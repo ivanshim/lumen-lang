@@ -2960,6 +2960,12 @@ impl<'a> Machine<'a> {
     /// The making itself, as the kind primitive does it: the class
     /// allocates a thing and constructs it.
     pub(super) fn construct_plainly(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
+        // A one-shot spread is read before either construction hook is called.
+        let given = if self.table.flag("ext.op.arithmetic.python_numbers") && given.iter().any(|item| matches!(item, Value::Couple(pair) if matches!(pair.0, Value::Flag(_)))) {
+            let (mut positional, named) = self.open_arguments(given)?;
+            positional.extend(named.into_iter().map(|(key, item)| Value::Couple(Rc::new((Value::text(&key), item)))));
+            positional
+        } else { given };
         self.abstract_turned_away(&class)?;
         let native = match Self::native_beneath(&class) {
             Some(word) if word == "Generic" && !self.table.strings("ext.stmt.type_params.open").is_empty() => None,
@@ -4624,6 +4630,11 @@ impl<'a> Machine<'a> {
                 }
             }
             if let Value::Wrapped(32,parts)=&value {
+                if self.names_in_calls && matches!(parts.get(2), Some(Value::Small(-1))) {
+                    let metadata = if key == self.detail("name") { Some(0) }
+                        else if key == "__objclass__" { Some(1) } else { None };
+                    if let Some(at) = metadata { return Ok(parts[at].clone()); }
+                }
                 if key==self.detail("descriptor.set"){return Ok(Self::wrap(33,parts.as_ref().clone()));}
                 if key==self.detail("descriptor.delete"){return Ok(Self::wrap(34,parts.as_ref().clone()));}
             }
@@ -6361,7 +6372,8 @@ impl<'a> Machine<'a> {
             other => other.clone(),
         } };
         let told=self.apply_class_member(bound,vec![given])?;
-        Ok(Some(told.is_true()))
+        let accepted = self.object_truth(&told)?;
+        Ok(Some(accepted))
     }
     /// The intrinsic words that name a kind of value rather than a piece
     /// of work. Only such a word stands for a class where `issubclass`
@@ -6558,7 +6570,8 @@ impl<'a> Machine<'a> {
         let Some(entry)=self.inherited_entry(&holder,&key) else{return Ok(None);};
         let bound=self.member_binding(entry,Some(choice.clone()),holder)?;
         let told=self.apply_class_member(bound,vec![given.clone()])?;
-        Ok(Some(told.is_true()))
+        let accepted = self.object_truth(&told)?;
+        Ok(Some(accepted))
     }
     /// The kind word a value reports, where it reports one: a class the
     /// program laid out and the native kind beneath it, a native word,
@@ -6930,6 +6943,30 @@ impl<'a> Machine<'a> {
         if matches!(op, 24 | 25) && values.len() == 1 {
             let function = Self::wrap(44, vec![values[0].settled()]);
             return if op == 24 { Ok(function) } else { self.apply_class_member(function, vec![Value::Small(1)]) };
+        }
+        // Ask subclass hooks from the calling ABC frame, matching the C helper.
+        if op == 29 {
+            let (arguments, keywords) = self.open_arguments(values)?;
+            if !keywords.is_empty() || arguments.len() != 2 {
+                return Err(String::from("TypeError: _abc_instancecheck() takes two positional arguments").into());
+            }
+            let target = arguments[0].settled();
+            let space = self.load_namespace("_abc")?;
+            let resolve = self.read_class_member(space, "_prepare_instancecheck", false)?;
+            let state = self.apply_class_member(resolve, vec![target.clone(), arguments[1].clone()])?;
+            let Value::Tuple(rows) = state.settled() else { return Err(String::from("TypeError: invalid ABC instance-check state").into()); };
+            let cached = rows[0].settled();
+            if !matches!(cached, Value::Nil) { return Ok(cached); }
+            let Value::Tuple(types) = rows[1].settled() else { return Err(String::from("TypeError: invalid ABC instance-check state").into()); };
+            let word = self.rules.specials[77].clone();
+            let mut remaining = types.len();
+            for kind in types.iter() {
+                let checker = self.read_class_member(target.clone(), &word, false)?;
+                let response = self.apply_class_member(checker, vec![kind.clone()])?;
+                remaining -= 1;
+                if remaining == 0 || self.object_truth(&response)? { return Ok(response); }
+            }
+            return Ok(Value::Flag(false));
         }
         if op == 23 {
             let (mut positional, options) = self.open_arguments(values)?;

@@ -2813,6 +2813,14 @@ impl<'a> Engine<'a> {
     /// The making itself, as the kind builtin does it: the class
     /// allocates a thing and constructs it.
     pub(super) fn class_construct(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        // Expand the call once: allocation and initialization share its arguments.
+        let args = if self.lang.python_numbers && args.iter().any(|item| matches!(item, Value::Tie(pair) if matches!(pair.0, Value::Flag(_)))) {
+            let title = c.python_title().unwrap_or_else(|| c.name.clone());
+            self.call_items_named(&title, args)?.into_iter().map(|(name, value)| match name {
+                Some(name) => Value::Tie(Rc::new((Value::text(&name), value))),
+                None => value,
+            }).collect()
+        } else { args };
         if self.traceback_class.as_ref().map_or(false, |known| Rc::ptr_eq(known, &c)) { return self.traceback_from_parts(args); }
         self.abstract_refusal(&c)?;
         let allocation = self.class_value(&c,self.class_word("allocate")).filter(|value| {
@@ -4082,6 +4090,10 @@ impl<'a> Engine<'a> {
                 }
             }
             if w.0 == 16 && !name.is_empty() {
+                if self.lang.bind_names && w.1.get(2).is_some_and(|part| part.plain() == "\0module-namespace") {
+                    if name == self.class_word("name") { return Ok(w.1[0].clone()); }
+                    if name == "__objclass__" { return Ok(w.1[1].clone()); }
+                }
                 if name == self.class_word("descriptor.set") { return Ok(Self::adapter(17, w.1.clone())); }
                 if name == self.class_word("descriptor.delete") { return Ok(Self::adapter(18, w.1.clone())); }
             }
@@ -6074,7 +6086,7 @@ impl<'a> Engine<'a> {
             other => other.clone(),
         } };
         let told=self.class_apply(bound,vec![given])?;
-        Ok(Some(self.truth(&told)))
+        Ok(Some(self.special_truth(&told)?))
     }
     /// The builtin words that name a kind of value rather than a piece
     /// of work. Only one of these stands as a class where `issubclass`
@@ -6232,7 +6244,7 @@ impl<'a> Engine<'a> {
         let Some(member)=self.class_value(&holder,&name) else{return Ok(None);};
         let bound=self.bind_class_value(member,Some(wanted.clone()),holder)?;
         let told=self.class_apply(bound,vec![given.clone()])?;
-        Ok(Some(self.truth(&told)))
+        Ok(Some(self.special_truth(&told)?))
     }
     /// The reference's walk along a `__bases__` line from `derived`
     /// towards the very `wanted`: a single base is stepped along and
@@ -6636,6 +6648,28 @@ impl<'a> Engine<'a> {
             24 | 25 if args.len() == 1 => {
                 let evaluator = Self::adapter(44, vec![args.remove(0).contents()]);
                 if which == 25 { self.class_apply(evaluator, vec![Value::Small(1)]) } else { Ok(evaluator) }
+            }
+            // Keep the accelerator boundary out of the Python frame chain.
+            29 => {
+                let entries = self.call_items(args)?;
+                if entries.len() != 2 || entries.iter().any(|(key, _)| key.is_some()) {
+                    return Err("TypeError: _abc_instancecheck() takes two positional arguments".into());
+                }
+                let owner = entries[0].1.contents();
+                let instance = entries[1].1.clone();
+                let module = self.import_module("_abc")?;
+                let prepare = self.class_get(module, "_prepare_instancecheck", false)?;
+                let prepared = self.class_apply(prepare, vec![owner.clone(), instance])?.contents();
+                let Value::Tuple(parts) = prepared else { return Err(self.class_refusal()); };
+                if !matches!(parts[0].contents(), Value::Null) { return Ok(parts[0].contents()); }
+                let Value::Tuple(candidates) = parts[1].contents() else { return Err(self.class_refusal()); };
+                let hook_name = self.lang.class_special[77].clone();
+                for (index, candidate) in candidates.iter().enumerate() {
+                    let hook = self.class_get(owner.clone(), &hook_name, false)?;
+                    let answer = self.class_apply(hook, vec![candidate.clone()])?;
+                    if index + 1 == candidates.len() || self.special_truth(&answer)? { return Ok(answer); }
+                }
+                Ok(Value::Flag(false))
             }
             23 => {
                 let entries = self.call_items(args)?;
@@ -7203,7 +7237,7 @@ impl<'a> Engine<'a> {
         let Some(start) = order.iter().position(|class| Self::super_same_class(class, owner)) else { return Ok(None) };
         let root_class = self.root_class();
         for class in &order[start + 1..] {
-            if name == self.class_word("allocate") {
+            if name == self.class_word("allocate") && Self::own_class_value(class, name).is_none() {
                 if let Some(word) = Self::own_kind(class) {
                     if word != self.class_word("root") { return Ok(Some(Self::adapter(14, vec![Value::text(&word)]))); }
                 }

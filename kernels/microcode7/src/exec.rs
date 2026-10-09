@@ -8380,7 +8380,7 @@ impl<'a> Machine<'a> {
             }
             if *work == crate::text::Work::FORMATMAP {
                 if positional.len() != 2 { return Err(crate::text::complaint(self.table, "arguments").into()); }
-                return Ok(Value::text(&self.mapping_format(subject, &positional[1], 0)?));
+                return self.mapping_format(subject, &positional[1], 0);
             }
             self.prim(Prim::Textual(*work), name, &positional).map_err(Escape::from)
         })())
@@ -10865,7 +10865,9 @@ impl<'a> Machine<'a> {
             crate::text::fit_names(self.table, crate::text::Work::NEWARGS, &mut supplied, keywords)?;
             return self.prim(Prim::Textual(crate::text::Work::NEWARGS), name, &supplied).map_err(Escape::from);
         }
-        if matches!(&actual, Value::Text(_)) {
+        let codepoint_method = matches!(&actual, Value::Unpaired(_))
+            && ["lower", "upper", "replace", "count", "index", "rindex", "find", "rfind", "split", "rsplit"].contains(&name);
+        if matches!(&actual, Value::Text(_)) || codepoint_method {
             let key = format!("ext.builtin.text.{}", name);
             if let Some((_, Prim::Textual(work))) = crate::table::BUILTIN_LABELS.iter().find(|(label, _)| *label == key) {
                 let mut given = vec![actual]; given.extend(arguments.into_iter().map(|v| v.settled()));
@@ -10875,7 +10877,7 @@ impl<'a> Machine<'a> {
                     if given.len() != 2 { return Err(crate::text::complaint(self.table, "arguments").into()); }
                     let Value::Text(s) = &given[0] else { return Err(crate::text::complaint(self.table, "receiver").into()); };
                     let s = s.to_string();
-                    return Ok(Value::text(&self.mapping_format(&s, &given[1], 0)?));
+                    return self.mapping_format(&s, &given[1], 0);
                 }
                 return self.prim(Prim::Textual(*work), name, &given).map_err(Escape::from);
             }
@@ -11056,14 +11058,14 @@ impl<'a> Machine<'a> {
     /// standing in for a key the mapping does not hold. A path after
     /// the key reads an attribute or a further place the same way a
     /// plain field of `.format` does.
-    fn mapping_format(&mut self, s: &str, mapping: &Value, depth: usize) -> Result<String, Escape> {
+    fn mapping_format(&mut self, s: &str, mapping: &Value, depth: usize) -> Res {
         if depth > 2 { return Err(crate::text::complaint(self.table, "format").into()); }
-        let mut out = String::new();
+        let mut out = Vec::<u32>::new();
         let mut chars = s.chars().peekable();
         while let Some(c) = chars.next() {
-            if (c == '{' || c == '}') && chars.peek() == Some(&c) { chars.next(); out.push(c); continue; }
+            if (c == '{' || c == '}') && chars.peek() == Some(&c) { chars.next(); out.push(u32::from(c)); continue; }
             if c == '}' { return Err(crate::text::complaint(self.table, "format.brace").into()); }
-            if c != '{' { out.push(c); continue; }
+            if c != '{' { out.push(u32::from(c)); continue; }
             let mut field = String::new();
             let mut nested = 0;
             let mut closed = false;
@@ -11101,12 +11103,12 @@ impl<'a> Machine<'a> {
                     rest = &tail[end + 1..];
                 } else { return Err(crate::text::complaint(self.table, "format").into()); }
             }
-            let spec = self.mapping_format(spec, mapping, depth + 1)?;
+            let spec = self.mapping_format(spec, mapping, depth + 1)?.bare();
             let names = self.wording();
             // A thing of the program's own is written by its own methods,
             // the way a field of `.format` is.
             if let Some(laid) = crate::formatting::Elsewhere::field_laid(self, &value, &spec, conversion)? {
-                out.push_str(&laid.bare());
+                out.extend(laid.character_numbers().ok_or_else(|| crate::text::complaint(self.table, "format"))?);
                 continue;
             }
             let shown = if conversion == "r" || conversion == "a" {
@@ -11119,9 +11121,9 @@ impl<'a> Machine<'a> {
                 }
                 Value::text(&shown).in_field(names, &spec, "")
             } else { value.in_field(names, &spec, conversion) };
-            out.push_str(&shown.ok_or_else(|| crate::text::complaint(self.table, "format"))?);
+            out.extend(shown.ok_or_else(|| crate::text::complaint(self.table, "format"))?.chars().map(|letter| letter as u32));
         }
-        Ok(out)
+        Ok(Value::characters(out))
     }
 
     fn ordered_members(&mut self, receiver: &Value, keywords: &[(String, Value)]) -> Res<Vec<Value>> {
@@ -19141,7 +19143,8 @@ impl<'a> Machine<'a> {
         if self.names_in_calls {
             let result = if matches!(op, Prim::ExtendLiteral(_, false)) {
                 self.prim_values(op, name, &[collection_read(&v[0]), v[1].clone()])?
-            } else if matches!(op, Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare | Prim::WeakGet) {
+            } else if matches!(op, Prim::MakeArray | Prim::MakeTuple | Prim::MakeMap | Prim::Couple | Prim::SpanOf | Prim::SliceBounds | Prim::IdentityOf | Prim::ValueMethod | Prim::Perform | Prim::Weigh | Prim::Prepare | Prim::WeakGet) {
+                // Constructing a tuple keeps each member's original collection cell.
                 self.prim_values(op, name, v)?
             } else if op == Prim::Quoted && v.first().map_or(false, |item| matches!(item, Value::Shared(_) | Value::Mutable(..)) && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_))))) {
                 self.prim_values(op, name, v)?
@@ -19421,7 +19424,7 @@ impl<'a> Machine<'a> {
             || matches!(op, Prim::SetAssign(0))
             || matches!(op, Prim::Landing(place) if self.table.landing_working(place) == Prim::SetAssign(0));
         if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(..)) && !view_kept)
-            && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
+            && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeTuple | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
             && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()
                 || (matches!(op, Prim::SetAssign(0)) || matches!(op, Prim::Landing(place) if matches!(self.table.landing_working(place), Prim::SetAssign(0))))
                     && v.first().is_some_and(|value| Self::dict_cell(value).is_some())) {

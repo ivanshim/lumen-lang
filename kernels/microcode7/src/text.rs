@@ -265,6 +265,25 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     } else { input };
 
     use Work::*;
+    // A descriptor search keeps the original Python character sequence.
+    let code_work = match work { FIND => "find", RFIND => "rfind", INDEX => "index", RINDEX => "rindex", COUNT => "count", REPLACE => "replace", LOWER => "lower", UPPER => "upper", _ => "" };
+    if code_work != "" && matches!(input.first(), Some(Value::Text(_) | Value::Unpaired(_)))
+        && input.iter().take(3).any(|v| matches!(v, Value::Unpaired(_))) {
+        let failure = |reason: &str| complaint(table, reason);
+        let absent = |_: &Value, _: &str| complaint(table, "receiver");
+        let request = crate::members::Request { target: &input[0], operation: code_work, given: input[1..].to_vec(), named: &[], names, complaint: &failure, unanswered: &absent };
+        return request.work_units(&input[0].character_numbers().unwrap());
+    }
+    // Splitting through a str descriptor also accepts lone surrogate separators.
+    let unit_split = matches!(work, SPLIT | RSPLIT)
+        && matches!(input.first(), Some(Value::Text(_) | Value::Unpaired(_)))
+        && input.iter().take(2).any(|v| matches!(v, Value::Unpaired(_)));
+    if unit_split {
+        let says = |reason: &str| complaint(table, reason);
+        let missing = |_: &Value, _: &str| complaint(table, "receiver");
+        return crate::members::Request { target: &input[0], operation: if work == SPLIT { "split" } else { "rsplit" },
+            given: input[1..].to_vec(), named: &[], names, complaint: &says, unanswered: &missing }.answer();
+    }
     if work==MAKETRANS {
         return make_table(input,table);
     }

@@ -198,6 +198,7 @@ pub struct Builder<'a> {
     /// The type parameters the declaration just read wrote between
     /// brackets, taken by the routine that declaration is making.
     pending_types: Vec<String>,
+    documentation_statement: Option<usize>,
     /// Where each bag of members a class may take in begins, by name:
     /// the token just past the mark that opens its body. Its members are
     /// read again wherever a class takes them in.
@@ -680,7 +681,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -795,7 +796,8 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
                         for name in table.strings("ext.system.module.doc") {
                             let slot = r.global_address(name);
                             if !r.named_in_program.iter().any(|bound| bound == name) { r.named_in_program.push(name.clone()); }
-                            stmts.push(Form::Write(slot, Box::new(Form::Const(Value::Text(said.clone())))));
+                            let doc = if table.has_any("ext.stmt.class.builder") { Value::text(&settle_doc_indentation(said.as_ref())) } else { Value::Text(said.clone()) };
+                            stmts.push(Form::Write(slot, Box::new(Form::Const(doc))));
                         }
                     }
                 }
@@ -803,7 +805,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             if own_line { opening = false; }
             if defines {
                 ahead.push(stmt);
-            } else if !opening_text || r.optimize < 2 {
+            } else if !opening_text || (r.optimize < 2 && !table.has_any("ext.stmt.class.builder")) {
                 stmts.push(stmt);
             }
             r.skip_line_ends();
@@ -1987,7 +1989,9 @@ impl<'a> Builder<'a> {
             doc.get_or_insert_with(String::new).push_str(&token.lexeme);
             finish += 1;
         }
-        if self.optimize >= 2 || expression_body || self.tokens.get(finish).map_or(false, |t| t.shape == Shape::Woven) { doc = None; }
+        let literal_statement = !expression_body && finish > start && self.tokens.get(finish).is_some_and(|token| matches!(token.shape, Shape::LineEnd | Shape::Finish | Shape::Close) || token.lexeme == ";");
+        if self.optimize >= 2 || !literal_statement { doc = None; }
+        if self.table.has_any("ext.stmt.class.builder") { doc = doc.map(|value| settle_doc_indentation(&value)); }
         let qualification=self.full_name_of(name);
         let taking = self.taking.take();
         let declared_on = self.declared_at;
@@ -2040,7 +2044,11 @@ impl<'a> Builder<'a> {
         let previous_finally = self.finally_nesting;
         let previous_stars = std::mem::take(&mut self.except_star_bases);
         if holds == Holds::Every { self.loop_depth = 0; self.finally_nesting = 0; }
-        let mut body = body(self)?;
+        let saved_documentation = self.documentation_statement.take();
+        if literal_statement && self.table.has_any("ext.stmt.class.builder") { self.documentation_statement = Some(start); }
+        let built_body = body(self);
+        self.documentation_statement = saved_documentation;
+        let mut body = built_body?;
         self.loop_depth = previous_loops;
         self.finally_nesting = previous_finally;
         self.except_star_bases = previous_stars;
@@ -2075,12 +2083,14 @@ impl<'a> Builder<'a> {
             (group, slot)
         }));
         let mut flags = 3i64;
+        if doc.is_some() && self.table.has_any("ext.stmt.class.builder") { flags += 67_108_864; }
         if self.layers.iter().skip(1).any(|s| s.holds == Holds::Every) { flags += 16; }
         for (kind, bit) in [('v', 4), ('k', 8)] {
             if taking.as_ref().map_or(false, |rules| rules.contains(&kind)) { flags |= bit; }
         }
         if scope.permits_async { flags |= 128; } else if generator { flags |= 32; }
-        let mut literals = vec![doc.as_ref().map_or(Value::Nil, |s| Value::text(s))];
+        let mut literals = Vec::new();
+        if let Some(text) = &doc { literals.push(Value::text(text)); } else if !self.table.has_any("ext.stmt.class.builder") { literals.push(Value::Nil); }
         let mut referenced = Vec::new();
         let mut suspension = false;
         if holds != Holds::Nothing && self.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
@@ -2491,7 +2501,11 @@ impl<'a> Builder<'a> {
         if let Some(problem) = self.type_scope_fault() { return Err(problem); }
         let opened = self.pos;
         self.warnings_in_statement(opened);
-        let made = self.stmt_of_line()?;
+        let made = if self.documentation_statement == Some(opened) {
+            self.documentation_statement = None;
+            while self.look().shape == Shape::Quote { self.pos += 1; }
+            prim_call(Prim::Seq, Vec::new())
+        } else { self.stmt_of_line()? };
         self.past_stmt(opened)?;
         Ok(made)
     }
@@ -5396,7 +5410,11 @@ impl<'a> Builder<'a> {
         // and the second level of optimisation has not dropped it.
         if self.optimize < 2 {
             if let Some(word) = table.single("ext.stmt.class.detail.doc") {
-                let said = self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme));
+                let said = self.tokens.get(self.pos).filter(|token| token.shape == Shape::Quote).map(|_| {
+                    let mut text = String::new();
+                    for token in self.tokens[self.pos..].iter().take_while(|t| t.shape == Shape::Quote) { text.push_str(&token.lexeme); }
+                    Value::text(&if table.has_any("ext.stmt.class.builder") { settle_doc_indentation(&text) } else { text })
+                });
                 if let Some(said) = said { self.member_ranked(word); self.parts().attributes.push(word.to_string()); self.parts().held.push(constant(said)); }
             }
         }
@@ -5653,7 +5671,11 @@ impl<'a> Builder<'a> {
         // (ext.stmt.class.detail.doc). A class that says nothing keeps
         // nothing under the word, rather than lacking the word.
         if let Some(word) = table.single("ext.stmt.class.detail.doc") {
-            let said = if self.optimize < 2 { self.tokens.get(self.pos).filter(|t| t.shape == Shape::Quote).map(|t| Value::text(&t.lexeme)) } else { None };
+            let said = if self.optimize < 2 { self.tokens.get(self.pos).filter(|token| token.shape == Shape::Quote).map(|_| {
+                    let mut text = String::new();
+                    for token in self.tokens[self.pos..].iter().take_while(|t| t.shape == Shape::Quote) { text.push_str(&token.lexeme); }
+                    Value::text(&if table.has_any("ext.stmt.class.builder") { settle_doc_indentation(&text) } else { text })
+                }) } else { None };
             self.member_ranked(word);
             self.parts().attributes.push(word.to_string());
             self.parts().held.push(constant(said.unwrap_or(Value::Nil)));
@@ -12969,4 +12991,33 @@ fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, name
         _ => {}
     }
     for child in children { inspect_form(child, locals, constants, names, suspension); }
+}
+
+// Preserve blank lines when settling the indentation of Python documentation.
+fn settle_doc_indentation(source: &str) -> String {
+    let mut chars = Vec::new();
+    let mut offset = 0;
+    for ch in source.chars() {
+        match ch {
+            '\t' => { let end = offset + (8 - offset % 8); while offset < end { chars.push(' '); offset += 1; } }
+            '\n' | '\r' => { chars.push(ch); offset = 0; }
+            other => { chars.push(other); offset += 1; }
+        }
+    }
+    let expanded: String = chars.into_iter().collect();
+    let rows: Vec<_> = expanded.split('\n').collect();
+    let mut least = usize::MAX;
+    for row in rows.iter().skip(1) {
+        let spaces = row.bytes().take_while(|b| *b == b' ').count();
+        if spaces < row.len() { least = least.min(spaces); }
+    }
+    if least == usize::MAX { least = 0; }
+    let mut result = String::new();
+    for (number, row) in rows.into_iter().enumerate() {
+        if number != 0 { result.push('\n'); }
+        let leading = row.bytes().take_while(|b| *b == b' ').count();
+        let removed = if number == 0 { leading } else { leading.min(least) };
+        result.push_str(&row[removed..]);
+    }
+    result
 }

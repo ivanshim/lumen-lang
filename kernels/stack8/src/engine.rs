@@ -14151,14 +14151,14 @@ impl<'a> Engine<'a> {
     /// standing in for a key the mapping does not hold. A path after
     /// the key reads an attribute or a further place the same way a
     /// plain field of `.format` does.
-    fn mapping_format(&mut self, s: &str, mapping: &Value, depth: usize) -> Res<String> {
+    fn mapping_format(&mut self, s: &str, mapping: &Value, depth: usize) -> Res<Value> {
         if depth > 2 { return Err(crate::strings::fault(self.lang, "format")); }
-        let mut out = String::new();
+        let mut out: Vec<u32> = Vec::new();
         let mut chars = s.chars().peekable();
         while let Some(c) = chars.next() {
-            if (c == '{' || c == '}') && chars.peek() == Some(&c) { chars.next(); out.push(c); continue; }
+            if (c == '{' || c == '}') && chars.peek() == Some(&c) { chars.next(); out.push(c as u32); continue; }
             if c == '}' { return Err(crate::strings::fault(self.lang, "format.brace")); }
-            if c != '{' { out.push(c); continue; }
+            if c != '{' { out.push(c as u32); continue; }
             let mut field = String::new();
             let mut nested = 0;
             let mut closed = false;
@@ -14196,17 +14196,17 @@ impl<'a> Engine<'a> {
                     rest = &tail[end + 1..];
                 } else { return Err(crate::strings::fault(self.lang, "format")); }
             }
-            let spec = self.mapping_format(spec, mapping, depth + 1)?;
+            let spec = self.mapping_format(spec, mapping, depth + 1)?.plain();
             let words = self.wording();
             let thing = value.contents();
             if !self.lang.class_special.is_empty() && Self::holds_object(&thing) {
                 // The program's own class says its own words, as in `.format`.
-                let text = if conversion.is_empty() { self.special_format(&thing, &spec)?.plain() } else {
+                let text = if conversion.is_empty() { self.special_format(&thing, &spec)? } else {
                     let said = self.special_text(&thing, conversion != "s")?;
                     let said = if conversion == "a" { crate::strings::ascii_escaped(&said) } else { said };
-                    Value::text(&said).string_field(&words, &spec, "").ok_or_else(|| crate::strings::fault(self.lang, "format"))?
+                    Value::text(&Value::text(&said).string_field(&words, &spec, "").ok_or_else(|| crate::strings::fault(self.lang, "format"))?)
                 };
-                out.push_str(&text);
+                out.extend(text.text_codes().ok_or_else(|| crate::strings::fault(self.lang, "format"))?);
                 continue;
             }
             let shown = if conversion == "r" || conversion == "a" {
@@ -14219,9 +14219,9 @@ impl<'a> Engine<'a> {
                 }
                 Value::text(&shown).string_field(&words, &spec, "")
             } else { value.string_field(&words, &spec, conversion) };
-            out.push_str(&shown.ok_or_else(|| crate::strings::fault(self.lang, "format"))?);
+            out.extend(shown.ok_or_else(|| crate::strings::fault(self.lang, "format"))?.chars().map(u32::from));
         }
-        Ok(out)
+        Ok(Value::from_codes(out))
     }
 
     /// Text on the left of the remainder sign, filled mark by mark. A
@@ -18157,7 +18157,8 @@ impl<'a> Engine<'a> {
             supplied.extend(named.into_iter().map(|(key, argument)| (Some(key), argument)));
             return self.builtin_call(Builtin::Text(crate::strings::TextOp::Getnewargs), operation, supplied);
         }
-        if matches!(&contents, Value::Text(_)) {
+        if matches!(&contents, Value::Text(_)) || matches!(&contents, Value::Codepoints(_))
+            && matches!(operation, "split" | "rsplit" | "find" | "rfind" | "index" | "rindex" | "count" | "replace" | "lower" | "upper") {
             let label = format!("ext.builtin.text.{}", operation);
             if self.lang.text_words.get(&label).map_or(false, |words| !words.is_empty()) {
                 let working = crate::strings::operation(operation);
@@ -20636,7 +20637,7 @@ impl<'a> Engine<'a> {
                     if normalized.len() != 2 { return Err(crate::strings::fault(self.lang, "arguments")); }
                     let Value::Text(s) = &normalized[0] else { return Err(crate::strings::fault(self.lang, "receiver")); };
                     let s = s.clone();
-                    return Ok(Value::text(&self.mapping_format(&s, &normalized[1], 0)?));
+                    return self.mapping_format(&s, &normalized[1], 0);
                 }
                 let answer = crate::strings::run(op, name, &normalized, self.lang, &sp)?;
                 if self.lang.bind_names {

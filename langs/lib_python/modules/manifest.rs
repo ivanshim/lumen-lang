@@ -1,6 +1,7 @@
 // Modules kept as source until a program asks for them.
 pub static MODULES: &[(&str, &str, &str)] = &[
     ("__future__", include_str!("__future__.py"), "__future__.py"),
+    ("_abc", include_str!("_abc.py"), "_abc.py"),
     ("_bisect", include_str!("_bisect.py"), "_bisect.py"),
     ("_blake2", include_str!("_blake2.py"), "_blake2.py"),
     ("_buffer", include_str!("_buffer.py"), "_buffer.py"),
@@ -278,7 +279,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("html.entities", include_str!("html/entities.py"), "html/entities.py"),
     ("html.parser", include_str!("html/parser.py"), "html/parser.py"),
     ("http", include_str!("http/__init__.py"), "http/__init__.py"),
-    ("http.client", include_str!("runtime_adapters/native_http_client.py"), "http/client.py"),
+    ("http.client", include_str!("http/client.py"), "http/client.py"),
     ("http.cookies", include_str!("http/cookies.py"), "http/cookies.py"),
     ("importlib", concat!(include_str!("importlib/__init__.py"), "\n", include_str!("runtime_adapters/importlib.py")), "importlib/__init__.py"),
     ("importlib._abc", include_str!("importlib/_abc.py"), "importlib/_abc.py"),
@@ -312,7 +313,9 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("optparse", include_str!("optparse.py"), "optparse.py"),
     ("os", include_str!("os.py"), "os.py"),
     ("pathlib", include_str!("pathlib/__init__.py"), "pathlib/__init__.py"),
+    ("pathlib._local", include_str!("pathlib/_local.py"), "pathlib/_local.py"),
     ("pathlib._os", include_str!("pathlib/_os.py"), "pathlib/_os.py"),
+    ("pathlib.types", include_str!("pathlib/types.py"), "pathlib/types.py"),
     ("pdb", include_str!("pdb.py"), "pdb.py"),
     ("pickle", concat!(include_str!("pickle.py"), "\n", include_str!("runtime_adapters/pickle.py")), "pickle.py"),
     ("pickletools", include_str!("pickletools.py"), "pickletools.py"),
@@ -335,6 +338,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("reprlib", include_str!("reprlib.py"), "reprlib.py"),
     ("rlcompleter", include_str!("rlcompleter.py"), "rlcompleter.py"),
     ("runtime_adapters.copyreg", include_str!("runtime_adapters/copyreg.py"), "runtime_adapters/copyreg.py"),
+    ("runtime_adapters.native_http_client", include_str!("runtime_adapters/native_http_client.py"), "runtime_adapters/native_http_client.py"),
     ("sched", include_str!("sched.py"), "sched.py"),
     ("secrets", include_str!("secrets.py"), "secrets.py"),
     ("select", include_str!("select.py"), "select.py"),
@@ -443,7 +447,10 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("unittest.mock", include_str!("unittest/mock.py"), "unittest/mock.py"),
     ("unittest.util", include_str!("unittest/util.py"), "unittest/util.py"),
     ("unittest", include_str!("unittest.py"), "unittest/__init__.py"),
+    ("urllib.error", include_str!("urllib/error.py"), "urllib/error.py"),
     ("urllib.parse", include_str!("urllib/parse.py"), "urllib/parse.py"),
+    ("urllib.request", include_str!("urllib/request.py"), "urllib/request.py"),
+    ("urllib.response", include_str!("urllib/response.py"), "urllib/response.py"),
     ("urllib", include_str!("urllib.py"), "urllib/__init__.py"),
     ("uuid", include_str!("uuid.py"), "uuid.py"),
     ("warnings", include_str!("runtime_adapters/native_warnings.py"), "warnings.py"),
@@ -453,6 +460,10 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("xml.dom", include_str!("xml/dom/__init__.py"), "xml/dom/__init__.py"),
     ("xml.dom.domreg", include_str!("xml/dom/domreg.py"), "xml/dom/domreg.py"),
     ("xml.dom.minicompat", include_str!("xml/dom/minicompat.py"), "xml/dom/minicompat.py"),
+
+    ("zipfile", include_str!("zipfile/__init__.py"), "zipfile/__init__.py"),
+    ("zipfile._path", include_str!("zipfile/_path/__init__.py"), "zipfile/_path/__init__.py"),
+    ("zipfile._path.glob", include_str!("zipfile/_path/glob.py"), "zipfile/_path/glob.py"),
     ("zlib", include_str!("zlib.py"), "zlib.py"),
 ];
 

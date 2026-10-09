@@ -324,6 +324,18 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
     let args = opened.as_slice();
 
     use TextOp::*;
+    // Native descriptors use the same code-point operations as bound methods.
+    let unit_operation = match op { Find => "find", Rfind => "rfind", Index => "index", Rindex => "rindex", Count => "count", Replace => "replace", Lower => "lower", Upper => "upper", _ => "" };
+    if !unit_operation.is_empty() && matches!(args.first(), Some(Value::Text(_) | Value::Codepoints(_)))
+        && args.iter().take(3).any(|v| matches!(v, Value::Codepoints(_))) {
+        return crate::methods::codepoint_operation(&args[0].text_codes().unwrap(), unit_operation, &args[1..], &|key| fault(lang, key));
+    }
+    // Native and bound splitting share the code-point path for surrogate text.
+    if matches!(op, Split | Rsplit) && matches!(args.first(), Some(Value::Text(_) | Value::Codepoints(_)))
+        && args.iter().take(2).any(|v| matches!(v, Value::Codepoints(_))) {
+        return crate::methods::call(&args[0], if op == Rsplit { "rsplit" } else { "split" }, &args[1..], &[], words,
+            &|reason| fault(lang, reason), &|_, _| fault(lang, "receiver"), true);
+    }
     if op == Maketrans {
         return translated_table(args,lang);
     }

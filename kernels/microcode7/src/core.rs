@@ -171,6 +171,8 @@ impl Value {
             Self::Wrapped(186, _) => "method-wrapper",
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Wrapped(60, slot))
                 if matches!(slot.as_slice(), [Self::Text(kind), Self::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, ty)| ty == "wrapper_descriptor"))) => "method-wrapper",
+            // A module namespace uses the native dictionary descriptor kind.
+            Self::Wrapped(32, layout) if matches!(layout.get(2), Some(Self::Small(-1))) => "member_descriptor",
             Self::Wrapped(130, _) => "function",
             Self::Wrapped(132, _) => "method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
