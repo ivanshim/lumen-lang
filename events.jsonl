@@ -9833,3 +9833,37 @@
 {"t":"2026-10-09T08:01:41Z","event":"finished","job":"dsflash-frame","exit_time":"2026-10-09T07:57:47Z"}
 {"t":"2026-10-09T08:01:41Z","event":"review-queued","job":"dsflash-frame","review":"review-auto-dsflash-frame-0801"}
 {"t":"2026-10-09T08:01:46Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-09T08:06:01Z","event":"started","job":"dsflash-calendar","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-09T08:10:14Z","event":"note","text":"prune-archive: removed 0 files (0 MB); 0 finished jobs"}
+{"t":"2026-10-09T08:10:26Z","event":"note","text":"archive-sync: archived to lumenlang2:coord-archive; pruned 42 old local items (active kept: claude-types claude-urllib claude-urllib-sol dsflash-bigmem dsflash-calendar dsflash-code-module-sol dsflash-difflib dsflash-file dsflash-longexp dsflash-mathprop-bigaddr dsflash-memoryview dsflash-memoryview-sol dsflash-pyclbr dsflash-pyclbr-sol dsflash-reprlib dsflash-unpack-baseexc dsflash-unpack-baseexc-sol dsflash-zipapp dspro-type-annotations kimi-generator-stop kimi-type-comments stdlib-bytes stdlib-code stdlib-compile stdlib-doctest stdlib-doctest-astra stdlib-mailbox stdlib-type-params )"}
+{"t":"2026-10-09T08:10:29Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-09T08:11:02Z","event":"review-started","job":"dsflash-frame","review":"review-auto-dsflash-frame-0801"}
+{"t":"2026-10-09T08:14:13Z","event":"accepted","job":"integrate-21g","batch":"21g","commit":"2a738fd08","note":"coordinator: final check on 2a738fd08 clean (1196/0, gates ok, 0 regression/disagree/broken; length builtin 133->134 new doctest, s8 tokenize 126->132 coverage); 12 branches; s8 11468->11764/12914, mc7 11388->11666/12818, 166 files; email 1800/1810 by class aggregation"}
+{"t":"2026-10-09T08:14:13Z","event":"integrated","job":"integrate-21g","batch":"21g","pr":542,"commit":"56a85fc9","note":"HISTORY.md 1bj added; pushed batch21g, PR #542 opened, pr-merge-watch running"}
+{"t":"2026-10-09T08:14:37Z","event":"returned","job":"dsflash-ensurepip","review":"review-auto-dsflash-ensurepip-0741","commit":"0f916cb28","round":1,"model":"deepseek-flash","note":"(1st; integrity ok; clean check 1196/0 gates ok; ensurepip absent->18/32 both; 14 bootstrap errors: no bundled pip wheel, small subject no partial) -> returns + or-resume queued"}
+{"t":"2026-10-09T08:14:37Z","event":"returned","job":"dsflash-py-compile","review":"review-auto-dsflash-py-compile-0746","commit":"5eec4ce3d","round":1,"model":"deepseek-flash","note":"(1st; integrity ok; clean check 1196/0 gates ok; py_compile 12->12/34 both = no gain; code objects unmarshallable, UTF-7 source decoding) -> returns + or-resume queued"}
+{"t":"2026-10-09T08:14:37Z","event":"queued","job":"dsflash-ensurepip","model":"deepseek-flash","line":"or-resume dsflash-ensurepip deepseek-flash session-4861a30f-e490-435a-a877-598b4f1d8874","note":"1st return resume"}
+{"t":"2026-10-09T08:14:37Z","event":"queued","job":"dsflash-py-compile","model":"deepseek-flash","line":"or-resume dsflash-py-compile deepseek-flash session-ecd8c17f-33fd-4bd6-a638-577303c74b99","note":"1st return resume"}
+{"t":"2026-10-09T08:15:28Z","event":"exited","job":"dsflash-reprlib","code":0}
+{"t":"2026-10-09T08:15:38Z","event":"quota","codex_week_used":23,"codex_credits":0,"claude_week_used":19,"claude_5h_used":18,"kimi_5h_used":0,"kimi_month_used":1,"kimi_code_used":0,"deepseek_usd":257.76}
+{"t":"2026-10-09T08:15:42Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":23,"expected":24.2,"gap":-1.2,"status":"ok"}
+{"t":"2026-10-09T08:15:52Z","event":"checkin","status":"done","actions":"accepted integrate-21g (2a738fd08; clean final check 1196/0, gates ok; s8 11468->11764/12914, mc7 11388->11666/12818, 166 files); HISTORY.md 1bj 56a85fc9, pushed batch21g, opened PR #542, pr-merge-watch started; RETURN dsflash-ensurepip (1st; 18/32, no pip wheel) -> returns + or-resume queued; RETURN dsflash-py-compile (1st; 12->12/34, code objects unmarshallable, UTF-7) -> returns + or-resume queued; deleted _int21g/target (box disk 81%->79%); prune-merged 0MB; luna FINDINGS appended","notes":"Codex week 23% (reset 01:54Z), codex-nostart absent; box load 3.6/8, 12.3 GB avail, disk 79%; Mac disk 87%; Claude 5h 18%/week 19%; luna ok gap -1.2; DS Flash 10 running + 2 queued = 12; Sol 10 workers + 1 review, 7 Sol lines queued; ensurepip may need a checker-provided pip wheel (WHEEL_PKG_DIR) - worker told to report if so"}
+{"t":"2026-10-09T08:16:04Z","event":"resumed","job":"dsflash-ensurepip","model":"deepseek-flash","session":"session-4861a30f-e490-435a-a877-598b4f1d8874"}
+{"t":"2026-10-09T08:17:02Z","event":"finished","job":"dsflash-reprlib","exit_time":"2026-10-09T08:15:28Z"}
+{"t":"2026-10-09T08:17:02Z","event":"review-queued","job":"dsflash-reprlib","review":"review-auto-dsflash-reprlib-0817"}
+{"t":"2026-10-09T08:17:06Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-09T08:17:22Z","event":"exited","job":"stdlib-mailbox","code":0}
+{"t":"2026-10-09T08:18:35Z","event":"exited","job":"dsflash-mathprop-bigaddr","code":0}
+{"t":"2026-10-09T08:18:41Z","event":"exited","job":"review-auto-dsflash-frame-0801","code":0}
+{"t":"2026-10-09T08:19:33Z","event":"exited","job":"dsflash-bigmem","code":0}
+{"t":"2026-10-09T08:21:06Z","event":"resumed","job":"dsflash-univnewlines-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-09T08:21:35Z","event":"exited","job":"stdlib-type-params","code":0}
+{"t":"2026-10-09T08:22:10Z","event":"finished","job":"dsflash-bigmem","exit_time":"2026-10-09T08:19:33Z"}
+{"t":"2026-10-09T08:22:10Z","event":"review-queued","job":"dsflash-bigmem","review":"review-auto-dsflash-bigmem-0822"}
+{"t":"2026-10-09T08:22:13Z","event":"finished","job":"dsflash-mathprop-bigaddr","exit_time":"2026-10-09T08:18:35Z"}
+{"t":"2026-10-09T08:22:13Z","event":"review-queued","job":"dsflash-mathprop-bigaddr","review":"review-auto-dsflash-mathprop-bigaddr-0822"}
+{"t":"2026-10-09T08:22:18Z","event":"finished","job":"stdlib-mailbox","exit_time":"2026-10-09T08:17:22Z"}
+{"t":"2026-10-09T08:22:18Z","event":"review-queued","job":"stdlib-mailbox","review":"review-auto-stdlib-mailbox-0822"}
+{"t":"2026-10-09T08:22:21Z","event":"finished","job":"stdlib-type-params","exit_time":"2026-10-09T08:21:35Z"}
+{"t":"2026-10-09T08:22:21Z","event":"review-queued","job":"stdlib-type-params","review":"review-auto-stdlib-type-params-0822"}
+{"t":"2026-10-09T08:22:22Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
