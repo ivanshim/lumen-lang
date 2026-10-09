@@ -67,6 +67,7 @@ impl<'a> Engine<'a> {
             if let Some(name) = self.lang.class_special.get(79) { hooks.push((name.clone(), Self::adapter(133, vec![Value::text(word)]))); }
         }
         if word == "Union" {
+            hooks.push((self.class_word("module").to_owned(), Value::text("typing")));
             hooks.push(("__repr__".into(), Self::adapter(126, Vec::new())));
             // The reference builds a union by subscription, which the
             // special form's own item method does; the folded members
@@ -3707,11 +3708,13 @@ impl<'a> Engine<'a> {
             if self.is_async_generator(&subject) {
                 if let Some(index) = self.lang.async_generator_fields.iter().position(|word| word == name) {
                     if index == 2 { return Ok(Value::Flag(self.async_generator_running(&subject))); }
+                    if index == 4 && generator.try_borrow().is_err() { return Ok(Value::Flag(false)); }
                     let state = generator.try_borrow().map_err(|_| self.class_refusal())?;
                     return Ok(match index {
                         0 => state.program.as_ref().map_or(Value::Null, |body| self.routine_code(body)),
                         1 => if state.closed { Value::Null } else { state.trace_frame.clone().map_or(Value::Null, Value::Object) },
                         2 => Value::Flag(false),
+                        4 => Value::Flag(state.started && !state.closed),
                         _ => match state.delegate.clone().unwrap_or(Value::Null) { Value::Adapter(parts) if parts.0 == 33 => parts.1[0].clone(), other => other },
                     });
                 }
@@ -4199,7 +4202,11 @@ impl<'a> Engine<'a> {
                     return Ok(callable);
                 }
                 if self.lang.class_annotations.first().map_or(false,|word|word==name) { return self.class_annotations(c); }
-                if let Some(v)=self.class_value(c,name) { return self.bind_class_value(v,None,c.clone()); }
+                // Abstract-marker lookup uses this class's own type slot.
+                let stored = if self.lang.class_details.get("abstract").and_then(|words| words.first()).is_some_and(|word| word == name) {
+                    Self::own_class_value(c, name)
+                } else { self.class_value(c, name) };
+                if let Some(v) = stored { return self.bind_class_value(v, None, c.clone()); }
                 // The classes written beneath this one, the live ones,
                 // as the reference's own type.__subclasses__ tells them.
                 if !self.class_word("subclasses").is_empty() && name==self.class_word("subclasses")
@@ -4547,7 +4554,7 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("module") {let home=self.routine_module(f);return Ok(self.routine_held(&subject,name,home));}
                 if name==self.class_word("defaults") {
                     let values=f.carried.iter().zip(&f.held).filter(|(i,_)| **i<f.formals.len() && f.parameter_rules.as_ref().map_or(true,|rules|rules[**i]<2)).map(|(_,v)|v.clone()).collect::<Vec<_>>();
-                    if values.is_empty() && f.least<f.formals.len() && f.within.is_some(){return Err(self.class_refusal());}
+                    if values.is_empty() && f.carried.iter().any(|slot| *slot < f.formals.len() && f.parameter_rules.as_ref().map_or(true, |rules| rules[*slot] < 2)) && f.within.is_some(){return Err(self.class_refusal());}
                     return Ok(if values.is_empty(){Value::Null}else{Value::tuple(values)});
                 }
                 if name==self.class_word("keywords") {
@@ -5734,7 +5741,9 @@ impl<'a> Engine<'a> {
         let tracked = Self::own_kind(c).is_none()
             && !matches!(Self::kind_beneath(c).as_deref(), Some("tuple" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray"));
         let protocol = self.class_value(c, "__abc_tpflags__").map_or(0, |v| match v.contents() { Value::Small(n) => n, _ => 0 }) & 96;
-        protocol + if c.constants.iter().any(|(key, _)| key == "\0native-name") && !Self::class_sealed(c) { 256 } else { 0 } + if Self::own_kind(c).is_some() || c.base.is_none() && c.name == self.class_word("root") { 0 } else { 512 } + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
+        let abstract_bit = self.lang.class_details.get("abstract").and_then(|words| words.first())
+            .and_then(|word| Self::own_class_value(c, word)).is_some_and(|value| value.is_true());
+        (if abstract_bit { 1 << 20 } else { 0 }) + protocol + if c.constants.iter().any(|(key, _)| key == "\0native-name") && !Self::class_sealed(c) { 256 } else { 0 } + if Self::own_kind(c).is_some() || c.base.is_none() && c.name == self.class_word("root") { 0 } else { 512 } + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
     }
     pub(super) fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
         if !self.lang.class_builder.is_empty() && self.names_property_class(&value.contents()) { return Ok(self.property_class()); }

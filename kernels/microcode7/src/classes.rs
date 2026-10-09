@@ -70,6 +70,8 @@ impl<'a> Machine<'a> {
             }
         }
         if word == "Union" {
+            let namespace = (self.detail("module").to_string(), Value::text("typing"));
+            protocols.push(namespace);
             protocols.push(("__repr__".to_owned(), Self::wrap(127, Vec::new())));
             // The reference builds a union by subscription; the folded
             // members are the very shape the class questions read.
@@ -4670,6 +4672,9 @@ impl<'a> Machine<'a> {
                     if Self::native_beneath(b).is_none() { bits |= 4; }
                 }
                 if let Some(Value::Small(protocol)) = self.inherited_entry(b, "__abc_tpflags__").map(|v| v.settled()) { bits |= protocol & 96; }
+                if let Some(marker) = self.rules.words_ext_stmt_class_detail_abstract.first() {
+                    if Self::own_entry(b, marker).is_some_and(|held| held.settled().is_true()) { bits |= 1048576; }
+                }
                 return Ok(Value::Small(bits));
             }
             if (Self::native_word(b).as_deref() == Some("float") || Self::native_beneath(b).as_deref() == Some("float")) && self.rules.words_ext_builtin_method_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
@@ -4810,7 +4815,10 @@ impl<'a> Machine<'a> {
                 return Ok(evaluator);
             }
             if self.rules.words_ext_stmt_class_annotations.first().map(String::as_str)==Some(key){return self.blueprint_annotations(b);}
-            if let Some(found)=self.inherited_entry(b,key){return self.member_binding(found,None,b.clone());}
+            // During class building this marker can still be absent.
+            let entry = self.rules.words_ext_stmt_class_detail_abstract.first().filter(|word| word.as_str() == key)
+                .map_or_else(|| self.inherited_entry(b, key), |_| Self::own_entry(b, key));
+            if let Some(found) = entry { return self.member_binding(found, None, b.clone()); }
             // The classes built beneath this one, the live ones, as the
             // reference's own type.__subclasses__ tells them.
             if key==self.detail("subclasses") && !self.detail("subclasses").is_empty()
@@ -5202,7 +5210,7 @@ impl<'a> Machine<'a> {
             if key==self.detail("namespace"){let index=self.routine_storage(&value);return Ok(Value::Attributes(self.routine_members[index].1.clone()));}
             if key==self.detail("defaults"){
                 let defaults:Vec<Value>=if matches!(value,Value::Bound(..))||self.written_over.contains_key(&Self::written_key(&value,&self.outermost)) {self.spare_worths(&code,&room,'p').into_iter().map(|(_,v)|v).collect()} else {Vec::new()};
-                if defaults.is_empty() && !code.local_defaults.is_empty(){return Err(self.class_unready());}
+                if defaults.is_empty() && code.local_defaults.iter().any(|slot| code.formal_slots.iter().position(|s| s == slot).is_some_and(|at| code.taking.as_ref().map_or(true, |rules| rules[at] != 'n'))){return Err(self.class_unready());}
                 return Ok(if defaults.is_empty(){Value::Nil}else{Value::tuple(defaults)});
             }
             // A routine answers its own call, so reading it back and
@@ -5212,11 +5220,13 @@ impl<'a> Machine<'a> {
             if self.is_async_generator(&value) {
                 if let Some(index) = self.table.strings("ext.stmt.async.generator.fields").iter().position(|word| word == key) {
                     if index == 2 { return Ok(Value::Flag(self.async_running(&value))); }
+                    if index == 4 && state.try_borrow().is_err() { return Ok(Value::Flag(false)); }
                     let held = state.try_borrow().map_err(|_| self.class_unready())?;
                     return Ok(match index {
                         0 => held.of.as_ref().map_or(Value::Nil, |body| self.code_handle(body)),
                         1 => if held.ended { Value::Nil } else { held.trace_state.clone().map_or(Value::Nil, Value::Thing) },
                         2 => Value::Flag(false),
+                        4 => Value::Flag(held.asleep()),
                         _ => match held.inner.clone().unwrap_or(Value::Nil) { Value::Wrapped(63, parts) => parts[0].clone(), other => other },
                     });
                 }

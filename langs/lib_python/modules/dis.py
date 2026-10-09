@@ -45,9 +45,9 @@ from opcode import opmap, opname, hasarg, hasjrel, hasjabs, hasexc
 
 hasjump = {'Skip', 'SkipCmp', 'Depart', 'Cycle', 'Choose'}
 
-class Positions:
-    def __init__(self, values):
-        self.lineno, self.end_lineno, self.col_offset, self.end_col_offset = values
+from collections import namedtuple
+
+Positions = namedtuple('Positions', 'lineno end_lineno col_offset end_col_offset', defaults=[None] * 4)
 
 class Instruction:
     def __init__(self, offset, opcode, argval, is_jump, positions):
@@ -55,7 +55,7 @@ class Instruction:
         self.opcode = self.opname = opcode
         self.arg = self.argval = argval
         self.argrepr = '' if argval is None else str(argval)
-        self.positions = Positions(positions)
+        self.positions = Positions(*positions)
         self.starts_line = self.positions.lineno
         self.is_jump_target = False
         self.is_jump = is_jump

@@ -52,6 +52,56 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `python-3.14.8/test_zipapp.py` | `Lib/test/test_zipapp.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/zipapp.py` | `Lib/zipapp.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/zipfile/{__init__,_path/__init__,_path/glob}.py` | `Lib/zipfile/{__init__,_path/__init__,_path/glob}.py`, unchanged beneath a provenance/PSF header | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/__init__.py` | `Lib/test/test_inspect/__init__.py`, unchanged; SHA-256 `9b2cce72fa8c7a7e688a79d55e15ea4914078c81058b0289ceb80cd5b69821c9` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/inspect_deferred_annotations.py` | `Lib/test/test_inspect/inspect_deferred_annotations.py`, unchanged; SHA-256 `e5a5fbf9ecd990cfa51812a5a4aaa23b1313af3189bfb892febd307068c8d750` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/inspect_fodder.py` | `Lib/test/test_inspect/inspect_fodder.py`, unchanged; SHA-256 `c418221061e9818de6b0624f5c5d9dbe725cc7f61431d0302fa641af94764a81` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/inspect_fodder2.py` | `Lib/test/test_inspect/inspect_fodder2.py`, unchanged; SHA-256 `66cfe2a9a93c6fb704856ee7249a38a353748954be76e6ca6b230789e7cb7cb0` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/inspect_stock_annotations.py` | `Lib/test/test_inspect/inspect_stock_annotations.py`, unchanged; SHA-256 `0c9c665429a34dc1ec6832ff33d62ed05798ce0953dd681481b6330eb84a3c62` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/inspect_stringized_annotations.py` | `Lib/test/test_inspect/inspect_stringized_annotations.py`, unchanged; SHA-256 `3100c0f9c80ee313ba939ba7870a6da629f55b3b6afc2ba2ba952706cb2bd934` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/inspect_stringized_annotations_2.py` | `Lib/test/test_inspect/inspect_stringized_annotations_2.py`, unchanged; SHA-256 `e9ea40815a00612f56b6534c812c10766ed9ba2fc497219737d1577ecc1ccbbb` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/inspect_stringized_annotations_pep695.py` | `Lib/test/test_inspect/inspect_stringized_annotations_pep695.py`, unchanged; SHA-256 `ebc8b2025fb8c53022db62cdb5bf37d6ad00cb641c5a1824aed3dc346b777258` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_inspect/test_inspect.py` | `Lib/test/test_inspect/test_inspect.py`, unchanged; SHA-256 `a0a78e87e27bdf723dbae8f9a74d9fc0c364531ddfcfc8650883a00423584787` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/__init__.py` | `Lib/asyncio/__init__.py` unchanged; SHA-256 `8148552daea881e3b33639d6e9bdab0da2021367ab694ee0604431c33c16983f` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/__main__.py` | `Lib/asyncio/__main__.py` unchanged; SHA-256 `cbe42559a5d94fd9692a24f2ba984f64623eb6caef7b1917306d0901450e4c5c` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/base_events.py` | `Lib/asyncio/base_events.py` unchanged; SHA-256 `9b20711272761ecad93248391c12532fcc7264849fcf59291f27a0a3c536ff90` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/base_futures.py` | `Lib/asyncio/base_futures.py` unchanged; SHA-256 `2f3798c4b82f5ac77647908b157c924f734f36871d98970e72849ea9a9a07856` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/base_subprocess.py` | `Lib/asyncio/base_subprocess.py` unchanged; SHA-256 `23578fd6d8647243b791583ef0c1bc997c3eef34250719e2544b04b82ff67aac` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/base_tasks.py` | `Lib/asyncio/base_tasks.py` unchanged; SHA-256 `56efac65b63db927af336fa55eb5bda93c97a2defa4734ea8d695ed20fd6712a` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/constants.py` | `Lib/asyncio/constants.py` unchanged; SHA-256 `873fc2f9e66313c3c19c337269e704f204b59f9e91d6ecbec59f68335484d338` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/coroutines.py` | `Lib/asyncio/coroutines.py` unchanged; SHA-256 `c5b8563c88e343f3076630aa6545fc77c548ceefb76936a360d7895c13691753` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/events.py` | `Lib/asyncio/events.py` unchanged; SHA-256 `62e2c619c38407309c0d2c98638642174ee7be5b874676c0225392fed4a00b0f` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/exceptions.py` | `Lib/asyncio/exceptions.py` unchanged; SHA-256 `a5971f88be14cd1417d59adf539ae48c5d818f95362a4e0eb00017e3690ab37b` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/format_helpers.py` | `Lib/asyncio/format_helpers.py` unchanged; SHA-256 `c02f2f8c1e2508ddb2f8d8c1bef452be1f6b9a1d2a998b89a56d153e42a5f1ef` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/futures.py` | `Lib/asyncio/futures.py` unchanged; SHA-256 `2f482524292a7c5d1b818aeb92434d183bd089e014cf50b785432284d2c8bc12` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/graph.py` | `Lib/asyncio/graph.py` unchanged; SHA-256 `8583a402fcd5d0bc296f753b6f05af1225459a00b1d18062a460862e87863897` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/locks.py` | `Lib/asyncio/locks.py` unchanged; SHA-256 `8ded089e680b9b67fca60893071356fa29343539f5113e66cf9da5f6ab734285` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/log.py` | `Lib/asyncio/log.py` unchanged; SHA-256 `80e4cc3ded4b138baba486519e7444801a23d6ac35f229d336a407a96af7e8d2` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/mixins.py` | `Lib/asyncio/mixins.py` unchanged; SHA-256 `8f4a3e16eca845ebfba422550cbcee7340ec8166d2bff6b750a8ed0de6b9ae3c` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/proactor_events.py` | `Lib/asyncio/proactor_events.py` unchanged; SHA-256 `e3bedbdeb8f7e18a51d7326d460741e5bcb0ad9ec0523b9fdee3a330a54076f8` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/protocols.py` | `Lib/asyncio/protocols.py` unchanged; SHA-256 `1d1b49988c338b4ef06e30f9e92d9db2e00080c341f0a3f573bb8312deb8aff6` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/queues.py` | `Lib/asyncio/queues.py` unchanged; SHA-256 `9ce87bf63f113509d479ea25fecd25a705766d750c304a180d1bff02a0fe6f6a` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/runners.py` | `Lib/asyncio/runners.py` unchanged; SHA-256 `d3b0765c4bd022dac4d101a034ba8c16b6e9c598e44d7b9d82b3239f3106fe65` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/selector_events.py` | `Lib/asyncio/selector_events.py` unchanged; SHA-256 `de05a1bec1f96eb85643d67958b31a01f0dff3210af0527af5ff3629bcbaa17e` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/sslproto.py` | `Lib/asyncio/sslproto.py` unchanged; SHA-256 `b33d2f13fc373b7220402c4358dc96c770cea14489f5570b49774b37f9ac052f` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/staggered.py` | `Lib/asyncio/staggered.py` unchanged; SHA-256 `8be17b2fa59a3a207b2e004f278257fc220c592afc8b6aa1cbe47030e1b9b4a9` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/streams.py` | `Lib/asyncio/streams.py` unchanged; SHA-256 `8e36342dc19e253705f76fb164dc3abe5f26d82afbedb792477c0d530ceb62a6` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/subprocess.py` | `Lib/asyncio/subprocess.py` unchanged; SHA-256 `7b70605716334f63cc482123b2aaa3b7c5bb7138eeab63a037bd8068d43307c1` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/taskgroups.py` | `Lib/asyncio/taskgroups.py` unchanged; SHA-256 `df0ea4f0911ea9c1006b4dec45557e0862a09d7a411c63259943731df8c41dda` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/tasks.py` | `Lib/asyncio/tasks.py` unchanged; SHA-256 `de76790a02ed881e595c31272bca50854aadadd9d91ca6f52706606505cb7ab0` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/threads.py` | `Lib/asyncio/threads.py` unchanged; SHA-256 `95877db9bf2c36ce9e630780ae145627f1401b95a9e8ee101b018df2898e8072` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/timeouts.py` | `Lib/asyncio/timeouts.py` unchanged; SHA-256 `dc1544c3c27ace84e2abc10f8fd13e340709a8579ff008ebc64c0d0fae6c0837` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/tools.py` | `Lib/asyncio/tools.py` unchanged; SHA-256 `6e74b35d25157f99335d70e2352a11d9be4aeee80f3300294dc80f75862dd00b` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/transports.py` | `Lib/asyncio/transports.py` unchanged; SHA-256 `bfd414b25979e07b74081140bf91332957a9bf8b5aa5a0c7ff0d779d93eada21` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/trsock.py` | `Lib/asyncio/trsock.py` unchanged; SHA-256 `c0eac37debcc51b702b808f6b7ed3e417343f5ff5f57125dad600a27eb082328` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/unix_events.py` | `Lib/asyncio/unix_events.py` unchanged; SHA-256 `760967defab5b28d611c46d7dbd51fd734679837a87a0673837ca5bdff8b1a41` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/windows_events.py` | `Lib/asyncio/windows_events.py` unchanged; SHA-256 `c88b8c0f6bf0619649587ffba1e4623d3fa621036470ce987a0ac7269a211cb2` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/asyncio/windows_utils.py` | `Lib/asyncio/windows_utils.py` unchanged; SHA-256 `b9c40e077d5c00dd22a1058ffd3fad8e21c8753b0710f02d97ade7bfdad03493` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/concurrent/futures/thread.py` | `Lib/concurrent/futures/thread.py` unchanged; SHA-256 `7f95079dda8064cd372c9c0ea60c7e172b34c8f2aa0c3d9213e85b8584aa033c` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/concurrent/futures/process.py` | `Lib/concurrent/futures/process.py` unchanged; SHA-256 `1ca05b878a4bdc37c063d1fff8fd1d6566dcba6316049779d9b8bd15ccca14b3` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/concurrent/futures/interpreter.py` | `Lib/concurrent/futures/interpreter.py` unchanged; SHA-256 `424fac5bf71743b4e02cfa8150919cac1a9e53e2e5173729f7ba75dd2da78e1e` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/_pickle.py` | Python runtime binding to the unchanged `pickle.py` engines; SHA-256 `068df99aba92205b3e1c0e9df5c75b78cfc7bcf174125c91d9e2babb1999f217` | Runtime adapter | Local interface | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/runtime_adapters/script_helper.py` | Unchanged `kill_python` definition from `Lib/test/support/script_helper.py`, over the existing native argument adapter; SHA-256 `0a2262de2cbc68b0d0efd71963be2175c0100aa846b9f5762457daadecc47e88` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/runtime_adapters/test_package.py` | Package-path binding for relocated reference suites; SHA-256 `da74ed870675c536d297f274c0f897df246ac432c25ec288bc1cb52231a02705` | Runtime adapter | Local suite layout | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_mimetypes.py` | `Lib/test/test_mimetypes.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/mime.types`, `mime.types2` | `Lib/test/mime.types`, `Lib/test/mime.types2`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -176,6 +226,10 @@ implementation and the upstream tests select their accelerator cases accordingly
 `test_pathlib/` is a library test for profile 1.0 and is not included in the
 counted core-language suite. Its package and support sources remain unchanged.
 
+The `_pickle` interface now binds the released pickle module's Python engines
+through lazy attributes to avoid the accelerator import cycle. It implements
+real serialization, not C acceleration: C-only descriptor and type metadata
+remain unavailable and those assertions fail honestly.
 ## Runtime fixture integrity audit (2026-10-02)
 
 The annotation fixtures are test inputs, not runtime adapters. The earlier
@@ -242,7 +296,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `dataclasses.py` | runtime adapter / implementation | `c8cf26b317b606e905a14cd497518fda1a742ca2ce34b29482aad5e4f761a9d5` | `e8439c8b111856645a8b31e0dbbba532b494426399bad456079c0e5730ad322e` |
 | `datetime.py` | runtime adapter / implementation | `0af428249328576d82d9b122a0d30fd6d15a22470886355d69aef460d76cacaf` | `742884b0c8e7dc69911858245db4f34d42e8ec0f769d580c570bd56032b0866c` |
 | `decimal.py` | runtime adapter / implementation | `34c68ae6da3863025093c6f9a3f332ef1a54ebeb4bb1bab7c1533d6b69ff5f0b` | `af29fa99aa720a68cab5a6384c7beba4c8e9480a6c1d53a512efeeb5a7e5c781` |
-| `dis.py` | runtime adapter / implementation | `374060342c94ef73b6e91a9644868d0460d8d35f19c7ac0fc1561f0b99670b00` | `17d4d9a9195c9ee5aa27a96f3e0871f9363fd501e3a64ef20cb1cc876d7ad553` |
+| `dis.py` | runtime adapter / implementation | `3b72c1a94e25a5a4772e515c1dd9bf823b3ac978fe77a2ec9a6f49173b0aed02` | `17d4d9a9195c9ee5aa27a96f3e0871f9363fd501e3a64ef20cb1cc876d7ad553` |
 | `doctest.py` | runtime adapter / implementation | `ad615d7193536046381d5d66eadab014bcd7edf7b1815add0cf7c50750fd7e03` | `3a5c30736974de19debbc9b3600461eef1943bd8b3b8afe3a634c05124b5dd5c` |
 | `enum.py` | runtime adapter / implementation | `80ebe6d718e9601a77cc56c8a7a526b9e2938eebb0e6d308aded60ca4cabad11` | `fd23a7598fa1104ef892abcd4154d3627283e6361eb7a91cd11dc4a7b6fb3a93` |
 | `errno.py` | runtime module; no Lib counterpart | `e9dac45709d8d26e173a71b7dc5b8507848e3729cfe7e591d8083992efe38d10` | `—` |
@@ -255,6 +309,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `grp.py` | native runtime adapter; no Lib counterpart | `16d9f4315f0cc158fc708457428e86d583b04ef7edb74bb0be11b6691581aabe` | `—` |
 | `heapq.py` | unchanged release copy | `f2d644de141a488db66fc13608a794ef5f2d33162299f6751ea92c3cb0b4c9ea` | `f2d644de141a488db66fc13608a794ef5f2d33162299f6751ea92c3cb0b4c9ea` |
 | `inspect.py` | runtime adapter / implementation | `82280ae260739cbd600feedaed0e0b76999a69a8708a7b3cb3fd851427e348bd` | `6daf297029d8971703b344de5cd485d71d4d935c72b85591493d8abc8512bdf7` |
+| `inspect.py` | unchanged release source | `6daf297029d8971703b344de5cd485d71d4d935c72b85591493d8abc8512bdf7` | `6daf297029d8971703b344de5cd485d71d4d935c72b85591493d8abc8512bdf7` |
 | `io.py` | runtime adapter / implementation | `cf85cf25e6255e6793812652b1b2e8fce04946c90f88480c76b9ad7cb29ebba1` | `1b75584d4efcc612dc0db2ae98619408276585a106f0544879edb5e25b55430a` |
 | `itertools.py` | runtime adapter / implementation | `43134d3fce836a09f53e800b9b5499e649232527540ded6aa5289682f5957704` | `11e8e8186a779a26ffd33bb5042b286bd08750a946c1398756225450d6bee6cc` |
 | `json.py` | runtime adapter / implementation | `f5f9bf3a3ad059f0d80ac41dd60ba4fde5da461b8fc79d5f217243aa1fd324d4` | `2dd10f1bf4c9ea5478e589216805e7f279d0e4bce134a19efa297404fb87407d` |
@@ -280,6 +335,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `re.py` | runtime adapter / implementation | `a803e6a068b211d46f3188662b366dc69984ac61bda074c502e82fbadf8824af` | `741a9de729ed8207bfa19db990f8826f1bf3661f33d0970a80c08cd1338ebc35` |
 | `reprlib.py` | unchanged release copy | `b04872e10d76252e44eae50cc785eb0fe478491afc4d7f0825a93f82b2eaba5f` | `b04872e10d76252e44eae50cc785eb0fe478491afc4d7f0825a93f82b2eaba5f` |
 | `runtime_adapters/copy.py` | runtime adapter / implementation | `c0a733b4c73e2c77f4b8b769717b771a44758ee169d27a99c755ebf2d16eacc4` | `15154fde290d6e65b5007905689a47a9a5a724822c5e06eec35d9ffbb2a3aa69` |
+| `runtime_adapters/inspect.py` | runtime adapter / implementation | `7bd576508bf126c7040f4486126a5225b4a86cd2758f54167c883d82915560f2` | `6daf297029d8971703b344de5cd485d71d4d935c72b85591493d8abc8512bdf7` |
 | `runtime_adapters/copyreg.py` | runtime adapter / implementation | `bc1e513213cb47877a24e1aa3f8b34c43e85332804558618fa8680739b511ce1` | `6376eb5722806396f5842997ac18add369ea9ac3ff4fcfe1460c41a088cac425` |
 | `runtime_adapters/functools.py` | runtime adapter / implementation | `1fd5b65b99cc8a2e6217822bce27baf6a833acc2a49cfbf4c942d9e1dd6976e4` | `9db56d38172c4c9e689b21cc58c8538008b09d86b682faf4dd193b529cdd79d5` |
 | `runtime_adapters/heapq.py` | runtime adapter / implementation | `6a33f1c1a941416c31a4c9375a3a4bcb3fd3c06fab0dc3961d48ec27b9ddd8b0` | `f2d644de141a488db66fc13608a794ef5f2d33162299f6751ea92c3cb0b4c9ea` |
@@ -570,6 +626,65 @@ honestly when those extensions are unavailable.
 | `stringprep.py` | `52618dbafb21fac84147d4241a364b08d1f0d803806cb86e4fcb921c200c754d` |
 | `encodings/cp273.py` | `6c6aec3b213ea3aebc2c526dd4d121c95d4a25a2fc928a87cd80f8448988185f` |
 | `encodings/mbcs.py` | `f6ed445ed537c9f856d8defe8b56505727737d0dc9348d0a877abedab4bdd864` |
+
+
+## Inspect runtime source
+
+The runtime now loads the complete, unchanged v3.14.8 `inspect.py` rather
+than the former partial native replacement. `runtime_adapters/inspect.py`
+contains the remaining adapter needs: partialmethod handles retain their
+native wrapper shape, and native disassembly currently lacks global/attribute
+reference kinds. Frame positions use retained native instruction offsets
+rather than CPython two-byte offsets. Closure cells can be inspected, but functions with named
+references raise `NotImplementedError` instead of silently losing globals.
+Native annotation evaluators can refuse unresolved FORWARDREF signatures;
+this adapter reports `ValueError` for that unavailable signature instead of
+letting evaluation errors escape from callers that handle uninspectable
+callables. Only a failed fallback from an unsupported format is translated;
+direct callback errors and VALUE annotation errors retain their exception.
+Type flags include the abstract bit from the class's own abstract-method set.
+The abstract marker is read from the class itself while subclass hooks run,
+so an ancestor's completed marker does not suppress unfinished-class analysis.
+The kernels expose asynchronous-generator suspension state and retain the
+v3.14 docstring and method code flags, with class scopes excluded from nested
+function flags. Frames expose their retained native `f_lasti`; `dis.Positions`
+is the release named-tuple interface. `dis.py` exposes the flag constants.
+
+All nine upstream `Lib/test/test_inspect/` files are present unchanged.
+There is no `__main__.py` in that upstream directory; the runnable test file
+is `test_inspect/test_inspect.py`. The asyncio package is now the complete
+unchanged release package, using its Python Future/Task fallback when `_asyncio`
+is absent. Native socket operations and isolated-test event-loop suspension
+remain limited; importing the package does not claim support for those operations.
+The `_pickle` interface binds the real Python serialization engines.
+Circular imports ignore unbound module `__getattr__` slots, and native frame
+types expose the standard `builtins` module name used by annotation formatting.
+Other remaining limits include native builtin text signatures and syntax-tree
+parsing for their signatures, string-format annotations, and source/frame
+operations that require information the runtime does not retain.
+
+The `test` package adapter extends its real package path with reference-suite
+roots containing `test/__init__.py` and `test/support/`, discovered from the
+program path and `sys.path`. This supports the repository's relocated test
+packages without changing their imports. The separate script-helper overlay
+adds the unchanged released `kill_python` function; the owned subprocess
+argument-routing implementation stays intact.
+
+The batch-21f signature additions are provided by the released inspect
+implementation: Parameter fields and replacement, immutable parameter mappings,
+Signature replacement/equality/hash, annotation formatting and metaclass call
+signatures. The redundant native replacement is removed; manifest registration
+continues to bind the release source and its separate runtime overlay.
+
+Native union values inherit the v3.14 `typing` module marker from their
+canonical union class. This lets the unchanged inspect formatter remove
+outer typing prefixes while preserving typing inside user module names.
+
+Microcode7 frame-local snapshots include the routine's captured cells, using
+the same lexical addresses as ordinary local lookup. This exposes live
+closure bindings before a coroutine starts and while a generator is suspended;
+unbound cells stay absent. Stack8 already provides these bindings.
+
 The email charset dependency reuses the signed codec port at
 `ecee70ec399ce9338ba6267d06aab481206c43f5`. The released sources in the
 provenance table stay unchanged. `_codecs.py`, `_codec_runtime.py`,

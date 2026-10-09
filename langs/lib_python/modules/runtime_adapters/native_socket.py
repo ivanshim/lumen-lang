@@ -1,6 +1,8 @@
 # Minimal native socket adapter; CPython v3.14.8 Modules/socketmodule.c.
 # Copyright (c) Python Software Foundation; PSF License in tests/python/LICENSE.
 from posix import _call, _path, close as _close, dup
+AF_UNSPEC = 0
+AI_PASSIVE = 1
 AF_UNIX = 1
 AF_INET = 2
 AF_INET6 = 10

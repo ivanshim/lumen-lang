@@ -2,7 +2,10 @@
   "files": {
     "collections": "collections/__init__.py",
     "unittest": "unittest/__init__.py",
-    "urllib": "urllib/__init__.py"
+    "urllib": "urllib/__init__.py",
+    "asyncio": "asyncio/__init__.py",
+    "concurrent": "concurrent/__init__.py",
+    "concurrent.futures": "concurrent/futures/__init__.py"
   },
   "aliases": {
     "os.path": "path",
@@ -25,7 +28,9 @@
     "marshal": "runtime_adapters/marshal.py",
     "abc": "runtime_adapters/abc.py",
     "zipimport": "runtime_adapters/zipimport.py",
-    "test.support": "runtime_adapters/code_test_support.py"
+    "test.support": "runtime_adapters/code_test_support.py",
+    "test.support.script_helper": "runtime_adapters/script_helper.py",
+    "test": "runtime_adapters/test_package.py"
   },
   "data": {
     "_codec_sjis": {
@@ -34,7 +39,6 @@
   },
   "replacements": {
     "annotationlib": "runtime_adapters/native_annotationlib.py",
-    "inspect": "runtime_adapters/native_inspect.py",
     "test.support": "runtime_adapters/native_test_support.py",
     "test.support.os_helper": "runtime_adapters/native_test_support_os_helper.py",
     "socket": "runtime_adapters/native_socket.py",

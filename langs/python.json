@@ -1150,7 +1150,8 @@
     "cr_running",
     "gi_yieldfrom",
     "__unused_python314_generator_state__",
-    "tb_lasti"
+    "tb_lasti",
+    "f_lasti"
   ],
   "ext.builtin.exceptions.traceback.member": [
     "__traceback__"
@@ -2810,7 +2811,8 @@
     "ag_code",
     "ag_frame",
     "ag_running",
-    "ag_await"
+    "ag_await",
+    "ag_suspended"
   ],
   "ext.stmt.async.generator.methods": [
     "asend",
