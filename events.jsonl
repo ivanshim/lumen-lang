@@ -10228,3 +10228,23 @@
 {"t":"2026-10-09T15:25:32Z","event":"review-queued","job":"stdlib-doctest-astra","review":"review-auto-stdlib-doctest-astra-1525"}
 {"t":"2026-10-09T15:25:51Z","event":"exited","job":"review-auto-dsflash-urllib2-1459","code":0}
 {"t":"2026-10-09T15:27:17Z","event":"review-started","job":"dsflash-mathprop-bigaddr-sol","review":"review-auto-dsflash-mathprop-bigaddr-sol-1505"}
+{"t":"2026-10-09T15:31:48Z","event":"exited","job":"review-auto-dsflash-mathprop-bigaddr-sol-1505","code":0}
+{"t":"2026-10-09T15:32:19Z","event":"started","job":"dsflash-datetime-iso","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-09T15:33:10Z","event":"exited","job":"dsflash-difflib","code":0}
+{"t":"2026-10-09T15:33:48Z","event":"returned","job":"dsflash-dataclasses","review":"review-auto-dsflash-dataclasses-1459","commit":"8e5804a4b","round":1,"model":"deepseek-flash","note":"(1st this round; clean 1196/0; dataclasses 271->277/280 both; introduced: iterator __slots__ layout not derived from materialized names, unlabeled __weakrefoffset__/__dictoffset__ in shared kernel lookup, invented 8/-8 offsets) -> returns + or-resume queued"}
+{"t":"2026-10-09T15:33:48Z","event":"queued","job":"dsflash-dataclasses","model":"deepseek-flash","line":"or-resume dsflash-dataclasses deepseek-flash session-47903f2c-49bb-4514-a6e7-900796183bff","note":"1st return resume"}
+{"t":"2026-10-09T15:33:48Z","event":"returned","job":"dsflash-urllib2","review":"review-auto-dsflash-urllib2-1459","commit":"4b7327138","round":1,"model":"deepseek-flash","note":"(1st; clean 1196/0; urllib2 78/84 both; introduced: _socket.gethostbyaddr drops main's native resolver/validation) -> returns + or-resume queued"}
+{"t":"2026-10-09T15:33:48Z","event":"queued","job":"dsflash-urllib2","model":"deepseek-flash","line":"or-resume dsflash-urllib2 deepseek-flash session-bd617e85-a43c-464a-9530-66c2d75f7f3b","note":"1st return resume"}
+{"t":"2026-10-09T15:33:48Z","event":"returned","job":"dsflash-mathprop-bigaddr-sol","review":"review-auto-dsflash-mathprop-bigaddr-sol-1505","commit":"3686f1aa3","round":1,"model":"gpt-6.1-sol","note":"(1st at Sol; integrity ok; clean 1196/0; no gain reachable: both subjects legitimate upstream skips) -> not resumed, subject needs re-scope by Ivan"}
+{"t":"2026-10-09T15:34:33Z","event":"exited","job":"dsflash-bigmem-sonnet","code":0}
+{"t":"2026-10-09T15:35:42Z","event":"finished","job":"dsflash-bigmem-sonnet","exit_time":"2026-10-09T15:34:33Z"}
+{"t":"2026-10-09T15:35:42Z","event":"review-queued","job":"dsflash-bigmem-sonnet","review":"review-auto-dsflash-bigmem-sonnet-1535"}
+{"t":"2026-10-09T15:35:44Z","event":"finished","job":"dsflash-difflib","exit_time":"2026-10-09T15:33:10Z"}
+{"t":"2026-10-09T15:35:44Z","event":"review-queued","job":"dsflash-difflib","review":"review-auto-dsflash-difflib-1535"}
+{"t":"2026-10-09T15:36:03Z","event":"quota","codex_week_used":47,"codex_credits":0,"claude_week_used":22,"claude_5h_used":6,"deepseek_usd":248.08}
+{"t":"2026-10-09T15:36:08Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":47,"expected":48.9,"gap":-1.9,"status":"ok"}
+{"t":"2026-10-09T15:36:19Z","event":"checkin","status":"done","actions":"RETURN dsflash-dataclasses (1st this round; iterator __slots__ layout, unlabeled offset attrs, invented 8/-8 offsets) -> returns + or-resume queued (session 47903f2c); RETURN dsflash-urllib2 (1st; _socket.gethostbyaddr drops main's native resolver) -> returns + or-resume queued (session bd617e85); RETURN dsflash-mathprop-bigaddr-sol (1st Sol; no reachable gain, subjects upstream skips) -> not resumed, Ivan asked to re-scope; prune-merged 0MB (box disk 83%, no idle accepted target/)","notes":"DS Flash 5 running + 2 resumes queued, 5 idle: no fresh Flash-sized in-scope subject left (enum leftover is a __main__ harness artifact); DS Pro 1/1 (frame-dspro); Haiku idle; Sonnet bigmem-sonnet just exited (review pending); Sol 11 running incl integrate-21h, 6 Sol lines queued; box load 3.3, 12.9G avail, disk 83%; Mac disk 87%; Codex week 46-47%; Claude 5h 5%/week 22%; luna gap -1.9 ok, no new alerts; no open PR"}
+{"t":"2026-10-09T15:37:21Z","event":"review-started","job":"stdlib-inspect","review":"review-auto-stdlib-inspect-1520"}
+{"t":"2026-10-09T15:42:23Z","event":"resumed","job":"dsflash-dataclasses","model":"deepseek-flash","session":"session-47903f2c-49bb-4514-a6e7-900796183bff"}
+{"t":"2026-10-09T15:44:45Z","event":"exited","job":"review-auto-stdlib-inspect-1520","code":0}
+{"t":"2026-10-09T15:47:25Z","event":"review-started","job":"stdlib-doctest-astra","review":"review-auto-stdlib-doctest-astra-1525"}
