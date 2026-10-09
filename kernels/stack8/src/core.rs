@@ -171,6 +171,8 @@ impl Value {
             // word, rather than off a value of it, is a descriptor: a
             // method's own kind, or a data member's, by the same
             // reckoning the repr gives it.
+            // The native module dictionary is a get/set descriptor, not a slot.
+            Value::Adapter(w) if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0module-namespace") => "member_descriptor",
             Value::Adapter(w) if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") => "getset_descriptor",
             Value::Adapter(w) if w.0 == 29 && w.1.len() == 3 => "classmethod_descriptor",
             Value::Adapter(w) if w.0 == 29 => return match w.1.as_slice() {

@@ -22,14 +22,20 @@
     "importlib": "runtime_adapters/importlib.py",
     "abc": "runtime_adapters/abc.py",
     "test.support.script_helper": "runtime_adapters/script_helper.py",
-    "codecs": "runtime_adapters/codecs.py"
+    "codecs": "runtime_adapters/codecs.py",
+    "_py_abc": "runtime_adapters/_py_abc.py",
+    "marshal": "runtime_adapters/marshal.py"
+  },
+  "data": {
+    "_codec_sjis": {
+      "_mapping_source": "../../lib_php/native/mbstring.php"
+    }
   },
   "replacements": {
     "annotationlib": "runtime_adapters/native_annotationlib.py",
     "inspect": "runtime_adapters/native_inspect.py",
     "test.support": "runtime_adapters/native_test_support.py",
     "test.support.os_helper": "runtime_adapters/native_test_support_os_helper.py",
-    "http.client": "runtime_adapters/native_http_client.py",
     "socket": "runtime_adapters/native_socket.py",
     "test.support.import_helper": "runtime_adapters/native_test_support_import_helper.py",
     "test.support.socket_helper": "runtime_adapters/native_test_support_socket_helper.py",

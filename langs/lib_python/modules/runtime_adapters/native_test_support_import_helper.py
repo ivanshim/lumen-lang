@@ -307,6 +307,8 @@ def make_legacy_pyc(source):
         does not need to exist, however the PEP 3147/488 pyc file must exist.
     :return: The file system path to the legacy pyc file.
     """
+    import importlib.util
+    import shutil
     pyc_file = importlib.util.cache_from_source(source)
     assert source.endswith('.py')
     legacy_pyc = source + 'c'

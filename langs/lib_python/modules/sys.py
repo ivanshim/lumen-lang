@@ -7,10 +7,36 @@ _host_environment = __posix
 argv = __program_namespace()['__program_argv']
 # Where a name that is `import`ed is looked for: a directory put here
 # is searched, in order, before the library carried inside this run.
-# The isolated default contains the library's own source location.
-# Callers add other directories explicitly; a program's directory is not
-# placed ahead of the embedded library merely because it contains a script.
+# Keep the safe-path default without implicitly adding the script directory.
+# Explicit PYTHONPATH entries precede the embedded library in their given order.
+# Normalize a POSIX search entry against the startup directory.
+def _absolute_search_entry(entry, cwd):
+    if not entry.startswith('/'):
+        entry = cwd + '/' + entry
+    prefix = '//' if entry.startswith('//') and not entry.startswith('///') else '/'
+    pieces = []
+    for piece in entry.split('/'):
+        if piece in ('', '.'):
+            continue
+        if piece == '..':
+            if pieces:
+                pieces.pop()
+        else:
+            pieces.append(piece)
+    return prefix + '/'.join(pieces)
+
+
 path = [__file__.rsplit('/', 1)[0]]
+_path_host = __host_info()
+_ignore_environment = int(_path_host[3].get('LUMEN_PYTHON_IGNORE_ENV') == '1')
+_python_path = '' if _ignore_environment else _path_host[3].get('PYTHONPATH', '')
+if _python_path:
+    _search_paths = []
+    for _entry in _python_path.split(':') + path:
+        _entry = _absolute_search_entry(_entry, _path_host[0])
+        if _entry not in _search_paths:
+            _search_paths.append(_entry)
+    path = _search_paths
 maxsize = 9223372036854775807
 # Where a written bytecode cache would live, and whether one is
 # written: the reference reads both while naming a cache file.
@@ -26,10 +52,14 @@ platform = 'linux'
 # of measuring this kernel against machinery it does not have.
 _Implementation = __namespace_type()
 implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
-                                 hexversion=0x000200f0, cache_tag='lumen-314')
+                                 hexversion=0x000200f0, cache_tag=_code_abi()[0])
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
+from _runtime_import import SourceFinder as _SourceFinder, make_spec as _make_spec, find_custom as _find_custom
+meta_path = [_SourceFinder()]
+path_hooks = []
+path_importer_cache = {}
 _recursion_limit = 1000
 
 # Startup flags describe the library environment and requested development mode.
@@ -41,12 +71,12 @@ class _Flags:
     dont_write_bytecode = 1
     no_user_site = 1
     no_site = 1
-    ignore_environment = 1
+    ignore_environment = _ignore_environment
     verbose = 0
     bytes_warning = 0
     quiet = 0
     hash_randomization = 0
-    isolated = 1
+    isolated = 0
     dev_mode = _host_environment('environ')[1].get(b'LUMEN_PYTHON_DEV_MODE') == b'1'
     utf8_mode = 1
     warn_default_encoding = 0
@@ -279,7 +309,7 @@ def exit(*args, **kwargs):
 # is warned about, once, and treated as '0' for that call.
 def breakpointhook(*args, **kws):
     import os
-    value = os.environ.get('PYTHONBREAKPOINT')
+    value = None if flags.ignore_environment else os.environ.get('PYTHONBREAKPOINT')
     if value is None or value == '':
         import pdb
         return pdb.set_trace(*args, **kws)
@@ -508,6 +538,15 @@ def getfilesystemencodeerrors():
     return "surrogateescape"
 
 
+# Explicit module runs search the working directory before the embedded
+# library. File runs retain the isolated default search path.
+if __program_namespace().get('__spec__') is not None:
+    _cwd_error, _cwd_bytes = __posix('cwd')
+    if _cwd_error:
+        raise OSError(_cwd_error, 'cannot resolve the working directory')
+    path.insert(0, _cwd_bytes.decode('utf-8', 'surrogateescape'))
+    flags.isolated = 0
+    flags.safe_path = False
 
 def gettrace():
     return __trace_native__(0)
