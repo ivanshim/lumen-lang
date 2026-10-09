@@ -2364,6 +2364,31 @@ impl<'a> Machine<'a> {
                         let of_own_kind=self.table.prims.get(word.as_str()).copied().filter(Self::names_a_kind)
                             .map_or_else(||word==receiver.kind_word(),|op|self.kind_covers(&op,&word,&receiver.settled()));
                         if word == "type" && self.stands_for_a_kind(&receiver) {
+                            let operation = [("get", 10), ("set", 11), ("remove", 12)].into_iter()
+                                .find_map(|(part, tag)| (entry == self.detail(part)).then_some(tag))
+                                .or_else(|| self.rules.words_ext_stmt_class_constructor.iter().any(|name| name == &entry).then_some(73));
+                            if let Some(tag) = operation {
+                                values.insert(0, receiver);
+                                return self.apply_class_member(Self::wrap(tag, Vec::new()), values);
+                            }
+                            if entry == self.detail("subclasses") {
+                                let owner = self.parent_type_arg(&receiver)?;
+                                return self.apply_class_member(Self::wrap(204, vec![Value::Blueprint(owner)]), values);
+                            }
+                            if entry == "__dir__" {
+                                if !values.is_empty() { return Err(format!("TypeError: expected 0 arguments, got {}", values.len()).into()); }
+                                return self.ordinary_directory(&receiver);
+                            }
+                            if self.rules.specials.get(1).is_some_and(|key| key == &entry) {
+                                if !values.is_empty() { return Err(format!("TypeError: expected 0 arguments, got {}", values.len()).into()); }
+                                return Ok(Value::text(&receiver.representation(self.wording())));
+                            }
+                            for slot in 76..=77 {
+                                if self.rules.specials.get(slot).is_some_and(|key| key == &entry) {
+                                    if values.len() != 1 { return Err(format!("TypeError: {entry}() takes exactly one argument ({} given)", values.len()).into()); }
+                                    return self.is_beneath(&values[0], &receiver, slot == 77).map(Value::Flag);
+                                }
+                            }
                             let slots = self.rules.specials;
                             let calls = slots.get(17).map_or(false, |name| name == &entry);
                             let hashes = slots.get(8).map_or(false, |name| name == &entry);
@@ -4412,7 +4437,13 @@ impl<'a> Machine<'a> {
             if let Some(word)=native {
                 if word.as_ref() == "type" {
                     let actual = self.builder_blueprint();
-                    return Ok(Value::Window(Rc::new(Value::Blueprint(actual)), 'm'));
+                    let mut entries: Vec<_> = actual.shared.borrow().iter().map(|(name, held)| (Value::text(name), held.clone())).collect();
+                    let added = ["get", "set", "remove", "subclasses"].into_iter().map(|part| self.detail(part).to_owned())
+                        .chain(self.rules.words_ext_stmt_class_constructor.iter().cloned())
+                        .chain([1, 76, 77].into_iter().filter_map(|slot| self.rules.specials.get(slot).cloned()))
+                        .chain(std::iter::once(String::from("__dir__")));
+                    for name in added { entries.push((Value::text(&name), self.kind_entry("type", &name))); }
+                    return Ok(Value::Window(Rc::new(Value::Dict(Rc::new(entries.into()))), 'm'));
                 }
                 let mut names = self.kind_stand_in(&word).map_or_else(Vec::new, |sample| self.native_directory(&sample));
                 names.extend(self.table.prims.keys().filter_map(|spelling| {
@@ -4485,6 +4516,9 @@ impl<'a> Machine<'a> {
             let operation = [("allocate", 70), ("call", 71), ("prepare", 72), ("get", 10), ("set", 11), ("remove", 12)]
                 .into_iter().find_map(|(part, tag)| (key == self.detail(part)).then_some(tag));
             if let Some(tag) = operation { return Ok(Self::wrap(tag, Vec::new())); }
+            let extra = key == self.detail("subclasses") || key == "__dir__"
+                || [1, 76, 77].into_iter().any(|slot| self.rules.specials.get(slot).is_some_and(|word| word == key));
+            if extra { return Ok(self.kind_entry("type", key)); }
         }
         if !self.detail("base").is_empty()&&(key==self.detail("base")||key==self.detail("bases")) {
             let blueprint=match &value {

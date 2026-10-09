@@ -2259,6 +2259,25 @@ impl<'a> Engine<'a> {
                     let of_own_kind = self.lang.builtins.get(word.as_str()).copied().filter(Self::kind_builtin)
                         .map_or_else(|| receiver.core_kind() == word, |op| self.kind_holds(&op, &word, &receiver.contents()));
                     if word == "type" && self.stands_for_kind(&receiver) {
+                        let tag = if self.lang.constructor.as_deref() == Some(member.as_str()) { Some(78) }
+                            else { [("get", 10), ("set", 11), ("remove", 12)].iter().find_map(|(part, tag)| (member == self.class_word(part)).then_some(*tag)) };
+                        if let Some(tag) = tag {
+                            let mut inputs = vec![receiver]; inputs.extend(args);
+                            return self.class_apply(Self::adapter(tag, Vec::new()), inputs);
+                        }
+                        if member == self.class_word("subclasses") {
+                            let owner = self.super_type_arg(&receiver)?;
+                            return self.class_apply(Self::adapter(204, vec![Value::Class(owner)]), args);
+                        }
+                        if member == "__dir__" || self.lang.class_special.get(1).is_some_and(|key| key == &member) {
+                            if !args.is_empty() { return Err(format!("TypeError: expected 0 arguments, got {}", args.len()).into()); }
+                            return if member == "__dir__" { self.default_directory(&receiver) }
+                                else { Ok(Value::text(&receiver.repr(&self.wording()))) };
+                        }
+                        if let Some(at) = [76, 77].into_iter().find(|at| self.lang.class_special.get(*at).is_some_and(|key| key == &member)) {
+                            if args.len() != 1 { return Err(format!("TypeError: {member}() takes exactly one argument ({} given)", args.len()).into()); }
+                            return Ok(Value::Flag(self.beneath(&args[0], &receiver, at == 77)?));
+                        }
                         if self.lang.class_special.get(17).map_or(false, |slot| slot == &member) {
                             // type.__call__ performs construction directly; routing
                             // through the metaclass again would call itself forever.
@@ -3841,7 +3860,13 @@ impl<'a> Engine<'a> {
             if let Some(word)=builtin {
                 if word.as_ref() == "type" {
                     let owner = self.metaclass_root();
-                    return Ok(Value::View(Rc::new((Value::Class(owner), "mapping".into()))));
+                    let mut rows: Vec<_> = owner.shared.borrow().iter().map(|(key, value)| (Value::text(key), value.clone())).collect();
+                    let mut names: Vec<String> = ["get", "set", "remove", "subclasses"].iter().map(|part| self.class_word(part).to_string()).collect();
+                    names.extend(self.lang.constructor.iter().cloned());
+                    names.extend([1, 76, 77].iter().filter_map(|at| self.lang.class_special.get(*at).cloned()));
+                    names.push("__dir__".into());
+                    for key in names { rows.push((Value::text(&key), self.held_kind_descriptor("type", &key))); }
+                    return Ok(Value::View(Rc::new((Value::Map(Rc::new(rows.into())), "mapping".into()))));
                 }
                 let mut listed = self.kind_sample(&word).map_or_else(Vec::new, |sample| self.kind_member_names(&sample));
                 let prefix = format!("{word}.");
@@ -3922,6 +3947,10 @@ impl<'a> Engine<'a> {
                 else if name == self.class_word("remove") { Some(12) }
                 else { None };
             if let Some(tag) = tag { return Ok(Self::adapter(tag, if name == self.class_word("subclass") { vec![Value::text(name)] } else { vec![] })); }
+            if name == self.class_word("subclasses") || name == "__dir__"
+                || [1, 76, 77].iter().any(|at| self.lang.class_special.get(*at).is_some_and(|key| key == name)) {
+                return Ok(self.held_kind_descriptor("type", name));
+            }
         }
         if matches!(&subject, Value::ByteKind(..)) {
             if let Some(member) = self.loose_kind_member(&subject, name) { return Ok(member); }
