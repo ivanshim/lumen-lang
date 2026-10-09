@@ -6725,21 +6725,22 @@ impl<'a> Compiler<'a> {
         let module_slot = self.gensym("class_module");
         let module_name = lang.module_names.first().cloned().unwrap_or_default();
         let mut shared: Vec<(String, String)> = Vec::new();
-        self.constant(Value::Small(first_row as i64));
-        let source_slot = self.gensym("class_line"); self.write(&source_slot);
-        shared.push(("__firstlineno__".into(), source_slot));
-        if !parameters.is_empty() {
+        let parameter_slot = if !parameters.is_empty() {
             for parameter in parameters { self.read(parameter); }
             self.act(Action::MakeTuple, parameters.len());
             let slot = self.gensym("class_parameters"); self.write(&slot);
-            shared.push(("__type_params__".into(), slot));
-        }
+            Some(slot)
+        } else { None };
         self.class_names.push((self.pieces.len(), HashMap::new()));
         self.class_globals.push((self.pieces.len(), Vec::new()));
         self.class_seen.push(Vec::new());
         if let Some(word)=lang.class_details.get("qualified").and_then(|v|v.first()) {
             self.constant(Value::text(&qualification));let slot=self.gensym("qualification");self.write(&slot);shared.push((word.clone(),slot));
         }
+        self.constant(Value::Small(first_row as i64));
+        let source_slot = self.gensym("class_line"); self.write(&source_slot);
+        shared.push(("__firstlineno__".into(), source_slot));
+        if let Some(slot) = parameter_slot { shared.push(("__type_params__".into(), slot)); }
         // Only the leading docstring writes documentation into the prepared mapping.
         let mut documentation = None;
         if lang.class_details.get("doc").is_some_and(|words| !words.is_empty()) {

@@ -77,6 +77,8 @@ original release cannot be established, rerun into a new directory instead.
 
 Reference count runs import each flat reference source through
 `run_reference.py` under its `test.<module>` name before unittest discovery.
-The requested file is loaded explicitly, so an embedded support-only module
-cannot replace the reference source. Package entry points retain their existing
-invocation. `python3 scripts/suite/test_python_tests.py` checks argument construction.
+The source directory precedes other package locations during normal import,
+and the imported origin must match the requested file. An embedded support-only
+module therefore cannot replace the reference source. Package entry points retain
+their existing invocation. `python3 scripts/suite/test_python_tests.py` checks
+argument construction, source precedence, module identity and the `load_tests` hook.

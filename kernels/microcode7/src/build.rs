@@ -5332,10 +5332,10 @@ impl<'a> Builder<'a> {
             let made = self.class_book();
             setup.push(made);
         }
+        if let Some(word)=table.single("ext.stmt.class.detail.qualified") {self.member_ranked(word);self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::text(&full_name)));}
         self.member_ranked("__firstlineno__");
         self.parts().attributes.push("__firstlineno__".to_owned());
         self.parts().held.push(constant(Value::Small(i64::from(opening_row))));
-        if let Some(word)=table.single("ext.stmt.class.detail.qualified") {self.member_ranked(word);self.parts().attributes.push(word.to_string());self.parts().held.push(constant(Value::text(&full_name)));}
         if !parameters.is_empty() {
             let values = parameters.iter().map(|word| self.read(word)).collect();
             self.member_ranked("__type_params__");
