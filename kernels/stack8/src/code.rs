@@ -927,6 +927,9 @@ impl Builtin {
 pub struct Routine {
     pub postponed_annotation: bool,
     pub checks_annotation_format: bool,
+    /// Whether the routine is one whose own name reads, while annotations are
+    /// being read in the forward-reference format, may stand for a reference.
+    pub reads_annotation: bool,
     /// The live class namespace slot and, when used by methods, its class cell.
     pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotation: Option<Rc<Routine>>,
@@ -937,6 +940,9 @@ pub struct Routine {
     pub code_names: Vec<String>,
     pub local_names: Vec<String>,
     pub code_flags: i64,
+    /// The future flags in force where the text was read, as the
+    /// reference's code objects carry them in co_flags.
+    pub future_bits: i64,
     pub lineless: bool,
     pub generator: bool,
     pub doc: Option<String>,

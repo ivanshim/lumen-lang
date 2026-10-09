@@ -381,6 +381,7 @@
     [
       "==",
       "!=",
+      "<>",
       "<",
       ">",
       "<=",
@@ -453,7 +454,8 @@
     "=="
   ],
   "op.ne": [
-    "!="
+    "!=",
+    "<>"
   ],
   "op.lt": [
     "<"
@@ -2173,6 +2175,10 @@
   "ext.builtin.compile.kind": [
     "code"
   ],
+  "ext.builtin.compile.incomplete": [
+    "_IncompleteInputError",
+    "incomplete input"
+  ],
   "ext.builtin.source.syntax": [
     "SyntaxError: invalid syntax"
   ],
@@ -3092,6 +3098,8 @@
   "ext.stmt.class.detail.subclass": [
     "__init_subclass__"
   ],
+  "ext.builtin.annotation_call": ["__annotation_call__"],
+  "ext.builtin.partial_repr": ["__partial_repr__"],
   "ext.builtin.namespace_type": [
     "__namespace_type"
   ],
