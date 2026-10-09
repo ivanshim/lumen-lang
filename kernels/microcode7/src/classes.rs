@@ -192,7 +192,7 @@ impl<'a> Machine<'a> {
                 && !kind.shared.borrow().iter().any(|(key, _)| key == name))
                 .filter_map(|name| self.carried_by_kind(&owner, &name).map(|entry| {
                     let member = match name.as_str() {
-                        "fromkeys" | "fromhex" | "from_bytes" | "from_number" | "__getformat__" => Self::wrap(60, vec![Value::text(word), Value::text(&name), Value::Flag(true)]),
+                        "fromkeys" | "fromhex" | "from_bytes" | "from_number" | "__getformat__" => self.classmethod_entry(word, &name),
                         _ => entry,
                     };
                     (name, member)
@@ -202,7 +202,7 @@ impl<'a> Machine<'a> {
         if word == "dict" {
             let mut entries = kind.shared.borrow_mut();
             entries.retain(|(name, _)| name != "fromkeys");
-            entries.push(("fromkeys".to_owned(), Self::wrap(60, vec![Value::text(word), Value::text("fromkeys"), Value::Flag(true)])));
+            entries.push(("fromkeys".to_owned(), self.classmethod_entry(word, "fromkeys")));
         }
         if word == "bytearray" {
             if let Some(task) = self.table.prims.get("bytearray.maketrans") {
@@ -3500,6 +3500,13 @@ impl<'a> Machine<'a> {
         let middle=if names.len()==1 {&words[2]} else {&words[3]};
         Err(format!("{}{}{}{}",words[1],c.name,middle,listed).into())
     }
+    fn classmethod_entry(&self, owner: &str, member: &str) -> Value {
+        let slot = (owner.to_owned(), format!("\0classmethod:{member}"));
+        self.loose_entries.borrow_mut().entry(slot).or_insert_with(|| {
+            Self::wrap(60, vec![Value::text(owner), Value::text(member), Value::Flag(true)])
+        }).clone()
+    }
+
     /// A member every class and thing has from the root: one the table
     /// names among the root's members, or, read off a thing, one of the
     /// hooks for making, constructing, reading, writing, removing and
@@ -3531,7 +3538,13 @@ impl<'a> Machine<'a> {
             _ if key == self.detail("subclass") => vec![Value::text(key)],
             _ => Vec::new(),
         };
-        Some(if tag == 1 { self.common_allocation() } else if tag == 2 && self.table.single("ext.stmt.class.constructor") == Some(key) { self.common_initialiser() } else { Self::wrap(tag, state) })
+        let answer = if tag == 1 { self.common_allocation() }
+            else if tag == 2 && self.table.single("ext.stmt.class.constructor") == Some(key) { self.common_initialiser() }
+            else {
+                self.loose_members.borrow_mut().entry(format!("root slot {key}"))
+                    .or_insert_with(|| Self::wrap(tag, state)).clone()
+            };
+        Some(answer)
     }
     /// The root's own answer for one of its members, the value it
     /// answers about coming first.
@@ -4494,18 +4507,25 @@ impl<'a> Machine<'a> {
                 let mut pairs = names.into_iter().filter_map(|name| {
                     self.carried_by_kind(&value, &name).map(|descriptor| {
                         let stored = match name.as_str() {
-                            "fromkeys" | "fromhex" | "from_bytes" | "from_number" | "__getformat__" => Self::wrap(60, vec![Value::text(&word), Value::text(&name), Value::Flag(true)]),
+                            "fromkeys" | "fromhex" | "from_bytes" | "from_number" | "__getformat__" => self.classmethod_entry(&word, &name),
                             _ => descriptor,
                         };
                         (Value::text(&name), stored)
                     })
                 }).collect::<Vec<_>>();
                 if matches!(word.as_ref(), "int" | "float" | "str" | "tuple" | "bytes" | "bytearray" | "dict" | "set" | "frozenset" | "complex" | "list") {
-                    pairs.push((Value::text(self.detail("allocate")), Self::wrap(14, vec![Value::text(&word)])));
+                    pairs.push((Value::text(self.detail("allocate")), self.native_allocation(&word)));
                 }
                 if self.table.spells("ext.stmt.class.builtin", "tuple") && ["tuple", "list", "dict", "set", "frozenset"].contains(&word.as_ref()) {
-                    let descriptor = Self::wrap(60, vec![Value::text(&word), Value::text("__class_getitem__"), Value::Flag(true)]);
+                    let descriptor = self.classmethod_entry(&word, "__class_getitem__");
                     pairs.push((Value::text("__class_getitem__"), descriptor));
+                }
+                // Keep native namespace entries alive when a mapping view is released.
+                for entry in &mut pairs {
+                    let slot = (word.to_string(), format!("\0dictionary:{}", entry.0.bare()));
+                    let original = self.loose_entries.borrow_mut().entry(slot)
+                        .or_insert_with(|| entry.1.clone()).clone();
+                    entry.1 = original;
                 }
                 // Expose stored Python slots on the public native class dictionary.
                 let kind = self.native_kind(&word);
@@ -4944,7 +4964,9 @@ impl<'a> Machine<'a> {
             }
             // The formatting every blueprint has from the root: a thing
             // and a specification, answered as the format builtin would.
-            if self.rules.specials.get(72).map_or(false,|word|word==key){return Ok(Self::wrap(59,Vec::new()));}
+            if self.rules.specials.get(72).map_or(false,|word|word==key) {
+                if let Some(member) = self.from_the_root(key, true, b) { return Ok(member); }
+            }
             {
                 let tag=if key==self.detail("allocate")&&(self.builds_classes(b)||b.ancestry.borrow().iter().any(|p|self.builds_classes(p))){70}else if key==self.detail("allocate"){1}else if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str)==Some(key)&&(self.builds_classes(b)||b.ancestry.borrow().iter().any(|p|self.builds_classes(p))){73}else if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str)==Some(key)||key==self.detail("subclass"){2}
                     else if key==self.detail("get"){10}else if key==self.detail("set"){11}else if key==self.detail("remove"){12}else{255};

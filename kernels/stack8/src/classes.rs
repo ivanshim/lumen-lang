@@ -180,7 +180,7 @@ impl<'a> Engine<'a> {
                 if c.shared.borrow().iter().any(|(key, _)| key == &name) { continue; }
                 if let Some(descriptor) = self.loose_kind_member(&Value::Class(c.clone()), &name) {
                     let descriptor = if matches!(name.as_str(), "fromkeys" | "fromhex" | "from_bytes" | "from_number" | "__getformat__") {
-                        Self::adapter(29, vec![Value::text(word), Value::text(&name), Value::Flag(true)])
+                        self.native_classmethod_descriptor(word, &name)
                     } else { descriptor };
                     c.shared.borrow_mut().push((name, descriptor));
                 }
@@ -192,7 +192,7 @@ impl<'a> Engine<'a> {
             }
         }
         if word == "dict" {
-            let descriptor = Self::adapter(29, vec![Value::text("dict"), Value::text("fromkeys"), Value::Flag(true)]);
+            let descriptor = self.native_classmethod_descriptor("dict", "fromkeys");
             let mut shared = c.shared.borrow_mut();
             if let Some((_, member)) = shared.iter_mut().find(|(name, _)| name == "fromkeys") { *member = descriptor; }
             else { shared.push((String::from("fromkeys"), descriptor)); }
@@ -2822,6 +2822,15 @@ impl<'a> Engine<'a> {
         let middle = if names.len() == 1 { &words[2] } else { &words[3] };
         Err(format!("{}{}{}{}", words[1], c.name, middle, listed).into())
     }
+    fn native_classmethod_descriptor(&self, owner: &str, name: &str) -> Value {
+        let key = format!("native classmethod {owner}.{name}");
+        let mut stored = self.loose_members.borrow_mut();
+        if let Some(value) = stored.get(&key) { return value.clone(); }
+        let descriptor = Self::adapter(29, vec![Value::text(owner), Value::text(name), Value::Flag(true)]);
+        stored.insert(key, descriptor.clone());
+        descriptor
+    }
+
     /// A member every thing and every class has from the root, where
     /// the name is one: the members the language names for it, and
     /// hooks for making, constructing, reading, writing, removing and
@@ -2859,7 +2868,14 @@ impl<'a> Engine<'a> {
             else if name==self.class_word("remove") {12}
             else if self.lang.class_special.get(72).map_or(false,|word| word==name) {19}
             else {return None};
-        Some(if hook == 1 { self.root_allocator() } else if hook == 2 && self.lang.constructor.as_deref() == Some(name) { self.root_initialiser() } else if (10..=12).contains(&hook) && !self.lang.class_builder.is_empty() { Self::adapter(hook, vec![Value::text(self.class_word("root"))]) } else { Self::adapter(hook, vec![]) })
+        if hook == 1 { return Some(self.root_allocator()); }
+        if hook == 2 && self.lang.constructor.as_deref() == Some(name) { return Some(self.root_initialiser()); }
+        let key = format!("root hook {name}");
+        if let Some(member) = self.loose_members.borrow().get(&key) { return Some(member.clone()); }
+        let args = if (10..=12).contains(&hook) && !self.lang.class_builder.is_empty() { vec![Value::text(self.class_word("root"))] } else { Vec::new() };
+        let member = Self::adapter(hook, args);
+        self.loose_members.borrow_mut().insert(key, member.clone());
+        Some(member)
     }
     /// The root's own working of one of its members, handed the value
     /// it works upon first.
@@ -3909,7 +3925,7 @@ impl<'a> Engine<'a> {
                 if word.as_ref() == "dict" { listed.extend(self.lang.value_methods.iter().filter(|(_, op)| op.as_str() == "fromkeys").map(|(key, _)| key.clone())); }
                 let mut pairs: Vec<(Value, Value)> = listed.iter().filter_map(|key| self.loose_kind_member(&subject, key).map(|held| {
                     let raw = if matches!(key.as_str(), "fromkeys" | "fromhex" | "from_bytes" | "from_number" | "__getformat__") {
-                        Self::adapter(29, vec![Value::text(&word), Value::text(key), Value::Flag(true)])
+                        self.native_classmethod_descriptor(&word, key)
                     } else { held };
                     (Value::text(key), raw)
                 })).collect();
@@ -3917,7 +3933,15 @@ impl<'a> Engine<'a> {
                     pairs.push((Value::text(self.class_word("allocate")), self.native_allocator(&word)));
                 }
                 if matches!(word.as_ref(), "tuple" | "list" | "dict" | "set" | "frozenset") && Lang::spells(&self.lang.builtin_bases, "tuple") {
-                    pairs.push((Value::text("__class_getitem__"), Self::adapter(29, vec![Value::text(&word), Value::text("__class_getitem__"), Value::Flag(true)])));
+                    pairs.push((Value::text("__class_getitem__"), self.native_classmethod_descriptor(&word, "__class_getitem__")));
+                }
+                // Synthetic descriptors belong to the class, not to the temporary mapping view.
+                {
+                    let mut retained = self.loose_members.borrow_mut();
+                    for (key, descriptor) in &mut pairs {
+                        let slot = format!("native dictionary {} {}", word, key.plain());
+                        *descriptor = retained.entry(slot).or_insert_with(|| descriptor.clone()).clone();
+                    }
                 }
                 // Public native class dictionaries include their stored Python slots.
                 let kind = self.kind_class(&word);
@@ -4261,7 +4285,9 @@ impl<'a> Engine<'a> {
                 if self.lang.bind_names && name == self.class_word("call") { return Ok(Self::adapter(3, vec![Self::adapter(41, Vec::new()), subject.clone()])); }
                 // The formatting every class has from the root: a thing
                 // and a specification, answered as the format builtin would.
-                if self.lang.class_special.get(72).map_or(false,|word|word==name) {return Ok(Self::adapter(19,vec![]));}
+                if self.lang.class_special.get(72).map_or(false,|word|word==name) {
+                    if let Some(formatter) = self.root_member(name, Some(c)) { return Ok(formatter); }
+                }
                 {
                     let index = if name==self.class_word("allocate") && (self.is_metaclass_root(c) || c.lineage.borrow().iter().any(|b| self.is_metaclass_root(b))) {Some(40)}
                         else if name==self.class_word("allocate") {Some(1)}
