@@ -7046,6 +7046,8 @@ impl<'a> Engine<'a> {
         }
         if matches!(held, Value::Slice(_)) {
             let mut names = vec!["start".to_string(), "step".to_string(), "stop".to_string()];
+            names.extend(self.lang.class_special.iter().filter(|name| self.kind_owns_protocol("slice", name)).cloned());
+            names.extend(self.lang.value_methods.iter().filter(|(_, operation)| matches!(operation.as_str(), "indices" | "slice_hash")).map(|(word, _)| word.clone()));
             if let Some(word) = self.lang.class_details.get("root.members").and_then(|words| words.get(9)) { names.push(word.clone()); }
             names.sort();
             return names;
@@ -7581,6 +7583,10 @@ impl<'a> Engine<'a> {
         }
         if let Value::Slice(bounds) = &held {
             if let Some(at) = self.slice_bound_named(name) { return Ok(Some(bounds[at].clone())); }
+            if self.kind_owns_protocol("slice", name) && name != self.class_word("allocate")
+                || self.lang.value_methods.get(name).is_some_and(|op| matches!(op.as_str(), "indices" | "slice_hash")) {
+                return Ok(Some(Value::ValueMethod(Rc::new((value.clone(), name.to_string())))));
+            }
             if let Some(at) = self.lang.class_special.iter().position(|word| word == name).filter(|at| matches!(at, 79 | 81)) {
                 return Ok(Some(Value::ValueMethod(Rc::new((value.clone(), if at == 79 { "slice_reduce" } else { "slice_reduce_ex" }.into())))));
             }
@@ -17633,6 +17639,21 @@ impl<'a> Engine<'a> {
         }
         if let Value::Slice(bounds) = &contents {
             if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+            if let Some(slot) = self.lang.class_special.iter().position(|name| name == operation) {
+                if slot == 1 && args.is_empty() {
+                    let mut parts = Vec::new();
+                    for bound in bounds.iter() { parts.push(self.special_text(bound, true)?); }
+                    return Ok(Value::text(&format!("slice({})", parts.join(", "))));
+                }
+                if slot == 8 && args.is_empty() { return self.slice_hashed(&contents); }
+                if (2..=7).contains(&slot) && args.len() == 1 {
+                    let Value::Slice(other) = args[0].contents() else {
+                        return Ok(Value::Declined(Rc::from(self.lang.special_declined.first().map(String::as_str).unwrap_or("NotImplemented"))));
+                    };
+                    let operation = match slot { 2 => Action::Eq, 3 => Action::Ne, 4 => Action::Lt, 5 => Action::Le, 6 => Action::Gt, _ => Action::Ge };
+                    return self.special_dyad(&operation, &Value::tuple(bounds.to_vec()), &Value::tuple(other.to_vec()));
+                }
+            }
             match (operation, args.len()) {
                 ("slice_reduce" | "__reduce__", 0) | ("slice_reduce_ex" | "__reduce_ex__", 1) => {
                     if args.len() == 1 { self.reduction_protocol(&args[0])?; }

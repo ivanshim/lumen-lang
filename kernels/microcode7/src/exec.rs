@@ -8489,6 +8489,12 @@ impl<'a> Machine<'a> {
         }
         if let Value::Span(_) = sample.settled() {
             let mut bounds = vec![String::from("start"), String::from("step"), String::from("stop")];
+            for slot in self.rules.specials {
+                if self.native_declares_protocol("slice", slot) { bounds.push(slot.clone()); }
+            }
+            for label in ["ext.builtin.method.indices", "ext.builtin.method.slice_hash"] {
+                bounds.extend(self.table.strings(label).iter().cloned());
+            }
             bounds.extend(self.rules.words_ext_stmt_class_detail_root_members.get(9).cloned());
             bounds.sort_unstable();
             return bounds;
@@ -9337,6 +9343,9 @@ impl<'a> Machine<'a> {
         }
         if let Value::Span(bounds) = value {
             if let Some(which) = self.span_bound_named(name) { return Some(bounds[which].clone()); }
+            let method = self.native_declares_protocol("slice", name) && name != self.detail("allocate")
+                || self.table.spells("ext.builtin.method.indices", name) || self.table.spells("ext.builtin.method.slice_hash", name);
+            if method { return Some(Value::Member(Rc::new(value.clone()), name.to_owned())); }
             if self.native_place(value, name) == Some(usize::MAX - 2) {
                 return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
             }
@@ -10493,6 +10502,24 @@ impl<'a> Machine<'a> {
         // form gives.
         if let Value::Span(bounds) = receiver.settled() {
             if !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+            let slot = self.rules.specials.iter().position(|word| word == name);
+            match (slot, arguments.as_slice()) {
+                (Some(1), []) => {
+                    let mut pieces = Vec::with_capacity(3);
+                    for item in bounds.iter() { pieces.push(self.converted_string(item, true)?.bare()); }
+                    return Ok(Value::text(&("slice(".to_owned() + &pieces.join(", ") + ")")));
+                }
+                (Some(8), []) => return self.span_hashed(receiver).map_err(Escape::from),
+                (Some(index @ 2..=7), [other]) => {
+                    let right = match other.settled() {
+                        Value::Span(parts) => Value::tuple(parts.to_vec()),
+                        _ => return Ok(Value::Refusal(Rc::from(self.rules.words_ext_stmt_class_special_declined.first().map(String::as_str).unwrap_or("NotImplemented")))),
+                    };
+                    let operation = [Prim::Eq, Prim::Ne, Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge][index - 2];
+                    return self.prim(operation, name, &[Value::tuple(bounds.to_vec()), right]).map_err(Escape::from);
+                }
+                _ => (),
+            }
             return match (name, arguments.len()) {
                 ("span_reduce" | "__reduce__", 0) | ("span_reduce_ex" | "__reduce_ex__", 1) => {
                     if arguments.len() != 0 { self.check_reduction_protocol(&arguments[0])?; }

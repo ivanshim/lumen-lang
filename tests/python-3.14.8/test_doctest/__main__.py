@@ -17,8 +17,10 @@ def _cases(suite):
             yield case
 
 
-def _matches(case, name):
+def _matches(case, name, identifiers):
     identifier = case.id()
+    if name in identifiers:
+        return identifier == name
     return (identifier == name or identifier.startswith(name + '.')
             or identifier.endswith('.' + name) or '.' + name + '.' in identifier)
 
@@ -30,11 +32,12 @@ if __name__ == '__main__':
         # Doctest IDs identify discovered cases, not callable module attributes.
         cases = list(_cases(load_tests(unittest.defaultTestLoader,
                                        unittest.TestSuite(), None)))
+        identifiers = {case.id() for case in cases}
         for name in names:
-            if not any(_matches(case, name) for case in cases):
+            if not any(_matches(case, name, identifiers) for case in cases):
                 raise ValueError('No discovered test matches ' + repr(name))
         suite = unittest.TestSuite(case for case in cases
-                                   if any(_matches(case, name) for name in names))
+                                   if any(_matches(case, name, identifiers) for name in names))
         result = unittest.TextTestRunner().run(suite)
         sys.exit(not result.wasSuccessful())
     else:
