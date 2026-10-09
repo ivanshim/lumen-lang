@@ -12614,7 +12614,10 @@ impl<'a> Machine<'a> {
     fn drive(&mut self, program: Rc<Routine>, frame: Rc<Env>) -> Res {
         let inherited = self.reading_now;
         if program.globe.is_none() { self.reading_now = None; }
+        // Tail calls enter here with a fitted frame but still need the callee's globals.
+        let namespace = self.enter_function_globals(&program);
         let answer = self.drive_body(program, frame);
+        self.leave_function_globals(namespace);
         self.reading_now = inherited;
         answer
     }
