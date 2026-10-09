@@ -10331,3 +10331,17 @@
 {"t":"2026-10-09T17:16:58Z","event":"note","text":"toolkit-sync: committed and pushed"}
 {"t":"2026-10-09T17:19:54Z","event":"review-started","job":"stdlib-runpy","review":"review-auto-stdlib-runpy-1712"}
 {"t":"2026-10-09T17:28:43Z","event":"exited","job":"review-auto-stdlib-runpy-1712","code":0}
+{"t":"2026-10-09T17:33:17Z","event":"returned","job":"stdlib-runpy","review":"review-auto-stdlib-runpy-1712","commit":"790662ac7","round":2,"model":"gpt-6.1-sol","note":"(2nd at Sol; integrity ok; clean check 1196/0 gates ok; runpy 0->39/40 both kernels; blockers introduced: -c/-E/- override explicit --lang php/lumen, PYTHONPATH ahead of script dir + '' made absolute; 24 conflicts vs batch21h) -> returns/stdlib-runpy.md + sol-resume queued; next return -> Astra"}
+{"t":"2026-10-09T17:33:17Z","event":"returned","job":"stdlib-zipimport","review":"review-auto-stdlib-zipimport-1642","commit":"2204c797e","round":2,"model":"gpt-6.1-sol","note":"(2nd at Sol; integrity ok; clean check 1196/0 gates ok; zipimport 0->73/91 both kernels; 12 covered errors remain: doctest testfile/DocFileTest loader, inspect.getsource, support.has_no_debug_ranges, support.requires; head lacks 21g) -> returns/stdlib-zipimport.md + sol-resume queued; next return -> Astra"}
+{"t":"2026-10-09T17:33:59Z","event":"exited","job":"dsflash-py-compile-sol","code":0}
+{"t":"2026-10-09T17:34:22Z","event":"quota","codex_week_used":54,"codex_credits":0,"claude_week_used":23,"claude_5h_used":11,"deepseek_usd":244.73}
+{"t":"2026-10-09T17:34:27Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":54,"expected":56.5,"gap":-2.5,"status":"ok"}
+{"t":"2026-10-09T17:34:36Z","event":"checkin","status":"done","actions":"RETURN stdlib-runpy (2nd Sol; runpy 0->39/40 both kept; introduced: -c/-E/- override explicit --lang php/lumen, PYTHONPATH ahead of script dir) -> returns + sol-resume queued; RETURN stdlib-zipimport (2nd Sol; zipimport 0->73/91 both kept; 12 covered errors: doctest testfile/DocFileTest loader, inspect.getsource, support.has_no_debug_ranges/requires) -> returns + sol-resume queued; prune-merged freed 0MB","notes":"next return of runpy or zipimport escalates to Astra; DS Flash 9/12, 3 idle: no fresh Flash-sized in-scope subject; DS Pro 1/1 frame-dspro; Haiku 1/1 hmac-haiku; Sonnet 1/1 bigmem-sonnet; Sol 11 running incl integrate-21h (6.6h) + 3 Sol lines queued; Astra doctest-astra; box load 10.5/8, 10.9G avail, disk 79%; Mac disk 87%; Codex week 54%; Claude 5h 11%/week 23%; luna gap -2.5 ok, no new alerts; no open PR"}
+{"t":"2026-10-09T17:34:57Z","event":"started","job":"dsflash-modulefinder-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-09T17:35:48Z","event":"exited","job":"integrate-21h","code":1}
+{"t":"2026-10-09T17:36:27Z","event":"exited","job":"integrate-21h","code":1}
+{"t":"2026-10-09T17:37:04Z","event":"exited","job":"integrate-21h","code":1}
+{"t":"2026-10-09T17:38:06Z","event":"finished","job":"dsflash-py-compile-sol","exit_time":"2026-10-09T17:33:59Z"}
+{"t":"2026-10-09T17:38:06Z","event":"review-queued","job":"dsflash-py-compile-sol","review":"review-auto-dsflash-py-compile-sol-1738"}
+{"t":"2026-10-09T17:39:58Z","event":"review-started","job":"dsflash-py-compile-sol","review":"review-auto-dsflash-py-compile-sol-1738"}
+{"t":"2026-10-09T17:44:43Z","event":"exited","job":"review-auto-dsflash-py-compile-sol-1738","code":0}
