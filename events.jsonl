@@ -9791,3 +9791,24 @@
 {"t":"2026-10-09T07:14:36Z","event":"quota","codex_week_used":19,"codex_credits":0,"claude_week_used":19,"claude_5h_used":15,"kimi_5h_used":0,"kimi_month_used":1,"kimi_code_used":0,"deepseek_usd":260.31}
 {"t":"2026-10-09T07:14:40Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":19,"expected":20.5,"gap":-1.5,"status":"ok"}
 {"t":"2026-10-09T07:14:50Z","event":"checkin","status":"done","actions":"returned stdlib-inspect (2nd, Sol) -> sol-resume queued; returned dsflash-dictviews (2nd, Flash) -> handed over to Sol, sol-new dsflash-dictviews-sol queued; prune-merged freed 0MB","notes":"Sol and DS Flash 12/12 full, 7 Sol lines queued; integrate-21g still running (5h20m); box disk 80%, Mac 87%; Codex week 19%"}
+{"t":"2026-10-09T07:31:34Z","event":"exited","job":"stdlib-runpy","code":0}
+{"t":"2026-10-09T07:31:49Z","event":"started","job":"dsflash-unpack-baseexc-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-09T07:33:30Z","event":"exited","job":"dspro-unicode-file-functions","code":0}
+{"t":"2026-10-09T07:33:55Z","event":"returned","job":"dsflash-marshal","review":"review-auto-dsflash-marshal-0644","commit":"3c86e7bc5","round":3,"model":"deepseek-flash","note":"(3rd; integrity ok; clean check 1196/0 gates ok; test_marshal 49->60/76 both kernels, 0 fail; introduced: code marshal drops consts/flags, code equality ignores body, code map-index collisions, load() needs tell()) -> FAILED at DS Flash (cascade)"}
+{"t":"2026-10-09T07:33:55Z","event":"handed-over","job":"dsflash-marshal","to":"gpt-6.1-sol","note":"3 returns at DS Flash; DS Pro, Haiku, Sonnet busy -> Sol; brief-dsflash-marshal-sol.md, sol-new dsflash-marshal-sol queued"}
+{"t":"2026-10-09T07:33:55Z","event":"queued","job":"dsflash-marshal-sol","model":"gpt-6.1-sol","line":"sol-new dsflash-marshal-sol","note":"cascade hand-over from DS Flash"}
+{"t":"2026-10-09T07:34:42Z","event":"quota","codex_week_used":21,"codex_credits":0,"claude_week_used":19,"claude_5h_used":16,"kimi_5h_used":0,"kimi_month_used":1,"kimi_code_used":0,"deepseek_usd":258.43}
+{"t":"2026-10-09T07:34:46Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":21,"expected":21.7,"gap":-0.7,"status":"ok"}
+{"t":"2026-10-09T07:34:53Z","event":"checkin","status":"done","actions":"RETURN dsflash-marshal (3rd at DS Flash; 60/76 both kernels but 4 introduced code-object/load bugs) -> FAILED, handed over to Sol (Pro/Haiku/Sonnet busy), brief-dsflash-marshal-sol.md, sol-new queued; prune 0MB, no idle accepted target/","notes":"box 82% disk, load 3.9/8, 12.5G mem avail; Mac 87%; Codex week 21%; Claude 5h 16%/week 19%; luna ok gap -0.7; no open PR; integrate-21g running; stdlib-runpy finished, auto-review pending"}
+{"t":"2026-10-09T07:36:00Z","event":"finished","job":"dspro-unicode-file-functions","exit_time":"2026-10-09T07:33:30Z"}
+{"t":"2026-10-09T07:36:00Z","event":"review-queued","job":"dspro-unicode-file-functions","review":"review-auto-dspro-unicode-file-functions-0735"}
+{"t":"2026-10-09T07:36:04Z","event":"finished","job":"stdlib-runpy","exit_time":"2026-10-09T07:31:34Z"}
+{"t":"2026-10-09T07:36:04Z","event":"review-queued","job":"stdlib-runpy","review":"review-auto-stdlib-runpy-0736"}
+{"t":"2026-10-09T07:36:06Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-09T07:36:51Z","event":"review-started","job":"dspro-unicode-file-functions","review":"review-auto-dspro-unicode-file-functions-0735"}
+{"t":"2026-10-09T07:40:35Z","event":"exited","job":"review-auto-dspro-unicode-file-functions-0735","code":0}
+{"t":"2026-10-09T07:40:52Z","event":"exited","job":"dsflash-ensurepip","code":0}
+{"t":"2026-10-09T07:41:11Z","event":"finished","job":"dsflash-ensurepip","exit_time":"2026-10-09T07:40:52Z"}
+{"t":"2026-10-09T07:41:11Z","event":"review-queued","job":"dsflash-ensurepip","review":"review-auto-dsflash-ensurepip-0741"}
+{"t":"2026-10-09T07:41:17Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-09T07:41:52Z","event":"review-started","job":"stdlib-runpy","review":"review-auto-stdlib-runpy-0736"}
