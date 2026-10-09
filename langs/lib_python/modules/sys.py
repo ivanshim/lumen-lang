@@ -1,6 +1,7 @@
 # Host primitives used by class bodies need non-private module bindings.
 _host_stream_read = __stream_read
 _host_stream_write = __stream_write
+_host_environment = __posix
 
 # Host details which the present numeric and object model can honour.
 argv = __program_namespace()['__program_argv']
@@ -96,9 +97,9 @@ class _HashInfo:
     inf = 314159
     nan = 0
     imag = 1000003
-    algorithm = 'unavailable'
+    algorithm = 'siphash13'
     hash_bits = 64
-    seed_bits = 0
+    seed_bits = 128
     cutoff = 0
 
 float_info = _FloatInfo()

@@ -74,3 +74,9 @@ It records the provenance path and digest, and refuses to replace an existing
 binding. The inventory is an explicit assertion from the original run's owner;
 its hashes verify the files, not which interpreter produced them. If the
 original release cannot be established, rerun into a new directory instead.
+
+Reference count runs import each flat reference source through
+`run_reference.py` under its `test.<module>` name before unittest discovery.
+The requested file is loaded explicitly, so an embedded support-only module
+cannot replace the reference source. Package entry points retain their existing
+invocation. `python3 scripts/suite/test_python_tests.py` checks argument construction.

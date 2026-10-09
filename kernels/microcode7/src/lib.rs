@@ -24,6 +24,7 @@ pub mod form;
 pub mod data;
 pub mod ghost;
 mod core;
+mod multibyte;
 mod posix;
 mod complex;
 mod byteformat;
@@ -645,7 +646,6 @@ fn protocol_complaint_named(table: &Table, words: &str) -> bool {
     }
 }
 mod sre;
-mod multibyte;
 
 
 mod normal;

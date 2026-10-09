@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/bz2_codec.py; PSF License.
 """Python 'bz2_codec' Codec - bz2 compression encoding.
 
 This codec de/encodes from bytes to bytes and is therefore usable with

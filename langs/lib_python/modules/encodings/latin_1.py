@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/latin_1.py; PSF License.
 """ Python 'latin-1' Codec
 
 

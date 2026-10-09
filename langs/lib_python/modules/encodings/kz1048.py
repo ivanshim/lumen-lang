@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/kz1048.py; PSF License.
 """ Python Character Mapping Codec kz1048 generated from 'MAPPINGS/VENDORS/MISC/KZ1048.TXT' with gencodec.py.
 
 """#"

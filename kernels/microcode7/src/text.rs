@@ -260,8 +260,11 @@ fn split_unpaired(input: &[Value], from_end: bool, table: &Table) -> Result<Valu
 }
 
 pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Names) -> Result<Value,String> {
-    let settled: Vec<Value> = input.iter().map(Value::settled).collect();
-    let input = settled.as_slice();
+    let settled;
+    let input = if input.iter().any(|value| matches!(value, Value::Mutable(..) | Value::Shared(_) | Value::Window(..))) {
+        settled = input.iter().map(Value::settled).collect::<Vec<_>>();
+        settled.as_slice()
+    } else { input };
 
     use Work::*;
     if work==MAKETRANS {
@@ -292,6 +295,88 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     if input.iter().any(|operand| match operand { Value::Unpaired(_) => true, Value::Tuple(parts) => parts.to_vec().iter().any(|part| matches!(part, Value::Unpaired(_))), _ => false }) {
         let numbers=match input.first(){Some(Value::Unpaired(row))=>row.clone(),Some(Value::Text(word))=>Rc::from(word.chars().map(u32::from).collect::<Vec<_>>()),_=>return Err(complaint(table,"receiver"))};
         let unpack=|item:&Value|match item {Value::Unpaired(row)=>Ok(row.to_vec()),Value::Text(word)=>Ok(word.chars().map(u32::from).collect::<Vec<_>>()),other=>Err(format!("TypeError: must be str, not {}",other.kind_word()))};
+        if work == SPLITLINES {
+            let given = Given { tail: &input[1..], table };
+            if given.tail.len() > 1 { return Err(given.bad("arguments")); }
+            let retain = given.whole(0, 0)? != 0;
+            let mut rest = numbers.as_ref(); let mut result = Vec::new();
+            while let Some(boundary) = rest.iter().position(|n| [13,10,133,8232,8233,11,12,28,29,30].contains(n)) {
+                let width = if rest[boundary] == 13 && rest.get(boundary+1) == Some(&10) { 2 } else { 1 };
+                let consumed = boundary + width;
+                result.push(Value::characters(rest[..if retain { consumed } else { boundary }].to_vec()));
+                rest = &rest[consumed..];
+            }
+            if !rest.is_empty() { result.push(Value::characters(rest.to_vec())); }
+            return Ok(Value::Vector(crate::tuples::Sequence::plain(result)));
+        }
+
+
+        if matches!(work, LOWER | UPPER | CASEFOLD) {
+            if input.len() > 1 { return Err(format!("TypeError: str.{}() takes no arguments ({} given)", _name.rsplit('.').next().unwrap_or(_name), input.len()-1)); }
+            let mut result: Vec<u32> = Vec::new();
+            let mut offset = 0;
+            while offset < numbers.len() {
+                if char::from_u32(numbers[offset]).is_none() {
+                    result.push(numbers[offset]); offset += 1; continue;
+                }
+                let begin = offset;
+                while offset < numbers.len() && char::from_u32(numbers[offset]).is_some() { offset += 1; }
+                let word: String = numbers[begin..offset].iter().filter_map(|u| char::from_u32(*u)).collect();
+                result.extend(case_changed(&word, work).chars().map(|letter| letter as u32));
+            }
+            return Ok(Value::characters(result));
+        }
+        if matches!(work, PARTITION | RPARTITION) {
+            let g = Given { tail: &input[1..], table };
+            if g.tail.is_empty() || g.tail.len() > if matches!(work, PARTITION | RPARTITION) { 1 } else { 3 } { return Err(g.bad("arguments")); }
+            let pattern = match &g.tail[0] {
+                Value::Text(t) => t.chars().map(u32::from).collect::<Vec<_>>(),
+                Value::Unpaired(u) => u.to_vec(),
+                value => return Err(if work == COUNT { format!("TypeError: count() argument 1 must be str, not {}", value.kind_word()) }
+                    else { format!("TypeError: must be str, not {}", value.kind_word()) }),
+            };
+            if matches!(work, PARTITION | RPARTITION) {
+                if pattern.is_empty() { return Err(g.bad("separator")); }
+                let matched = if work == RPARTITION { numbers.windows(pattern.len()).rposition(|u| u == pattern) }
+                    else { numbers.windows(pattern.len()).position(|u| u == pattern) };
+                let trio = if let Some(at) = matched {
+                    vec![Value::characters(numbers[..at].to_vec()), Value::characters(pattern.clone()), Value::characters(numbers[at+pattern.len()..].to_vec())]
+                } else if work == RPARTITION { vec![Value::text(""), Value::text(""), Value::characters(numbers.to_vec())] }
+                else { vec![Value::characters(numbers.to_vec()), Value::text(""), Value::text("")] };
+                return Ok(Value::tuple(trio));
+            }
+            let width = numbers.len() as i64;
+            let begin = match g.tail.get(1) { Some(Value::Nil) | None => 0, Some(v) => count(v, table)? };
+            let stop = match g.tail.get(2) { Some(Value::Nil) | None => width, Some(v) => count(v, table)? };
+            let lower = if begin < 0 { begin.saturating_add(width).max(0) } else { begin };
+            let upper = if stop < 0 { stop.saturating_add(width).max(0) } else { stop.min(width) };
+            if work != COUNT {
+                let found = if upper < lower { None }
+                    else if pattern.is_empty() { Some(if work == RFIND || work == RINDEX { upper } else { lower }) }
+                    else {
+                        let selected = &numbers[lower as usize..upper as usize];
+                        let local = if matches!(work, RFIND | RINDEX) { selected.windows(pattern.len()).rposition(|row| row == pattern) }
+                            else { selected.windows(pattern.len()).position(|row| row == pattern) };
+                        local.map(|position| lower + position as i64)
+                    };
+                return match found {
+                    Some(position) => Ok(Value::Small(position)),
+                    None if work == INDEX || work == RINDEX => Err(g.bad("missing")),
+                    None => Ok(Value::Small(-1)),
+                };
+            }
+            if upper < lower { return Ok(Value::Small(0)); }
+            if pattern.is_empty() { return Ok(Value::Small(upper-lower+1)); }
+            let mut tail = &numbers[lower as usize..upper as usize]; let mut total = 0;
+            while pattern.len() <= tail.len() {
+                match tail.windows(pattern.len()).position(|u| u == pattern) {
+                    Some(at) => { total += 1; tail = &tail[at+pattern.len()..]; }
+                    None => break,
+                }
+            }
+            return Ok(Value::Small(total));
+        }
+
         let count=|item:&Value|item.as_big()?.to_i64().ok_or_else(||String::from("OverflowError: Python int too large to convert to C ssize_t"));
         if matches!(work, STRIP | LSTRIP | RSTRIP) {
             let method = if work == STRIP { "strip" } else if work == LSTRIP { "lstrip" } else { "rstrip" };
@@ -425,7 +510,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     }
     let source=subject.as_ref();
     if matches!(work, COUNT|FIND|RFIND|INDEX|RINDEX|STARTSWITH|ENDSWITH) {
-        return seek(work,source,&g);
+        return seek(work,subject,&g);
     }
     let many=source.chars().count();
     let answer=match work {
@@ -565,6 +650,13 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
                 Value::Thing(_) => return Err(g.bad("protocol")),
                 _=>return Err(g.bad("walk")),
             };
+            // A singleton containing an exact string keeps its original storage.
+            if g.table.flag("ext.op.arithmetic.python_numbers") && row.len() == 1 {
+                match &row[0] {
+                    Value::Text(_) | Value::Unpaired(_) => return Ok(row[0].clone()),
+                    _ => (),
+                }
+            }
             let mut result: Vec<u32> = Vec::new();
             for (position, item) in row.into_iter().enumerate() {
                 let numbers = item.character_numbers().ok_or_else(|| g.bad("join"))?;
@@ -617,12 +709,12 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     Ok(answer)
 }
 
-fn seek(work: Work, source: &str, g: &Given) -> Result<Value,String> {
+fn seek(work: Work, source: &std::rc::Rc<str>, g: &Given) -> Result<Value,String> {
     // A search borrows its selected bytes instead of building a row
     // of characters and a second string. Bounds still name characters;
     // a Unicode boundary is reached from whichever end is nearer.
-    let (begin,end,fitting,piece)=if g.tail.len()==1 {(0,0,true,source)} else {
-        let ascii=source.is_ascii();let size=if ascii {source.len()} else {source.chars().count()};
+    let (begin,end,fitting,piece)=if g.tail.len()==1 {(0,0,true,source.as_ref())} else {
+        let ascii=if g.table.flag("ext.op.arithmetic.python_numbers") { Value::ascii_letters(source) } else { source.is_ascii() };let size=if ascii {source.len()} else {source.chars().count()};
         let bound=|place:usize,default:usize|->Result<usize,String>{
             let number=match g.tail.get(place) {None|Some(Value::Nil)=>return Ok(default),Some(v)=>count(v,g.table)?};
             Ok(if number>=0 {number as usize} else {(size as i64).saturating_add(number).max(0) as usize})
@@ -716,7 +808,12 @@ pub(crate) fn extent_of_string(subject: &Rc<str>) -> usize {
         if let Some((_, measured)) = known.borrow().get(&identity) { return *measured; }
         let measured = subject.chars().count();
         let mut lengths = known.borrow_mut();
-        if lengths.len() > 1000 { lengths.retain(|_, entry| entry.0.strong_count() > 0); }
+        // Remove expired weak owners before they retain many obsolete large buffers.
+        lengths.retain(|_, (owner, _)| owner.upgrade().is_some());
+        while lengths.len() >= 16 {
+            let Some(first) = lengths.keys().next().copied() else { break };
+            lengths.remove(&first);
+        }
         lengths.insert(identity, (Rc::downgrade(subject), measured));
         measured
     })

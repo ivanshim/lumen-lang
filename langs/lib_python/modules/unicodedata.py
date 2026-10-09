@@ -111,5 +111,5 @@ def name(char, default=None):
 def lookup(name):
     return __sre_native(5, name.upper())
 
-# Decomposition is read from the native Unicode database.
+# Native decomposition retains the complete CPython descriptor contract.
 decomposition = __unicode_decomposition

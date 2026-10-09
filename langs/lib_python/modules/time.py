@@ -379,3 +379,8 @@ def strftime(format, fields=None):
 
 # The system clock exposes the native C calendar formatter.
 ctime = _host_clock("ctime")
+def strptime(data_string, format="%a %b %d %H:%M:%S %Y"):
+    # The parsing itself is the reference's pure-Python _strptime; it
+    # imports this module, so it is fetched on the first call.
+    import _strptime
+    return _strptime._strptime_time(data_string, format)

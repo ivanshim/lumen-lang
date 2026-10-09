@@ -4,7 +4,104 @@
 use crate::value::{CursorSource, Value};
 use num_bigint::BigInt;
 use num_traits::{Signed, ToPrimitive, Zero};
-use std::hash::{Hash, Hasher};
+/// The secret this process hashes text and bytes under, settled once.
+/// `PYTHONHASHSEED` chooses it as the reference chooses it: an integer
+/// runs a small linear generator, nought turns scattering off, and no
+/// value at all or `random` draws fresh bytes from the system.
+static PY_HASH_KEYS: std::sync::OnceLock<(u64, u64)> = std::sync::OnceLock::new();
+
+fn py_hash_keys() -> (u64, u64) {
+    *PY_HASH_KEYS.get_or_init(|| {
+        let mut secret = [0u8; 16];
+        match std::env::var("PYTHONHASHSEED").ok().as_deref() {
+            Some(word) if word != "random" => {
+                let start = word.parse::<u32>().unwrap_or(0);
+                if start != 0 {
+                    let mut rolling = start;
+                    for slot in secret.iter_mut() {
+                        rolling = rolling.wrapping_mul(214_013).wrapping_add(2_531_011);
+                        *slot = ((rolling >> 16) & 0xff) as u8;
+                    }
+                }
+            }
+            _ => {
+                let mut drawn = || -> std::io::Result<()> {
+                    use std::io::Read;
+                    std::fs::File::open("/dev/urandom")?.read_exact(&mut secret)
+                };
+                if drawn().is_err() {
+                    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0x9e37_79b9_7f4a_7c15, |span| span.as_nanos() as u64);
+                    secret[..8].copy_from_slice(&stamp.to_le_bytes());
+                    secret[8..].copy_from_slice(&stamp.rotate_left(29).to_le_bytes());
+                }
+            }
+        }
+        (u64::from_le_bytes(secret[..8].try_into().unwrap()), u64::from_le_bytes(secret[8..].try_into().unwrap()))
+    })
+}
+
+/// A run of bytes hashed the reference's way with SipHash-1-3: nought
+/// for nothing at all, the folded number otherwise, and -1 kept aside.
+fn py_hash_bytes(data: &[u8]) -> i64 {
+    if data.is_empty() { return 0; }
+    let (first, second) = py_hash_keys();
+    let folded = siphash13(first, second, data) as i64;
+    if folded == -1 { -2 } else { folded }
+}
+
+/// Text hashed as the reference stores it: one byte a point while every
+/// point fits under 256, two little-endian bytes while they fit under
+/// 65536, and four otherwise.
+fn py_hash_codes(points: impl Iterator<Item = u32>) -> i64 {
+    let row: Vec<u32> = points.collect();
+    let widest = row.iter().copied().max().unwrap_or(0);
+    let mut data = Vec::with_capacity(row.len() * 4);
+    if widest < 0x100 {
+        data.extend(row.iter().map(|&point| point as u8));
+    } else if widest < 0x1_0000 {
+        for &point in &row { data.extend_from_slice(&(point as u16).to_le_bytes()); }
+    } else {
+        for &point in &row { data.extend_from_slice(&point.to_le_bytes()); }
+    }
+    py_hash_bytes(&data)
+}
+
+fn siphash13(first: u64, second: u64, data: &[u8]) -> u64 {
+    fn round(v: &mut [u64; 4]) {
+        v[0] = v[0].wrapping_add(v[1]);
+        v[2] = v[2].wrapping_add(v[3]);
+        v[1] = v[1].rotate_left(13) ^ v[0];
+        v[3] = v[3].rotate_left(16) ^ v[2];
+        v[0] = v[0].rotate_left(32);
+        v[2] = v[2].wrapping_add(v[1]);
+        v[0] = v[0].wrapping_add(v[3]);
+        v[1] = v[1].rotate_left(17) ^ v[2];
+        v[3] = v[3].rotate_left(21) ^ v[0];
+        v[2] = v[2].rotate_left(32);
+    }
+    let mut v = [first ^ 0x736f_6d65_7073_6575, second ^ 0x646f_7261_6e64_6f6d,
+                 first ^ 0x6c79_6765_6e65_7261, second ^ 0x7465_6462_7974_6573];
+    let mut at = 0;
+    while data.len() - at >= 8 {
+        let word = u64::from_le_bytes(data[at..at + 8].try_into().unwrap());
+        v[3] ^= word;
+        round(&mut v);
+        v[0] ^= word;
+        at += 8;
+    }
+    let mut tail = [0u8; 8];
+    tail[..data.len() - at].copy_from_slice(&data[at..]);
+    let close = ((data.len() as u64) << 56) | u64::from_le_bytes(tail);
+    v[3] ^= close;
+    round(&mut v);
+    v[0] ^= close;
+    v[2] ^= 0xff;
+    round(&mut v);
+    round(&mut v);
+    round(&mut v);
+    (v[0] ^ v[1]) ^ (v[2] ^ v[3])
+}
 
 impl Value {
     /// What a value of the given sort is called, as CPython names it,
@@ -85,6 +182,9 @@ impl Value {
             Value::Adapter(w) if w.0 == 205 => "getset_descriptor",
             Value::Adapter(w) if w.0 == 206 => "method-wrapper",
             Value::Adapter(w) if w.0 == 207 => "wrapper_descriptor",
+            Value::Adapter(w) if w.0 == 182 => "builtin_function_or_method",
+            Value::Adapter(w) if w.0 == 183 => if matches!(w.1.last(), Some(Value::Object(_))) { "method-wrapper" } else { "wrapper_descriptor" },
+            Value::Adapter(w) if w.0 == 184 => "method-wrapper",
             Value::Adapter(w) if w.0 == 129 => "function",
             Value::Adapter(w) if w.0 == 63 => "method_descriptor",
             Value::Adapter(w) if w.0 == 64 => "builtin_function_or_method",
@@ -180,6 +280,18 @@ impl Value {
     pub fn core_hash(&self) -> Option<i64> {
         let finish = |n| if n == -1 { -2 } else { n };
         match self {
+            Value::Adapter(slot) if slot.0 == 183 => {
+                let hashed = match (slot.1.first(), slot.1.last()) {
+                    (Some(Value::Class(owner)), Some(Value::Object(receiver))) => {
+                        let mut descriptor = std::rc::Rc::as_ptr(owner) as usize >> 4;
+                        let word = match slot.1.get(1) { Some(Value::Text(word)) => word.as_ref(), _ => "__init__" };
+                        for byte in word.bytes() { descriptor = descriptor.rotate_left(5) ^ usize::from(byte); }
+                        descriptor ^ (std::rc::Rc::as_ptr(receiver) as usize >> 4)
+                    }
+                    _ => std::rc::Rc::as_ptr(slot) as usize >> 4,
+                };
+                Some(finish(hashed as i64))
+            }
             Value::Complex(z) => {
                 if z.real.is_nan() || z.imag.is_nan() { return Some((std::rc::Rc::as_ptr(z) as usize >> 4) as i64); }
                 let a = crate::complex::real(z.real).core_hash()?;
@@ -193,21 +305,9 @@ impl Value {
                 if number.is_negative() { h = -h; }
                 Some(finish(h))
             }
-            Value::Codepoints(row) => {
-                let mut h = std::collections::hash_map::DefaultHasher::new();
-                row.hash(&mut h);
-                Some(finish(h.finish() as i64))
-            }
-            Value::Text(s) => {
-                if s.is_empty() { return Some(0); }
-                let mut h = std::collections::hash_map::DefaultHasher::new();
-                s.hash(&mut h);
-                Some(finish(h.finish() as i64))
-            }
-            Value::Bytes(bytes, false, _) => {
-                let text: String = bytes.borrow().iter().map(|byte| char::from(*byte)).collect();
-                Value::text(&text).core_hash()
-            }
+            Value::Codepoints(row) => Some(py_hash_codes(row.iter().copied())),
+            Value::Text(s) => Some(py_hash_codes(s.chars().map(|c| c as u32))),
+            Value::Bytes(bytes, false, _) => Some(py_hash_bytes(&bytes.borrow())),
             Value::Native(_, name) => Value::Text(name.clone()).core_hash(),
             Value::ByteKind(mutable, _) => Value::text(if *mutable { "bytearray" } else { "bytes" }).core_hash(),
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
@@ -318,6 +418,10 @@ impl Value {
                 }
                 Some(if h == u64::MAX { 1546275796 } else { h as i64 })
             }
+            // A cursor walks a row, a span or a walk of the kernel's
+            // own; it hashes by where it lies, as the reference hashes
+            // an iterator by its place, so two names for one walk agree.
+            Value::Cursor(state) => Some((std::rc::Rc::as_ptr(state) as usize >> 4) as i64),
             _ => None,
         }
     }

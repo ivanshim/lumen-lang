@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/undefined.py; PSF License.
 """ Python 'undefined' Codec
 
     This codec will always raise a UnicodeError exception when being
