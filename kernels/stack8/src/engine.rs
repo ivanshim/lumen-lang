@@ -7117,17 +7117,20 @@ impl<'a> Engine<'a> {
     /// the same rows as fresh Rcs, so this tells such a refresh from a
     /// real write the comparison made.
     fn same_rows(one: &crate::value::KeyedPairs, other: &crate::value::KeyedPairs) -> bool {
-        // A refresh rebuilds every name as a fresh text, so a key is the
-        // same key when it stands in the same place or spells the same
-        // name; a value is the same when it stands in the same place.
-        one.len() == other.len() && one.iter().zip(other.iter()).all(|((left, lv), (right, rv))| {
-            let held = |value: &Value| match value {
-                Value::Text(word) => Some(word.clone()),
-                Value::Hashed(pair) => match pair.0.contents() { Value::Text(word) => Some(word), _ => None },
-                _ => None,
+        // A refresh rebuilds every name as a fresh text, so a text key is
+        // the same key when it spells the same name; every other key is the
+        // same when it stands in the same place.
+        one.len() == other.len() && one.iter().zip(other.iter()).all(|((left, _), (right, _))| {
+            // A key kept beside its hash is asked by the thing it holds,
+            // never by the wrapper: a custom key written again is the same
+            // key, and a swap of unequal keys is seen for what it is.
+            let bare = |value: &Value| match value {
+                Value::Hashed(pair) => pair.0.contents(),
+                other => other.contents(),
             };
-            let _ = (lv, rv);
-            left.same_place(right) || match (held(left), held(right)) { (Some(a), Some(b)) => a == b, _ => false }
+            let (left, right) = (bare(left), bare(right));
+            let text = |value: &Value| match value { Value::Text(word) => Some(word.clone()), _ => None };
+            left.same_place(&right) || match (text(&left), text(&right)) { (Some(a), Some(b)) => a == b, _ => false }
         })
     }
 

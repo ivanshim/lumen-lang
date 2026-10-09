@@ -1743,6 +1743,9 @@ impl Value {
             (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
             (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
             (Value::Fields(x), Value::Fields(y)) => Rc::ptr_eq(x, y),
+            // A boolean stands for its own place: it is held by
+            // worth alone, so one worth is one place.
+            (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Small(x), Value::Small(y)) => x == y,
             (Value::Null, Value::Null) => true,
             _ => false,

@@ -1585,6 +1585,9 @@ impl Value {
             (Value::Dict(x), Value::Dict(y)) => Rc::ptr_eq(x, y),
             (Value::Backtrace(x), Value::Backtrace(y)) => Rc::ptr_eq(x, y),
             (Value::Thing(x), Value::Thing(y)) => Rc::ptr_eq(x, y),
+            // A truth is held by worth alone, not by an allocation,
+            // so one worth is the one place.
+            (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Small(x), Value::Small(y)) => x == y,
             (Value::Nil, Value::Nil) => true,
             _ => false,
