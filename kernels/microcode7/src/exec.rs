@@ -19679,7 +19679,7 @@ impl<'a> Machine<'a> {
                 let mut values: Vec<Value> = v.iter().map(|x| match Self::underlying(x) { Some(word @ Value::Text(_)) => word, _ => x.settled() }).collect();
                 // Keep descriptor calls on the labelled native bytes encoder.
                 if work == crate::text::Work::ENCODE && self.table.has_any("ext.builtin.bytes.encode") {
-                    return self.octet_routine(2, &values);
+                    return self.convert_text(true, &[], &values, true);
                 }
                 if work == crate::text::Work::JOIN && values.len() == 2 && matches!(values[0], Value::Text(_) | Value::Unpaired(_)) {
                     let items = self.gathered_members(&values[1])?;
