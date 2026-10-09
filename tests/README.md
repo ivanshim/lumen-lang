@@ -39,6 +39,9 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `langs/lib_python/modules/codeop.py` | `Lib/codeop.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_compile.py`, `python-3.14.8/test/support/bytecode_helper.py` | `Lib/test/test_compile.py`, `Lib/test/support/bytecode_helper.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/test/support/bytecode_helper.py` | `Lib/test/support/bytecode_helper.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_code.py`, `test/_code_definitions.py`, `test/support/bytecode_helper.py` | `Lib/test/test_code.py`, `Lib/test/_code_definitions.py`, `Lib/test/support/bytecode_helper.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/{opcode,_opcode_metadata}.py` | `Lib/opcode.py`, `Lib/_opcode_metadata.py`, copied byte for byte; `_opcode.py` supplies release catalogue data and refuses bytecode implementation operations | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/test/{_code_definitions,support/bytecode_helper}.py` | `Lib/test/_code_definitions.py`, `Lib/test/support/bytecode_helper.py`, copied byte for byte for embedded imports; `runtime_adapters/code_test_support.py` retains the upstream debug-range decorators and late-deletion helper | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_mimetypes.py` | `Lib/test/test_mimetypes.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/mime.types`, `mime.types2` | `Lib/test/mime.types`, `Lib/test/mime.types2`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_genericclass.py` | `Lib/test/test_genericclass.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -357,3 +360,19 @@ The runtime `_ast_unparse.py` is preserved byte for byte from CPython
 `v3.14.8` (`Lib/_ast_unparse.py`); `_ast.py` shares the runtime node classes.
 The AST field schema follows CPython 3.14 and its ASDL definitions. Tree helper
 algorithms are taken from `Lib/ast.py`, with the runtime parser kept separate.
+Code-object coverage uses the unchanged `test_code.py` language test (profile
+1.0, not yet included in the published score). Native code exposes retained
+argument layouts, local and closure names, constants, flags and source
+locations. Location offsets count native instructions in two-byte units;
+missing line or column coordinates remain `None`. The location table uses
+Python's documented encoding, including replacement tables and deprecated
+`co_lnotab` warnings.
+
+The opcode catalogue supplies release names and predicates for imports; it
+does not supply bytecode. Reading or replacing CPython bytecode and exception
+tables, constructing runnable code from bytecode, and reading an unrecorded
+operand-stack bound raise `NotImplementedError`. Native closure/local slot
+removal and global-operand renaming remain unavailable. Code comparison keeps
+native compilation provenance, so independent compilations are not yet
+compared by canonical instruction content. C-API hooks remain absent; the
+upstream decorators determine skips and unguarded requests fail normally.

@@ -937,7 +937,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     let mut root_names = Vec::new();
     let mut suspended = false;
     inspect_form(&body, &[], &mut root_literals, &mut root_names, &mut suspended);
-    let program = Routine { definition: None, immediate_slots: None, body_boundary: r.pos, lexical_origin: r.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_protocol: false, reads_annotation: false, annotator: None, literals: root_literals, referenced: root_names, locals: Vec::new(), flags: 0, future_bits: r.future_bits, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
+    let program = Routine { definition: None, immediate_slots: None, body_boundary: r.pos, lexical_origin: r.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_protocol: false, reads_annotation: false, annotator: None, literals: root_literals, referenced: root_names, locals: Vec::new(), cells: Vec::new(), flags: 0, future_bits: r.future_bits, lineless: false, locations: None, stack_bound: None, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), warnings: r.warnings, future_bits: r.future_bits, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
 }
 
@@ -2161,7 +2161,10 @@ impl<'a> Builder<'a> {
             (group, slot)
         }));
         let mut flags = 3i64;
-        if self.layers.iter().skip(1).any(|s| s.holds == Holds::Every) { flags += 16; }
+        let enclosing_function = self.layers.iter().enumerate().skip(1).any(|(index, layer)| {
+            layer.holds == Holds::Every && self.class_bindings.iter().all(|(depth, _)| *depth != index + 1)
+        });
+        if enclosing_function { flags |= 16; }
         for (kind, bit) in [('v', 4), ('k', 8)] {
             if taking.as_ref().map_or(false, |rules| rules.contains(&kind)) { flags |= bit; }
         }
@@ -2171,6 +2174,20 @@ impl<'a> Builder<'a> {
         let mut suspension = false;
         if holds != Holds::Nothing && self.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
         inspect_form(&body, &locals, &mut literals, &mut referenced, &mut suspension);
+        let mut cells: Vec<String> = literals.iter().filter_map(|item| match item { Value::Routine(child) => Some(child), _ => None })
+            .flat_map(|child| child.reaching.iter().map(|address| if address.ident.starts_with("#completed_class") { "__class__".to_string() } else { address.ident.to_string() }))
+            .filter(|name| locals.contains(name)).collect();
+        cells.sort_unstable();
+        cells.dedup();
+        cells.sort_by_key(|name| params.iter().position(|word| word == name).unwrap_or(usize::MAX));
+        locals.retain(|name| params.contains(name) || !cells.contains(name));
+        let borrowed: Vec<&str> = scope.reaching.iter().map(|a| a.ident.as_ref()).collect();
+        referenced.retain(|name| !borrowed.contains(&name.as_str()));
+        if literals.is_empty() || (doc.is_some() && literals.len() == 1) { literals.push(Value::Nil); }
+        if doc.is_some() { flags |= 1 << 26; }
+        if let Some((class, _)) = &self.within {
+            if qualification == [class.as_str(), name].join(".") { flags |= 1 << 27; }
+        }
         if scope.permits_async && suspension {
             if let Some(at) = scope.return_value_at {
                 self.pos = at;
@@ -2178,7 +2195,7 @@ impl<'a> Builder<'a> {
             }
             flags = (flags & !128) | 512;
         }
-        Ok(constant(Value::Routine(Rc::new(Routine { definition: None, immediate_slots: None, body_boundary: self.pos, lexical_origin: self.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_protocol: false, reads_annotation: false, annotator, literals, referenced, locals, flags, future_bits: self.future_bits, lineless: false, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
+        Ok(constant(Value::Routine(Rc::new(Routine { definition: None, immediate_slots: None, body_boundary: self.pos, lexical_origin: self.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_protocol: false, reads_annotation: false, annotator, literals, referenced, locals, cells, flags, future_bits: self.future_bits, lineless: false, locations: None, stack_bound: None, qualification, doc, generator, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least, formals: params, taking, formal_kinds, formal_slots: scope.formal_slots, idents: scope.idents, reaching: scope.reaching, frameless: holds == Holds::Nothing, written_in: self.written_in.clone(), within: self.within.as_ref().map(|(named, _)| Rc::from(named.as_str())), declared_on, type_params, globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: catches, carried, body }))))
     }
 
     fn annotation_spelling(&self, first: usize, last: usize) -> String {
@@ -2274,7 +2291,7 @@ impl<'a> Builder<'a> {
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
         let wrap = |name: &str, body: Form| {
-            let program = Routine { definition: None, immediate_slots: None, body_boundary: self.pos, lexical_origin: self.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_protocol: false, reads_annotation: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, future_bits: self.future_bits, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
+            let program = Routine { definition: None, immediate_slots: None, body_boundary: self.pos, lexical_origin: self.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_protocol: false, reads_annotation: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), cells: Vec::new(), flags: 0, future_bits: self.future_bits, lineless: false, locations: None, stack_bound: None, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
             constant(Value::Routine(Rc::new(program)))
         };
         prim_call(Prim::Choose, vec![test, wrap("<then>", then), wrap("<else>", otherwise)])
@@ -5381,7 +5398,7 @@ impl<'a> Builder<'a> {
             namespace = Some((book, cell, protocol)); cannot = declined; Ok(body)
         })?;
         let Form::Const(Value::Routine(code)) = body else { unreachable!() };
-        let mut code = (*code).clone(); code.class_namespace = namespace; code.flags &= !3;
+        let mut code = (*code).clone(); code.class_namespace = namespace; code.flags &= !(3 | (1 << 27));
         let made = prim_call(Prim::ClassWork(16), vec![Form::Read(builder), constant(Value::Routine(Rc::new(code))), constant(Value::text(&title)), Form::Read(header)]);
         if self.in_class_body() {
             let slot = self.gensym("inner_class");
@@ -12491,7 +12508,7 @@ impl<'a> Builder<'a> {
             param_slots.reverse();
             let mut body = sequence(s);
             if table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
-            let program = Routine { definition: None, immediate_slots: None, body_boundary: self.pos, lexical_origin: self.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_protocol: false, reads_annotation: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), flags: 0, future_bits: self.future_bits, lineless: false, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body };
+            let program = Routine { definition: None, immediate_slots: None, body_boundary: self.pos, lexical_origin: self.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_protocol: false, reads_annotation: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), cells: Vec::new(), flags: 0, future_bits: self.future_bits, lineless: false, locations: None, stack_bound: None, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name, least: 0, formals: params, formal_kinds: Vec::new(), taking: None, formal_slots: param_slots, idents: scope.idents, reaching: scope.reaching, frameless: false, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Yields, carried: Vec::new(), body };
             stack.push(constant(Value::Routine(Rc::new(program))));
             return Ok(());
         }
@@ -12885,6 +12902,16 @@ fn constant_key_matches(a: &Value, b: &Value) -> bool {
     }
 }
 
+// Follow the same unconditional exits as sequential form evaluation.
+fn metadata_stops(node: &Form) -> bool {
+    match node {
+        Form::OnLine(_, _, inner) | Form::Located(_, _, inner) | Form::Muted(inner) | Form::Silenced(inner) => metadata_stops(inner),
+        Form::Apply(Callee::Prim(Prim::Yield | Prim::Raise | Prim::Leave | Prim::Resume, _), _) => true,
+        Form::Apply(Callee::Prim(Prim::Seq, _), entries) => entries.iter().any(metadata_stops),
+        _ => false,
+    }
+}
+
 fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, names: &mut Vec<String>, suspension: &mut bool) {
     let mut indexed: HashMap<i64, Vec<usize>> = HashMap::new();
     for at in 0..constants.len() {
@@ -12931,10 +12958,29 @@ fn inspect_indexed_form(form: &Form, locals: &[String], constants: &mut Vec<Valu
         Form::Apply(callee, args) => {
             if matches!(callee, Callee::Prim(Prim::Suspend, _)) { *suspension = true; }
             match callee {
-                Callee::Code(target) => children.push(target),
+                Callee::Code(target) => inspect_indexed_form(target, locals, constants, names, suspension, indexed),
                 Callee::Prim(op, spelling) => if !matches!(op, Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Yield | Prim::Leave | Prim::Resume) { named(spelling, locals, names); },
             }
-            children.extend(args);
+            for (index, child) in args.iter().enumerate() {
+                let name_operand = match callee {
+                    Callee::Prim(Prim::Of | Prim::ReadMember | Prim::WriteMember | Prim::HasMember | Prim::Ask | Prim::Onto, _) => index == 1,
+                    Callee::Prim(Prim::BringModule, _) => index == 0,
+                    Callee::Prim(Prim::ImportMember, _) => index > 0,
+                    _ => false,
+                };
+                if name_operand {
+                    if let Form::Const(Value::Text(label)) = child {
+                        if !names.iter().any(|word| word == label.as_ref()) { names.push(label.to_string()); }
+                        continue;
+                    }
+                }
+                let mut plain = child;
+                while let Form::OnLine(_, _, inner) | Form::Located(_, _, inner) = plain { plain = inner; }
+                let unused_literal = matches!(callee, Callee::Prim(Prim::Seq, _)) && index + 1 < args.len()
+                    && matches!(plain, Form::Const(Value::Text(_) | Value::Small(_) | Value::Frac(_) | Value::Flag(_) | Value::Nil));
+                if !unused_literal { inspect_indexed_form(child, locals, constants, names, suspension, indexed); }
+                if matches!(callee, Callee::Prim(Prim::Seq, _)) && metadata_stops(child) { break; }
+            }
         }
         Form::Dyad { a, b, .. } => {
             for input in [a, b] {

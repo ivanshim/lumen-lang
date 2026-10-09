@@ -1287,11 +1287,13 @@ impl Value {
         let mut attributes = vec![Value::text(&program.lexical_origin), Value::Small(program.body_boundary as i64)];
         attributes.extend([
             Value::text(&program.ident), Value::Small(program.declared_on.into()),
-            Value::Small(program.flags), Value::Small(program.future_bits),
-            Value::Flag(program.lineless), Value::Flag(program.generator),
+            Value::Small(program.flags | program.future_bits), Value::Flag(program.lineless),
+            program.locations.clone().unwrap_or(Value::Nil),
             names(&program.formals), Value::tuple(kinds),
             program.gather_from.map_or(Value::Nil, |index| Value::Small(index as i64)),
             names(&program.referenced), names(&program.locals), names(&program.idents),
+            names(&program.cells.iter().filter(|word| !program.locals.contains(word)).cloned().collect::<Vec<_>>()),
+            names(&program.reaching.iter().map(|place| place.ident.to_string()).collect::<Vec<_>>()),
             Value::tuple(program.literals.clone()),
         ]);
         Value::tuple(attributes)
@@ -1818,6 +1820,12 @@ impl Value {
             // around the routine they hold, as CPython writes them.
             Value::Wrapped(4, parts) => format!("<staticmethod({})>", parts[0].bare()),
             Value::Wrapped(5, parts) => format!("<classmethod({})>", parts[0].bare()),
+            Value::Wrapped(7, payload) => {
+                if let Some(Value::Routine(program) | Value::Bound(program, _)) = payload.first() {
+                    let filename = program.written_in.as_deref().unwrap_or("<string>");
+                    format!("<code object {} at {:p}, file {filename:?}, line {}>", program.ident, Rc::as_ptr(payload), program.declared_on)
+                } else { String::from("<code object>") }
+            },
             Value::Wrapped(..) => "<member wrapper>".into(),
             Value::Tuple(items) => {
                 let among = Among::members(self);

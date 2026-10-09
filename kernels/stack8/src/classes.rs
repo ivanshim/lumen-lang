@@ -1463,7 +1463,7 @@ impl<'a> Engine<'a> {
             })
         })
     }
-    fn closure_title(name: &str) -> &str {
+    pub(super) fn closure_title(name: &str) -> &str {
         if name.starts_with("#class_cell") { "__class__" } else { name }
     }
     pub(super) fn adapter(kind: u8, values: Vec<Value>) -> Value { Value::Adapter(Rc::new((kind,values))) }
@@ -2377,6 +2377,11 @@ impl<'a> Engine<'a> {
         if matches!(Self::own_kind(&c).as_deref(), Some("range_iterator" | "longrange_iterator")) {
             return Err(format!("TypeError: cannot create '{}' instances", c.name).into());
         }
+        if Self::own_kind(&c).as_deref() == Some("code") {
+            let values = self.call_items(args)?;
+            if values.iter().any(|(key, _)| key.is_some()) { return Err("TypeError: code() takes no keyword arguments".into()); }
+            return self.code_metadata_call("construct", values.into_iter().map(|(_, value)| value).collect());
+        }
         if Self::own_kind(&c).as_deref() == Some("function") && self.lang.trace_fields.len() > 18 {
             let mut parts = vec![None; 5];
             let mut next = 0;
@@ -2422,6 +2427,9 @@ impl<'a> Engine<'a> {
             let Some(globals) = parts[1].clone() else { return Err("TypeError: function() missing required argument 'globals'".into()); };
             if !matches!(globals.contents(), Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
             let mut made = (**origin).clone();
+            made.doc = if made.code_flags & 0x4000000 != 0 {
+                made.code_constants.first().and_then(|value| match value { Value::Text(text) => Some(text.to_string()), _ => None })
+            } else { None };
             made.globe = Some(globals.clone());
             made.born = Some(self.ambient_builtins());
             if let Some(Value::Text(name)) = parts[2].as_ref().map(Value::contents) { made.ident = name.to_string(); made.qualified = name.to_string(); }
@@ -2451,6 +2459,9 @@ impl<'a> Engine<'a> {
             });
             made.revised = RefCell::new(None);
             let created = Value::Routine(Rc::new(made));
+            self.frame_codes.insert(Rc::as_ptr(&origin.code_identity) as usize, Rc::downgrade(&code));
+            let at = self.function_storage(&created);
+            self.function_members[at].1.fields.borrow_mut().push((format!("\0{}", self.class_word("code")), Value::Adapter(code.clone())));
             if origin.ident == "<genexpr>" || origin.ident.starts_with("#generator") { return Ok(Self::adapter(43, vec![created])); }
             return Ok(created);
         }
@@ -3172,6 +3183,10 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        if name == "__replace__" && matches!(&subject, Value::Class(kind) if Self::own_kind(kind).as_deref() == Some("code")) {
+            let module = self.import_module("_code_metadata")?;
+            return self.class_get(module, "replace", false);
+        }
         if let Value::Object(code) = &subject {
             if self.code_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &code.class_now()))
                 && self.lang.class_details.get("code.replace").and_then(|words| words.first()).is_some_and(|word| word == name) {
@@ -3881,6 +3896,14 @@ impl<'a> Engine<'a> {
                 if let Some(root)=self.root_member(name,Some(c)) {return Ok(root);}
             }
             Value::Object(o) => {
+                if name.starts_with("co_") {
+                    let retained = {
+                        let fields = o.fields.borrow();
+                        if fields.iter().any(|(key, _)| key == name) { None }
+                        else { fields.iter().find(|(key, _)| key == "\0compiled").map(|(_, value)| value.clone()) }
+                    };
+                    if let Some(code) = retained { return self.class_get(code, name, false); }
+                }
                 let module = self.module_holding(&subject).is_some() || Self::kind_beneath(&o.class_now()).as_deref() == Some("module");
                 if module {
                     let annotate = self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).cloned().unwrap_or_default();
@@ -4180,7 +4203,12 @@ impl<'a> Engine<'a> {
                     let pairs=Self::spare_arguments(f,true);
                     return Ok(if pairs.is_empty(){Value::Null}else{Value::Map(Rc::new(pairs.into_iter().map(|(i,v)|(Value::text(&f.formals[i]),v)).collect()))});
                 }
-                if name==self.class_word("code") {return Ok(self.routine_code(f));}
+                if name==self.class_word("code") {
+                    let code = self.routine_code(f);
+                    let at = self.function_storage(&subject);
+                    self.function_members[at].1.fields.borrow_mut().push((format!("\0{name}"), code.clone()));
+                    return Ok(code);
+                }
                 if name==self.class_word("namespace") { let at=self.function_storage(&subject); return Ok(Value::Fields(self.function_members[at].1.clone())); }
                 // The cells a routine closes over, in the order of the
                 // names they stand for, or nothing where it closes over
@@ -4207,8 +4235,22 @@ impl<'a> Engine<'a> {
             }
             Value::Adapter(w) if w.0==7 => {
                 if let Value::Routine(f)=&w.1[0] {
-                    if self.lang.class_details.get("code.replace").and_then(|words| words.first()).map_or(false, |word| word == name) {
+                    if name == "__replace__" || self.lang.class_details.get("code.replace").and_then(|words| words.first()).map_or(false, |word| word == name) {
                         return Ok(Value::ValueMethod(Rc::new((subject.clone(), "code_replace".to_string()))));
+                    }
+                    if name == "co_lines" || name == "co_positions" {
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), if name == "co_lines" { "code_lines" } else { "code_positions" }.to_string()))));
+                    }
+                    if name == "co_linetable" {
+                        if let Some(table) = &f.location_bytes { return Ok(table.clone()); }
+                        return self.code_metadata_call("location_table", vec![subject.clone()]);
+                    }
+                    if name == "co_lnotab" { return self.code_metadata_call("lnotab", vec![subject.clone()]); }
+                    if name == "co_stacksize" {
+                        return f.declared_stack.map(Value::Small).ok_or_else(|| Fault::Note("NotImplementedError: native operand-stack bounds are not retained".into()));
+                    }
+                    if name == "co_code" || name == "co_exceptiontable" {
+                        return Err("NotImplementedError: native code has no CPython bytecode or exception table".into());
                     }
                     if let Some(field) = self.lang.class_details.get("code.fields").and_then(|v| v.iter().position(|s| s == name)) {
                         let number = |n: usize| Value::Small(n as i64);
@@ -4221,9 +4263,10 @@ impl<'a> Engine<'a> {
                             4 => number(f.local_names.len()),
                             5 => words(&f.code_names),
                             6 => Value::tuple(f.code_constants.iter().map(|v| if let Value::Routine(r) = v { self.routine_code(r) } else { v.clone() }).collect()),
-                            7 => Value::Small(f.code_flags),
+                            7 => Value::Small(f.code_flags | f.future_bits),
                             8 => Value::Text(f.written_in.clone().unwrap_or_else(|| self.root_source.clone())),
-                            9 => number(f.declared_on.max(1) as usize),
+                            9 => number(if f.ident == "<program>" { 1 } else { f.declared_on as usize }),
+                            12 => words(&f.cell_names),
                             11 => {
                                 let mut names: Vec<String> = f.enclosing.iter().map(|(slot, _)| Self::closure_title(&f.idents[*slot]).to_owned()).collect();
                                 names.extend(f.enclosed.iter().map(|(slot, _)| Self::closure_title(&f.idents[*slot]).to_owned()));
@@ -4478,7 +4521,7 @@ impl<'a> Engine<'a> {
     fn code_kind_differs(f: &Rc<Routine>, value: Option<&Value>) -> bool {
         let Some(Value::Adapter(code)) = value.map(Value::contents) else { return false };
         let (7, Some(Value::Routine(source))) = (code.0, code.1.first()) else { return false };
-        Self::routine_now(source).code_flags != Self::routine_now(f).code_flags
+        (Self::routine_now(source).code_flags ^ Self::routine_now(f).code_flags) & (32 | 128 | 512) != 0
     }
     /// The routine as it stands once the program writes its spare
     /// arguments, its keyword-only spare arguments or its code over, or
@@ -4498,6 +4541,9 @@ impl<'a> Engine<'a> {
             }
             let mut made = (*source).clone();
             made.annotation = now.annotation.clone();
+            made.globe = now.globe.clone();
+            made.born = now.born.clone();
+            made.home = now.home.clone();
             made.ident = now.ident.clone();
             made.qualified = now.qualified.clone();
             made.doc = now.doc.clone();
@@ -5087,7 +5133,7 @@ impl<'a> Engine<'a> {
                     }
                     let assigned = if name == self.class_word("code") { value.clone() } else { None };
                     let now=self.routine_rewritten(f,name,value)?;
-                    let body_address = Rc::as_ptr(&now.instrs) as usize;
+                    let body_address = Rc::as_ptr(&now.code_identity) as usize;
                     *f.revised.borrow_mut()=Some(Rc::new(now));
                     // Keep the assigned immutable code apart from the function's name and defaults.
                     if let Some(code) = assigned {

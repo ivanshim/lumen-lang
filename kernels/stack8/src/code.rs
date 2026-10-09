@@ -934,16 +934,20 @@ pub struct Routine {
     pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotation: Option<Rc<Routine>>,
     pub code_constants: Vec<Value>,
+    pub code_identity: Rc<()>,
     pub source_tokens: Rc<str>,
     pub source_end: usize,
     pub embedded_integers: Option<Vec<bool>>,
     pub code_names: Vec<String>,
     pub local_names: Vec<String>,
+    pub cell_names: Vec<String>,
     pub code_flags: i64,
     /// The future flags in force where the text was read, as the
     /// reference's code objects carry them in co_flags.
     pub future_bits: i64,
     pub lineless: bool,
+    pub location_bytes: Option<Value>,
+    pub declared_stack: Option<i64>,
     pub generator: bool,
     pub doc: Option<String>,
     pub qualified: String,
@@ -1057,15 +1061,16 @@ impl Drop for Routine {
 
 impl Routine {
     pub fn replacing_constants(&self, supplied: &[Value]) -> Result<Self, String> {
-        if supplied.len() != self.code_constants.len() {
-            return Err("NotImplementedError: changing the constant table length is unavailable".into());
-        }
         let replacements: Vec<Value> = supplied.iter().map(|value| match value.contents() {
             Value::Adapter(parts) if parts.0 == 7 => parts.1[0].clone(),
             other => other,
         }).collect();
-        let embedded = self.embedded_integers.clone().unwrap_or_else(|| self.code_constants.iter()
-            .map(|value| matches!(value, Value::Small(number) if (0..=255).contains(number))).collect());
+        let mut embedded = self.embedded_integers.clone().unwrap_or_else(|| self.code_constants.iter()
+            .map(|value| matches!(value, Value::Small(0..=255))).collect());
+        if embedded.iter().skip(supplied.len()).any(|immediate| !immediate) {
+            return Err("NotImplementedError: removing native constant operands is unavailable".into());
+        }
+        embedded.resize(embedded.len().max(supplied.len()), false);
         for left in 0..self.code_constants.len() {
             if self.code_constants[left + 1..].iter().any(|right|
                 std::mem::discriminant(right) == std::mem::discriminant(&self.code_constants[left])
@@ -1102,8 +1107,9 @@ impl Routine {
         };
         let mut result = self.clone();
         let mut instructions = self.instrs.as_ref().clone();
-        for instruction in &mut instructions {
+        for (offset, instruction) in instructions.iter_mut().enumerate() {
             match instruction {
+                Instr::Const(Value::Flag(false)) if matches!(self.instrs.get(offset + 1), Some(Instr::Skip(_))) => {},
                 Instr::Const(value) => *value = swap(value)?,
                 Instr::Bump { by, .. } => {
                     let updated = swap(by)?;
@@ -1123,10 +1129,55 @@ impl Routine {
         result.instrs = Rc::new(instructions);
         result.code_constants = replacements;
         result.embedded_integers = Some(embedded);
-        result.doc = result.code_constants.first().and_then(|value| match value {
-            Value::Text(text) => Some(text.to_string()), _ => None,
-        });
+        result.doc = if result.code_flags & 0x4000000 == 0 { None } else {
+            result.code_constants.first().and_then(|value| match value { Value::Text(text) => Some(text.to_string()), _ => None })
+        };
         result.revised = RefCell::new(None);
         Ok(result)
+    }
+}
+
+impl Routine {
+    // A replacement table governs saved frames as well as code inspection.
+    pub fn mapped_line(&self, instruction: i64) -> Option<Option<i64>> {
+        let Value::Bytes(storage, ..) = self.location_bytes.as_ref()? else { return None };
+        let bytes = storage.borrow();
+        fn number(bytes: &[u8], cursor: &mut usize) -> Option<i64> {
+            let mut result = 0i64;
+            for shift in (0..63).step_by(6) {
+                let byte = *bytes.get(*cursor)?;
+                *cursor += 1;
+                result |= i64::from(byte & 63) << shift;
+                if byte & 64 == 0 { return Some(result); }
+            }
+            None
+        }
+        let mut cursor = 0;
+        let mut offset = 0i64;
+        let mut line = i64::from(self.declared_on);
+        while let Some(header) = bytes.get(cursor).copied() {
+            cursor += 1;
+            let kind = (header >> 3) & 15;
+            let length = i64::from(header & 7) + 1;
+            let present = match kind {
+                13 | 14 => {
+                    let Some(delta) = number(&bytes, &mut cursor) else { return Some(None) };
+                    line += if delta & 1 == 0 { delta >> 1 } else { -(delta >> 1) };
+                    if kind == 14 {
+                        for _ in 0..3 { if number(&bytes, &mut cursor).is_none() { return Some(None); } }
+                    }
+                    true
+                }
+                10..=12 => { line += i64::from(kind - 10); cursor += 2; true }
+                15 => false,
+                _ => { cursor += 1; true }
+            };
+            if cursor > bytes.len() { return Some(None); }
+            if instruction >= offset && instruction < offset + length {
+                return Some(if present && line != -1 { Some(line) } else { None });
+            }
+            offset += length;
+        }
+        Some(None)
     }
 }

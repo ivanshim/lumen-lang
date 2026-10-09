@@ -841,11 +841,14 @@ pub struct Routine {
     pub immediate_slots: Option<Vec<bool>>,
     pub referenced: Vec<String>,
     pub locals: Vec<String>,
+    pub cells: Vec<String>,
     pub flags: i64,
     /// The future flags in force where the text was read, as the
     /// reference's code objects carry them in co_flags.
     pub future_bits: i64,
     pub lineless: bool,
+    pub locations: Option<Value>,
+    pub stack_bound: Option<i64>,
     pub doc: Option<String>,
     pub qualification: String,
     /// Method parameters whose fallback is evaluated in the body.
@@ -1089,8 +1092,16 @@ impl Form {
             | Self::Located(_, _, inner) | Self::CellOrSaid(_, _, _, inner)
             | Self::HeldEither(_, _, _, inner) => descend.push(inner),
             Self::Apply(callee, arguments) => {
+                let excluded = match callee {
+                    Callee::Prim(Prim::Of | Prim::ReadMember | Prim::WriteMember | Prim::HasMember | Prim::Ask | Prim::Onto, _) => 1..2,
+                    Callee::Prim(Prim::BringModule, _) => 0..1,
+                    Callee::Prim(Prim::ImportMember, _) => 1..arguments.len(),
+                    _ => 0..0,
+                };
                 if let Callee::Code(target) = callee { descend.push(target); }
-                descend.extend(arguments);
+                for (slot, argument) in arguments.iter_mut().enumerate() {
+                    if !excluded.contains(&slot) || !matches!(argument, Self::Const(Value::Text(_))) { descend.push(argument); }
+                }
             }
             Self::Dyad { a, b, .. } => for input in [a, b] {
                 match input { Input::Form(inner) => descend.push(inner), Input::Const(value) => alter(value, old, new, inline)?, _ => {} }
@@ -1124,9 +1135,6 @@ impl Form {
 
 impl Routine {
     pub fn with_literals(&self, values: &[Value]) -> Result<Self, String> {
-        if values.len() != self.literals.len() {
-            return Err("NotImplementedError: changing the constant table length is unavailable".into());
-        }
         let mut literals = Vec::new();
         for value in values {
             literals.push(match value.settled() {
@@ -1134,8 +1142,12 @@ impl Routine {
                 plain => plain,
             });
         }
-        let inline = self.immediate_slots.clone().unwrap_or_else(|| self.literals.iter().map(|value|
-            if let Value::Small(n) = value { *n >= 0 && *n < 256 } else { false }).collect());
+        let mut inline = self.immediate_slots.clone().unwrap_or_else(|| self.literals.iter()
+            .map(|value| matches!(value, Value::Small(0..=255))).collect());
+        if inline.iter().skip(values.len()).any(|slot| !slot) {
+            return Err(String::from("NotImplementedError: removing native constant operands is unavailable"));
+        }
+        while inline.len() < values.len() { inline.push(false); }
         for (index, entry) in self.literals.iter().enumerate() {
             if self.literals.iter().skip(index + 1).any(|other|
                 std::mem::discriminant(entry) == std::mem::discriminant(other) && entry.equals(other)) {
@@ -1145,10 +1157,51 @@ impl Routine {
         let mut adjusted = self.clone();
         adjusted.body.change_literals(&self.literals, &literals, &inline)?;
         adjusted.immediate_slots = Some(inline);
-        adjusted.doc = literals.first().and_then(|value| match value {
-            Value::Text(word) => Some(word.to_string()), _ => None,
-        });
+        adjusted.doc = if adjusted.flags & (1 << 26) != 0 {
+            literals.first().and_then(|value| match value { Value::Text(word) => Some(word.to_string()), _ => None })
+        } else { None };
         adjusted.literals = literals;
         Ok(adjusted)
+    }
+}
+
+impl Routine {
+    // Source-less ranges in retained tables also hide a frame's line.
+    pub fn retained_row(&self, target: i64) -> Option<Value> {
+        let Value::Octets { cell, .. } = self.locations.as_ref()? else { return None };
+        let held = cell.borrow();
+        let mut remaining = held.iter().copied();
+        let mut row = self.declared_on as i64;
+        let mut visited = 0;
+        let unsigned = |input: &mut std::iter::Copied<std::slice::Iter<'_, u8>>| -> Option<i64> {
+            let mut bits = 0;
+            let mut amount = 0;
+            loop {
+                let next = input.next()?;
+                if bits >= 63 { return None; }
+                amount |= (next as i64 & 0x3f) << bits;
+                if next & 0x40 == 0 { return Some(amount); }
+                bits += 6;
+            }
+        };
+        while let Some(tag) = remaining.next() {
+            let width = (tag & 7) as i64 + 1;
+            let format = tag >> 3 & 0xf;
+            if format == 13 || format == 14 {
+                let Some(step) = unsigned(&mut remaining) else { return Some(Value::Nil) };
+                row += if step & 1 != 0 { -(step / 2) } else { step / 2 };
+                if format == 14 && (0..3).any(|_| unsigned(&mut remaining).is_none()) { return Some(Value::Nil); }
+            } else if format < 13 {
+                if format >= 10 { row += (format - 10) as i64; }
+                let payload = if format < 10 { 1 } else { 2 };
+                for _ in 0..payload { if remaining.next().is_none() { return Some(Value::Nil); } }
+            }
+            visited += width;
+            // Numbered forms begin at one; table entries begin at zero.
+            if (visited - width..visited).contains(&(target - 1)) {
+                return Some(if format == 15 || row == -1 { Value::Nil } else { Value::Small(row) });
+            }
+        }
+        Some(Value::Nil)
     }
 }

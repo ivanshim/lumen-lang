@@ -536,7 +536,7 @@ pub struct Machine<'a> {
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
     async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>)>,
     delegated_answers: std::collections::HashSet<usize>,
-    code_handles: HashMap<usize, Weak<Vec<Value>>>,
+    pub(super) code_handles: HashMap<usize, Weak<Vec<Value>>>,
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
     pub library_files: HashMap<String, String>,
@@ -5629,6 +5629,13 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// Route metadata helpers through normal Python calls and catchable errors.
+    pub(super) fn code_metadata_call(&mut self, operation: &str, args: Vec<Value>) -> Res {
+        let namespace = self.load_namespace("_code_metadata")?;
+        let callback = self.read_class_member(namespace, operation, false)?;
+        self.apply_class_member(callback, args)
+    }
+
     pub(super) fn code_handle(&mut self, body: &Rc<Routine>) -> Value {
         if let Some(template) = &body.definition { return self.code_handle(template); }
         let address = Rc::as_ptr(body) as usize;
@@ -5639,7 +5646,15 @@ impl<'a> Machine<'a> {
             .map(|entry| entry.4.clone()).filter(|source| !Rc::ptr_eq(source, body));
         let handle = match origin {
             Some(source) => self.code_handle(&source),
-            None => Value::Wrapped(7, Rc::new(vec![Value::Routine(body.clone())]).into()),
+            None => {
+                let mut immutable = (**body).clone();
+                immutable.definition = None;
+                immutable.globe = None;
+                immutable.born = None;
+                immutable.framed_in = None;
+                immutable.annotator = None;
+                Value::Wrapped(7, Rc::new(vec![Value::Routine(Rc::new(immutable))]).into())
+            },
         };
         if let Value::Wrapped(7, parts) = &handle {
             self.code_handles.insert(address, Rc::downgrade(parts));
@@ -5788,8 +5803,12 @@ impl<'a> Machine<'a> {
                     }
                     return Some(Value::Shared(self.world_kept()));
                 }
-                if index == 4 && matches!(&item.holds.borrow()[5].1, Value::Bound(body, _) if body.lineless) {
-                    return Some(Value::Nil);
+                if index == 4 {
+                    let saved = item.holds.borrow();
+                    if let Value::Bound(program, _) = &saved[5].1 {
+                        if let Some(row) = program.retained_row(Self::activation_instruction(item)) { return Some(row); }
+                        if program.lineless { return Some(Value::Nil); }
+                    }
                 }
                 if index != 12 { return None; }
                 self.update_activation_locals(item);
@@ -10058,6 +10077,10 @@ impl<'a> Machine<'a> {
             if !(arguments.is_empty() && keywords.is_empty()) { return Err(self.method_fault("arguments").into()); }
             return Ok(self.ordinary_directory(receiver));
         }
+        if name == "code_positions" || name == "code_lines" {
+            if !(arguments.is_empty() && keywords.is_empty()) { return Err(String::from("TypeError: code location iterator takes no arguments").into()); }
+            return self.code_metadata_call(if name == "code_lines" { "lines" } else { "positions" }, vec![receiver.clone()]);
+        }
         if name == "code_replace" {
             if let Value::Thing(item) = receiver.settled() {
                 if self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
@@ -10082,23 +10105,78 @@ impl<'a> Machine<'a> {
             let Value::Wrapped(7, parts) = receiver.settled() else { return Err(self.class_unready()) };
             let Some(Value::Routine(body) | Value::Bound(body, _)) = parts.first() else { return Err(self.class_unready()) };
             if !arguments.is_empty() { return Err(Escape::Error(String::from("TypeError: code.replace() takes no positional arguments"))); }
-            let line_word = self.table.strings("ext.stmt.class.detail.code.replace").get(1).map(String::as_str).unwrap_or("");
+            let edits = Value::Dict(Rc::new(keywords.into_iter().map(|(word, item)| (Value::text(&word), item)).collect::<Vec<_>>().into()));
+            let checked = self.code_metadata_call("validate_replace", vec![receiver.clone(), edits])?;
+            let Value::Dict(edits) = checked.settled() else { return Err(self.class_unready()) };
             let mut copy = (**body).clone();
-            for (keyword, value) in keywords {
-                if keyword == line_word {
-                    if !matches!(value.settled(), Value::Octets { .. }) { return Err(Escape::Error(String::from("TypeError: co_linetable must be bytes"))); }
-                    copy.lineless = true;
-                    continue;
-                }
-                match (keyword.as_str(), value.settled()) {
+            let mut counts = [body.taking.as_ref().map_or(body.formals.len(), |kinds| kinds.iter().filter(|kind| matches!(kind, 'b' | 'p')).count()),
+                body.taking.as_ref().map_or(0, |kinds| kinds.iter().filter(|kind| **kind == 'p').count()),
+                body.taking.as_ref().map_or(0, |kinds| kinds.iter().filter(|kind| **kind == 'n').count())];
+            let reshapes = edits.iter().any(|(key, _)| ["co_argcount", "co_posonlyargcount", "co_kwonlyargcount", "co_flags", "co_varnames"].contains(&key.bare().as_str()));
+            for (keyword, item) in edits.iter() {
+                let word = keyword.bare();
+                match (word.as_str(), item.settled()) {
+                    ("co_argcount", Value::Small(n)) => counts[0] = n as usize,
+                    ("co_posonlyargcount", Value::Small(n)) => counts[1] = n as usize,
+                    ("co_kwonlyargcount", Value::Small(n)) => counts[2] = n as usize,
+                    ("co_nlocals", _) => {},
                     ("co_consts", Value::Tuple(values)) => copy = copy.with_literals(&values)?,
+                    ("co_stacksize", Value::Small(n)) => copy.stack_bound = Some(n),
                     ("co_name", Value::Text(text)) => copy.ident = text.to_string(),
                     ("co_qualname", Value::Text(text)) => copy.qualification = text.to_string(),
                     ("co_filename", Value::Text(text)) => copy.written_in = Some(text),
-                    ("co_firstlineno", Value::Small(line)) if line > 0 => copy.declared_on = line as u32,
-                    ("co_flags", Value::Small(flags)) => copy.flags = flags,
-                    _ => return Err(Escape::Error(format!("TypeError: code.replace() got an unexpected keyword argument '{keyword}'"))),
+                    ("co_linetable", bytes @ Value::Octets { .. }) => {
+                        copy.lineless = matches!(&bytes, Value::Octets { cell, .. } if cell.borrow().is_empty());
+                        let previous = self.read_class_member(receiver.clone(), "co_linetable", false)?;
+                        if !previous.equals(&bytes) { copy.locations = Some(bytes); }
+                    }
+                    ("co_firstlineno", Value::Small(line)) => {
+                        if copy.declared_on == line as u32 { continue; }
+                        if copy.locations.is_none() { copy.locations = Some(self.read_class_member(receiver.clone(), "co_linetable", false)?); }
+                        copy.declared_on = line as u32;
+                    }
+                    ("co_flags", Value::Small(flags)) => { copy.flags = flags; copy.future_bits = 0; copy.generator = flags & 0x2a0 != 0; }
+                    ("co_varnames", Value::Tuple(words)) => {
+                        let revised: Vec<String> = words.iter().map(Value::bare).collect();
+                        if revised.len() < body.locals.len() { return Err(String::from("NotImplementedError: removing native local slots is unavailable").into()); }
+                        for ident in copy.idents.iter_mut().chain(copy.formals.iter_mut()) {
+                            if let Some(index) = body.locals.iter().position(|old| old == ident) { *ident = revised[index].clone(); }
+                        }
+                        for name in revised.iter().skip(body.locals.len()) { copy.idents.push(name.clone()); }
+                        copy.locals = revised;
+                    }
+                    ("co_cellvars", Value::Tuple(words)) => copy.cells = words.iter().map(Value::bare).collect(),
+                    ("co_freevars", Value::Tuple(words)) => {
+                        let revised: Vec<String> = words.iter().map(Value::bare).collect();
+                        if revised.windows(2).any(|pair| pair[0] >= pair[1]) { return Err(String::from("NotImplementedError: unordered or duplicate native closure names are unavailable").into()); }
+                        if revised.len() < copy.reaching.len() { return Err(String::from("NotImplementedError: removing native closure slots is unavailable").into()); }
+                        copy.reaching.sort_by_key(|address| Self::capture_title(&address.ident).to_owned());
+                        for (address, ident) in copy.reaching.iter_mut().zip(&revised) { address.ident = Rc::from(ident.as_str()); }
+                        let mut next = copy.reaching.iter().filter(|address| address.up == 1).map(|address| address.at + 1).max().unwrap_or(0);
+                        for ident in revised.into_iter().skip(copy.reaching.len()) {
+                            copy.reaching.push(Address { ident: Rc::from(ident), up: 1, at: next, fallback: None });
+                            next += 1;
+                        }
+                    }
+                    ("co_names", Value::Tuple(words)) => {
+                        let revised: Vec<String> = words.iter().map(Value::bare).collect();
+                        if !revised.starts_with(&body.referenced) { return Err(String::from("NotImplementedError: renaming native global and attribute operands is unavailable").into()); }
+                        copy.referenced = revised;
+                    }
+                    ("co_code" | "co_exceptiontable", _) => return Err(String::from("NotImplementedError: replacing CPython bytecode or exception tables is unavailable").into()),
+                    _ => return Err(self.class_unready()),
                 }
+            }
+            if reshapes {
+                let mut modes: Vec<char> = (0..counts[0]).map(|index| if index < counts[1] { 'p' } else { 'b' }).collect();
+                modes.resize(modes.len() + counts[2], 'n');
+                if copy.flags & 4 != 0 { modes.push('v'); }
+                if copy.flags & 8 != 0 { modes.push('k'); }
+                copy.formals = copy.locals[..modes.len()].to_vec();
+                copy.formal_slots = copy.formals.iter().map(|ident| copy.idents.iter().position(|name| name == ident).unwrap_or(copy.idents.len())).collect();
+                copy.formal_kinds.resize(modes.len(), None);
+                copy.least = copy.least.min(modes.len());
+                copy.taking = Some(modes);
             }
             return Ok(Value::Wrapped(7, Rc::new(vec![Value::Routine(Rc::new(copy))]).into()));
         }
@@ -27882,6 +27960,7 @@ impl<'a> Machine<'a> {
         let holds = vec![(formals[0].clone(), Value::Text(source)), (formals[1].clone(), Value::Text(file.clone())), (formals[2].clone(), Value::Small(mode as i64)), ("co_filename".to_owned(), Value::Text(file)), ("co_flags".to_owned(), Value::Small(bits)), ("co_firstlineno".to_owned(), Value::Small(1)), ("co_optimize".to_owned(), Value::Small(optimize))];
         let mut holds = holds;
         holds.push(("co_consts".to_owned(), constants));
+        holds.push(("\0compiled".to_owned(), self.code_handle(&built.program)));
         holds.push(("\0optimization".to_owned(), Value::Small(optimize.max(0))));
         if !sites.is_empty() { holds.push(("\0ast_positions".to_owned(), sites_value)); }
         self.made += 1;
@@ -29659,6 +29738,14 @@ impl Machine<'_> {
                         let program = match target.settled() {
                             Value::Bound(body, _) | Value::Routine(body) => body,
                             Value::Wrapped(7, data) => match &data[0] { Value::Routine(body) => body.clone(), _ => return Err("TypeError: expected code".into()) },
+                            Value::Thing(object) => {
+                                let values = object.holds.borrow();
+                                let retained = values.iter().find_map(|(name, value)| if name == "\0compiled" { Some(value) } else { None });
+                                match retained {
+                                    Some(Value::Wrapped(7, parts)) => match &parts[0] { Value::Routine(body) => body.clone(), _ => return Err("TypeError: expected code".into()) },
+                                    _ => return Err("TypeError: expected a function or code object".into()),
+                                }
+                            }
                             _ => return Err("TypeError: expected a function or code object".into()),
                         };
                         let mut rows = Vec::new();
