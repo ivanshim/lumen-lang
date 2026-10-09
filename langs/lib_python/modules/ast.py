@@ -167,7 +167,13 @@ def _read_escape(source, i, is_bytes):
         if close >= n:
             raise 'SyntaxError: malformed \\N character escape'
         import unicodedata
-        return (unicodedata.lookup(source[i + 2:close]), close + 1)
+        try:
+            named = unicodedata.lookup(source[i + 2:close])
+        except KeyError:
+            named = None
+        if named is None or len(named) != 1:
+            raise 'SyntaxError: unknown Unicode character name'
+        return (named, close + 1)
     # An unknown escape keeps the backslash, as Python does.
     return ('\\' + c, i + 1)
 
@@ -405,6 +411,12 @@ def literal_eval(node_or_string):
 
 def _syntax(message):
     raise 'SyntaxError: ' + message
+
+def _indent(message):
+    raise 'IndentationError: ' + message
+
+def _tab(message):
+    raise 'TabError: ' + message
 
 def _no_tree():
     raise _NO_TREE
@@ -2049,16 +2061,133 @@ _STMT_WORDS = ('def', 'class', 'if', 'elif', 'else', 'for', 'while', 'try',
 _BINOPS = {'+': Add, '-': Sub, '*': Mult, '/': Div, '//': FloorDiv,
            '%': Mod, '@': MatMult, '<<': LShift, '>>': RShift,
            '|': BitOr, '^': BitXor, '&': BitAnd, '**': Pow}
+
+# Statement classes whose parse reads through the whole suite, newlines
+# included; the token after one is already the next statement's first.
 _CMPOPS = {'==': Eq, '!=': NotEq, '<': Lt, '<=': LtE, '>': Gt, '>=': GtE}
 _UNARY = {'+': UAdd, '-': USub, '~': Invert}
 
+# The names CPython's parser uses for the targets it refuses in
+# 'target += value' (Parser/action_helpers.c, _PyPegen_get_expr_name); only
+# the node kinds this reader can build are listed, and Constant is read
+# apart because its name depends on the value.
+_AUG_NAMES = {Tuple: 'tuple', List: 'list', Dict: 'dict literal',
+              Set: 'set display', Call: 'function call',
+              BinOp: 'expression', UnaryOp: 'expression',
+              BoolOp: 'expression', Compare: 'comparison',
+              ListComp: 'list comprehension', Await: 'await expression',
+              JoinedStr: 'f-string expression',
+              FormattedValue: 'f-string expression'}
+
+def _aug_target_name(node):
+    name = _AUG_NAMES.get(type(node))
+    if name is not None:
+        return name
+    if type(node) == Constant:
+        value = node.value
+        if value is None:
+            return 'None'
+        if value is True:
+            return 'True'
+        if value is False:
+            return 'False'
+        if type(value).__name__ == 'ellipsis':
+            return 'ellipsis'
+        return 'literal'
+    return 'expression'
+
 class _Parser:
-    def __init__(self, source, toks, optimize=-1, fold_debug=False):
+    def __init__(self, source, toks, optimize=-1, fold_debug=False, comments=None, fv=None):
         self.source = source
         self.toks = toks
         self.at = 0
+        self.fv = _feature_minor(fv)
         self.optimize = optimize
         self.fold_debug = fold_debug
+        self.lines = source.split('\n')
+        self.icols = {}
+        self.indent_stack = [0]
+        # CPython's alternate indentation column (each tab one wide) for
+        # every active level. A level's spelling rides on this stack, so
+        # leaving a suite restores the enclosing spelling instead of
+        # comparing one sibling suite against another that reused the
+        # same column.
+        self.alt_stack = [0]
+        # Type comments by row, from the comments _lex recorded; a row is
+        # struck out as its comment attaches to a node, and a type comment
+        # left over at the end of the module is a misplaced one.
+        self.tcomments = {}
+        self.used = set()
+        if comments is not None:
+            for row, col, text in comments:
+                payload = _type_comment_payload(text)
+                if payload is not None:
+                    self.tcomments[row] = payload
+
+    def indent_col(self, tok):
+        # A statement's indentation: the line's leading whitespace, each
+        # tab advancing to the next multiple of eight, as CPython's
+        # tokenizer measures it.
+        row = tok.srow
+        known = self.icols.get(row)
+        if known is not None:
+            return known
+        text = self.lines[row - 1] if row - 1 < len(self.lines) else ''
+        col = 0
+        i = 0
+        stop = tok.scol
+        while i < stop and i < len(text):
+            if text[i] == '\t':
+                col += 8 - col % 8
+            else:
+                col += 1
+            i += 1
+        self.icols[row] = col
+        return col
+
+    def alt_indent_col(self, tok):
+        # The same leading whitespace with each tab and space counting
+        # one: CPython's alternate indentation column, which records how
+        # a level is spelled where indent_col records how wide it is.
+        text = self.lines[tok.srow - 1] if tok.srow - 1 < len(self.lines) else ''
+        stop = tok.scol if tok.scol < len(text) else len(text)
+        i = 0
+        while i < stop and (text[i] == ' ' or text[i] == '\t' or
+                            text[i] == '\f'):
+            i += 1
+        return i
+
+    def prefix_len(self, tok):
+        # The leading whitespace of the token's line, in characters; a
+        # statement's first token always stands right after it.
+        text = self.lines[tok.srow - 1] if tok.srow - 1 < len(self.lines) else ''
+        i = 0
+        n = len(text)
+        while i < n and (text[i] == ' ' or text[i] == '\t' or text[i] == '\f'):
+            i += 1
+        return i
+
+    def at_clause(self, word, parent_col):
+        # A clause keyword (else, except, ...) opening a line of its own
+        # at the owning statement's indentation.
+        tok = self.peek()
+        return (tok.kind == 'name' and tok.text == word and
+                tok.scol == self.prefix_len(tok) and
+                self.indent_col(tok) == parent_col)
+
+    def take_comment(self, row):
+        # The type comment standing on row, struck out so it cannot
+        # attach twice; None when the row carries none.
+        payload = self.tcomments.get(row)
+        if payload is not None and row not in self.used:
+            self.used.add(row)
+            return payload
+        return None
+
+    def check_comments(self):
+        for row in self.tcomments:
+            if row not in self.used:
+                _syntax('invalid syntax')
 
     def peek(self):
         return self.toks[self.at]
@@ -2095,10 +2224,22 @@ class _Parser:
             while self.peek().kind == 'newline':
                 self.pop()
             tok = self.peek()
-            if tok.kind == 'end' or tok.scol < indent:
+            if tok.kind == 'end':
                 return body
-            if tok.scol > indent:
-                raise IndentationError('unexpected indent')
+            if tok.scol != self.prefix_len(tok):
+                _syntax('invalid syntax')
+            column = self.indent_col(tok)
+            if column < indent:
+                if column not in self.indent_stack:
+                    _indent('unindent does not match any outer indentation level')
+                return body
+            alternate = self.alt_indent_col(tok)
+            if column > indent:
+                if alternate <= self.alt_stack[-1]:
+                    _tab('inconsistent use of tabs and spaces in indentation')
+                _indent('unexpected indent')
+            if alternate != self.alt_stack[-1]:
+                _tab('inconsistent use of tabs and spaces in indentation')
             node = self.parse_stmt()
             body.append(node)
             while self.at_op(';'):
@@ -2137,9 +2278,16 @@ class _Parser:
             return body
         while self.peek().kind == 'newline':
             self.pop()
-        if self.peek().kind == 'end' or self.peek().scol <= header.scol:
+        if self.peek().kind == 'end' or self.indent_col(self.peek()) <= self.indent_col(header):
             raise IndentationError('expected an indented block')
-        body = self.parse_block(self.peek().scol)
+        alternate = self.alt_indent_col(self.peek())
+        if alternate <= self.alt_stack[-1]:
+            _tab('inconsistent use of tabs and spaces in indentation')
+        self.indent_stack.append(self.indent_col(self.peek()))
+        self.alt_stack.append(alternate)
+        body = self.parse_block(self.indent_stack[-1])
+        self.indent_stack.pop()
+        self.alt_stack.pop()
         self._inline_tail = 0
         return body
 
@@ -2164,10 +2312,13 @@ class _Parser:
         keyword_only = False
         while not self.at_op(closing):
             if self.at_op('/'):
+                if self.fv < 8:
+                    _syntax('Positional-only parameters are only supported in Python 3.8 and greater')
                 self.pop()
                 posonly = positional
                 positional = []
             else:
+                argument = None
                 category = ''
                 if self.at_op('*') or self.at_op('**'):
                     category = self.pop().text
@@ -2202,6 +2353,11 @@ class _Parser:
                     positional.append(argument)
                     if has_default:
                         defaults.append(default)
+            comment_row = self.toks[self.at - 1].srow
+            if self.at_op(','):
+                comment_row = self.peek().srow
+            if argument is not None:
+                argument.type_comment = self.take_comment(comment_row)
             if not self.at_op(','):
                 break
             self.pop()
@@ -2287,7 +2443,7 @@ class _Parser:
         token = self.peek()
         first = token if start is None else start
         word = token.text
-        if word == 'async':
+        if word == 'async' and self.fv >= 5:
             self.pop()
             node = self.parse_stmt(first)
             mapping = {FunctionDef: AsyncFunctionDef, For: AsyncFor, With: AsyncWith}
@@ -2321,8 +2477,23 @@ class _Parser:
             if self.at_op('->'):
                 self.pop()
                 returns, rs, re = self.parse_expr(False)
+            comments = []
+            if self.toks[self.at + 1].kind == 'newline':
+                colon_row = self.peek().srow
+                header_comment = self.take_comment(colon_row)
+                if header_comment is not None:
+                    comments.append(header_comment)
+                ahead = self.at + 1
+                while self.toks[ahead].kind == 'newline':
+                    ahead += 1
+                for row in range(colon_row + 1, self.toks[ahead].srow):
+                    comment = self.take_comment(row)
+                    if comment is not None:
+                        comments.append(comment)
+            if len(comments) > 1:
+                _syntax('Cannot have two type comments on def')
             body = self.parse_suite(first)
-            return self.located(FunctionDef, first, body[-1], name=name.text, args=params, body=body, returns=returns, type_params=type_params)
+            return self.located(FunctionDef, first, body[-1], name=name.text, args=params, body=body, returns=returns, type_params=type_params, type_comment=comments[0] if comments else None)
         if word == 'class':
             self.pop()
             name = self.pop()
@@ -2349,9 +2520,9 @@ class _Parser:
             other = []
             while self.peek().kind == 'newline':
                 self.pop()
-            if self.peek().scol == first.scol and self.at_name('elif') and word != 'while':
+            if self.indent_col(self.peek()) == self.indent_col(first) and self.at_name('elif') and word != 'while':
                 other = [self.parse_stmt()]
-            elif self.peek().scol == first.scol and self.at_name('else'):
+            elif self.indent_col(self.peek()) == self.indent_col(first) and self.at_name('else'):
                 header = self.pop()
                 other = self.parse_suite(header)
             return self.located(While if word == 'while' else If, first, (other or body)[-1], test=test, body=body, orelse=other)
@@ -2363,13 +2534,14 @@ class _Parser:
             self.pop()
             value, vs, ve = self.parse_expr(True)
             self.set_store(target)
+            type_comment = self.take_comment(self.peek().srow) if self.toks[self.at + 1].kind == 'newline' else None
             body = self.parse_suite(first)
             other = []
             while self.peek().kind == 'newline':
                 self.pop()
-            if self.peek().scol == first.scol and self.at_name('else'):
+            if self.indent_col(self.peek()) == self.indent_col(first) and self.at_name('else'):
                 other = self.parse_suite(self.pop())
-            return self.located(For, first, (other or body)[-1], target=target, iter=value, body=body, orelse=other)
+            return self.located(For, first, (other or body)[-1], target=target, iter=value, body=body, orelse=other, type_comment=type_comment)
         if word == 'with':
             self.pop()
             parenthesized = self.at_op('(')
@@ -2391,8 +2563,9 @@ class _Parser:
                     break
             if parenthesized:
                 self.expect_op(')')
+            type_comment = self.take_comment(self.peek().srow) if self.toks[self.at + 1].kind == 'newline' else None
             body = self.parse_suite(first)
-            return self.located(With, first, body[-1], items=items, body=body)
+            return self.located(With, first, body[-1], items=items, body=body, type_comment=type_comment)
         if word == 'match' and self.toks[self.at + 1].text not in ('=', '(', '.', '[', ':', ';'):
             self.pop()
             subject, ss, se = self.parse_expr(True)
@@ -2433,7 +2606,7 @@ class _Parser:
             while True:
                 while self.peek().kind == 'newline':
                     self.pop()
-                if self.peek().scol != first.scol:
+                if self.indent_col(self.peek()) != self.indent_col(first):
                     break
                 if self.at_name('except'):
                     header = self.pop()
@@ -2535,7 +2708,7 @@ class _Parser:
             for target in targets:
                 self.set_store(target, Del)
             return self.located(Delete, first, self.toks[self.at - 1], targets=targets)
-        if first.kind == 'name' and word in _STMT_WORDS and word not in ('yield', 'await', 'lambda'):
+        if first.kind == 'name' and word in _STMT_WORDS and word not in ('yield', 'await', 'lambda') and not (word == 'async' and self.fv < 5):
             _no_tree()
         node, ls, le = self.parse_expr(True)
         if self.at_op(':'):
@@ -2550,6 +2723,8 @@ class _Parser:
         operator = self.peek().text
         if self.peek().kind == 'op' and operator.endswith('=') and operator[:-1] in _BINOPS:
             self.pop()
+            if not isinstance(node, (Name, Attribute, Subscript)):
+                _syntax("'" + _aug_target_name(node) + "' is an illegal expression for augmented assignment")
             value, vs, ve = self.parse_expr(True)
             self.set_store(node)
             return self.located(AugAssign, first, self.toks[self.at - 1], target=node, op=_BINOPS[operator[:-1]](), value=value)
@@ -2562,7 +2737,7 @@ class _Parser:
                     targets.append(value)
             for target in targets:
                 self.set_store(target)
-            return self.located(Assign, first, self.toks[self.at - 1], targets=targets, value=value)
+            return self.located(Assign, first, self.toks[self.at - 1], targets=targets, value=value, type_comment=self.take_comment(self.toks[self.at - 1].srow))
         return self.located(Expr, first, self.toks[self.at - 1], value=node)
 
     # Read assignment targets without treating the following 'in' as comparison.
@@ -2774,6 +2949,8 @@ class _Parser:
         while True:
             tok = self.peek()
             if tok.kind == 'op' and tok.text in ('*', '/', '//', '%', '@'):
+                if tok.text == '@' and self.fv < 5:
+                    _syntax("The '@' operator is only supported in Python 3.5 and greater")
                 self.pop()
                 right, rs, re = self.parse_unary()
                 node = BinOp(left=node, op=_BINOPS[tok.text](), right=right,
@@ -2795,7 +2972,18 @@ class _Parser:
         return self.parse_power()
 
     def parse_power(self):
-        node, ls, le = self.parse_postfix()
+        tok = self.peek()
+        if tok.kind == 'name' and tok.text == 'await' and self.fv >= 5:
+            # await takes a primary alone: 'await f() ** 2' squares the
+            # awaited value, and 'await -x' is no expression at all.
+            self.pop()
+            operand, os, oe = self.parse_postfix()
+            node = Await(value=operand, lineno=tok.srow, col_offset=tok.scol,
+                         end_lineno=oe[0], end_col_offset=oe[1])
+            ls = (tok.srow, tok.scol)
+            le = oe
+        else:
+            node, ls, le = self.parse_postfix()
         if self.at_op('**'):
             self.pop()
             right, rs, re = self.parse_unary()
@@ -2974,6 +3162,8 @@ class _Parser:
 
         if tok.kind == 'num':
             self.pop()
+            if '_' in tok.text and self.fv < 6:
+                _syntax('Underscores in numeric literals are only supported in Python 3.6 and greater')
             node = Constant(value=_number(tok.text, self.source),
                             lineno=tok.srow, col_offset=tok.scol,
                             end_lineno=tok.erow, end_col_offset=tok.ecol)
@@ -2990,7 +3180,12 @@ class _Parser:
             if word == '__debug__' and (self.fold_debug or self.optimize >= 1):
                 return self.keyword_constant(tok, self.optimize < 1)
             if word in _STMT_WORDS or word in ('and', 'or', 'is', 'in', 'not', 'if', 'else'):
-                _no_tree()
+                if self.fv < 5 and (word == 'async' or word == 'await'):
+                    pass
+                elif word == 'await':
+                    _syntax('invalid syntax')
+                else:
+                    _no_tree()
             node = Name(id=word, ctx=Load(), lineno=tok.srow,
                         col_offset=tok.scol, end_lineno=tok.erow,
                         end_col_offset=tok.ecol)
@@ -3192,12 +3387,11 @@ class _Parser:
                          end_col_offset=last.ecol)
         return (node, (first.srow, first.scol), (last.erow, last.ecol))
 
-def _type_comment_payload(text):
-    # The payload of a type comment, or None when the comment (its
-    # source, '#' first, to the end of the line) is not one. CPython's
-    # tokenizer matches '#', then any spaces and tabs, then 'type:',
-    # then spaces and tabs again; a 'type: ignore' comment is collected
-    # apart and is not a type comment.
+def _comment_payload(text):
+    # What follows 'type:' in a comment (its source, '#' first, to the end
+    # of the line), or None when the comment is not a '# type:' comment at
+    # all. CPython's tokenizer matches '#', then any spaces and tabs, then
+    # 'type:', then spaces and tabs again.
     i = 1
     n = len(text)
     while i < n and (text[i] == ' ' or text[i] == '\t'):
@@ -3207,12 +3401,43 @@ def _type_comment_payload(text):
     i += 5
     while i < n and (text[i] == ' ' or text[i] == '\t'):
         i += 1
-    payload = text[i:]
-    if payload[:6] == 'ignore' and (len(payload) == 6 or
-                                    (ord(payload[6]) < 128 and
-                                     not payload[6].isalnum())):
+    return text[i:]
+
+def _is_ignore(payload):
+    # A 'type: ignore' comment is collected apart and is not a type
+    # comment; 'ignore' must end there or be followed by a non-alphanumeric
+    # ASCII character ('ignoreé' and 'ignorewhatever' are type comments).
+    return payload[:6] == 'ignore' and (len(payload) == 6 or
+                                        (ord(payload[6]) < 128 and
+                                         not payload[6].isalnum()))
+
+def _type_comment_payload(text):
+    # The payload of a type comment, or None when the comment is not one.
+    payload = _comment_payload(text)
+    if payload is None or _is_ignore(payload):
         return None
     return payload
+
+def _type_ignore_tag(text):
+    # The tag of a 'type: ignore' comment -- whatever stands after
+    # 'ignore', '[' or '=' or ' ...' included -- or None.
+    payload = _comment_payload(text)
+    if payload is None or not _is_ignore(payload):
+        return None
+    return payload[6:]
+
+def _feature_minor(feature_version):
+    # feature_version as a 3.minor pair's minor. None is the running
+    # version; an int is the minor of 3.x; a pair is (major, minor).
+    if feature_version is None:
+        import sys
+        return sys.version_info[1]
+    if type(feature_version) == type(0):
+        return feature_version
+    major, minor = feature_version
+    if major != 3:
+        raise 'ValueError: feature_version major must be 3'
+    return minor
 
 def _check_type_comments(toks, comments):
     # One pass over tokens and comments in source order. Inside a def's
@@ -3398,12 +3623,14 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
     if mode not in ('exec', 'single'):
         raise ValueError("compile() mode must be 'exec', 'eval', 'single' or 'func_type'")
     comments = []
-    toks = _lex(source, 0, len(source), 1, 0, False, comments)
+    toks = _lex(source, 0, len(source), 1, 0, False,
+                comments if type_comments else None)
     if type_comments:
         _check_type_comments(toks, comments)
-    parser = _Parser(source, toks)
+    parser = _Parser(source, toks, comments=comments if type_comments else None, fv=feature_version)
     tree = parser.parse_module(single=mode == 'single')
     if type_comments:
+        parser.check_comments()
         for row, column, text in comments:
             payload = text[1:].lstrip(' \t')
             if payload.startswith('type:'):
