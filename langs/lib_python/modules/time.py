@@ -43,6 +43,7 @@ def monotonic_ns():
 def perf_counter_ns():
     return __clock(True, False)
 
+_STRUCT_TM_ITEMS = 11
 struct_time = _host_clock('struct_time')
 
 def localtime(seconds=None):
@@ -175,133 +176,203 @@ def asctime(fields=None):
 def ctime(seconds=None):
     return asctime(localtime(seconds))
 
+# The E and O modifiers name an alternative representation the C locale
+# does not carry, so over the plain conversion they fall back on it; the
+# pairs the host's C library refuses stand as written instead.
+_E_MODIFIERS = 'cCnpPrRstTuXxYyZz%'
+_O_MODIFIERS = 'bBCdegGhHIjklmMnpPrRsStTuUVwWyzZ%'
+
+def _modifier_fits(modifier, conversion):
+    if modifier == 'E':
+        return conversion in _E_MODIFIERS
+    return conversion in _O_MODIFIERS
+
+def _offset_word(offset):
+    # A zone offset spelled the way the C library does, sign and figures.
+    sign = '+'
+    if offset < 0:
+        sign = '-'
+        offset = -offset
+    hours, left = divmod(offset, 3600)
+    minutes = divmod(left, 60)[0]
+    return sign + _pair(hours) + _pair(minutes)
+
+def _case(conversion, text, flags):
+    # A caret raises every conversion but the lower-case meridian; a
+    # hash changes the case of the day and month names and the meridian
+    # only, as the C library's own flag does.
+    if '^' in flags and conversion != 'P':
+        text = text.upper()
+    if '#' in flags and conversion and conversion in 'aAbBhp':
+        text = text.lower() if text.isupper() else text.upper()
+    return text
+
+def _field(conversion, text, flags, digits, natural, pad):
+    # Lay the figures out the width the C library would: its own width
+    # unless one is written, a flag choosing the filler, and the whole
+    # shortened only when the conversion carries that few figures.
+    wide = natural
+    fill = pad
+    for flag in flags:
+        if flag == '-':
+            fill = ' '
+            wide = 0
+        elif flag == '0':
+            fill = '0'
+            if wide == 0:
+                wide = natural
+        elif flag == '_':
+            fill = ' '
+    if digits:
+        wanted = int(digits)
+        if wanted > wide:
+            wide = wanted
+    # The zone name keeps its own shape however a negative flag meets a
+    # width, the one conversion the C library lays out differently.
+    if conversion == 'Z' and '-' in flags:
+        wide = len(text)
+    if wide > len(text):
+        text = fill * (wide - len(text)) + text
+    return _case(conversion, text, flags)
+
 def strftime(format, fields=None):
-    # Directive by directive in the C locale, padded the way the host's
-    # C library pads: a bare year is not spread to four figures, and a
-    # conversion it would not know stands as written.
+    # Directive by directive the way the host's C library writes it in
+    # the C locale: every conversion, the flags and field width written
+    # before it, the E and O modifiers, and any conversion the library
+    # would not know left as written.
     if fields is None:
         fields = localtime()
     parts = list(fields)
     if len(parts) != 9:
         raise TypeError('strftime() argument must be a 9-sequence, not ' + str(len(parts)) + '-sequence')
-    year, month, day, hour, minute, second, weekday, day_of_year = parts[:8]
+    year, month, day, hour, minute, second, weekday, day_of_year, isdst = parts
+    zone = getattr(fields, 'tm_zone', None)
+    offset = getattr(fields, 'tm_gmtoff', None)
     iso = None
     out = ''
     at = 0
-    while at < len(format):
+    span = len(format)
+    while at < span:
         ch = format[at]
         at += 1
         if ch != '%':
             out += ch
             continue
-        if at >= len(format):
-            out += '%'
+        spec = at
+        flags = ''
+        while at < span and format[at] in '-_0^#':
+            flags += format[at]
+            at += 1
+        digits = ''
+        while at < span and format[at].isdigit():
+            digits += format[at]
+            at += 1
+        if at < span and format[at] in 'EO':
+            modifier = format[at]
+            at += 1
+        else:
+            modifier = ''
+        if at >= span:
+            out += _field('', '%' + format[spec:], flags, digits, 0, ' ')
             break
         ch = format[at]
         at += 1
-        if ch == 'E' or ch == 'O':
-            if ch == 'O' and at < len(format) and format[at] in ('B', 'b'):
-                word = format[at]
-                at += 1
-                out += _MONTH_FULL[month] if word == 'B' else _MONTH_SHORT[month]
-            else:
-                out += '%' + ch
+        if modifier and not _modifier_fits(modifier, ch):
+            out += _field('', '%' + format[spec:at], flags, digits, 0, ' ')
             continue
         if ch == 'a':
-            out += _DAY_SHORT[weekday]
+            out += _field('a', _DAY_SHORT[weekday], flags, digits, 0, ' ')
         elif ch == 'A':
-            out += _DAY_FULL[weekday]
+            out += _field('A', _DAY_FULL[weekday], flags, digits, 0, ' ')
         elif ch == 'b' or ch == 'h':
-            out += _MONTH_SHORT[month]
+            out += _field('b', _MONTH_SHORT[month], flags, digits, 0, ' ')
         elif ch == 'B':
-            out += _MONTH_FULL[month]
+            out += _field('B', _MONTH_FULL[month], flags, digits, 0, ' ')
         elif ch == 'c':
-            out += asctime(parts)
+            out += _case('c', asctime(parts), flags)
         elif ch == 'C':
-            out += str(divmod(year, 100)[0])
+            out += _field('C', str(divmod(year, 100)[0]), flags, digits, 1, '0')
         elif ch == 'd':
-            out += _pair(day)
-        elif ch == 'e':
-            out += _spread(day)
+            out += _field('d', str(day), flags, digits, 2, '0')
         elif ch == 'D' or ch == 'x':
-            out += _pair(month) + '/' + _pair(day) + '/' + _pair(divmod(year, 100)[1])
+            out += _field('D', _pair(month) + '/' + _pair(day) + '/' + _pair(divmod(year, 100)[1]), flags, digits, 0, ' ')
+        elif ch == 'e':
+            out += _field('e', str(day), flags, digits, 2, ' ')
         elif ch == 'F':
-            out += str(year) + '-' + _pair(month) + '-' + _pair(day)
-        elif ch == 'G':
-            if iso is None:
-                iso = _iso(year, weekday, day_of_year)
-            out += str(iso[0])
+            out += _case('F', str(year) + '-' + _pair(month) + '-' + _pair(day), flags)
         elif ch == 'g':
             if iso is None:
                 iso = _iso(year, weekday, day_of_year)
-            out += _pair(divmod(iso[0], 100)[1])
+            out += _field('g', str(divmod(iso[0], 100)[1]), flags, digits, 2, '0')
+        elif ch == 'G':
+            if iso is None:
+                iso = _iso(year, weekday, day_of_year)
+            out += _field('G', str(iso[0]), flags, digits, 1, '0')
         elif ch == 'H':
-            out += _pair(hour)
+            out += _field('H', str(hour), flags, digits, 2, '0')
         elif ch == 'I':
             twelve = divmod(hour, 12)[1]
-            out += _pair(12 if twelve == 0 else twelve)
+            out += _field('I', str(12 if twelve == 0 else twelve), flags, digits, 2, '0')
         elif ch == 'j':
-            out += _triple(day_of_year)
+            out += _field('j', str(day_of_year), flags, digits, 3, '0')
         elif ch == 'k':
-            out += _spread(hour)
+            out += _field('k', str(hour), flags, digits, 2, ' ')
         elif ch == 'l':
             twelve = divmod(hour, 12)[1]
-            out += _spread(12 if twelve == 0 else twelve)
+            out += _field('l', str(12 if twelve == 0 else twelve), flags, digits, 2, ' ')
         elif ch == 'm':
-            out += _pair(month)
+            out += _field('m', str(month), flags, digits, 2, '0')
         elif ch == 'M':
-            out += _pair(minute)
+            out += _field('M', str(minute), flags, digits, 2, '0')
         elif ch == 'n':
-            out += '\n'
+            out += _field('n', '\n', flags, digits, 0, ' ')
         elif ch == 'p':
-            out += 'AM' if hour < 12 else 'PM'
+            out += _field('p', 'AM' if hour < 12 else 'PM', flags, digits, 2, ' ')
         elif ch == 'P':
-            out += 'am' if hour < 12 else 'pm'
+            out += _field('P', 'am' if hour < 12 else 'pm', flags, digits, 2, ' ')
         elif ch == 'r':
             twelve = divmod(hour, 12)[1]
-            out += (_pair(12 if twelve == 0 else twelve) + ':' + _pair(minute) +
-                    ':' + _pair(second) + ' ' + ('AM' if hour < 12 else 'PM'))
+            out += _case('r', _pair(12 if twelve == 0 else twelve) + ':' + _pair(minute) + ':' + _pair(second) + ' ' + ('AM' if hour < 12 else 'PM'), flags)
         elif ch == 'R':
-            out += _pair(hour) + ':' + _pair(minute)
+            out += _field('R', _pair(hour) + ':' + _pair(minute), flags, digits, 0, ' ')
         elif ch == 's':
             days = _ymd2ord(year, month, day) - _EPOCH_ORD
-            out += str(days * 86400 + hour * 3600 + minute * 60 + second)
+            out += _field('s', str(days * 86400 + hour * 3600 + minute * 60 + second), flags, digits, 0, ' ')
         elif ch == 'S':
-            out += _pair(second)
+            out += _field('S', str(second), flags, digits, 2, '0')
         elif ch == 't':
-            out += '\t'
+            out += _field('t', '\t', flags, digits, 0, ' ')
         elif ch == 'T' or ch == 'X':
-            out += _pair(hour) + ':' + _pair(minute) + ':' + _pair(second)
+            out += _field('T', _pair(hour) + ':' + _pair(minute) + ':' + _pair(second), flags, digits, 0, ' ')
         elif ch == 'u':
-            out += str(weekday + 1)
+            out += _field('u', str(weekday + 1), flags, digits, 1, '0')
         elif ch == 'U':
             sunday = divmod(weekday + 1, 7)[1]
-            out += _pair(divmod(day_of_year - 1 + 7 - sunday, 7)[0])
+            out += _field('U', str(divmod(day_of_year - 1 + 7 - sunday, 7)[0]), flags, digits, 2, '0')
         elif ch == 'V':
             if iso is None:
                 iso = _iso(year, weekday, day_of_year)
-            out += _pair(iso[1])
+            out += _field('V', str(iso[1]), flags, digits, 2, '0')
         elif ch == 'w':
-            out += str(divmod(weekday + 1, 7)[1])
+            out += _field('w', str(divmod(weekday + 1, 7)[1]), flags, digits, 1, '0')
         elif ch == 'W':
-            out += _pair(divmod(day_of_year - 1 + 7 - weekday, 7)[0])
+            out += _field('W', str(divmod(day_of_year - 1 + 7 - weekday, 7)[0]), flags, digits, 2, '0')
         elif ch == 'y':
-            out += _pair(divmod(year, 100)[1])
+            out += _field('y', str(divmod(year, 100)[1]), flags, digits, 2, '0')
         elif ch == 'Y':
-            out += str(year)
+            out += _field('Y', str(year), flags, digits, 1, '0')
         elif ch == 'z':
-            out += '+0000'
+            out += _field('z', '+0000' if offset is None else _offset_word(offset), flags, digits, 0, ' ')
         elif ch == 'Z':
-            # A broken-down time carrying a zone name keeps it; one
-            # made by hand is named for the zone when it says it is not
-            # in daylight time, and nameless when it cannot say.
-            zone = getattr(fields, 'tm_zone', None)
+            # A broken-down time carrying a zone name keeps it; one made
+            # by hand names the zone when it says it is not in daylight
+            # time, and stands nameless when it cannot say.
             if zone is not None:
-                out += zone
-            elif parts[8] >= 0:
-                out += 'UTC'
+                out += _field('Z', zone, flags, digits, 0, ' ')
+            elif isdst >= 0:
+                out += _field('Z', 'UTC', flags, digits, 0, ' ')
         elif ch == '%':
-            out += '%'
+            out += _field('%', '%', flags, digits, 0, ' ')
         else:
-            out += '%' + ch
+            out += _field('', '%' + format[spec:at], flags, digits, 0, ' ')
     return out
