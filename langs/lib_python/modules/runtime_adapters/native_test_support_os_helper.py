@@ -3,11 +3,51 @@ import os
 import warnings
 from collections.abc import MutableMapping
 from contextlib import contextmanager
-from shutil import rmtree as _rmtree
+import stat
 
 # The name CPython's tests give the one scratch file they write.
 TESTFN = '@test'
 
+
+# Remove protected test trees using the upstream permission-retry algorithm.
+def _rmtree(path):
+    import shutil
+    try:
+        shutil.rmtree(path)
+        return
+    except OSError:
+        pass
+
+    # Remove descendants, repairing owner permissions for each operation.
+    def _rmtree_inner(path):
+        from test.support import _force_run
+        # Clear file flags (e.g. UF_IMMUTABLE, UF_NOUNLINK on BSD).
+        if hasattr(os, 'chflags'):
+            try:
+                os.chflags(path, 0)
+            except OSError:
+                pass
+        for name in _force_run(path, os.listdir, path):
+            fullname = os.path.join(path, name)
+            try:
+                mode = os.lstat(fullname).st_mode
+            except OSError:
+                mode = 0
+            if hasattr(os, 'lchflags'):
+                try:
+                    os.lchflags(fullname, 0)
+                except OSError:
+                    pass
+            if stat.S_ISDIR(mode):
+                _rmtree_inner(fullname)
+                _force_run(path, os.rmdir, fullname)
+            else:
+                _force_run(path, os.unlink, fullname)
+    _rmtree_inner(path)
+    os.rmdir(path)
+
+
+# Remove a tree, tolerating a path that is already absent.
 def rmtree(path):
     try:
         _rmtree(path)
@@ -154,8 +194,9 @@ class EnvironmentVarGuard(MutableMapping):
     def set(self, envvar, value):
         self[envvar] = value
 
-    def unset(self, envvar):
-        del self[envvar]
+    def unset(self, *envvars):
+        for envvar in envvars:
+            del self[envvar]
 
     def copy(self):
         return dict(self._environ)

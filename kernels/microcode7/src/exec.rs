@@ -8996,6 +8996,15 @@ impl<'a> Machine<'a> {
                 return Some(self.kind_entry(&word, name));
             }
         }
+        if word != "type" && self.table.has_any("ext.stmt.class.builder") {
+            let hook = if name == self.detail("get") { Some(10) }
+                else if name == self.detail("set") { Some(11) }
+                else if name == self.detail("remove") { Some(12) }
+                else { None };
+            if let Some(tag) = hook {
+                return Some(Value::Wrapped(tag, Rc::new(vec![Value::text(self.detail("root"))]).into()));
+            }
+        }
         let constructor = [word.as_str(), name].join(".");
         match self.table.prims.get(&constructor) {
             Some(hex) if matches!(hex, Prim::Octets(5 | 49)) || self.table.spells("ext.builtin.method.fromhex", &constructor) => {
