@@ -499,10 +499,9 @@ def _wanted_detail(want):
     index = 0
     while index < len(rest):
         line = rest[index]
-        if line.strip() in ['', '...'] or line[:1] == ' ' or line[:1] == '\t':
-            index += 1
-            continue
-        break
+        if line[:1].isalnum() or line[:1] == '_':
+            break
+        index += 1
     kept = []
     while index < len(rest):
         if rest[index].strip() == '':

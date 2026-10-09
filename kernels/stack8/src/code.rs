@@ -510,6 +510,7 @@ pub enum Builtin {
     DeriveClass,
     CallOutcome,
     CopyValue,
+    Multibyte,
     Sre,
     UnicodeDecomposition,
     ModuleLoad,

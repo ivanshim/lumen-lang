@@ -186,6 +186,7 @@ struct Invocation {
     python: Option<&'static python_versions::PythonVersion>,
     module_source: Option<String>,
     module_name: Option<String>,
+    python_development: bool,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -553,6 +554,10 @@ fn run_all() {
     // to a file to say this: the words travel with the run.
     std::env::set_var("LUMEN_KERNEL", inv.kernel.as_str());
     std::env::set_var("LUMEN_LANG", inv.language.name());
+    if inv.language.name() == "python" {
+        if inv.python_development { std::env::set_var("LUMEN_PYTHON_DEV_MODE", "1"); }
+        else { std::env::remove_var("LUMEN_PYTHON_DEV_MODE"); }
+    }
     // Only an actual -m invocation carries module execution metadata;
     // a script child must not inherit its parent's module identity.
     if let Some(name) = &inv.module_name { std::env::set_var("LUMEN_RUN_MODULE", name); }
@@ -862,6 +867,15 @@ fn plainly(e: &std::io::Error) -> String {
     }
 }
 
+/// Where this build keeps the Python library, which is the first
+/// directory a name is looked for in.
+fn python_library_root() -> String {
+    match env::var_os("LUMEN_ROOT") {
+        Some(root) => std::path::PathBuf::from(root).join("langs/lib_python/modules").to_string_lossy().into_owned(),
+        None => concat!(env!("CARGO_MANIFEST_DIR"), "/langs/lib_python/modules").to_string(),
+    }
+}
+
 fn parse_args(args: &[OsString]) -> Invocation {
     let held = args.first().map(|a| a.to_string_lossy().into_owned()).unwrap_or_else(|| "lumen-lang".to_string());
     let program = held.as_str();
@@ -875,6 +889,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut file: Option<String> = None;
     let mut module_source = None;
     let mut module_name = None;
+    let mut python_development = false;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
 
@@ -886,6 +901,19 @@ fn parse_args(args: &[OsString]) -> Invocation {
     // Options may precede the file; `--lang` may also follow it directly.
     loop {
         match rest.first().and_then(|a| a.to_str()) {
+            Some("-X") if file.is_none() => {
+                if rest.len() < 2 { usage(program); }
+                if said(&rest[1]) != "dev" {
+                    eprintln!("Error: unsupported Python -X option '{}'", said(&rest[1]));
+                    process::exit(2);
+                }
+                python_development = true;
+                rest = &rest[2..];
+            }
+            Some("-Xdev") if file.is_none() => {
+                python_development = true;
+                rest = &rest[1..];
+            }
             Some("--kernel") if file.is_none() => {
                 if rest.len() < 2 {
                     usage(program);
@@ -955,6 +983,14 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 let mut found = None;
                 for candidate in [format!("{path}.py"), format!("{path}/__main__.py")] {
                     if let Ok(source) = fs::read_to_string(&candidate) { found = Some((candidate, source)); break; }
+                }
+                if found.is_none() {
+                    // A name the library keeps is found where the library
+                    // keeps it, as the reference finds one walking sys.path.
+                    let root = python_library_root();
+                    for candidate in [format!("{root}/{path}.py"), format!("{root}/{path}/__main__.py")] {
+                        if let Ok(source) = fs::read_to_string(&candidate) { found = Some((candidate, source)); break; }
+                    }
                 }
                 if found.is_none() {
                     let executable_module = format!("{module}.__main__");
@@ -1050,6 +1086,10 @@ fn parse_args(args: &[OsString]) -> Invocation {
         }
     });
 
+    if python_development && language.name() != "python" {
+        eprintln!("Error: -X dev requires the Python language");
+        process::exit(2);
+    }
     let mut language = language;
     let python = if language.name() == "python" {
         let version = python_versions::select(python.as_deref(), &file).unwrap_or_else(|e| { eprintln!("{e}"); process::exit(1) });
@@ -1062,7 +1102,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         language = Language::File { name: "python".to_string(), path, text };
         Some(version)
     } else { None };
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, python_development, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.
