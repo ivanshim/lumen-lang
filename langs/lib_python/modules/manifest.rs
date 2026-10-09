@@ -92,6 +92,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("concurrent", include_str!("concurrent/__init__.py"), "concurrent/__init__.py"),
     ("concurrent.futures", include_str!("concurrent/futures/__init__.py"), "concurrent/futures/__init__.py"),
     ("concurrent.futures._base", include_str!("concurrent/futures/_base.py"), "concurrent/futures/_base.py"),
+    ("concurrent.interpreters", include_str!("concurrent/interpreters/__init__.py"), "concurrent/interpreters/__init__.py"),
     ("configparser", include_str!("configparser.py"), "configparser.py"),
     ("contextlib", include_str!("contextlib.py"), "contextlib.py"),
     ("contextvars", include_str!("contextvars.py"), "contextvars.py"),

@@ -97,11 +97,10 @@ class Mock:
         # stands for: it answers to that class and only to the names
         # that class has.
         self._spec_class = None
-        self._mock_methods = None
+        self._mock_methods = _spec_names(spec)
         self._mock_children = {}
-        if spec is not None:
+        if spec is not None and not isinstance(spec, (list, tuple)):
             self._spec_class = spec if isinstance(spec, type) else type(spec)
-            self._mock_methods = dir(spec)
         self.return_value = return_value
         self._side_effect = None
         self.side_effect = side_effect

@@ -42,8 +42,8 @@ behavior and the newer integrated suite inventory are retained.
 8c54d3d5ffc1d1204237e6c69b25c27c7b05b483128f185eeed9ba7ef2229ac2); it star-imports
 `_types`, the runtime's stand-in for `Modules/_typesmodule.c`, whose names are
 the runtime's own kinds (the pure fallback in `types.py` reads the same values)
-except `MappingProxyType`, `CapsuleType` and the helper functions the kernels
-call for unions and subscripted kinds. `_datetime` has no C accelerator behind
+including the native mapping proxy, plus helpers for unions and subscripted
+kinds. `CapsuleType` is absent because there is no runtime C-API capsule kind. `_datetime` has no C accelerator behind
 it: it re-exports the classes of `_pydatetime`, the very objects `datetime`
 exposes, and has no `datetime_CAPI` capsule.
 
@@ -61,3 +61,8 @@ That constructor currently accepts positional code, globals and an optional
 name for module code; the remaining optional constructor arguments are not
 yet supported on this code representation. Generator expression operands
 retain their `.0` binding and are checked as iterators when resumed.
+
+`concurrent/interpreters/__init__.py` is a byte-for-byte copy of CPython
+v3.14.8 `Lib/concurrent/interpreters/__init__.py`. Importing it requires the
+absent `_interpreters` backend and propagates `ModuleNotFoundError`; callers
+can detect the unavailable facility through the standard import exception.
