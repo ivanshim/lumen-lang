@@ -27313,7 +27313,7 @@ impl Engine<'_> {
                     let returned = if level == 0 { absolute.split('.').next().unwrap_or(&absolute) }
                         else if name.is_empty() { absolute.as_str() }
                         else { &absolute[..absolute.len() - name.len() + name.split('.').next().unwrap_or(&name).len()] };
-                    self.import_module(returned)
+                    if returned == absolute { Ok(module) } else { self.import_module(returned) }
                 })();
                 match loaded {
                     Ok(module) => Ok(module),

@@ -27749,12 +27749,15 @@ impl<'a> Machine<'a> {
                     return Ok(namespace);
                 }
                 let result_name = if level == 0 { full_name.split('.').next().unwrap_or(&full_name).to_owned() }
-                    else if name.is_empty() { full_name }
+                    else if name.is_empty() { return Ok(namespace); }
                     else {
                         let suffix = name.find('.').map_or(0, |at| name.len() - at);
                         full_name[..full_name.len() - suffix].to_owned()
                     };
-                self.load_namespace(&result_name)
+                match result_name == full_name {
+                    true => Ok(namespace),
+                    false => self.load_namespace(&result_name),
+                }
             }
             Prim::Prepare => self.text_prepared(name, v),
             _ => self.text_performed(op == Prim::Weigh, name, v),
