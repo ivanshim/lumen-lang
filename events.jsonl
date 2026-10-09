@@ -10345,3 +10345,19 @@
 {"t":"2026-10-09T17:38:06Z","event":"review-queued","job":"dsflash-py-compile-sol","review":"review-auto-dsflash-py-compile-sol-1738"}
 {"t":"2026-10-09T17:39:58Z","event":"review-started","job":"dsflash-py-compile-sol","review":"review-auto-dsflash-py-compile-sol-1738"}
 {"t":"2026-10-09T17:44:43Z","event":"exited","job":"review-auto-dsflash-py-compile-sol-1738","code":0}
+{"t":"2026-10-09T17:51:03Z","event":"resumed","job":"stdlib-runpy","model":"gpt-6.1-sol"}
+{"t":"2026-10-09T17:54:15Z","event":"accepted","job":"dsflash-py-compile-sol","review":"review-auto-dsflash-py-compile-sol-1738","batch":"21i","commit":"366eb16a2","branch":"fix/dsflash-py-compile","model":"gpt-6.1-sol","note":"(Sol hand-over after 2 DS Flash returns) test_py_compile 12->34/34 both kernels; UTF-7 surrogate blockers fixed; clean check 1196/0 gates ok; independence 0; integrity ok, sha256 test+py_compile.py match v3.14.8; joins batch21h textually (no conflict markers) but overlaps _imp.py (contextlib-async), engine/exec code reductions (stdlib-code) - combine at integration; follow-ups: re-certify tokenize s8 132->126 timeout + decimal/bytes/calendar/io timeouts, nested-code marshal (inherited)"}
+{"t":"2026-10-09T17:54:27Z","event":"note","text":"integrate-21h: Sol session ran out of context window at 17:35Z (3 resume exits code 1) with all 12 merges + repairs at 8894bf39 done; old log kept as worker-integrate-21h.ctx1.log, continuation appended to brief, sol-new integrate-21h queued at head (fresh session)"}
+{"t":"2026-10-09T17:55:02Z","event":"quota","codex_week_used":55,"codex_credits":0,"claude_week_used":23,"claude_5h_used":12,"deepseek_usd":244.52}
+{"t":"2026-10-09T17:55:07Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":55,"expected":58.0,"gap":-3.0,"status":"ok"}
+{"t":"2026-10-09T17:55:13Z","event":"checkin","status":"done","actions":"ACCEPT dsflash-py-compile-sol (366eb16a2, 21i; py_compile 12->34/34 both kernels, clean 1196/0, sha256 match); integrate-21h hit Sol context-window limit at 17:35Z (3 exits) after all 12 merges + repairs at 8894bf39 -> old log rotated, continuation appended to brief, sol-new integrate-21h queued at head (fresh session); prune-merged 0MB","notes":"21h not yet certified: lverify run 1 on 6141f20f had bytes/dataclasses/hmac/reprlib/syntax regressions + userstring mc7 timeout; repairs restore dataclasses/hmac/reprlib/syntax, bytes 167 vs 170 and userstring still to confirm; DS Flash 9/12, 3 idle: no fresh Flash-sized in-scope subject; DS Pro 1/1 frame-dspro; Haiku 1/1 hmac-haiku; Sonnet 1/1 bigmem-sonnet; Sol 11 running + integrate-21h, zipimport queued; Astra doctest-astra; box load 5.2/8, 11.7G avail, disk 80%; Mac disk 87%; Codex week 55%; Claude 5h 12%/week 23%; luna gap -3.0 ok, no new alerts; no open PR"}
+{"t":"2026-10-09T17:56:04Z","event":"started","job":"integrate-21h","model":"gpt-6.1-sol"}
+{"t":"2026-10-09T17:56:43Z","event":"exited","job":"dsflash-ensurepip-sol","code":0}
+{"t":"2026-10-09T17:58:29Z","event":"finished","job":"dsflash-ensurepip-sol","exit_time":"2026-10-09T17:56:43Z"}
+{"t":"2026-10-09T17:58:29Z","event":"review-queued","job":"dsflash-ensurepip-sol","review":"review-auto-dsflash-ensurepip-sol-1758"}
+{"t":"2026-10-09T18:00:44Z","event":"exited","job":"dsflash-code-module-sol","code":0}
+{"t":"2026-10-09T18:01:05Z","event":"review-started","job":"dsflash-ensurepip-sol","review":"review-auto-dsflash-ensurepip-sol-1758"}
+{"t":"2026-10-09T18:03:37Z","event":"finished","job":"dsflash-code-module-sol","exit_time":"2026-10-09T18:00:44Z"}
+{"t":"2026-10-09T18:03:37Z","event":"review-queued","job":"dsflash-code-module-sol","review":"review-auto-dsflash-code-module-sol-1803"}
+{"t":"2026-10-09T18:04:02Z","event":"exited","job":"review-auto-dsflash-ensurepip-sol-1758","code":0}
+{"t":"2026-10-09T18:06:06Z","event":"review-started","job":"dsflash-code-module-sol","review":"review-auto-dsflash-code-module-sol-1803"}
