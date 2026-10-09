@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/hex_codec.py; PSF License.
 """Python 'hex_codec' Codec - 2-digit hex content transfer encoding.
 
 This codec de/encodes from bytes to bytes.

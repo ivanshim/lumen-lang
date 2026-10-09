@@ -1,4 +1,3 @@
-# Source: CPython Lib/xml/dom/domreg.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """Registration facilities for DOM. This module should not be used
 directly. Instead, the functions getDOMImplementation and
 registerDOMImplementation should be imported from xml.dom."""

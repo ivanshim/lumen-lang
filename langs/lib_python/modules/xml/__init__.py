@@ -1,4 +1,3 @@
-# Source: CPython Lib/xml/__init__.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """Core XML support for Python.
 
 This package contains four sub-packages:

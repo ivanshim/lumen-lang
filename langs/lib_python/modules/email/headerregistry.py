@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/email/headerregistry.py; PSF License.
 """Representing and manipulating email headers via custom objects.
 
 This module provides an implementation of the HeaderRegistry API.

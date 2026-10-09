@@ -1,4 +1,3 @@
-# Source: CPython Lib/xml/dom/__init__.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """W3C Document Object Model implementation for Python.
 
 The Python mapping of the Document Object Model is documented in the

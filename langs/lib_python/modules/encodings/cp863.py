@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/cp863.py; PSF License.
 """ Python Character Mapping Codec generated from 'VENDORS/MICSFT/PC/CP863.TXT' with gencodec.py.
 
 """#"

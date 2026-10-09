@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/email/header.py; PSF License.
 # Copyright (C) 2002 Python Software Foundation
 # Author: Ben Gertzfield, Barry Warsaw
 # Contact: email-sig@python.org

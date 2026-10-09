@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/getpass.py; PSF License.
 """Utilities to get a password and/or the current user name.
 
 getpass(prompt[, stream[, echo_char]]) - Prompt for a password, with echo

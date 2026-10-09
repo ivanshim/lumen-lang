@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/utf_8.py; PSF License.
 """ Python 'utf-8' Codec
 
 
