@@ -788,6 +788,23 @@ class DocTestCase(_NamedCase):
         return '<DocTestCase ' + self._dt_test.name + '>'
 
 
+def _normalize_module(module, depth=2):
+    if isinstance(module, types.ModuleType):
+        return module
+    if isinstance(module, str):
+        return __load_module(module)
+    if module is not None:
+        raise TypeError('Expected a module, string, or None')
+    try:
+        try:
+            name = sys._getframemodulename(depth)
+        except AttributeError:
+            name = sys._getframe(depth).f_globals['__name__']
+        return sys.modules[name]
+    except KeyError:
+        return None
+
+
 def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
                  **options):
     """A unittest suite of the examples found in a module's docstrings."""
@@ -800,6 +817,7 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
         if (directory == 'test' or '/tests/' in path and directory.split('-', 1)[0] == 'python') and path.rsplit('/', 1)[-1].startswith('test_') and path.endswith('.py'):
             globs = _copy_dict(names)
             globs['__name__'] = 'test.' + path.rsplit('/', 1)[-1][:-3]
+    module = _normalize_module(module)
     tests = test_finder.find(module, None, None, globs, extraglobs)
     suite = unittest.TestSuite()
     optionflags = options.get('optionflags', 0)
@@ -814,10 +832,48 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
 
 
 def DocFileSuite(*paths, **options):
+    if options.get('module_relative', True) and options.get('package') is None:
+        options['package'] = _normalize_module(None, 2)
     suite = unittest.TestSuite()
     for path in paths:
         suite.addTest(DocFileTest(path, **options))
     return suite
+
+
+def _load_testfile(filename, package, module_relative, encoding):
+    import os
+    if module_relative:
+        if isinstance(package, str):
+            package = __load_module(package)
+        elif package is None:
+            package = _normalize_module(None, 3)
+        elif not isinstance(package, types.ModuleType):
+            raise TypeError('Expected a module, string, or None')
+        if filename.startswith('/'):
+            raise ValueError('Module-relative files may not have absolute paths')
+        filename = os.path.join(*filename.split('/'))
+        if hasattr(package, '__file__'):
+            basedir = os.path.dirname(package.__file__)
+        elif package.__name__ == '__main__':
+            basedir = os.path.dirname(sys.argv[0]) if sys.argv and sys.argv[0] else os.curdir
+        else:
+            for directory in getattr(package, '__path__', ()):
+                candidate = os.path.join(directory, filename)
+                if os.path.exists(candidate):
+                    filename = candidate
+                    break
+            else:
+                raise ValueError("Can't resolve paths relative to the module %r (it has no __file__)" % package.__name__)
+            basedir = ''
+        filename = os.path.join(basedir, filename)
+        loader = getattr(package, '__loader__', None)
+        if loader is None:
+            loader = getattr(getattr(package, '__spec__', None), 'loader', None)
+        if hasattr(loader, 'get_data'):
+            text = loader.get_data(filename).decode(encoding)
+            return text.replace('\r\n', '\n').replace('\r', '\n'), filename
+    with open(filename, encoding=encoding) as source:
+        return source.read(), filename
 
 
 def DocFileTest(path, **options):
