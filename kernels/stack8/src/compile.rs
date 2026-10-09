@@ -974,9 +974,10 @@ fn compile_pass(
         a.piece().instrs.extend(shifted);
     }
     plans.extend(a.plans.clone());
-    let unit = a.pieces.pop().expect("the top unit");
+    let mut unit = a.pieces.pop().expect("the top unit");
+    if !lang.compile_modes.is_empty() { fold_boolean_branches(&mut unit.instrs); }
     a.registry.top_level_coroutine = unit.generator;
-    let (root_constants, root_names) = code_metadata(&unit.instrs, &None, &[]);
+    let (root_constants, root_names) = code_metadata(&unit.instrs, &None, &[], false);
     a.registry.future_bits = a.future_bits;
     Ok(Rc::new(Routine { embedded_integers: None, source_end: a.pos, source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_identity: Rc::new(()), code_names: root_names, local_names: Vec::new(), cell_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, location_bytes: None, declared_stack: None, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
 }
@@ -2126,7 +2127,8 @@ impl<'a> Compiler<'a> {
             if rules.contains(&4) { code_flags |= 8; }
         }
         code_flags |= if unit.asynchronous { if instrs.iter().any(|i| matches!(i, Instr::Act(Action::Suspend, _))) { 512 } else { 128 } } else if unit.generator { 32 } else { 0 };
-        let (mut code_constants, mut code_names) = code_metadata(&instrs, &doc, &local_names);
+        if !self.lang.compile_modes.is_empty() { fold_boolean_branches(&mut instrs); }
+        let (mut code_constants, mut code_names) = code_metadata(&instrs, &doc, &local_names, true);
         code_names.sort_by_key(|name| self.tokens[source..self.pos].iter().position(|token| token.shape == Shape::Instr && token.lexeme == *name).unwrap_or(usize::MAX));
         if doc.is_some() && code_constants.len() == 1 { code_constants.push(Value::Null); }
         let mut cell_names = Vec::new();
@@ -10004,6 +10006,23 @@ impl<'a> Compiler<'a> {
                     let key = from;
                     let earlier = self.take_boolean_exits(key);
                     let disjunction = matches!(infix.action, Action::Or);
+                    let literal = if !lang.compile_modes.is_empty() && earlier.is_empty() {
+                        let mut meaningful = self.piece().instrs[from..].iter().filter(|word| !matches!(word, Instr::Line(_) | Instr::Location(..)));
+                        match (meaningful.next(), meaningful.next()) {
+                            (Some(Instr::Const(Value::Flag(answer))), None) => Some(*answer),
+                            _ => None,
+                        }
+                    } else { None };
+                    if let Some(answer) = literal {
+                        let left = self.piece().instrs.split_off(from);
+                        self.expr(right_floor)?;
+                        if answer == disjunction {
+                            self.take_boolean_exits(from);
+                            self.piece().instrs.truncate(from);
+                            self.piece().instrs.extend(left);
+                        }
+                        continue;
+                    }
                     self.write(TEMP_CELL);
                     self.read(TEMP_CELL);
                     if matches!(infix.action, Action::Or) {
@@ -13219,6 +13238,60 @@ fn operand_of(w: &Instr) -> Option<Operand> {
 /// The peephole: where four or three or two of the five instrs spell one
 /// of the three fused ones, that one replaces them. Jump targets move
 /// with the instrs; a group is left alone if a jump lands inside it.
+fn fold_boolean_branches(words: &mut [Instr]) {
+    let mut entrances = vec![false; words.len() + 1];
+    let destinations = |word: &Instr| -> Vec<usize> {
+        match word {
+            Instr::Skip(to) | Instr::Guard(to) | Instr::SkipCmp { to, .. } | Instr::Depart { to, .. } => vec![*to],
+            Instr::Attempt(plan) => {
+                let mut points = vec![plan.body.0, plan.body.1, plan.after];
+                for clause in &plan.clauses {
+                    points.extend([clause.body.0, clause.body.1]);
+                    for pair in &clause.kinds { points.extend([pair.0, pair.1]); }
+                }
+                for pair in [&plan.otherwise, &plan.last].into_iter().flatten() { points.extend([pair.0, pair.1]); }
+                points
+            }
+            _ => Vec::new(),
+        }
+    };
+    for word in words.iter() {
+        for to in destinations(word) { if to < entrances.len() { entrances[to] = true; } }
+    }
+    for first in 0..words.len() {
+        let Instr::Const(Value::Flag(truth)) = words[first] else { continue; };
+        let mut unary = first + 1;
+        while unary < words.len() && matches!(words[unary], Instr::Line(_) | Instr::Location(..)) { unary += 1; }
+        if unary < words.len() && matches!(words[unary], Instr::Act(Action::Not, 1))
+            && !entrances[first + 1..=unary].iter().any(|entry| *entry) {
+            words[first] = Instr::Const(Value::Flag(!truth));
+            words[unary] = Instr::Nothing;
+        }
+    }
+    let mut unconditional = HashSet::new();
+    for first in 0..words.len() {
+        let Instr::Const(Value::Flag(truth)) = words[first] else { continue; };
+        let mut branch = first + 1;
+        while branch < words.len() && matches!(words[branch], Instr::Line(_) | Instr::Location(..) | Instr::Nothing) { branch += 1; }
+        if branch == words.len() || entrances[first + 1..=branch].iter().any(|entry| *entry) { continue; }
+        if matches!(words[branch], Instr::Skip(_)) {
+            if truth {
+                words[first] = Instr::Nothing;
+                words[branch] = Instr::Nothing;
+            } else { unconditional.insert(branch); }
+        }
+    }
+    let mut live = vec![false; words.len()];
+    let mut queue = vec![0];
+    while let Some(at) = queue.pop() {
+        if at >= words.len() || live[at] { continue; }
+        live[at] = true;
+        queue.extend(destinations(&words[at]));
+        if !matches!(words[at], Instr::Depart { .. }) && !unconditional.contains(&at) { queue.push(at + 1); }
+    }
+    for (at, word) in words.iter_mut().enumerate() { if !live[at] { *word = Instr::Nothing; } }
+}
+
 fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
     let mut targets = vec![false; instrs.len() + 1];
     for w in &instrs {
@@ -13663,8 +13736,9 @@ fn same_constant(left: &Value, right: &Value) -> bool {
     }
 }
 
-fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String]) -> (Vec<Value>, Vec<String>) {
+fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String], function: bool) -> (Vec<Value>, Vec<String>) {
     let mut constants: Vec<Value> = doc.as_ref().map(|text| Value::text(text)).into_iter().collect();
+    if function && doc.is_none() { constants.push(Value::Null); }
     let mut names = Vec::new();
     let mut constant_buckets: HashMap<i64, Vec<usize>> = HashMap::new();
     for (at, value) in constants.iter().enumerate() {
@@ -13698,6 +13772,8 @@ fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String]) -> (V
         if at == 0 && matches!(word, Instr::Const(Value::Null)) && matches!(words.get(1), Some(Instr::Write(cell)) if cell.ident.as_ref() == RESULT_CELL) { continue; }
         match word {
             Instr::Const(value) => {
+                // Inline integer operands are not replaceable constant-pool entries.
+                if matches!(value, Value::Small(0..=255)) { continue; }
                 if matches!(value, Value::Flag(false)) && matches!(words.get(at + 1), Some(Instr::Skip(_))) { continue; }
                 let discarded = matches!(words.get(at + 1), Some(Instr::Write(cell)) if cell.ident.as_ref() == RESULT_CELL)
                     && !(matches!(words.get(at + 2), Some(Instr::Depart { .. })) || matches!(words.get(at + 2), Some(Instr::Read(cell)) if cell.ident.as_ref() == RESULT_CELL));
@@ -13732,7 +13808,7 @@ fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String]) -> (V
             _ => {}
         }
     }
-    if constants.is_empty() { constants.push(Value::Null); }
+    if constants.is_empty() || (!function && !constants.iter().any(|value| matches!(value, Value::Null))) { constants.push(Value::Null); }
     (constants, names)
 }
 

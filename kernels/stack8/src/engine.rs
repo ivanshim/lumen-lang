@@ -5592,7 +5592,7 @@ impl<'a> Engine<'a> {
         for (offset, instruction) in body.instrs.iter().enumerate() {
             match instruction {
                 Instr::Line(line) => { row = *line; position = vec![Value::Small(row as i64), Value::Null, Value::Null, Value::Null]; }
-                Instr::Location(a, b, c, d) => position = [a, b, c, d].into_iter().map(|part| Value::Small(*part as i64)).collect(),
+                Instr::Location(a, b, c, d) => position = [a, c, b, d].into_iter().map(|part| Value::Small(*part as i64)).collect(),
                 _ => {}
             }
             let description = format!("{instruction:?}");
@@ -27411,11 +27411,11 @@ impl Engine<'_> {
                 Shape::Lead | Shape::Finish => continue,
                 _ => {}
             }
-            if after_semicolon && matches!(token.spelling(), "if" | "for" | "while" | "try" | "with" | "def" | "class" | "async") {
+            if after_semicolon && token.shape == Shape::Instr && matches!(token.spelling(), "if" | "for" | "while" | "try" | "with" | "def" | "class" | "async") {
                 return Err(("SyntaxError: invalid syntax".into(), token.row, token.column));
             }
             if depth == 0 && line_start {
-                let word = token.spelling();
+                let word = if matches!(token.shape, Shape::Instr | Shape::Sign) { token.spelling() } else { "" };
                 if seen {
                     let decorated = decorators && matches!(word, "@" | "def" | "class" | "async");
                     let continued = compound && matches!(word, "elif" | "else" | "except" | "finally");
@@ -27489,8 +27489,14 @@ impl Engine<'_> {
         let dont_inherit = match args.get(4) { Some(value) => self.special_truth(value)?, None => false };
         if flags & 1024 != 0 {
             let ast = self.route_module("ast")?;
+            let input_reader = self.member_of(ast.clone(), "_compile_input")?.ok_or_else(|| self.source_unready())?;
+            let supplied = self.call_held(input_reader, vec![args[0].clone()])?;
+            let supplied = match supplied.contents() {
+                Value::Bytes(bytes, ..) => Value::Text(self.source_bytes(&bytes.borrow(), &file)?),
+                other => other,
+            };
             let reader = self.member_of(ast, "_compile_ast")?.ok_or_else(|| self.source_unready())?;
-            return self.call_held(reader, vec![args[0].clone(), Value::Text(file.clone()), Value::Text(manner.clone()), Value::Small(flags), Value::Small(optimization), args.get(6).cloned().unwrap_or(Value::Null)]);
+            return self.call_held(reader, vec![supplied, Value::Text(file.clone()), Value::Text(manner.clone()), Value::Small(flags), Value::Small(optimization), args.get(6).cloned().unwrap_or(Value::Null)]);
         }
         let mut supplied_positions = Value::tuple(Vec::new());
         let source = match Self::worth_of(&args[0]).unwrap_or_else(|| args[0].contents()) {

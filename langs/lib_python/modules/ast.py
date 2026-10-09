@@ -3278,6 +3278,51 @@ def _parse_for_compile(source, filename, mode, type_comments, optimize):
     return parse(source, filename, mode, type_comments=bool(type_comments),
                  optimize=optimize)
 
+_parsed_sources = {}
+
+def _tree_signature(value):
+    kind = type(value)
+    if isinstance(value, AST):
+        fields = tuple((name, _tree_signature(getattr(value, name, None))) for name in value._fields)
+        attributes = tuple((name, _tree_signature(getattr(value, name, None))) for name in value._attributes)
+        if any(item is None for _, item in fields + attributes):
+            return None
+        return kind, tuple(value._fields), tuple(value._attributes), fields, attributes
+    if kind in (list, tuple):
+        children = tuple(_tree_signature(item) for item in value)
+        return None if any(item is None for item in children) else (kind, children)
+    if kind in (float, complex):
+        return kind, repr(value)
+    if kind in (str, bytes, int, bool, type(None), type(Ellipsis)):
+        return kind, value
+    return None
+
+def _forget_source(key, reference):
+    item = _parsed_sources.get(key)
+    if item is not None and item[0] is reference:
+        del _parsed_sources[key]
+
+# Reuse source only while every ASDL field and source coordinate is unchanged.
+def _remember_source(tree, source, mode):
+    import weakref
+    from functools import partial
+    key = id(tree)
+    signature = _tree_signature(tree)
+    if signature is None:
+        return
+    try:
+        reference = weakref.ref(tree, partial(_forget_source, key))
+    except TypeError:
+        return
+    _parsed_sources[key] = reference, signature, source, mode
+
+def _unchanged_source(tree, mode):
+    item = _parsed_sources.get(id(tree))
+    if item is not None and item[0]() is tree and item[3] == mode:
+        if item[1] == _tree_signature(tree):
+            return item[2]
+    return None
+
 def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
           feature_version=None, optimize=-1, fold_debug=False):
     if isinstance(source, (bytes, bytearray)):
@@ -3288,6 +3333,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         raise SyntaxError('source code string cannot contain null bytes')
     if optimize not in (-1, 0, 1, 2):
         raise ValueError('compile(): invalid optimize value')
+    original_source = source
     source = source.replace('\r\n', '\n').replace('\r', '\n')
     if mode == 'func_type':
         toks = _lex(source, 0, len(source), 1, 0, False)
@@ -3311,6 +3357,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
             _syntax('invalid syntax')
         tree = FunctionType(argtypes=argtypes, returns=returns)
         _check_features(tree, feature_version)
+        _remember_source(tree, original_source, mode)
         return _optimized_tree(tree, optimize, fold_debug)
     if mode == 'eval':
         toks = _lex(source, 0, len(source), 1, 0, False)
@@ -3326,6 +3373,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
             _syntax('invalid syntax')
         tree = Expression(body=node)
         _check_features(tree, feature_version)
+        _remember_source(tree, original_source, mode)
         return _optimized_tree(tree, optimize, fold_debug)
     if mode not in ('exec', 'single'):
         raise ValueError("compile() mode must be 'exec', 'eval', 'single' or 'func_type'")
@@ -3348,6 +3396,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
             raise SyntaxError('invalid syntax')
         tree = Interactive(body=tree.body)
     _check_features(tree, feature_version)
+    _remember_source(tree, original_source, mode)
     return _optimized_tree(tree, optimize, fold_debug)
 
 def dump(
@@ -3906,6 +3955,13 @@ def _check_features(tree, version):
         if version < minimum:
             raise SyntaxError(type(node).__name__ + ' is only supported in Python 3.' + str(minimum) + ' and greater')
 
+# Preserve trees while accepting source through the existing buffer protocol.
+def _compile_input(source):
+    if isinstance(source, (AST, str, bytes)):
+        return source
+    import builtins
+    return builtins._buffer_bytes(source)
+
 # Route compile's AST-only flags through the same public parser.
 def _compile_ast(source, filename, mode, flags, optimize=-1, feature_version=None):
     if flags < 0 or flags & 255:
@@ -3996,7 +4052,7 @@ def _validate_node(node, active=None):
         _validate_constant(node.value)
     active.remove(identity)
 
-# Compile the current tree rather than replaying the text from which it was parsed.
+# Validate the current tree before compiling retained or regenerated source.
 def _compile_source(tree, mode):
     if not isinstance(tree, AST):
         return None
@@ -4007,7 +4063,22 @@ def _compile_source(tree, mode):
         raise TypeError('expected ' + expected.__name__ + ' node, got ' + type(tree).__name__)
     _validate_node(tree)
     _validate_contexts(tree)
-    source = unparse(tree)
+    original = _unchanged_source(tree, mode)
+    if original is not None:
+        return original, ()
+    from _ast_unparse import Unparser
+    class CompilerUnparser(Unparser):
+        def _write_constant(self, value):
+            if type(value) is complex and value.real == 0 and repr(value.real).startswith('-'):
+                imaginary = repr(abs(value.imag))
+                if imaginary == 'inf':
+                    imaginary = '1e309'
+                if imaginary != 'nan':
+                    operation = '+' if repr(value.imag).startswith('-') else '-'
+                    self.write('-(0.0' + operation + imaginary + 'j)')
+                    return
+            super()._write_constant(value)
+    source = CompilerUnparser().visit(tree)
     generated = parse(source, mode='exec' if mode == 'single' else mode)
     if mode == 'single':
         generated = Interactive(body=generated.body)
@@ -4071,7 +4142,86 @@ def _validate_constant(value):
 
 
 def _optimized_tree(tree, optimize, fold_debug=False):
+    def pattern_value(node):
+        if isinstance(node, Constant) and type(node.value) in (int, float, complex):
+            return node.value
+        if isinstance(node, UnaryOp) and isinstance(node.op, (UAdd, USub)):
+            value = pattern_value(node.operand)
+            if value is not None:
+                return -value if isinstance(node.op, USub) else +value
+        if isinstance(node, BinOp) and isinstance(node.op, (Add, Sub)):
+            left, right = pattern_value(node.left), pattern_value(node.right)
+            if type(left) in (int, float) and type(right) is complex:
+                return left + right if isinstance(node.op, Add) else left - right
+        return None
+
     class Optimizer(NodeTransformer):
+        def visit_MatchValue(self, node):
+            self.generic_visit(node)
+            value = pattern_value(node.value) if optimize > 0 else None
+            if value is not None:
+                node.value = copy_location(Constant(value=value), node.value)
+            return node
+
+        def visit_MatchMapping(self, node):
+            self.generic_visit(node)
+            if optimize > 0:
+                for index, key in enumerate(node.keys):
+                    value = pattern_value(key)
+                    if value is not None:
+                        node.keys[index] = copy_location(Constant(value=value), key)
+            return node
+
+        def visit_BinOp(self, node):
+            self.generic_visit(node)
+            if optimize < 1 or not isinstance(node.op, Mod) or not isinstance(node.left, Constant) or type(node.left.value) is not str or not isinstance(node.right, Tuple):
+                return node
+            text, arguments = node.left.value, node.right.elts
+            if any(isinstance(arg, Starred) for arg in arguments):
+                return node
+            values, literal, cursor, argument = [], '', 0, 0
+            while cursor < len(text):
+                if text[cursor] != '%':
+                    literal += text[cursor]
+                    cursor += 1
+                    continue
+                cursor += 1
+                if cursor < len(text) and text[cursor] == '%':
+                    literal += '%'
+                    cursor += 1
+                    continue
+                flags = ''
+                while cursor < len(text) and text[cursor] in '-+ #0':
+                    flags += text[cursor]
+                    cursor += 1
+                width_start = cursor
+                while cursor < len(text) and '0' <= text[cursor] <= '9':
+                    cursor += 1
+                width = text[width_start:cursor]
+                precision = ''
+                if cursor < len(text) and text[cursor] == '.':
+                    cursor += 1
+                    precision_start = cursor
+                    while cursor < len(text) and '0' <= text[cursor] <= '9':
+                        cursor += 1
+                    precision = '.' + (text[precision_start:cursor] or '0')
+                if cursor == len(text) or text[cursor] not in 'sar' or argument == len(arguments):
+                    return node
+                if literal:
+                    values.append(copy_location(Constant(value=literal), node.left))
+                    literal = ''
+                spec = (('<' if '-' in flags else '>') + width if width else '') + precision
+                value = FormattedValue(value=arguments[argument], conversion=ord(text[cursor]),
+                                       format_spec=copy_location(Constant(value=spec), node.left) if spec else None)
+                values.append(copy_location(value, node))
+                argument += 1
+                cursor += 1
+            if argument != len(arguments):
+                return node
+            if literal:
+                values.append(copy_location(Constant(value=literal), node.left))
+            return copy_location(JoinedStr(values=values), node)
+
         def visit_Name(self, node):
             if node.id == '__debug__' and isinstance(node.ctx, Load) and (fold_debug or optimize > 0):
                 return copy_location(Constant(value=optimize < 1), node)
@@ -4082,7 +4232,9 @@ def _optimized_tree(tree, optimize, fold_debug=False):
             if optimize == 2 and isinstance(result, (Module, FunctionDef, AsyncFunctionDef, ClassDef)):
                 body = result.body
                 if body and isinstance(body[0], Expr) and isinstance(body[0].value, Constant) and isinstance(body[0].value.value, str):
-                    del body[0]
+                    removed = body.pop(0)
+                    if not body:
+                        body.append(copy_location(Pass(), removed))
             return result
     return Optimizer().visit(tree)
 

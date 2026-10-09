@@ -933,10 +933,11 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     };
     let mut body = body;
     if r.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
-    let mut root_literals = vec![Value::Nil];
+    let mut root_literals = Vec::new();
     let mut root_names = Vec::new();
     let mut suspended = false;
     inspect_form(&body, &[], &mut root_literals, &mut root_names, &mut suspended);
+    if !root_literals.iter().any(|item| matches!(item, Value::Nil)) { root_literals.push(Value::Nil); }
     let program = Routine { definition: None, immediate_slots: None, body_boundary: r.pos, lexical_origin: r.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_protocol: false, reads_annotation: false, annotator: None, literals: root_literals, referenced: root_names, locals: Vec::new(), cells: Vec::new(), flags: 0, future_bits: r.future_bits, lineless: false, locations: None, stack_bound: None, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), warnings: r.warnings, future_bits: r.future_bits, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
 }
@@ -2170,6 +2171,7 @@ impl<'a> Builder<'a> {
         }
         if scope.permits_async { flags |= 128; } else if generator { flags |= 32; }
         let mut literals: Vec<Value> = doc.iter().map(|s| Value::text(s)).collect();
+        if doc.is_none() && holds != Holds::Nothing { literals.push(Value::Nil); }
         let mut referenced = Vec::new();
         let mut suspension = false;
         if holds != Holds::Nothing && self.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
@@ -2290,6 +2292,9 @@ impl<'a> Builder<'a> {
     /// A branch: `if(test, «then», «otherwise»)`, the arms program values
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
+        if self.table.has_any("ext.builtin.compile.modes") {
+            if let Some(answer) = literal_boolean(&test) { return if answer { then } else { otherwise }; }
+        }
         let wrap = |name: &str, body: Form| {
             let program = Routine { definition: None, immediate_slots: None, body_boundary: self.pos, lexical_origin: self.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_protocol: false, reads_annotation: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), cells: Vec::new(), flags: 0, future_bits: self.future_bits, lineless: false, locations: None, stack_bound: None, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
             constant(Value::Routine(Rc::new(program)))
@@ -2318,6 +2323,9 @@ impl<'a> Builder<'a> {
             self.skip_line_ends();
             if self.key("stmt.else") { self.advance(); Some(Box::new(self.body()?)) } else { None }
         } else { None };
+        if self.table.has_any("ext.builtin.compile.modes") && literal_boolean(&test) == Some(false) {
+            return Ok(otherwise.map(|body| *body).unwrap_or_else(|| constant(Value::Nil)));
+        }
         Ok(Form::Cycle { test: Box::new(test), body: Box::new(body), step, after: false, otherwise })
     }
 
@@ -9718,7 +9726,11 @@ impl<'a> Builder<'a> {
                 // The right side is a program, run only when the left leaves it open.
                 Prim::Both | Prim::Either => {
                     let lazy = self.limb(Traps::Naught, |r| r.expr(floor_right))?;
-                    prim_call(op.prim, vec![left, lazy])
+                    match literal_boolean(&left).filter(|_| self.table.has_any("ext.builtin.compile.modes")) {
+                        Some(truth) if truth == matches!(op.prim, Prim::Either) => left,
+                        Some(_) => lazy,
+                        None => prim_call(op.prim, vec![left, lazy]),
+                    }
                 }
                 other => {
                     let string_sum = matches!(op.prim, Prim::Plus | Prim::Minus) && self.pos - consumed == origin + 1 && matches!(self.tokens[origin].shape, Shape::Quote | Shape::ByteQuote);
@@ -12903,6 +12915,16 @@ fn constant_key_matches(a: &Value, b: &Value) -> bool {
 }
 
 // Follow the same unconditional exits as sequential form evaluation.
+fn literal_boolean(mut form: &Form) -> Option<bool> {
+    loop {
+        match form {
+            Form::Const(Value::Flag(answer)) => return Some(*answer),
+            Form::Located(_, _, child) | Form::OnLine(_, _, child) => form = child,
+            _ => return None,
+        }
+    }
+}
+
 fn metadata_stops(node: &Form) -> bool {
     match node {
         Form::OnLine(_, _, inner) | Form::Located(_, _, inner) | Form::Muted(inner) | Form::Silenced(inner) => metadata_stops(inner),
@@ -12922,6 +12944,7 @@ fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, name
 
 fn inspect_indexed_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, names: &mut Vec<String>, suspension: &mut bool, indexed: &mut HashMap<i64, Vec<usize>>) {
     fn literal(value: &Value, constants: &mut Vec<Value>, indexed: &mut HashMap<i64, Vec<usize>>) {
+        if matches!(value, Value::Small(0..=255)) { return; }
         if let Value::Routine(p) = value {
             if p.frameless { return; }
             if let Some(a) = &p.annotator { literal(&Value::Routine(a.clone()), constants, indexed); }

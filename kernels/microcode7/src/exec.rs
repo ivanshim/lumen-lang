@@ -27780,11 +27780,11 @@ impl<'a> Machine<'a> {
             if word.shape == Shape::Close { nesting = nesting.saturating_sub(1); continue; }
             if word.shape == Shape::LineEnd { beginning = true; separated = false; continue; }
             if matches!(word.shape, Shape::Lead | Shape::Finish) { continue; }
-            if separated && ["def", "class", "async", "with", "try", "while", "for", "if"].contains(&word.spelling()) {
+            if separated && word.shape == Shape::Bare && ["def", "class", "async", "with", "try", "while", "for", "if"].contains(&word.spelling()) {
                 return Err((String::from("SyntaxError: invalid syntax"), word.row, word.column));
             }
             if beginning && nesting == 0 {
-                let name = word.spelling();
+                let name = match word.shape { Shape::Bare | Shape::Sign => word.spelling(), _ => "" };
                 match header {
                     Some(block) => {
                         let arm = block && ["else", "elif", "finally", "except"].contains(&name);
@@ -27856,8 +27856,13 @@ impl<'a> Machine<'a> {
         let suppress_inheritance = if let Some(value) = v.get(4) { self.object_truth(value)? } else { false };
         if flags & 1024 != 0 {
             let namespace = self.load_namespace("ast")?;
+            let prepare = self.attribute(&namespace, "_compile_input").ok_or_else(|| self.source_refused())?;
+            let argument = self.core_run(&prepare, vec![v[0].clone()])?;
+            let argument = if let Value::Octets { cell, .. } = argument.settled() {
+                Value::Text(self.decode_program(&cell.borrow(), &file)?)
+            } else { argument };
             let reader = self.attribute(&namespace, "_compile_ast").ok_or_else(|| self.source_refused())?;
-            return self.core_run(&reader, vec![v[0].clone(), Value::Text(file.clone()), Value::Text(manner.clone()), Value::Small(flags), Value::Small(optimize), v.get(6).cloned().unwrap_or(Value::Nil)]);
+            return self.core_run(&reader, vec![argument, Value::Text(file.clone()), Value::Text(manner.clone()), Value::Small(flags), Value::Small(optimize), v.get(6).cloned().unwrap_or(Value::Nil)]);
         }
         let mut sites_value = Value::tuple(Vec::new());
         let source = match Self::underlying(&v[0]).unwrap_or_else(|| v[0].settled()) {

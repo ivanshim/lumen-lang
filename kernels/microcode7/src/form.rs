@@ -992,7 +992,7 @@ impl Form {
         let tag = if matches!(self, Self::Apply(Callee::Prim(Prim::Choose, _), _)) { "Choose" } else { display.split(['(', ' ', '{']).next().unwrap_or("") };
         let branches = matches!(self, Self::Cycle { .. } | Self::Apply(Callee::Prim(Prim::Choose, _), _));
         output.push(Value::tuple(vec![Value::Small(*next as i64), Value::text(tag), Value::Nil, Value::Flag(branches),
-            Value::tuple([coordinates.0, coordinates.1, coordinates.2, coordinates.3].into_iter().map(|number| if number == u32::MAX { Value::Nil } else { Value::Small(number as i64) }).collect())]));
+            Value::tuple([coordinates.0, coordinates.2, coordinates.1, coordinates.3].into_iter().map(|number| if number == u32::MAX { Value::Nil } else { Value::Small(number as i64) }).collect())]));
         match self {
             Self::Located(_, _, inner) | Self::OnLine(_, _, inner) => {
                 inner.instruction_listing(next, coordinates, output);
