@@ -428,13 +428,14 @@ def _docstring_of_module(names):
 # ---------------------------------------------------------------- running
 
 def _exception_detail(error, message, namespace=None):
-    """The last line of a traceback: the kind and, after it, the message."""
+    """The last line of a traceback: the kind and, after it, the message.
+
+    The name is the exception class's own, read from its metadata; nothing
+    about the namespace the example ran in changes it."""
     if isinstance(error, BaseException):
         kind = error.__class__
         detail = kind.__name__
         module = kind.__module__
-        if module == '__main__' and namespace is not None:
-            module = namespace.get('__name__', module)
         if module != 'builtins' and module != '__main__':
             detail = module + '.' + detail
         text = str(error)
@@ -793,12 +794,8 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
     """A unittest suite of the examples found in a module's docstrings."""
     if test_finder is None:
         test_finder = DocTestFinder()
-    if module is None and globs is None:
-        names = __program_namespace()
-        path = names.get('__file__', '')
-        if '/tests/python/test_' in path and path.endswith('.py'):
-            globs = _copy_dict(names)
-            globs['__name__'] = 'test.' + path.rsplit('/', 1)[-1][:-3]
+    if module is None:
+        module = sys.modules[__program_namespace(1).f_globals['__name__']]
     tests = test_finder.find(module, None, None, globs, extraglobs)
     suite = unittest.TestSuite()
     optionflags = options.get('optionflags', 0)

@@ -6601,7 +6601,25 @@ impl<'a> Engine<'a> {
         // has: the methods of the kind and the special names its
         // family answers to.
         if let Some(sample)=self.dir_sample(one) {
-            let names=self.kind_member_names(&sample);
+            let mut names=self.kind_member_names(&sample);
+            // A backtrace answers this question itself, so the listing
+            // it gives is the whole of it; every other value of a
+            // builtin kind adds what every object inherits: the root's
+            // members, the details each type answers to, and the item
+            // hook for the kinds whose protocol spells one.
+            if !matches!(sample.contents(), Value::Trace(_)) {
+                for part in ["kind","get","set","remove","allocate","subclass","doc"] {
+                    let word=self.class_word(part);
+                    if !word.is_empty() { names.push(word.to_string()); }
+                }
+                if let Some(name)=&self.lang.constructor { names.push(name.clone()); }
+                names.extend(self.lang.class_details.get("root.members").into_iter().flatten().cloned());
+                names.extend(self.lang.class_special.get(72).cloned());
+                let kind=sample.core_kind();
+                let item=self.class_word("getitem");
+                if !item.is_empty() && self.kind_owns_protocol(&kind, item) { names.push(item.to_string()); }
+            }
+            names.sort();names.dedup();
             return Value::array(names.iter().map(|n|Value::text(n)).collect());
         }
         let mut names=vec![];let class=match one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().filter(|(n,_)|!n.starts_with(['\0', '#'])).map(|(n,_)|n.clone()));Some(&o.class_now())},_=>None};
