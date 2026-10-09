@@ -25985,7 +25985,7 @@ impl Machine<'_> {
                     }
                     else { self.fault_kinds.get(name).cloned().unwrap_or_else(|| match self.table.prims.get(name) { Some(op) => Value::Intrinsic(*op, Rc::from(name.as_str())), None => Value::Unset }) };
                 let link = Value::Shared(Rc::new(RefCell::new(initial)));
-                if is_module_name || (bound.contains(name.as_str()) && self.table.name_like(name)) || (path_word == Some(name.as_str()) && search.is_some()) || package_word == Some(name.as_str()) { members.push((name.clone(), link.clone())); }
+                if is_module_name || file_word == Some(name.as_str()) || (bound.contains(name.as_str()) && self.table.name_like(name)) || (path_word == Some(name.as_str()) && search.is_some()) || package_word == Some(name.as_str()) { members.push((name.clone(), link.clone())); }
                 world[beginning + position] = link;
             }
         }
@@ -26053,7 +26053,7 @@ impl Machine<'_> {
         self.importing.insert(path.into());
         self.refresh_import_table(path);
         let scope = self.outermost.clone();
-        let caller_location = (self.written_in.clone(), self.row);
+        let caller_location = (self.written_in.clone(), self.row, self.extent.take());
         let caller_activation = self.active_trace.take();
         // Imported module code is a real frame whose caller is the importer;
         // warnings with a stack level and frame introspection need that link.
@@ -26066,7 +26066,7 @@ impl Machine<'_> {
         self.reading_now = caller_reading;
         self.frames_named.pop();
         self.active_trace = caller_activation;
-        (self.written_in, self.row) = caller_location;
+        (self.written_in, self.row, self.extent) = caller_location;
         if let Err(stopped) = stopped {
             self.importing.remove(path); self.library_origins.remove(path);
             self.imported.remove(path); self.namespace_places.borrow_mut().take();

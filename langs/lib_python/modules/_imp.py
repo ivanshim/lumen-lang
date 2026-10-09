@@ -52,15 +52,22 @@ class _NativeFinder:
             return None
         from importlib._bootstrap import ModuleSpec
         origin = __load_module(fullname, True)
-        spec = ModuleSpec(fullname, _NativeLoader, origin=origin, is_package=bool(origin and origin.endswith('__init__.py')))
-        spec.has_location = origin is not None
+        native = is_builtin(fullname)
+        spec = ModuleSpec(fullname, _NativeLoader, origin='built-in' if native else origin, is_package=bool(origin and origin.endswith('__init__.py')))
+        spec.has_location = origin is not None and not native
         return spec
 
 class _NativeLoader:
     @staticmethod
     def create_module(spec):
-        return __load_module(spec.name)
+        module = __load_module(spec.name)
+        spec.loader_state = tuple(name for name in ('__name__', '__file__', '__cached__', '__loader__', '__package__', '__spec__')
+                                  if not hasattr(module, name))
+        return module
     @staticmethod
     def exec_module(module):
-        # The source-backed native create operation initializes the namespace.
-        pass
+        # Creation already ran the body; preserve its deletions after bootstrap adds metadata.
+        missing = module.__spec__.loader_state
+        for name in missing:
+            if hasattr(module, name):
+                delattr(module, name)

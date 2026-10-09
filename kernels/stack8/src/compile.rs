@@ -3200,6 +3200,7 @@ impl<'a> Compiler<'a> {
                 return self.attempt();
             }
             if Lang::spells(&lang.throw_words, &w) {
+                let statement_start = self.pos;
                 self.take();
                 if !lang.syntax_members.is_empty() && self.on_keyword(&lang.throw_from) {
                     return Err("SyntaxError: invalid syntax".into());
@@ -3218,6 +3219,7 @@ impl<'a> Compiler<'a> {
                         self.expr(0)?;
                         if lang.exceptions.is_empty() { self.piece().instrs.truncate(from); } else { count = 2; }
                     }
+                    if !lang.trace_fields.is_empty() { self.put(self.expression_location(statement_start)); }
                     self.act(Action::Hurl, count);
                 }
                 return Ok(());

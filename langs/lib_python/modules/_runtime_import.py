@@ -136,8 +136,9 @@ def make_spec(name, filename):
     bootstrap = sys.modules.get('importlib._bootstrap')
     factory = getattr(bootstrap, 'ModuleSpec', ModuleSpec) if bootstrap is not None else ModuleSpec
     loader = SourceLoader(name, filename)
-    spec = factory(name, loader, origin=filename, is_package=filename.endswith('/__init__.py'))
-    spec.has_location = True
+    native = name in sys.builtin_module_names
+    spec = factory(name, loader, origin='built-in' if native else filename, is_package=filename.endswith('/__init__.py'))
+    spec.has_location = not native
     if spec.submodule_search_locations is not None:
         spec.submodule_search_locations.append(filename.rsplit('/', 1)[0])
     return spec

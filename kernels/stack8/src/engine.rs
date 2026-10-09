@@ -25459,7 +25459,7 @@ impl Engine<'_> {
             // write actually bound at the module's own outermost scope
             // is one the module carries: the rest never left the frame
             // that held them.
-            if (local.globals.contains(name) && name.chars().next().is_some_and(|letter| self.lang.begins_name(letter))) || (self.lang.module_path.as_ref() == Some(name) && package_path.is_some()) || self.lang.module_package.as_ref() == Some(name) {
+            if file_word.as_ref() == Some(name) || (local.globals.contains(name) && name.chars().next().is_some_and(|letter| self.lang.begins_name(letter))) || (self.lang.module_path.as_ref() == Some(name) && package_path.is_some()) || self.lang.module_package.as_ref() == Some(name) {
                 fields.push((name.clone(), shared));
             }
         }
