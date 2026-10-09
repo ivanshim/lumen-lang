@@ -1829,7 +1829,10 @@ impl<'a> Machine<'a> {
                             return symbolic.map_err(Escape::Error);
                         }
                         match values[0].settled() {
-                            Value::Blueprint(class) => { if let Some(entry) = Self::own_entry(&class, &values[1].bare()) { return Ok(entry.settled()); } },
+                            Value::Blueprint(class) => {
+                                if values[1].bare() == "__class__" { return Ok(Value::Blueprint(class)); }
+                                if let Some(entry) = Self::own_entry(&class, &values[1].bare()) { return Ok(entry.settled()); }
+                            },
                             _ if values.get(3).is_some_and(|book| !matches!(book.settled(), Value::Nil)) => {
                                 if let Value::Tuple(pair) = self.class_namespace_read(vec![values[3].clone(), values[1].clone()])? {
                                     if pair[0].is_true() { return Ok(pair[1].clone()); }

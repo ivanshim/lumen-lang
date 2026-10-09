@@ -1472,7 +1472,10 @@ impl<'a> Compiler<'a> {
                 let global_fallback = members.contains(name);
                 let owner = owner.clone();
                 let book = self.gathered.iter().rev().find(|body| body.class_cell == owner).and_then(|body| body.book.clone());
-                self.glance(&owner);
+                if name == "__class__" {
+                    if let Some(body) = self.gathered.iter_mut().rev().find(|body| body.class_cell == owner) { body.needs_class_cell = true; }
+                    self.glance(&owner);
+                } else { self.constant(Value::Null); }
                 self.constant(Value::text(name));
                 let fallback = self.routine("#annotation fallback", Vec::new(), 0, true, |c| {
                     if global_fallback {
@@ -2238,8 +2241,7 @@ impl<'a> Compiler<'a> {
         self.pos = entries[0].1;
         let previous_namespace = self.annotation_namespace.clone();
         if self.in_class_body() && self.annotation_namespace.is_none() {
-            self.gathering().needs_class_cell = true;
-        let owner = self.gathering().class_cell.clone();
+            let owner = self.gathering().class_cell.clone();
             let names = self.gathering().bindings.clone();
             self.cell_to_write(&owner);
             self.annotation_namespace = Some((owner, names));
@@ -6495,8 +6497,7 @@ impl<'a> Compiler<'a> {
             let alias = self.look_ahead(1).lexeme.clone();
             let slot = self.member_place(&alias, "alias");
             self.member_kept(&alias, &slot);
-            self.gathering().needs_class_cell = true;
-        let owner = self.gathering().class_cell.clone();
+            let owner = self.gathering().class_cell.clone();
             let names = self.gathering().bindings.clone();
             self.cell_to_write(&owner);
             let outside = self.annotation_namespace.replace((owner, names));
@@ -6526,8 +6527,7 @@ impl<'a> Compiler<'a> {
             let named = self.want_name("as the method name")?;
             let original = self.spelled[self.pos - 1].lexeme.clone();
             if self.on_any(&lang.type_params_open) {
-                self.gathering().needs_class_cell = true;
-        let owner = self.gathering().class_cell.clone();
+                let owner = self.gathering().class_cell.clone();
                 let names = self.gathering().bindings.clone();
                 self.cell_to_write(&owner);
                 let outer_namespace = self.annotation_namespace.replace((owner, names));
@@ -7873,7 +7873,6 @@ impl<'a> Compiler<'a> {
     /// A class body's annotation, read as a routine of no parameters
     /// that answers the annotation's value when it is called.
     fn deferred_annotation(&mut self) -> Res<Rc<Routine>> {
-        self.gathering().needs_class_cell = true;
         let owner = self.gathering().class_cell.clone();
         let names = self.gathering().bindings.clone();
         self.cell_to_write(&owner);
@@ -8042,8 +8041,7 @@ impl<'a> Compiler<'a> {
             let coroutine = std::mem::take(&mut self.coroutine_next);
             let enclosing_namespace = self.annotation_namespace.clone();
             if self.in_class_body() {
-                self.gathering().needs_class_cell = true;
-        let owner = self.gathering().class_cell.clone();
+                let owner = self.gathering().class_cell.clone();
                 let names = self.gathering().bindings.clone();
                 self.cell_to_write(&owner);
                 self.annotation_namespace = Some((owner, names));

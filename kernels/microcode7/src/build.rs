@@ -1943,7 +1943,10 @@ impl<'a> Builder<'a> {
                 let only_global = entries.iter().any(|entry| entry == name);
                 let class = class.clone();
                 let live = self.under_way.iter().rev().find(|body| body.completed_class.ident.as_ref() == class).and_then(|body| body.book.clone());
-                let receiver = Form::Glance(self.address_to_read(&class));
+                let receiver = if name == "__class__" {
+                    if let Some(parts) = self.under_way.iter_mut().rev().find(|body| body.completed_class.ident.as_ref() == class) { parts.needs_class_cell = true; }
+                    Form::Glance(self.address_to_read(&class))
+                } else { constant(Value::Nil) };
                 let outside = self.routine("<annotation fallback>", Holds::Every, Traps::Naught, Vec::new(), 0, |b| {
                     if !only_global { return Ok(b.read_fallback(name)); }
                     let at = match b.layers[0].idents.iter().position(|word| word == name) {
@@ -2283,8 +2286,7 @@ impl<'a> Builder<'a> {
         self.pos = sites[0].1;
         let outer_owner = self.annotation_owner.clone();
         if self.in_class_body() && self.annotation_owner.is_none() {
-            self.parts().needs_class_cell = true;
-        let class = self.parts().completed_class.ident.to_string();
+            let class = self.parts().completed_class.ident.to_string();
             let entries = self.parts().lexical_members.clone();
             self.address_to_write(&class);
             self.annotation_owner = Some((class, entries));
@@ -4941,8 +4943,7 @@ impl<'a> Builder<'a> {
             let alias = self.glance(1).lexeme.clone();
             let place = self.member_address(&alias, "alias");
             self.member_noted(&alias, place.clone());
-            self.parts().needs_class_cell = true;
-        let class = self.parts().completed_class.ident.to_string();
+            let class = self.parts().completed_class.ident.to_string();
             let entries = self.parts().lexical_members.clone();
             self.address_to_write(&class);
             let outer = self.annotation_owner.replace((class, entries));
@@ -7768,7 +7769,6 @@ impl<'a> Builder<'a> {
         let ident = self.table.strings("ext.stmt.function.anonymous").first().map(String::as_str).unwrap_or(ANONYMOUS);
         // A plain expression: an equals sign after it gives the member its
         // value and is no assignment within the annotation.
-        self.parts().needs_class_cell = true;
         let class = self.parts().completed_class.ident.to_string();
         let entries = self.parts().lexical_members.clone();
         self.address_to_write(&class);
@@ -7967,8 +7967,7 @@ impl<'a> Builder<'a> {
             self.coroutine_next = false;
             let saved_owner = self.annotation_owner.clone();
             if self.in_class_body() {
-                self.parts().needs_class_cell = true;
-        let class = self.parts().completed_class.ident.to_string();
+                let class = self.parts().completed_class.ident.to_string();
                 let entries = self.parts().lexical_members.clone();
                 self.address_to_write(&class);
                 self.annotation_owner = Some((class, entries));

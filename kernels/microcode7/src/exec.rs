@@ -541,6 +541,7 @@ pub struct Machine<'a> {
     async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>)>,
     delegated_answers: std::collections::HashSet<usize>,
     pub(super) code_handles: HashMap<usize, (Weak<Routine>, Weak<Vec<Value>>)>,
+    pub(super) annotation_namespaces: HashMap<usize, (Weak<MapStore>, Weak<Blueprint>)>,
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
     pub library_files: HashMap<String, String>,
@@ -2057,6 +2058,7 @@ impl<'a> Machine<'a> {
             async_generators: HashMap::new(),
             delegated_answers: std::collections::HashSet::new(),
             code_handles: HashMap::new(),
+            annotation_namespaces: HashMap::new(),
             holding_fault: Vec::new(),
             holding_below: 0,
             asking_presence: false,
@@ -26860,6 +26862,17 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn class_namespace_read(&mut self, values: Vec<Value>) -> Result<Value, Escape> {
+        let namespace = values[0].settled();
+        let namespace = Self::underlying(&namespace).unwrap_or(namespace).settled();
+        let owner = match namespace {
+            Value::Dict(storage) => self.annotation_namespaces.get(&(Rc::as_ptr(&storage) as usize))
+                .and_then(|(source, blueprint)| source.upgrade().filter(|source| Rc::ptr_eq(source, &storage)).and_then(|_| blueprint.upgrade())),
+            _ => None,
+        };
+        if let Some(class) = owner {
+            let entry = Self::own_entry(&class, &values[1].bare());
+            return Ok(Value::tuple(vec![Value::Flag(entry.is_some()), entry.map(|value| value.settled()).unwrap_or(Value::Nil)]));
+        }
         let found = self.mapping_read(&values[0].settled(), &values[1].bare())?;
         Ok(Value::tuple(vec![Value::Flag(found.is_some()), found.unwrap_or(Value::Nil)]))
     }
@@ -26953,6 +26966,7 @@ impl<'a> Machine<'a> {
         let captured = namespace.unwrap_or_else(|| Value::Dict(Rc::new(Vec::new().into())));
         let (mapping, class_cell, protocol) = match captured { Value::Tuple(values) if values.len() == 3 => (values[0].clone(), Some(values[1].clone()), matches!(values[2], Value::Flag(true))), value => (value, None, false) };
         if bases_changed { self.mapping_write(&mapping, &hooks[1], Some(before_bases))?; }
+        let annotation_namespace = mapping.clone();
         let result = if let Some(factory) = factory {
             let mut given = vec![Value::Text(name.clone()), bases, mapping]; given.extend(keywords); self.apply_held(factory, given)?
         } else {
@@ -26961,6 +26975,13 @@ impl<'a> Machine<'a> {
             for (key, value) in self.open_arguments(keywords)?.1 { members.push((format!("\0handed:{key}"), value)); }
             self.build_class_value(name.to_string(), parents, members)?
         };
+        let raw = annotation_namespace.settled();
+        if let Value::Dict(storage) = Self::underlying(&raw).unwrap_or(raw).settled() {
+            if let Value::Blueprint(class) = &result {
+                if self.annotation_namespaces.len() % 256 == 255 { self.annotation_namespaces.retain(|_, (source, class)| source.strong_count() > 0 && class.strong_count() > 0); }
+                self.annotation_namespaces.insert(Rc::as_ptr(&storage) as usize, (Rc::downgrade(&storage), Rc::downgrade(class)));
+            }
+        }
         if let Some(Value::Wrapped(35, items)) = class_cell {
             if !protocol { let word = self.detail("cell.contents").to_owned(); self.alter_class_member(Value::Wrapped(35, items), &word, Some(result.clone()), true)?; return Ok(result); }
             // What the builder answered may be no class at all: the cell

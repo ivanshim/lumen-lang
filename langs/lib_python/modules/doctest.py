@@ -796,7 +796,9 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
     if module is None and globs is None:
         names = __program_namespace()
         path = names.get('__file__', '')
-        if '/tests/python/test_' in path and path.endswith('.py'):
+        directory = path.rsplit('/', 1)[0]
+        suite = directory.rsplit('/', 1)[-1]
+        if '/tests/' in path and (suite == 'python' or suite.startswith('python-')) and path.endswith('.py'):
             globs = _copy_dict(names)
             globs['__name__'] = 'test.' + path.rsplit('/', 1)[-1][:-3]
     tests = test_finder.find(module, None, None, globs, extraglobs)

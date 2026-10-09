@@ -1508,7 +1508,7 @@ impl<'a> Engine<'a> {
             _ => false,
         }
     }
-    fn own_class_value(c: &Class, name: &str) -> Option<Value> {
+    pub(super) fn own_class_value(c: &Class, name: &str) -> Option<Value> {
         if let Some(v) = c.shared.read(name, c.python_names.borrow().is_some()) {
             return if matches!(v.contents(), Value::Blank | Value::Gap) { None } else { Some(v) };
         }
@@ -1931,6 +1931,7 @@ impl<'a> Engine<'a> {
                         return self.unresolved_annotation_name(names, &args[1].plain()).map_err(Fault::Note);
                     }
                     if let Value::Class(owner) = args[0].contents() {
+                        if args[1].plain() == "__class__" { return Ok(Value::Class(owner)); }
                         if let Some(value) = Self::own_class_value(&owner, &args[1].plain()) { return Ok(value.contents()); }
                     } else if args.get(3).is_some_and(|book| !matches!(book.contents(), Value::Null)) {
                         let Value::Tuple(found) = self.class_namespace_read(vec![args[3].clone(), args[1].clone()])? else { unreachable!() };
