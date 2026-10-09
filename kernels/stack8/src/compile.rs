@@ -3725,7 +3725,8 @@ impl<'a> Compiler<'a> {
         let lang = self.lang;
         let word = self.look().spelling();
         if !lang.keywords.contains(word) { return true; }
-        [&lang.true_words, &lang.false_words, &lang.null_words, &lang.ellipsis_words, &lang.lambda_words, &lang.await_words]
+        [&lang.true_words, &lang.false_words, &lang.null_words, &lang.ellipsis_words, &lang.lambda_words, &lang.await_words,
+            &lang.match_words, &lang.match_cases, &lang.type_alias_words]
             .into_iter().any(|spellings| Lang::spells(spellings, word))
             || lang.monadic.contains_key(word)
     }
@@ -3798,8 +3799,14 @@ impl<'a> Compiler<'a> {
         };
         for part in &parts {
             let mut letters = part.chars();
+            // Python reserves hard keywords; contextual words remain import names.
+            let reserved = if self.lang.reserved_names.is_empty() {
+                self.lang.keywords.contains(*part)
+            } else {
+                Lang::spells(&self.lang.reserved_names, part)
+            };
             if !letters.next().map_or(false, |c| self.lang.begins_name(c))
-                || !letters.all(|c| self.lang.extends_name(c)) || self.lang.keywords.contains(*part) {
+                || !letters.all(|c| self.lang.extends_name(c)) || reserved {
                 return Err(format!("Expected identifier in an import, got '{}'", word));
             }
         }
@@ -3868,7 +3875,7 @@ impl<'a> Compiler<'a> {
         }
         let star = from && self.look().shape == Shape::Sign && lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul));
         if star && group.is_none() {
-            if !lang.syntax_members.is_empty() && (!self.piece().outermost || self.in_class_body()) { return Err("SyntaxError: import * only allowed at module level".into()); }
+            if !lang.syntax_members.is_empty() && (self.pieces.len() > 1 || self.in_class_body()) { return Err("SyntaxError: import * only allowed at module level".into()); }
             self.take();
             if lang.import_values {
                 self.act(Action::Import(module.clone(), ImportStyle::Star), 0);
@@ -5438,8 +5445,10 @@ impl<'a> Compiler<'a> {
             let tier = lang.range_marks.iter().filter_map(|r| lang.precedence.get(r)).min().copied().unwrap_or(0);
             let source_at = self.pos;
             let from = self.mark();
+            // A Python iterator source admits the whole conditional expression.
+            let source_level = if lang.range_marks.is_empty() && !lang.comprehension_for.is_empty() { 0 } else { tier + 1 };
             if self.on_any(&lang.array_spread) { self.scope_value()?; }
-            else { self.expr(tier + 1)?; self.scope_tail(from)?; }
+            else { self.expr(source_level)?; self.scope_tail(from)?; }
             if !(self.look().shape == Shape::Sign && Lang::spells(&lang.range_marks, &self.look().spelling())) {
                 // Not a range: what was read is a thing to walk through.
                 if !lang.for_collections {
@@ -10600,8 +10609,8 @@ impl<'a> Compiler<'a> {
                 for _ in 0..extra { self.discard(); }
                 let parent = self.within.as_ref().map(|(name, base)| if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {name.clone()} else {base.clone().unwrap_or_default()});
                 let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));
-                if extra == 0 && parent.is_some() && self.method_self.is_some() && !self.gathered.is_empty()
-                    && (member.is_none() || self.look_ahead(2).lexeme != call.open) {
+                // A direct call needs the lexical class cell just as a proxy read does.
+                if extra == 0 && parent.is_some() && self.method_self.is_some() && !self.gathered.is_empty() {
                     self.gathering().needs_class_cell = true;
                     self.gathering().class_cell_protocol = true;
                     let cell = self.gathering().class_cell.clone();

@@ -33,6 +33,9 @@ def import_module(name, package=None):
     return __load_module(name)
 
 # Bootstrap discovery around the native source loader, including namespace packages.
-sys.meta_path.extend((_imp._NativeFinder, _bootstrap_external.PathFinder))
+for _index, _finder in enumerate(sys.meta_path):
+    if type(_finder) is sys._SourceFinder:
+        sys.meta_path[_index] = _imp._NativeFinder
+sys.meta_path.append(_bootstrap_external.PathFinder)
 sys.path_hooks.append(_bootstrap_external.FileFinder.path_hook(
     (_bootstrap_external.SourceFileLoader, _bootstrap_external.SOURCE_SUFFIXES)))

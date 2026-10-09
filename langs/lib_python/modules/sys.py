@@ -4,12 +4,18 @@ _host_stream_write = __stream_write
 
 # Host details which the present numeric and object model can honour.
 argv = __program_namespace()['__program_argv']
+# Startup options are actual host invocation state, independent of parent filters.
+_startup_environment = __posix('environ')[1]
+_warning_options = _startup_environment.get(b'LUMEN_PYTHON_WARNOPTIONS', b'').decode()
+warnoptions = _warning_options.split('\x1f') if _warning_options else []
 # Where a name that is `import`ed is looked for: a directory put here
 # is searched, in order, before the library carried inside this run.
-# The isolated default contains the library's own source location.
-# Callers add other directories explicitly; a program's directory is not
-# placed ahead of the embedded library merely because it contains a script.
-path = [__file__.rsplit('/', 1)[0]]
+# The embedded library retains its default precedence. Startup also exposes
+# the script directory (or -m working directory) and enabled Python search path.
+path = [__file__.rsplit('/', 1)[0], _startup_environment.get(b'LUMEN_PYTHON_START_PATH', b'').decode()]
+_search_path = _startup_environment.get(b'LUMEN_PYTHON_SEARCH_PATH', b'').decode()
+if _search_path:
+    path.extend(_search_path.split(':'))
 maxsize = 9223372036854775807
 # Where a written bytecode cache would live, and whether one is
 # written: the reference reads both while naming a cache file.
@@ -29,12 +35,14 @@ implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
-meta_path = []
+from _runtime_import import SourceFinder as _SourceFinder, make_spec as _make_spec, find_custom as _find_custom
+meta_path = [_SourceFinder()]
 path_hooks = []
 path_importer_cache = {}
 _recursion_limit = 1000
 
-# Stub: startup flags describe the fixed library environment.
+# Startup flags retain the fixed library environment and the requested dev mode.
+_startup_environment = __posix('environ')[1]
 class _Flags:
     debug = 0
     inspect = 0
@@ -43,13 +51,13 @@ class _Flags:
     dont_write_bytecode = 1
     no_user_site = 1
     no_site = 1
-    ignore_environment = 1
+    ignore_environment = int(_startup_environment.get(b'LUMEN_PYTHON_IGNORE_ENV', b'0') == b'1')
     verbose = 0
     bytes_warning = 0
     quiet = 0
     hash_randomization = 0
     isolated = 1
-    dev_mode = False
+    dev_mode = _startup_environment.get(b'LUMEN_PYTHON_DEV_MODE', b'0') == b'1'
     utf8_mode = 1
     warn_default_encoding = 0
     safe_path = True
@@ -105,11 +113,7 @@ def setrecursionlimit(limit):
         raise TypeError("'" + type(limit).__name__ + "' object cannot be interpreted as an integer")
     if limit < 1:
         raise ValueError('recursion limit must be greater or equal than 1')
-    frame = _getframe()
-    depth = 0
-    while frame is not None:
-        depth += 1
-        frame = frame.f_back
+    depth = __program_namespace('recursion_depth')
     if limit <= depth:
         raise RecursionError('cannot set the recursion limit to ' + str(limit) +
                              ' at the recursion depth ' + str(depth) + ': the limit is too low')
@@ -507,6 +511,14 @@ def _getframemodulename(depth=0):
         raise TypeError('an integer is required')
     return __frame_module(max(depth, 0) + 1)
 
+
+def settrace(func):
+    return __settrace(func)
+
+
+def gettrace():
+    return __gettrace()
+
 # Names supplied by the native importer and its source-backed adapters.
 builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_warnings', '_weakref', '_io', 'posix', 'marshal')
 
@@ -526,5 +538,10 @@ def gettrace():
 
 def settrace(trace):
     __trace_native__(1, trace)
+
+
+def getrefcount(object, /):
+    """Return live shared-storage ownership, including interpreter temporaries."""
+    return __program_namespace('refcount', object)
 def getdefaultencoding():
     return "utf-8"

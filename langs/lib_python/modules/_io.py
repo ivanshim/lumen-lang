@@ -708,10 +708,14 @@ class FileIO(_RawIOBase):
         import os
         if getattr(self, '_fd', -1) >= 0:
             self.close()
+        self._fd = -1
+        self._closed = True
         if not isinstance(mode, str):
             raise TypeError('mode must be a string')
+        if any(letter not in 'rwax+b' for letter in mode):
+            raise ValueError('invalid mode: ' + mode)
         base = [letter for letter in mode if letter in 'rwax']
-        if len(base) != 1 or any(letter not in 'rwax+b' for letter in mode) or mode.count('+') > 1 or mode.count('b') > 1:
+        if len(base) != 1 or mode.count('+') > 1:
             raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
         self._readable = base[0] == 'r' or '+' in mode
         self._writable = base[0] != 'r' or '+' in mode
@@ -1038,6 +1042,15 @@ class BufferedRWPair(BufferedReader):
 class _Open:
     __name__ = 'open'
     def __call__(self, file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
+        if not isinstance(mode, str):
+            raise TypeError('open() argument 2 must be str, not ' + type(mode).__name__)
+        letters = set(mode)
+        if not letters <= set('axrwb+t') or len(mode) != len(letters):
+            raise ValueError('invalid mode: ' + repr(mode))
+        if 't' in letters and 'b' in letters:
+            raise ValueError("can't have text and binary mode at once")
+        if len(letters & set('axrw')) != 1:
+            raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
         if type(file) is not str or opener is not None or encoding is not None or errors is not None or newline is not None or 'b' in mode:
             if not isinstance(file, int) and not hasattr(type(file), '__index__') and not isinstance(file, float):
                 import os

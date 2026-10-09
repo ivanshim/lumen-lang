@@ -223,6 +223,9 @@ pub struct Generator {
     /// whether the body is on its way back to where it left off.
     pub resume: Vec<Step>,
     pub resuming: bool,
+    /// Whether the body stands on the stack right now, so that entering
+    /// it again is refused the way the reference refuses it.
+    pub running: bool,
     /// The faults the body itself is handling, kept while it sleeps so
     /// that what is raised next stands behind them.
     pub held: Vec<Value>,
@@ -239,7 +242,7 @@ impl Generator {
         Self { name: String::new(), qualified: String::new(), trace_frame: None, suspended_position: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, finalized: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None, reversed_walk: None,
-            resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
+            resume: Vec::new(), resuming: false, running: false, held: Vec::new(), hurled: None, walked: None }
     }
 }
 
@@ -426,6 +429,7 @@ pub type FxBuildHasher = std::hash::BuildHasherDefault<QuickHash>;
 /// The hash finds a member; the row remembers when it first came.
 #[derive(Debug, Clone)]
 pub struct Members {
+    pub protocol_keys: bool,
     pub row: Vec<String>,
     pub held: std::collections::HashMap<String, Value, FxBuildHasher>,
     pub word: String,
@@ -449,13 +453,14 @@ pub struct Members {
 
 impl Members {
     pub fn empty(word: String, fixed: bool) -> Self {
-        Self { row: Vec::new(), held: std::collections::HashMap::default(), word, fixed, folded: std::cell::Cell::new(None), protocol: 0 }
+        Self { protocol_keys: false, row: Vec::new(), held: std::collections::HashMap::default(), word, fixed, folded: std::cell::Cell::new(None), protocol: 0 }
     }
 
     pub fn insert(&mut self, key: String, value: Value) {
         self.folded.set(None);
         if !self.held.contains_key(&key) {
             if matches!(value, Value::Hashed(_)) { self.protocol += 1; }
+            self.protocol_keys |= matches!(value, Value::Hashed(_) | Value::Object(_)) || matches!(value, Value::Tuple(_)) && value.member_key().is_err();
             self.row.push(key.clone());
             self.held.insert(key, value);
         }
@@ -898,7 +903,66 @@ pub fn reversed_view_kind(tag: &str) -> &'static str {
     match tag { "keys" => "dict_reversekeyiterator", "values" => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
 }
 
+pub(super) enum Retention { Immortal, Owners(usize) }
+
+impl Retention {
+    pub(super) fn python_count(self) -> i64 {
+        match self {
+            Self::Owners(count) => count as i64,
+            // CPython's immortal header marker describes lifetime, not an owner count.
+            Self::Immortal => (3_u32 << 30) as i64,
+        }
+    }
+}
+
 impl Value {
+    /// Actual shared-storage owners, including live interpreter temporaries.
+    pub(super) fn shared_owners(&self) -> Option<Retention> {
+        macro_rules! owners { ($cell:expr) => { Some(Retention::Owners(Rc::strong_count($cell))) }; }
+        match self {
+            Value::Small(_) | Value::Flag(_) | Value::Null | Value::Ellipsis | Value::Stream(_) => Some(Retention::Immortal),
+            Value::Codepoints(p) => owners!(p),
+            Value::ValueMethod(p) => owners!(p),
+            Value::View(p) => owners!(p),
+            Value::Native(_, p) => owners!(p),
+            Value::Cursor(p) => owners!(p),
+            Value::Trace(p) => owners!(p),
+            Value::Hashed(p) => owners!(p),
+            Value::Fields(p) => owners!(p),
+            Value::Walking(p) => owners!(p),
+            Value::Declined(p) => owners!(p),
+            Value::Walk(p) => owners!(p),
+            Value::Bytes(p, ..) => owners!(p),
+            Value::Export(p) => owners!(p),
+            Value::ByteKind(_, p) => owners!(p),
+            Value::Adapter(p) => owners!(p),
+            Value::Counted(p) => owners!(p),
+            Value::Huge(p) => owners!(p),
+            Value::Frac(p) => owners!(p),
+            Value::Real(p) => owners!(p),
+            Value::Complex(p) => owners!(p),
+            Value::Text(p) => owners!(p),
+            Value::Words(p, _) => owners!(p),
+            Value::Array(p) => owners!(p),
+            Value::Tuple(p) => owners!(p),
+            Value::Generator(p) => owners!(p),
+            Value::Set(p) => owners!(p),
+            Value::SetWalk(p, _) => owners!(p),
+            Value::Slice(p) => owners!(p),
+            Value::Map(p) => owners!(p),
+            Value::Class(p) => owners!(p),
+            Value::Object(p) => owners!(p),
+            Value::Tie(p) => owners!(p),
+            Value::Routine(p) => owners!(p),
+            Value::Descriptor(p) => owners!(p),
+            Value::Faint(p) => owners!(p),
+            Value::Collection(cell, _) => owners!(cell),
+            Value::Bond(cell) | Value::Binding(cell) => cell.borrow().shared_owners(),
+            Value::Method(_, _, stamp) => owners!(stamp),
+            _ => None,
+        }
+    }
+
     pub fn method(owner: Rc<Instance>, code: Rc<Routine>) -> Self { Self::Method(owner, code, Rc::new(MethodStamp)) }
 
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Items::tuple(parts)) }
@@ -1902,6 +1966,10 @@ impl Value {
                 let owner = match &w.1[1] { Value::Class(c) => c.name.as_str(), _ => "" };
                 format!("<attribute '{}' of '{}' objects>", w.1[0].plain(), owner)
             },
+            Value::Adapter(w) if w.0 == 205 => match &w.1[1] {
+                Value::Class(owner) => format!("<attribute '{}' of '{}' objects>", w.1[2].plain(), owner.name),
+                _ => "<member wrapper>".to_string(),
+            },
             Value::Adapter(w) if w.0 == 29 => match w.1.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
                     Some((label, _)) => format!("<{label} '{word}' of '{kind}' objects>"),
@@ -1957,6 +2025,8 @@ impl Value {
         }
         match kind {
             "type" if matches!(name, "__dict__" | "__name__" | "__mro__") => Some(("attribute", "getset_descriptor")),
+            "code" if matches!(name, "co_varnames" | "co_freevars" | "co_cellvars" | "co_code" | "co_lnotab") => Some(("attribute", "getset_descriptor")),
+            "code" if name.starts_with("co_") => Some(("member", "member_descriptor")),
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),
             "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),

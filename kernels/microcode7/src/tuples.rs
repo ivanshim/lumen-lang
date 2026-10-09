@@ -37,18 +37,23 @@ impl TupleReserve {
 pub struct Sequence {
     row: Rc<Vec<Value>>,
     tuple: bool,
+    remembered: Rc<Cell<Option<i64>>>,
 }
 impl From<Rc<Vec<Value>>> for Sequence {
-    fn from(row: Rc<Vec<Value>>) -> Self { Self { row, tuple: false } }
+    fn from(row: Rc<Vec<Value>>) -> Self { Self { row, tuple: false, remembered: Rc::new(Cell::new(None)) } }
 }
 impl Deref for Sequence {
     type Target = Rc<Vec<Value>>;
     fn deref(&self) -> &Self::Target { &self.row }
 }
 impl DerefMut for Sequence {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.row }
+    fn deref_mut(&mut self) -> &mut Self::Target { self.remembered = Rc::new(Cell::new(None)); &mut self.row }
 }
 impl Sequence {
+    /// Retrieve the hash from a prior successful traversal of this tuple.
+    pub fn known_hash(&self) -> Option<i64> { self.remembered.get() }
+    /// Share a finished hash with references to the same immutable storage.
+    pub fn record_hash(&self, number: i64) { self.remembered.set(Some(number)); }
     pub fn plain(values: Vec<Value>) -> Self { Rc::new(values).into() }
 
     pub fn tuple(values: Vec<Value>) -> Self {
@@ -66,7 +71,7 @@ impl Sequence {
                 row
             }
         };
-        Self { row, tuple }
+        Self { row, tuple, remembered: Rc::new(Cell::new(None)) }
     }
 }
 impl Drop for Sequence {
@@ -102,6 +107,23 @@ impl Drop for Scope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // Keep immutable aliases' hashes while discarding an altered row's memo.
+    #[test]
+    fn sequence_hash_does_not_follow_recycled_or_changed_contents() {
+        let _scope = Scope::enter(true);
+        let first = Sequence::tuple(vec![Value::Small(7)]);
+        let mut next = first.clone();
+        first.record_hash(29);
+        assert_eq!(next.known_hash(), Some(29));
+        Rc::make_mut(&mut next).clear();
+        assert!(next.known_hash().is_none());
+        assert_eq!(first.known_hash(), Some(29));
+        drop(first);
+        drop(next);
+        let fresh = Sequence::tuple(vec![Value::Small(9)]);
+        assert!(fresh.known_hash().is_none());
+    }
+
     #[test]
     fn aliases_hold_elements_until_the_reserve_receives_empty_storage() {
         let _scope = Scope::enter(true);

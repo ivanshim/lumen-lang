@@ -1,3 +1,4 @@
+# Source: CPython v3.14.8 / 8e6e75d9102e, Lib/unittest/util.py; PSF License.
 """Various utility functions."""
 
 from collections import namedtuple, Counter

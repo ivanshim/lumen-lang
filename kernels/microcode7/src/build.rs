@@ -3425,7 +3425,16 @@ impl<'a> Builder<'a> {
                 (true, Some(mark)) => said.split(mark).collect::<Vec<_>>(),
                 _ => vec![said.as_str()],
             };
-            if pieces.iter().any(|part| !self.table.name_like(part) || self.table.keywords.contains(*part)) {
+            // Use the language's explicit identifier exclusions when supplied.
+            let banned_names = self.table.strings("ext.lexical.identifier.reserved");
+            let invalid = pieces.iter().any(|part| {
+                !self.table.name_like(part) || if banned_names.is_empty() {
+                    self.table.keywords.contains(*part)
+                } else {
+                    banned_names.iter().any(|name| name == part)
+                }
+            });
+            if invalid {
                 return Err(format!("Expected identifier among imported names, got '{}'", said));
             }
             path.extend(pieces.iter().map(|s| s.to_string()));
@@ -3493,7 +3502,7 @@ impl<'a> Builder<'a> {
         }
         let mut writes = Vec::new();
         if taking_names && !enclosed && self.on_any("op.mul") {
-            if self.table.has_any("ext.builtin.exceptions.syntax") && (self.in_class_body() || self.layers.iter().skip(1).any(|scope| scope.holds == Holds::Every)) {
+            if self.table.has_any("ext.builtin.exceptions.syntax") && (self.in_class_body() || self.layers.iter().skip(self.outer_layers).any(|scope| scope.holds == Holds::Every)) {
                 return Err(String::from("SyntaxError: import * only allowed at module level"));
             }
             self.advance();
@@ -3620,7 +3629,8 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let head = self.look().spelling();
         if !table.keywords.contains(head) || table.monadic.contains_key(head) { return true; }
-        ["ext.op.lambda", "ext.op.await", "literal.true", "literal.false", "literal.null", "ext.literal.ellipsis"]
+        ["ext.op.lambda", "ext.op.await", "literal.true", "literal.false", "literal.null", "ext.literal.ellipsis",
+            "ext.stmt.type_alias", "ext.stmt.match.case", "ext.stmt.match"]
             .iter().any(|label| table.spells(label, head))
     }
 
@@ -3746,19 +3756,20 @@ impl<'a> Builder<'a> {
                     leaving
                 } else {
                     value = prim_call(Prim::StartContext, vec![manager_read]);
-                    manager
+                    manager.clone()
                 };
                 value = self.located(bounds, value);
                 let entered = self.gensym("entered");
                 steps.push(Form::Write(entered.clone(), Box::new(value)));
-                value = Form::Read(entered);
+                if asynchronous { steps.push(Form::Forget(manager)); }
+                value = Form::Release(entered);
                 contexts.push((steps.len(), watched, bounds));
             }
             if self.key("ext.stmt.with.as") {
                 self.advance();
                 let place = self.gensym("with");
                 let name = place.ident.to_string();
-                steps.push(Form::Write(place, Box::new(value)));
+                steps.push(Form::Write(place.clone(), Box::new(value)));
                 let start = self.pos;
                 let mut boundary = start;
                 let mut closing = Vec::new();
@@ -3777,6 +3788,7 @@ impl<'a> Builder<'a> {
                     return Err(String::from("SyntaxError: cannot assign to expression"));
                 }
                 steps.push(self.distribute(start..boundary, &name).map_err(|e| self.loop_target_error(start..boundary, e))?);
+                if table.has_any("ext.stmt.class.special") { steps.push(Form::Forget(place)); }
                 self.pos = boundary;
             } else { steps.push(value); }
             if !self.on_any("syntax.call.separator") { break; }
@@ -7143,8 +7155,13 @@ impl<'a> Builder<'a> {
         } else {
             let tier = table.strings("op.range").iter().filter_map(|r| table.precedence.get(r.as_str())).min().copied().unwrap_or(0);
             let beginning = self.pos;
+            // Collection loops without range operators use Python's full source grammar.
+            let minimum = match (table.strings("op.range").is_empty(), table.single("ext.op.comprehension.for")) {
+                (true, Some(_)) => 0,
+                _ => tier + 1,
+            };
             let start = if self.on_any("ext.syntax.array.spread") { self.comma_value()? }
-                else { let item = self.expr(tier + 1)?; self.comma_tail(item)? };
+                else { let item = self.expr(minimum)?; self.comma_tail(item)? };
             if !(self.look().shape == Shape::Sign && table.spells("op.range", &self.look().spelling())) {
                 // No range mark: what was read is something to walk through.
                 if !table.flag("ext.stmt.for.collection") {
@@ -10122,8 +10139,8 @@ impl<'a> Builder<'a> {
                         let made = self.parent_without_arguments(&t.lexeme);
                         return self.subscript(made);
                     }
-                    (true, Some(_), Some(receiver), member) if !self.under_way.is_empty()
-                        && (member.is_none() || self.glance(2).lexeme != open) => {
+                    // Resolve zero-argument super through its defining class, including method calls.
+                    (true, Some(_), Some(receiver), _) if !self.under_way.is_empty() => {
                         self.parts().needs_class_cell = true;
                         self.parts().class_cell_protocol = true;
                         let private = self.parts().completed_class.ident.to_string();
@@ -11321,10 +11338,12 @@ impl<'a> Builder<'a> {
             }
             return self.gather_comprehension(next, &closing, mapped);
         }
-        let mut value = prim_call(if mapped { Prim::MakeMap } else if family == "map" { Prim::EmptySet } else { Prim::MakeArray }, vec![]);
+        let opener = if mapped { Prim::MakeMap } else if family == "map" { Prim::EmptySet } else { Prim::MakeArray };
+        let mut parts: Vec<(Form, bool)> = Vec::new();
+        let mut opened = false;
         while !self.sign(&closing) {
             let spreading = self.on_any(if mapped { "ext.syntax.map.spread" } else { "ext.syntax.array.spread" });
-            if spreading { self.advance(); }
+            if spreading { self.advance(); opened = true; }
             let mut beginning = self.pos;
             let mut item = self.expr(0)?;
             if mapped && !spreading {
@@ -11353,11 +11372,28 @@ impl<'a> Builder<'a> {
                 self.pos = beginning;
                 return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
             }
-            value = prim_call(Prim::ExtendLiteral(mapped, spreading), vec![value, item]);
+            parts.push((item, spreading));
             if self.sign(&closing) { break; }
             self.need_sign(&separator, "between parts of a literal")?;
         }
         self.advance();
+        // A list display with nothing opened out is made whole in one
+        // step: a literal of tens of thousands of members would otherwise
+        // be a chain of one-member growings as deep as the display is
+        // long, and reading that chain back would run the run out of
+        // stack. A map, a set, or anything opened out, still grows part
+        // by part so that every member lands in the order the text wrote
+        // it, and custom keys keep the handling they already had.
+        let flat = !opened && family == "array";
+        let mut value = if flat {
+            prim_call(opener, parts.into_iter().map(|(item, _)| item).collect())
+        } else {
+            let mut grown = prim_call(opener, Vec::new());
+            for (item, spreading) in parts {
+                grown = prim_call(Prim::ExtendLiteral(mapped, spreading), vec![grown, item]);
+            }
+            grown
+        };
         if family == "map" && !mapped && self.table.has_any("ext.stmt.class.special") { value = prim_call(Prim::DistinctObjects, vec![value]); }
         Ok(value)
     }

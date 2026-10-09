@@ -4533,8 +4533,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytearray.fromhex` | - | - | `bytearray.fromhex` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes` | - | - | `bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes._export` | - | - | `_export` | - | - | - | - | - | - | - |
-| `ext.builtin.bytes.decode` | - | - | `decode` | - | - | - | - | - | - | - |
-| `ext.builtin.bytes.encode` | - | - | `encode` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.decode` | - | - | `decode` `__codec_decode` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.encode` | - | - | `encode` `__codec_encode` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.escape_decode` | - | - | `__escape_decode_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.find` | - | - | `find` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.from_int` | - | - | `to_bytes` | - | - | - | - | - | - | - |
@@ -4692,6 +4692,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.frozenset` | - | - | `frozenset` | - | - | - | - | - | - | - |
 | `ext.builtin.gc.collect` | - | - | `__gc_collect` | - | - | - | - | - | - | - |
 | `ext.builtin.getattr` | - | - | `getattr` | - | - | - | - | - | - | - |
+| `ext.builtin.gettrace` | - | - | `__gettrace` | - | - | - | - | - | - | - |
 | `ext.builtin.globals` | - | - | `globals` | - | - | - | - | - | - | - |
 | `ext.builtin.hasattr` | - | - | `hasattr` | - | - | - | - | - | - | - |
 | `ext.builtin.hash` | - | - | `hash` | - | - | - | - | - | - | - |
@@ -4835,6 +4836,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.min` | - | - | `min` | - | - | - | - | - | - | - |
 | `ext.builtin.module.helper.amiss` | - | - | `TypeError: invalid module helper arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
+| `ext.builtin.multibyte` | - | - | `__multibyte_native` | - | - | - | - | - | - | - |
 | `ext.builtin.namespace_type` | - | - | `__namespace_type` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
@@ -4922,6 +4924,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.set.unsupported` | - | - | `NotImplementedError: hashing this value is not provided` | - | - | - | - | - | - | - |
 | `ext.builtin.set.update` | - | - | `update` | - | - | - | - | - | - | - |
 | `ext.builtin.setattr` | - | - | `setattr` | - | - | - | - | - | - | - |
+| `ext.builtin.settrace` | - | - | `__settrace` | - | - | - | - | - | - | - |
 | `ext.builtin.shell` | - | - | - | - | `shell_exec` | - | - | - | - | - |
 | `ext.builtin.signal` | - | - | `__signal` | - | - | - | - | - | - | - |
 | `ext.builtin.slice` | - | - | `slice` | - | - | - | - | - | - | - |
@@ -5307,6 +5310,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.op.walk.rewind` | - | - | - | - | `rewind` | - | - | - | - | - |
 | `ext.op.walk.this` | - | - | - | - | `current` | - | - | - | - | - |
 | `ext.stmt.annotation` | - | - | `:` | - | - | - | - | - | - | - |
+| `ext.stmt.annotation.adapter` | - | - | `__native_annotation_rows__` | - | - | - | - | - | - | - |
 | `ext.stmt.annotation.amiss` | - | - | `invalid syntax` | - | - | - | - | - | - | - |
 | `ext.stmt.annotation.target.unready` | - | - | `NotImplementedError: annotated attribute targets are not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.assert` | - | - | `assert` | - | - | - | - | - | - | - |
@@ -5370,7 +5374,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.code.amiss` | - | - | `TypeError: __code__ must be set to a code object` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` `co_freevars` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.free` | - | - | `ValueError: ` `() requires a code object with ` ` free vars, not ` | - | - | - | - | - | - | - |
-| `ext.stmt.class.detail.code.mismatch` | - | - | `code object of non-matching type` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.mismatch` | - | - | `Assigning a code object of non-matching type is deprecated (e.g., from a generator to a plain function)` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.replace` | - | - | `replace` `co_linetable` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults` | - | - | `__defaults__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.defaults.amiss` | - | - | `TypeError: __defaults__ must be set to a tuple object` | - | - | - | - | - | - | - |
@@ -5405,6 +5409,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.namespace` | - | - | `__dict__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace.amiss` | - | - | `TypeError: __dict__ must be set to a dictionary, not a '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace.kept` | - | - | `TypeError: cannot delete __dict__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.native.getsets` | - | - | `builtins` `memoryview` `obj format itemsize strides readonly c_contiguous contiguous f_contiguous nbytes ndim shape` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.native.protocols` | - | - | (84 strings; see language definition) | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.order` | - | - | `mro` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.original.bases` | - | - | `__orig_bases__` | - | - | - | - | - | - | - |
@@ -5430,6 +5435,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.subclass` | - | - | `__init_subclass__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.subclasses` | - | - | `__subclasses__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.text.amiss` | - | - | `TypeError: ` ` must be set to a string object` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.text_signature` | - | - | `__text_signature__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.type_params` | - | - | `__type_params__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.unready` | - | - | `NotImplementedError: this class operation is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.varnames` | - | - | `co_varnames` | - | - | - | - | - | - | - |
@@ -5509,7 +5515,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import.missing` | - | - | `ModuleNotFoundError: No module named '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.nonpackage` | - | - | `; '` `' is not a package` | - | - | - | - | - | - | - |
 | `ext.stmt.import.relative.packages` | - | - | `true` | - | - | - | - | - | - | - |
-| `ext.stmt.import.relative.unready` | - | - | `NotImplementedError: relative imports require a package context` | - | - | - | - | - | - | - |
+| `ext.stmt.import.relative.unready` | - | - | `ImportError: attempted relative import with no known parent package` | - | - | - | - | - | - | - |
 | `ext.stmt.import.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.legacy_call` | - | - | `print` `exec` | - | - | - | - | - | - | - |
 | `ext.stmt.loop.else` | - | - | `true` | - | - | - | - | - | - | - |
@@ -6128,3 +6134,26 @@ without invoking attribute hooks, metaclass properties, or other descriptors.
 `ext.builtin.documentation` contains alternating native object names and their
 documentation strings. It supplies metadata for existing builtin objects and
 descriptors; it does not create members or change their behavior.
+`ext.stmt.annotation.adapter` names a runtime attribute exposing retained native class annotation expressions to the symbolic namespace adapter. Python uses it to produce genuine forward references without changing direct annotator format errors.
+
+The Python program-namespace primitive accepts `recursion_depth` to expose the active kernel recursion counter. The sys adapter validates a new limit against that counter, including native dispatch entries, so an accepted low limit retains room to restore the limit after unwinding.
+`ext.stmt.class.detail.text_signature` names optional native callable signature metadata.
+`ext.stmt.class.detail.native.getsets` declares triples of module, native class, and getter names whose adapter implementations become read-only native data descriptors. Class access returns the descriptor; instance access validates its owner and calls the getter.
+Python text methods validate named error policies in development mode (`-X dev`). Private `__codec_encode` and `__codec_decode` spellings reuse the bytes encode/decode labels for low-level registry conversion, where unused policies remain lazy.
+
+`ext.builtin.multibyte` names the Python native CJK mapping primitive. It provides complete CJK character mappings, prefix validation, GB18030 ranges, and Unicode 16.0/3.2 normalization data to the Python codec state machines. Other languages do not register it.
+
+The Python program-namespace primitive accepts `refcount` and a value to read
+its actual shared-allocation owners, including interpreter temporaries. Canonical
+inline integers, booleans and singletons cannot be deallocated and report
+CPython's immortal lifetime marker. `sys.getrefcount` exposes this ownership
+information; heap counts need not match CPython's object representation.
+Native frame inspection walks `sys._getframe()` and its `f_back` links.
+Parameter-only native text signatures are syntax-validated by `compile()` and
+read directly into inspect parameters without requiring syntax-tree support.
+
+Python startup accepts `-E`, `-Woption` and `-W option` before a source or `-m`
+module. `-E` ignores Python environment configuration while preserving the
+process environment. Warning options retain CPython's environment-before-command
+order and first-occurrence deduplication; runtime warning filters then process
+that ordered list. Other language invocations retain their existing options.

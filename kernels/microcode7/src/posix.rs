@@ -124,6 +124,10 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                 use std::os::unix::ffi::OsStrExt as _;
                 std::env::current_dir().map(|here| octets(here.as_os_str().as_bytes())).map_err(|err| err.raw_os_error().unwrap_or(libc::EIO))
             }
+        "locale_encoding" => {
+            let name = libc::nl_langinfo(libc::CODESET);
+            Ok(octets(CStr::from_ptr(name).to_bytes()))
+        },
             "getpid" | "getuid" | "geteuid" | "getgid" | "getegid" => {
                 let ident = match operation.as_ref() { "getpid" => libc::getpid() as i64, "getuid" => libc::getuid() as i64, "geteuid" => libc::geteuid() as i64, "getgid" => libc::getgid() as i64, _ => libc::getegid() as i64 };
                 Ok(Value::Small(ident))

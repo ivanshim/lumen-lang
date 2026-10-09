@@ -642,10 +642,12 @@
     "bytes"
   ],
   "ext.builtin.bytes.decode": [
-    "decode"
+    "decode",
+    "__codec_decode"
   ],
   "ext.builtin.bytes.encode": [
-    "encode"
+    "encode",
+    "__codec_encode"
   ],
   "ext.builtin.bytes.find": [
     "find"
@@ -3225,7 +3227,7 @@
     "TypeError: __code__ must be set to a code object"
   ],
   "ext.stmt.class.detail.code.mismatch": [
-    "code object of non-matching type"
+    "Assigning a code object of non-matching type is deprecated (e.g., from a generator to a plain function)"
   ],
   "ext.stmt.class.detail.code.free": [
     "ValueError: ",
@@ -3522,7 +3524,7 @@
   ],
   "ext.stmt.import.relative.packages": true,
   "ext.stmt.import.relative.unready": [
-    "NotImplementedError: relative imports require a package context"
+    "ImportError: attempted relative import with no known parent package"
   ],
   "ext.stmt.import.value": true,
   "ext.stmt.loop.else": true,
@@ -6048,5 +6050,25 @@
     "Return state information for pickling.",
     "zip.__setstate__",
     "Set state information for unpickling."
+  ],
+  "ext.builtin.multibyte": [
+    "__multibyte_native"
+  ],
+  "ext.builtin.settrace": [
+    "__settrace"
+  ],
+  "ext.builtin.gettrace": [
+    "__gettrace"
+  ],
+  "ext.stmt.class.detail.text_signature": [
+    "__text_signature__"
+  ],
+  "ext.stmt.class.detail.native.getsets": [
+    "builtins",
+    "memoryview",
+    "obj format itemsize strides readonly c_contiguous contiguous f_contiguous nbytes ndim shape"
+  ],
+  "ext.stmt.annotation.adapter": [
+    "__native_annotation_rows__"
   ]
 }

@@ -66,10 +66,7 @@ def ceil(x):
         method = x.__ceil__
         if method is None:
             raise TypeError("'NoneType' object is not callable")
-        answer = method()
-        if type(answer) != type(1) and type(answer) != type(True):
-            raise 'TypeError: __ceil__ returned non-Integral (type ' + type(answer).__name__ + ')'
-        return answer
+        return method()
     _check_real(x)
     x = float(x)
     if isinf(x) or isnan(x):
@@ -86,10 +83,7 @@ def trunc(x):
         method = x.__trunc__
         if method is None:
             raise TypeError("'NoneType' object is not callable")
-        answer = method()
-        if type(answer) != type(1) and type(answer) != type(True):
-            raise 'TypeError: __trunc__ returned non-Integral (type ' + type(answer).__name__ + ')'
-        return answer
+        return method()
     if type(x) != type(1) and type(x) != type(1.0) and type(x) != type(True):
         raise "TypeError: type " + type(x).__name__ + " doesn't define __trunc__ method"
     _check_real(x)

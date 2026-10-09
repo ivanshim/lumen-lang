@@ -268,6 +268,25 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     if work==REPR {
         return if input.len()==1 {Ok(Value::text(&expression(&input[0],names)))} else {Err(complaint(table,"arguments"))};
     }
+    if let Some(Value::Unpaired(numbers)) = input.first() {
+        if matches!(work, LOWER|UPPER|CASEFOLD|SWAPCASE) {
+            if input.len() > 1 { return Err(format!("TypeError: str.{}() takes no arguments ({} given)",_name,input.len()-1)); }
+            let mut converted = Vec::new(); let mut position = 0;
+            while position < numbers.len() {
+                match char::from_u32(numbers[position]) {
+                    None => {converted.push(numbers[position]); position+=1;}
+                    Some(_) => {
+                        let beginning = position;
+                        while position < numbers.len() && char::from_u32(numbers[position]).is_some() {position+=1;}
+                        let part: String = numbers[beginning..position].iter().filter_map(|n| char::from_u32(*n)).collect();
+                        let result = apply(table,work,_name,&[Value::text(&part)],names)?;
+                        if let Value::Text(word) = result {converted.extend(word.chars().map(u32::from));}
+                    }
+                }
+            }
+            return Ok(Value::characters(converted));
+        }
+    }
     if input.iter().any(|operand| match operand { Value::Unpaired(_) => true, Value::Tuple(parts) => parts.to_vec().iter().any(|part| matches!(part, Value::Unpaired(_))), _ => false }) {
         let numbers=match input.first(){Some(Value::Unpaired(row))=>row.clone(),Some(Value::Text(word))=>Rc::from(word.chars().map(u32::from).collect::<Vec<_>>()),_=>return Err(complaint(table,"receiver"))};
         let unpack=|item:&Value|match item {Value::Unpaired(row)=>Ok(row.to_vec()),Value::Text(word)=>Ok(word.chars().map(u32::from).collect::<Vec<_>>()),other=>Err(format!("TypeError: must be str, not {}",other.kind_word()))};

@@ -1642,6 +1642,21 @@ def open_urlresource(url, *args, **kwargs):
         raise unittest.SkipTest('resource urlfetch is not enabled')
     raise NotImplementedError('HTTP resource retrieval is not supported')
 
+# CPython v3.14.8 test.support helper; PSF License.
+_old_android_emulator = None
+def setswitchinterval(interval):
+    # Setting a very low gil interval on the Android emulator causes python
+    # to hang (issue #26939).
+    minimum_interval = 1e-4   # 100 us
+    if is_android and interval < minimum_interval:
+        global _old_android_emulator
+        if _old_android_emulator is None:
+            import platform
+            av = platform.android_ver()
+            _old_android_emulator = av.is_emulator and av.api_level < 24
+        if _old_android_emulator:
+            interval = minimum_interval
+    return sys.setswitchinterval(interval)
 
 # Return the complete C0 control-character set used by protocol parsers.
 def control_characters_c0():

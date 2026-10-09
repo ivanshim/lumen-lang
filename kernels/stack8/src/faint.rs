@@ -289,6 +289,7 @@ pub fn walk_departing(dying: &mut Generator) {
                 reversed_walk: dying.reversed_walk.take(),
                 resume: std::mem::take(&mut dying.resume),
                 resuming: dying.resuming,
+                running: false,
                 held: std::mem::take(&mut dying.held),
                 hurled: dying.hurled.take(),
                 walked: dying.walked.take(),

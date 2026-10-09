@@ -82,6 +82,9 @@ impl Value {
             },
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(slot)) if slot.0 == 29
                 && matches!(slot.1.as_slice(), [Value::Text(kind), Value::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, ty)| ty == "wrapper_descriptor"))) => "method-wrapper",
+            Value::Adapter(w) if w.0 == 205 => "getset_descriptor",
+            Value::Adapter(w) if w.0 == 206 => "method-wrapper",
+            Value::Adapter(w) if w.0 == 207 => "wrapper_descriptor",
             Value::Adapter(w) if w.0 == 129 => "function",
             Value::Adapter(w) if w.0 == 63 => "method_descriptor",
             Value::Adapter(w) if w.0 == 64 => "builtin_function_or_method",
@@ -91,6 +94,7 @@ impl Value {
                 let wrapper = descriptor.1.len() == 2 && matches!(descriptor.1.as_slice(), [Value::Text(kind), Value::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, form)| form == "wrapper_descriptor"));
                 if wrapper { "method-wrapper" } else { "builtin_function_or_method" }
             },
+            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(getter)) if getter.0 == 0) => "builtin_function_or_method",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Native(..))) => "builtin_function_or_method",
             Value::Routine(_) => "function",
             Value::Adapter(function) if function.0 == 180 => "function",
@@ -100,6 +104,9 @@ impl Value {
             Value::Adapter(w) if w.0 == 15 => if w.1.is_empty() { "wrapper_descriptor" } else { "method-wrapper" },
             Value::Adapter(w) if w.0 == 16 => if w.1.first().is_some_and(|name| matches!(name.plain().as_str(), "__dict__" | "__weakref__")) { "getset_descriptor" } else { "member_descriptor" },
             Value::Adapter(w) if w.0 == 79 => "wrapper_descriptor",
+            // A slot's own descriptor is a member; the two layout names
+            // it never is, __weakref__ and __dict__, read as attributes.
+            Value::Adapter(w) if w.0 == 16 => if w.1.len() == 2 && matches!(w.1.first(), Some(Value::Text(name)) if !matches!(&**name, "__weakref__" | "__dict__")) { "member_descriptor" } else { "getset_descriptor" },
             Value::Adapter(w) if matches!(w.0, 1 | 2 | 10..=12 | 19 | 30 | 36 | 119 | 235 | 236) => "wrapper_descriptor",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Native(..))) =>
                 if matches!(w.1.get(1), Some(Value::Class(_))) { "method" } else { "builtin_function_or_method" },
@@ -111,6 +118,9 @@ impl Value {
             Value::Adapter(w) if w.0 == 32 => if matches!(w.1.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Value::Adapter(w) if w.0 == 7 => "code",
             Value::Adapter(w) if w.0 == 143 => "function",
+            // A slot a class names is carried by a member descriptor:
+            // the accessor __slots__ lays down, named the way type() names it.
+            Value::Adapter(w) if w.0 == 16 && matches!(w.1.as_slice(), [Value::Text(word), _] if word.as_ref() != "__weakref__") => "member_descriptor",
             Value::Class(_) | Value::SortOf(_) | Value::ByteKind(..) => "type",
             Value::Object(o) => {
                 let class = o.class_now();

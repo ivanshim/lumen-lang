@@ -83,6 +83,7 @@ impl Value {
             Self::Wrapped(1 | 2 | 10..=12 | 36 | 59 | 120, _) => "wrapper_descriptor",
             Self::Wrapped(133, _) => "method_descriptor",
             Self::Wrapped(134, _) => "builtin_function_or_method",
+            Self::Wrapped(3, parts) if parts.first().is_some_and(|call| matches!(call, Self::Wrapped(0, _))) => "builtin_function_or_method",
             Self::Wrapped(3, kept) if matches!(kept.first(), Some(Self::Wrapped(133, _) | Self::Intrinsic(..))) => "builtin_function_or_method",
             Self::Wrapped(3, kept) if matches!(kept.first(), Some(Self::Wrapped(60, _))) => {
                 let Some(Self::Wrapped(_, slot)) = kept.first() else { unreachable!() };
@@ -93,12 +94,20 @@ impl Value {
             },
             Self::Wrapped(235, _) => "wrapper_descriptor",
             Self::Wrapped(14, _) => "builtin_function_or_method",
+            // A slot's own descriptor is a member; the two layout names
+            // it never is, __weakref__ and __dict__, read as attributes.
+            Self::Wrapped(32, parts) => if parts.len() == 2 && matches!(parts.first(), Some(Value::Text(name)) if !matches!(&**name, "__weakref__" | "__dict__")) { "member_descriptor" } else { "getset_descriptor" },
             Self::Wrapped(4, _) => "staticmethod",
             Self::Wrapped(5, _) => "classmethod",
             Self::Wrapped(35, _) => "cell",
             Self::Wrapped(7, _) => "code",
+            Self::Wrapped(205, _) => "getset_descriptor",
+            Self::Wrapped(206, _) => "method-wrapper",
+            Self::Wrapped(207, _) => "wrapper_descriptor",
             Self::Wrapped(143, _) => "function",
             Self::Wrapped(62, parts) => if matches!(parts.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
+            // The entry __slots__ lays down for a name reads as a
+            // member descriptor, the same word type() gives that accessor.
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => "method",
             Self::Wrapped(3, parts) if parts.first().is_some_and(|entry| matches!(entry, Self::Intrinsic(..))) => {
                 if let Some(Self::Blueprint(_)) = parts.get(1) { "method" } else { "builtin_function_or_method" }
@@ -109,12 +118,7 @@ impl Value {
             // word, rather than off a value of it, is a descriptor: a
             // method's own kind, or a data member's, by the same
             // reckoning the repr gives it.
-            Self::Wrapped(32, fields) if matches!(fields.get(2), Some(Self::Small(-2))) => "getset_descriptor",
             Self::Wrapped(60, held) if held.len() > 2 => "classmethod_descriptor",
-            Self::Wrapped(32, slots) => match slots.first().map(Value::bare).as_deref() {
-                Some("__dict__" | "__weakref__") => "getset_descriptor",
-                _ => "member_descriptor",
-            },
             Self::Wrapped(60, parts) => return match parts.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => Self::loose_member_descriptor(kind, word).map_or("method_descriptor", |(_, ty)| ty).to_owned(),
                 _ => "object".to_owned(),

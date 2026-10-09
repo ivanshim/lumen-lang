@@ -355,6 +355,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         settled.ok_or_else(|| "The programs of this file take and leave values in a way that does not settle".to_string())?
     };
     let mut machine = exec::Machine::new(table, reduced.globals.clone());
+    machine.main_bindings.extend(reduced.bound_globally.iter().cloned());
     for (origin, field, text, _) in request {
         if origin == "SELF" && field == "library_root" {
             machine.library_directory = Some(std::path::PathBuf::from(text));
@@ -644,6 +645,7 @@ fn protocol_complaint_named(table: &Table, words: &str) -> bool {
     }
 }
 mod sre;
+mod multibyte;
 
 
 mod normal;

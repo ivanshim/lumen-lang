@@ -304,6 +304,7 @@ pub struct Adornment {
 // standard scattering pays for on every insertion.
 #[derive(Clone, Debug)]
 pub struct SetStore {
+    pub custom_keys: bool,
     pub entries: Vec<(String, Value)>,
     pub keys: HashSet<String, crate::table::FxBuildHasher>,
     pub spelling: String,
@@ -325,7 +326,7 @@ pub struct SetStore {
 
 impl SetStore {
     pub fn new(spelling: &str, sealed: bool) -> SetStore {
-        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into(), sealed, reckoned: std::cell::Cell::new(None), instances: 0 }
+        SetStore { custom_keys: false, entries: vec![], keys: Default::default(), spelling: spelling.into(), sealed, reckoned: std::cell::Cell::new(None), instances: 0 }
     }
 
     /// The address the whole store takes where a set holds it: the
@@ -348,6 +349,8 @@ impl SetStore {
         self.reckoned.set(None);
         if self.keys.insert(address.clone()) {
             if matches!(item, Value::Keyed(..)) { self.instances += 1; }
+            let own_hash = matches!(item, Value::Keyed(..) | Value::Thing(_));
+            self.custom_keys = self.custom_keys || own_hash || (matches!(item, Value::Tuple(_)) && item.hash_address().is_err());
             self.entries.push((address, item));
         }
     }
@@ -772,7 +775,66 @@ pub fn reversed_window_kind(portion: char) -> &'static str {
     match portion { 'k' => "dict_reversekeyiterator", 'v' => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
 }
 
+pub(super) enum ReferenceState { Permanent, Counted(usize) }
+
+impl ReferenceState {
+    pub(super) fn as_python(self) -> i64 {
+        if let Self::Counted(owners) = self { owners as i64 }
+        else { i64::from(0xc000_0000_u32) }
+    }
+}
+
 impl Value {
+    /// Read ownership from the allocation itself, without cloning its value.
+    pub(super) fn allocation_holds(&self) -> Option<ReferenceState> {
+        // An inline identity has no allocation that copying or dropping could release.
+        if matches!(self, Self::Nil | Self::Flag(_) | Self::Small(_) | Self::Ellipsis | Self::Channel(_)) {
+            return Some(ReferenceState::Permanent);
+        }
+        let count = match self {
+            Self::Unpaired(cell) => Rc::strong_count(cell),
+            Self::Member(cell, _) => Rc::strong_count(cell),
+            Self::Window(cell, _) => Rc::strong_count(cell),
+            Self::Row(cell) => Rc::strong_count(cell),
+            Self::Intrinsic(_, cell) => Rc::strong_count(cell),
+            Self::Iterator(cell) => Rc::strong_count(cell),
+            Self::Backtrace(cell) => Rc::strong_count(cell),
+            Self::Attributes(cell) => Rc::strong_count(cell),
+            Self::Refusal(cell) => Rc::strong_count(cell),
+            Self::Cursor(cell) => Rc::strong_count(cell),
+            Self::Arguments(cell) => Rc::strong_count(cell),
+            Self::Octets { cell, .. } => Rc::strong_count(cell),
+            Self::Export(cell) => Rc::strong_count(cell),
+            Self::OctetKind { shown: cell, .. } => Rc::strong_count(cell),
+            Self::Wrapped(_, cell) => Rc::strong_count(cell),
+            Self::Progression(cell) => Rc::strong_count(cell),
+            Self::Huge(cell) => Rc::strong_count(cell),
+            Self::Frac(cell) => Rc::strong_count(cell),
+            Self::Complex(cell) => Rc::strong_count(cell),
+            Self::Text(cell) => Rc::strong_count(cell),
+            Self::TextRow(cell, _) => Rc::strong_count(cell),
+            Self::Vector(cell) => Rc::strong_count(cell),
+            Self::Tuple(cell) => Rc::strong_count(cell),
+            Self::Generator(cell) => Rc::strong_count(cell),
+            Self::Set(cell) => Rc::strong_count(cell),
+            Self::SetCursor { source: cell, .. } => Rc::strong_count(cell),
+            Self::Span(cell) => Rc::strong_count(cell),
+            Self::Dict(cell) => Rc::strong_count(cell),
+            Self::Couple(cell) => Rc::strong_count(cell),
+            Self::Blueprint(cell) => Rc::strong_count(cell),
+            Self::Thing(cell) => Rc::strong_count(cell),
+            Self::Routine(cell) => Rc::strong_count(cell),
+            Self::Bound(cell, _) => Rc::strong_count(cell),
+            Self::Adorned(cell) => Rc::strong_count(cell),
+            Self::Dim(cell) => Rc::strong_count(cell),
+            Self::Mutable(binding, _) => Rc::strong_count(binding),
+            Self::Shared(binding) => return binding.borrow().allocation_holds(),
+            Self::Method(_, _, mark) => Rc::strong_count(mark),
+            _ => return None,
+        };
+        Some(ReferenceState::Counted(count))
+    }
+
     pub fn method(code: Rc<Routine>, receiver: Rc<Thing>) -> Value { Value::Method(code, receiver, Rc::new(MethodMark)) }
 
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Sequence::tuple(parts)) }
@@ -1807,6 +1869,11 @@ impl Value {
                 Value::Blueprint(owner) => format!("<attribute '{}' of '{}' objects>", fields[0].bare(), owner.name),
                 _ => "<member wrapper>".into(),
             },
+            Value::Wrapped(205, layout) => {
+                if let Value::Blueprint(declaring) = &layout[0] {
+                    format!("<attribute '{}' of '{}' objects>", layout[1].bare(), declaring.name)
+                } else { String::from("<member wrapper>") }
+            },
             Value::Wrapped(60, parts) => match parts.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
                     Some((label, _)) => format!("<{label} '{word}' of '{kind}' objects>"),
@@ -1905,6 +1972,7 @@ impl Value {
         if native_slot { return Some(("slot wrapper", "wrapper_descriptor")); }
         match kind {
             "type" if matches!(name, "__dict__" | "__mro__" | "__name__") => Some(("attribute", "getset_descriptor")),
+            "code" if name.starts_with("co_") => Some(if ["co_varnames", "co_freevars", "co_cellvars", "co_code", "co_lnotab"].contains(&name) { ("attribute", "getset_descriptor") } else { ("member", "member_descriptor") }),
             "function" if name == "__code__" => Some(("attribute", "getset_descriptor")),
             "function" if name == "__globals__" => Some(("member", "member_descriptor")),
             "dict" if name == "fromkeys" => Some(("method", "classmethod_descriptor")),

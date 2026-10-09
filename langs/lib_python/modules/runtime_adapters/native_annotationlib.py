@@ -79,7 +79,12 @@ def call_annotate_function(annotate, format, owner=None):
     try:
         return annotate(format)
     except NotImplementedError:
-        pass
+        if format == Format.FORWARDREF and not isinstance(annotate, types.FunctionType):
+            rows = getattr(annotate, '__native_annotation_rows__', None)
+            if rows is None and isinstance(owner, type):
+                rows = getattr(owner, '__native_annotation_rows__', None)
+            if rows is not None:
+                return _native_annotation_rows(rows, owner)
     if format == Format.STRING:
         # Evaluating with every name a stand-in gives the text of the source.
         # Where that format is not there, the values stand for their own text.
@@ -282,7 +287,7 @@ def get_annotations(obj, *, globals=None, locals=None, eval_str=False, format=1)
     return return_value
 
 # Runtime adapter derived from CPython v3.14.8 / 8e6e75d9102e, Lib/annotationlib.py; PSF License.
-# ForwardRef uses conditionals for formats; symbolic AST transformation is unavailable.
+# ForwardRef and symbolic namespace protocols use retained native syntax nodes.
 import ast
 import builtins
 import keyword
@@ -1103,6 +1108,36 @@ class _StringifierDict(dict):
         return name
 
 
+def _build_closure(annotate, owner, is_class, stringifier_dict, *, allow_evaluation):
+    if not annotate.__closure__:
+        return None, None
+    new_closure = []
+    cell_dict = {}
+    for name, cell in zip(annotate.__code__.co_freevars, annotate.__closure__, strict=True):
+        cell_dict[name] = cell
+        new_cell = None
+        if allow_evaluation:
+            try:
+                cell.cell_contents
+            except ValueError:
+                pass
+            else:
+                new_cell = cell
+        if new_cell is None:
+            fwdref = _Stringifier(
+                name,
+                cell=cell,
+                owner=owner,
+                globals=annotate.__globals__,
+                is_class=is_class,
+                stringifier_dict=stringifier_dict,
+            )
+            stringifier_dict.stringifiers.append(fwdref)
+            new_cell = types.CellType(fwdref)
+        new_closure.append(new_cell)
+    return tuple(new_closure), cell_dict
+
+
 def annotations_to_string(annotations):
     """Convert an annotation dict containing values to approximately the STRING format.
 
@@ -1112,3 +1147,55 @@ def annotations_to_string(annotations):
         n: t if isinstance(t, str) else type_repr(t)
         for n, t in annotations.items()
     }
+
+# Native class annotations retain separate zero-argument expression closures.
+# Apply the same symbolic namespace and closure protocol as call_annotate_function.
+def _native_annotation_rows(rows, owner):
+    result = {}
+    for index in range(0, len(rows), 2):
+        key, expression = rows[index:index + 2]
+        if not isinstance(expression, types.FunctionType):
+            result[key] = expression
+            continue
+        try:
+            result[key] = expression()
+        except NameError:
+            namespace = {**expression.__builtins__, **expression.__globals__}
+            symbols = _StringifierDict(namespace, globals=expression.__globals__,
+                                       owner=owner, is_class=isinstance(owner, type),
+                                       format=Format.FORWARDREF)
+            closure, cells = _build_closure(expression, owner, isinstance(owner, type),
+                                          symbols, allow_evaluation=True)
+            rebuilt = types.FunctionType(expression.__code__, symbols, closure=closure)
+            result[key] = rebuilt()
+            symbols.transmogrify(cells)
+    return result
+
+_sentinel = object()
+
+def type_repr(value):
+    """Convert a Python value to a format suitable for use with the STRING format.
+
+    This is intended as a helper for tools that support the STRING format but do
+    not have access to the code that originally produced the annotations. It uses
+    repr() for most objects.
+
+    """
+    if isinstance(value, (type, types.FunctionType, types.BuiltinFunctionType)):
+        if value.__module__ == "builtins":
+            return value.__qualname__
+        return f"{value.__module__}.{value.__qualname__}"
+    if value is ...:
+        return "..."
+    return repr(value)
+
+
+class _ExtraNameFixer(ast.NodeTransformer):
+    """Fixer for __extra_names__ items in ForwardRef __repr__ and string evaluation"""
+    def __init__(self, extra_names):
+        self.extra_names = extra_names
+
+    def visit_Name(self, node: ast.Name):
+        if (new_name := self.extra_names.get(node.id, _sentinel)) is not _sentinel:
+            node = ast.Name(id=type_repr(new_name))
+        return node
