@@ -272,6 +272,16 @@ impl<'a> Engine<'a> {
         std::iter::once(c).chain(c.lineage.borrow().iter().map(Rc::as_ref)).find_map(Self::own_kind)
     }
 
+    /// Find the native allocation kind through physical bases, independently of a supplied MRO.
+    fn allocation_kind(c: &Class) -> Option<String> {
+        let mut owner = Some(c);
+        while let Some(class) = owner {
+            if let Some(kind) = Self::own_kind(class) { return Some(kind); }
+            owner = class.base.as_deref();
+        }
+        None
+    }
+
     /// Whether a class stands on the builtin kind named, through any of
     /// its line: a class written with several builtin bases stands on
     /// each of them, and answers to any of them asked after.
@@ -1017,7 +1027,7 @@ impl<'a> Engine<'a> {
         c.shared.borrow_mut().push(("\0slots".into(), Value::array(named.iter().map(|slot| Value::text(slot.plain().as_str())).collect())));
         c.shared.borrow_mut().push(("\0layout".into(), self.instance_layout(c, Some(&named))));
         c.weak_storage.set(Some(self.weak_layout(c)));
-        if let Some(kind @ ("int" | "tuple" | "bytes")) = Self::kind_beneath(c).as_deref() {
+        if let Some(kind @ ("int" | "tuple" | "bytes")) = Self::allocation_kind(c).as_deref() {
             if !named.is_empty() {
                 return Err(format!("TypeError: nonempty __slots__ not supported for subtype of '{kind}'").into());
             }
@@ -1073,7 +1083,7 @@ impl<'a> Engine<'a> {
         let (mut size, mut dictionary, mut weak) = c.base.as_ref()
             .map(|base| Self::class_layout(base, self.exception_class(base)))
             .unwrap_or((16, 0, 0));
-        let variable = matches!(Self::kind_beneath(c).as_deref(), Some("int" | "tuple" | "bytes"));
+        let variable = matches!(Self::allocation_kind(c).as_deref(), Some("int" | "tuple" | "bytes"));
         // Secondary bases can supply storage, but cannot enlarge a variable-sized layout.
         for base in &c.direct {
             let (_, base_dict, base_weak) = Self::class_layout(base, self.exception_class(base));
@@ -5713,7 +5723,7 @@ impl<'a> Engine<'a> {
     /// dictionary and of the native value kept in its fields.
     pub(super) fn weak_layout(&self, c: &Class) -> bool {
         if let Some(layout) = c.weak_storage.get() { return layout; }
-        if matches!(Self::kind_beneath(c).as_deref(), Some("int" | "tuple" | "bytes")) { return false; }
+        if matches!(Self::allocation_kind(c).as_deref(), Some("int" | "tuple" | "bytes")) { return false; }
         if let Some(kind) = Self::own_kind(c) { return matches!(kind.as_str(), "set" | "frozenset"); }
         if c.direct.is_empty() { return false; }
         if let Some(names) = Self::stored_slot_names(c) {

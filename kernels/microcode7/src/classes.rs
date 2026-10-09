@@ -273,6 +273,12 @@ impl<'a> Machine<'a> {
         std::iter::once(b).chain(b.ancestry.borrow().iter().map(Rc::as_ref)).find_map(Self::native_word)
     }
 
+    /// Read the native storage ancestry, which a custom resolution order cannot resize.
+    fn storage_native(b: &Blueprint) -> Option<String> {
+        if let Some(word) = Self::native_word(b) { return Some(word); }
+        b.under.as_ref().and_then(|parent| Self::storage_native(parent))
+    }
+
     /// Whether a blueprint stands on the native kind named, through any
     /// of its line: a blueprint written with several native parents
     /// stands on each of them, and answers to any asked after.
@@ -1082,7 +1088,7 @@ impl<'a> Machine<'a> {
         class.shared.borrow_mut().push(("\0slots".to_owned(), Value::Vector(crate::tuples::Sequence::plain(kept))));
         class.shared.borrow_mut().push(("\0layout".to_owned(), self.instance_layout(class, Some(&words))));
         class.weak_slot.set(Some(self.admits_weak(class)));
-        let native = Self::native_beneath(class);
+        let native = Self::storage_native(class);
         if !words.is_empty() && matches!(native.as_deref(), Some("tuple" | "bytes" | "int")) {
             return Err(format!("TypeError: nonempty __slots__ not supported for subtype of '{}'", native.unwrap()).into());
         }
@@ -1148,7 +1154,7 @@ impl<'a> Machine<'a> {
         let (mut size, mut dictionary, mut weak) = class.under.as_ref()
             .map(|parent| Self::kept_layout(parent, self.is_fault_kind(parent)))
             .unwrap_or((16, 0, 0));
-        let can_add_weak = !matches!(Self::native_beneath(class).as_deref(), Some("bytes" | "tuple" | "int"));
+        let can_add_weak = !matches!(Self::storage_native(class).as_deref(), Some("bytes" | "tuple" | "int"));
         // A parent's storage is available even when another parent provides the shape.
         for parent in class.parents.iter() {
             let inherited = Self::kept_layout(parent, self.is_fault_kind(parent));
@@ -5373,7 +5379,7 @@ impl<'a> Machine<'a> {
     /// new storage. Variable-sized integer, tuple and byte layouts cannot add it.
     pub(super) fn admits_weak(&self, b: &Blueprint) -> bool {
         if let Some(stored) = b.weak_slot.get() { return stored; }
-        let underlying = Self::native_beneath(b);
+        let underlying = Self::storage_native(b);
         if matches!(underlying.as_deref(), Some("bytes" | "int" | "tuple")) { return false; }
         match Self::native_word(b) {
             Some(word) => return word == "frozenset" || word == "set",
