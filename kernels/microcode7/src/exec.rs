@@ -11855,7 +11855,7 @@ impl<'a> Machine<'a> {
         if values.iter().all(|v| !matches!(v, Value::Couple(_))) { return Ok((values, Vec::new())); }
         let only_expansion = self.has_class_order() && values.iter().all(|v| matches!(v, Value::Couple(_)))
             && values.iter().filter(|v| matches!(v, Value::Couple(pair) if matches!(pair.0, Value::Flag(false)))).count() == 1;
-        let opened = self.open_arguments(values);
+        let opened = self.open_arguments_owned(values, Some(name));
         if only_expansion {
             if let Err(Escape::Error(text)) = &opened {
                 if let Some(kind) = text.strip_prefix("TypeError: Value after * must be an iterable, not ") {
@@ -11866,7 +11866,13 @@ impl<'a> Machine<'a> {
         opened
     }
     pub(super) fn open_arguments(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
-        let (positions, names) = self.open_arguments_raw(values)?;
+        self.open_arguments_owned(values, None)
+    }
+    /// The same opening, turned to text names; `owner` names the callee
+    /// in a repeated-name complaint, or is nothing where no name is at
+    /// hand and the plain wording is used.
+    fn open_arguments_owned(&mut self, values: Vec<Value>, owner: Option<&str>) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
+        let (positions, names) = self.open_arguments_raw(values, owner)?;
         let mut named = Vec::new();
         for (key, value) in names {
             match key {
@@ -11878,20 +11884,24 @@ impl<'a> Machine<'a> {
     }
     /// The same opening, keeping each named thing's key as it was given:
     /// only a `**` mapping can bring a name that is no text, and the
-    /// reference holds such a name until every mapping is merged.
-    pub(super) fn open_arguments_raw(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(Value, Value)>)> {
+    /// reference holds such a name until every mapping is merged. Each
+    /// name is put into one map by that map's own road as it is met, so
+    /// a name of the program's own is hashed and weighed there, and each
+    /// `**` worth is read only after its name found no place already.
+    pub(super) fn open_arguments_raw(&mut self, values: Vec<Value>, owner: Option<&str>) -> Res<(Vec<Value>, Vec<(Value, Value)>)> {
         let mut positions = Vec::new();
         let mut names = Vec::new();
+        let mut folded: Vec<(Value, Value)> = Vec::new();
         for worth in values {
             let Value::Couple(pair) = worth else { positions.push(worth); continue };
             match &pair.0 {
-                Value::Text(key) => names.push((Value::text(key), pair.1.clone())),
+                Value::Text(key) => {
+                    let key = Value::text(key);
+                    self.note_keyword(&mut folded, &key, owner)?;
+                    names.push((key, pair.1.clone()));
+                }
                 Value::Flag(true) => {
-                    let pairs = match self.mapping_pairs(&pair.1)? {
-                        Some(pairs) => pairs,
-                        None => return Err(self.argument_fault("ext.syntax.call.spread.pairs.amiss", None).into()),
-                    };
-                    names.extend(pairs);
+                    self.spread_named(&pair.1, &mut names, &mut folded, owner)?;
                 }
                 Value::Flag(false) => {
                     match &pair.1.settled() {
@@ -11925,6 +11935,65 @@ impl<'a> Machine<'a> {
         Ok((positions, names))
     }
 
+    /// Put one name into the folded keyword map by the dictionary's own
+    /// road: it is hashed where it stands and weighed against the names
+    /// already there, and a name the map already holds is refused as the
+    /// reference words it.
+    fn note_keyword(&mut self, folded: &mut Vec<(Value, Value)>, key: &Value, owner: Option<&str>) -> Result<(), String> {
+        if !self.map_enter(folded, key.clone(), Value::Unset)? {
+            let label = self.key_label(key);
+            let said = match owner {
+                Some(called) => self.keyword_twice_named(called, &label),
+                None => self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&label)),
+            };
+            return Err(said);
+        }
+        Ok(())
+    }
+
+    /// Spread one `**` mapping into a call, one name at a time: a name
+    /// is hashed and weighed against the names already given before the
+    /// mapping is asked for its worth, so a name met twice is refused
+    /// without the mapping's reader ever running.
+    fn spread_named(&mut self, source: &Value, names: &mut Vec<(Value, Value)>, folded: &mut Vec<(Value, Value)>, owner: Option<&str>) -> Result<(), String> {
+        let candidate = match source.settled() {
+            Value::Dict(_) => source.settled(),
+            _ => Self::underlying(source).map(|under| under.settled()).unwrap_or_else(|| source.settled()),
+        };
+        match &candidate {
+            Value::Dict(entries) => {
+                for (key, value) in entries.to_vec() {
+                    self.note_keyword(folded, &key, owner)?;
+                    names.push((key, value));
+                }
+                Ok(())
+            }
+            Value::Attributes(fields) => {
+                for (key, value) in self.attribute_entries(fields) {
+                    self.note_keyword(folded, &key, owner)?;
+                    names.push((key, value));
+                }
+                Ok(())
+            }
+            Value::Thing(_) => {
+                let reader = match self.read_class_member(candidate.clone(), "keys", false) {
+                    Ok(method) => Some(method),
+                    Err(escaped) if self.missing_member_escape(&escaped) => { self.sought_in_vain = None; None },
+                    Err(escaped) => return Err(self.suspension_fault(escaped)),
+                };
+                let Some(reader) = reader else { return Err(self.argument_fault("ext.syntax.call.spread.pairs.amiss", None)); };
+                let keys = self.apply_class_member(reader, Vec::new()).map_err(|escaped| self.suspension_fault(escaped))?;
+                for key in self.gathered_members(&keys)? {
+                    self.note_keyword(folded, &key, owner)?;
+                    let item = self.prim(Prim::At, "", &[candidate.clone(), key.clone()])?;
+                    names.push((key, item));
+                }
+                Ok(())
+            }
+            _ => Err(self.argument_fault("ext.syntax.call.spread.pairs.amiss", None)),
+        }
+    }
+
     /// The name the outermost names go by, where the language gives
     /// them one: the namespace a routine written there belongs to.
     fn namespace_named(&self) -> Option<String> {
@@ -11945,19 +12014,26 @@ impl<'a> Machine<'a> {
     /// refused as the text is read. The reference names the routine by
     /// the namespace it belongs to and the name it goes by there, so
     /// the two are written together here.
-    fn keyword_twice(&self, program: &Routine, key: &str) -> String {
-        let words = self.table.strings("ext.syntax.call.amiss.keyword");
-        if words.len() < 3 { return self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)); }
-        // A routine the text was read with its own dictionary answers to
-        // the name that dictionary gave itself, exactly as its
-        // `__module__` does; only a routine the program wrote falls
-        // back on the namespace the running source belongs to.
+    /// The name a routine goes by where the call stands. A routine the
+    /// text was read with its own dictionary answers to the name that
+    /// dictionary gave itself, exactly as its `__module__` does; only a
+    /// routine the program wrote falls back on the namespace the running
+    /// source belongs to.
+    fn callee_label(&self, program: &Routine) -> String {
         let space = program.framed_in.as_ref().map(|named| named.to_string()).or_else(|| self.namespace_named());
-        let called = match (space, self.routine_called(program)) {
+        match (space, self.routine_called(program)) {
             (Some(space), title) if !title.is_empty() => space + "." + &title,
             (_, title) => title,
-        };
-        self.whole_complaint([words[0].as_str(), &called, &words[1], key, &words[2]].concat())
+        }
+    }
+
+    /// The words for a name handed twice, naming the callee the call was
+    /// meant for; the same whether that callee is a routine of the
+    /// program's own or a kind the language furnishes.
+    fn keyword_twice_named(&self, called: &str, key: &str) -> String {
+        let words = self.table.strings("ext.syntax.call.amiss.keyword");
+        if words.len() < 3 { return self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key)); }
+        self.whole_complaint([words[0].as_str(), called, &words[1], key, &words[2]].concat())
     }
 
     /// The name a keyword goes by in a complaint: its own text, or for a
@@ -12088,7 +12164,8 @@ impl<'a> Machine<'a> {
             && values.iter().all(|worth| !matches!(worth, Value::Couple(_) | Value::Unset)) {
             return Ok(values);
         }
-        let (positional, named) = self.open_arguments_raw(values)?;
+        let owner = self.callee_label(program);
+        let (positional, named) = self.open_arguments_raw(values, Some(&owner))?;
         let mut fitted = vec![Value::Unset; manners.len()];
         let ordinary: Vec<usize> = manners.iter().enumerate()
             .filter_map(|(slot, how)| matches!(how, 'b' | 'p').then_some(slot)).collect();
@@ -12113,20 +12190,8 @@ impl<'a> Machine<'a> {
             false => Vec::new(),
         };
         let mut spare_names = Vec::new();
-        // The reference merges every `**` mapping into a single
-        // dictionary as it walks them: a name of the program's own is
-        // hashed and weighed by its `__hash__` and `__eq__`, and a name
-        // met twice is refused then and there, before any name is asked
-        // to be text.
-        {
-            let mut folded: Vec<(Value, Value)> = Vec::new();
-            for (key, _) in named.iter() {
-                if !self.map_enter(&mut folded, key.clone(), Value::Unset)? {
-                    let label = self.key_label(key);
-                    return Err(self.keyword_twice(program, &label).into());
-                }
-            }
-        }
+        // Every name was already folded by the dictionary's own road as
+        // the arguments were opened, so a repeat is refused there.
         for (key, worth) in named {
             let Value::Text(text) = &key else { return Err(String::from("TypeError: keywords must be strings").into()); };
             let key = text.to_string();

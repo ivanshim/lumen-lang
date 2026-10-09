@@ -3467,7 +3467,7 @@ impl<'a> Engine<'a> {
     pub(super) fn call_items_named(&mut self, called: &str, args: Vec<Value>) -> Flow<Vec<(Option<String>, Value)>> {
         let direct = !self.lang.class_builder.is_empty() && args.iter().filter(|value| matches!(value, Value::Tie(pair) if matches!(pair.0, Value::Flag(false)))).count() == 1
             && args.iter().all(|value| matches!(value, Value::Tie(_)));
-        match self.call_items(args) {
+        match self.call_items_owned(args, Some(called)) {
             Err(Fault::Note(message)) if direct && message.starts_with("TypeError: Value after * must be an iterable, not ") => {
                 let kind = message.trim_start_matches("TypeError: Value after * must be an iterable, not ");
                 Err(format!("TypeError: {called}() argument after * must be an iterable, not {kind}").into())
@@ -3476,7 +3476,13 @@ impl<'a> Engine<'a> {
         }
     }
     fn call_items(&mut self, args: Vec<Value>) -> Flow<Vec<(Option<String>, Value)>> {
-        let raw = self.call_items_raw(args)?;
+        self.call_items_owned(args, None)
+    }
+    /// The same opening, turned to text names; `owner` names the callee
+    /// in a repeated-name complaint, or is nothing where no name is at
+    /// hand and the plain wording is used.
+    fn call_items_owned(&mut self, args: Vec<Value>, owner: Option<&str>) -> Flow<Vec<(Option<String>, Value)>> {
+        let raw = self.call_items_raw(args, owner)?;
         let mut items = Vec::new();
         for (key, value) in raw {
             match key {
@@ -3490,13 +3496,21 @@ impl<'a> Engine<'a> {
 
     /// The same opening, keeping each named thing's key as it was given:
     /// only a `**` mapping can bring a name that is no text, and the
-    /// reference holds such a name until every mapping is merged.
-    fn call_items_raw(&mut self, args: Vec<Value>) -> Flow<Vec<(Option<Value>, Value)>> {
+    /// reference holds such a name until every mapping is merged. Each
+    /// name is put into one map by that map's own road as it is met, so
+    /// a name of the program's own is hashed and weighed there, and each
+    /// `**` worth is read only after its name found no place already.
+    fn call_items_raw(&mut self, args: Vec<Value>, owner: Option<&str>) -> Flow<Vec<(Option<Value>, Value)>> {
         let mut items = Vec::new();
+        let mut gathered: Vec<(Value, Value)> = Vec::new();
         for value in args {
             match value {
                 Value::Tie(pair) => match &pair.0 {
-                    Value::Text(name) => items.push((Some(Value::text(name)), pair.1.clone())),
+                    Value::Text(name) => {
+                        let key = Value::text(name);
+                        self.note_keyword(&mut gathered, &key, owner)?;
+                        items.push((Some(key), pair.1.clone()));
+                    }
                     Value::Flag(false) => match &pair.1.contents() {
                         // Spreading a walk over the arguments asks it for
                         // every member it has, and that asking may run
@@ -3539,11 +3553,7 @@ impl<'a> Engine<'a> {
                         _ => return Err(self.lang.spread_amiss[0].clone().into()),
                     },
                     Value::Flag(true) => {
-                        let pairs = match self.mapping_entries(&pair.1)? {
-                            Some(pairs) => pairs,
-                            None => return Err(self.lang.spread_pairs_amiss[0].clone().into()),
-                        };
-                        for (key, held) in pairs { items.push((Some(key), held)); }
+                        self.spread_named(&pair.1, &mut items, &mut gathered, owner)?;
                     }
                     _ => return Err(self.lang.call_amiss[0].clone().into()),
                 },
@@ -3551,6 +3561,57 @@ impl<'a> Engine<'a> {
             }
         }
         Ok(items)
+    }
+
+    /// Put one name into the gathered keyword map by the dictionary's
+    /// own road: it is hashed where it stands and weighed against the
+    /// names already there, and a name the map already holds is refused
+    /// as the reference words it.
+    fn note_keyword(&mut self, gathered: &mut Vec<(Value, Value)>, key: &Value, owner: Option<&str>) -> Flow<()> {
+        if !self.map_enter(gathered, key.clone(), Value::Null)? {
+            let label = self.key_label(key);
+            let said = match owner {
+                Some(called) => self.keyword_twice_named(called, &label),
+                None => Self::named_fault(&self.lang.call_duplicate, &label),
+            };
+            return Err(said.into());
+        }
+        Ok(())
+    }
+
+    /// Spread one `**` mapping into a call, one name at a time: a name
+    /// is hashed and weighed against the names already given before the
+    /// mapping is asked for its worth, so a name met twice is refused
+    /// without the mapping's reader ever running.
+    fn spread_named(&mut self, source: &Value, items: &mut Vec<(Option<Value>, Value)>, gathered: &mut Vec<(Value, Value)>, owner: Option<&str>) -> Flow<()> {
+        let held = source.contents();
+        // A map's own pairs are already in hand, so no reader runs.
+        let own = match &held {
+            Value::Map(pairs) => Some(pairs.to_vec()),
+            _ => match Self::worth_of(source).map(|worth| worth.contents()) {
+                Some(Value::Map(pairs)) => Some(pairs.to_vec()),
+                _ => None,
+            },
+        };
+        if let Some(pairs) = own {
+            for (key, value) in pairs {
+                self.note_keyword(gathered, &key, owner)?;
+                items.push((Some(key), value));
+            }
+            return Ok(());
+        }
+        // A thing of the program's own offers its names once; each worth
+        // is read only after its name has found no place already.
+        let Some(reader) = self.member_of(held.clone(), "keys")? else {
+            return Err(self.lang.spread_pairs_amiss[0].clone().into());
+        };
+        let window = self.call_held(reader, Vec::new())?;
+        for key in self.core_members(&window)? {
+            self.note_keyword(gathered, &key, owner)?;
+            let value = self.special_dyad(&Action::At, &held, &key)?;
+            items.push((Some(key), value));
+        }
+        Ok(())
     }
 
     fn named_fault(words: &[String], name: &str) -> String {
@@ -3594,14 +3655,22 @@ impl<'a> Engine<'a> {
     /// The module a class being made belongs to: the module the routine
     /// whose frame stands around the making was written in. The
     /// program's own frames answer as the program, as they always did.
-    fn keyword_twice(&self, program: &Routine, name: &str) -> String {
-        let words = &self.lang.call_keyword_twice;
-        if words.len() < 3 { return Self::named_fault(&self.lang.call_duplicate, name); }
+    /// The name a routine goes by where the call stands, for the words
+    /// about a call made to it.
+    fn callee_label(&self, program: &Routine) -> String {
         let qualified = self.called_as(program);
-        let called = match self.module_named() {
+        match self.module_named() {
             Some(module) if !qualified.is_empty() => format!("{module}.{qualified}"),
             _ => qualified,
-        };
+        }
+    }
+
+    /// The words for a name handed twice, naming the callee the call was
+    /// meant for; the same whether that callee is a routine of the
+    /// program's own or a kind the language furnishes.
+    fn keyword_twice_named(&self, called: &str, name: &str) -> String {
+        let words = &self.lang.call_keyword_twice;
+        if words.len() < 3 { return Self::named_fault(&self.lang.call_duplicate, name); }
         self.said_whole(format!("{}{}{}{}{}", words[0], called, words[1], name, words[2]))
     }
 
@@ -3739,7 +3808,8 @@ impl<'a> Engine<'a> {
             && args.iter().all(|given| !matches!(given, Value::Tie(_) | Value::Blank)) {
             return Ok(args);
         }
-        let items = self.call_items_raw(args)?;
+        let owner = self.callee_label(program);
+        let items = self.call_items_raw(args, Some(&owner))?;
         let mut frame = vec![Value::Blank; rules.len()];
         let slots: Vec<usize> = rules.iter().enumerate().filter_map(|(i, r)| (*r < 2).then_some(i)).collect();
         let rest = rules.iter().position(|r| *r == 3);
@@ -3759,21 +3829,8 @@ impl<'a> Engine<'a> {
         let spoken: Vec<String> = if rules.contains(&1) {
             items.iter().filter_map(|(name, _)| match name { Some(Value::Text(text)) => Some(text.to_string()), _ => None }).collect()
         } else { Vec::new() };
-        // The reference folds every `**` mapping into one dictionary as
-        // it goes: each name is put in by the dictionary's own road, so
-        // a name of the program's own is hashed and compared by its
-        // `__hash__` and `__eq__`, and a name met twice is refused while
-        // the folding still runs -- before any name is asked to be text.
-        {
-            let mut gathered: Vec<(Value, Value)> = Vec::new();
-            for (name, _) in items.iter() {
-                let Some(key) = name else { continue };
-                if !self.map_enter(&mut gathered, key.clone(), Value::Null)? {
-                    let label = self.key_label(key);
-                    return Err(self.keyword_twice(program, &label).into());
-                }
-            }
-        }
+        // Every name was already folded by the dictionary's own road as
+        // the arguments were opened, so a repeat is refused there.
         let mut keywords = Vec::new();
         for (name, value) in items {
             let Some(key) = name else { continue };
