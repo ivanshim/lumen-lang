@@ -182,6 +182,9 @@ impl Value {
             Value::Adapter(w) if w.0 == 182 => "builtin_function_or_method",
             Value::Adapter(w) if w.0 == 183 => if matches!(w.1.last(), Some(Value::Object(_))) { "method-wrapper" } else { "wrapper_descriptor" },
             Value::Adapter(w) if w.0 == 184 => "method-wrapper",
+            Value::Adapter(w) if w.0 == 205 => "getset_descriptor",
+            Value::Adapter(w) if w.0 == 206 => "method-wrapper",
+            Value::Adapter(w) if w.0 == 207 => "wrapper_descriptor",
             Value::Adapter(w) if w.0 == 129 => "function",
             Value::Adapter(w) if w.0 == 63 => "method_descriptor",
             Value::Adapter(w) if w.0 == 64 => "builtin_function_or_method",
@@ -211,6 +214,9 @@ impl Value {
             Value::Adapter(w) if w.0 == 32 => if matches!(w.1.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             Value::Adapter(w) if w.0 == 7 => "code",
             Value::Adapter(w) if w.0 == 143 => "function",
+            // A slot a class names is carried by a member descriptor:
+            // the accessor __slots__ lays down, named the way type() names it.
+            Value::Adapter(w) if w.0 == 16 && matches!(w.1.as_slice(), [Value::Text(word), _] if word.as_ref() != "__weakref__") => "member_descriptor",
             Value::Class(_) | Value::SortOf(_) | Value::ByteKind(..) => "type",
             Value::Object(o) => {
                 let class = o.class_now();

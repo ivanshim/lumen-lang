@@ -1841,6 +1841,11 @@ impl Value {
                 Value::Blueprint(owner) => format!("<attribute '{}' of '{}' objects>", fields[0].bare(), owner.name),
                 _ => "<member wrapper>".into(),
             },
+            Value::Wrapped(205, layout) => {
+                if let Value::Blueprint(declaring) = &layout[0] {
+                    format!("<attribute '{}' of '{}' objects>", layout[1].bare(), declaring.name)
+                } else { String::from("<member wrapper>") }
+            },
             Value::Wrapped(60, parts) => match parts.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
                     Some((label, _)) => format!("<{label} '{word}' of '{kind}' objects>"),

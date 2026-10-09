@@ -3014,6 +3014,14 @@
   "ext.stmt.class.detail.call": [
     "__call__"
   ],
+  "ext.stmt.class.detail.text_signature": [
+    "__text_signature__"
+  ],
+  "ext.stmt.class.detail.native.getsets": [
+    "builtins",
+    "memoryview",
+    "obj format itemsize strides readonly c_contiguous contiguous f_contiguous nbytes ndim shape"
+  ],
   "ext.stmt.class.detail.code": [
     "__code__"
   ],

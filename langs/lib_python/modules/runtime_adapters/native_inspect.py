@@ -644,6 +644,8 @@ class Signature:
         elif not hasattr(obj, '__code__'):
             if not callable(obj):
                 raise TypeError(repr(obj) + ' is not a callable object')
+            if getattr(obj, '__text_signature__', None) == '()':
+                return cls()
             call = getattr(obj, '__call__', None)
             if call is None or not hasattr(call, '__code__'):
                 raise ValueError('no signature found for builtin ' + repr(obj))
