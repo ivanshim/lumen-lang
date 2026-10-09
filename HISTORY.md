@@ -2619,3 +2619,60 @@ test_pickletools 149/164 on both kernels by method groups (whole files exceed th
 174 → 176, test_posixpath 84 → 87, test_str 127 → 128, test_urlparse 73 → 74. The full check of the final commit
 agrees on 1195 scratch programs with no mismatch, passes every gate, and shows no regression or kernel disagreement;
 kernel independence reports no problem; provenance exact 540, adapter 20, no mismatch.
+
+### 1bh. Batch 21d merged as #539; batch 21e: syntax, reprlib, shlex, wave, enum, netrc, cmd, cookies, codeop
+
+Twelve branches, each reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator; the
+branches came from DeepSeek V4.1 Flash, DeepSeek V4 Pro, Kimi K3 and GPT-6.1 Sol workers, several finished by GPT-6.1
+Sol after reviews.
+
+- fix/dsflash-syntax (SyntaxError cases), fix/dsflash-reprlib (reprlib; one Python-only formatter, the earlier
+  stream-name spoof kept removed), fix/dsflash-shlex (shlex), fix/dspro-wave (wave with CPython's audio tests and
+  fixtures), fix/dsflash-enum (enum), fix/dsflash-netrc (netrc and fileinput; the UTF-7 boundary fix),
+  fix/stdlib-cmd (cmd, native descriptor binding and receiver validation), fix/dspro-leftovers (forward dictionary
+  iteration; list, dict and exception corners), fix/dsflash-http-cookies (http.cookies, one copy and one
+  registration), fix/dsflash-datetime-speed (microcode7 weakref callback order; one ghost-state machine keeping both
+  behaviours), fix/dsflash-nturl2path (nturl2path), fix/kimi-codeop (codeop, _IncompleteInputError, code-content
+  hashing; the strict warnings_helper checks kept).
+
+One integration fix followed the merges: _io emits a real ResourceWarning for unclosed owned descriptors (four
+garbage-collection cases restored), and stack8 symbol reservation and both kernels' live dictionary positions were
+made cheaper. The batch keeps one canonical test.support subTests that awaits coroutine test methods;
+inspect.iscoroutinefunction unwraps partial and partialmethod; a failing async test and a failing async partial both
+fail on both kernels.
+
+Measured: 11260 (stack8) of 12451 and 11180 (microcode7) of 12361, over 147 files, from 10994 of 12200 and 10417 of
+11557 over 140. New files: test_wave 113/113, test_netrc 23/24, test_fileinput 56/57, test_cmd 4/5,
+test_http_cookies 32/33, test_nturl2path 4/6 (two skips), test_codeop 13/13. test_syntax 38 → 40, test_reprlib
+24 → 29, test_shlex 42 → 44, test_enum 1066 → 1069, test_dataclasses 244 → 246, test_list 65 → 66, test_dict
+111 → 112, test_exceptions 97 → 98 on both kernels; test_calendar stack8 72 → 76, microcode7 61 → 62; microcode7
+test_datetime now completes whole (499/553, 870 s timeout → 725 s) and test_statistics 364 → 365. The full check of
+the final commit agrees on 1195 scratch programs with no mismatch, passes every gate, and shows no regression, length
+change, broken progress line or kernel disagreement; kernel independence reports no problem. Still timing out in
+parts: decimal, bytes, tokenize, io and microcode7 calendar's CommandLineTestCase.
+
+### 1bi. Batch 21e merged as #540; batch 21f: dataclasses, functools, filecmp, mimetypes, structseq, genericclass, strftime
+
+Twelve branches, each reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator; the
+branches came from DeepSeek V4.1 Flash, Kimi K3 and Claude Sonnet 5.5 workers.
+
+- fix/kimi-numtower (numeric tower; Fraction dispatch and cross-kind set lookup), fix/dsflash-dataclasses
+  (dataclasses), fix/dsflash-mimetypes (mimetypes), fix/kimi-filecmp (filecmp), fix/dsflash-subclassinit
+  (__init_subclass__ and __set_name__), fix/dsflash-genericclass (__class_getitem__ and metaclass priority),
+  fix/dsflash-structseq (struct sequences), fix/claude-functools (functools; partial repr, annotation scopes, tuple
+  hash caching), fix/dsflash-builtin (builtins), fix/dsflash-flufl (the Barry-as-FLUFL future via the existing
+  per-compiler future state), fix/dsflash-tabnanny (tabnanny), fix/dsflash-strftime (strftime).
+
+Two integration fixes followed the merges: microcode7 annotation calls no longer replace module globals (with a
+regression fixture), and child processes keep the interpreter launcher identity (the tabnanny driver passes 20/20 on
+both kernels).
+
+Measured: 11468 (stack8) of 12612 and 11388 (microcode7) of 12522, over 156 files, from 11260 of 12451 and 11180 of
+12361 over 147. New files: test_filecmp 16/16, test_flufl 4/4, test_genericclass 21/22, test_mimetypes 41/44,
+test_numeric_tower 9/9, test_strftime 4/4, test_structseq 25/25, test_subclassinit 17/17, test_tabnanny 0/0 (its
+driver 20/20). test_builtin 113 -> 115, test_dataclasses 246 -> 270, test_decimal 84/286 -> 105/306 (more of the file
+now runs), test_enum 1069 -> 1070, test_functools 176 -> 198, test_reprlib 29 -> 30 on both kernels. The full check of
+the final commit agrees on 1196 scratch programs with no mismatch, passes every gate, and shows no regression, broken
+progress line or kernel disagreement; the only length change is decimal's coverage gain; kernel independence reports
+no problem. Known cost: stack8 test_glob takes 178 s instead of 136 s (a follow-up). Still timing out in parts:
+decimal, bytes, tokenize, io and calendar's CommandLineTestCase.

@@ -1641,3 +1641,8 @@ def open_urlresource(url, *args, **kwargs):
     if not is_resource_enabled('urlfetch'):
         raise unittest.SkipTest('resource urlfetch is not enabled')
     raise NotImplementedError('HTTP resource retrieval is not supported')
+
+
+# Return the complete C0 control-character set used by protocol parsers.
+def control_characters_c0():
+    return [chr(value) for value in range(32)] + ["\x7f"]

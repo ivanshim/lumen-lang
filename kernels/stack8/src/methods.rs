@@ -1,3 +1,27 @@
+/// Where a run of code units first or last stands inside a longer run.
+fn codes_search(hay: &[u32], needle: &[u32], from: usize, backwards: bool) -> Option<usize> {
+    if needle.is_empty() { return Some(if backwards { hay.len() } else { from.min(hay.len()) }); }
+    if needle.len() > hay.len() { return None; }
+    let places = 0..=hay.len() - needle.len();
+    if backwards {
+        places.rev().find(|&i| hay[i..i + needle.len()] == *needle)
+    } else {
+        places.filter(|&i| i >= from).find(|&i| hay[i..i + needle.len()] == *needle)
+    }
+}
+
+/// How many runs of the sought code units stand in the longer run.
+fn codes_tally(hay: &[u32], needle: &[u32]) -> usize {
+    if needle.is_empty() { return hay.len() + 1; }
+    let mut tally = 0;
+    let mut at = 0;
+    while let Some(found) = codes_search(hay, needle, at, false) {
+        tally += 1;
+        at = found + needle.len();
+    }
+    tally
+}
+
 // Methods belonging to the values themselves. The spelling is supplied
 // by the definition; the receiver keeps its own mutable holding place.
 
@@ -28,10 +52,10 @@ fn keyed_alike(a: &Value, b: &Value) -> bool {
 }
 
 /// Write a key over the value it holds, or at the end of the pairs.
-fn put_pair(pairs: &mut Vec<(Value, Value)>, key: Value, value: Value, words: &Wording) {
+fn put_pair(pairs: &mut crate::value::KeyedPairs, key: Value, value: Value, words: &Wording) {
     match pairs.iter_mut().find(|(k, _)| alike(k, &key, words)) {
         Some(slot) => slot.1 = value,
-        None => pairs.push((key, value)),
+        None => pairs.push_row(key, value),
     }
 }
 
@@ -275,6 +299,23 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
         // so a sigma at the end of a word and every scalar around a
         // unit no `char` holds are cased exactly as `str.lower` and
         // `str.upper` case them.
+        Value::Codepoints(row) if op == "count" => {
+            arity(1, 3)?;
+            let span = row.len();
+            let raw = a.get(1).filter(|v| !matches!(v.contents(), Value::Null)).map(|v| integer(v, fault)).transpose()?.unwrap_or(0);
+            let low = bound(raw, span);
+            let high = a.get(2).filter(|v| !matches!(v.contents(), Value::Null)).map(|v| integer(v, fault)).transpose()?.map_or(span, |n| bound(n, span));
+            let ordered = raw <= span as i64 && low <= high;
+            let part = &row[low..high.max(low)];
+            let needle = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            if op == "count" {
+                let total = if !ordered { 0 } else { codes_tally(part, &needle) };
+                return Ok(Value::Small(total as i64));
+            }
+            let at = if !ordered { None } else { codes_search(part, &needle, 0, matches!(op, "rfind" | "rindex")) };
+            if matches!(op, "index" | "rindex") && at.is_none() { return Err(fault("substring")); }
+            return Ok(Value::Small(at.map_or(-1, |i| (low + i) as i64)));
+        }
         Value::Codepoints(row) if op == "upper" || op == "lower" => {
             arity(0, 0)?;
             let work = if op == "upper" { crate::strings::TextOp::Upper } else { crate::strings::TextOp::Lower };
@@ -538,21 +579,21 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     arity(1,2)?;
                     if matches!(a[0].contents(), Value::Array(_) | Value::Map(_)) {return Err(fault("arguments"));}
                     let at=pairs.iter().position(|(k,_)| alike(k,&a[0],words));
-                    if let Some(at)=at {let value=pairs[at].1.clone();if op=="pop" {pairs.remove(at);store(Value::Map(Rc::new(pairs)))?;} return Ok(value);}
+                    if let Some(at)=at {let value=pairs[at].1.clone();if op=="pop" {pairs.remove_row(at);store(Value::Map(Rc::new(pairs)))?;} return Ok(value);}
                     let value=a.get(1).cloned().unwrap_or(Value::Null);
                     if op=="pop" && a.len()==1 {return Err(fault("key")+&a[0].representation(words));}
-                    if op=="setdefault" {pairs.push((a[0].clone(),value.clone()));store(Value::Map(Rc::new(pairs)))?;} return Ok(value);
+                    if op=="setdefault" {pairs.push_row(a[0].clone(),value.clone());store(Value::Map(Rc::new(pairs)))?;} return Ok(value);
                 }
                 "keys" | "values" | "items" => {arity(0,0)?;return Ok(Value::View(Rc::new((receiver.clone(),op.to_string()))));}
                 // The last pair written is taken out and handed back.
                 "popitem" => {
                     arity(0,0)?;
-                    let Some((key,value))=pairs.pop() else {return Err(fault("popitem"));};
+                    let Some((key,value))=pairs.pop_last() else {return Err(fault("popitem"));};
                     store(Value::Map(Rc::new(pairs)))?;
                     let plain = match key { Value::Hashed(pair) => pair.0.clone(), other => other };
                     return Ok(Value::tuple(vec![plain,value]));
                 }
-                "copy" => {arity(0,0)?;return Ok(Value::Map(Rc::new(pairs)).held(true));}
+                "copy" => {arity(0,0)?;return Ok(Value::Map(Rc::new(pairs.copied())).held(true));}
                 "clear" => {arity(0,0)?;pairs.clear();}
                 // Pairs are written as they are read, so those before an
                 // ill-shaped one stand written when it stops the call.
