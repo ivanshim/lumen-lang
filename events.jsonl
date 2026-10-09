@@ -9997,3 +9997,21 @@
 {"t":"2026-10-09T10:39:53Z","event":"note","text":"PR #542 merge notice: sent message 8072"}
 {"t":"2026-10-09T10:39:53Z","event":"note","text":"PR #542: completed success"}
 {"t":"2026-10-09T10:39:55Z","event":"merged","pr":542,"branch":"batch21g","main":"6588533a7"}
+{"t":"2026-10-09T10:44:48Z","event":"started","job":"dsflash-modulefinder","model":"deepseek-flash","via":"ds-run"}
+{"t":"2026-10-09T10:45:29Z","event":"exited","job":"review-auto-dspro-type-annotations-haiku-1024","code":0}
+{"t":"2026-10-09T10:49:49Z","event":"review-started","job":"dsflash-longexp","review":"review-auto-dsflash-longexp-1029"}
+{"t":"2026-10-09T10:53:12Z","event":"returned","job":"dspro-type-annotations","review":"review-auto-dspro-type-annotations-haiku-1024","commit":"34d74ad07","round":3,"note":"(1st Haiku return; integrity ok; check 1196/0 gates ok; type_annotations 48/49 both kernels; FunctionType kwdefaults accepted but discarded on both kernels, no None/dict validation) -> returns/dspro-type-annotations-haiku.md + Haiku resume"}
+{"t":"2026-10-09T10:53:12Z","event":"resumed","job":"dspro-type-annotations-haiku","model":"claude-haiku-5-5","note":"1st Haiku return; Haiku slot free"}
+{"t":"2026-10-09T10:54:56Z","event":"exited","job":"review-auto-dsflash-longexp-1029","code":0}
+{"t":"2026-10-09T10:55:15Z","event":"merged","pr":542,"batch":"21g","main":"6588533a7","note":"batch21g merged 10:39:49Z (CI green); base/count-batch21g staged"}
+{"t":"2026-10-09T10:55:15Z","event":"note","text":"base/count-batch21g staged from counts/batch21g-merge (2a738fd08; main 6588533a7 = merge of batch21g, identical tree apart from HISTORY.md; 1196/0, gates ok, 333 files); new returns use BASE_COUNT=count-batch21g"}
+{"t":"2026-10-09T10:55:27Z","event":"exited","job":"stdlib-bytes","code":0}
+{"t":"2026-10-09T10:56:18Z","event":"queued","job":"integrate-21h","model":"gpt-6.1-sol","line":"sol-new integrate-21h","note":"21g merged; brief-integrate-21h.md: 8 21e leftovers (rlcompleter..yieldfrom) + 4 oldest 21f (typing, pathlib, locale, ucn); base main 6588533a7, BASE_COUNT=count-batch21g; queue head"}
+{"t":"2026-10-09T10:56:30Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-09T10:56:46Z","event":"quota","codex_week_used":31,"codex_credits":0,"claude_week_used":20,"claude_5h_used":7,"deepseek_usd":253.68}
+{"t":"2026-10-09T10:56:50Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":30,"expected":33.2,"gap":-3.2,"status":"ok"}
+{"t":"2026-10-09T10:56:51Z","event":"started","job":"integrate-21h","model":"gpt-6.1-sol"}
+{"t":"2026-10-09T10:57:12Z","event":"checkin","status":"done","actions":"RETURN dspro-type-annotations-haiku (1st Haiku; FunctionType kwdefaults accepted but discarded on both kernels) -> returns/dspro-type-annotations-haiku.md + Haiku resume started; recorded PR #542 merged (21g, main 6588533a7); staged base/count-batch21g (333 files); wrote brief-integrate-21h.md (8 21e leftovers + typing, pathlib, locale, ucn), sol-new integrate-21h at queue head; checkin-brief NEXT INTEGRATION -> 21h/21i (toolkit-sync); prune-merged freed 3087MB (kimi-metaclass, stdlib-email; box 79%->77%); luna FINDINGS appended","notes":"Sol 12/12 (11 + review dsflash-longexp) + Astra 1, 4 Sol lines queued (integrate-21h first); DS Flash 7/12, 5 idle (small/medium pool exhausted, Ivan asked 07:57); DS Pro/Haiku/Sonnet busy; Codex week 31%; Claude 5h 6%/week 20%; box load 4.4/8, 12.6G avail, disk 77%; Mac disk 88%; no open PR; luna gap -3.2 ok, alert = OpenClaw relay (expected)"}
+{"t":"2026-10-09T11:00:27Z","event":"finished","job":"stdlib-bytes","exit_time":"2026-10-09T10:55:27Z"}
+{"t":"2026-10-09T11:00:28Z","event":"review-queued","job":"stdlib-bytes","review":"review-auto-stdlib-bytes-1100"}
+{"t":"2026-10-09T11:01:52Z","event":"review-started","job":"stdlib-bytes","review":"review-auto-stdlib-bytes-1100"}
