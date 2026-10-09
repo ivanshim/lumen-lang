@@ -9448,3 +9448,25 @@
 {"t":"2026-10-09T01:33:50Z","event":"quota","codex_week_used":100,"codex_credits":0,"claude_week_used":15,"claude_5h_used":5,"kimi_5h_used":0,"kimi_month_used":1,"kimi_code_used":0,"deepseek_usd":273.18}
 {"t":"2026-10-09T01:33:53Z","event":"luna-meter","reset":"2026-10-07T03:34:52Z","metered":100,"expected":101.8,"gap":-1.8,"status":"ok"}
 {"t":"2026-10-09T01:33:59Z","event":"checkin","status":"done","actions":"prune-merged 0MB; no new verdicts (12 pending are Sol usage-limit exits, all queued as sol-resume)","notes":"Codex week 100% (resets 2026-10-14 03:28Z), codex-nostart stays: Sol 0/12 running, 16 Sol lines wait in queue; DS Flash 12/12, DS Pro 1/1, Sonnet 1/1 (claude-urllib); Kimi month exhausted; 2 held resumes wait for DS Flash slot; box load 1.5, 13.1 GB avail, disk 76%; Mac disk 85%; no open PR; luna gap -1.8 ok, no new alerts"}
+{"t":"2026-10-09T01:45:39Z","event":"decision","text":"Ivan applied his spare Codex weekly reset 2026-10-09 ~09:40 SGT: usage 0%, next reset 2026-10-16 09:40 SGT. codex-nostart removed; 16 queued Sol lines (integrate-21g, reviews, 11 resumes) start as slots and the load gate allow.","by":"Ivan"}
+{"t":"2026-10-09T01:45:43Z","event":"review-started","job":"stdlib-inspect","review":"review-auto-stdlib-inspect-0000"}
+{"t":"2026-10-09T01:50:13Z","event":"exited","job":"dsflash-contextlib-async","code":0}
+{"t":"2026-10-09T01:50:41Z","event":"exited","job":"review-auto-stdlib-inspect-0000","code":0}
+{"t":"2026-10-09T01:50:45Z","event":"started","job":"integrate-21g","model":"gpt-6.1-sol"}
+{"t":"2026-10-09T01:52:57Z","event":"finished","job":"dsflash-contextlib-async","exit_time":"2026-10-09T01:50:13Z"}
+{"t":"2026-10-09T01:52:57Z","event":"review-queued","job":"dsflash-contextlib-async","review":"review-auto-dsflash-contextlib-async-0152"}
+{"t":"2026-10-09T01:53:02Z","event":"note","text":"review-queue: started dispatch.sh loop (none was running)"}
+{"t":"2026-10-09T01:53:38Z","event":"returned","job":"stdlib-inspect","review":"review-auto-stdlib-inspect-0000","commit":"a44d116ad","round":1,"note":"(1st; integrity ok; clean check 1195/0 gates ok; blocking: test_inspect 0->0 both kernels, import fails on asyncio/_pickle; side gains dataclasses +13, functools +1, enum +1) -> returns/stdlib-inspect.md + queue"}
+{"t":"2026-10-09T01:53:38Z","event":"queued","job":"stdlib-inspect","model":"gpt-6.1-sol","line":"sol-resume stdlib-inspect","note":"1st return"}
+{"t":"2026-10-09T01:53:44Z","event":"queued","job":"kimi-generator-stop","model":"deepseek-flash","line":"or-resume kimi-generator-stop deepseek-flash none","note":"held resume -> queue (DS Flash slot freed by dsflash-contextlib-async)"}
+{"t":"2026-10-09T01:54:16Z","event":"quota","codex_week_used":0,"codex_credits":0,"claude_week_used":15,"claude_5h_used":6,"kimi_5h_used":0,"kimi_month_used":1,"kimi_code_used":0,"deepseek_usd":272.86}
+{"t":"2026-10-09T01:54:16Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":0,"expected":0.0,"gap":"+0.0","status":"ok"}
+{"t":"2026-10-09T01:54:23Z","event":"checkin","status":"done","actions":"RETURN stdlib-inspect (1st; test_inspect 0->0, import fails on asyncio/_pickle) -> returns + sol-resume queued; held resume kimi-generator-stop -> queue (DS Flash slot from finished dsflash-contextlib-async, review queued); prune-merged 0MB; luna FINDINGS appended","notes":"Codex week 0% after Ivan's spare reset (next 2026-10-16 01:40Z): integrate-21g running, 17 Sol lines queued, dispatch starts one per 5 min; DS Flash 11/12 + 1 queued, DS Pro 1/1, Sonnet 1/1 (claude-urllib); kimi-type-comments still held; box load 2.4, 10.7 GB avail, disk 77%; Mac disk 86%; no open PR; luna gap +0.0 ok"}
+{"t":"2026-10-09T01:55:41Z","event":"decision","text":"Ivan: OpenAI gave another free reset - full steam. 11 queued Sol jobs started in a burst (45 s apart) instead of the dispatcher's 5-min spacing.","by":"Ivan"}
+{"t":"2026-10-09T01:55:42Z","event":"started","job":"dsflash-descrtut-sol","model":"gpt-6.1-sol","via":"burst"}
+{"t":"2026-10-09T01:55:46Z","event":"resumed","job":"kimi-generator-stop","model":"deepseek-flash","session":"none"}
+{"t":"2026-10-09T01:56:27Z","event":"review-started","job":"dsflash-fileio","review":"review-auto-dsflash-fileio-0016"}
+{"t":"2026-10-09T01:57:12Z","event":"resumed","job":"stdlib-runpy","model":"gpt-6.1-sol","via":"burst"}
+{"t":"2026-10-09T01:57:58Z","event":"resumed","job":"stdlib-bytes","model":"gpt-6.1-sol","via":"burst"}
+{"t":"2026-10-09T01:58:43Z","event":"resumed","job":"stdlib-doctest","model":"gpt-6.1-sol","via":"burst"}
+{"t":"2026-10-09T01:59:09Z","event":"exited","job":"review-auto-dsflash-fileio-0016","code":0}
