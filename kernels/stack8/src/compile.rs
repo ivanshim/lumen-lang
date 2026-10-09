@@ -42,7 +42,6 @@ thread_local! {
 /// The global names, each with a slot.
 #[derive(Default)]
 pub struct Registry {
-    pub optimization: u8,
     index: HashMap<String, usize>,
     module_index: HashMap<String, HashMap<String, usize>>,
     wildcard_index: HashMap<usize, (usize, HashMap<String, usize>)>,
@@ -60,6 +59,11 @@ pub struct Registry {
     /// of the reading, and any the text itself imports, read back once
     /// the reading is done.
     pub future_bits: i64,
+    /// The optimization level the caller asked of `compile`: below one
+    /// keeps docstrings, assertions and `__debug__` as written; one
+    /// drops assertions and settles `__debug__` false; two drops
+    /// docstrings as well.
+    pub optimize: i64,
     /// The names the outermost statements declared global, for text
     /// read into two dictionaries: a name so declared is written to the
     /// outer one.
@@ -521,6 +525,7 @@ pub fn compile_within(
         survey.idents.reserve(symbol_capacity);
         survey.allow_top_level_await = table.allow_top_level_await;
         survey.future_bits = future_bits;
+        survey.optimize = table.optimize;
         if let Err(said) = compile_pass(tokens, lang, &mut survey, before, written_in.clone(), inside.clone(), within.clone(), read_in, &mut plans, true, wants_value, interactive) {
             table.stopped_at = survey.stopped_at;
             table.stopped_column = survey.stopped_column;
@@ -842,7 +847,7 @@ fn compile_pass(
                     _ => None,
                 };
                 if let Some(words) = words {
-                    if a.registry.optimization == 2 { a.piece().instrs.truncate(from); }
+                    if a.registry.optimize == 2 { a.piece().instrs.truncate(from); }
                     else { for name in &lang.module_doc {
                         a.constant(Value::text(&words));
                         a.write(name);
@@ -934,7 +939,7 @@ fn compile_pass(
     a.registry.top_level_coroutine = unit.generator;
     let (root_constants, root_names) = code_metadata(&unit.instrs, &None, &[]);
     a.registry.future_bits = a.future_bits;
-    Ok(Rc::new(Routine { embedded_integers: None, source_end: a.pos, source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, checks_annotation_format: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
+    Ok(Rc::new(Routine { embedded_integers: None, source_end: a.pos, source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -1365,8 +1370,8 @@ impl<'a> Compiler<'a> {
     }
 
     fn read(&mut self, name: &str) {
-        if name == "__debug__" && !self.lang.compile_modes.is_empty() {
-            self.constant(Value::Flag(self.registry.optimization == 0));
+        if name == "__debug__" && !self.lang.compile_modes.is_empty() && !self.writing_place {
+            self.constant(Value::Flag(self.registry.optimize == 0));
             return;
         }
         if let Some((owner, members)) = &self.annotation_namespace {
@@ -1465,7 +1470,9 @@ impl<'a> Compiler<'a> {
                 return;
             }
         }
-        if self.in_class_body() && self.lang.shadow_builtins {
+        // A name an annotation reads is read when the annotation is, not settled
+        // here, so that reading it afresh can stand for it.
+        if self.in_class_body() && self.lang.shadow_builtins && !self.reading_annotation {
             if let Some(native) = self.lang.builtins.get(name).copied() {
                 let class_local = self.gathering().bindings.contains(name) && !self.declared_outside_class(name);
                 let slot = if class_local {
@@ -1944,8 +1951,8 @@ impl<'a> Compiler<'a> {
         }
         let documentation_at = self.tokens.len() - self.tokens[self.pos..].iter().skip_while(|t| matches!(t.shape, Shape::LineEnd | Shape::Open) || self.lang.block_intros.contains(&t.lexeme)).count();
         let is_doc = !expression && quoted && leading.peek().is_some_and(|t| matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || self.lang.ends_stmt(&t.lexeme));
-        if is_doc && self.registry.optimization == 2 { self.omitted_docs.insert(documentation_at); }
-        let doc = (is_doc && self.registry.optimization < 2).then_some(literal);
+        if is_doc && self.registry.optimize == 2 { self.omitted_docs.insert(documentation_at); }
+        let doc = (is_doc && self.registry.optimize < 2).then_some(literal);
         let qualified = self.qualified(name);
         let parameter_rules = self.parameter_rules.take();
         let declared_on = self.declared_at;
@@ -2071,7 +2078,7 @@ impl<'a> Compiler<'a> {
         }
         code_flags |= if unit.asynchronous { if instrs.iter().any(|i| matches!(i, Instr::Act(Action::Suspend, _))) { 512 } else { 128 } } else if unit.generator { 32 } else { 0 };
         let (code_constants, code_names) = code_metadata(&instrs, &doc, &local_names);
-        Ok(Rc::new(Routine { embedded_integers: None, source_end: self.pos, source_tokens: self.source_tokens.clone(), class_namespace: None, postponed_annotation: false, checks_annotation_format: false, annotation, code_constants, code_names, local_names, code_flags, future_bits: self.future_bits, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
+        Ok(Rc::new(Routine { embedded_integers: None, source_end: self.pos, source_tokens: self.source_tokens.clone(), class_namespace: None, postponed_annotation: false, checks_annotation_format: false, reads_annotation: false, annotation, code_constants, code_names, local_names, code_flags, future_bits: self.future_bits, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
     }
 
     fn annotation_text(&self, start: usize, end: usize) -> String {
@@ -2127,8 +2134,8 @@ impl<'a> Compiler<'a> {
                 let previous = std::mem::replace(&mut c.reading_annotation, true);
                 c.expr_at(0, false)?;
                 c.reading_annotation = previous;
+                let text = c.annotation_text(*start, c.pos);
                 if c.future_annotations {
-                    let text = c.annotation_text(*start, c.pos);
                     c.piece().instrs.truncate(expression);
                     c.constant(Value::text(&text));
                 }
@@ -2151,6 +2158,7 @@ impl<'a> Compiler<'a> {
         result.map(|routine| {
             let mut evaluator = (*routine).clone();
             evaluator.checks_annotation_format = true;
+            evaluator.reads_annotation = true;
             evaluator.parameter_rules = Some(vec![1]);
             Some(Rc::new(evaluator))
         })
@@ -3239,6 +3247,7 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.assert_words, &w) {
                 let assertion_start = self.mark();
                 self.take();
+                let assert_from = self.mark();
                 if !lang.syntax_members.is_empty() {
                     let (named, _) = self.outer_marks(self.pos, self.tokens.len(), &lang.expression_assign);
                     if !named.is_empty() {
@@ -3257,6 +3266,14 @@ impl<'a> Compiler<'a> {
                     }
                 }
                 self.expr(0)?;
+                if self.registry.optimize >= 1 {
+                    if lang.calling.as_ref().and_then(|b| b.between.as_ref()).map_or(false, |m| self.at_symbol(m)) {
+                        self.take();
+                        self.expr(0)?;
+                    }
+                    self.piece().instrs.truncate(assert_from);
+                    return Ok(());
+                }
                 self.act(Action::Not, 1);
                 let passed = self.skip();
                 if lang.calling.as_ref().and_then(|b| b.between.as_ref()).map_or(false, |m| self.at_symbol(m)) {
@@ -3269,7 +3286,7 @@ impl<'a> Compiler<'a> {
                 }
                 self.act(Action::AssertFault, 1);
                 self.land(passed);
-                if self.registry.optimization != 0 { self.piece().instrs.truncate(assertion_start); }
+                if self.registry.optimize != 0 { self.piece().instrs.truncate(assertion_start); }
                 return Ok(());
             }
             if Lang::spells(&lang.foreach_words, &w) {
@@ -6318,9 +6335,11 @@ impl<'a> Compiler<'a> {
             self.take();
         } else if self.look().shape == Shape::Quote {
             // Text alone at the head of the body is what the class
-            // says about itself; text anywhere else is discarded.
+            // says about itself; text anywhere else is discarded. The
+            // second level of optimisation drops a class's opening text
+            // as well as a program's.
             let words = self.take().lexeme;
-            if let (true, Some(slot)) = (heads_the_body && self.registry.optimization < 2, self.gathering().documentation.clone()) {
+            if let (true, Some(slot)) = (heads_the_body && self.registry.optimize < 2, self.gathering().documentation.clone()) {
                 self.constant(Value::text(&words));
                 self.write(&slot);
                 if !lang.class_builder.is_empty() {
@@ -7617,6 +7636,7 @@ impl<'a> Compiler<'a> {
         answer.map(|code| {
             let mut scalar = (*code).clone();
             scalar.postponed_annotation = self.future_annotations;
+            scalar.reads_annotation = true;
             Rc::new(scalar)
         })
     }
@@ -9771,6 +9791,18 @@ impl<'a> Compiler<'a> {
                 let word = if text == "&" { "and" } else { "or" };
                 return Err(format!("SyntaxError: invalid syntax. Maybe you meant '{word}' or '{text}' instead of '{text}{text}'?"));
             }
+            if !lang.syntax_members.is_empty() && text == "<>" && !self.barry_as_flufl {
+                let (row, end) = (t.row, t.column + 2);
+                self.registry.stopped_end = end;
+                self.registry.stopped_end_row = row;
+                return Err("SyntaxError: invalid syntax.  Maybe you meant '!=' instead of '<>'?".into());
+            }
+            if !lang.syntax_members.is_empty() && text == "!=" && self.barry_as_flufl {
+                let (row, end) = (t.row, t.column + 2);
+                self.registry.stopped_end = end;
+                self.registry.stopped_end_row = row;
+                return Err("SyntaxError: with Barry as BDFL, use '<>' instead of '!='".into());
+            }
             if floor == 0 && lang.if_else_words.first() == Some(&text) {
                 self.take();
                 let yes: Vec<Instr> = self.piece().instrs.drain(from..).collect();
@@ -9988,7 +10020,7 @@ impl<'a> Compiler<'a> {
         }
         // Where Barry is at the helm the two-character spelling is the
         // one that is wrong, and the old diamond is the one to write.
-        if self.barry_as_flufl && matches!(action, Action::Ne) {
+        if self.barry_as_flufl && word != "<>" && matches!(action, Action::Ne) {
             return Err("SyntaxError: with Barry as BDFL, use '<>' instead of '!='".into());
         }
         Ok(matches!(action, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge | Action::Same | Action::Unsame | Action::Contains | Action::Lacks)
@@ -10301,24 +10333,32 @@ impl<'a> Compiler<'a> {
             }
             return Ok(());
         }
-        if tok.shape != Shape::Quote && Lang::spells(&lang.special_declined, &tok.spelling()) {
+        if tok.shape != Shape::Quote && Lang::spells(&lang.special_declined, &tok.spelling())
+            && !self.piece().idents.contains(&tok.lexeme) {
             self.take();
             self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
             return self.indexing(from);
         }
-        if Lang::spells(&lang.special_stop, &tok.spelling()) && !lang.exceptions.iter().any(|w| w == tok.spelling()) {
+        if Lang::spells(&lang.special_stop, &tok.spelling())
+            && !lang.exceptions.iter().any(|w| w == tok.spelling())
+            && !self.piece().idents.contains(&tok.lexeme) {
             self.take();
             let class = crate::value::Class { direct: Vec::new(), lineage: std::cell::RefCell::new(Vec::new()), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: std::cell::RefCell::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: std::cell::RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None) };
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from);
         }
-        if tok.shape != Shape::Quote && Lang::spells(&lang.ellipsis_words, &tok.spelling()) {
+        // The words for the lone value and the one a method declines with
+        // are literals only where the name is not kept this scope; a
+        // parameter or local of that name reads as the name it is.
+        if tok.shape != Shape::Quote && Lang::spells(&lang.ellipsis_words, &tok.spelling())
+            && !self.piece().idents.contains(&tok.lexeme) {
             self.take();
             self.constant(Value::Ellipsis);
             return self.indexing(from);
         }
         // The value a method declines an operation with, written by name.
-        if tok.shape != Shape::Quote && Lang::spells(&lang.unimplemented_words, &tok.spelling()) {
+        if tok.shape != Shape::Quote && Lang::spells(&lang.unimplemented_words, &tok.spelling())
+            && !self.piece().idents.contains(&tok.lexeme) {
             self.take();
             self.constant(Value::Declined(Rc::from(tok.lexeme.as_str())));
             return self.indexing(from);
