@@ -3892,8 +3892,15 @@ impl<'a> Engine<'a> {
             row.resize(rules.len(), Value::Blank);
             return Ok(row);
         }
-        // Only spread errors need the callee's module lookup.
-        let items = if args.iter().any(|value| matches!(value, Value::Tie(pair) if matches!(pair.0, Value::Flag(_)))) {
+        // Empty built-in spreads cannot raise expansion diagnostics.
+        let items = if args.iter().any(|value| match value {
+            Value::Tie(pair) if matches!(pair.0, Value::Flag(_)) => match (&pair.0, pair.1.contents()) {
+                (Value::Flag(false), Value::Tuple(items)) if items.is_empty() => false,
+                (Value::Flag(true), Value::Map(items)) if items.is_empty() => false,
+                _ => true,
+            },
+            _ => false,
+        }) {
             let callee_name = self.routine_string(program);
             self.call_items_for(args, Callee::Routine(&callee_name))?
         } else { self.call_items(args)? };

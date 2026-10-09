@@ -12567,8 +12567,15 @@ impl<'a> Machine<'a> {
                 return Ok(fitted);
             }
         }
-        // Only spread errors need the callee's module lookup.
-        let (positional, named) = if values.iter().any(|value| matches!(value, Value::Couple(pair) if matches!(pair.0, Value::Flag(_)))) {
+        // Empty built-in spreads cannot raise expansion diagnostics.
+        let (positional, named) = if values.iter().any(|value| match value {
+            Value::Couple(pair) if matches!(pair.0, Value::Flag(_)) => match (&pair.0, pair.1.settled()) {
+                (Value::Flag(false), Value::Tuple(items)) if items.is_empty() => false,
+                (Value::Flag(true), Value::Dict(items)) if items.is_empty() => false,
+                _ => true,
+            },
+            _ => false,
+        }) {
             let title = self.routine_called(program);
             let called = match self.routine_module(program).settled() {
                 Value::Text(space) if !space.is_empty() && &*space != "builtins" && !title.is_empty() => format!("{space}.{title}"),
