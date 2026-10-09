@@ -1536,7 +1536,7 @@ impl<'a> Machine<'a> {
             })
         })
     }
-    fn capture_title(word: &str) -> &str {
+    pub(super) fn capture_title(word: &str) -> &str {
         match word.strip_prefix("#completed_class") { Some(_) => "__class__", None => word }
     }
     fn wrap(tag:u8,items:Vec<Value>)->Value {Value::Wrapped(tag,Rc::new(items).into())}

@@ -446,3 +446,8 @@ continues to bind the release source and its separate runtime overlay.
 Native union values inherit the v3.14 `typing` module marker from their
 canonical union class. This lets the unchanged inspect formatter remove
 outer typing prefixes while preserving typing inside user module names.
+
+Microcode7 frame-local snapshots include the routine's captured cells, using
+the same lexical addresses as ordinary local lookup. This exposes live
+closure bindings before a coroutine starts and while a generator is suspended;
+unbound cells stay absent. Stack8 already provides these bindings.

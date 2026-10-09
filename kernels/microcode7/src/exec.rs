@@ -5807,6 +5807,15 @@ impl<'a> Machine<'a> {
             let visible = if body.ident == "<genexpr>" && body.formals.first() == Some(word) { ".0" } else { word.as_str() };
             if Self::visible_name(visible) && !matches!(value, Value::Unset) { entries.push((Value::text(visible), value)); }
         }
+        // Captured bindings are locals of this frame too, even before it runs.
+        for reach in &body.reaching {
+            let name = Self::capture_title(&reach.ident);
+            if !Self::visible_name(name) || entries.iter().any(|(key, _)| key.bare() == name) { continue; }
+            let origin = ascend(environment, reach.up);
+            let Some(binding) = origin.cells.borrow().get(reach.at).cloned() else { continue };
+            let content = binding.settled();
+            if !matches!(content, Value::Unset) { entries.push((Value::text(name), content)); }
+        }
         if let Some((owner, names, frame)) = &self.gathering_locals {
             if *owner == Rc::as_ptr(item) as usize {
                 for (name, held) in names.iter().zip(frame.cells.borrow().iter()) {
