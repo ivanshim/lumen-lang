@@ -44,7 +44,7 @@ def _native_spec(module):
     if spec is None and filename is not None:
         spec = _bootstrap_external.spec_from_file_location(name, filename)
     if spec is not None:
-        _bootstrap._init_module_attrs(spec, module)
+        _bootstrap._init_module_attrs(spec, module, override=True)
 
 for _module in list(_sys.modules.values()):
     if isinstance(_module, type(_sys)) and getattr(_module, '__spec__', None) is None:
