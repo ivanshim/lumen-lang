@@ -101,30 +101,28 @@ def resetwarnings():
     _state.seen = []
 
 
-def _location(stacklevel):
-    if type(stacklevel) != type(0) and type(stacklevel) != type(True):
-        raise TypeError('stacklevel must be an integer')
+def _import_frame(frame):
+    # Native loader bridges stand in for frames hidden by the import machinery.
+    return frame.f_globals.get('__name__') in (
+        '_imp', '_runtime_import', 'importlib._bootstrap',
+        'importlib._bootstrap_external',
+    )
+
+
+def _location(stacklevel, prefixes=()):
     import sys
-    frame = sys._getframe(max(stacklevel, 1) + 1)
+    frame = sys._getframe(2)
+    hide_imports = stacklevel > 1 and not _import_frame(frame)
+    for _ in range(max(stacklevel, 1) - 1):
+        frame = frame.f_back
+        while frame is not None and hide_imports and (
+                _import_frame(frame) or
+                any(frame.f_code.co_filename.startswith(prefix) for prefix in prefixes)):
+            frame = frame.f_back
+        if frame is None:
+            return ['<sys>', 0, sys.__dict__.get('__name__', '<string>')]
     return [frame.f_code.co_filename, frame.f_lineno,
             frame.f_globals.get('__name__', '<string>')]
-
-
-def _outside(prefixes, stacklevel):
-    # Begin at warn's caller, then count the requested external callers.
-    # Prefix matches do not consume any of the requested depth.
-    import sys
-    calls = __warning_calls()
-    remaining = max(2, stacklevel) - 1
-    for at in range(2, len(calls)):
-        frame = calls[at]
-        file = frame['file']
-        if any(file.startswith(prefix) for prefix in prefixes):
-            continue
-        remaining -= 1
-        if remaining == 0:
-            return [file, frame['line'], sys._getframe(at + 1).f_globals.get('__name__', '<string>')]
-    return ['<sys>', 0, '<sys>']
 
 def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixes=()):
     if not isinstance(stacklevel, int) and not hasattr(type(stacklevel), '__index__'):
@@ -145,7 +143,7 @@ def warn(message, category=None, stacklevel=1, source=None, *, skip_file_prefixe
     if not isinstance(message, Warning):
         message = category(message)
     if skip_file_prefixes is not None and len(skip_file_prefixes) != 0:
-        place = _outside(skip_file_prefixes, stacklevel)
+        place = _location(max(2, stacklevel), skip_file_prefixes)
     else:
         place = _location(stacklevel)
     filename = place[0]
