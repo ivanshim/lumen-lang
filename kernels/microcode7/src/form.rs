@@ -829,6 +829,9 @@ pub struct Routine {
     pub definition: Option<Rc<Routine>>,
     pub annotation_is_text: bool,
     pub annotation_protocol: bool,
+    /// Whether the routine's own name reads, while annotations are being read
+    /// in the forward-reference format, may stand for a reference.
+    pub reads_annotation: bool,
     /// The live class namespace slot and, when used by methods, its class cell.
     pub class_namespace: Option<(String, Option<String>, bool)>,
     pub annotator: Option<Rc<Routine>>,
