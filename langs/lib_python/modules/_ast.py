@@ -1,2 +1,2 @@
-# Share the runtime syntax-tree classes with the public ast module.
+# Share the public node classes with the compiler-facing module.
 from ast import *
