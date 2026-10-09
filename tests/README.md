@@ -26,6 +26,16 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `python-3.14.8/test/` | `Lib/test/__init__.py`, `Lib/test/audiotests.py`, and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper,pty_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_patma.py` | `Lib/test/test_patma.py` (unchanged; SHA-256 `ce4a802e1722fdd02ca6da58138a465a050edd360a150bbbba829586b3d15f55`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/{test_pickle,test_copyreg,test_pickletools}.py` and `python-3.14.8/test/{pickletester,picklecommon}.py` | `Lib/test`: pickle, copyreg, pickletools and pickle support classes, unchanged | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_ast/__init__.py` | `Lib/test/test_ast/__init__.py`, byte for byte (SHA-256 `90b5cf9c1b53bb3ff98437b85ef11674697d994cf3573b0fd44712c114df2bdc`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_ast/data/ast_repr.txt` | `Lib/test/test_ast/data/ast_repr.txt`, byte for byte (SHA-256 `496d9e76bf12602855e7ed3636e0c1db5cdf6087a73d3a469e1a7c4ec7ca10b5`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_ast/snippets.py` | `Lib/test/test_ast/snippets.py`, byte for byte (SHA-256 `cc56f5c71d26cb580fa1ddcd7734fe64531e856d4f25acaa291bb0012620bc4c`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_ast/test_ast.py` | `Lib/test/test_ast/test_ast.py`, byte for byte (SHA-256 `087ed090727c33ddaf9918be028ad1760914db7485c2a61a5ead911e236c79b1`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_ast/utils.py` | `Lib/test/test_ast/utils.py`, byte for byte (SHA-256 `09954af7c72fb805ce01bd4df288f49e8ab19ea2c8b65a02c168500b9587d40d`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test/support/ast_helper.py` | `Lib/test/support/ast_helper.py`, byte for byte (SHA-256 `ef59a178bcb025e2f967e9028b8400ba108d42d5eb84f4508a22a7218a169c0c`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `../langs/lib_python/modules/test/support/ast_helper.py` | `Lib/test/support/ast_helper.py`, byte for byte (SHA-256 `ef59a178bcb025e2f967e9028b8400ba108d42d5eb84f4508a22a7218a169c0c`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `../langs/lib_python/modules/test/test_ast/__init__.py` | `Lib/test/test_ast/__init__.py`, byte for byte (SHA-256 `90b5cf9c1b53bb3ff98437b85ef11674697d994cf3573b0fd44712c114df2bdc`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `../langs/lib_python/modules/test/test_ast/snippets.py` | `Lib/test/test_ast/snippets.py`, byte for byte (SHA-256 `cc56f5c71d26cb580fa1ddcd7734fe64531e856d4f25acaa291bb0012620bc4c`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `../langs/lib_python/modules/test/test_ast/utils.py` | `Lib/test/test_ast/utils.py`, byte for byte (SHA-256 `09954af7c72fb805ce01bd4df288f49e8ab19ea2c8b65a02c168500b9587d40d`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/codeop.py` | `Lib/codeop.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_mimetypes.py` | `Lib/test/test_mimetypes.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/mime.types`, `mime.types2` | `Lib/test/mime.types`, `Lib/test/mime.types2`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -166,7 +176,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `abc.py` | runtime adapter / implementation | `603345f1fb09023bf4a7d6fd8110b30b9f597b75ebdaaba5a8c2231035c1ff9c` | `e558702a95cdce3febd289da021715d2b92bc43995b8a1bc58dfa1c3d8010287` |
 | `annotationlib.py` | runtime adapter / implementation | `0e5cbe8e425fa84ece6d79ce7570fae01d0aa4b7a4caff8d972ed48684701cd7` | `1cce29393714b91e3f71571ffbedacc7f73f11ad26be10701debeb86ec059a32` |
 | `array.py` | runtime module; no Lib counterpart | `ff86234099fa527fd6fbc1a2b91af824d55da715285a8780c3ff95a333f545ba` | `—` |
-| `ast.py` | runtime adapter / implementation | `cd41975034508ed523abaf2492cafb83e94c4235fb6e23050c5b8c6383622aff` | `5ea9a796353544bea0d706153516f04ef3d92be305d15a73238403837d77e34c` |
+| `ast.py` | runtime adapter / implementation | `cd41975034508ed523abaf2492cafb83e94c4235fb6e23050c5b8c6383622aff` | `dee8e96a1f1873b5da177b7d8e20c2d8f44ad6c77c86f6f1a2a3a33631904960` |
 | `bisect.py` | unchanged release copy | `f1cf7b85fc36b5da249813fc5ab97d9464f8cc1bc817f7146206fa2713e35999` | `f1cf7b85fc36b5da249813fc5ab97d9464f8cc1bc817f7146206fa2713e35999` |
 | `builtins.py` | runtime module; no Lib counterpart | `c6b7e1eb4b4ad674e1e42fb716e69c97bb0c6ee4c8db6862e7615c9309d8a591` | `—` |
 | `cmd.py` | unchanged release copy | `2412ce55bbaa0be0bb33e11e3a13735160194e674a7d88a262da708ee00e4d7f` | `2412ce55bbaa0be0bb33e11e3a13735160194e674a7d88a262da708ee00e4d7f` |
@@ -381,3 +391,8 @@ and `langs/lib_python/data/unicode/README.md`.
 All complete library copies introduced in this batch match CPython `v3.14.8`
 byte for byte, including original line numbers. Release provenance is retained
 in the table above; runtime changes remain in kernels and explicit adapters.
+
+The runtime `_ast_unparse.py` is preserved byte for byte from CPython
+`v3.14.8` (`Lib/_ast_unparse.py`); `_ast.py` shares the runtime node classes.
+The AST field schema follows CPython 3.14 and its ASDL definitions. Tree helper
+algorithms are taken from `Lib/ast.py`, with the runtime parser kept separate.

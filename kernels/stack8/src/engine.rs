@@ -27697,28 +27697,108 @@ impl Engine<'_> {
         open
     }
 
+    fn single_text_tokens(tokens: &[crate::lex::Token], source: &str) -> Result<(), (String, usize, usize)> {
+        use crate::lex::Shape;
+        let (mut depth, mut line_start, mut seen, mut compound, mut decorators) = (0usize, true, false, false, false);
+        let mut last_top = None;
+        let mut after_semicolon = false;
+        for (at, token) in tokens.iter().enumerate() {
+            match token.shape {
+                Shape::Open => { depth += 1; continue; }
+                Shape::Close => { depth = depth.saturating_sub(1); continue; }
+                Shape::LineEnd => { line_start = true; after_semicolon = false; continue; }
+                Shape::Lead | Shape::Finish => continue,
+                _ => {}
+            }
+            if after_semicolon && matches!(token.spelling(), "if" | "for" | "while" | "try" | "with" | "def" | "class" | "async") {
+                return Err(("SyntaxError: invalid syntax".into(), token.row, token.column));
+            }
+            if depth == 0 && line_start {
+                let word = token.spelling();
+                if seen {
+                    let decorated = decorators && matches!(word, "@" | "def" | "class" | "async");
+                    let continued = compound && matches!(word, "elif" | "else" | "except" | "finally");
+                    if !decorated && !continued {
+                        let message = if compound { "SyntaxError: invalid syntax" } else { "SyntaxError: multiple statements found while compiling a single statement" };
+                        return Err((message.into(), token.row, token.column));
+                    }
+                } else {
+                    seen = true;
+                    compound = matches!(word, "if" | "while" | "for" | "try" | "with" | "def" | "class" | "async" | "@");
+                    if word == "match" {
+                        let mut groups = 0usize;
+                        for (offset, next) in tokens[at + 1..].iter().enumerate() {
+                            if matches!(next.shape, Shape::LineEnd | Shape::Open | Shape::Finish) { break; }
+                            match next.lexeme.as_str() {
+                                "(" | "[" | "{" => groups += 1,
+                                ")" | "]" | "}" => groups = groups.saturating_sub(1),
+                                ":" if groups == 0 && offset > 0 => { compound = true; break; }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                decorators = word == "@";
+            }
+            last_top = if depth == 0 { Some(token.end_row.max(token.row)) } else { None };
+            after_semicolon = token.lexeme == ";";
+            line_start = false;
+        }
+        if compound && last_top.is_some_and(|row| row >= source.split('\n').count()) {
+            return Err(("SyntaxError: invalid syntax".into(), last_top.unwrap(), 0));
+        }
+        if !seen { return Err(("SyntaxError: invalid syntax".into(), 0, 0)); }
+        Ok(())
+    }
+
+    fn ast_position_rows(value: &Value) -> Res<Vec<[u32; 8]>> {
+        let Value::Tuple(rows) = value.contents() else { return Err("TypeError: invalid AST position mapping".into()); };
+        let mut positions = Vec::with_capacity(rows.len());
+        for row in rows.iter() {
+            let Value::Tuple(numbers) = row.contents() else { return Err("TypeError: invalid AST position mapping".into()); };
+            if numbers.len() != 8 { return Err("TypeError: invalid AST position mapping".into()); }
+            let mut coordinates = [0; 8];
+            for (index, number) in numbers.iter().enumerate() {
+                let Value::Small(number) = number.contents() else { return Err("TypeError: invalid AST position mapping".into()); };
+                coordinates[index] = number as u32;
+            }
+            positions.push(coordinates);
+        }
+        Ok(positions)
+    }
+
     fn text_readied(&mut self, name: &str, args: Vec<Value>) -> Res<Value> {
         if args.len() < 3 || args.len() > self.lang.compile_parameters.len() { return Err(self.core_fault("core.arity", name)); }
         let (Value::Text(file), Value::Text(manner)) = (args[1].contents(), args[2].contents()) else { return Err(self.source_unready()) };
+        if args.get(3).is_some_and(|value| matches!(value.contents(), Value::Small(bits) if bits & 1024 != 0)) {
+            let ast = self.route_module("ast")?;
+            let parser = self.member_of(ast, "_compile_ast")?.ok_or_else(|| self.source_unready())?;
+            return self.call_held(parser, vec![args[0].clone(), args[1].clone(), args[2].clone(), args[3].clone(), args.get(5).cloned().unwrap_or(Value::Small(-1)), args.get(6).cloned().unwrap_or(Value::Null)]);
+        }
+        let mut supplied_positions = Value::tuple(Vec::new());
         let source = match args[0].contents() {
             Value::Text(source) => source,
             Value::Bytes(bytes, ..) => self.source_bytes(&bytes.borrow(), &file)?,
             Value::Object(tree) => {
-                // A tree from the library's ast reader keeps the text it
-                // was read from; compiling the tree compiles that text.
-                let held = {
-                    let fields = tree.fields.borrow();
-                    fields.iter().find(|(word, _)| word == "_lumen_tree_source").map(|(_, value)| value.contents())
-                };
-                match held {
-                    Some(Value::Text(source)) => source,
-                    // Anything else handed over may still be a row of
-                    // bytes behind the buffer it exports, which the
-                    // reference reads the same way it reads bytes.
-                    _ => match self.number_buffer(&Value::Object(tree))? {
-                        Some(row) => self.source_bytes(&row, &file)?,
-                        None => return Err("TypeError: compile() arg 1 must be a string, bytes or AST object".into()),
-                    },
+                // A tree from the library's ast reader is turned back
+                // into the text it stands for, each node's place
+                // carried beside it; a value that is no tree may still
+                // be a row of bytes behind the buffer it exports, which
+                // the reference reads as bytes just the same.
+                match self.number_buffer(&Value::Object(tree.clone()))? {
+                    Some(row) => self.source_bytes(&row, &file)?,
+                    None => {
+                        let module = self.route_module("ast")?;
+                        let converter = self.member_of(module, "_compile_source")?.ok_or_else(|| self.source_unready())?;
+                        match self.call_held(converter, vec![Value::Object(tree), Value::Text(manner.clone())])?.contents() {
+                            Value::Tuple(parts) if parts.len() == 2 => {
+                                let Value::Text(text) = parts[0].contents() else { return Err(self.source_unready()); };
+                                supplied_positions = parts[1].clone();
+                                text
+                            }
+                            _ => return Err(self.source_unready()),
+                        }
+                    }
                 }
             }
             _ => return Err("TypeError: compile() arg 1 must be a string, bytes or AST object".into()),
@@ -27798,7 +27878,8 @@ impl Engine<'_> {
         trial.allow_top_level_await = allow_top_await;
         trial.future_bits = future_bits;
         trial.optimize = optimization;
-        let checked = match crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
+        let positions = Self::ast_position_rows(&supplied_positions)?;
+        let checked = match crate::compile::at_ast_positions(&positions, || crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref())))) {
             Ok(checked) => checked,
             Err(said) => {
                 if allow_incomplete && mode != 0 && !Self::past_reading_complaint(&said) {
@@ -27809,6 +27890,11 @@ impl Engine<'_> {
                 return Err(self.text_syntax(mode, said, &file, trial.stopped_at, trial.stopped_column, Some((trial.stopped_end_row, trial.stopped_end)), &source));
             }
         };
+        if mode == 2 && !matches!(args[0].contents(), Value::Object(_)) {
+            if let Err((said, row, column)) = Self::single_text_tokens(&tokens, &source) {
+                return Err(self.text_syntax(mode, said, &file, row, column, None, &source));
+            }
+        }
         if allow_incomplete && mode != 0 && tokens.iter().all(|token| matches!(token.shape, crate::lex::Shape::Lead | crate::lex::Shape::LineEnd | crate::lex::Shape::Open | crate::lex::Shape::Close | crate::lex::Shape::Finish)) {
             // A text without so much as a word is neither one statement
             // nor one expression; with the flag the reference calls it
@@ -27858,6 +27944,7 @@ impl Engine<'_> {
         let mut fields = fields;
         let source_fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file.clone())), (words[2].clone(), Value::Small(mode as i64)), ("co_filename".to_string(), Value::Text(file)), ("co_flags".to_string(), Value::Small(bits)), ("co_firstlineno".to_string(), Value::Small(1)), ("co_optimize".to_string(), Value::Small(optimization))];
         fields.splice(0..0, source_fields);
+        if !positions.is_empty() { fields.push(("\0ast_positions".to_owned(), supplied_positions)); }
         self.made += 1;
         Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(fields), mark: self.made })))
     }
@@ -28002,6 +28089,10 @@ impl Engine<'_> {
             }
         }
         let Some(first) = args.first().map(Value::contents) else { return Err(self.core_fault("core.arity", name)) };
+        let positions = match &first {
+            Value::Object(code) => code.fields.borrow().iter().find(|(key, _)| key == "\0ast_positions").map(|(_, value)| Self::ast_position_rows(value)).transpose()?.unwrap_or_default(),
+            _ => Vec::new(),
+        };
         let replacements = match &first {
             Value::Object(code) if code.fields.borrow().iter().any(|(name, _)| name == "\0replace_constants") =>
                 code.fields.borrow().iter().find(|(name, _)| name == "co_consts").and_then(|(_, value)| match value { Value::Tuple(values) => Some(values.as_ref().clone()), _ => None }),
@@ -28057,8 +28148,8 @@ impl Engine<'_> {
         let near = as_book(args.get(2))?;
         let (outer, near) = match (outer, near) {
             (None, None) => return match within.filter(|_| mode != 2) {
-                Some((names, values)) => self.run_text_within(&source, file, mode, names, values, top_await, replacements, optimization),
-                None => self.run_text_here_about(&source, file, mode, top_await, replacements, optimization),
+                Some((names, values)) => self.run_text_within(&source, file, mode, names, values, top_await, replacements, optimization, &positions),
+                None => self.run_text_here_about(&source, file, mode, top_await, replacements, optimization, &positions),
             },
             (Some(outer), Some(near)) if Rc::ptr_eq(&outer, &near) => (outer, None),
             (Some(outer), near) => (outer, near),
@@ -28096,17 +28187,17 @@ impl Engine<'_> {
                 }
             }
         }
-        self.run_text_booked(&source, file, mode, outer, near, top_await, replacements, optimization)
+        self.run_text_booked(&source, file, mode, outer, near, top_await, replacements, optimization, &positions)
     }
 
     /// Text run where the call stands: inside a text book, in that
     /// book; else against the outermost names.
-    fn run_text_here_about(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64) -> Res<Value> {
+    fn run_text_here_about(&mut self, source: &str, file: Option<String>, mode: usize, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64, positions: &[[u32; 8]]) -> Res<Value> {
         if let Some(at) = self.reading_in {
             let (near, outer) = (self.text_books[at].near.clone(), self.text_books[at].outer.clone());
             return match outer {
-                Some(outer) => self.run_text_booked(source, file, mode, outer, Some(near), top_await, replacements, optimization),
-                None => self.run_text_booked(source, file, mode, near, None, top_await, replacements, optimization),
+                Some(outer) => self.run_text_booked(source, file, mode, outer, Some(near), top_await, replacements, optimization, positions),
+                None => self.run_text_booked(source, file, mode, near, None, top_await, replacements, optimization, positions),
             };
         }
         if let Some(Value::Object(module)) = self.module_slots.get(&self.source).and_then(|(_, name)| self.modules.get(name)).cloned() {
@@ -28117,7 +28208,7 @@ impl Engine<'_> {
                     self.book_put(&globals, &word, Some(builtins)).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
                 }
             }
-            return self.run_text_booked(source, file, mode, globals, None, top_await, replacements, optimization);
+            return self.run_text_booked(source, file, mode, globals, None, top_await, replacements, optimization, positions);
         }
         let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
@@ -28125,7 +28216,7 @@ impl Engine<'_> {
             Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
         self.registry.optimize = optimization;
-        let (program, shown) = self.text_program(source, &tokens, &file, mode, None, top_await, None)?;
+        let (program, shown) = self.text_program(source, &tokens, &file, mode, None, top_await, None, positions)?;
         let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
         self.world.resize(self.registry.idents.len(), Value::Blank);
         self.text_finished(&program, &file, shown)
@@ -28137,7 +28228,7 @@ impl Engine<'_> {
     /// writes to a frame of its own making, a copy of the routine's, so
     /// the routine goes on holding what it held and a name the text
     /// makes is gone once the text is done.
-    fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64) -> Res<Value> {
+    fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64, positions: &[[u32; 8]]) -> Res<Value> {
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
@@ -28158,7 +28249,7 @@ impl Engine<'_> {
         self.registry.allow_top_level_await = top_await;
         self.registry.future_bits = self.text_future_bits.get();
         self.registry.optimize = optimization;
-        let program = match crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, Some(file.clone()), Some(names), within, true) {
+        let program = match crate::compile::at_ast_positions(positions, || crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, Some(file.clone()), Some(names), within, true)) {
             Ok(program) => program,
             Err(said) => { let row = self.registry.stopped_at; let col = self.registry.stopped_column; let end = (self.registry.stopped_end_row, self.registry.stopped_end); return Err(self.text_syntax(mode, said, &file, row, col, Some(end), source)); }
         };
@@ -28186,7 +28277,7 @@ impl Engine<'_> {
 
     /// Text run in dictionaries of its own: its names are given slots
     /// of their own in the world, and a book is kept for them.
-    fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64) -> Res<Value> {
+    fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64, positions: &[[u32; 8]]) -> Res<Value> {
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -28218,7 +28309,7 @@ impl Engine<'_> {
         // that every routine the text makes answers with the name the
         // namespace had when they were made, not one written later.
         local.home = Some(module_hint.as_deref().map(Rc::from));
-        let (program, shown) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await, module_hint.as_deref())?;
+        let (program, shown) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await, module_hint.as_deref(), positions)?;
         let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
         let names: Vec<String> = local.idents[offset..].to_vec();
         for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }
@@ -28242,7 +28333,7 @@ impl Engine<'_> {
     /// one statement shown as it runs, which is an expression written
     /// out where it is one; else statements. Answers whether what the
     /// program leaves is to be written out.
-    fn text_program(&mut self, source: &str, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>, top_await: bool, module_hint: Option<&str>) -> Res<(Rc<Routine>, bool)> {
+    fn text_program(&mut self, source: &str, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>, top_await: bool, module_hint: Option<&str>, positions: &[[u32; 8]]) -> Res<(Rc<Routine>, bool)> {
         let mut amiss = (String::new(), 0, 0, (0, 0));
         let mut noted = Vec::new();
         let mut compiled = None;
@@ -28253,7 +28344,7 @@ impl Engine<'_> {
             if compiled.is_none() {
                 registry.value_only = mode == 1;
                 registry.interactive = mode == 2;
-                match crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone())) {
+                match crate::compile::at_ast_positions(positions, || crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone()))) {
                     Ok(program) => { noted = std::mem::take(&mut registry.warnings); compiled = Some((program, false)); }
                     Err(said) => amiss = (said, registry.stopped_at, registry.stopped_column, (registry.stopped_end_row, registry.stopped_end)),
                 }
