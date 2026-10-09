@@ -49,3 +49,9 @@ for _class in (partial, partialmethod, _PlaceholderType, singledispatchmethod,
 
 del _class
 
+
+# Native partial formatting retains slot references before user representations.
+def _partial_repr(self, _base=partial):
+    return __partial_repr__(self, _base)
+
+partial.__repr__ = recursive_repr()(_partial_repr)
