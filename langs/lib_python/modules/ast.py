@@ -1178,7 +1178,12 @@ class _Parser:
         self.lines = source.split('\n')
         self.icols = {}
         self.indent_stack = [0]
-        self.tabws = {0: ''}
+        # CPython's alternate indentation column (each tab one wide) for
+        # every active level. A level's spelling rides on this stack, so
+        # leaving a suite restores the enclosing spelling instead of
+        # comparing one sibling suite against another that reused the
+        # same column.
+        self.alt_stack = [0]
         # Type comments by row, from the comments _lex recorded; a row is
         # struck out as its comment attaches to a node, and a type comment
         # left over at the end of the module is a misplaced one.
@@ -1210,6 +1215,18 @@ class _Parser:
             i += 1
         self.icols[row] = col
         return col
+
+    def alt_indent_col(self, tok):
+        # The same leading whitespace with each tab and space counting
+        # one: CPython's alternate indentation column, which records how
+        # a level is spelled where indent_col records how wide it is.
+        text = self.lines[tok.srow - 1] if tok.srow - 1 < len(self.lines) else ''
+        stop = tok.scol if tok.scol < len(text) else len(text)
+        i = 0
+        while i < stop and (text[i] == ' ' or text[i] == '\t' or
+                            text[i] == '\f'):
+            i += 1
+        return i
 
     def prefix_len(self, tok):
         # The leading whitespace of the token's line, in characters; a
@@ -1285,13 +1302,12 @@ class _Parser:
                 if col not in self.indent_stack:
                     _indent('unindent does not match any outer indentation level')
                 break
+            alt = self.alt_indent_col(tok)
             if col > indent:
+                if alt <= self.alt_stack[-1]:
+                    _tab('inconsistent use of tabs and spaces in indentation')
                 _indent('unexpected indent')
-            ws = self.lines[tok.srow - 1][:tok.scol]
-            known = self.tabws.get(indent)
-            if known is None:
-                self.tabws[indent] = ws
-            elif known != ws:
+            if alt != self.alt_stack[-1]:
                 _tab('inconsistent use of tabs and spaces in indentation')
             body.append(self.parse_stmt())
             if type(body[-1]) not in _COMPOUND:
@@ -1317,12 +1333,26 @@ class _Parser:
         while self.peek().kind == 'newline':
             self.pop()
         tok = self.peek()
-        if tok.kind == 'end' or self.indent_col(tok) <= parent_col:
+        if tok.kind == 'end':
             _indent('expected an indented block')
         indent = self.indent_col(tok)
+        alt = self.alt_indent_col(tok)
+        if indent < parent_col:
+            _indent('expected an indented block')
+        if indent == parent_col:
+            # The line stands in the enclosing suite, not this one; a
+            # different spelling of the same column is CPython's TabError,
+            # the same spelling merely means no block was opened.
+            if alt != self.alt_stack[-1]:
+                _tab('inconsistent use of tabs and spaces in indentation')
+            _indent('expected an indented block')
+        if alt <= self.alt_stack[-1]:
+            _tab('inconsistent use of tabs and spaces in indentation')
         self.indent_stack.append(indent)
+        self.alt_stack.append(alt)
         body = self.parse_block(indent)
         self.indent_stack.pop()
+        self.alt_stack.pop()
         return body
 
     def expect_name(self, word):
@@ -1553,6 +1583,7 @@ class _Parser:
         kwarg = None
         current = args
         starred = False
+        bare_star = False
         defaulted = False
         while not self.at_op(')'):
             if kwarg is not None:
@@ -1584,7 +1615,12 @@ class _Parser:
                                  end_col_offset=name_tok.ecol)
                     node = vararg
                     row = name_tok.srow
+                    if self.at_op(':'):
+                        self.pop()
+                        vararg.annotation, ans, are = self.parse_or()
+                        row = are[0]
                 else:
+                    bare_star = True
                     row = tok.srow
             elif self.at_op('**'):
                 self.pop()
@@ -1598,6 +1634,10 @@ class _Parser:
                             end_col_offset=name_tok.ecol)
                 node = kwarg
                 row = name_tok.srow
+                if self.at_op(':'):
+                    self.pop()
+                    kwarg.annotation, ans, are = self.parse_or()
+                    row = are[0]
             else:
                 name_tok = self.peek()
                 if name_tok.kind != 'name' or name_tok.text in _STMT_WORDS:
@@ -1636,6 +1676,8 @@ class _Parser:
                     node.type_comment = comment
             if not more:
                 break
+        if bare_star and not kwonlyargs:
+            _syntax('named arguments must follow bare *')
         if posonly is None:
             posonly = []
         return arguments(posonlyargs=posonly, args=args, vararg=vararg,
@@ -1659,6 +1701,8 @@ class _Parser:
         oneline = self.peek().kind != 'newline'
         body = self.parse_suite(self.indent_col(start))
         orelse = []
+        while self.peek().kind == 'newline':
+            self.pop()
         if self.at_clause('else', self.indent_col(start)):
             self.pop()
             self.expect_op(':')
@@ -1714,6 +1758,8 @@ class _Parser:
         self.expect_op(':')
         body = self.parse_suite(self.indent_col(wtok))
         orelse = []
+        while self.peek().kind == 'newline':
+            self.pop()
         if self.at_clause('else', self.indent_col(wtok)):
             self.pop()
             self.expect_op(':')
