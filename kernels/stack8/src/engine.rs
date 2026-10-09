@@ -7960,6 +7960,14 @@ impl<'a> Engine<'a> {
                     if held.finished || *at < BigInt::from(0) { return Ok(Value::Small(0)); }
                     Some((thing.clone(), at.clone()))
                 }
+                // A map or set walked as it stands guesses what is left
+                // from the size it began at against where it stands now,
+                // and guesses nothing once that size has changed.
+                CursorSource::Viewed(window, place, size) => {
+                    if held.finished || size.0 == usize::MAX || *place == usize::MAX || Self::window_size(window).0 != size.0 { return Ok(Value::Small(0)); }
+                    let remaining = if matches!(window, Value::Set(_)) { size.0.saturating_sub(*place) as u64 } else { size.1 };
+                    return Ok(Value::Small(remaining as i64));
+                }
                 _ => None,
             }};
             // A walk taken by place from a sequence's own `__getitem__`
@@ -7970,7 +7978,9 @@ impl<'a> Engine<'a> {
                 let length = self.builtin_call(Builtin::Length, "len", vec![(None, thing)])?;
                 let size = match &length { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => length.as_big(), _ => Err(self.core_fault("core.integer", &length.core_kind())) }?;
                 let hint = at + BigInt::from(1);
-                return Ok(Value::of_big(if size < hint { size } else { hint }));
+                // A walk that has fallen past the end of what it reads
+                // guesses nothing whatever the sequence once measured.
+                return Ok(Value::of_big(if size < hint { BigInt::from(0) } else { hint }));
             }
             return Ok(Value::Small(0));
         }
@@ -10096,7 +10106,19 @@ impl<'a> Engine<'a> {
                 Value::array(items).held(true)
             }
             Builtin::List if args.len() == 1 => {
-                let row = Value::array(self.special_items(&args[0])?);
+                // The reference takes the walk before it asks for the
+                // guess, so a state the walk lays down is there to be
+                // read, and then draws out that very walk.
+                let row = {
+                    let source = args[0].contents();
+                    if matches!(source, Value::Object(_)) {
+                        let walk = self.core_iterator(&source)?;
+                        self.length_hint_probe(&source)?;
+                        Value::array(self.special_items(&walk)?)
+                    } else {
+                        Value::array(self.special_items(&args[0])?)
+                    }
+                };
                 // What a cursor hands out is quoted as a window's members are.
                 if matches!(args[0], Value::View(_) | Value::Collection(_, true) | Value::Text(_) | Value::Cursor(_) | Value::Walk(_) | Value::Generator(_)) { row.held(true) } else { row }
             },
@@ -17529,7 +17551,10 @@ impl<'a> Engine<'a> {
         let mut args = args;
         if operation == "extend" && args.len() == 1 && matches!(receiver.contents(), Value::Array(_))
             && !matches!(args[0].contents(), Value::Array(_) | Value::Tuple(_) | Value::Set(_) | Value::Map(_) | Value::Text(_) | Value::Counted(_)) {
-            args[0] = Value::array(self.comprehension_items(&args[0])?);
+            let source = args[0].contents();
+            let walk = self.core_iterator(&source)?;
+            self.length_hint_probe(&source)?;
+            args[0] = Value::array(self.comprehension_items(&walk)?);
         }
         // A mapping subclass whose subscript member was read off the
         // thing itself reaches its `__missing__` through the subscript
@@ -18691,11 +18716,123 @@ impl<'a> Engine<'a> {
             Value::Text(word) => word.chars().map(|letter| self.byte_number(&Value::text(&letter.to_string()), false)).collect(),
             other => {
                 let walk = self.core_iterator(other)?;
+                self.length_hint_probe(other)?;
                 let mut bytes = Vec::new();
                 while let Some(item) = self.core_step(&walk)? { bytes.push(self.byte_index(&item, false)?); }
                 Ok(bytes)
             },
         }
+    }
+
+    /// The member a window upon a map or a set hands over at a place,
+    /// read from the thing as it stands now rather than as it stood
+    /// when the walk began.
+    fn viewed_member(window: &Value, place: usize) -> Option<Value> {
+        match window.contents() {
+            Value::Array(items) => items.get(place).cloned(),
+            Value::Set(members) => members.try_borrow().ok().and_then(|held| held.row.get(place)
+                .and_then(|key| held.held.get(key).map(|value| match value { Value::Hashed(pair) => pair.0.clone(), value => value.clone() }))),
+            _ => None,
+        }
+    }
+
+    /// How a window that has changed under a walk complains. A set has
+    /// one complaint whatever changed; a map names whether it was the
+    /// size or the keys.
+    fn viewed_changed(&self, window: &Value, now: (usize, u64), began: (usize, u64)) -> String {
+        match window.contents() {
+            Value::Set(_) => self.lang.set_words["ext.builtin.set.changed"].first().cloned().unwrap_or_default(),
+            _ => self.lang.core_words["core.dict.changed"][usize::from(now.0 == began.0)].clone(),
+        }
+    }
+
+    /// The guess at how many members an iterable holds, asked of an
+    /// object the way the reference asks it before gathering. Its
+    /// length is asked first, where its kind has one, and what that
+    /// length raises stops the gathering -- save a TypeError, which the
+    /// reference forgets and then asks the object's own
+    /// `__length_hint__` instead. A length that is no whole number
+    /// becomes that same TypeError, a length below nought is a
+    /// ValueError, and one past the largest index is an OverflowError.
+    /// The hint is read the same way: a TypeError raised by the hint is
+    /// forgotten, NotImplemented is no hint, a hint that is no whole
+    /// number is a TypeError, one below nought a ValueError, and one
+    /// outside the index range an OverflowError. Only what asking the
+    /// guess does matters, never the guess itself.
+    fn length_hint_probe(&mut self, value: &Value) -> Res<()> {
+        match self.special_call(value, 10, Vec::new()) {
+            Ok(Some(length)) => {
+                let whole = if matches!(length, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    Some(length)
+                } else {
+                    match self.special_index(&length) {
+                        Ok(found) => found,
+                        Err(fault) => {
+                            if !self.forget_type_error(&fault) { return Err(fault); }
+                            None
+                        }
+                    }
+                };
+                if let Some(number) = whole {
+                    let number = number.as_big()?;
+                    if number.is_negative() {
+                        return Err("ValueError: __len__() should return >= 0".to_string());
+                    }
+                    if number > BigInt::from(i64::MAX) {
+                        return Err("OverflowError: cannot fit 'int' into an index-sized integer".to_string());
+                    }
+                    return Ok(());
+                }
+            }
+            Ok(None) => {}
+            Err(fault) => {
+                if !self.forget_type_error(&fault) { return Err(fault); }
+            }
+        }
+        match self.special_call(value, 78, Vec::new()) {
+            Ok(Some(hint)) => {
+                if matches!(hint, Value::Declined(_)) { return Ok(()); }
+                if !matches!(hint, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    return Err(format!("TypeError: __length_hint__ must be an integer, not {}", hint.core_kind()));
+                }
+                let number = hint.as_big()?;
+                if number < BigInt::from(i64::MIN) || number > BigInt::from(i64::MAX) {
+                    return Err("OverflowError: Python int too large to convert to C ssize_t".to_string());
+                }
+                if number.is_negative() {
+                    return Err("ValueError: __length_hint__() should return >= 0".to_string());
+                }
+                Ok(())
+            }
+            Ok(None) => Ok(()),
+            Err(fault) => {
+                if !self.forget_type_error(&fault) { return Err(fault); }
+                Ok(())
+            }
+        }
+    }
+
+    /// Forget a fault the reference swallows when it asks for a length:
+    /// a TypeError, whether it was thrown or merely worded by the
+    /// kernel. Any other fault is left standing.
+    fn forget_type_error(&mut self, fault: &str) -> bool {
+        if matches!(&self.carried, Some(Fault::Thrown(Value::Object(object))) if object.class_now().named("TypeError", false)) {
+            self.carried = None;
+            return true;
+        }
+        self.carried.is_none() && self.worded_type_error(fault)
+    }
+
+    /// Whether a fault the kernel worded for itself is one the language
+    /// classes as a TypeError. Such a fault carries no thrown value, so
+    /// it is read by the class its words name, against the kind the
+    /// language calls a fault of the kernel's own.
+    fn worded_type_error(&self, told: &str) -> bool {
+        let Some(name) = self.class_for(told) else { return false };
+        let Some(kind) = self.lang.fault_kind.as_deref() else { return false };
+        if name == kind { return true; }
+        let (Some(Value::Class(actual)), Some(Value::Class(wanted))) = (self.native_exceptions.get(&name), self.native_exceptions.get(kind)) else { return false };
+        Self::exception_beneath(actual, wanted)
     }
 
     /// A whole number a row of bytes is handed as a place. CPython
@@ -21971,7 +22108,16 @@ impl<'a> Engine<'a> {
             Builtin::List => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
-                let result = Value::array(self.comprehension_items(&args[0])?);
+                let result = {
+                    let source = args[0].contents();
+                    if matches!(source, Value::Object(_)) {
+                        let walk = self.core_iterator(&source)?;
+                        self.length_hint_probe(&source)?;
+                        Value::array(self.comprehension_items(&walk)?)
+                    } else {
+                        Value::array(self.comprehension_items(&args[0])?)
+                    }
+                };
                 if matches!(args[0], Value::View(_) | Value::Collection(_, true) | Value::Text(_) | Value::Cursor(_) | Value::Walk(_) | Value::Generator(_)) { result.held(true) } else { result }
             }
             Builtin::Any => {
@@ -23660,6 +23806,17 @@ impl Engine<'_> {
             if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) { state.borrow_mut().walked = Some(word); }
             return Ok(walk);
         }
+        // A set is walked the very way a map is: through the members it
+        // holds now, so a change to how many it holds stops the walk
+        // rather than being passed over, and the members still to come
+        // are read from where the walk stands.
+        if !self.lang.set_words["ext.builtin.set.changed"].is_empty() && matches!(source.contents(), Value::Set(_)) {
+            let members = source.contents();
+            let size = Self::window_size(&members);
+            let walk = Self::core_cursor(CursorSource::Viewed(members, 0, size));
+            if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) { state.borrow_mut().walked = Some(word); }
+            return Ok(walk);
+        }
         let walk = Self::core_cursor(CursorSource::Items(Rc::new(self.core_members(source)?).into(), 0));
         if let (Value::Cursor(state), Some(word)) = (&walk, Self::walk_called(source)) { state.borrow_mut().walked = Some(word); }
         if let (Value::Cursor(state), Value::Object(_)) = (&walk, source) { state.borrow_mut().origin = Some(source.clone()); }
@@ -23918,6 +24075,7 @@ impl Engine<'_> {
     /// Record the original size and the number of entries still owed.
     fn window_size(window: &Value) -> (usize, u64) {
         let len = match window {
+            Value::Set(members) => return (members.borrow().held.len(), 0),
             Value::View(view) => match view.0.proxy_dictionary() { Value::Map(pairs) => pairs.len(), _ => 0 },
             _ => 0,
         };
@@ -23953,6 +24111,16 @@ impl Engine<'_> {
 
     /// Read a view's projection using its owner's current entry table.
     fn window_next(&self, window: &Value, place: &mut usize, counts: &mut (usize, u64)) -> Res<Option<Value>> {
+        if matches!(window, Value::Set(_)) {
+            let now = Self::window_size(window);
+            if now.0 != counts.0 {
+                counts.0 = usize::MAX;
+                return Err(format!("\0{}", self.viewed_changed(window, now, *counts)));
+            }
+            let member = Self::viewed_member(window, *place);
+            if member.is_some() { *place += 1; }
+            return Ok(member);
+        }
         let Value::View(view) = window else { return Ok(None) };
         self.map_next_entry(&view.0, place, counts, &view.1)
     }

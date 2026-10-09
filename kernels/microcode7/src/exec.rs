@@ -8815,6 +8815,14 @@ impl<'a> Machine<'a> {
                     if held.done || *at < BigInt::from(0) { return Ok(Value::Small(0)); }
                     Some((thing.clone(), at.clone()))
                 }
+                // A map or set walked as it stands guesses what is left
+                // from the size it began at against where it stands now,
+                // and guesses nothing once that size has changed.
+                IteratorKind::Watching { window, at, size } => {
+                    if held.done || size.0 == usize::MAX || *at == usize::MAX || Self::window_extent(window).0 != size.0 { return Ok(Value::Small(0)); }
+                    let left = if matches!(window, Value::Set(_)) { size.0.saturating_sub(*at) as u64 } else { size.1 };
+                    return Ok(Value::Small(left as i64));
+                }
                 _ => None,
             }};
             // A walk taken by place from a thing's own `__getitem__`
@@ -8825,7 +8833,9 @@ impl<'a> Machine<'a> {
                 let length = self.prim(Prim::Length, "len", &[thing]).map_err(Escape::Error)?;
                 let size = match &length { Value::Small(_) | Value::Huge(_) | Value::Flag(_) => length.as_big(), _ => Err(self.core_complaint("core.integer", &length.kind_word())) }?;
                 let hint = at + BigInt::from(1);
-                return Ok(Value::from_big(if size < hint { size } else { hint }));
+                // A walk that has fallen past the end of what it reads
+                // guesses nothing whatever the sequence once measured.
+                return Ok(Value::from_big(if size < hint { BigInt::from(0) } else { hint }));
             }
             return Ok(Value::Small(0));
         }
@@ -10485,7 +10495,7 @@ impl<'a> Machine<'a> {
         let mut arguments = arguments;
         if name == "extend" && arguments.len() == 1 && matches!(receiver.settled(), Value::Vector(_)) {
             let plain = matches!(arguments[0].settled(), Value::Vector(_) | Value::Tuple(_) | Value::Row(_) | Value::Set(_) | Value::Dict(_) | Value::Text(_) | Value::Progression(_));
-            if !plain { let drawn = self.gathered_members(&arguments[0])?; arguments[0] = Value::Vector(crate::tuples::Sequence::plain(drawn)); }
+            if !plain { let source = arguments[0].settled(); let walk = self.iterated_value(&source)?; self.length_hint_probe(&source)?; let drawn = self.gathered_members(&walk)?; arguments[0] = Value::Vector(crate::tuples::Sequence::plain(drawn)); }
         }
         // A mapping subclass whose subscript member was read off the
         // thing itself reaches its `__missing__` through the subscript
@@ -13337,6 +13347,7 @@ impl<'a> Machine<'a> {
             Value::Text(word) => word.chars().map(|letter| self.octet_item(&Value::text(&letter.to_string()), false)).collect(),
             other => {
                 let source = self.iterated_value(other)?;
+                self.length_hint_probe(other)?;
                 let mut collected = Vec::new();
                 loop {
                     let Some(next) = self.next_value(&source)? else { return Ok(collected); };
@@ -13348,6 +13359,110 @@ impl<'a> Machine<'a> {
 
     fn octet_contents(&self, source: &Value, iterable: bool) -> Result<Vec<u8>, String> {
         self.octet_gathered(source, iterable, false)
+    }
+
+    /// The member a window upon a map or a set hands over at a place,
+    /// read from the thing as it stands now rather than as it stood
+    /// when the walk began.
+    fn watched_member(window: &Value, at: usize) -> Option<Value> {
+        match window.settled() {
+            Value::Vector(items) => items.get(at).cloned(),
+            Value::Set(store) => store.try_borrow().ok().and_then(|held| held.entries.get(at)
+                .map(|(_, value)| match value { Value::Keyed(thing, _) => thing.as_ref().clone(), held => held.clone() })),
+            _ => None,
+        }
+    }
+
+    /// The guess at how many members an iterable holds, asked of an
+    /// object the way the reference asks it before gathering. Its length
+    /// is asked first, where its kind has one, and what that length
+    /// raises stops the gathering -- save a TypeError, which the
+    /// reference forgets and then asks the object's own
+    /// `__length_hint__` instead. A length that is no whole number
+    /// becomes that same TypeError, a length below nought is a
+    /// ValueError, and one past the largest index an OverflowError. The
+    /// hint is read the same way: a TypeError raised by the hint is
+    /// forgotten, NotImplemented is no hint, a hint that is no whole
+    /// number is a TypeError, one below nought a ValueError, and one
+    /// outside the index range an OverflowError. Only what asking the
+    /// guess does matters, never the guess itself.
+    fn length_hint_probe(&mut self, value: &Value) -> Result<(), String> {
+        if self.appointment(value, 10).is_some() {
+            match self.ask_special(value, 10, &[]) {
+                Ok(Some(length)) => {
+                    let whole = if matches!(length.settled(), Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                        Some(length.settled())
+                    } else {
+                        match self.stood_for_whole(&length) {
+                            Ok(found) => found,
+                            Err(complaint) => {
+                                if !self.forget_type_error(&complaint) { return Err(complaint); }
+                                None
+                            }
+                        }
+                    };
+                    if let Some(number) = whole {
+                        let number = number.as_big()?;
+                        if number < BigInt::from(0) {
+                            return Err("ValueError: __len__() should return >= 0".to_owned());
+                        }
+                        if number > BigInt::from(i64::MAX) {
+                            return Err("OverflowError: cannot fit 'int' into an index-sized integer".to_owned());
+                        }
+                        return Ok(());
+                    }
+                }
+                Ok(None) => {}
+                Err(complaint) => {
+                    if !self.forget_type_error(&complaint) { return Err(complaint); }
+                }
+            }
+        }
+        match self.ask_special(value, 78, &[]) {
+            Ok(Some(hint)) => {
+                let hint = hint.settled();
+                if matches!(hint, Value::Refusal(_)) { return Ok(()); }
+                if !matches!(hint, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
+                    return Err(format!("TypeError: __length_hint__ must be an integer, not {}", hint.kind_word()));
+                }
+                let number = hint.as_big()?;
+                if number < BigInt::from(i64::MIN) || number > BigInt::from(i64::MAX) {
+                    return Err("OverflowError: Python int too large to convert to C ssize_t".to_owned());
+                }
+                if number < BigInt::from(0) {
+                    return Err("ValueError: __length_hint__() should return >= 0".to_owned());
+                }
+                Ok(())
+            }
+            Ok(None) => Ok(()),
+            Err(complaint) => {
+                if !self.forget_type_error(&complaint) { return Err(complaint); }
+                Ok(())
+            }
+        }
+    }
+
+    /// Forget a fault the reference swallows when it asks for a length:
+    /// a TypeError, whether it was thrown or merely worded by the
+    /// machine. Any other fault is left standing.
+    fn forget_type_error(&mut self, fault: &str) -> bool {
+        if matches!(&self.got_away, Some(Escape::Thrown(Value::Thing(thing))) if thing.blueprint().goes_by("TypeError", false)) {
+            self.got_away = None;
+            return true;
+        }
+        self.got_away.is_none() && self.worded_type_error(fault)
+    }
+
+    /// Whether a fault the machine worded for itself is one the language
+    /// classes as a TypeError. Such a fault carries no thrown value, so
+    /// it is read by the class its words name, against the kind the
+    /// language calls a fault of the machine's own.
+    fn worded_type_error(&self, told: &str) -> bool {
+        let Some(name) = self.class_of_fault(told) else { return false };
+        let Some(kind) = self.table.strings("ext.system.fault.class.kind").first().cloned() else { return false };
+        if name == kind { return true; }
+        let (Some(Value::Blueprint(actual)), Some(Value::Blueprint(wanted))) = (self.fault_kinds.get(&name), self.fault_kinds.get(&kind)) else { return false };
+        Self::fault_descends(actual, wanted)
     }
 
     fn octet_gathered(&self, source: &Value, iterable: bool, whole_row: bool) -> Result<Vec<u8>, String> {
@@ -17400,7 +17515,19 @@ impl<'a> Machine<'a> {
             }
             (Prim::Iterated, [one @ (Value::Thing(_) | Value::Wrapped(61, _))]) => one.clone(),
             (Prim::Listed, [one]) => {
-                let result = Value::Vector(crate::tuples::Sequence::plain(self.object_members(one)?));
+                // The reference takes the walk before it asks for the
+                // guess, so a state the walk lays down is there to be
+                // read, and then draws out that very walk.
+                let result = {
+                    let source = one.settled();
+                    if matches!(source, Value::Thing(_)) {
+                        let walk = self.iterated_value(&source)?;
+                        self.length_hint_probe(&source)?;
+                        Value::Vector(crate::tuples::Sequence::plain(self.object_members(&walk)?))
+                    } else {
+                        Value::Vector(crate::tuples::Sequence::plain(self.object_members(one)?))
+                    }
+                };
                 // Members an iterator hands out are kept quoted, as a window's are.
                 if matches!(one, Value::Window(..) | Value::Mutable(_, true) | Value::Text(_) | Value::Iterator(_) | Value::Generator(_)) { result.keep(true) } else { result }
             },
@@ -28828,6 +28955,15 @@ impl Machine<'_> {
                     },
                 }
             }
+            // A set is walked the very way a map is: through the
+            // members it holds now, so a change to how many it holds
+            // stops the walk rather than being passed over, and the
+            // members still to come are read from where the walk stands.
+            _ if self.table.has_any("ext.builtin.set.changed") && matches!(source.settled(), Value::Set(_)) => {
+                let members = source.settled();
+                let size = Self::window_extent(&members);
+                Ok(Self::cursor_value_walked(IteratorKind::Watching { window: members, at: 0, size }, Some(Rc::from("set_iterator"))))
+            }
             _ => {
                 let entries = self.core_collect(source)?;
                 let walk = Self::cursor_value(IteratorKind::Stored { entries: Rc::new(entries).into(), next: 0 });
@@ -29122,6 +29258,7 @@ impl Machine<'_> {
     /// Initialise the fixed size and remaining yield allowance of a view.
     fn window_extent(window: &Value) -> (usize, u64) {
         match window {
+            Value::Set(store) => (store.borrow().entries.len(), 0),
             Value::Window(owner, _) => match owner.proxy_pairs() {
                 Value::Dict(entries) => (entries.len(), entries.len() as u64),
                 _ => (0, 0),
@@ -29160,6 +29297,15 @@ impl Machine<'_> {
 
     /// Project the next live dictionary entry through a keys/values/items view.
     fn advance_window(&self, view: &Value, offset: &mut usize, balance: &mut (usize, u64)) -> Result<Option<Value>, String> {
+        if matches!(view, Value::Set(_)) {
+            if Self::window_extent(view).0 != balance.0 {
+                balance.0 = usize::MAX;
+                return Err(format!("\0{}", self.table.strings("ext.builtin.set.changed").first().cloned().unwrap_or_default()));
+            }
+            let item = Self::watched_member(view, *offset);
+            if item.is_some() { *offset += 1; }
+            return Ok(item);
+        }
         match view {
             Value::Window(owner, projection) => self.advance_dictionary(owner, offset, balance, *projection),
             _ => Ok(None),
