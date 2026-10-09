@@ -15522,7 +15522,7 @@ impl<'a> Machine<'a> {
     }
 
     fn ask_special(&mut self, subject: &Value, index: usize, tail: &[Value]) -> Result<Option<Value>, String> {
-        if self.table.flag("ext.stmt.type_parameters") && index == 15 {
+        if index == 15 && self.table.flag("ext.stmt.type_parameters") {
             let reader = self.appointment(subject, index);
             let mut display = None;
             if let Value::Thing(object) = subject {
@@ -15535,6 +15535,9 @@ impl<'a> Machine<'a> {
             if matches!(reader, Some(Value::Nil)) || (reader.is_none() && display.is_some()) {
                 let name = display.unwrap_or_else(|| subject.kind_word());
                 return Err(self.core_complaint("core.uniterable", &name));
+            }
+            if !matches!(subject, Value::Blueprint(_)) {
+                return self.dispatch_appointment(index, subject, tail, reader);
             }
         }
         if let Value::Blueprint(class) = subject {
@@ -19177,12 +19180,11 @@ impl<'a> Machine<'a> {
     }
 
     fn window_inside(value: &Value) -> Option<Value> {
-        if matches!(value, Value::Window(..)) { return Some(value.clone()); }
-        let content = match value {
-            Value::Shared(cell) | Value::Mutable(cell, _) => cell.borrow().clone(),
-            _ => return None,
-        };
-        Self::window_inside(&content)
+        match value {
+            Value::Window(..) => Some(value.clone()),
+            Value::Shared(cell) | Value::Mutable(cell, _) => Self::window_inside(&cell.borrow()),
+            _ => None,
+        }
     }
 
     fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {

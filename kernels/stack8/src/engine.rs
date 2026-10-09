@@ -8404,6 +8404,9 @@ impl<'a> Engine<'a> {
             if matches!(slot, Some(Value::Null)) || (slot.is_none() && qualified.is_some()) {
                 return Err(self.core_fault("core.uniterable", &qualified.unwrap_or_else(|| value.core_kind())));
             }
+            if !matches!(value, Value::Class(_)) {
+                return self.invoke_resolved_special(value, place, slot, args);
+            }
         }
         if let Value::Class(class) = value {
             let Some(maker) = Self::maker_beneath(class) else { return Ok(None); };
