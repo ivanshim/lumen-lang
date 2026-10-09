@@ -1163,7 +1163,9 @@ fn parse_args(args: &[OsString]) -> Invocation {
             }
             Some(flag @ ("-c" | "-E" | "-")) if file.is_none()
                 && !language.as_ref().map_or_else(|| {
-                    python.is_some() || env::var("LUMEN_LANG").is_ok_and(|held| held == "python")
+                    python.is_some() || env::var("LUMEN_LANG").map_or(true, |held| {
+                        held.trim().is_empty() || language_from_flag(&held).name() == "python"
+                    })
                 }, |selected| selected.name() == "python") => {
                 eprintln!("Error: {flag} requires the Python language");
                 process::exit(2);
