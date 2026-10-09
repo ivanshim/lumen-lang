@@ -6807,7 +6807,7 @@ impl<'a> Machine<'a> {
                             let answer=self.apply_class_member(bound,Vec::new())?;
                             let names=self.object_members(&answer)?;
                             let ordered=self.arranged(names,&Value::Nil,false).map_err(Escape::from)?;
-                            return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)));
+                            return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)).keep(true));
                         }
                     }
                 }
@@ -6831,12 +6831,12 @@ impl<'a> Machine<'a> {
                             let answer=self.apply_class_member(method.clone(),Vec::new())?;
                             let names=self.object_members(&answer)?;
                             let ordered=self.arranged(names,&Value::Nil,false).map_err(Escape::from)?;
-                            return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)));
+                            return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)).keep(true));
                         }
                     }
                     let keys = entries.into_iter().map(|entry| entry.0).collect();
                     let ordered = self.arranged(keys, &Value::Nil, false).map_err(Escape::from)?;
-                    return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)));
+                    return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)).keep(true));
                 }
             }
             // A thing with a directory method of its own answers with it,
@@ -6845,22 +6845,22 @@ impl<'a> Machine<'a> {
                 if let Some(answer)=self.ask_special(&values[0],75,&[])?{
                     let names=self.object_members(&answer)?;
                     let ordered=self.arranged(names,&Value::Nil,false).map_err(Escape::from)?;
-                    return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)));
+                    return Ok(Value::Vector(crate::tuples::Sequence::plain(ordered)).keep(true));
                 }
             }
             // The kind primitive stands for the class of the kind it
             // names, and answers that class's own directory.
             if let Value::Intrinsic(Prim::SortOf, _) = &values[0] {
                 let kind = self.builder_blueprint();
-                return Ok(self.ordinary_directory(&Value::Blueprint(kind)));
+                return Ok(self.ordinary_directory(&Value::Blueprint(kind).keep(true)));
             }
             // A lone singleton answers with the directory of the kind
             // it is the one value of, the list the reference gives both.
             if matches!(values[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) {
                 let kind = self.kind_named_after(&values[0]);
-                return Ok(self.ordinary_directory(&kind));
+                return Ok(self.ordinary_directory(&kind).keep(true));
             }
-            return Ok(self.ordinary_directory(&values[0]));
+            return Ok(self.ordinary_directory(&values[0]).keep(true));
         }
         if op==8 {return Err(self.wrong_count(&self.class_tool_word(8),1,values.len()));}
         // With the protocol spelled, a property is a thing of the

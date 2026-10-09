@@ -12538,7 +12538,15 @@ impl<'a> Engine<'a> {
                             for name in names {
                                 match fields.iter().find(|(word, _)| word == name) {
                                     Some((word, held)) => kept.push((word.clone(), held.clone())),
-                                    None => return Err(self.import_member_fault(&object.class.name.clone(), name).into()),
+                                    // A name the wildcard asks for that the
+                                    // module's own text never bound is a
+                                    // submodule the reference imports on
+                                    // demand, as a plain from-import does.
+                                    None => {
+                                        let parent = Value::Object(object.clone());
+                                        let child = self.import_member(&parent, &object.class.name.clone(), name)?;
+                                        kept.push((name.clone(), child));
+                                    }
                                 }
                             }
                             kept
@@ -25789,6 +25797,13 @@ impl Engine<'_> {
         }
         for name in &self.lang.module_names {
             if !fields.iter().any(|(key, _)| key == name) { fields.push((name.clone(), Value::text(path))); }
+        }
+        // CPython gives every module a `__doc__` entry, `None` where the
+        // module's own text opens with no documentation, so a package
+        // written into a directory on `sys.path` answers one to `dir`
+        // and to a plain attribute read.
+        for word in &self.lang.module_doc {
+            if !fields.iter().any(|(key, _)| key == word) { fields.push((word.clone(), Value::Null)); }
         }
         // `__file__` is read from outside a module (`mod.__file__`) as
         // freely as `__name__` is, in CPython, so it is carried here
