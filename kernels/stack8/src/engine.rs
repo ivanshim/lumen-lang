@@ -7370,7 +7370,7 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        if name==self.class_word("allocate") && matches!(value.contents(),Value::Small(_)|Value::Huge(_)|Value::Real(_)|Value::Complex(_)|Value::Text(_)|Value::Codepoints(_)|Value::Array(_)|Value::Tuple(_)|Value::Map(_)|Value::Bytes(..)|Value::Set(_)) {
+        if [self.class_word("allocate"), self.class_word("doc")].contains(&name) && matches!(value.contents(),Value::Flag(_)|Value::Small(_)|Value::Huge(_)|Value::Real(_)|Value::Complex(_)|Value::Text(_)|Value::Codepoints(_)|Value::Array(_)|Value::Tuple(_)|Value::Map(_)|Value::Bytes(..)|Value::Set(_)) {
             let result=self.class_get(value.clone(),name,true).map_err(|fault|{self.carried=Some(fault);self.special_fault()})?;
             return Ok(Some(result));
         }
@@ -22900,7 +22900,7 @@ impl<'a> Engine<'a> {
             Builtin::Restore => unreachable!(),
             // These two are read only where a language binds names,
             // which reaches them through `core_call` instead.
-            Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
+            Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -23595,7 +23595,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -24678,6 +24678,18 @@ impl Engine<'_> {
                     self.native_reduce(&args[0])
                 }
             }
+            Builtin::LzmaDecode => {
+                arity(3, 3)?;
+                let Value::Bytes(content, ..) = args[0].contents() else { return Err("TypeError: codec input must be bytes".into()); };
+                let format = self.byte_whole(&args[1])?;
+                let Value::Text(limit) = args[2].contents() else { return Err("TypeError: memory limit must be a decimal string".into()); };
+                let memory = limit.parse::<u64>().map_err(|_| "OverflowError: invalid memory limit".to_owned())?;
+                let result = match lumen_lzma::decode(&content.borrow(), format, memory) {
+                    Ok((output, used)) => vec![Value::Small(0), self.byte_make(output, false), Value::Small(used as i64)],
+                    Err(code) => vec![Value::Small(code.into()), self.byte_make(Vec::new(), false), Value::Small(0)],
+                };
+                Value::Tuple(Rc::new(result).into())
+            }
             Builtin::ZlibNative => {
                 arity(8, 8)?;
                 if self.lang.zlib_native.is_empty() { return Err(self.core_fault("core.unready", name)); }
@@ -25755,7 +25767,7 @@ impl Engine<'_> {
             }
         }
         let hook = if let Value::Object(space) = module {
-            space.fields.borrow().iter().find(|(key, _)| key == "__getattr__").map(|(_, held)| held.contents())
+            space.fields.borrow().iter().find(|(key, _)| key == "__getattr__").map(|(_, held)| held.contents()).filter(|value| !matches!(value, Value::Blank))
         } else { None };
         if let Some(callable) = hook {
             match self.class_apply(callable, vec![Value::text(name)]) {

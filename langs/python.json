@@ -910,6 +910,7 @@
   "ext.builtin.binascii_native": [
     "__binascii_native__"
   ],
+  "ext.builtin.lzma_decode": ["__lzma_decode__"],
   "ext.builtin.zlib_native": [
     "__zlib_native__"
   ],

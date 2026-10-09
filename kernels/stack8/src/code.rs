@@ -772,6 +772,7 @@ pub enum Builtin {
     /// built-in writing for out to bytes and read it back: `None`
     /// where the value keeps none, else the pieces marshal writes and
     /// its opposite number reads back into the very value again.
+    LzmaDecode,
     ZlibNative,
     StructNative,
     BinAscii,

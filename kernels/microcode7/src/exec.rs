@@ -9096,7 +9096,7 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
-        if name==self.detail("allocate") && matches!(value.settled(),Value::Small(_)|Value::Huge(_)|Value::Frac(_)|Value::Complex(_)|Value::Text(_)|Value::Unpaired(_)|Value::Vector(_)|Value::Tuple(_)|Value::Dict(_)|Value::Octets{..}|Value::Set(_)) { return self.read_class_member(value.clone(),name,true).ok(); }
+        if (name == self.detail("allocate") || name == self.detail("doc")) && matches!(value.settled(),Value::Flag(_)|Value::Small(_)|Value::Huge(_)|Value::Frac(_)|Value::Complex(_)|Value::Text(_)|Value::Unpaired(_)|Value::Vector(_)|Value::Tuple(_)|Value::Dict(_)|Value::Octets{..}|Value::Set(_)) { return self.read_class_member(value.clone(),name,true).ok(); }
         if matches!(value, Value::Unpaired(_)) && crate::table::BUILTIN_LABELS.iter().any(|(label,operation)| *label==format!("ext.builtin.text.{name}") && matches!(operation,Prim::Textual(_))) {
             return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
         }
@@ -23199,7 +23199,7 @@ impl<'a> Machine<'a> {
                 if v.is_empty() { Value::tuple(Vec::new()) }
                 else { n(1)?; Value::tuple(self.gathered_members(&v[0])?) }
             }
-            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::ZlibNative | Prim::BinaryFormat | Prim::BinaryAscii | Prim::ContextStore | Prim::NamespaceRead | Prim::TraceBridge | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
+            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::LzmaDecode | Prim::ZlibNative | Prim::BinaryFormat | Prim::BinaryAscii | Prim::ContextStore | Prim::NamespaceRead | Prim::TraceBridge | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
@@ -26309,7 +26309,11 @@ impl Machine<'_> {
             }
         }
         let fallback = match value {
-            Value::Thing(space) => space.holds.borrow().iter().find(|entry| entry.0 == "__getattr__").map(|entry| entry.1.settled()),
+            Value::Thing(space) => space.holds.borrow().iter().find_map(|(word, cell)| {
+                if word != "__getattr__" { return None; }
+                let hook = cell.settled();
+                (!matches!(hook, Value::Unset)).then_some(hook)
+            }),
             _ => None,
         };
         if let Some(f) = fallback {
@@ -28764,7 +28768,7 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 impl Machine<'_> {
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | ZlibNative | BinaryFormat | BinaryAscii | ContextStore | NamespaceRead | TraceBridge | HeapNative | ReduceNative | RebuildNative)
+        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | LzmaDecode | ZlibNative | BinaryFormat | BinaryAscii | ContextStore | NamespaceRead | TraceBridge | HeapNative | ReduceNative | RebuildNative)
     }
 
     pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -29945,6 +29949,26 @@ impl Machine<'_> {
                     if !key.starts_with('\0') { entries.push((Value::text(key), item.clone())); }
                 }
                 Ok(Value::Dict(Rc::new(entries.into())))
+            }
+            LzmaDecode => {
+                require(3, 3)?;
+                let compressed = match input[0].settled() {
+                    Value::Octets { cell, .. } => cell.borrow().clone(),
+                    _ => return Err("TypeError: codec input must be bytes".into()),
+                };
+                let container = match input[1].settled() {
+                    Value::Small(number) => number,
+                    _ => return Err("TypeError: container format must be an integer".into()),
+                };
+                let memory = match input[2].settled() {
+                    Value::Text(decimal) => decimal.parse::<u64>().map_err(|_| "OverflowError: invalid memory limit".to_owned())?,
+                    _ => return Err("TypeError: memory limit must be a decimal string".into()),
+                };
+                let (status, bytes, taken) = match lumen_lzma::decode(&compressed, container, memory) {
+                    Err(problem) => (i64::from(problem), Vec::new(), 0),
+                    Ok((decoded, count)) => (0, decoded, count as i64),
+                };
+                Ok(Value::tuple(vec![Value::Small(status), self.octets(bytes, false), Value::Small(taken)]))
             }
             ZlibNative => {
                 require(8, 8)?;
