@@ -1680,3 +1680,27 @@ def patch(test_instance, object_to_patch, attr_name, new_value):
 
     # actually override the attribute
     setattr(object_to_patch, attr_name, new_value)
+
+_buggy_ucrt = None
+def skip_if_buggy_ucrt_strfptime(test):
+    """
+    Skip decorator for tests that use buggy strptime/strftime
+
+    If the UCRT bugs are present time.localtime().tm_zone will be
+    an empty string, otherwise we assume the UCRT bugs are fixed
+
+    See bpo-37552 [Windows] strptime/strftime return invalid
+    results with UCRT version 17763.615
+    """
+    import locale
+    global _buggy_ucrt
+    if _buggy_ucrt is None:
+        if(sys.platform == 'win32' and
+                locale.getencoding() == 'cp65001' and
+                time.localtime().tm_zone == ''):
+            _buggy_ucrt = True
+        else:
+            _buggy_ucrt = False
+    return unittest.skip("buggy MSVC UCRT strptime/strftime")(test) if _buggy_ucrt else test
+
+

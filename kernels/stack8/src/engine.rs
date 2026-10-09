@@ -9876,7 +9876,7 @@ impl<'a> Engine<'a> {
         let mut replacement: Option<Vec<Value>> = None;
         for (position, value) in args.iter().enumerate() {
             let worth = if places == [usize::MAX] { None } else { self.worth_free_of(value, places) };
-            let worth = worth.filter(|worth| !(matches!(op, Builtin::Repr | Builtin::Ascii | Builtin::ToText) && Self::worth_names_class(worth)) || (op == Builtin::Reversed && matches!(worth, Value::Array(_))));
+            let worth = worth.filter(|worth| !(matches!(op, Builtin::Repr | Builtin::Ascii | Builtin::ToText) && Self::worth_names_class(worth)) && !(op == Builtin::Reversed && matches!(worth, Value::Array(_))));
             if let Some(worth) = worth {
                 let row = replacement.get_or_insert_with(|| args[..position].to_vec());
                 row.push(worth);
