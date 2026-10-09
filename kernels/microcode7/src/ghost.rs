@@ -315,7 +315,7 @@ fn watch_ghost(ghost: &Ghost) {
 
 /// The farewell method of a class, looked for among its programs first
 /// and then among the values it keeps for itself.
-pub fn farewell_of(class: &Blueprint) -> Option<Value> {
+pub fn farewell_of(class: &Rc<Blueprint>) -> Option<Value> {
     FAREWELL_NAME.try_with(|stored| {
         let borrowed = stored.borrow();
         let word = borrowed.as_ref()?;
@@ -646,8 +646,9 @@ impl Knot {
                     if let Ok(shared) = b.shared.try_borrow() {
                         for (_, v) in shared.iter() { held(out, v); }
                     }
+                    if let Ok(bases) = b.supplied_bases.try_borrow() { for value in bases.iter() { held(out, value); } }
                     for (_, p) in &b.methods { out.push(Knot::Held(Value::Routine(p.clone()))); }
-                    for parent in b.under.iter().chain(b.ancestry.borrow().iter()).chain(b.parents.borrow().iter()).chain(&b.answers) {
+                    for parent in b.under.borrow().iter().chain(b.ancestry.borrow().iter()).chain(b.parents.borrow().iter()).chain(&b.answers) {
                         out.push(Knot::Held(Value::Blueprint(parent.clone())));
                     }
                 }
@@ -902,6 +903,7 @@ impl Web {
                     }
                 }
                 Knot::Held(Value::Blueprint(b)) => {
+                    if let Ok(mut bases) = b.supplied_bases.try_borrow_mut() { taken.extend(bases.take()); }
                     if let Ok(mut shared) = b.shared.try_borrow_mut() {
                         taken.extend(std::mem::take(&mut *shared).into_iter().map(|(_, v)| v));
                     }

@@ -2213,7 +2213,7 @@ pub struct Class {
     pub direct: RefCell<Vec<Rc<Class>>>,
     pub outline: Option<String>,
     pub name: String,
-    pub base: Option<Rc<Class>>,
+    pub base: RefCell<Option<Rc<Class>>>,
     /// The classes of method names only that this one answers to.
     pub answers: Vec<Rc<Class>>,
     pub fields: Vec<(String, Value)>,
@@ -2222,6 +2222,10 @@ pub struct Class {
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
     pub shared: ClassMembers,
+    /// Keep allocated storage and the exact bases tuple outside the writable namespace.
+    pub slot_layout: RefCell<Option<Vec<String>>>,
+    pub dictionary_layout: std::cell::Cell<Option<bool>>,
+    pub python_bases: RefCell<Option<Value>>,
     /// The weak-reference layout fixed when a Python class is created.
     /// Namespace writes cannot change an already allocated layout.
     pub weak_storage: std::cell::Cell<Option<bool>>,
@@ -2260,27 +2264,27 @@ impl Class {
 
     /// The program of that name, in this class or the nearest one
     /// beneath it that has one.
-    pub fn method(&self, name: &str) -> Option<&Rc<Routine>> {
+    pub fn method(&self, name: &str) -> Option<Rc<Routine>> {
         match self.methods.iter().find(|(n, _)| n == name) {
-            Some((_, p)) => Some(p),
-            None => self.base.as_ref().and_then(|b| b.method(name)),
+            Some((_, p)) => Some(p.clone()),
+            None => self.base.borrow().as_ref().and_then(|b| b.method(name)),
         }
     }
 
     /// The constant of that name, looked for the same way.
-    pub fn constant(&self, name: &str) -> Option<&Value> {
+    pub fn constant(&self, name: &str) -> Option<Value> {
         match self.constants.iter().find(|(n, _)| n == name) {
-            Some((_, v)) => Some(v),
-            None => self.base.as_ref().and_then(|b| b.constant(name)),
+            Some((_, v)) => Some(v.clone()),
+            None => self.base.borrow().as_ref().and_then(|b| b.constant(name)),
         }
     }
 
     /// The class holding a value of that name for itself.
-    pub fn holder(&self, name: &str) -> Option<&Class> {
+    pub fn holder(self: &Rc<Self>, name: &str) -> Option<Rc<Class>> {
         if self.shared.read(name, self.python_names.borrow().is_some()).is_some() {
-            return Some(self);
+            return Some(self.clone());
         }
-        self.base.as_ref().and_then(|b| b.holder(name))
+        self.base.borrow().as_ref().and_then(|b| b.holder(name))
     }
 
     /// Whether this class is that one, stands on it, or answers to it.
@@ -2291,7 +2295,7 @@ impl Class {
             false => self.name == name,
         };
         same
-            || self.base.as_ref().map_or(false, |b| b.named(name, loosely))
+            || self.base.borrow().as_ref().map_or(false, |b| b.named(name, loosely))
             || self.answers.iter().any(|a| a.named(name, loosely))
     }
 
@@ -2303,10 +2307,10 @@ impl Class {
 
     /// How far a member of that name may be reached from, and the class
     /// that says so: the nearest one declaring it, this class first.
-    pub fn reach_of(&self, name: &str) -> Option<(Reach, &str)> {
+    pub fn reach_of(&self, name: &str) -> Option<(Reach, String)> {
         match self.fields.iter().position(|(n, _)| n == name) {
-            Some(at) => Some((self.reaches.get(at).copied().unwrap_or(Reach::Open), self.name.as_str())),
-            None => self.base.as_ref().and_then(|b| b.reach_of(name)),
+            Some(at) => Some((self.reaches.get(at).copied().unwrap_or(Reach::Open), self.name.clone())),
+            None => self.base.borrow().as_ref().and_then(|b| b.reach_of(name)),
         }
     }
 
@@ -2318,17 +2322,13 @@ impl Class {
     /// Ask whether an inherited public field exists without constructing
     /// the complete instance layout or cloning its names and values.
     pub fn has_public_field(&self, name: &str) -> bool {
-        let mut current = Some(self);
-        while let Some(class) = current {
-            if class.fields.iter().enumerate().any(|(at, (key, _))|
-                key == name && class.reaches.get(at) != Some(&Reach::Hidden)) { return true; }
-            current = class.base.as_deref();
-        }
-        false
+        if self.fields.iter().enumerate().any(|(at, (key, _))|
+                key == name && self.reaches.get(at) != Some(&Reach::Hidden)) { return true; }
+        self.base.borrow().as_ref().is_some_and(|parent| parent.has_public_field(name))
     }
 
     pub fn all_fields(&self) -> Vec<(String, Value)> {
-        let mut all = self.base.as_ref().map_or_else(Vec::new, |b| b.all_fields());
+        let mut all = self.base.borrow().as_ref().map_or_else(Vec::new, |b| b.all_fields());
         for (at, (name, value)) in self.fields.iter().enumerate() {
             let alone = self.reaches.get(at) == Some(&Reach::Hidden);
             let filed = match alone {

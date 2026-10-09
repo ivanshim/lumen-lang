@@ -261,7 +261,7 @@ fn note_death() {
 }
 
 /// The routine a class says its last words with, where it has one.
-pub fn last_word_of(class: &Class) -> Option<Value> {
+pub fn last_word_of(class: &Rc<Class>) -> Option<Value> {
     LAST_WORD.try_with(|w| {
         let name = w.borrow();
         let name = name.as_deref()?;
@@ -269,7 +269,8 @@ pub fn last_word_of(class: &Class) -> Option<Value> {
             return Some(Value::Routine(program.clone()));
         }
         let holder = class.holder(name)?;
-        holder.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.clone())
+        let value = holder.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.clone());
+        value
     }).ok().flatten()
 }
 
@@ -572,8 +573,9 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
             if let Ok(shared) = c.shared.try_borrow() {
                 out.extend(shared.iter().map(|(_, v)| v.clone()));
             }
+            if let Ok(bases) = c.python_bases.try_borrow() { out.extend(bases.iter().cloned()); }
             out.extend(c.methods.iter().map(|(_, p)| Value::Routine(p.clone())));
-            out.extend(c.base.iter().map(|b| Value::Class(b.clone())));
+            out.extend(c.base.borrow().iter().map(|b| Value::Class(b.clone())));
             out.extend(c.lineage.borrow().iter().chain(c.direct.borrow().iter()).chain(&c.answers).map(|b| Value::Class(b.clone())));
         }
         Value::Generator(g) => {
@@ -836,6 +838,7 @@ impl Graph {
                     }
                 }
                 Value::Class(c) => {
+                    if let Ok(mut bases) = c.python_bases.try_borrow_mut() { grave.extend(bases.take()); }
                     if let Ok(mut shared) = c.shared.try_borrow_mut() {
                         grave.extend(std::mem::take(&mut *shared).into_iter().map(|(_, v)| v));
                     }
