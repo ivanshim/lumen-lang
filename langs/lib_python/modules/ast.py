@@ -3364,6 +3364,17 @@ def _tree_for_compile(source, filename, mode, type_comments, optimize):
 def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
           feature_version=None, optimize=-1, fold_debug=False):
     if isinstance(source, AST):
+        # A tree goes back through the reader only where its shape suits
+        # the mode; an optimised reading settles the names it folds.
+        expected = {'exec': Module, 'eval': Expression,
+                    'single': Interactive, 'func_type': FunctionType}.get(mode)
+        if expected is None:
+            raise ValueError("compile() mode must be 'exec', 'eval', 'single' or 'func_type'")
+        if not isinstance(source, expected):
+            raise TypeError('expected ' + expected.__name__ + ' node, got ' + type(source).__name__)
+        if optimize >= 1:
+            return parse(unparse(source), filename, mode, type_comments=type_comments,
+                         optimize=optimize, fold_debug=True)
         return source
     if isinstance(source, (bytes, bytearray)):
         source = source.decode('utf-8')
