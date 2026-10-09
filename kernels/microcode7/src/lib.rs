@@ -24,6 +24,7 @@ pub mod form;
 pub mod data;
 pub mod ghost;
 mod core;
+mod multibyte;
 mod posix;
 mod complex;
 mod byteformat;

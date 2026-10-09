@@ -3559,6 +3559,11 @@ impl<'a> Engine<'a> {
                             Value::Map(_) => pair.1.contents(),
                             _ => Self::worth_of(&pair.1).map(|worth| worth.contents()).unwrap_or_else(|| pair.1.contents()),
                         };
+                        let source = match source {
+                            Value::Fields(owner) => Value::Map(Rc::new(self.fields_entries(&owner).into())),
+                            Value::View(proxy) if proxy.1 == "mapping" => proxy.0.contents(),
+                            other => other,
+                        };
                         let Value::Map(m) = source else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
                         for (key, held) in m.iter() {
                             let Value::Text(name) = key else { return Err(self.lang.spread_pairs_amiss[0].clone().into()); };
@@ -7458,6 +7463,9 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
+        if !name.is_empty() && name == self.class_word("doc") {
+            if let Some(doc) = self.primitive_doc(value) { return Ok(Some(Value::text(doc))); }
+        }
         if name == self.class_word("doc") && matches!(value.contents(), Value::Null) { return Ok(Some(Value::text("The type of the None singleton."))); }
         if let Value::View(view) = value {
             if view.1 == "mapping" && ["get", "keys", "values", "items", "copy"].contains(&name) {
@@ -7613,7 +7621,9 @@ impl<'a> Engine<'a> {
             return Ok(Some(Value::ValueMethod(Rc::new((held.clone(), "float_from_number".to_string())))));
         }
         if let Some(loose) = self.loose_kind_member(&held, name) { return Ok(Some(loose)); }
-        if matches!(held, Value::Codepoints(_)) && matches!(self.lang.builtins.get(name), Some(Builtin::Text(_))) {
+        let text_descriptor = self.lang.builtin_words.iter().find(|(op, _)| *op == Builtin::ToText)
+            .and_then(|(_, word)| self.lang.builtins.get(&format!("{word}.{name}")));
+        if matches!(held, Value::Codepoints(_)) && (matches!(self.lang.builtins.get(name), Some(Builtin::Text(_))) || matches!(text_descriptor, Some(Builtin::Text(_)))) {
             return Ok(Some(Value::ValueMethod(Rc::new((held, name.to_string())))));
         }
         if let (Value::Text(subject), Some(Builtin::Text(op))) = (&held, self.lang.builtins.get(name)) {
@@ -7692,7 +7702,7 @@ impl<'a> Engine<'a> {
             Value::Real(_) => Kindred::Real,
             Value::Frac(_) => Kindred::Ratio,
             Value::Complex(_) => Kindred::Complex,
-            Value::Text(_) => Kindred::Text,
+            Value::Text(_) | Value::Codepoints(_) => Kindred::Text,
             Value::Bytes(_, changeable, _) => Kindred::Bytes(*changeable),
             Value::Array(_) => Kindred::Row,
             Value::Tuple(_) => Kindred::Tuple,
@@ -8266,6 +8276,11 @@ impl<'a> Engine<'a> {
     }
 
     fn string_conversion(&mut self, value: &Value, repr: bool) -> Res<Value> {
+        if !repr && matches!(value.contents(), Value::Codepoints(_)) { return Ok(value.contents()); }
+        // str inherits its text conversion even when a subclass replaces repr.
+        if !repr && self.special_value(value, 0).is_none() {
+            if let Some(text @ (Value::Text(_) | Value::Codepoints(_))) = Self::worth_of(value) { return Ok(text); }
+        }
         // A whole number is written out only where it holds no more
         // figures than the definition allows, whichever conversion --
         // writing, representing or quoting -- asked for the text.
@@ -8423,7 +8438,9 @@ impl<'a> Engine<'a> {
             // A thing keeping a worth of its kind shows as that worth
             // where its class says nothing of how it is shown.
             if let Some(worth) = Self::worth_of(value) {
-                let told = self.special_value(value, 1).is_some() || (!representation && self.special_value(value, 0).is_some());
+                let inherited_text = !representation && matches!(worth.contents(), Value::Text(_) | Value::Codepoints(_));
+                let told = self.special_value(value, 0).is_some() && !representation
+                    || !inherited_text && self.special_value(value, 1).is_some();
                 if !told { let name = object.class_now().name.clone(); return self.worth_shown(&name, &worth, representation); }
             }
             let place = if representation || self.special_value(value, 0).is_none() { 1 } else { 0 };
@@ -8868,22 +8885,22 @@ impl<'a> Engine<'a> {
 
     /// A thing written to a format specification: by its own method,
     /// by the worth it keeps, or as its text where nothing was asked.
-    fn special_format(&mut self, value: &Value, spec: &str) -> Res<String> {
+    fn special_format(&mut self, value: &Value, spec: &str) -> Res<Value> {
         if let Some(answer) = self.special_call(value, 72, vec![Value::text(spec)])? {
             return match answer {
-                Value::Text(text) => Ok(text.to_string()),
+                text @ (Value::Text(_) | Value::Codepoints(_)) => Ok(text),
                 other => match Self::worth_of(&other).map(|worth| worth.contents()) {
-                    Some(Value::Text(text)) => Ok(text.to_string()),
+                    Some(text @ (Value::Text(_) | Value::Codepoints(_))) => Ok(text),
                     _ => Err(format!("{}{}", self.lang.format_result.first().map_or("", String::as_str), Self::shown_kind(&other))),
                 },
             };
         }
-        if spec.is_empty() { return self.special_text(value, false); }
+        if spec.is_empty() { return self.string_conversion(value, false); }
         if let Some(worth) = Self::worth_of(value) {
             let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
-            return writer.field(&worth.contents(), spec, "");
+            return writer.field_value(&worth.contents(), spec, "");
         }
-        if spec.is_empty() { return self.special_text(value, false); }
+        if spec.is_empty() { return self.string_conversion(value, false); }
         let pieces = &self.lang.format_spec_amiss;
         Err(format!("{}{}{}", pieces.first().map_or("", String::as_str), Self::shown_kind(value), pieces.get(1).map_or("", String::as_str)))
     }
@@ -9851,14 +9868,15 @@ impl<'a> Engine<'a> {
             Builtin::Fetch | Builtin::Replace | Builtin::Erase => &[usize::MAX],
             Builtin::Length => &[10], Builtin::Hash => &[8], Builtin::Bool => &[9, 10], Builtin::Next => &[16],
             Builtin::ToText => &[0, 1], Builtin::Repr | Builtin::Ascii => &[1], Builtin::ToInt => &[38], Builtin::AsReal => &[39], Builtin::Absolute => &[40],
-            Builtin::Iter | Builtin::List | Builtin::Sorted | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Any | Builtin::Minimum | Builtin::Maximum | Builtin::Sum => &[15],
+            Builtin::Iter | Builtin::List | Builtin::Sorted | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Any | Builtin::Minimum | Builtin::Maximum | Builtin::Sum => &[15],
+            Builtin::Reversed => &[42],
             Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin => &[],
             _ => &[usize::MAX],
         };
         let mut replacement: Option<Vec<Value>> = None;
         for (position, value) in args.iter().enumerate() {
             let worth = if places == [usize::MAX] { None } else { self.worth_free_of(value, places) };
-            let worth = worth.filter(|worth| !(matches!(op, Builtin::Repr | Builtin::Ascii | Builtin::ToText) && Self::worth_names_class(worth)));
+            let worth = worth.filter(|worth| !(matches!(op, Builtin::Repr | Builtin::Ascii | Builtin::ToText) && Self::worth_names_class(worth)) || (op == Builtin::Reversed && matches!(worth, Value::Array(_))));
             if let Some(worth) = worth {
                 let row = replacement.get_or_insert_with(|| args[..position].to_vec());
                 row.push(worth);
@@ -10038,7 +10056,7 @@ impl<'a> Engine<'a> {
                         }
                     },
                 };
-                Value::text(&self.special_format(&args[0], &spec)?)
+                self.special_format(&args[0], &spec)?
             }
             Builtin::Replace if args.len() == 3 && matches!(&args[2], Value::Map(_)) => {
                 let Value::Map(entries) = &args[2] else { unreachable!() };
@@ -12991,7 +13009,7 @@ impl<'a> Engine<'a> {
                         let text = text.clone();
                         let args = self.call_items(args)?;
                         let filled = self.filled_template(&text, &args)?;
-                        self.data.push(Value::text(&filled));
+                        self.data.push(filled);
                         return Ok(());
                     }
                 }
@@ -13647,17 +13665,20 @@ impl<'a> Engine<'a> {
                 if Self::holds_object(&value.contents()) && !self.lang.class_special.is_empty() {
                     let thing = value.contents();
                     let shown = if conversion.is_empty() { self.special_format(&thing, &specification)? } else {
-                        let text = Value::text(&self.special_text(&thing, conversion != "s")?);
-                        crate::formatting::Writer { lang: self.lang, words: self.wording() }.field(&text, &specification, "")?
+                        let mut text = self.string_conversion(&thing, conversion != "s")?;
+                        text = Self::worth_of(&text).unwrap_or(text);
+                        let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
+                        if conversion == "a" { text = writer.ascii_value(&text); }
+                        crate::formatting::Writer { lang: self.lang, words: self.wording() }.field_value(&text, &specification, "")?
                     };
-                    Value::text(&shown)
+                    shown
                 } else if self.lang.format_builtin.is_empty() {
                 let rendered = value.string_field(&self.wording(), &specification, &conversion)
                     .ok_or_else(|| self.lang.format_unavailable.clone().unwrap_or_else(|| "This formatted value is not supported".into()))?;
                 Value::text(&rendered)
                 } else {
                     let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
-                    Value::text(&writer.field(&value, &specification, &conversion)?)
+                    writer.field_value(&value, &specification, &conversion)?
                 }
             }
             Action::Interpolation | Action::TemplateMake => {
@@ -13792,7 +13813,7 @@ impl<'a> Engine<'a> {
     /// keeps the grammar of the fields; a thing of the program's own
     /// takes the road a formatted string's field takes, so that the two
     /// ways of writing a field say the same words.
-    fn filled_template(&mut self, text: &str, args: &[(Option<String>, Value)]) -> Res<String> {
+    fn filled_template(&mut self, text: &str, args: &[(Option<String>, Value)]) -> Res<Value> {
         let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
         let mut offered = |value: &Value, request: crate::formatting::FieldRequest<'_>| -> Res<Option<Value>> {
             use crate::formatting::FieldRequest;
@@ -13803,12 +13824,12 @@ impl<'a> Engine<'a> {
             };
             let thing = value.contents();
             if self.lang.class_special.is_empty() || !Self::holds_object(&thing) { return Ok(None); }
-            if conversion.is_empty() { return self.special_format(&thing, spec).map(|s| Some(Value::text(&s))); }
-            let mut words = self.special_text(&thing, conversion != "s")?;
-            if conversion == "a" { words = crate::strings::ascii_escaped(&words); }
-            let said = Value::text(&words);
+            if conversion.is_empty() { return self.special_format(&thing, spec).map(Some); }
+            let mut said = self.string_conversion(&thing, conversion != "s")?;
+            said = Self::worth_of(&said).unwrap_or(said);
             let inner = crate::formatting::Writer { lang: self.lang, words: self.wording() };
-            inner.field(&said, spec, "").map(|s| Some(Value::text(&s)))
+            if conversion == "a" { said = inner.ascii_value(&said); }
+            inner.field_value(&said, spec, "").map(Some)
         };
         writer.template(text, args, &mut offered)
     }
@@ -13870,7 +13891,7 @@ impl<'a> Engine<'a> {
             let thing = value.contents();
             if !self.lang.class_special.is_empty() && Self::holds_object(&thing) {
                 // The program's own class says its own words, as in `.format`.
-                let text = if conversion.is_empty() { self.special_format(&thing, &spec)? } else {
+                let text = if conversion.is_empty() { self.special_format(&thing, &spec)?.plain() } else {
                     let said = self.special_text(&thing, conversion != "s")?;
                     let said = if conversion == "a" { crate::strings::ascii_escaped(&said) } else { said };
                     Value::text(&said).string_field(&words, &spec, "").ok_or_else(|| crate::strings::fault(self.lang, "format"))?
@@ -14418,6 +14439,10 @@ impl<'a> Engine<'a> {
         }
         if matches!(a, Value::Codepoints(_)) || matches!(b, Value::Codepoints(_)) {
             if let (Some(mut left), Some(right)) = (a.text_codes(), b.text_codes()) {
+                if matches!(op, Action::Add) && self.lang.python_numbers {
+                    if right.is_empty() && matches!(a, Value::Text(_) | Value::Codepoints(_)) { return Ok(a.clone()); }
+                    if left.is_empty() && matches!(b, Value::Text(_) | Value::Codepoints(_)) { return Ok(b.clone()); }
+                }
                 if matches!(op, Action::Add | Action::Join) { left.extend(right); return Ok(Value::from_codes(left)); }
                 if matches!(op, Action::Contains | Action::Lacks) {
                     let found = left.is_empty() || right.windows(left.len()).any(|part| part == left);
@@ -14661,7 +14686,19 @@ impl<'a> Engine<'a> {
             return Err(self.byte_fault("unready"));
         }
         let sp = self.wording();
-        let joined = || Value::text(&format!("{}{}", self.told(a, &sp), self.told(b, &sp)));
+        let joined = || {
+            // Join Python text without allocating temporary display strings.
+            if self.lang.python_numbers {
+                if let (Value::Text(left), Value::Text(right)) = (a, b) {
+                    if right.is_empty() { return a.clone(); }
+                    if left.is_empty() { return b.clone(); }
+                    let mut combined = String::with_capacity(left.len() + right.len());
+                    combined.push_str(left); combined.push_str(right);
+                    return Value::text(&combined);
+                }
+            }
+            Value::text(&format!("{}{}", self.told(a, &sp), self.told(b, &sp)))
+        };
         Ok(match op {
             Action::Matrix => return Err(if self.lang.matrix_unready.is_some() { self.operands_complaint(&self.sign_of(op), a, b) } else { "Matrix multiplication cannot run".into() }),
             Action::And => Value::Flag(self.truth(a) && self.truth(b)),
@@ -16002,7 +16039,7 @@ impl<'a> Engine<'a> {
                 Ok(if matches!(target, Value::Tuple(_)) { Value::tuple(selected) } else { Value::array(selected) })
             }
             Value::Text(text) if self.lang.text_indexable => {
-                let ascii = text.is_ascii();
+                let ascii = if self.lang.python_numbers { Value::text_ascii(text) } else { text.is_ascii() };
                 let length = if ascii { text.len() } else { text.chars().count() };
                 let (first, last, step) = self.slice_edges(parts, length)?;
                 if step == 1 {
@@ -17669,6 +17706,16 @@ impl<'a> Engine<'a> {
             if !args.is_empty() { return Err(format!("TypeError: {owner}.__getnewargs__() takes no arguments ({} given)", args.len())); }
         }
         if let Value::Codepoints(codes) = &contents {
+            let qualified = self.lang.builtin_words.iter().find(|(op, _)| *op == Builtin::ToText)
+                .map(|(_, word)| format!("{word}.{operation}"));
+            if let Some(Builtin::Text(work)) = qualified.as_ref().and_then(|word| self.lang.builtins.get(word)).copied().filter(|op| matches!(op, Builtin::Text(crate::strings::TextOp::Splitlines | crate::strings::TextOp::Split | crate::strings::TextOp::Rsplit | crate::strings::TextOp::Partition | crate::strings::TextOp::Rpartition | crate::strings::TextOp::Lower | crate::strings::TextOp::Upper | crate::strings::TextOp::Casefold | crate::strings::TextOp::Count | crate::strings::TextOp::Replace | crate::strings::TextOp::Find | crate::strings::TextOp::Rfind | crate::strings::TextOp::Index | crate::strings::TextOp::Rindex))) {
+                let mut supplied = vec![contents.clone()]; supplied.extend(args);
+                crate::strings::keywords(work, &mut supplied, named, self.lang)?;
+                if work == crate::strings::TextOp::Splitlines && supplied.len() == 2 {
+                    supplied[1] = Value::Flag(self.special_truth(&supplied[1])?);
+                }
+                return crate::strings::run(work, operation, &supplied, self.lang, &self.wording());
+            }
             if operation == "__getnewargs__" {
                 let mut supplied = vec![contents.clone()]; supplied.extend(args);
                 crate::strings::keywords(crate::strings::TextOp::Getnewargs, &mut supplied, named, self.lang)?;
@@ -17840,7 +17887,7 @@ impl<'a> Engine<'a> {
             if let Value::Text(text) = receiver.contents() {
                 let items = args.into_iter().map(|value| (None, value))
                     .chain(named.into_iter().map(|(key, value)| (Some(key), value))).collect::<Vec<_>>();
-                return self.filled_template(&text, &items).map(|filled| Value::text(&filled));
+                return self.filled_template(&text, &items);
             }
         }
 
@@ -19076,32 +19123,44 @@ impl<'a> Engine<'a> {
             Value::Text(_) => return Err(part(0)),
             other => return Err(format!("{}{}{}", part(1), other.core_kind(), part(2))),
         };
-        self.byte_transcode(false, &row, args)
+        self.byte_transcode(false, &row, args, true)
     }
 
     fn codec_library(&mut self, member: &str, args: Vec<Value>) -> Res<Value> {
-        let module = self.route_module("codecs")?;
+        let module = self.route_module("_codec_runtime")?;
         let routine = self.member_of(module, member)?.ok_or_else(|| self.byte_fault("unready"))?;
         self.call_held(routine, args)
     }
 
-    fn byte_transcode(&mut self, encode: bool, row: &[u8], args: &[Value]) -> Res<Value> {
+    fn byte_transcode(&mut self, encode: bool, row: &[u8], args: &[Value], text_method: bool) -> Res<Value> {
         if args.is_empty() || args.len() > 3 { return Err(self.byte_fault("arguments")); }
+        // Codec names and error names must first encode as ordinary UTF-8 strings.
+        for argument in args.iter().skip(1) {
+            let name = Self::worth_of(argument).unwrap_or_else(|| argument.contents());
+            if matches!(name, Value::Codepoints(_)) {
+                self.codec_library("_encode_surrogates", vec![name, Value::text("utf-8"), Value::text("strict")])?;
+            }
+        }
         let policy = match args.get(2) {
             None => "strict".to_owned(),
             Some(Value::Text(s)) => s.to_string(),
             _ => return Err(self.byte_fault("arguments")),
         };
+        if policy.contains('\0') || args.get(1).is_some_and(|v| matches!(v, Value::Text(word) if word.contains('\0'))) {
+            return Err("ValueError: embedded null character".into());
+        }
+        if text_method && !encode && row.is_empty() && args.get(1).map_or(true, |v| matches!(v, Value::Text(_)))
+            && std::env::var("LUMEN_PYTHON_DEV_MODE").ok().as_deref() != Some("1") {
+            return Ok(Value::text(""));
+        }
         let codec = match self.byte_codec(args.get(1)) {
             Ok(n) if n < 3 => n,
-            _ => return self.codec_library(if encode { "_encode" } else { "_decode" }, args.to_vec()),
+            _ => return self.codec_library(match (encode, text_method) { (true, true) => "_text_encode", (false, true) => "_text_decode", (true, false) => "_encode", (false, false) => "_decode" }, args.to_vec()),
         };
-        // A policy the codecs module has never heard of is refused here,
-        // before the fold below could pass it over on an empty or clean
-        // input where no error would ever bring it to light.
-        if policy != "strict" && policy != "ignore" && policy != "replace" {
+        if text_method && args.len() == 3 && std::env::var("LUMEN_PYTHON_DEV_MODE").is_ok_and(|flag| flag == "1") {
             self.codec_library("lookup_error", vec![Value::text(&policy)])?;
         }
+        // Resolve custom error handlers only when a conversion actually fails.
         if encode && matches!(args[0], Value::Codepoints(_)) { return self.codec_library("_encode_surrogates", args.to_vec()); }
         let name = self.byte_codec_name(codec);
         let mut output = Vec::new();
@@ -19369,7 +19428,7 @@ impl<'a> Engine<'a> {
         if task <= 3 && !args.is_empty() && (task >= 2 || args.len() >= 2) {
             let decode = task == 3;
             let row = if decode { self.byte_row(&args[0], false)? } else { Vec::new() };
-            let result = self.byte_transcode(!decode, &row, args)?;
+            let result = self.byte_transcode(!decode, &row, args, true)?;
             if task == 1 {
                 if let Value::Bytes(cell, ..) = result { return Ok(self.byte_make(cell.borrow().clone(), true)); }
             }
@@ -20131,12 +20190,17 @@ impl<'a> Engine<'a> {
                         }
                     },
                 };
-                Value::text(&writer.field(&args[0], &spec, "")?)
+                writer.field_value(&args[0], &spec, "")?
             }
             // Bytes are made of the numbers they are handed, and a walk
             // stands for its numbers as plainly as a list does. Gather
             // the walk into a row first so that a walk backwards over a
             // byte string can be built straight back into one.
+            Builtin::Bytes(task @ (2 | 3)) if name == "__codec_encode" || name == "__codec_decode" => {
+                if args.is_empty() { return Err(self.byte_fault("arguments")); }
+                let data = if task == 3 { self.byte_row(&args[0], false)? } else { Vec::new() };
+                self.byte_transcode(task == 2, &data, &args, false)?
+            }
             Builtin::Bytes(task) => {
                 if task == 0 && args.len() == 1 {
                     if let Value::Object(object) = &args[0] {
@@ -20184,8 +20248,12 @@ impl<'a> Engine<'a> {
                         if let Some(mapping) = self.member_of(normalized[0].clone(), "_rows")? { normalized[0] = mapping.contents(); }
                     }
                 }
-                if matches!(op, crate::strings::TextOp::Expandtabs | crate::strings::TextOp::Splitlines) && normalized.len() == 2 {
-                    if let Some(index) = self.special_index(&normalized[1])? { normalized[1] = index; }
+                if normalized.len() == 2 {
+                    if op == crate::strings::TextOp::Splitlines && self.lang.python_numbers {
+                        normalized[1] = Value::Flag(self.special_truth(&normalized[1])?);
+                    } else if matches!(op, crate::strings::TextOp::Expandtabs | crate::strings::TextOp::Splitlines) {
+                        if let Some(index) = self.special_index(&normalized[1])? { normalized[1] = index; }
+                    }
                 }
                 if op == crate::strings::TextOp::Translate && normalized.len() == 2 && matches!(normalized[1], Value::Object(_)) {
                     if let Value::Text(source) = &normalized[0] {
@@ -21157,6 +21225,7 @@ impl<'a> Engine<'a> {
                     constants: Vec::new(), shared: crate::value::ClassMembers::new(shared), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None),
                 }))
             }
+            Builtin::Multibyte => return crate::multibyte::call(args),
             Builtin::Sre => return crate::sre::call(args),
             Builtin::UnicodeDecomposition => return crate::sre::decompose(args),
             Builtin::CopyValue => {
@@ -24591,7 +24660,7 @@ impl Engine<'_> {
         let result = match b {
             Builtin::InstanceOf => { arity(2, 2)?; Value::Flag(self.core_isinstance(&args[0], &args[1])?) }
             Builtin::Bool => { arity(0, 1)?; Value::Flag(match args.first() { Some(value) => self.special_truth(value)?, None => false }) }
-            Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::ByteKind(..) | Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::Method(..)) || matches!(&args[0], Value::Adapter(w) if matches!(w.0, 0..=4 | 8..=12 | 14 | 15 | 17..=27 | 29 | 30 | 40..=48 | 63 | 64 | 77..=80 | 131))) }
+            Builtin::Callable => { arity(1, 1)?; Value::Flag(matches!(args[0], Value::ByteKind(..) | Value::Native(..) | Value::Routine(_) | Value::Class(_) | Value::ValueMethod(_) | Value::TextMethod(..) | Value::Method(..)) || matches!(&args[0], Value::Adapter(w) if matches!(w.0, 0..=4 | 8..=12 | 14 | 15 | 17..=27 | 29 | 30 | 40..=48 | 63 | 64 | 77..=80 | 131))) }
             Builtin::Repr => {
                 arity(1, 1)?;
                 // A whole number is quoted only where it holds no more
@@ -24930,6 +24999,12 @@ impl Engine<'_> {
             }
             Builtin::Reversed => {
                 arity(1, 1)?;
+                // An inherited list reverse walk uses its live native storage.
+                if self.fuller_classes() {
+                    if let Some(storage) = Self::worth_of(&args[0]).filter(|v| matches!(v.contents(), Value::Array(_))) {
+                        return self.core_call(Builtin::Reversed, name, vec![storage], Vec::new());
+                    }
+                }
                 if let Value::Fields(owner) = &args[0] {
                     let mut keys: Vec<Value> = self.fields_entries(owner).into_iter().map(|(key, _)| key).collect();
                     keys.reverse();

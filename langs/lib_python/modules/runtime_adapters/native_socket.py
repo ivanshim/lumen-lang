@@ -51,3 +51,54 @@ class herror(OSError):
     pass
 
 timeout = TimeoutError
+
+# Read the operating system hostname through the existing Python host bridge.
+def gethostname():
+    return _call('socket_hostname').decode('utf-8', 'surrogateescape')
+
+# Resolve a real address and preserve the resolver's exception category.
+def gethostbyaddr(ip_address):
+    if isinstance(ip_address, str):
+        address = ip_address.encode('idna')
+    elif isinstance(ip_address, (bytes, bytearray)):
+        address = bytes(ip_address)
+    else:
+        raise TypeError('gethostbyaddr() argument 1 must be str, bytes or bytearray, not ' + type(ip_address).__name__)
+    if b'\0' in address:
+        raise TypeError('gethostbyaddr() argument 1 must be encoded string without null bytes, not ' + type(ip_address).__name__)
+    kind, code, message, result = _call('socket_hostbyaddr', address)
+    if kind == 1:
+        raise gaierror(code, message.decode('utf-8', 'surrogateescape'))
+    if kind == 2:
+        raise herror(code, message.decode('utf-8', 'surrogateescape'))
+    hostname, aliases, addresses = result
+    return (hostname.decode('utf-8', 'surrogateescape'),
+            [name.decode('utf-8', 'surrogateescape') for name in aliases],
+            [name.decode('ascii') for name in addresses])
+
+# From CPython v3.14.8 (8e6e75d9102e), Lib/socket.py: getfqdn; PSF License.
+def getfqdn(name=''):
+    """Get fully qualified domain name from name.
+
+    An empty argument is interpreted as meaning the local host.
+
+    First the hostname returned by gethostbyaddr() is checked, then
+    possibly existing aliases. In case no FQDN is available and `name`
+    was given, it is returned unchanged. If `name` was empty, '0.0.0.0' or '::',
+    hostname from gethostname() is returned.
+    """
+    name = name.strip()
+    if not name or name in ('0.0.0.0', '::'):
+        name = gethostname()
+    try:
+        hostname, aliases, ipaddrs = gethostbyaddr(name)
+    except error:
+        pass
+    else:
+        aliases.insert(0, hostname)
+        for name in aliases:
+            if '.' in name:
+                break
+        else:
+            name = hostname
+    return name

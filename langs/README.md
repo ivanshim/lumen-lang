@@ -4544,6 +4544,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytes.decode` | - | - | `decode` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.encode` | - | - | `encode` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.escape_decode` | - | - | `__escape_decode_native__` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.decode` | - | - | `decode` `__codec_decode` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.encode` | - | - | `encode` `__codec_encode` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.find` | - | - | `find` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.from_int` | - | - | `to_bytes` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.fromhex` | - | - | `bytes.fromhex` | - | - | - | - | - | - | - |
@@ -4844,6 +4846,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.min` | - | - | `min` | - | - | - | - | - | - | - |
 | `ext.builtin.module.helper.amiss` | - | - | `TypeError: invalid module helper arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
+| `ext.builtin.multibyte` | - | - | `__multibyte_native` | - | - | - | - | - | - | - |
 | `ext.builtin.namespace_type` | - | - | `__namespace_type` | - | - | - | - | - | - | - |
 | `ext.builtin.net.ask` | - | - | - | - | `__net_ask` | - | - | - | - | - |
 | `ext.builtin.next` | - | - | `next` | - | - | - | - | - | - | - |
@@ -6134,3 +6137,4 @@ The instruction vocabulary belongs to each kernel; it is not CPython bytecode.
 
 `ext.builtin.static_namespace` reads stored namespaces and class linearizations
 without invoking attribute hooks, metaclass properties, or other descriptors.
+`ext.builtin.multibyte` names the Python-only CJK mapping primitive used by the multibyte codec state machines. It uses the codec port's released mapping tables; other languages leave it unregistered.
