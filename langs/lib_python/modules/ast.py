@@ -2311,6 +2311,7 @@ class _Parser:
         kwarg = None
         keyword_only = False
         while not self.at_op(closing):
+            argument = None
             if self.at_op('/'):
                 if self.fv < 8:
                     _syntax('Positional-only parameters are only supported in Python 3.8 and greater')

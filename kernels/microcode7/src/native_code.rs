@@ -79,10 +79,10 @@ impl<'a> Machine<'a> {
         let prior: Vec<_> = (0..beginning).map(|index| format!("\0prior/{index}")).collect();
         let shadowed: Vec<_> = self.table.prims.keys().cloned().collect();
         let flags = code.compilation_entry.2;
-        let mut built = crate::build::build_text(&scanned, self.table, &prior, code.compilation_entry.1,
+        let mut built = crate::build::build_text_optimized(&scanned, self.table, &prior, code.compilation_entry.1,
             code.written_in.clone(), Some(Value::Shared(global.clone())), None, None,
             flags & 1 != 0, &shadowed, flags & 4 != 0, flags & 2 != 0,
-            (flags >> 8) & 3, flags & !0x307).map_err(|(message, _, _)| message)?;
+            flags & !0x307, ((flags >> 8) & 3) as u8).map_err(|(message, _, _)| message)?;
         let mut updated = built.program.with_literals(&code.literals)?;
         updated.locations = code.locations.clone();
         updated.encoded_handlers = code.encoded_handlers.clone();

@@ -453,9 +453,9 @@ pub fn build_from(tokens: &[Token], table: &Table, seeded: &[String], assumed: H
 
 // Reconstruct native code with the lexical future flags that built its image.
 pub(crate) fn build_from_image(tokens: &[Token], table: &Table, seeded: &[String], before: u32, future_bits: i64) -> Res<Built> {
-    build_text(tokens, table, seeded, before, None, None, None, None,
+    build_text_optimized(tokens, table, seeded, before, None, None, None, None,
         future_bits & 1 != 0, &[], future_bits & 4 != 0, future_bits & 2 != 0,
-        (future_bits >> 8) & 3, future_bits & !0x307).map_err(|(message, _, _)| message)
+        future_bits & !0x307, ((future_bits >> 8) & 3) as u8).map_err(|(message, _, _)| message)
 }
 
 /// The same, save that the text stands inside a routine already running:
