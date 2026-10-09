@@ -5714,7 +5714,7 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn class_from_type(&mut self,values:Vec<Value>)->Res {
         let (args, options) = self.open_arguments(values)?;
-        let mut values: Vec<Value> = args.iter().map(Value::settled).collect();
+        let mut values: Vec<Value> = args.iter().map(|value| if matches!(Self::window_inside(value), Some(Value::Window(_, 'm'))) { value.clone() } else { value.settled() }).collect();
         if values.len() != 3 && !options.is_empty() { return Err("TypeError: type() takes 1 or 3 arguments".to_owned().into()); }
         let options: Vec<Value> = options.into_iter().map(|(word, value)| Value::Couple(Rc::new((Value::text(&word), value)))).collect();
         if values.len() == 3 {

@@ -18452,7 +18452,7 @@ impl<'a> Machine<'a> {
         self.prim_values(op, name, v)
     }
 
-    fn window_inside(value: &Value) -> Option<Value> {
+    pub(super) fn window_inside(value: &Value) -> Option<Value> {
         if matches!(value, Value::Window(..)) { return Some(value.clone()); }
         let content = match value {
             Value::Shared(cell) | Value::Mutable(cell, _) => cell.borrow().clone(),

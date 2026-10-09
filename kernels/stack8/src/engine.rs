@@ -24213,7 +24213,7 @@ impl Engine<'_> {
                 // `isinstance` asks after a view itself, not after the
                 // row its members would stand as, so that a claim made
                 // for its very kind is honoured.
-                if b == Builtin::InstanceOf {
+                if matches!(b, Builtin::InstanceOf | Builtin::SortOf) {
                     if let Some(view) = Self::view_in(value) { *value = view; continue; }
                 }
                 if b == Builtin::Repr && matches!(value, Value::Bond(_) | Value::Binding(_) | Value::Collection(..))

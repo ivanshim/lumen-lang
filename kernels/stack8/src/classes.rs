@@ -5449,7 +5449,7 @@ impl<'a> Engine<'a> {
         let mut named = Vec::new(); let mut plain = Vec::new();
         for (word, value) in self.call_items(args)? {
             if let Some(word) = word { named.push(Value::Tie(Rc::new((Value::text(&word), value)))); }
-            else { plain.push(value.contents()); }
+            else { plain.push(if Self::proxy_reading(&value).is_some() { value } else { value.contents() }); }
         }
         let mut args = plain;
         if args.len() != 3 && !named.is_empty() { return Err("TypeError: type() takes 1 or 3 arguments".into()); }
