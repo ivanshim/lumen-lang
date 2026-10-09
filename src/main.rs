@@ -862,6 +862,15 @@ fn plainly(e: &std::io::Error) -> String {
     }
 }
 
+/// Where this build keeps the Python library, which is the first
+/// directory a name is looked for in.
+fn python_library_root() -> String {
+    match env::var_os("LUMEN_ROOT") {
+        Some(root) => std::path::PathBuf::from(root).join("langs/lib_python/modules").to_string_lossy().into_owned(),
+        None => concat!(env!("CARGO_MANIFEST_DIR"), "/langs/lib_python/modules").to_string(),
+    }
+}
+
 fn parse_args(args: &[OsString]) -> Invocation {
     let held = args.first().map(|a| a.to_string_lossy().into_owned()).unwrap_or_else(|| "lumen-lang".to_string());
     let program = held.as_str();
@@ -955,6 +964,14 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 let mut found = None;
                 for candidate in [format!("{path}.py"), format!("{path}/__main__.py")] {
                     if let Ok(source) = fs::read_to_string(&candidate) { found = Some((candidate, source)); break; }
+                }
+                if found.is_none() {
+                    // A name the library keeps is found where the library
+                    // keeps it, as the reference finds one walking sys.path.
+                    let root = python_library_root();
+                    for candidate in [format!("{root}/{path}.py"), format!("{root}/{path}/__main__.py")] {
+                        if let Ok(source) = fs::read_to_string(&candidate) { found = Some((candidate, source)); break; }
+                    }
                 }
                 if found.is_none() {
                     let executable_module = format!("{module}.__main__");
