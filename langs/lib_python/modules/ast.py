@@ -1748,11 +1748,12 @@ def _lex(source, start, end, row, col, for_field, comments=None):
     # one they end a statement unless brackets are open. When comments is
     # a list each comment is recorded there as (row, col, source text),
     # '#' first, without entering the token stream.
+    characters = list(source)
     toks = []
     i = start
     depth = 0
     while i < end:
-        c = source[i]
+        c = characters[i]
         srow, scol = row, col
         if c == ' ' or c == '\t' or c == '\f':
             i += 1
@@ -1761,7 +1762,7 @@ def _lex(source, start, end, row, col, for_field, comments=None):
         if c == '\r':
             i += 1
             continue
-        if c == '\\' and source[i + 1:i + 2] == '\n':
+        if c == '\\' and ''.join(characters[i + 1:i + 2]) == '\n':
             i, row, col = _adv(source, i, 2, row, col)
             continue
         if c == '\n':
@@ -1774,38 +1775,38 @@ def _lex(source, start, end, row, col, for_field, comments=None):
             continue
         if c == '#' and not for_field:
             j = i
-            while j < end and source[j] != '\n':
+            while j < end and characters[j] != '\n':
                 j += 1
             if comments is not None:
-                comments.append((srow, scol, source[i:j]))
-            col += len(source[i:j].encode('utf-8'))
+                comments.append((srow, scol, ''.join(characters[i:j])))
+            col += len(''.join(characters[i:j]).encode('utf-8'))
             i = j
             continue
-        if c.isdigit() or (c == '.' and source[i + 1:i + 2].isdigit()):
+        if c.isdigit() or (c == '.' and ''.join(characters[i + 1:i + 2]).isdigit()):
             j = i
-            while j < end and (source[j].isalnum() or source[j] in '_.'):
-                if source[j] in 'eE':
+            while j < end and (characters[j].isalnum() or characters[j] in '_.'):
+                if characters[j] in 'eE':
                     j += 1
-                    if j < end and (source[j] == '+' or source[j] == '-'):
+                    if j < end and (characters[j] == '+' or characters[j] == '-'):
                         j += 1
                     continue
                 j += 1
-            toks.append(_Tok('num', source[i:j], srow, scol, srow, scol + len(source[i:j].encode('utf-8'))))
-            col += len(source[i:j].encode('utf-8'))
+            toks.append(_Tok('num', ''.join(characters[i:j]), srow, scol, srow, scol + len(''.join(characters[i:j]).encode('utf-8'))))
+            col += len(''.join(characters[i:j]).encode('utf-8'))
             i = j
             continue
         if c == '_' or c.isalpha():
             j = i
-            while j < end and (source[j] == '_' or source[j].isalnum()):
+            while j < end and (characters[j] == '_' or characters[j].isalnum()):
                 j += 1
-            word = source[i:j]
+            word = ''.join(characters[i:j])
             lowered = word.lower()
-            if j < end and source[j] in '\'"' and lowered in _STRING_PREFIXES:
+            if j < end and characters[j] in '\'"' and lowered in _STRING_PREFIXES:
                 if 'f' in lowered or 't' in lowered:
                     lit_end, quote, content_end = _fstring_end(source, j)
                     ci, crow, ccol = _adv(source, i, (j - i) + len(quote), row, col)
                     i2, erow, ecol = _adv(source, ci, lit_end - ci, crow, ccol)
-                    tok = _Tok('tstr' if 't' in lowered else 'fstr', source[i:lit_end], srow, scol, erow, ecol)
+                    tok = _Tok('tstr' if 't' in lowered else 'fstr', ''.join(characters[i:lit_end]), srow, scol, erow, ecol)
                     tok.prefix = lowered
                     tok.quote = quote
                     tok.cs = ci
@@ -1818,30 +1819,30 @@ def _lex(source, start, end, row, col, for_field, comments=None):
                 value, after = _read_string(source, j, lowered)
                 _check_single_line(source, j, after)
                 _, erow, ecol = _adv(source, i, after - i, row, col)
-                tok = _Tok('str', source[i:after], srow, scol, erow, ecol)
+                tok = _Tok('str', ''.join(characters[i:after]), srow, scol, erow, ecol)
                 tok.value = value
                 tok.prefix = lowered
                 toks.append(tok)
                 i, row, col = after, erow, ecol
                 continue
-            toks.append(_Tok('name', word, srow, scol, srow, scol + len(source[i:j].encode('utf-8'))))
-            col += len(source[i:j].encode('utf-8'))
+            toks.append(_Tok('name', word, srow, scol, srow, scol + len(''.join(characters[i:j]).encode('utf-8'))))
+            col += len(''.join(characters[i:j]).encode('utf-8'))
             i = j
             continue
         if c == '"' or c == "'":
             value, after = _read_string(source, i, '')
             _check_single_line(source, i, after)
             _, erow, ecol = _adv(source, i, after - i, row, col)
-            tok = _Tok('str', source[i:after], srow, scol, erow, ecol)
+            tok = _Tok('str', ''.join(characters[i:after]), srow, scol, erow, ecol)
             tok.value = value
             toks.append(tok)
             i, row, col = after, erow, ecol
             continue
         matched = None
-        if source[i:i + 3] in _OPS3:
-            matched = source[i:i + 3]
-        elif source[i:i + 2] in _OPS2:
-            matched = source[i:i + 2]
+        if ''.join(characters[i:i + 3]) in _OPS3:
+            matched = ''.join(characters[i:i + 3])
+        elif ''.join(characters[i:i + 2]) in _OPS2:
+            matched = ''.join(characters[i:i + 2])
         elif c in _OPS1:
             matched = c
         if matched is None:
@@ -3281,21 +3282,37 @@ def _parse_for_compile(source, filename, mode, type_comments, optimize):
 _parsed_sources = {}
 
 def _tree_signature(value):
-    kind = type(value)
-    if isinstance(value, AST):
-        fields = tuple((name, _tree_signature(getattr(value, name, None))) for name in value._fields)
-        attributes = tuple((name, _tree_signature(getattr(value, name, None))) for name in value._attributes)
-        if any(item is None for _, item in fields + attributes):
+    pending = [(value, False)]
+    active = set()
+    signature = []
+    while pending:
+        value, leaving = pending.pop()
+        if leaving:
+            active.remove(value)
+            continue
+        kind = type(value)
+        if isinstance(value, AST) or kind in (list, tuple):
+            identity = id(value)
+            if identity in active:
+                raise RecursionError('maximum recursion depth exceeded during compilation')
+            active.add(identity)
+            pending.append((identity, True))
+            if isinstance(value, AST):
+                fields, attributes = tuple(value._fields), tuple(value._attributes)
+                signature.append((kind, fields, attributes))
+                for name in reversed(fields + attributes):
+                    pending.append((getattr(value, name, None), False))
+            else:
+                signature.append((kind, len(value)))
+                for child in reversed(value):
+                    pending.append((child, False))
+        elif kind in (float, complex):
+            signature.append((kind, repr(value)))
+        elif kind in (str, bytes, int, bool, type(None), type(Ellipsis)):
+            signature.append((kind, value))
+        else:
             return None
-        return kind, tuple(value._fields), tuple(value._attributes), fields, attributes
-    if kind in (list, tuple):
-        children = tuple(_tree_signature(item) for item in value)
-        return None if any(item is None for item in children) else (kind, children)
-    if kind in (float, complex):
-        return kind, repr(value)
-    if kind in (str, bytes, int, bool, type(None), type(Ellipsis)):
-        return kind, value
-    return None
+    return tuple(signature)
 
 def _forget_source(key, reference):
     item = _parsed_sources.get(key)

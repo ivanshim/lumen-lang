@@ -12961,6 +12961,7 @@ fn inspect_indexed_form(form: &Form, locals: &[String], constants: &mut Vec<Valu
     }
     let mut children: Vec<&Form> = Vec::new();
     match form {
+        Form::Const(Value::Unset) => {},
         Form::Const(Value::Routine(p)) if p.frameless => children.push(&p.body),
         Form::Const(v) => literal(v, constants, indexed),
         Form::Read(a) | Form::Take(a) | Form::Glance(a) => { if a.up > 0 && a.fallback.is_none() { named(&a.ident, locals, names); } },

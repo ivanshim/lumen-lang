@@ -13772,6 +13772,7 @@ fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String], funct
         if at == 0 && matches!(word, Instr::Const(Value::Null)) && matches!(words.get(1), Some(Instr::Write(cell)) if cell.ident.as_ref() == RESULT_CELL) { continue; }
         match word {
             Instr::Const(value) => {
+                if matches!(value, Value::Blank | Value::Gap | Value::Fence) { continue; }
                 // Inline integer operands are not replaceable constant-pool entries.
                 if matches!(value, Value::Small(0..=255)) { continue; }
                 if matches!(value, Value::Flag(false)) && matches!(words.get(at + 1), Some(Instr::Skip(_))) { continue; }
