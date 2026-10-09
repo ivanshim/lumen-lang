@@ -1686,6 +1686,17 @@ def _string_skip_pos(source, i, row, col):
     _, row, col = _adv(source, start, i - start, row, col)
     return (i, row, col)
 
+def _nested_fstring_at(source, i):
+    # Whether the quote at i opens a nested f- or t-string: one prefix
+    # letter stands just before it and no name runs up to that prefix.
+    p = i - 1
+    if p < 0 or source[p] not in 'fFtT':
+        return False
+    q = p - 1
+    while q >= 0 and source[q] in 'rRbBuUfFtT':
+        q -= 1
+    return q < 0 or not _is_name_char(source[q])
+
 def _fstring_end(source, i):
     # i at the opening quote of an f-string literal; answers the index
     # just past the closing quote, the quote and the closing quote's
@@ -1699,6 +1710,8 @@ def _fstring_end(source, i):
         quote = q
     i += len(quote)
     depth = 0
+    in_spec = []
+    brackets = []
     while i < n:
         c = source[i]
         if c == '\\':
@@ -1713,6 +1726,8 @@ def _fstring_end(source, i):
                 i += 2
                 continue
             depth += 1
+            in_spec.append(False)
+            brackets.append(0)
             i += 1
             continue
         if c == '}':
@@ -1720,10 +1735,28 @@ def _fstring_end(source, i):
                 i += 2
                 continue
             depth -= 1
+            if in_spec:
+                in_spec.pop()
+            if brackets:
+                brackets.pop()
             i += 1
             continue
-        if depth > 0 and (c == '"' or c == "'"):
-            i = _string_skip(source, i)
+        if depth > 0:
+            if not in_spec[-1]:
+                if c in '([':
+                    brackets[-1] += 1
+                elif c in ')]':
+                    if brackets[-1] > 0:
+                        brackets[-1] -= 1
+                elif c == ':' and brackets[-1] == 0:
+                    in_spec[-1] = True
+                elif c == '"' or c == "'":
+                    if _nested_fstring_at(source, i):
+                        i = _fstring_end(source, i)[0]
+                    else:
+                        i = _string_skip(source, i)
+                    continue
+            i += 1
             continue
         i += 1
     _syntax('unterminated f-string literal')
@@ -1772,7 +1805,7 @@ def _lex(source, start, end, row, col, for_field, comments=None):
                 continue
             toks.append(_Tok('newline', '\n', srow, scol, srow, scol + 1))
             continue
-        if c == '#' and not for_field:
+        if c == '#':
             j = i
             while j < end and source[j] != '\n':
                 j += 1
@@ -1915,8 +1948,8 @@ def _joined_values(source, seg_i, seg_end, row, col, raw, spec, multi, template=
                 parts.append(Constant(value=_ftext(source, text_start, i, raw, not spec),
                                       lineno=text_srow, col_offset=text_scol,
                                       end_lineno=row, end_col_offset=col))
-            fv, i, row, col = _formatted(source, i, row, col, raw, multi, template)
-            parts.append(fv)
+            added, i, row, col = _formatted(source, i, row, col, raw, multi, template)
+            parts.extend(added)
             text_start = i
             text_srow, text_scol = row, col
             continue
@@ -1928,11 +1961,13 @@ def _joined_values(source, seg_i, seg_end, row, col, raw, spec, multi, template=
     return parts
 
 def _formatted(source, i, row, col, raw, multi, template=False):
-    # i at the '{' opening a replacement field; answers the FormattedValue
-    # node, the index just past its '}', and the position there. The
-    # node covers its braces; a format spec is a JoinedStr starting at
-    # the ':' and ending where the field's '}' stands. A field may span
-    # lines; its spec may not unless the f-string is triple-quoted.
+    # i at the '{' opening a replacement field; answers the nodes the
+    # field makes -- the text a self-documenting '=' repeats, then the
+    # FormattedValue -- the index just past its '}', and the position
+    # there. The node covers its braces; a format spec is a JoinedStr
+    # starting at the ':' and ending where the field's '}' stands. A
+    # field may span lines; its spec may not unless the f-string is
+    # triple-quoted.
     srow, scol = row, col
     i, row, col = _adv(source, i, 1, row, col)
     expr_start = i
@@ -1944,6 +1979,8 @@ def _formatted(source, i, row, col, raw, multi, template=False):
     spec_scol = 0
     body_srow = 0
     body_scol = 0
+    debug = False
+    debug_end = -1
     depth = 0
     n = len(source)
     while True:
@@ -1951,7 +1988,11 @@ def _formatted(source, i, row, col, raw, multi, template=False):
             _syntax("f-string: valid expression required before '}'")
         c = source[i]
         if c == '"' or c == "'":
-            i, row, col = _string_skip_pos(source, i, row, col)
+            if _nested_fstring_at(source, i):
+                end = _fstring_end(source, i)[0]
+                i, row, col = _adv(source, i, end - i, row, col)
+            else:
+                i, row, col = _string_skip_pos(source, i, row, col)
             continue
         if c == '\\':
             i, row, col = _adv(source, i, 2, row, col)
@@ -1968,15 +2009,23 @@ def _formatted(source, i, row, col, raw, multi, template=False):
             if depth == 0:
                 if expr_end < 0:
                     expr_end = i
+                if debug and debug_end < 0:
+                    debug_end = i
                 break
             depth -= 1
             i, row, col = _adv(source, i, 1, row, col)
             continue
         if depth == 0 and c == '=' and source[i + 1:i + 2] != '=' and source[i - 1:i] not in ('=', '!', '<', '>', ':'):
-            _no_tree()
+            if expr_end < 0:
+                expr_end = i
+            debug = True
+            i, row, col = _adv(source, i, 1, row, col)
+            continue
         if depth == 0 and c == '!' and source[i + 1:i + 2] != '=':
             if expr_end < 0:
                 expr_end = i
+            if debug and debug_end < 0:
+                debug_end = i
             conv = ord(source[i + 1])
             i, row, col = _adv(source, i, 2, row, col)
             continue
@@ -1985,6 +2034,8 @@ def _formatted(source, i, row, col, raw, multi, template=False):
                 _no_tree()
             if expr_end < 0:
                 expr_end = i
+            if debug and debug_end < 0:
+                debug_end = i
             spec_srow, spec_scol = row, col
             i, row, col = _adv(source, i, 1, row, col)
             spec_start = i
@@ -1994,8 +2045,12 @@ def _formatted(source, i, row, col, raw, multi, template=False):
                 if i >= n:
                     _syntax("f-string: valid expression required before '}'")
                 c2 = source[i]
-                if c2 == '"' or c2 == "'":
-                    i, row, col = _string_skip_pos(source, i, row, col)
+                if (c2 == '"' or c2 == "'") and sdepth > 0:
+                    if _nested_fstring_at(source, i):
+                        end = _fstring_end(source, i)[0]
+                        i, row, col = _adv(source, i, end - i, row, col)
+                    else:
+                        i, row, col = _string_skip_pos(source, i, row, col)
                     continue
                 if c2 == '\\':
                     i, row, col = _adv(source, i, 2, row, col)
@@ -2013,10 +2068,14 @@ def _formatted(source, i, row, col, raw, multi, template=False):
                     i, row, col = _adv(source, i, 1, row, col)
                     continue
                 i, row, col = _adv(source, i, 1, row, col)
+            if debug and debug_end < 0:
+                debug_end = i
             break
         i, row, col = _adv(source, i, 1, row, col)
     # i is at the field's closing '}' and (row, col) is its position.
     value = _parse_field_expr(source, expr_start, expr_end, esrow, escol)
+    if debug and conv == -1 and spec_start < 0:
+        conv = ord('r')
     spec = None
     if spec_start >= 0:
         values = _joined_values(source, spec_start, i, body_srow, body_scol, raw, True, multi)
@@ -2030,7 +2089,12 @@ def _formatted(source, i, row, col, raw, multi, template=False):
                              conversion=conv, format_spec=spec, lineno=srow,
                              col_offset=scol, end_lineno=row, end_col_offset=col + 1)
     i, row, col = _adv(source, i, 1, row, col)
-    return (node, i, row, col)
+    if debug:
+        repeated = Constant(value=source[expr_start:debug_end],
+                            lineno=esrow, col_offset=escol,
+                            end_lineno=row, end_col_offset=col)
+        return ([repeated, node], i, row, col)
+    return ([node], i, row, col)
 
 def _parse_field_expr(source, s, e, row, col):
     toks = _lex(source, s, e, row, col, True)
@@ -2583,6 +2647,10 @@ class _Parser:
         if type(node) == Name or type(node) == Attribute or type(node) == Subscript:
             node.ctx = context()
             return
+        if type(node) == Starred:
+            node.ctx = context()
+            self.set_store(node.value, context)
+            return
         if type(node) == Tuple or type(node) == List:
             node.ctx = context()
             for elt in node.elts:
@@ -2620,7 +2688,7 @@ class _Parser:
                 comma = self.pop()
                 le = (comma.erow, comma.ecol)
                 tok = self.peek()
-                if tok.kind in ('newline', 'end') or self.at_op(';') or self.at_op(')') or self.at_op(']') or self.at_op('}'):
+                if tok.kind in ('newline', 'end') or self.at_op(';') or self.at_op(')') or self.at_op(']') or self.at_op('}') or self.at_op('=') or (tok.kind == 'op' and tok.text.endswith('=') and tok.text[:-1] in _BINOPS):
                     break
                 elt, es, ee = self.parse_expr(False)
                 elts.append(elt)
@@ -2634,7 +2702,7 @@ class _Parser:
         while self.at_name('or'):
             self.pop()
             right, rs, re = self.parse_and()
-            if type(node) == BoolOp and type(node.op) == Or:
+            if type(node) == BoolOp and type(node.op) == Or and not getattr(node, '_paren', False):
                 node.values.append(right)
                 node.end_lineno = re[0]
                 node.end_col_offset = re[1]
@@ -2650,7 +2718,7 @@ class _Parser:
         while self.at_name('and'):
             self.pop()
             right, rs, re = self.parse_not()
-            if type(node) == BoolOp and type(node.op) == And:
+            if type(node) == BoolOp and type(node.op) == And and not getattr(node, '_paren', False):
                 node.values.append(right)
                 node.end_lineno = re[0]
                 node.end_col_offset = re[1]
@@ -3034,6 +3102,7 @@ class _Parser:
                 return (node, (open_tok.srow, open_tok.scol),
                         (close_tok.erow, close_tok.ecol))
             close_tok = self.expect_op(')')
+            node._paren = True
             return (node, (open_tok.srow, open_tok.scol),
                     (close_tok.erow, close_tok.ecol))
         if self.at_op('['):
@@ -3176,6 +3245,8 @@ class _Parser:
                     pieces.append(value)
         values = []
         for piece in pieces:
+            if type(piece) == Constant and piece.value == '':
+                continue
             if values and type(values[-1]) == Constant and type(piece) == Constant:
                 prev = values[-1]
                 values[-1] = Constant(value=prev.value + piece.value,
@@ -3292,6 +3363,8 @@ def _tree_for_compile(source, filename, mode, type_comments, optimize):
 
 def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
           feature_version=None, optimize=-1, fold_debug=False):
+    if isinstance(source, AST):
+        return source
     if isinstance(source, (bytes, bytearray)):
         source = source.decode('utf-8')
     if not isinstance(source, str):
