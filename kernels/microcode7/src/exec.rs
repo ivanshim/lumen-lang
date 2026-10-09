@@ -7583,8 +7583,14 @@ impl<'a> Machine<'a> {
                         }
                         if let (Some(Value::Span(bounds)), Some(storage)) = (&key, &worth_cell) {
                             let bounds = self.span_settled(bounds)?;
+                            let incoming = if matches!(target, Value::Vector(_)) {
+                                let entries = self.object_members(&value).map_err(|words| {
+                                    if words.contains("not iterable") || words.contains("not an iterable") { self.span_complaint("assign") } else { words }
+                                })?;
+                                Value::Vector(crate::tuples::Sequence::plain(entries))
+                            } else { value.clone() };
                             drop(target);
-                            self.span_written(&mut storage.borrow_mut(), &bounds, &value)?;
+                            self.span_written(&mut storage.borrow_mut(), &bounds, &incoming)?;
                             return Ok(Value::Nil);
                         }
                         if self.works_sequences() {
