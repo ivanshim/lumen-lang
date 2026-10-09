@@ -796,9 +796,15 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
     if module is None and globs is None:
         names = __program_namespace()
         path = names.get('__file__', '')
-        if '/tests/python/test_' in path and path.endswith('.py'):
+        # A program run straight from the Python suite names itself the
+        # way `python -m test <name>` names it, however the file was laid
+        # out beneath the suite: the basename alone decides. The path is
+        # not trusted, since the host may copy or link the suite under a
+        # name of its own.
+        basename = path.rsplit('/', 1)[-1]
+        if basename.startswith('test_') and path.endswith('.py'):
             globs = _copy_dict(names)
-            globs['__name__'] = 'test.' + path.rsplit('/', 1)[-1][:-3]
+            globs['__name__'] = 'test.' + basename[:-3]
     tests = test_finder.find(module, None, None, globs, extraglobs)
     suite = unittest.TestSuite()
     optionflags = options.get('optionflags', 0)
