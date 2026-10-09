@@ -78,9 +78,18 @@ class Mock:
             return
         object.__setattr__(self, name, value)
 
-    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None):
+    def __init__(self, spec=None, side_effect=None, return_value=DEFAULT, wraps=None, name=None):
         self._mock_name = name
         self._mock_wraps = wraps
+        # A spec is the class (or the thing of a class) the stand-in
+        # stands for: it answers to that class and only to the names
+        # that class has.
+        self._spec_class = None
+        self._mock_methods = None
+        self._mock_children = {}
+        if spec is not None:
+            self._spec_class = spec if isinstance(spec, type) else type(spec)
+            self._mock_methods = dir(spec)
         self.return_value = return_value
         self._side_effect = None
         self.side_effect = side_effect
@@ -151,6 +160,8 @@ class Mock:
         self.call_count = 0
         self.call_args = None
         self.call_args_list = []
+        for child in list(self._mock_children.values()):
+            child.reset_mock()
 
     def assert_called(self):
         if not self.called:
@@ -189,9 +200,17 @@ class Mock:
         # for, so what looks inside a mock sees what is really there.
         if name[:1] == '_':
             raise AttributeError(name)
+        if self._mock_methods is not None and name not in self._mock_methods:
+            raise AttributeError('Mock object has no attribute ' + repr(name))
         child = Mock(name=name)
         setattr(self, name, child)
+        self._mock_children[name] = child
         return child
+
+    @property
+    def __class__(self):
+        spec = self.__dict__.get('_spec_class')
+        return type(self) if spec is None else spec
 
 
 # What the reference hands back from each of the double-underscore names
@@ -225,9 +244,9 @@ class MagicMock(Mock):
     # arithmetic ones, the asynchronous ones and the rest the reference
     # carries are not, so a MagicMock added to a number is refused
     # rather than answering with a stand-in.
-    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None):
+    def __init__(self, spec=None, side_effect=None, return_value=DEFAULT, wraps=None, name=None):
         self._magic = {}
-        Mock.__init__(self, name, return_value, side_effect, wraps)
+        Mock.__init__(self, spec, side_effect, return_value, wraps, name)
         for word in _MAGIC_ANSWERS:
             child = Mock(name=word)
             child.return_value = _MAGIC_ANSWERS[word]
@@ -237,6 +256,11 @@ class MagicMock(Mock):
         walker.return_value = iter([])
         self._magic['__iter__'] = walker
         setattr(self, '__iter__', walker)
+        # A spec that has the name makes the walk's step one more stand-in.
+        if self._mock_methods is not None and '__next__' in self._mock_methods:
+            stepper = Mock(name='__next__')
+            self._magic['__next__'] = stepper
+            setattr(self, '__next__', stepper)
 
     def __repr__(self):
         if self._mock_name is None:
@@ -278,6 +302,9 @@ class MagicMock(Mock):
 
     def __iter__(self):
         return self._magic['__iter__']()
+
+    def __next__(self):
+        return self._magic['__next__']()
 
     def __enter__(self):
         return MagicMock(name='__enter__')

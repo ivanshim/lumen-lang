@@ -7461,18 +7461,25 @@ impl<'a> Engine<'a> {
                 return Ok(Some(Value::ValueMethod(Rc::new((Value::Generator(held.clone()), name.to_string())))));
             }
             if name == self.class_word("name") || name == self.class_word("qualified") {
-                let state = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?;
-                return Ok(Some(Value::text(if name == self.class_word("name") { &state.name } else { &state.qualified })));
+                let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
+                let which = usize::from(name != self.class_word("name"));
+                let text = if which == 0 { state.name.clone() } else { state.qualified.clone() };
+                // Reading a name twice hands back the one text, as a function's name does.
+                if let Some(kept) = state.named[which].clone().filter(|kept| kept.plain() == text) { return Ok(Some(kept)); }
+                let fresh = Value::text(&text);
+                state.named[which] = Some(fresh.clone());
+                return Ok(Some(fresh));
             }
             if !self.is_async_generator(&Value::Generator(held.clone())) {
-            if let Some(index @ (14 | 15 | 19..=24)) = self.lang.trace_fields.iter().position(|key| key == name) {
+            if let Some(index @ (14 | 15 | 19..=24 | 27..=29)) = self.lang.trace_fields.iter().position(|key| key == name) {
                 if index == 25 && held.try_borrow().is_err() { return Ok(Some(Value::text("GEN_RUNNING"))); }
                 if index == 23 { return Ok(Some(Value::Flag(held.try_borrow().is_err()))); }
-                if index == 24 && held.try_borrow().is_err() { return Ok(Some(Value::Null)); }
+                if matches!(index, 24 | 28) && held.try_borrow().is_err() { return Ok(Some(Value::Null)); }
+                if index == 29 { return Ok(Some(Value::Null)); }
                 let state = held.try_borrow().map_err(|_| self.lang.class_unready.first().cloned().unwrap_or_default())?;
                 if matches!(index, 14 | 19 | 20) { return Ok(Some(if state.closed { Value::Null } else { state.trace_frame.clone().map_or(Value::Null, Value::Object) })); }
                 if matches!(index, 21 | 22) { return Ok(Some(Value::Flag(state.started && !state.closed))); }
-                if index == 24 { return Ok(Some(state.delegate.clone().unwrap_or(Value::Null))); }
+                if matches!(index, 24 | 28) { return Ok(Some(state.delegate.clone().unwrap_or(Value::Null))); }
                 if let Some(program) = &state.program { return Ok(Some(self.routine_code(program))); }
             }
             }
@@ -12274,7 +12281,7 @@ impl<'a> Engine<'a> {
                 let field = match &held {
                     Value::Trace(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(1..=3 | 16..=18 | 26)),
                     Value::Generator(_) if self.is_async_generator(&held) => self.lang.async_generator_fields.iter().any(|word| word == name.as_ref()),
-                    Value::Generator(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(14 | 15 | 19..=24)),
+                    Value::Generator(_) => matches!(self.lang.trace_fields.iter().position(|key| key == name.as_ref()), Some(14 | 15 | 19..=24 | 27..=29)),
                     Value::Complex(_) => ["ext.builtin.complex.real", "ext.builtin.complex.imag"].iter().any(|key| Lang::spells(&self.lang.complex_words[*key], name)),
                     Value::Object(o) => self.member_at(&o.fields.borrow(), name).is_some(),
                     Value::Slice(_) => self.slice_bound_named(name).is_some(),

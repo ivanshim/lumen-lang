@@ -238,6 +238,8 @@ enum Stepped {
 
 pub struct Suspension {
     pub(crate) titles: [String; 2],
+    /// The titles as values, kept so that reading one twice hands back the very same text.
+    pub(crate) titled: [Option<Value>; 2],
     trace_state: Option<Rc<Thing>>,
     resume_extent: Option<(u32, u32, u32, u32)>,
     frame: Rc<Env>,
@@ -360,7 +362,7 @@ impl Suspension {
     }
 
     fn body(program: &Rc<Routine>, frame: Rc<Env>) -> Self {
-        Self { titles: [program.ident.clone(), program.qualification.clone()], trace_state: None, resume_extent: None, frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
+        Self { titles: [program.ident.clone(), program.qualification.clone()], titled: [None, None], trace_state: None, resume_extent: None, frame, owed: vec![Owed::Find(program.body.clone())], found: Vec::new(),
             begun: false, ended: false, receiving: false, result: Value::Nil,
             inner: None, members: None, ready: None, overseen: None, reversed_walk: None, of: Some(program.clone()),
             holding: Vec::new(),
@@ -373,7 +375,7 @@ impl Drop for Suspension {
     fn drop(&mut self) {
         if self.asleep() && crate::ghost::bidding() {
             let again = Suspension {
-                titles: self.titles.clone(), trace_state: self.trace_state.take(), resume_extent: self.resume_extent, frame: self.frame.clone(),
+                titles: self.titles.clone(), titled: [None, None], trace_state: self.trace_state.take(), resume_extent: self.resume_extent, frame: self.frame.clone(),
                 owed: std::mem::take(&mut self.owed), found: std::mem::take(&mut self.found),
                 begun: true, ended: false, receiving: self.receiving,
                 result: std::mem::replace(&mut self.result, Value::Nil),
@@ -4353,6 +4355,7 @@ impl<'a> Machine<'a> {
         } else { (members, None) };
         Value::Generator(Rc::new(RefCell::new(Suspension {
             titles: [String::new(), String::new()],
+            titled: [None, None],
             trace_state: None,
             resume_extent: None,
             holding: Vec::new(),
@@ -5743,12 +5746,13 @@ impl<'a> Machine<'a> {
         }
         let index = words.iter().position(|word| word == key)?;
         match value {
-            Value::Generator(cell) if matches!(index, 14 | 15 | 19 | 20 | 21 | 22 | 23 | 24) => {
+            Value::Generator(cell) if matches!(index, 14 | 15 | 19 | 20 | 21 | 22 | 23 | 24 | 27 | 28 | 29) => {
                 if index == 25 && cell.try_borrow().is_err() { return Some(Value::text("GEN_RUNNING")); }
                 if index == 23 { return Some(Value::Flag(cell.try_borrow().is_err())); }
-                if index == 24 && cell.try_borrow().is_err() { return Some(Value::Nil); }
+                if matches!(index, 24 | 28) && cell.try_borrow().is_err() { return Some(Value::Nil); }
+                if index == 29 { return Some(Value::Nil); }
                 let state = cell.try_borrow().ok()?;
-                if index == 24 { return Some(state.inner.clone().unwrap_or(Value::Nil)); }
+                if matches!(index, 24 | 28) { return Some(state.inner.clone().unwrap_or(Value::Nil)); }
                 if matches!(index, 21 | 22) { return Some(Value::Flag(state.begun && !state.ended)); }
                 if matches!(index, 14 | 19 | 20) {
                     if let Some(item) = &state.trace_state {
@@ -9203,7 +9207,12 @@ impl<'a> Machine<'a> {
             }
             for (index, part) in ["name", "qualified"].iter().enumerate() {
                 if name == self.detail(part) {
-                    return state.try_borrow().ok().map(|g| Value::text(&g.titles[index]));
+                    let mut g = state.try_borrow_mut().ok()?;
+                    let text = g.titles[index].clone();
+                    if let Some(kept) = g.titled[index].clone().filter(|kept| kept.bare() == text) { return Some(kept); }
+                    let fresh = Value::text(&text);
+                    g.titled[index] = Some(fresh.clone());
+                    return Some(fresh);
                 }
             }
             if !self.is_async_generator(value) && self.table.strings("ext.stmt.yield.running").first().map_or(false, |w| w == name) { return Some(Value::Flag(state.try_borrow().is_err())); }

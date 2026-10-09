@@ -3483,19 +3483,20 @@ impl<'a> Engine<'a> {
                         _ => match state.delegate.clone().unwrap_or(Value::Null) { Value::Adapter(parts) if parts.0 == 33 => parts.1[0].clone(), other => other },
                     });
                 }
-                if self.lang.trace_fields.iter().position(|key| key == name).is_some_and(|at| matches!(at, 14 | 15 | 19..=24)) {
+                if self.lang.trace_fields.iter().position(|key| key == name).is_some_and(|at| matches!(at, 14 | 15 | 19..=24 | 27..=29)) {
                     return Err(self.missing_member(&subject, name));
                 }
             }
             let index = self.lang.trace_fields.iter().position(|key| key == name);
-            if matches!(index, Some(14 | 15 | 19 | 20 | 21 | 22 | 23 | 24)) {
+            if matches!(index, Some(14 | 15 | 19 | 20 | 21 | 22 | 23 | 24 | 27 | 28 | 29)) {
                 if index == Some(25) && generator.try_borrow().is_err() { return Ok(Value::text("GEN_RUNNING")); }
                 let kept = generator.try_borrow().map_err(|_| self.class_refusal())?;
                 match index {
                     Some(14 | 19 | 20) => return Ok(if kept.closed { Value::Null } else { kept.trace_frame.clone().map_or(Value::Null, Value::Object) }),
                     Some(21 | 22) => return Ok(Value::Flag(kept.started && !kept.closed)),
                     Some(23) => return Ok(Value::Flag(false)),
-                    Some(24) => return Ok(kept.delegate.clone().unwrap_or(Value::Null)),
+                    Some(24 | 28) => return Ok(kept.delegate.clone().unwrap_or(Value::Null)),
+                    Some(29) => return Ok(Value::Null),
                     _ => if let Some(program) = &kept.program { return Ok(self.routine_code(program)); },
                 }
             }

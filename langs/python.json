@@ -1128,7 +1128,10 @@
     "cr_running",
     "gi_yieldfrom",
     "__unused_python314_generator_state__",
-    "tb_lasti"
+    "tb_lasti",
+    "cr_code",
+    "cr_await",
+    "cr_origin"
   ],
   "ext.builtin.exceptions.traceback.member": [
     "__traceback__"
