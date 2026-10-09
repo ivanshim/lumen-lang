@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/importlib/resources/_itertools.py; PSF License.
 # from more_itertools 9.0
 def only(iterable, default=None, too_long=None):
     """If *iterable* has only one item, return it.

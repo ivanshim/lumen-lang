@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/importlib/resources/__init__.py; PSF License.
 """
 Read resources contained within a package.
 

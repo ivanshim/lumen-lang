@@ -102,16 +102,16 @@ class Popen:
                  text=None, umask=-1, pipesize=-1, process_group=None):
         if shell:
             raise NotImplementedError('subprocess: shell=True is not supported')
-        if isinstance(args, str):
-            argv = [args]
+        import os
+        if isinstance(args, (str, bytes, os.PathLike)):
+            argv = [os.fsdecode(args)]
         else:
-            argv = list(args)
+            argv = [os.fsdecode(arg) for arg in args]
         if env is None:
             env = {}
         in_mode = _stream_mode(stdin)
         out_mode = _stream_mode(stdout)
         err_mode = _stream_mode(stderr, True)
-        import os
         if text is not None and universal_newlines is not None and bool(text) != bool(universal_newlines):
             raise SubprocessError('Cannot disambiguate when both text and universal_newlines are supplied but different. Pass one or the other.')
         self.text_mode = bool(text or universal_newlines or encoding or errors)
@@ -122,7 +122,7 @@ class Popen:
             raise OSError(2, 'No such file or directory', argv[0])
         self._handle = handle
         self._stderr_to_stdout = stderr == STDOUT
-        self.args = argv
+        self.args = args
         self.returncode = None
         self.stdin = _Writable(handle, self.encoding, self.errors) if in_mode == 1 else None
         self.stdout = _Readable(handle, 0, self.encoding, self.errors) if out_mode == 1 else None

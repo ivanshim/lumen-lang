@@ -7404,9 +7404,10 @@ impl<'a> Machine<'a> {
                     if Self::native_word(base).as_deref() == Some("GenericAlias") {
                         if let Some(entry) = Self::own_entry(base, key) { return Ok(Some(self.member_binding(entry, None, actual.clone())?)); }
                     }
-                    if Self::own_entry(base, key).is_some() { return Ok(None); }
-                    if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
-                        return Ok(Some(Self::wrap(14, vec![Value::text(&native)])));
+                    if Self::own_entry(base, key).is_none() {
+                        if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
+                            return Ok(Some(Self::wrap(14, vec![Value::text(&native)])));
+                        }
                     }
                 }
                 if self.is_fault_kind(base) && self.fault_method_word(key) {

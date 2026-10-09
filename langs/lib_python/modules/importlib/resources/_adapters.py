@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/importlib/resources/_adapters.py; PSF License.
 from contextlib import suppress
 from io import TextIOWrapper
 

@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/importlib/resources/readers.py; PSF License.
 from __future__ import annotations
 
 import collections

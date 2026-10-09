@@ -190,6 +190,7 @@ struct Invocation {
     module_name: Option<String>,
     python_development: bool,
     python_ignore_environment: bool,
+    python_safe_path: bool,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -689,6 +690,7 @@ fn run_all() {
     if inv.language.name() == "python" {
         if inv.python_development { std::env::set_var("LUMEN_PYTHON_DEV_MODE", "1"); }
         else { std::env::remove_var("LUMEN_PYTHON_DEV_MODE"); }
+        std::env::set_var("LUMEN_PYTHON_SAFE_PATH", if inv.python_safe_path { "1" } else { "0" });
         if inv.python_ignore_environment { std::env::set_var("LUMEN_PYTHON_IGNORE_ENV", "1"); }
         else { std::env::remove_var("LUMEN_PYTHON_IGNORE_ENV"); }
     }
@@ -1033,15 +1035,6 @@ fn plainly(e: &std::io::Error) -> String {
     }
 }
 
-/// Where this build keeps the Python library, which is the first
-/// directory a name is looked for in.
-fn python_library_root() -> String {
-    match env::var_os("LUMEN_ROOT") {
-        Some(root) => std::path::PathBuf::from(root).join("langs/lib_python/modules").to_string_lossy().into_owned(),
-        None => concat!(env!("CARGO_MANIFEST_DIR"), "/langs/lib_python/modules").to_string(),
-    }
-}
-
 fn parse_args(args: &[OsString]) -> Invocation {
     let held = args.first().map(|a| a.to_string_lossy().into_owned()).unwrap_or_else(|| "lumen-lang".to_string());
     let program = held.as_str();
@@ -1057,6 +1050,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut module_name = None;
     let mut python_development = false;
     let mut python_ignore_environment = false;
+    let mut python_safe_path = !env::var("LUMEN_LANG").is_ok_and(|held| held == "python");
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
 
@@ -1138,6 +1132,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
             // to the program and is left to it.
             Some(flag) if file.is_none() && (flag == "-m" || flag.starts_with("-m") && flag.len() > 2
                 && (python.is_some() || language.as_ref().is_some_and(|held| held.name() == "python") || env::var("LUMEN_LANG").is_ok_and(|held| held == "python"))) => {
+                python_safe_path = false;
                 let (module, used) = if flag == "-m" {
                     if rest.len() < 2 { usage(program); }
                     (said(&rest[1]), 2)
@@ -1153,6 +1148,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 break;
             }
             Some("-c") if file.is_none() => {
+                python_safe_path = false;
                 if rest.len() < 2 { usage(program); }
                 file = Some("<string>".to_owned());
                 module_source = Some(said(&rest[1]));
@@ -1161,11 +1157,13 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 break;
             }
             Some("-E") if file.is_none() => {
+                python_safe_path = false;
                 python_ignore_environment = true;
                 language = Some(Language::Named("python".to_string()));
                 rest = &rest[1..];
             }
             Some("-") if file.is_none() => {
+                python_safe_path = false;
                 file = Some("-".to_string());
                 language = Some(Language::Named("python".to_string()));
                 rest = &rest[1..];
@@ -1308,7 +1306,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         language = Language::File { name: "python".to_string(), path, text };
         Some(version)
     } else { None };
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, python_development, python_ignore_environment, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, python_development, python_ignore_environment, python_safe_path, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.

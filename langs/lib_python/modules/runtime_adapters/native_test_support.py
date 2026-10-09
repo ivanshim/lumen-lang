@@ -1644,31 +1644,22 @@ def open_urlresource(url, *args, **kwargs):
     raise NotImplementedError('HTTP resource retrieval is not supported')
 
 
-# From CPython v3.14.8; PSF License.
-def requires_bz2(reason='requires bz2'):
+def get_attribute(obj, name):
+    """Get an attribute, raising SkipTest if AttributeError is raised."""
     try:
-        import bz2
-    except ImportError:
-        bz2 = None
-    return unittest.skipUnless(bz2, reason)
-
+        attribute = getattr(obj, name)
+    except AttributeError:
+        raise unittest.SkipTest("object %r has no attribute %r" % (obj, name))
+    else:
+        return attribute
 
 # From CPython v3.14.8; PSF License.
-def requires_lzma(reason='requires lzma'):
-    try:
-        import lzma
-    except ImportError:
-        lzma = None
-    return unittest.skipUnless(lzma, reason)
 
 
 # From CPython v3.14.8; PSF License.
-def requires_zstd(reason='requires zstd'):
-    try:
-        from compression import zstd
-    except ImportError:
-        zstd = None
-    return unittest.skipUnless(zstd, reason)
+
+
+# From CPython v3.14.8; PSF License.
 
 
 # From CPython v3.14.8; PSF License.
@@ -1730,6 +1721,50 @@ def skip_if_buggy_ucrt_strfptime(test):
 
 # CPython v3.14.8 Lib/test/support/__init__.py; PSF License.
 import stat
+
+# Return the complete C0 control-character set used by protocol parsers.
+def control_characters_c0():
+    return [chr(value) for value in range(32)] + ["\x7f"]
+
+# Select compression tests by importing the requested runtime module.
+def requires_gzip(reason='requires gzip'):
+    try:
+        import gzip
+    except ImportError:
+        gzip = None
+    return unittest.skipUnless(gzip, reason)
+
+
+# Select compression tests by importing the requested runtime module.
+def requires_bz2(reason='requires bz2'):
+    try:
+        import bz2
+    except ImportError:
+        bz2 = None
+    return unittest.skipUnless(bz2, reason)
+
+
+# Select compression tests by importing the requested runtime module.
+def requires_lzma(reason='requires lzma'):
+    try:
+        import lzma
+    except ImportError:
+        lzma = None
+    return unittest.skipUnless(lzma, reason)
+
+
+# Select compression tests by importing the requested runtime module.
+def requires_zstd(reason='requires zstd'):
+    try:
+        from compression import zstd
+    except ImportError:
+        zstd = None
+    return unittest.skipUnless(zstd, reason)
+
+
+import stat
+
+# Retry filesystem operations after restoring owner permissions.
 def _force_run(path, func, *args):
     try:
         return func(*args)

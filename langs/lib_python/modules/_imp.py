@@ -72,3 +72,44 @@ def find_frozen(name, withdata=False):
 # Cached code carries the source location through its nested definitions.
 def _fix_co_filename(code, path):
     return _code_filename(code, path)
+
+# PEP 552 uses a deterministic SipHash-1-3 keyed by the bytecode magic token.
+def source_hash(key, source, /):
+    import operator
+    key = operator.index(key)
+    if key < -0x8000000000000000 or key > 0x7fffffffffffffff:
+        raise OverflowError('Python int too large to convert to C long')
+    key &= 0xffffffffffffffff
+    source = memoryview(source).tobytes()
+    mask = 0xffffffffffffffff
+    def rotate(word, bits):
+        return ((word << bits) | (word >> (64 - bits))) & mask
+    def round_once(words):
+        a, b, c, d = words
+        a = (a + b) & mask
+        c = (c + d) & mask
+        b = rotate(b, 13) ^ a
+        d = rotate(d, 16) ^ c
+        a = rotate(a, 32)
+        c = (c + b) & mask
+        a = (a + d) & mask
+        b = rotate(b, 17) ^ c
+        d = rotate(d, 21) ^ a
+        c = rotate(c, 32)
+        return a, b, c, d
+    words = (key ^ 0x736f6d6570736575, 0x646f72616e646f6d,
+             key ^ 0x6c7967656e657261, 0x7465646279746573)
+    end = len(source) - len(source) % 8
+    for offset in range(0, end, 8):
+        block = int.from_bytes(source[offset:offset + 8], 'little')
+        a, b, c, d = words
+        a, b, c, d = round_once((a, b, c, d ^ block))
+        words = (a ^ block, b, c, d)
+    tail = ((len(source) & 255) << 56) | int.from_bytes(source[end:], 'little')
+    a, b, c, d = words
+    a, b, c, d = round_once((a, b, c, d ^ tail))
+    words = (a ^ tail, b, c ^ 255, d)
+    for _ in range(3):
+        words = round_once(words)
+    a, b, c, d = words
+    return (a ^ b ^ c ^ d).to_bytes(8, 'little')

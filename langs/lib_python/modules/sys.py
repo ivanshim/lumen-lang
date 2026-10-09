@@ -28,6 +28,15 @@ def _absolute_search_entry(entry, cwd):
 
 path = [__file__.rsplit('/', 1)[0]]
 _path_host = __host_info()
+_safe_path = _path_host[3].get('LUMEN_PYTHON_SAFE_PATH') == '1'
+if not _safe_path:
+    _startup_file = __program_namespace().get('__file__', '')
+    if _startup_file in ('<string>', '<stdin>'):
+        path.insert(0, '')
+    elif _startup_file == '-m':
+        path.insert(0, _path_host[0])
+    else:
+        path.insert(0, _startup_file.rsplit('/', 1)[0])
 _ignore_environment = int(_path_host[3].get('LUMEN_PYTHON_IGNORE_ENV') == '1')
 _python_path = '' if _ignore_environment else _path_host[3].get('PYTHONPATH', '')
 if _python_path:
@@ -80,7 +89,7 @@ class _Flags:
     dev_mode = _host_environment('environ')[1].get(b'LUMEN_PYTHON_DEV_MODE') == b'1'
     utf8_mode = 1
     warn_default_encoding = 0
-    safe_path = True
+    safe_path = _safe_path
     int_max_str_digits = 4300
     gil = 1
     thread_inherit_context = 0
@@ -188,7 +197,12 @@ class _StandardStream:
     def flush(self):
         self._ensure_open()
 
+    def fileno(self):
+        self._ensure_open()
+        return self._fd
+
 class _BinaryInput(_StandardStream):
+    _fd = 0
     def read(self, size=-1):
         self._ensure_open()
         return _host_stream_read(size, False, True)
@@ -205,20 +219,24 @@ class _BinaryInput(_StandardStream):
             raise StopIteration
         return line
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _BinaryOutput(_StandardStream):
     def __init__(self, error=False):
         self.error = error
+        self._fd = 2 if error else 1
     def write(self, data):
         self._ensure_open()
         return _host_stream_write(data, self.error, True)
     def flush(self):
         self._ensure_open()
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _Output(_StandardStream):
+    _fd = 1
     def __init__(self):
         self.buffer = _BinaryOutput()
     def write(self, *args, **keywords):
@@ -231,9 +249,11 @@ class _Output(_StandardStream):
         self._ensure_open()
 
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _Error(_StandardStream):
+    _fd = 2
     def __init__(self):
         self.buffer = _BinaryOutput(True)
     def write(self, *args, **keywords):
@@ -246,7 +266,8 @@ class _Error(_StandardStream):
         self._ensure_open()
 
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _Input(_BinaryInput):
     def __init__(self):
@@ -260,7 +281,8 @@ class _Input(_BinaryInput):
         return _host_stream_read(size, True)
 
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 stdout = _Output()
 stderr = _Error()
@@ -556,3 +578,34 @@ def settrace(trace):
     __trace_native__(1, trace)
 def getdefaultencoding():
     return "utf-8"
+
+# Resolve path entries lazily so bootstrap imports can use the native source reader.
+def _zip_path_hook(path):
+    from zipimport import zipimporter
+    return zipimporter(path)
+
+# Build the source finder only when an ordinary directory is first searched.
+def _file_path_hook(path):
+    from importlib._bootstrap_external import FileFinder, _get_supported_file_loaders
+    return FileFinder.path_hook(*_get_supported_file_loaders())(path)
+
+# Delegate path searching to the upstream finder and its importer cache.
+class _PathFinder:
+    @classmethod
+    def find_spec(cls, fullname, path=None, target=None):
+        from importlib._bootstrap_external import PathFinder
+        return PathFinder.find_spec(fullname, path, target)
+
+    @classmethod
+    def invalidate_caches(cls):
+        from importlib._bootstrap_external import _NamespacePath
+        for path, finder in list(path_importer_cache.items()):
+            if finder is None or not path.startswith('/'):
+                del path_importer_cache[path]
+            elif hasattr(finder, 'invalidate_caches'):
+                finder.invalidate_caches()
+        _NamespacePath._epoch += 1
+
+path_importer_cache = {}
+path_hooks = [_zip_path_hook, _file_path_hook]
+meta_path = [_PathFinder, _SourceFinder()]

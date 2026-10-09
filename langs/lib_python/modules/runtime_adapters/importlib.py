@@ -1,14 +1,11 @@
-# Bringing a module in is the reader's own work. This module names the
-# parts of that machinery a program is allowed to ask after, and the
-# one call that settles any finder state. The reader reads directories
-# as it goes and keeps nothing of their listing between imports, so
-# there is never a stale cache to clear and the ask is answered with
-# nothing to do. The naming of a bytecode cache stands in
-# importlib.util, beside this module.
+# Imports use the native reader; cache invalidation reaches registered finders.
 
 
 def invalidate_caches():
-    return None
+    import sys
+    for finder in list(sys.meta_path):
+        if hasattr(finder, "invalidate_caches"):
+            finder.invalidate_caches()
 
 # The utility part lives in importlib.util; the name below stands ready
 # for the embedded alias that brings that module in beside this one.
@@ -46,9 +43,12 @@ def _native_spec(module):
     if spec is not None:
         _bootstrap._init_module_attrs(spec, module, override=True)
 
+from _runtime_import import SourceLoader as _BootstrapSourceLoader
 for _module in list(_sys.modules.values()):
-    if isinstance(_module, type(_sys)) and getattr(_module, '__spec__', None) is None:
-        _native_spec(_module)
+    if isinstance(_module, type(_sys)):
+        _spec = getattr(_module, '__spec__', None)
+        if _spec is None or isinstance(_spec.loader, _BootstrapSourceLoader):
+            _native_spec(_module)
 
 # Let installed finders handle namespaces and other non-source path entries.
 def _native_import(name):

@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/importlib/resources/_common.py; PSF License.
 import os
 import pathlib
 import tempfile
