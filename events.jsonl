@@ -10167,3 +10167,19 @@
 {"t":"2026-10-09T14:24:11Z","event":"finished","job":"dsflash-struct","exit_time":"2026-10-09T14:23:41Z"}
 {"t":"2026-10-09T14:24:11Z","event":"review-queued","job":"dsflash-struct","review":"review-auto-dsflash-struct-1424"}
 {"t":"2026-10-09T14:25:58Z","event":"review-started","job":"dsflash-struct","review":"review-auto-dsflash-struct-1424"}
+{"t":"2026-10-09T14:29:48Z","event":"exited","job":"review-auto-dsflash-struct-1424","code":0}
+{"t":"2026-10-09T14:29:56Z","event":"exited","job":"dsflash-memoryview-sol","code":0}
+{"t":"2026-10-09T14:33:10Z","event":"exited","job":"stdlib-compile","code":0}
+{"t":"2026-10-09T14:33:19Z","event":"returned","job":"dsflash-struct","review":"review-auto-dsflash-struct-1424","commit":"0baf38476","round":1,"note":"(1st; integrity ok; clean check 1196/0 gates ok; no gain: test_struct 37/44 both kernels, E->F at :763 fresh _struct not collected; introduced: weakref exemption trusts sys.modules/import-map membership, non-module objects become weakrefable) -> returns/dsflash-struct.md + queue"}
+{"t":"2026-10-09T14:33:19Z","event":"queued","job":"dsflash-struct","model":"deepseek-flash","line":"or-resume dsflash-struct deepseek-flash session-ea8d1b27-33fc-41e1-b14c-2e564f309f23","note":"1st return; dsh session"}
+{"t":"2026-10-09T14:34:23Z","event":"finished","job":"dsflash-memoryview-sol","exit_time":"2026-10-09T14:29:56Z"}
+{"t":"2026-10-09T14:34:23Z","event":"review-queued","job":"dsflash-memoryview-sol","review":"review-auto-dsflash-memoryview-sol-1434"}
+{"t":"2026-10-09T14:34:27Z","event":"finished","job":"stdlib-compile","exit_time":"2026-10-09T14:33:10Z"}
+{"t":"2026-10-09T14:34:27Z","event":"review-queued","job":"stdlib-compile","review":"review-auto-stdlib-compile-1434"}
+{"t":"2026-10-09T14:34:43Z","event":"quota","codex_week_used":44,"codex_credits":0,"claude_week_used":22,"claude_5h_used":2,"deepseek_usd":249.05}
+{"t":"2026-10-09T14:34:48Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":44,"expected":45.9,"gap":-1.9,"status":"ok"}
+{"t":"2026-10-09T14:34:55Z","event":"checkin","status":"done","actions":"RETURN dsflash-struct (1st DS Flash; no gain test_struct 37/44 both, fresh _struct not collected; weakref exemption trusts sys.modules membership) -> returns/dsflash-struct.md + or-resume queued (session ea8d1b27); prune-merged 0MB (box disk 83%, idle accepted worktrees with target/: none)","notes":"dsflash-memoryview-sol and stdlib-compile finished, review-queue loop will queue Sol reviews; Sol 8 running + Astra 1 (stdlib-doctest-astra), 7 Sol lines queued; DS Flash 10 running + struct queued, 1 slot idle: no Flash-sized in-scope subject left; DS Pro/Sonnet busy, Haiku idle (no fresh subjects); box load 8.3/8, 11.5G avail, disk 83%; Mac disk 86%; Codex week 44%; Claude 5h 2%/week 22%; luna gap -1.9 ok, no new alerts; no open PR (integrate-21h running)"}
+{"t":"2026-10-09T14:35:01Z","event":"review-started","job":"dsflash-memoryview-sol","review":"review-auto-dsflash-memoryview-sol-1434"}
+{"t":"2026-10-09T14:39:46Z","event":"exited","job":"review-auto-dsflash-memoryview-sol-1434","code":0}
+{"t":"2026-10-09T14:40:03Z","event":"started","job":"dsflash-ensurepip-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-09T14:45:04Z","event":"started","job":"dsflash-py-compile-sol","model":"gpt-6.1-sol"}
