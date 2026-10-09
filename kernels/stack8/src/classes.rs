@@ -1636,6 +1636,8 @@ impl<'a> Engine<'a> {
                     Ok(answer?)
                 } else { Ok(self.value_method(&bound.0, &bound.1, args, Vec::new())?) }
             },
+            method @ Value::TextMethod(..) => self.call_held(method, args)
+                .map_err(|message| self.carried.take().unwrap_or_else(|| message.into())),
             Value::Method(o,p,_) => { args.insert(0,Value::Object(o)); self.invoke(&p,args)?; Ok(self.drop_top()?) }
             // A thing called stands on its own call member, which may be
             // a thing again: each such step is counted with the calls

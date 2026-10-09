@@ -47,7 +47,9 @@ fn checked_word(work: Work) -> &'static str {
     match work {
         NEWARGS => "__getnewargs__", ISASCII => "isascii", ISDECIMAL => "isdecimal", ISNUMERIC => "isnumeric", ISTITLE => "istitle",
         PARTITION => "partition", RPARTITION => "rpartition", REMOVEPREFIX => "removeprefix", REMOVESUFFIX => "removesuffix", TRANSLATE => "translate",
-        SPLITLINES => "splitlines", EXPANDTABS => "expandtabs", _ => "",
+        SPLITLINES => "splitlines", EXPANDTABS => "expandtabs",
+        UPPER => "upper", LOWER => "lower", CASEFOLD => "casefold", SWAPCASE => "swapcase",
+        TITLE => "title", CAPITALIZE => "capitalize", ISPRINTABLE => "isprintable", ISIDENTIFIER => "isidentifier", _ => "",
     }
 }
 

@@ -533,7 +533,7 @@ pub struct Machine<'a> {
     tracing_function: Value,
     tracing_busy: bool,
     omitted_trace_fault: Option<(Weak<Thing>, Weak<Thing>)>,
-    gathering_locals: Option<(usize, Vec<String>, Rc<Env>)>,
+    gathering_locals: Vec<(usize, Vec<String>, Rc<Env>)>,
     extent: Option<(u32, u32, u32, u32)>,
     activation_kind: Option<Rc<Blueprint>>,
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
@@ -2059,7 +2059,7 @@ impl<'a> Machine<'a> {
             tracing_function: Value::Nil,
             tracing_busy: false,
             omitted_trace_fault: None,
-            gathering_locals: None,
+            gathering_locals: Vec::new(),
             extent: None,
             activation_kind: None,
             generator_frames: HashMap::new(),
@@ -5798,7 +5798,7 @@ impl<'a> Machine<'a> {
         if routine.ident == "<program>" {
             if let Some(reading) = self.reading_now {
                 entries[3].1 = Value::Shared(self.readings[reading].near.clone());
-                entries.push((String::from("\0dynamic_locals"), Value::Flag(true)));
+                entries.push((String::from("\0dynamic_locals"), entries[3].1.clone()));
             }
         }
         if !matches!(self.tracing_function, Value::Nil) {
@@ -5886,7 +5886,19 @@ impl<'a> Machine<'a> {
 
     fn update_activation_locals(&self, item: &Rc<Thing>) {
         let kept = item.holds.borrow();
-        if kept.iter().any(|(name, _)| name == "\0dynamic_locals") { return; }
+        let original = kept.iter().find_map(|(name, held)| match (name.as_str(), held) {
+            ("\0dynamic_locals", Value::Shared(cell)) => Some(cell.clone()), _ => None,
+        });
+        let gathering = self.gathering_locals.iter().find(|(owner, _, _)| *owner == Rc::as_ptr(item) as usize);
+        if let (Some(namespace), None) = (&original, gathering) {
+            let earlier = kept[3].1.clone();
+            drop(kept);
+            if let Value::Shared(view) = earlier {
+                if Rc::ptr_eq(&view, namespace) == false { view.replace(namespace.borrow().clone()); }
+            }
+            item.holds.borrow_mut()[3].1 = Value::Shared(namespace.clone());
+            return;
+        }
         let Value::Bound(body, environment) = &kept[5].1 else { return };
         let mut entries = Vec::new();
         for (word, value) in body.idents.iter().zip(environment.cells.borrow().iter()) {
@@ -5894,7 +5906,15 @@ impl<'a> Machine<'a> {
             let visible = if body.ident == "<genexpr>" && body.formals.first() == Some(word) { ".0" } else { word.as_str() };
             if Self::visible_name(visible) && !matches!(value, Value::Unset) { entries.push((Value::text(visible), value)); }
         }
-        if let Some((owner, names, frame)) = &self.gathering_locals {
+        if let Some(namespace) = &original {
+            let source = namespace.borrow().clone();
+            match source {
+                Value::Dict(rows) => entries = rows.to_vec(),
+                Value::Attributes(module) => entries = module.holds.borrow().iter().map(|(name, held)| (Value::text(name), held.clone())).collect(),
+                _ => (),
+            }
+        }
+        for (owner, names, frame) in &self.gathering_locals {
             if *owner == Rc::as_ptr(item) as usize {
                 for (name, held) in names.iter().zip(frame.cells.borrow().iter()) {
                     let worth = held.settled();
@@ -5910,7 +5930,7 @@ impl<'a> Machine<'a> {
         drop(kept);
         item.holds.borrow_mut()[6].1 = updated.clone();
         match book {
-            Value::Shared(cell) => { cell.replace(updated); }
+            Value::Shared(cell) if original.as_ref().map_or(true, |source| !Rc::ptr_eq(source, &cell)) => { cell.replace(updated); }
             _ => item.holds.borrow_mut()[3].1 = Value::Shared(Rc::new(RefCell::new(updated))),
         }
     }
@@ -12840,9 +12860,11 @@ impl<'a> Machine<'a> {
         if mine {
             self.active_trace = if program.ident == "<gathering>" { caller_trace.clone() } else { self.activation(&program, &frame, caller_trace.clone()) };
         }
-        let earlier_gathering = std::mem::replace(&mut self.gathering_locals, if program.ident == "<gathering>" {
-            caller_trace.as_ref().map(|parent| (Rc::as_ptr(parent) as usize, program.idents.clone(), frame.clone()))
-        } else { None });
+        let earlier_gathering = self.gathering_locals.len();
+        if let ("<gathering>", Some(parent)) = (program.ident.as_str(), self.active_trace.as_ref()) {
+            let context = (Rc::as_ptr(parent) as usize, program.idents.clone(), frame.clone());
+            self.gathering_locals.push(context);
+        }
         if mine && !self.rules.trace_words.is_empty() { self.row = program.declared_on; }
         let trace_started = if mine && !matches!(self.tracing_function, Value::Nil) { self.emit_trace("call", Value::Nil) } else { Ok(()) };
         let outcome: Res = if let Err(error) = trace_started { Err(error) } else { loop {
@@ -12991,7 +13013,7 @@ impl<'a> Machine<'a> {
             self.active_trace = caller_trace;
             self.extent = parent_extent;
         }
-        self.gathering_locals = earlier_gathering;
+        self.gathering_locals.truncate(earlier_gathering);
         self.update_watched_locals();
         if self.rules.has_any_ext_builtin_exceptions_traceback { self.row = was_on_row; }
         self.standing -= counted;

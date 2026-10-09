@@ -112,7 +112,7 @@ pub struct Engine<'a> {
     in_trace_hook: bool,
     trace_fault_outside: Option<(Weak<Instance>, Weak<Instance>)>,
     running_routine: Option<Rc<Routine>>,
-    inline_comp: Option<(usize, Vec<String>, Vec<Value>)>,
+    inline_comp: Vec<(usize, Vec<String>, Vec<Value>)>,
     location: Option<(u32, u32, u32, u32)>,
     frame_class: Option<Rc<Class>>,
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
@@ -1598,7 +1598,7 @@ impl<'a> Engine<'a> {
             trace_fault_outside: None,
             running_routine: None,
             text_future_bits: std::cell::Cell::new(0),
-            inline_comp: None,
+            inline_comp: Vec::new(),
             location: None,
             frame_class: None,
             generator_frames: HashMap::new(),
@@ -4379,9 +4379,12 @@ impl<'a> Engine<'a> {
         });
         let caller_frame = self.trace_frame.take();
         self.trace_frame = if program.ident == "<comprehension>" { caller_frame.clone() } else { self.make_frame(program, &frame, caller_frame.clone()) };
-        let previous_comp = std::mem::replace(&mut self.inline_comp, if program.ident == "<comprehension>" {
-            caller_frame.as_ref().map(|owner| (Rc::as_ptr(owner) as usize, program.idents.clone(), frame.clone()))
-        } else { None });
+        let previous_comp = self.inline_comp.len();
+        if program.ident == "<comprehension>" {
+            if let Some(owner) = &caller_frame {
+                self.inline_comp.push((Rc::as_ptr(owner) as usize, program.idents.clone(), frame.clone()));
+            }
+        }
         let caller_line = self.line;
         let caller_location = self.location.take();
         self.inside.push(program.within.clone());
@@ -4440,7 +4443,7 @@ impl<'a> Engine<'a> {
             if let Some((_, captured)) = &mut self.class_body_capture { *captured = Some(namespace); }
         }
         self.trace_frame = caller_frame;
-        self.inline_comp = previous_comp;
+        self.inline_comp.truncate(previous_comp);
         self.refresh_observed_frame();
         self.location = caller_location;
         if !self.lang.trace_fields.is_empty() { self.line = caller_line; }
@@ -5680,7 +5683,7 @@ impl<'a> Engine<'a> {
         if program.ident == "<program>" {
             if let Some(book) = self.reading_in {
                 fields[3].1 = Value::Bond(self.text_books[book].near.clone());
-                fields.push(("\0namespace_frame".into(), Value::Flag(true)));
+                fields.push(("\0namespace_frame".into(), fields[3].1.clone()));
             }
         }
         if !matches!(self.trace_hook, Value::Null) {
@@ -5730,7 +5733,20 @@ impl<'a> Engine<'a> {
 
     fn refresh_frame(&mut self, object: &Rc<Instance>) {
         let fields = object.fields.borrow();
-        if fields.iter().any(|(key, _)| key == "\0namespace_frame") { return; }
+        let namespace = fields.iter().find(|(key, _)| key == "\0namespace_frame").and_then(|(_, value)| {
+            if let Value::Bond(book) = value { Some(book.clone()) } else { None }
+        });
+        let in_comprehension = self.inline_comp.iter().any(|(owner, _, _)| *owner == Rc::as_ptr(object) as usize);
+        if let Some(book) = &namespace {
+            if !in_comprehension {
+                if let Value::Bond(visible) = &fields[3].1 {
+                    if !Rc::ptr_eq(book, visible) { *visible.borrow_mut() = book.borrow().clone(); }
+                }
+                drop(fields);
+                object.fields.borrow_mut()[3].1 = Value::Bond(book.clone());
+                return;
+            }
+        }
         let Value::Routine(program) = &fields[6].1 else { return };
         let Value::Tuple(slots) = &fields[5].1 else { return };
         let mut pairs: Vec<(Value, Value)> = program.idents.iter().zip(slots.iter()).filter_map(|(name, value)| {
@@ -5738,7 +5754,14 @@ impl<'a> Engine<'a> {
             let visible = if program.ident == "<genexpr>" && program.formals.first() == Some(name) { ".0" } else { name.as_str() };
             (Self::public_name(visible) && !matches!(value, Value::Blank | Value::Gap)).then(|| (Value::text(visible), value))
         }).collect();
-        if let Some((owner, names, values)) = &self.inline_comp {
+        if let Some(book) = &namespace {
+            match book.borrow().clone() {
+                Value::Map(entries) => pairs = entries.to_vec(),
+                Value::Fields(module) => pairs = self.fields_entries(&module),
+                _ => {},
+            }
+        }
+        for (owner, names, values) in &self.inline_comp {
             if *owner == Rc::as_ptr(object) as usize {
                 for (name, value) in names.iter().zip(values) {
                     let held = match value { Value::Binding(cell) => cell.borrow().clone(), other => other.clone() };
@@ -5753,8 +5776,10 @@ impl<'a> Engine<'a> {
         let existing = fields[3].1.clone();
         drop(fields);
         object.fields.borrow_mut()[7].1 = value.clone();
-        if let Value::Bond(cell) = existing { *cell.borrow_mut() = value; }
-        else { object.fields.borrow_mut()[3].1 = Value::Bond(Rc::new(RefCell::new(value))); }
+        match existing {
+            Value::Bond(cell) if !namespace.as_ref().is_some_and(|book| Rc::ptr_eq(book, &cell)) => *cell.borrow_mut() = value,
+            _ => object.fields.borrow_mut()[3].1 = Value::Bond(Rc::new(RefCell::new(value))),
+        }
     }
 
     fn refresh_observed_frame(&mut self) {
@@ -24150,7 +24175,7 @@ impl Engine<'_> {
 
     fn core_apply(&mut self, work: &Value, mut args: Vec<Value>) -> Res<Value> {
         match work {
-            Value::Adapter(_) => match self.class_apply(work.clone(), args) {
+            Value::Adapter(_) | Value::TextMethod(..) => match self.class_apply(work.clone(), args) {
                 Ok(answer) => Ok(answer),
                 Err(raised) => {
                     self.carried = Some(raised);

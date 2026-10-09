@@ -1690,6 +1690,7 @@ impl<'a> Machine<'a> {
                     answer
                 }
             },
+            text @ Value::TextCall { .. } => self.apply_held(text, values),
             Value::Method(code,thing,_)=>{values.insert(0,Value::Thing(thing));self.invoke(code,self.outermost.clone(),values)},
             // A thing called stands on its own call member, which may
             // be a thing again. Reaching through one makes no frame, so

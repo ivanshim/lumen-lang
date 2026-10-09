@@ -99,7 +99,9 @@ fn checked_name(op: TextOp) -> &'static str {
     match op {
         Getnewargs => "__getnewargs__", Isascii => "isascii", Isdecimal => "isdecimal", Isnumeric => "isnumeric", Istitle => "istitle",
         Partition => "partition", Rpartition => "rpartition", Removeprefix => "removeprefix", Removesuffix => "removesuffix", Translate => "translate",
-        Splitlines => "splitlines", Expandtabs => "expandtabs", _ => "",
+        Splitlines => "splitlines", Expandtabs => "expandtabs",
+        Capitalize => "capitalize", Title => "title", Swapcase => "swapcase", Casefold => "casefold",
+        Isidentifier => "isidentifier", Isprintable => "isprintable", Upper => "upper", Lower => "lower", _ => "",
     }
 }
 
