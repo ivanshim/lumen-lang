@@ -3,11 +3,10 @@ import os
 import unittest
 
 def has_no_debug_ranges():
-    try:
-        import _testcapi
-    except ImportError:
-        raise unittest.SkipTest("_testinternalcapi required")
-    return not _testcapi.config_get('code_debug_ranges')
+    # Query the compiled location table rather than a CPython-only C helper.
+    code = compile('for value in ():\n    pass\n', '<debug ranges>', 'exec')
+    return not any(start is not None and end is not None
+                   for _, _, start, end in code.co_positions())
 
 
 def requires_debug_ranges(reason='requires co_positions / debug_ranges'):

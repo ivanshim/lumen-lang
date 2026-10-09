@@ -26987,7 +26987,7 @@ impl<'a> Machine<'a> {
         // the ordinary names, and those find the spare namespace
         // the way a name anywhere else does.
         let found = match named {
-            Some(Value::Shared(natives)) => {
+            Some(Value::Shared(natives) | Value::Mutable(natives, _)) => {
                 let supplied = self.natives_book.as_ref().map_or(false, |own| Rc::ptr_eq(&natives, own));
                 match looked_up(&natives, name) {
                     Some(worth) => Some(worth),
@@ -27869,9 +27869,18 @@ impl<'a> Machine<'a> {
     // from its storage; its __getitem__ remains active for user names.
     fn builtin_entry(&mut self, book: &Rc<RefCell<Value>>, word: &str) -> Result<Option<Value>, Escape> {
         let owner = book.borrow().clone();
-        if let Some(native) = Self::underlying(&owner) {
-            let stored = native.settled();
-            if matches!(stored, Value::Dict(_)) { return self.mapping_read(&stored, word); }
+        let stored = Self::underlying(&owner).unwrap_or(owner).settled();
+        if let Value::Dict(rows) = stored {
+            let mut found = rows.iter().find(|(key, _)| spells_key(key, word)).map(|(_, value)| value.clone());
+            loop {
+                let inner = match &found {
+                    Some(Value::Shared(link)) => link.borrow().clone(),
+                    _ => break,
+                };
+                if matches!(inner, Value::Shared(_) | Value::Mutable(_, _)) { found = Some(inner); }
+                else { break; }
+            }
+            return Ok(found);
         }
         self.booked_get(book, word)
     }

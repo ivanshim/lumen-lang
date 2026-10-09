@@ -49,6 +49,28 @@ if not getattr(_machinery_sys, '_lumen_importers_ready', False):
         pass
     else:
         _machinery_external._install(_machinery_bootstrap)
+        # Replace the lazy bootstrap proxy at its original search priority.
+        proxy = getattr(_machinery_sys, '_PathFinder', None)
+        if proxy in _machinery_sys.meta_path:
+            position = _machinery_sys.meta_path.index(proxy)
+            _machinery_sys.meta_path.remove(_machinery_external.PathFinder)
+            _machinery_sys.meta_path[position] = _machinery_external.PathFinder
+        for name in ('_zip_path_hook', '_file_path_hook'):
+            hook = getattr(_machinery_sys, name, None)
+            if hook in _machinery_sys.path_hooks:
+                _machinery_sys.path_hooks.remove(hook)
+        # Metadata has no caches before its optional module is loaded.
+        def _invalidate_path_caches():
+            for path, finder in list(_machinery_sys.path_importer_cache.items()):
+                if finder is None or not _machinery_external._path_isabs(path):
+                    del _machinery_sys.path_importer_cache[path]
+                elif hasattr(finder, 'invalidate_caches'):
+                    finder.invalidate_caches()
+            _machinery_external._NamespacePath._epoch += 1
+            metadata = _machinery_sys.modules.get('importlib.metadata')
+            if metadata is not None:
+                metadata.MetadataPathFinder.invalidate_caches()
+        _machinery_external.PathFinder.invalidate_caches = staticmethod(_invalidate_path_caches)
         if _zip_path_hook not in _machinery_sys.path_hooks:
             _machinery_sys.path_hooks.insert(0, _zip_path_hook)
         _machinery_sys._lumen_importers_ready = True

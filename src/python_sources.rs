@@ -115,7 +115,8 @@ fn resources(from: &Path, to: &Path, uid: u32) -> io::Result<()> {
         let path = entry.path();
         let destination = to.join(entry.file_name());
         let kind = entry.file_type()?;
-        if kind.is_symlink() { return Err(invalid(&path, "source resource is symlinked")); }
+        // Supplemental links are omitted; embedded sources and cache paths stay validated.
+        if kind.is_symlink() { continue; }
         if kind.is_dir() {
             if entry.file_name() == "__pycache__" { continue; }
             private_directory(&destination, uid)?;

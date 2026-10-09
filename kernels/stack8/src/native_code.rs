@@ -16,6 +16,25 @@ impl<'a> Engine<'a> {
         let mut registry = crate::compile::Registry::with_outside_slots(offset);
         registry.program_bound.extend(self.lang.builtins.keys().cloned());
         registry.globe = Some(Value::Bond(outer.clone()));
+        registry.home = Some(book_entry(&outer, "__name__").and_then(|value| match value.contents() {
+            Value::Text(name) => Some(name), _ => None,
+        }));
+        if let Some(word) = self.lang.module_builtins.first().cloned() {
+            let configured = self.book_builtins(&outer, &word).map_err(|fault| {
+                self.carried = Some(fault); self.special_fault()
+            })?;
+            let builtins = match configured {
+                Some(value) => value,
+                None => {
+                    let defaults = self.native_dict();
+                    self.book_put(&outer, &word, Some(defaults.clone())).map_err(|fault| {
+                        self.carried = Some(fault); self.special_fault()
+                    })?;
+                    defaults
+                }
+            };
+            registry.born = Some(builtins);
+        }
         registry.future_bits = original.image_origin.2 & !0x307;
         registry.value_only = original.image_origin.2 & 1 != 0;
         registry.interactive = original.image_origin.2 & 2 != 0;

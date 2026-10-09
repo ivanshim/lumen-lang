@@ -79,8 +79,24 @@ impl<'a> Machine<'a> {
         let prior: Vec<_> = (0..beginning).map(|index| format!("\0prior/{index}")).collect();
         let shadowed: Vec<_> = self.table.prims.keys().cloned().collect();
         let flags = code.compilation_entry.2;
+        let module_name = looked_up(&global, "__name__").and_then(|value| match value.settled() {
+            Value::Text(name) => Some(name), _ => None,
+        });
+        let builtins = if let Some(word) = self.table.strings("ext.system.module.builtins").first().cloned() {
+            match self.builtin_entry(&global, &word) {
+                Ok(Some(value)) => value,
+                Ok(None) => {
+                    let defaults = Value::Shared(self.natives_kept());
+                    if let Err(escape) = self.booked_put(&global, &word, Some(defaults.clone())) {
+                        self.got_away = Some(escape); return Err(self.bad_answer());
+                    }
+                    defaults
+                },
+                Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
+            }
+        } else { Value::Mutable(self.natives_kept(), true) };
         let mut built = crate::build::build_text(&scanned, self.table, &prior, code.compilation_entry.1,
-            code.written_in.clone(), Some(Value::Shared(global.clone())), None, None,
+            code.written_in.clone(), Some(Value::Shared(global.clone())), Some(builtins), module_name,
             flags & 1 != 0, &shadowed, flags & 4 != 0, flags & 2 != 0,
             (flags >> 8) & 3, flags & !0x307).map_err(|(message, _, _)| message)?;
         let mut updated = built.program.with_literals(&code.literals)?;

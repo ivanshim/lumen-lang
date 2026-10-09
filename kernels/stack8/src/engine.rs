@@ -5758,7 +5758,7 @@ impl<'a> Engine<'a> {
         for (offset, instruction) in body.instrs.iter().enumerate() {
             match instruction {
                 Instr::Line(line) => { row = *line; position = vec![Value::Small(row as i64), Value::Null, Value::Null, Value::Null]; }
-                Instr::Location(a, b, c, d) => position = [a, b, c, d].into_iter().map(|part| Value::Small(*part as i64)).collect(),
+                Instr::Location(a, b, c, d) => position = [a, c, b, d].into_iter().map(|part| Value::Small(*part as i64)).collect(),
                 _ => {}
             }
             let description = format!("{instruction:?}");
@@ -26450,7 +26450,7 @@ impl Engine<'_> {
             None => None,
         };
         let found = match builtins_value {
-            Some(Value::Bond(natives)) => {
+            Some(Value::Bond(natives) | Value::Collection(natives, _)) => {
                 let ours = self.natives.as_ref().map_or(false, |own| Rc::ptr_eq(&natives, own));
                 match book_entry(&natives, name) {
                     Some(held) => Some(held),
@@ -26716,7 +26716,7 @@ impl Engine<'_> {
     /// Whether a value is that very dictionary, rather than some other
     /// dictionary a program handed over for its own names.
     fn our_native_dict(&self, held: &Value) -> bool {
-        matches!(held, Value::Bond(cell) if self.natives.as_ref().map_or(false, |ours| Rc::ptr_eq(cell, ours)))
+        matches!(held, Value::Bond(cell) | Value::Collection(cell, _) if self.natives.as_ref().map_or(false, |ours| Rc::ptr_eq(cell, ours)))
     }
 
     /// The module a program asking for the builtins by name is handed:
@@ -27416,10 +27416,18 @@ impl Engine<'_> {
     /// user read hook. Ordinary name reads still use book_get.
     fn book_builtins(&mut self, book: &Rc<RefCell<Value>>, name: &str) -> Flow<Option<Value>> {
         let value = book.borrow().clone();
-        if let Some(storage) = Self::worth_of(&value) {
-            if matches!(storage.contents(), Value::Map(_)) {
-                return self.dyn_lookup(&storage.contents(), name);
-            }
+        let storage = Self::worth_of(&value).unwrap_or(value);
+        if let Value::Map(entries) = storage.contents() {
+            let index = entries.named_row(name).unwrap_or_else(|()| entries.iter().position(|(key, _)| key_spells(key, name)));
+            return Ok(index.map(|index| {
+                let mut held = entries[index].1.clone();
+                while let Value::Bond(cell) = &held {
+                    let next = cell.borrow().clone();
+                    if !matches!(next, Value::Bond(_) | Value::Collection(_, _)) { break; }
+                    held = next;
+                }
+                held
+            }));
         }
         self.book_get(book, name)
     }

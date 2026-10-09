@@ -3253,6 +3253,8 @@ impl<'a> Compiler<'a> {
                 return self.attempt();
             }
             if Lang::spells(&lang.throw_words, &w) {
+                let statement_start = self.pos;
+                let instructions_start = self.mark();
                 self.take();
                 if !lang.syntax_members.is_empty() && self.on_keyword(&lang.throw_from) {
                     return Err("SyntaxError: invalid syntax".into());
@@ -3270,6 +3272,12 @@ impl<'a> Compiler<'a> {
                         let from = self.mark();
                         self.expr(0)?;
                         if lang.exceptions.is_empty() { self.piece().instrs.truncate(from); } else { count = 2; }
+                    }
+                    if !lang.trace_fields.is_empty() {
+                        let location = self.expression_location(statement_start);
+                        let arguments: Vec<Instr> = self.piece().instrs.drain(instructions_start..).collect();
+                        self.put(location);
+                        for instruction in relocated(arguments, 1) { self.put(instruction); }
                     }
                     self.act(Action::Hurl, count);
                 }

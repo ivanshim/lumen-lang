@@ -19,7 +19,8 @@ def format_tb(tb, limit=None, exc=None):
             lines = linecache.getlines(filename, item.tb_frame.f_globals)
             if lines and lines[0][:1] == '\ufeff':
                 lines[0] = lines[0][1:]
-            shown = lines[line - 1].strip()
+            original = lines[line - 1].rstrip('\n')
+            shown = original.strip()
             mark = None
             if isinstance(exc, AssertionError) and shown.startswith('assert '):
                 expression = shown[7:].split(',', 1)[0]
@@ -36,6 +37,14 @@ def format_tb(tb, limit=None, exc=None):
                 entry += '    ' + shown + '\n'
                 if mark is not None and mark > 0:
                     entry += '    ' + ' ' * (7 if shown.startswith('assert ') else 0) + '^' * mark + '\n'
+                elif item.tb_colno is not None and item.tb_end_colno is not None:
+                    if item.tb_end_lineno == line:
+                        indent = len(original) - len(original.lstrip())
+                        start = max(0, item.tb_colno - indent)
+                        width = min(item.tb_end_colno - item.tb_colno, len(shown) - start)
+                        if width > 0 and (start > 0 or width < len(shown)):
+                            entry += '    ' + ' ' * start + '^' * width + '\n'
+
         except (OSError, IndexError, UnicodeError):
             pass
         result.append(entry)

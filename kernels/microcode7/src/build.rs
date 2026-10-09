@@ -3389,6 +3389,7 @@ impl<'a> Builder<'a> {
                 return self.attempt_stmt();
             }
             if self.key("ext.stmt.throw") {
+                let keyword_at = self.pos;
                 self.advance();
                 if self.table.has_any("ext.builtin.exceptions.syntax") && self.key("ext.stmt.throw.from") {
                     return Err("SyntaxError: invalid syntax".to_owned());
@@ -3407,7 +3408,8 @@ impl<'a> Builder<'a> {
                     let cause = self.expr(0)?;
                     if self.table.has_any("ext.builtin.exceptions") { values.push(cause); }
                 }
-                return Ok(prim_call(Prim::Hurl, values));
+                let raised = prim_call(Prim::Hurl, values);
+                return Ok(self.located(self.span_since(keyword_at), raised));
             }
             if self.key("ext.stmt.assert") {
                 self.advance();
