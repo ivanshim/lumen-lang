@@ -1842,6 +1842,7 @@ def write_mirror(lang, d, files, reasons):
         aliases = layout.get("aliases", {})
         adapters = layout.get("adapters", {})
         preludes = layout.get("preludes", {})
+        embedded_data = layout.get("data", {})
         replacements = layout.get("replacements", {})
         packed = []
         for source in sorted(modules.rglob(f"*.{ext}")):
@@ -1855,6 +1856,10 @@ def write_mirror(lang, d, files, reasons):
             source_expr = f'include_str!({json.dumps(replacements.get(name, relative))})'
             if name in preludes:
                 source_expr = f'concat!(include_str!({json.dumps(preludes[name])}), "\\n", {source_expr})'
+            for variable, data_file in embedded_data.get(name, {}).items():
+                prefix = json.dumps(variable + ' = r"""')
+                suffix = json.dumps('"""\n')
+                source_expr = f'concat!({prefix}, include_str!({json.dumps(data_file)}), {suffix}, {source_expr})'
             if name in adapters:
                 source_expr = f'concat!({source_expr}, "\\n", include_str!({json.dumps(adapters[name])}))'
             packed.append(f'    ({json.dumps(name)}, {source_expr}, {json.dumps(location)}),\n')

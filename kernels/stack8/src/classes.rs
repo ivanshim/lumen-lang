@@ -229,8 +229,39 @@ impl<'a> Engine<'a> {
         match word {
             "enumerate" => Some("Return an enumerate object.\n\n  iterable\n    an object supporting iteration\n\nThe enumerate object yields pairs containing a count (from start, which\ndefaults to zero) and a value yielded by the iterable argument.\n\nenumerate is useful for obtaining an indexed list:\n    (0, seq[0]), (1, seq[1]), (2, seq[2]), ..."),
             "reversed" => Some("Return a reverse iterator over the values of the given sequence."),
+            "str" => Some("str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'."),
+            "bool" => Some("Returns True when the argument is true, False otherwise.\nThe builtins True and False are the only two instances of the class bool.\nThe class bool is a subclass of the class int, and cannot be subclassed."),
+            "int" => Some("int([x]) -> integer\nint(x, base=10) -> integer\n\nConvert a number or string to an integer, or return 0 if no arguments\nare given.  If x is a number, return x.__int__().  For floating-point\nnumbers, this truncates towards zero.\n\nIf x is not a number or if base is given, then x must be a string,\nbytes, or bytearray instance representing an integer literal in the\ngiven base.  The literal can be preceded by '+' or '-' and be surrounded\nby whitespace.  The base defaults to 10.  Valid bases are 0 and 2-36.\nBase 0 means to interpret the base from the string as an integer\niteral.\n>>> int('0b100', base=0)\n4"),
+            "float" => Some("Convert a string or number to a floating-point number, if possible."),
+            "list" => Some("Built-in mutable sequence.\n\nIf no argument is given, the constructor creates a new empty list.\nThe argument must be an iterable if specified."),
+            "tuple" => Some("Built-in immutable sequence.\n\nIf no argument is given, the constructor returns an empty tuple.\nIf iterable is specified the tuple is initialized from iterable's items.\n\nIf the argument is a tuple, the return value is the same object."),
+            "dict" => Some("dict() -> new empty dictionary\ndict(mapping) -> new dictionary initialized from a mapping object's\n    (key, value) pairs\ndict(iterable) -> new dictionary initialized as if via:\n    d = {}\n    for k, v in iterable:\n        d[k] = v\ndict(**kwargs) -> new dictionary initialized with the name=value pairs\n    in the keyword argument list.  For example:  dict(one=1, two=2)"),
+            "set" => Some("Build an unordered collection of unique elements."),
+            "frozenset" => Some("Build an immutable unordered collection of unique elements."),
+            "bytes" => Some("bytes(iterable_of_ints) -> bytes\nbytes(string, encoding[, errors]) -> bytes\nbytes(bytes_or_buffer) -> immutable copy of bytes_or_buffer\nbytes(int) -> bytes object of size given by the parameter initialized with null bytes\nbytes() -> empty bytes object\n\nConstruct an immutable array of bytes from:\n  - an iterable yielding integers in range(256)\n  - a text string encoded using the specified encoding\n  - any object implementing the buffer API.\n  - an integer"),
+            "bytearray" => Some("bytearray(iterable_of_ints) -> bytearray\nbytearray(string, encoding[, errors]) -> bytearray\nbytearray(bytes_or_buffer) -> mutable copy of bytes_or_buffer\nbytearray(int) -> bytes array of size given by the parameter initialized with null bytes\nbytearray() -> empty bytes array\n\nConstruct a mutable bytearray object from:\n  - an iterable yielding integers in range(256)\n  - a text string encoded using the specified encoding\n  - a bytes or a buffer object\n  - any object implementing the buffer API.\n  - an integer"),
+            "range" => Some("range(stop) -> range object\nrange(start, stop[, step]) -> range object\n\nReturn an object that produces a sequence of integers from start (inclusive)\nto stop (exclusive) by step.  range(i, j) produces i, i+1, i+2, ..., j-1.\nstart defaults to 0, and stop is omitted!  range(4) produces 0, 1, 2, 3.\nThese are exactly the valid indices for a list of 4 elements.\nWhen step is given, it specifies the increment (or decrement)."),
+            "slice" => Some("slice(stop)\nslice(start, stop[, step])\n\nCreate a slice object.\n\nThis is used for extended slicing (e.g. a[0:10:2])."),
+            "complex" => Some("Create a complex number from a string or numbers.\n\nIf a string is given, parse it as a complex number.\nIf a single number is given, convert it to a complex number.\nIf the 'real' or 'imag' arguments are given, create a complex number\nwith the specified real and imaginary components."),
+            "property" => Some("Property attribute.\n\n  fget\n    function to be used for getting an attribute value\n  fset\n    function to be used for setting an attribute value\n  fdel\n    function to be used for del'ing an attribute\n  doc\n    docstring\n\nTypical use is to define a managed attribute x:\n\nclass C(object):\n    def getx(self): return self._x\n    def setx(self, value): self._x = value\n    def delx(self): del self._x\n    x = property(getx, setx, delx, \"I'm the 'x' property.\")\n\nDecorators make defining new properties or modifying existing ones easy:\n\nclass C(object):\n    @property\n    def x(self):\n        \"I am the 'x' property.\"\n        return self._x\n    @x.setter\n    def x(self, value):\n        self._x = value\n    @x.deleter\n    def x(self):\n        del self._x"),
+            "staticmethod" => Some("Convert a function to be a static method.\n\nA static method does not receive an implicit first argument.\nTo declare a static method, use this idiom:\n\n     class C:\n         @staticmethod\n         def f(arg1, arg2, argN):\n             ...\n\nIt can be called either on the class (e.g. C.f()) or on an instance\n(e.g. C().f()). Both the class and the instance are ignored, and\nneither is passed implicitly as the first argument to the method.\n\nStatic methods in Python are similar to those found in Java or C++.\nFor a more advanced concept, see the classmethod builtin."),
+            "classmethod" => Some("Convert a function to be a class method.\n\nA class method receives the class as implicit first argument,\njust like an instance method receives the instance.\nTo declare a class method, use this idiom:\n\n  class C:\n      @classmethod\n      def f(cls, arg1, arg2, argN):\n          ...\n\nIt can be called either on the class (e.g. C.f()) or on an instance\n(e.g. C().f()).  The instance is ignored except for its class.\nIf a class method is called for a derived class, the derived class\nobject is passed as the implied first argument.\n\nClass methods are different than C++ or Java static methods.\nIf you want those, see the staticmethod builtin."),
+            "memoryview" => Some("Create a new memoryview object which references the given object."),
             _ => None,
         }
+    }
+    /// Read a primitive's type documentation without replacing user class metadata.
+    pub(super) fn primitive_doc(&self, value: &Value) -> Option<&'static str> {
+        let raw = value.contents();
+        let word = match &raw {
+            Value::Native(op, name) if Self::kind_builtin(op) => name.as_ref(),
+            Value::ByteKind(changeable, _) => return Self::builtin_kind_doc(self.byte_kind_word(*changeable)),
+            Value::Text(_) | Value::Codepoints(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)
+                | Value::Real(_) | Value::Frac(_) | Value::Complex(_) | Value::Array(_) | Value::Tuple(_)
+                | Value::Map(_) | Value::Set(_) | Value::Counted(_) | Value::Slice(_) | Value::Bytes(..) => return Self::builtin_kind_doc(&raw.core_kind()),
+            _ => return None,
+        };
+        Self::builtin_kind_doc(word)
     }
     /// The builtin kind a class itself stands for, if it is one.
     pub(super) fn own_kind(c: &Class) -> Option<String> {
@@ -1494,6 +1525,10 @@ impl<'a> Engine<'a> {
         match callable {
             Value::Bond(cell) => { let held = cell.borrow().clone(); self.class_apply(held, args) },
             Value::Routine(p) => { self.invoke(&p,args)?; Ok(self.drop_top()?) }
+            Value::TextMethod(text, operation, name) => {
+                args.insert(0, Value::Text(text));
+                self.class_apply(Value::Native(Builtin::Text(operation), name), args)
+            }
             Value::Native(operation, name) => {
                 if operation == Builtin::UnicodeDecomposition && args.iter().all(|arg| !matches!(arg, Value::Tie(_))) {
                     return Ok(crate::sre::decompose(&args)?);
@@ -2486,6 +2521,14 @@ impl<'a> Engine<'a> {
     /// The making itself, as the kind builtin does it: the class
     /// allocates a thing and constructs it.
     pub(super) fn class_construct(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        // Expand the call once: allocation and initialization share its arguments.
+        let args = if self.lang.python_numbers && args.iter().any(|item| matches!(item, Value::Tie(pair) if matches!(pair.0, Value::Flag(_)))) {
+            let title = c.python_title().unwrap_or_else(|| c.name.clone());
+            self.call_items_named(&title, args)?.into_iter().map(|(name, value)| match name {
+                Some(name) => Value::Tie(Rc::new((Value::text(&name), value))),
+                None => value,
+            }).collect()
+        } else { args };
         if self.traceback_class.as_ref().map_or(false, |known| Rc::ptr_eq(known, &c)) { return self.traceback_from_parts(args); }
         self.abstract_refusal(&c)?;
         let allocation = self.class_value(&c,self.class_word("allocate")).filter(|value| {
@@ -3140,6 +3183,9 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        if !name.is_empty() && name == self.class_word("doc") {
+            if let Some(doc) = self.primitive_doc(&subject) { return Ok(Value::text(doc)); }
+        }
         if name == self.class_word("doc") && matches!(subject.contents(), Value::Null) {
             return Ok(Value::text("The type of the None singleton."));
         }
@@ -3361,6 +3407,9 @@ impl<'a> Engine<'a> {
             if name == self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
         }
         let raw = subject.contents();
+        if matches!(raw, Value::Codepoints(_)) && self.surrogate_case_operation(name).is_some() {
+            return Ok(Value::ValueMethod(Rc::new((raw, name.to_owned()))));
+        }
         if self.lang.bind_names && !name.starts_with("__") {
             if let Value::Object(instance) = &raw {
                 let owner = instance.class_now();
@@ -3601,6 +3650,10 @@ impl<'a> Engine<'a> {
         }
         if let Value::Adapter(w) = &subject {
             if w.0 == 16 && !name.is_empty() {
+                if self.lang.bind_names && w.1.get(2).is_some_and(|part| part.plain() == "\0module-namespace") {
+                    if name == self.class_word("name") { return Ok(w.1[0].clone()); }
+                    if name == "__objclass__" { return Ok(w.1[1].clone()); }
+                }
                 if name == self.class_word("descriptor.set") { return Ok(Self::adapter(17, w.1.clone())); }
                 if name == self.class_word("descriptor.delete") { return Ok(Self::adapter(18, w.1.clone())); }
             }
@@ -3637,6 +3690,15 @@ impl<'a> Engine<'a> {
                 else if name == self.class_word("remove") { Some(12) }
                 else { None };
             if let Some(tag) = tag { return Ok(Self::adapter(tag, if name == self.class_word("subclass") { vec![Value::text(name)] } else { vec![] })); }
+        }
+        if matches!(subject.contents(), Value::Codepoints(_)) {
+            if let Some(method) = self.builtin_member(&subject, name)? { return Ok(method); }
+        }
+        // Attribute reads through getattr and hasattr share the bytes method inventory.
+        if let Value::Bytes(_, mutable, _) = subject.contents() {
+            if let Some(operation) = self.byte_member(name, mutable) {
+                return Ok(Value::ValueMethod(Rc::new((subject.clone(), operation.to_string()))));
+            }
         }
         if matches!(&subject, Value::ByteKind(..)) {
             if let Some(member) = self.loose_kind_member(&subject, name) { return Ok(member); }
@@ -4075,7 +4137,7 @@ impl<'a> Engine<'a> {
                         }
                         return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
                     }
-                    if let Some(op)=self.lang.value_methods.get(name).cloned() {
+                    if let Some(op)=self.lang.value_methods.get(name).filter(|op| crate::methods::answered(&worth, op)).cloned() {
                         // The parts of a complex number are read rather
                         // than called, as they are on the number itself.
                         if matches!(op.as_str(),"real"|"imag") {
@@ -5437,7 +5499,7 @@ impl<'a> Engine<'a> {
             other => other.clone(),
         };
         let told=self.class_apply(bound,vec![given])?;
-        Ok(Some(self.truth(&told)))
+        Ok(Some(self.special_truth(&told)?))
     }
     /// The builtin words that name a kind of value rather than a piece
     /// of work. Only one of these stands as a class where `issubclass`
@@ -5595,7 +5657,7 @@ impl<'a> Engine<'a> {
         let Some(member)=self.class_value(&holder,&name) else{return Ok(None);};
         let bound=self.bind_class_value(member,Some(wanted.clone()),holder)?;
         let told=self.class_apply(bound,vec![given.clone()])?;
-        Ok(Some(self.truth(&told)))
+        Ok(Some(self.special_truth(&told)?))
     }
     /// The reference's walk along a `__bases__` line from `derived`
     /// towards the very `wanted`: a single base is stepped along and
@@ -5962,6 +6024,28 @@ impl<'a> Engine<'a> {
             24 | 25 if args.len() == 1 => {
                 let evaluator = Self::adapter(44, vec![args.remove(0).contents()]);
                 if which == 25 { self.class_apply(evaluator, vec![Value::Small(1)]) } else { Ok(evaluator) }
+            }
+            // Keep the accelerator boundary out of the Python frame chain.
+            30 => {
+                let entries = self.call_items(args)?;
+                if entries.len() != 2 || entries.iter().any(|(key, _)| key.is_some()) {
+                    return Err("TypeError: _abc_instancecheck() takes two positional arguments".into());
+                }
+                let owner = entries[0].1.contents();
+                let instance = entries[1].1.clone();
+                let module = self.import_module("_abc")?;
+                let prepare = self.class_get(module, "_prepare_instancecheck", false)?;
+                let prepared = self.class_apply(prepare, vec![owner.clone(), instance])?.contents();
+                let Value::Tuple(parts) = prepared else { return Err(self.class_refusal()); };
+                if !matches!(parts[0].contents(), Value::Null) { return Ok(parts[0].contents()); }
+                let Value::Tuple(candidates) = parts[1].contents() else { return Err(self.class_refusal()); };
+                let hook_name = self.lang.class_special[77].clone();
+                for (index, candidate) in candidates.iter().enumerate() {
+                    let hook = self.class_get(owner.clone(), &hook_name, false)?;
+                    let answer = self.class_apply(hook, vec![candidate.clone()])?;
+                    if index + 1 == candidates.len() || self.special_truth(&answer)? { return Ok(answer); }
+                }
+                Ok(Value::Flag(false))
             }
             23 => {
                 let entries = self.call_items(args)?;
@@ -6477,7 +6561,7 @@ impl<'a> Engine<'a> {
         let Some(start) = order.iter().position(|class| Self::super_same_class(class, owner)) else { return Ok(None) };
         let root_class = self.root_class();
         for class in &order[start + 1..] {
-            if name == self.class_word("allocate") {
+            if name == self.class_word("allocate") && Self::own_class_value(class, name).is_none() {
                 if let Some(word) = Self::own_kind(class) {
                     if word != self.class_word("root") { return Ok(Some(Self::adapter(14, vec![Value::text(&word)]))); }
                 }

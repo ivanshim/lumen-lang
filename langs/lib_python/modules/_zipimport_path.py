@@ -9,6 +9,8 @@ def find(fullname, path):
         spec = finder.find_spec(fullname, path)
         if spec is None:
             continue
+        if getattr(finder, "_native_source_finder", False):
+            return None
         if type(spec.loader) is _bootstrap_external.SourceFileLoader:
             native_file = __load_module(fullname, True)
             if native_file is not None:
