@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/rlcompleter.py; PSF License.
 """Word completion for GNU readline.
 
 The completer completes keywords, built-ins and globals in a selectable

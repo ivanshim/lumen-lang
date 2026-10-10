@@ -5,6 +5,15 @@ _host_environment = __posix
 
 # Host details which the present numeric and object model can honour.
 argv = __program_namespace()['__program_argv']
+# Startup options are consumed by the warnings module when first imported.
+warnoptions = []
+_startup_options = __posix('environ')[1].get(b'LUMEN_WARNOPTIONS', b'').decode('utf-8')
+while _startup_options:
+    _size, _tail = _startup_options.split(':', 1)
+    _size = int(_size)
+    warnoptions.append(_tail[:_size])
+    _startup_options = _tail[_size:]
+del _startup_options
 # Where a name that is `import`ed is looked for: a directory put here
 # is searched, in order, before the library carried inside this run.
 # Keep the safe-path default without implicitly adding the script directory.
@@ -36,6 +45,7 @@ if not _safe_path:
     elif _startup_file == '-m':
         path.insert(0, _path_host[0])
     else:
+        _startup_file = _absolute_search_entry(_startup_file, _path_host[0])
         path.insert(0, _startup_file.rsplit('/', 1)[0])
 _ignore_environment = int(_path_host[3].get('LUMEN_PYTHON_IGNORE_ENV') == '1')
 _python_path = '' if _ignore_environment else _path_host[3].get('PYTHONPATH', '')
@@ -70,9 +80,19 @@ from _runtime_import import SourceFinder as _SourceFinder, make_spec as _make_sp
 meta_path = [_SourceFinder()]
 path_hooks = []
 path_importer_cache = {}
+pycache_prefix = None
 _recursion_limit = 1000
 
-# Startup flags describe the library environment and requested development mode.
+def _environment(name):
+    import posix
+    value = posix.environ.get(name)
+    if value is None:
+        value = posix.environ.get(name.encode())
+    if isinstance(value, bytes):
+        value = value.decode()
+    return value
+
+# Stub: startup flags describe the fixed library environment.
 class _Flags:
     debug = 0
     inspect = 0
@@ -87,9 +107,19 @@ class _Flags:
     quiet = 0
     hash_randomization = 0
     isolated = 0
-    dev_mode = _host_environment('environ')[1].get(b'LUMEN_PYTHON_DEV_MODE') == b'1'
-    utf8_mode = 1
-    warn_default_encoding = 0
+    # The options that PYTHONDEVMODE, PYTHONUTF8 and
+    # PYTHONWARNDEFAULTENCODING (or -X dev, -X utf8, -X
+    # warn_default_encoding, which the helpers that start a second
+    # interpreter hand over as those) turn on or off, read when asked.
+    @property
+    def dev_mode(self):
+        return bool(_environment('PYTHONDEVMODE')) or _host_environment('environ')[1].get(b'LUMEN_PYTHON_DEV_MODE') == b'1'
+    @property
+    def utf8_mode(self):
+        return 0 if _environment('PYTHONUTF8') == '0' else 1
+    @property
+    def warn_default_encoding(self):
+        return 1 if _environment('PYTHONWARNDEFAULTENCODING') else 0
     safe_path = _safe_path
     int_max_str_digits = 4300
     gil = 1
@@ -412,12 +442,19 @@ def getsizeof(value, default=None):
         if base is object or base in _sizeof_bases:
             break
         if '__sizeof__' in base.__dict__:
-            measured = type(value).__sizeof__(value)
+            method = base.__dict__['__sizeof__']
+            binder = getattr(type(method), '__get__', None)
+            if binder is not None:
+                method = binder(method, value, type(value))
+            try:
+                measured = method()
+            except TypeError:
+                if default is not None:
+                    return default
+                raise
             if not isinstance(measured, int):
                 raise TypeError('__sizeof__() should return int, got ' + type(measured).__name__)
             if measured < 0:
-                if default is not None:
-                    return default
                 raise ValueError('__sizeof__() should return >= 0')
             return measured
     # A rough count of the value's payload and its enclosing record.
@@ -476,11 +513,15 @@ def _report_unraisable(exc_value, exc_traceback, about, kind):
             exc_traceback = raised.__traceback__
     if kind == 'deallocator':
         message = 'Exception ignored while calling deallocator ' + repr(about)
+    elif kind == 'file':
+        message = 'Exception ignored while finalizing file ' + repr(about)
+    elif kind == 'coroutine':
+        message = 'Exception ignored while finalizing coroutine ' + repr(about)
     elif kind == 'generator':
         message = 'Exception ignored while closing generator ' + repr(about)
     else:
         message = None
-    target = None if kind == 'generator' else about
+    target = None if kind in ('generator', 'coroutine', 'file') else about
     try:
         unraisablehook(UnraisableHookArgs(type(exc_value), exc_value,
                                          exc_traceback, message, target))
@@ -550,7 +591,7 @@ def _getframemodulename(depth=0):
     return __frame_module(max(depth, 0) + 1)
 
 # Names supplied by the native importer and its source-backed adapters.
-builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_warnings', '_weakref', '_io', 'posix', 'marshal')
+builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_weakref', '_io', 'posix', 'marshal', '_warnings')
 
 
 def getfilesystemencoding():
@@ -580,6 +621,8 @@ def settrace(trace):
 def getdefaultencoding():
     return "utf-8"
 
+_import_shadow_root = None if flags.safe_path else path[0]
+
 # Resolve path entries lazily so bootstrap imports can use the native source reader.
 def _zip_path_hook(path):
     from zipimport import zipimporter
@@ -594,8 +637,11 @@ def _file_path_hook(path):
 class _PathFinder:
     @classmethod
     def find_spec(cls, fullname, path=None, target=None):
-        from importlib._bootstrap_external import PathFinder
-        return PathFinder.find_spec(fullname, path, target)
+        external = modules.get('importlib._bootstrap_external')
+        finder = getattr(external, 'PathFinder', None)
+        if finder is None:
+            return None
+        return finder.find_spec(fullname, path, target)
 
     @classmethod
     def invalidate_caches(cls):
@@ -613,3 +659,44 @@ import _imp
 meta_path = [_PathFinder, _SourceFinder(), _imp._NativeFinder]
 
 stdlib_module_names = frozenset(__load_module('', 'names'))
+# Source and native modules participate in the same finder protocol.
+
+
+def getrefcount(object, /):
+    return __trace_native__(5, object)
+
+
+def get_coroutine_origin_tracking_depth():
+    return __trace_native__(3)
+
+
+def set_coroutine_origin_tracking_depth(depth):
+    from operator import index
+    __trace_native__(4, index(depth))
+
+
+_asyncgen_hook_missing = object()
+_asyncgen_hook_type = None
+
+
+def get_asyncgen_hooks():
+    global _asyncgen_hook_type
+    if _asyncgen_hook_type is None:
+        from collections import namedtuple
+        _asyncgen_hook_type = namedtuple('asyncgen_hooks', 'firstiter finalizer', module='sys')
+    return _asyncgen_hook_type(*__trace_native__(6))
+
+
+def set_asyncgen_hooks(firstiter=_asyncgen_hook_missing, finalizer=_asyncgen_hook_missing):
+    if firstiter is not _asyncgen_hook_missing and firstiter is not None and not callable(firstiter):
+        raise TypeError('callable firstiter expected')
+    if finalizer is not _asyncgen_hook_missing and finalizer is not None and not callable(finalizer):
+        raise TypeError('callable finalizer expected')
+    if firstiter is not _asyncgen_hook_missing:
+        __trace_native__(7, firstiter)
+    if finalizer is not _asyncgen_hook_missing:
+        __trace_native__(8, finalizer)
+
+
+def is_finalizing():
+    return __trace_native__(9)

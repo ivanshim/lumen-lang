@@ -2,7 +2,10 @@
   "files": {
     "collections": "collections/__init__.py",
     "unittest": "unittest/__init__.py",
-    "urllib": "urllib/__init__.py"
+    "urllib": "urllib/__init__.py",
+    "unittest.case": "unittest/case.py",
+    "unittest.result": "unittest/result.py",
+    "asyncio": "asyncio/__init__.py"
   },
   "aliases": {
     "os.path": "path",
@@ -27,7 +30,17 @@
     "marshal": "runtime_adapters/marshal.py",
     "zipimport": "runtime_adapters/zipimport.py",
     "test.support": "runtime_adapters/code_test_support.py",
-    "test": "runtime_adapters/test_package.py"
+    "test": "runtime_adapters/test_package.py",
+    "ast": "runtime_adapters/ast.py",
+    "sys": "runtime_adapters/sys.py",
+    "_py_warnings": "runtime_adapters/warnings.py",
+    "importlib._bootstrap": "runtime_adapters/importlib_bootstrap.py",
+    "unittest": "runtime_adapters/unittest_bindings.py",
+    "builtins": "runtime_adapters/builtins.py",
+    "unicodedata": "runtime_adapters/unicodedata.py",
+    "traceback": "runtime_adapters/traceback.py",
+    "io": "runtime_adapters/io.py",
+    "test.support.warnings_helper": "runtime_adapters/warnings_helper.py"
   },
   "data": {
     "_codec_sjis": {
@@ -42,10 +55,22 @@
     "test.support.import_helper": "runtime_adapters/native_test_support_import_helper.py",
     "test.support.socket_helper": "runtime_adapters/native_test_support_socket_helper.py",
     "test.support.threading_helper": "runtime_adapters/native_test_support_threading_helper.py",
-    "warnings": "runtime_adapters/native_warnings.py",
-    "test.test_importlib.util": "runtime_adapters/native_test_importlib_util.py"
+    "test.test_importlib.util": "runtime_adapters/native_test_importlib_util.py",
+    "importlib._bootstrap_external": "runtime_adapters/importlib_external.py",
+    "http.server": "runtime_adapters/native_http_server.py",
+    "signal": "runtime_adapters/native_signal.py",
+    "test.support.script_helper": "runtime_adapters/native_test_support_script_helper.py",
+    "threading": "runtime_adapters/native_threading.py",
+    "unittest.mock": "runtime_adapters/native_unittest_mock.py",
+    "inspect": "runtime_adapters/native_inspect.py"
   },
   "preludes": {
     "zipimport": "runtime_adapters/zipimport_bootstrap.py"
+  },
+  "names": {
+    "runtime_sources/unittest_case.py": "unittest.case",
+    "runtime_sources/unittest_result.py": "unittest.result",
+    "runtime_sources/test_package_main.py": "test.test_dataclasses.__main__",
+    "runtime_sources/source_inspect.py": "_source_inspect"
   }
 }

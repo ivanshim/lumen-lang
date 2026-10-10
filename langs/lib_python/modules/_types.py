@@ -49,6 +49,8 @@ def _kind_name(kind):
 GenericAlias = type(list[int])
 
 
+GenericAlias = type(list[int])
+
 NoneType = type(None)
 FunctionType = type(lambda: None)
 LambdaType = FunctionType

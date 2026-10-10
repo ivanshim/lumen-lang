@@ -38,7 +38,7 @@ def _native_spec(module):
     name = module.__name__
     spec = _bootstrap.BuiltinImporter.find_spec(name)
     filename = getattr(module, '__file__', None)
-    if spec is None and filename is not None:
+    if spec is None and isinstance(filename, str):
         spec = _bootstrap_external.spec_from_file_location(name, filename)
     if spec is not None:
         _bootstrap._init_module_attrs(spec, module, override=True)
@@ -49,7 +49,7 @@ from _runtime_import import SourceLoader as _BootstrapSourceLoader
 for _module in list(_sys.modules.values()):
     if isinstance(_module, type(_sys)):
         _spec = getattr(_module, '__spec__', None)
-        if _spec is None or isinstance(_spec.loader, _BootstrapSourceLoader):
+        if _spec is None or isinstance(_spec.loader, _BootstrapSourceLoader) or _spec.loader is _imp._NativeLoader:
             _native_spec(_module)
 
 # Let installed finders handle namespaces and other non-source path entries.
@@ -65,3 +65,5 @@ def _native_import(name):
         from _zipimport_path import bind
         bind(parent_name, child, module)
     return module
+# The standard importlib package exposes its loader definitions.
+from . import machinery

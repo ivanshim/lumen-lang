@@ -87,16 +87,13 @@ def getdoc(object):
 
 
 def stack(context=1):
-    # CPython walks the calls in progress and hands back a record for
-    # each, with the frame, the file and the line. No kernel here keeps
-    # the calls in progress as anything a program can reach, so an empty
-    # list would read as a program called from nowhere, which is never
-    # true. It refuses instead.
-    raise 'NotImplementedError: inspect.stack needs the calls in progress as objects, which this runtime does not keep'
+    import sys
+    return getouterframes(sys._getframe(1), context)
 
 
 def currentframe():
-    raise 'NotImplementedError: inspect.currentframe needs a frame object, which this runtime does not keep'
+    import sys
+    return sys._getframe(1)
 
 
 def getgeneratorstate(generator):
@@ -355,6 +352,8 @@ _is_coroutine_mark = object()
 
 
 def __getattr__(name):
+    if name in ('getfile', 'getmodulename', 'getsourcefile', 'getabsfile', 'getmodule', 'findsource', 'getblock', 'getsourcelines', 'getsource'):
+        return getattr(__load_module('_source_inspect'), name)
     if name.startswith('__'):
         raise AttributeError("module 'inspect' has no attribute '" + name + "'")
     raise 'NotImplementedError: inspect.' + name + ' needs to read a compiled body, which this runtime does not hand out'
@@ -621,7 +620,7 @@ class Signature:
                       eval_str=False, annotation_format=1):
         if follow_wrapped:
             seen = set()
-            while hasattr(obj, '__wrapped__'):
+            while not isinstance(obj, type) and hasattr(obj, '__wrapped__'):
                 if id(obj) in seen:
                     raise ValueError('wrapper loop when unwrapping ' + repr(obj))
                 seen.add(id(obj))
@@ -634,7 +633,7 @@ class Signature:
         if not hasattr(obj, '__code__') and getattr(obj, '__text_signature__', None) == '()':
             return cls()
         bound = getattr(obj, '__self__', None) is not None
-        if hasattr(obj, '__func__'):
+        if not isinstance(obj, type) and hasattr(obj, '__func__'):
             obj = obj.__func__
         if isinstance(obj, type):
             custom = cls._metaclass_call(obj)

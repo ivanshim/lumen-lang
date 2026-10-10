@@ -98,3 +98,8 @@ def DecodeLocaleEx(data, current_locale=0, errors='strict', /):
 
 def __getattr__(name):
     raise AttributeError("module '_testinternalcapi' has no attribute '" + name + "'")
+
+
+def run_in_subinterp_with_config(code, config):
+    import unittest
+    raise unittest.SkipTest('subinterpreters are not supported')

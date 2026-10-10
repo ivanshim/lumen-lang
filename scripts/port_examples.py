@@ -1844,6 +1844,7 @@ def write_mirror(lang, d, files, reasons):
         preludes = layout.get("preludes", {})
         embedded_data = layout.get("data", {})
         replacements = layout.get("replacements", {})
+        module_names = layout.get("names", {})
         packed = []
         for source in sorted(modules.rglob(f"*.{ext}")):
             # Non-UTF-8 sources need the filesystem loader's decoding.
@@ -1854,7 +1855,7 @@ def write_mirror(lang, d, files, reasons):
             relative = source.relative_to(modules).as_posix()
             if relative in adapters.values() or relative in replacements.values() or relative in preludes.values():
                 continue
-            name = relative[:-(len(ext) + 1)].replace("/", ".")
+            name = module_names.get(relative, relative[:-(len(ext) + 1)].replace("/", "."))
             if name.endswith(".__init__"):
                 name = name[:-9]
             location = locations.get(name, relative)

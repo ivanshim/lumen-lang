@@ -56,6 +56,8 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `runtime_adapters/native_test_support.py::skip_if_buggy_ucrt_strfptime` | Unchanged decorator body from `Lib/test/support/__init__.py`, with its cache global | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py`, `Lib/wave.py`, `Lib/cmd.py`, `Lib/selectors.py`, `Lib/nturl2path.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/` | `Lib/test/__init__.py`, `Lib/test/audiotests.py`, and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper,pty_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_gettext.py` | `Lib/test/test_gettext.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/{test_pickle,test_picklebuffer,test_copyreg,test_pickletools}.py` and `python-3.14.8/test/{pickletester,picklecommon}.py` | `Lib/test`: pickle, PickleBuffer, copyreg, pickletools and pickle support classes, unchanged | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/codeop.py` | `Lib/codeop.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_runpy.py`, `langs/lib_python/modules/runpy.py` | `Lib/test/test_runpy.py`, `Lib/runpy.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/importlib/metadata/`, `importlib/_abc.py` | `Lib/importlib/metadata/*.py` and `Lib/importlib/_abc.py`, copied byte for byte for finder cache invalidation | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -67,6 +69,7 @@ series is retained, in a window of two series; only 3.14 is registered today.
 
 | `python-3.14.8/` | [python/cpython](https://github.com/python/cpython) `Lib/test`: core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, `test_super.py`, `test_csv.py`, `test_configparser.py`, `test_linecache.py`, `test_tokenize.py`, `test_abc.py`, `test_contextlib.py`, `test_ordered_dict.py`, `test_defaultdict.py`, `test_glob.py`, `test_timeit.py`, `test_datetime.py`, `test_getopt.py`, `test_optparse.py`, and support data (`mathdata/`, `tokenizedata/`, `configdata/`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_pathlib/` | `Lib/test/test_pathlib/`, all 12 files copied byte for byte (including `support/`); no separate data files in this release | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_descr.py` | [python/cpython](https://github.com/python/cpython/blob/v3.14.8/Lib/test/test_descr.py) `Lib/test/test_descr.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_raise.py`, `test_property.py` | `Lib/test/test_raise.py`, `Lib/test/test_property.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/zipfile/{__init__,_path/__init__,_path/glob}.py` | `Lib/zipfile/{__init__,_path/__init__,_path/glob}.py`, unchanged beneath a provenance/PSF header; required by pathlib’s ZIP-backed test support | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/urllib/{request,error,response}.py` | `Lib/urllib/{request,error,response}.py`, unchanged beneath a provenance/PSF header; imported by the pathlib test’s URI checks | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -92,10 +95,17 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `langs/lib_python/modules/stringprep.py` | `Lib/stringprep.py`, copied byte for byte; `_unicodedata_320.py` is the runtime Unicode 3.2 database it reads | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_yield_from.py`, `test_generator_stop.py` | `Lib/test/test_yield_from.py`, `Lib/test/test_generator_stop.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_locale.py` | `Lib/test/test_locale.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_unicode_file.py`, `test_unicode_file_functions.py` | `Lib/test/test_unicode_file.py`, `Lib/test/test_unicode_file_functions.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_raise.py`, `test_property.py`, `test_bufio.py` | `Lib/test/test_raise.py`, `Lib/test/test_property.py`, `Lib/test/test_bufio.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_traceback.py`, `levenshtein_examples.json` | `Lib/test/test_traceback.py`, `Lib/test/levenshtein_examples.json`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/traceback.py`, `codeop.py` | `Lib/traceback.py`, `Lib/codeop.py`, unchanged beneath PSF provenance headers | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_coroutines.py` | `Lib/test/test_coroutines.py`, copied byte for byte; language profile 1.0, not yet counted | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py`, and the `Lib/urllib/error.py` and `Lib/urllib/response.py` that `test_ucn.py` imports | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `unicode-data/` | [unicode.org](https://www.unicode.org/) UCD files: `UnicodeData.txt`, `NameAliases.txt`, `NamedSequences.txt` (16.0.0) and `UnicodeData-3.2.0.txt` | 16.0.0 / 3.2.0 | 2024-02-02 / 2002-03 | [Unicode](../unicode-data/LICENSE.txt) |
+| `python-3.14.8/test_robotparser.py` | `Lib/test/test_robotparser.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py`; for the library test `test_robotparser`, `Lib/urllib/robotparser.py`, `Lib/urllib/error.py`, `Lib/urllib/response.py` copied byte for byte, with `http/server.py` as a runtime adapter and main's full canonical `urllib/request.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/` | `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
 | `python-3.14.8/` | [python/cpython](https://github.com/python/cpython) `Lib/test`: core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, `test_csv.py`, `test_configparser.py`, `test_linecache.py`, `test_tokenize.py`, `test_abc.py`, `test_contextlib.py`, `test_ordered_dict.py`, `test_defaultdict.py`, `test_glob.py`, `test_timeit.py`, `test_datetime.py`, `test_getopt.py`, `test_optparse.py`, and support data (`mathdata/`, `tokenizedata/`, `configdata/`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -428,6 +438,15 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `python-3.14.8/test/relimport.py` | `Lib/test/relimport.py`, copied byte for byte; SHA-256 `b61ce17b00a1338fca815852eae64f7c819b9ed34a6f5c40ee189ff32312d8fc` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/test/relimport.py` | `Lib/test/relimport.py`, copied byte for byte; SHA-256 `b61ce17b00a1338fca815852eae64f7c819b9ed34a6f5c40ee189ff32312d8fc` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
+| `python-3.14.8/test_dbm_dumb.py`, `test_shelve.py` | `Lib/test/test_dbm_dumb.py`, `Lib/test/test_shelve.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/dbm/__init__.py`, `dbm/dumb.py`, `shelve.py` | `Lib/dbm/__init__.py`, `Lib/dbm/dumb.py`, `Lib/shelve.py`, unchanged beneath a PSF provenance header; `dbm.gnu`, `dbm.ndbm` and `dbm.sqlite3` stay absent so `dbm` falls back honestly | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/test/test_dbm.py` | `Lib/test/test_dbm.py`, copied byte for byte, providing the `dbm_iterator` that `test_shelve` imports | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/runtime_adapters/code_test_support.py` | Restored accepted runtime overlay; compiled `co_positions()` capability query and upstream late-deletion helper from `Lib/test/support/__init__.py` | 3.14.8 / `v3.14.8` | Runtime capability adapter | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/runtime_adapters/test_package.py` | Restored accepted package-path binding for relocated reference suites | Runtime adapter | Local suite layout | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/runtime_sources/test_package_main.py` | Load the existing package and run its unchanged tests through unittest | Runtime adapter | Local package entry point | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/runtime_sources/source_inspect.py` | `Lib/inspect.py`, copied byte for byte and registered as `_source_inspect` for source inspection alongside the native capability adapter | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/runtime_adapters/warnings_helper.py` | Resource-warning context manager retained as a runtime overlay while the copied `Lib/test/support/warnings_helper.py` stays byte for byte | Runtime adapter | Suite compatibility | [PSF](python-3.14.8/LICENSE) |
+
 The `python-3.14.8/test/` package and its support, import, threading, OS, script, and
 pseudo-terminal helpers are also preserved byte for byte at that commit. `Lib/test/datetimetester.py` is preserved, with its source header, in
 `langs/lib_python/modules/test/datetimetester.py`. The embedded runtime support
@@ -518,7 +537,7 @@ were compared to their documented source module or C implementation. The
 previous 120-entry re-pin inventory was recovered from repository history
 for the inventory comparison; the new rows below record every audited file.
 
-Hashes apply to file bodies after the single `# Source: CPython` provenance
+Hashes apply to file bodies after the single PSF provenance
 line, where present. Adapter hashes deliberately differ; no claim of
 byte-for-byte provenance is made for them. A dash means no same-path release
 source exists. Full working measurements are in ignored `probe/`.
@@ -891,8 +910,6 @@ honestly when those extensions are unavailable.
 | `stringprep.py` | `52618dbafb21fac84147d4241a364b08d1f0d803806cb86e4fcb921c200c754d` |
 | `encodings/cp273.py` | `6c6aec3b213ea3aebc2c526dd4d121c95d4a25a2fc928a87cd80f8448988185f` |
 | `encodings/mbcs.py` | `f6ed445ed537c9f856d8defe8b56505727737d0dc9348d0a877abedab4bdd864` |
-| `langs/lib_python/modules/runtime_adapters/code_test_support.py` | Restored accepted runtime overlay; compiled `co_positions()` capability query and upstream late-deletion helper from `Lib/test/support/__init__.py` | 3.14.8 / `v3.14.8` | Runtime capability adapter | [PSF](python-3.14.8/LICENSE) |
-| `langs/lib_python/modules/runtime_adapters/test_package.py` | Restored accepted package-path binding for relocated reference suites | Runtime adapter | Local suite layout | [PSF](python-3.14.8/LICENSE) |
 
 
 
@@ -918,3 +935,35 @@ in the table above; runtime changes remain in kernels and explicit adapters.
 `python-3.14.8/test_pathlib/__main__.py` is a local package runner, like the dataclasses runner. It calls the unchanged upstream package's `load_tests` hook; it is not a copied CPython reference file.
 
 `python-3.14.8/test_lumen_pathlib_{join,join_posix,join_windows,read,write,copy}.py` are local package-context runners for unchanged upstream modules. They add no assertions or skips and are not CPython reference copies.
+## Warnings library coverage
+
+`test_warnings/` is a library suite (profile 1.0), not part of the core
+language score. Its five upstream files are preserved byte for byte. The
+embedded test package and its helper files retain upstream bodies beneath
+PSF provenance headers so `test.test_warnings` imports through the runtime.
+`warnings.py` and `_py_warnings.py` also retain complete upstream bodies.
+Separate runtime adapters preserve the existing private capture interface.
+Both Python kernels provide a native `_warnings` module with filter and once
+registries, warning emission, revision invalidation and lock operations. The
+module is advertised through `_imp` and `sys.builtin_module_names`; its warning
+functions are native kernel callables. The public library bodies and original
+importlib source files remain unchanged. The external bootstrap adapter changes
+only its warning backend import and provenance docstring, preserving positions.
+
+Fresh imports exercise both upstream variants without changing the import
+helper or skip logic. A custom finder can still make `_warnings` unavailable;
+the resulting upstream collection error remains honest. Real caller frames,
+source-loader metadata and the standard warning recorder are shared runtime
+behavior rather than reference-test substitutions. The real `unittest.case`
+and `unittest.result` sources are registered from separate source files so the
+existing unittest implementation and its directory remain untouched.
+
+The unchanged warnings suite now collects 197 methods on each full kernel,
+with 176 passing, 10 skipped by the existing suite and 11 nonpassing methods
+(11 failures and no errors), compared with zero collected methods before the
+native backend. Remaining cases expose subprocess option/module startup and
+resource finalization. The 13 original semantic probes and ten additional
+native/runtime probes match CPython on both kernels. Signature annotation reads
+honor the requested format and reuse resolved annotation dictionaries; native
+base allocation respects declared allocators, and compatible slotted class
+assignment preserves stored values. No copied test or library body is edited.

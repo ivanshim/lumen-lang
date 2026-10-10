@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 / 8e6e75d9102e, Lib/asyncio/coroutines.py; PSF License.
 __all__ = 'iscoroutinefunction', 'iscoroutine'
 
 import collections.abc

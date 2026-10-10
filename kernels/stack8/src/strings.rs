@@ -109,9 +109,16 @@ pub fn keywords(op: TextOp, args: &mut Vec<Value>, named: Vec<(String, Value)>, 
     let initial = args.len();
     let method = checked_name(op);
     if !named.is_empty() && !method.is_empty() {
-        if !matches!(op, TextOp::Expandtabs | TextOp::Splitlines) { return Err(format!("TypeError: str.{method}() takes no keyword arguments")); }
-        let total = initial.saturating_sub(1) + named.len();
-        if total > 1 { return Err(format!("TypeError: {method}() takes at most 1 argument ({total} given)")); }
+        match op {
+            TextOp::Expandtabs | TextOp::Splitlines => {
+                let total = initial.saturating_sub(1) + named.len();
+                if total > 1 { return Err(format!("TypeError: {method}() takes at most 1 argument ({total} given)")); }
+            }
+            // Replace also takes count by name, after its two
+            // positional-only arguments; the loop below lays it down.
+            TextOp::Replace => {}
+            _ => return Err(format!("TypeError: str.{method}() takes no keyword arguments")),
+        }
     }
     let mut used = Vec::new();
     for (key, value) in named {
@@ -125,6 +132,7 @@ pub fn keywords(op: TextOp, args: &mut Vec<Value>, named: Vec<(String, Value)>, 
             TextOp::Encode if fits("encoding") => 1,
             TextOp::Encode if fits("errors") => 2,
             TextOp::Replace if fits("count") => 3,
+            TextOp::Replace => return Err(fault(lang, "arguments")),
             _ if !method.is_empty() => return Err(format!("TypeError: '{key}' is an invalid keyword argument for {method}()")),
             _ => return Err(fault(lang, "arguments")),
         };
@@ -200,6 +208,25 @@ fn final_sigma(letters: &[char], at: usize) -> bool {
 }
 
 pub(crate) fn recase(s: &str, op: TextOp) -> String {
+    if s.is_ascii() {
+        match op {
+            TextOp::Upper => return s.to_ascii_uppercase(),
+            TextOp::Lower | TextOp::Casefold => return s.to_ascii_lowercase(),
+            TextOp::Capitalize | TextOp::Title | TextOp::Swapcase => {
+                let mut prior = false;
+                return s.bytes().enumerate().map(|(at, byte)| {
+                    let upper = match op {
+                        TextOp::Capitalize => at == 0,
+                        TextOp::Title => !prior,
+                        _ => byte.is_ascii_lowercase(),
+                    };
+                    prior = byte.is_ascii_alphabetic();
+                    char::from(if upper { byte.to_ascii_uppercase() } else { byte.to_ascii_lowercase() })
+                }).collect();
+            }
+            _ => {},
+        }
+    }
     let letters: Vec<char> = s.chars().collect();
     let mut prior = false;
     let mut answer = String::new();
@@ -849,4 +876,20 @@ pub(crate) fn character_length(text: &Rc<str>) -> usize {
         entries.insert(address, (Rc::downgrade(text), count));
         count
     })
+}
+
+#[cfg(test)]
+mod recase_tests {
+    use super::{recase, TextOp};
+    #[test]
+    fn ascii_and_unicode_case_changes() {
+        assert_eq!(recase("Az09\x1f", TextOp::Upper), "AZ09\x1f");
+        assert_eq!(recase("Az09\x1f", TextOp::Casefold), "az09\x1f");
+        assert_eq!(recase("Straße ΣΟΣ", TextOp::Lower), "straße σος");
+        assert_eq!(recase("Straße ΣΟΣ", TextOp::Upper), "STRASSE ΣΟΣ");
+        assert_eq!(recase("hELLO don't 42world!", TextOp::Capitalize), "Hello don't 42world!");
+        assert_eq!(recase("hELLO don't 42world!", TextOp::Title), "Hello Don'T 42World!");
+        assert_eq!(recase("hELLO don't 42world!", TextOp::Swapcase), "Hello DON'T 42WORLD!");
+
+    }
 }

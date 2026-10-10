@@ -5,6 +5,8 @@ copied unchanged, apart from one provenance and PSF licence header: enum, netrc,
 pydoc, __future__, pkgutil, reprlib, token, keyword, inspect, linecache, mimetypes,
 tokenize, functools, bisect, heapq, copyreg, genericpath, posixpath, stat, fnmatch, shlex, http.cookies, unittest.util, and the _pyrepl package initializer and pager.
 Their upstream bodies are checked byte for byte during source auditing.
+`inspect.py` is the unchanged CPython v3.14.8 source. Its runtime support lives in
+`runtime_adapters/native_inspect.py`, which differs from CPython.
 
 Native C facilities are modeled separately. `_tokenize` supplies the pinned
 TokenizerIter interface; its Python scanner derives from CPython's older
