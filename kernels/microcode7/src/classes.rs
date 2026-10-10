@@ -2408,12 +2408,16 @@ impl<'a> Machine<'a> {
                         match &kept[0] {
                             Value::Blueprint(owner) => self.blueprint_annotation_values(owner, symbolic),
                             Value::Vector(rows) => {
+                                let reading = self.armed_names.take();
                                 let mut annotations = Vec::new();
                                 for index in (0..rows.len()).step_by(2) {
                                     let Some(source) = rows.get(index + 1) else { break; };
                                     let source = source.settled();
                                     if matches!(source, Value::Unset) { continue; }
-                                    let found = self.annotation_entry(source, symbolic, None)?;
+                                    self.armed_names = reading.clone();
+                                    let found = self.annotation_entry(source, symbolic, None);
+                                    self.armed_names = None;
+                                    let found = found?;
                                     annotations.push((rows[index].clone(), found));
                                 }
                                 let mapping = Value::Dict(Rc::new(annotations.into()));
@@ -2542,7 +2546,7 @@ impl<'a> Machine<'a> {
                             let title = format!("{module}.{}", c.name);
                             return Err(format!("TypeError: object.__new__({title}) is not safe, use {title}.__new__()").into());
                         }
-                        if Self::native_beneath(c).is_some_and(|word| matches!(word.as_str(), "bool" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray" | "tuple" | "list" | "dict" | "set" | "frozenset" | "type" | "module" | "memoryview" | "range" | "slice" | "code" | "frame" | "traceback" | "function" | "generator" | "coroutine" | "async_generator")) {
+                        if std::iter::once(c.as_ref()).chain(c.ancestry.borrow().iter().map(Rc::as_ref)).filter_map(Self::native_word).any(|word| matches!(word.as_str(), "bool" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray" | "tuple" | "list" | "dict" | "set" | "frozenset" | "type" | "module" | "memoryview" | "range" | "slice" | "code" | "frame" | "traceback" | "function" | "generator" | "coroutine" | "async_generator")) {
                             let name=&c.name;
                             return Err(format!("TypeError: object.__new__({name}) is not safe, use {name}.__new__()").into());
                         }
@@ -2762,7 +2766,7 @@ impl<'a> Machine<'a> {
                             if !valid { return Err(format!("TypeError: function.__new__({0}): {0} is not a subtype of function", c.name).into()); }
                             return self.construct_ordered(c, values);
                         }
-                        if Self::native_beneath(&c).as_deref()!=Some(word.as_str()){return Err(format!("TypeError: {word}.__new__({0}): {0} is not a subtype of {word}",c.name).into())}
+                        if !Self::native_among(&c, &word){return Err(format!("TypeError: {word}.__new__({0}): {0} is not a subtype of {word}",c.name).into())}
                         if word.as_str()=="module" {
                             self.made+=1;
                             let holds=RefCell::new(vec![]);
@@ -2856,7 +2860,7 @@ impl<'a> Machine<'a> {
                             return self.describe_module(subject);
                         }
                         let receiver=match &subject {
-                            Value::Thing(t) if Self::native_beneath(&t.blueprint()).as_deref()==Some(word.as_str()) =>
+                            Value::Thing(t) if Self::native_among(&t.blueprint(), &word) =>
                                 Self::underlying(&subject).unwrap_or_else(||subject.clone()),
                             _=>subject.clone(),
                         };
@@ -4509,6 +4513,7 @@ impl<'a> Machine<'a> {
         self.blueprint_annotation_values(b, false)
     }
     fn blueprint_annotation_values(&mut self, b: &Rc<Blueprint>, symbolic: bool) -> Res {
+        let reading = self.armed_names.take();
         let mut pairs=Vec::new();
         // The entry is kept in a cell, as the blueprint's members are; keys
         // and routines alternate along it.
@@ -4517,7 +4522,10 @@ impl<'a> Machine<'a> {
                 let [key,worth]=pair else{break};
                 let worth = worth.settled();
                 if matches!(worth, Value::Unset) { continue; }
-                let value = self.annotation_entry(worth, symbolic, Some(b.clone()))?;
+                self.armed_names = reading.clone();
+                let value = self.annotation_entry(worth, symbolic, Some(b.clone()));
+                self.armed_names = None;
+                let value = value?;
                 pairs.push((key.clone(),value));
             }
         }
@@ -5599,7 +5607,7 @@ impl<'a> Machine<'a> {
             if Self::names_a_kind(op) && self.table.single("ext.stmt.class.constructor") == Some(key) { return Ok(self.common_initialiser()); }
             if Self::names_a_kind(op) {
                 let native_class = self.native_kind(&word);
-                if let Some(inherited) = self.from_the_root(key, false, &native_class) { return Ok(inherited); }
+                if let Some(inherited) = self.from_the_root(key, true, &native_class) { return Ok(inherited); }
             }
         }
         if self.native_class_spelling("bytes") && (key == "__buffer__" || key == "__release_buffer__") {

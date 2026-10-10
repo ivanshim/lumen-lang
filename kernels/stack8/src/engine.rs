@@ -18430,11 +18430,6 @@ impl<'a> Engine<'a> {
                         }
                     }
                     let mut fields = frame.fields.borrow_mut();
-                    if let Value::Tuple(slots) = &fields[5].1 {
-                        for slot in slots.iter() {
-                            if let Value::Binding(cell) = slot { *cell.borrow_mut() = Value::Blank; }
-                        }
-                    }
                     fields[5].1 = Value::tuple(Vec::new());
                     fields[3].1 = Value::Null;
                     fields[7].1 = Value::Null;

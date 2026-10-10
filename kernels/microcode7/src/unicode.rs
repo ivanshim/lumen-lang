@@ -3,6 +3,7 @@
 // https://www.unicode.org/license.txt .
 
 pub fn property(c: char, mask: u16) -> bool {
+    if c.is_ascii() { return ASCII_PROPERTIES[c as usize] & mask != 0; }
     let number = u64::from(c as u32);
     let found = RANGES.partition_point(|entry| (*entry >> 16 & 0x1fffff) < number);
     RANGES.get(found).map_or(false, |entry| {
@@ -3749,4 +3750,29 @@ pub fn decomposition(point: u32) -> String {
         table
     });
     written.get(&point).cloned().unwrap_or_default()
+}
+
+// Derived from RANGES; ASCII classification needs no range search.
+const ASCII_PROPERTIES: [u16; 128] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 1, 1, 1, 1, 1, 33, 1, 1, 1, 1, 1, 1, 33, 1,
+    1547, 1547, 1547, 1547, 1547, 1547, 1547, 1547, 1547, 1547, 33, 1, 1, 1, 1, 1,
+    1, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141,
+    2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 1, 1, 1, 33, 9,
+    33, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205,
+    2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 1, 1, 1, 1, 0,
+];
+
+#[cfg(test)]
+mod ascii_properties_tests {
+    #[test]
+    fn packed_ascii_properties_agree() {
+        for scalar in 0..128u64 {
+            let expected = super::RANGES.iter().find(|row| **row >> 37 <= scalar && scalar <= (**row >> 16 & 0x1fffff)).map_or(0, |row| *row as u16);
+            for bit in 0..16 {
+                assert_eq!(super::property(char::from_u32(scalar as u32).unwrap(), 1 << bit), expected & (1 << bit) != 0);
+            }
+        }
+    }
 }

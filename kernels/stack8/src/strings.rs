@@ -211,6 +211,18 @@ pub(crate) fn recase(s: &str, op: TextOp) -> String {
         match op {
             TextOp::Upper => return s.to_ascii_uppercase(),
             TextOp::Lower | TextOp::Casefold => return s.to_ascii_lowercase(),
+            TextOp::Capitalize | TextOp::Title | TextOp::Swapcase => {
+                let mut prior = false;
+                return s.bytes().enumerate().map(|(at, byte)| {
+                    let upper = match op {
+                        TextOp::Capitalize => at == 0,
+                        TextOp::Title => !prior,
+                        _ => byte.is_ascii_lowercase(),
+                    };
+                    prior = byte.is_ascii_alphabetic();
+                    char::from(if upper { byte.to_ascii_uppercase() } else { byte.to_ascii_lowercase() })
+                }).collect();
+            }
             _ => {},
         }
     }
@@ -850,5 +862,9 @@ mod recase_tests {
         assert_eq!(recase("Az09\x1f", TextOp::Casefold), "az09\x1f");
         assert_eq!(recase("Straße ΣΟΣ", TextOp::Lower), "straße σος");
         assert_eq!(recase("Straße ΣΟΣ", TextOp::Upper), "STRASSE ΣΟΣ");
+        assert_eq!(recase("hELLO don't 42world!", TextOp::Capitalize), "Hello don't 42world!");
+        assert_eq!(recase("hELLO don't 42world!", TextOp::Title), "Hello Don'T 42World!");
+        assert_eq!(recase("hELLO don't 42world!", TextOp::Swapcase), "Hello DON'T 42WORLD!");
+
     }
 }

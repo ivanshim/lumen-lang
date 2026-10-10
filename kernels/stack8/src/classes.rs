@@ -2235,7 +2235,7 @@ impl<'a> Engine<'a> {
                         let name = c.python_title().unwrap_or_else(|| c.name.clone());
                         return Err(format!("TypeError: object.__new__({name}) is not safe, use {name}.__new__()").into());
                     }
-                    if Self::kind_beneath(c).is_some_and(|word| matches!(word.as_str(), "bool" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray" | "tuple" | "list" | "dict" | "set" | "frozenset" | "type" | "module" | "memoryview" | "range" | "slice" | "code" | "frame" | "traceback" | "function" | "generator" | "coroutine" | "async_generator")) {
+                    if std::iter::once(c.as_ref()).chain(c.lineage.borrow().iter().map(Rc::as_ref)).filter_map(Self::own_kind).any(|word| matches!(word.as_str(), "bool" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray" | "tuple" | "list" | "dict" | "set" | "frozenset" | "type" | "module" | "memoryview" | "range" | "slice" | "code" | "frame" | "traceback" | "function" | "generator" | "coroutine" | "async_generator")) {
                         return Err(format!("TypeError: object.__new__({0}) is not safe, use {0}.__new__()",c.name).into());
                     }
                     if self.exception_class(c) { return Ok(self.exception_instance(c.clone(), args[1..].to_vec(), Value::Null)); }
@@ -2436,12 +2436,16 @@ impl<'a> Engine<'a> {
                     match &w.1[0] {
                         Value::Class(owner) => self.class_annotation_values(owner, forward),
                         Value::Array(row) => {
+                            let reading = self.armed_names.take();
                             let mut entries = Vec::new();
                             for pair in row.chunks(2) {
                                 let [key, evaluator] = pair else { break; };
                                 let evaluator = evaluator.contents();
                                 if matches!(evaluator, Value::Blank) { continue; }
-                                let value = self.annotation_value(evaluator, forward, None)?;
+                                self.armed_names = reading.clone();
+                                let value = self.annotation_value(evaluator, forward, None);
+                                self.armed_names = None;
+                                let value = value?;
                                 entries.push((key.clone(), value));
                             }
                             Ok(self.keep_collection(Value::Map(Rc::new(entries.into()))))
@@ -2627,7 +2631,7 @@ impl<'a> Engine<'a> {
                         if Self::own_kind(&c).as_deref() != Some("function") { return Err(format!("TypeError: function.__new__({0}): {0} is not a subtype of function", c.name).into()); }
                         return self.class_make(c, args);
                     }
-                    if Self::kind_beneath(&c).as_deref()!=Some(word.as_str()) {return Err(format!("TypeError: {word}.__new__({0}): {0} is not a subtype of {word}",c.name).into())}
+                    if !Self::kind_among(&c, &word) {return Err(format!("TypeError: {word}.__new__({0}): {0} is not a subtype of {word}",c.name).into())}
                     if word == "module" {
                         self.made+=1;
                         return Ok(Value::Object(Rc::new(Instance {replacement_class:RefCell::new(None),class:c,fields:RefCell::new(Vec::new()),mark:self.made})));
@@ -2699,7 +2703,7 @@ impl<'a> Engine<'a> {
                         // row or a map, behind a cell of its own): the
                         // writing must reach the very thing the subclass
                         // instance keeps, not a copy taken out of it.
-                        Value::Object(o) if Self::kind_beneath(&o.class_now()).as_deref() == Some(word.as_ref()) => {
+                        Value::Object(o) if Self::kind_among(&o.class_now(), &word) => {
                             Self::worth_of(&subject).unwrap_or_else(|| subject.clone())
                         }
                         _ => subject.clone(),
@@ -4827,7 +4831,8 @@ impl<'a> Engine<'a> {
                     return Ok(loose);
                 }
                 if self.lang.constructor.as_deref() == Some(name) { return Ok(self.root_initialiser()); }
-                if let Some(inherited) = self.root_member(name, None) { return Ok(inherited); }
+                let root = self.root_class();
+                if let Some(inherited) = self.root_member(name, Some(&root)) { return Ok(inherited); }
             }
             Value::Class(c) => {
                 if name == "__type_params__" && self.lang.type_parameters {
@@ -5977,13 +5982,17 @@ impl<'a> Engine<'a> {
     fn class_annotation_values(&mut self, c: &Rc<Class>, forward: bool) -> Flow<Value> {
         // The entry stands in a cell, as a class's members do.
         let kept=c.shared.borrow().iter().find(|(n,_)|n==crate::code::ANNOTATE_WORD).map(|(_,v)|v.contents());
+        let reading = self.armed_names.take();
         let mut pairs=Vec::new();
         if let Some(Value::Array(row))=kept {
             for pair in row.chunks(2) {
                 let [key,routine]=pair else {break};
                 let routine = routine.contents();
                 if matches!(routine, Value::Blank) { continue; }
-                let value = self.annotation_value(routine, forward, Some(c.clone()))?;
+                self.armed_names = reading.clone();
+                let value = self.annotation_value(routine, forward, Some(c.clone()));
+                self.armed_names = None;
+                let value = value?;
                 pairs.push((key.clone(),value));
             }
         }

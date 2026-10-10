@@ -4,6 +4,7 @@
 
 pub fn bits(letter: char) -> u16 {
     let n = letter as u32;
+    if n < 128 { return ASCII_BITS[n as usize]; }
     let at = PROPERTIES.partition_point(|r| r.1 < n);
     PROPERTIES.get(at).filter(|r| r.0 <= n).map_or(0, |r| r.2)
 }
@@ -6530,4 +6531,27 @@ pub fn decomposition(point: u32) -> String {
         table
     });
     mappings.get(&point).cloned().unwrap_or_default()
+}
+
+// Derived from PROPERTIES; avoid a Unicode range search for ASCII.
+const ASCII_BITS: [u16; 128] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 1, 1, 1, 1, 1, 33, 1, 1, 1, 1, 1, 1, 33, 1,
+    1547, 1547, 1547, 1547, 1547, 1547, 1547, 1547, 1547, 1547, 33, 1, 1, 1, 1, 1,
+    1, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141,
+    2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 1, 1, 1, 33, 9,
+    33, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205,
+    2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 1, 1, 1, 1, 0,
+];
+
+#[cfg(test)]
+mod ascii_properties_tests {
+    #[test]
+    fn matches_unicode_database() {
+        for number in 0..128 {
+            let expected = super::PROPERTIES.iter().find(|row| row.0 <= number && number <= row.1).map_or(0, |row| row.2);
+            assert_eq!(super::bits(char::from_u32(number).unwrap()), expected);
+        }
+    }
 }

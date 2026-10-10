@@ -165,6 +165,20 @@ pub(crate) fn case_changed(word: &str, work: Work) -> String {
         match work {
             Work::UPPER => return word.to_ascii_uppercase(),
             Work::LOWER | Work::CASEFOLD => return word.to_ascii_lowercase(),
+            Work::CAPITALIZE | Work::TITLE | Work::SWAPCASE => {
+                let mut result = String::with_capacity(word.len());
+                let mut cased_before = false;
+                for (position, character) in word.char_indices() {
+                    let to_upper = match work {
+                        Work::CAPITALIZE => position == 0,
+                        Work::TITLE => !cased_before,
+                        _ => character.is_ascii_lowercase(),
+                    };
+                    result.push(if to_upper { character.to_ascii_uppercase() } else { character.to_ascii_lowercase() });
+                    cased_before = character.is_ascii_alphabetic();
+                }
+                return result;
+            }
             _ => {},
         }
     }
@@ -851,5 +865,9 @@ mod recase_tests {
         assert_eq!(case_changed("Az09\x1f", Work::CASEFOLD), "az09\x1f");
         assert_eq!(case_changed("Straße ΣΟΣ", Work::LOWER), "straße σος");
         assert_eq!(case_changed("Straße ΣΟΣ", Work::UPPER), "STRASSE ΣΟΣ");
+        assert_eq!(case_changed("hELLO don't 42world!", Work::CAPITALIZE), "Hello don't 42world!");
+        assert_eq!(case_changed("hELLO don't 42world!", Work::TITLE), "Hello Don'T 42World!");
+        assert_eq!(case_changed("hELLO don't 42world!", Work::SWAPCASE), "Hello DON'T 42WORLD!");
+
     }
 }

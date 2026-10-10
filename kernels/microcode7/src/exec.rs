@@ -10946,14 +10946,22 @@ impl<'a> Machine<'a> {
                             }
                         } else { self.shut_generator(&walk)?; return Ok(Value::Nil); }
                     }
+                    let code = {
+                        let holds = item.holds.borrow();
+                        match (&holds[1].1, &holds[5].1) {
+                            (Value::Nil, Value::Bound(program, _)) => Some(program.clone()),
+                            _ => None,
+                        }
+                    }.map(|program| self.code_handle(&program));
                     let mut holds = item.holds.borrow_mut();
+                    if let Some(code) = code { holds[1].1 = code; }
                     if let Value::Bound(_, environment) = &holds[5].1 {
                         for place in environment.cells.borrow_mut().iter_mut() {
-                            if let Value::Shared(cell) = place { *cell.borrow_mut() = Value::Unset; }
-                            *place = Value::Unset;
+                            if !matches!(place, Value::Shared(_)) { *place = Value::Unset; }
                         }
                     }
-                    holds[3].1 = Value::Nil;
+                    holds[5].1 = Value::Nil;
+                    holds[3].1 = Value::Dict(Rc::new(Vec::new().into()));
                     holds[6].1 = Value::Nil;
                     return Ok(Value::Nil);
                 }
@@ -18760,11 +18768,6 @@ impl<'a> Machine<'a> {
             (Prim::Length, [one]) if Self::underlying(one).is_some() => {
                 let payload = Self::underlying(one).unwrap().settled();
                 self.prim(Prim::Length, "len", &[payload])?
-            }
-            (Prim::Hashed, [one]) if matches!(self.appointment(one, 8), Some(Value::Nil)) => {
-                // Equality without a hash method, or the hash method set to
-                // nothing: such a thing cannot be a key.
-                return Err(self.core_complaint("core.unhashable", &one.kind_word()));
             }
             (Prim::Hashed, [code @ Value::Wrapped(7, _)]) => Value::Small(Value::code_worth_hash(code).ok_or_else(|| self.bad_answer())?),
             (Prim::Hashed, [one]) => {
