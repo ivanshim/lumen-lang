@@ -6212,6 +6212,19 @@ impl<'a> Engine<'a> {
         match self.locals_locate(&pairs, key)? { Some(at) => Ok(Some(pairs[at].clone())), None => Ok(None) }
     }
 
+    fn locals_reverse_union(&mut self, proxy: &Rc<Instance>, source: &Value) -> Res<Value> {
+        let keys = self.class_get(source.clone(), "keys", false).map_err(|fault| { self.carried = Some(fault); String::new() })?;
+        let supplied = self.call_held(keys, Vec::new())?;
+        let walk = self.core_iterator(&supplied)?;
+        let mut merged = Vec::new();
+        while let Some(key) = self.core_step(&walk)? {
+            let value = self.special_dyad(&Action::At, source, &key)?;
+            self.map_enter(&mut merged, key, value)?;
+        }
+        for (key, value) in self.locals_live_pairs(proxy) { self.map_enter(&mut merged, key, value)?; }
+        Ok(Value::Map(Rc::new(merged.into())))
+    }
+
     fn locals_method(&mut self, proxy: &Rc<Instance>, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
         match operation {
@@ -6307,6 +6320,10 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Ok(Value::Null)
+            }
+            "__ror__" => {
+                if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+                self.locals_reverse_union(proxy, &args[0])
             }
             "__or__" | "__ior__" => {
                 if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
@@ -8096,7 +8113,7 @@ impl<'a> Engine<'a> {
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
         if let Some(proxy) = self.locals_proxy(value) {
             self.locals_rebuild(&proxy);
-            if ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__iter__", "__len__", "__or__", "__ior__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&name) {
+            if ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__iter__", "__len__", "__or__", "__ror__", "__ior__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&name) {
                 return Ok(Some(Value::ValueMethod(Rc::new((value.clone(), name.to_string())))));
             }
         }
@@ -10180,17 +10197,7 @@ impl<'a> Engine<'a> {
             // worth beneath.
             if matches!(op, Action::BitEither) && !matches!(a.contents(), Value::Map(_)) && self.locals_proxy(a).is_none() {
                 if let Some(proxy) = self.locals_proxy(b) {
-                    // The reflected native union reads the left operand as a mapping.
-                    let keys = self.class_get(a.clone(), "keys", false).map_err(|fault| { self.carried = Some(fault); String::new() })?;
-                    let supplied = self.call_held(keys, Vec::new())?;
-                    let walk = self.core_iterator(&supplied)?;
-                    let mut merged = Vec::new();
-                    while let Some(key) = self.core_step(&walk)? {
-                        let value = self.special_dyad(&Action::At, a, &key)?;
-                        self.map_enter(&mut merged, key, value)?;
-                    }
-                    for (key, value) in self.locals_live_pairs(&proxy) { self.map_enter(&mut merged, key, value)?; }
-                    return Ok(Value::Map(Rc::new(merged.into())));
+                    return self.locals_reverse_union(&proxy, a);
                 }
             }
             if direct >= 18 && !joining_kinds && declined && !native_side {
@@ -11853,7 +11860,7 @@ impl<'a> Engine<'a> {
                 Action::Grab(name) if name.as_ref() == "__getformat__" && self.data.last().is_some_and(|value| matches!(value.contents(), Value::Real(_))) => { let value = self.drop_top()?; Some(self.class_get(value, name, false)?) },
                 Action::Grab(name) if self.data.last().is_some_and(|v| self.locals_proxy(v).is_some()) => {
                     let v = self.drop_top()?;
-                    if ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__iter__", "__len__", "__or__", "__ior__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&name.as_ref()) {
+                    if ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__iter__", "__len__", "__or__", "__ror__", "__ior__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&name.as_ref()) {
                         Some(Value::ValueMethod(Rc::new((v, name.to_string()))))
                     } else {
                         return Err(self.member_amiss(&v, &name).into());
@@ -18131,7 +18138,7 @@ impl<'a> Engine<'a> {
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         if let Some(proxy) = self.locals_proxy(receiver) {
-            if ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__len__", "__iter__", "__or__", "__ior__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&operation) {
+            if ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__len__", "__iter__", "__or__", "__ror__", "__ior__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&operation) {
                 return self.locals_method(&proxy, operation, args, named);
             }
         }

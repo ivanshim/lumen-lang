@@ -6212,7 +6212,7 @@ impl<'a> Machine<'a> {
     pub(super) fn locals_member(name: &str) -> bool {
         matches!(name, "keys" | "values" | "items" | "get" | "pop" | "setdefault" | "update" | "copy"
             | "__reversed__" | "__getitem__" | "__setitem__" | "__delitem__" | "__contains__"
-            | "__iter__" | "__len__" | "__or__" | "__ior__" | "__repr__" | "__reduce__" | "__reduce_ex__")
+            | "__iter__" | "__len__" | "__or__" | "__ror__" | "__ior__" | "__repr__" | "__reduce__" | "__reduce_ex__")
     }
 
     /// The one blueprint a frame-locals proxy stands on, made when the
@@ -6556,6 +6556,19 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn locals_prepend(&mut self, proxy: &Rc<Thing>, source: &Value) -> Res<Value> {
+        let member = self.read_class_member(source.clone(), "keys", false)?;
+        let offered = self.apply_within(member, Vec::new())?;
+        let cursor = self.iterated_value(&offered)?;
+        let mut entries = Vec::new();
+        while let Some(key) = self.next_value(&cursor)? {
+            let held = self.prim(Prim::At, "", &[source.clone(), key.clone()])?;
+            self.map_enter(&mut entries, key, held)?;
+        }
+        for (key, held) in self.locals_live_pairs(proxy) { self.map_enter(&mut entries, key, held)?; }
+        Ok(Value::Dict(Rc::new(entries.into())))
+    }
+
     fn locals_method(&mut self, proxy: &Rc<Thing>, operation: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
         if !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
         match operation {
@@ -6649,6 +6662,10 @@ impl<'a> Machine<'a> {
                     }
                 }
                 Ok(Value::Nil)
+            }
+            "__ror__" => {
+                if arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
+                self.locals_prepend(proxy, &arguments[0])
             }
             "__or__" | "__ior__" => {
                 if arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
@@ -18050,18 +18067,8 @@ impl<'a> Machine<'a> {
             // names the sign and both kinds rather than reading the
             // worth beneath.
             if operation == Prim::BitsEither && self.locals_proxy(right).is_some() {
-                // A reflected proxy union requires the earlier operand's mapping protocol.
-                let getter = self.read_class_member(left.clone(), "keys", false).map_err(|fault| self.suspension_fault(fault))?;
-                let offered = self.apply_within(getter, Vec::new())?;
-                let cursor = self.iterated_value(&offered)?;
-                let mut entries = Vec::new();
-                while let Some(key) = self.next_value(&cursor)? {
-                    let held = self.prim(Prim::At, "", &[left.clone(), key.clone()])?;
-                    self.map_enter(&mut entries, key, held)?;
-                }
                 let retained = self.locals_proxy(right).expect("the right operand is a proxy");
-                for (key, held) in self.locals_live_pairs(&retained) { self.map_enter(&mut entries, key, held)?; }
-                return Ok(Some(Value::Dict(Rc::new(entries.into()))));
+                return self.locals_prepend(&retained, left).map(Some).map_err(|fault| self.suspension_fault(fault));
             }
             if forward >= 18 && !joining_kinds && declined && !native_side {
                 let sign = self.written_as(&operation);
