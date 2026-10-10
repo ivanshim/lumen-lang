@@ -18162,7 +18162,11 @@ impl<'a> Machine<'a> {
             for (index, operand) in operands.iter().enumerate() {
                 let slots = if operation == Prim::Powered && index == 2 { &[][..] } else { free_at };
                 let mapping_key = index == 1 && matches!(operation, Prim::At | Prim::Fetch)
-                    && matches!(Self::underlying(&operands[0]).unwrap_or_else(|| operands[0].settled()).settled(), Value::Dict(_));
+                    && match &operands[0] {
+                        Value::Dict(_) => true,
+                        Value::Thing(_) | Value::Mutable(..) | Value::Shared(_) => matches!(Self::underlying(&operands[0]).unwrap_or_else(|| operands[0].settled()).settled(), Value::Dict(_)),
+                        _ => false,
+                    };
                 let mut substitute = if mapping_key { None } else { self.underlying_unless(operand, slots) };
                 if substitute.as_ref().is_some_and(|worth| matches!(operation, Prim::Quoted | Prim::Asciied | Prim::AsText) && Self::worth_leads_with_name(worth)) {
                     substitute = None;
