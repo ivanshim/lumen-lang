@@ -11022,7 +11022,9 @@ impl<'a> Engine<'a> {
                 let result = self.dyadic(if *repeat { &Action::Mul } else { &Action::Add }, &operands[0], &operands[1])?;
                 if let (Value::Bytes(target, true, _), Value::Bytes(source, ..)) = (&operands[0], &result) {
                     if ByteExport::active(target) && target.borrow().len() != source.borrow().len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
-                    *target.borrow_mut() = source.borrow().clone();
+                    let mut held = target.borrow_mut();
+                    *held = source.borrow().clone();
+                    Self::byte_spare(&mut held);
                     operands[0].clone()
                 } else { result }
             }
@@ -15978,7 +15980,9 @@ impl<'a> Engine<'a> {
             let (start, stop, step, places) = self.slice_places(&bounds, row.borrow().len())?;
             if step == 1 {
                 if ByteExport::active(row) && stop - start != replacement.len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
-                row.borrow_mut().splice(start..stop, replacement);
+                let mut held = row.borrow_mut();
+                held.splice(start..stop, replacement);
+                Self::byte_spare(&mut held);
             }
             else if places.len() != replacement.len() {
                 // A run that would change the row's size is refused while
@@ -18819,8 +18823,17 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
-    fn byte_make(&self, row: Vec<u8>, mutable: bool) -> Value {
+    fn byte_make(&self, mut row: Vec<u8>, mutable: bool) -> Value {
+        if mutable { Self::byte_spare(&mut row); }
         Value::Bytes(Rc::new(RefCell::new(row)), mutable, Rc::from(self.lang.byte_words["ext.system.bytes.repr"][usize::from(mutable)].as_str()))
+    }
+
+    /// A changeable row keeps one byte of room past its content. That
+    /// byte is the trailing NUL the reference's allocation count takes
+    /// in; here it is storage the row really holds, so the count reads
+    /// it back instead of being handed a number.
+    fn byte_spare(row: &mut Vec<u8>) {
+        if !row.is_empty() && row.capacity() <= row.len() { row.reserve(1); }
     }
 
     /// The word a definition spells one of the two bytes kinds with. The
@@ -19600,19 +19613,37 @@ impl<'a> Engine<'a> {
             let rest = &args[1..];
             let counted = |wanted: usize| if rest.len() == wanted { Ok(()) } else { Err(bad()) };
             match task {
-                52 => { counted(1)?; let byte = self.byte_index(&rest[0], false)?; if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().push(byte); }
+                52 => {
+                    counted(1)?;
+                    let byte = self.byte_index(&rest[0], false)?;
+                    if ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                    let mut held = cell.borrow_mut();
+                    held.push(byte);
+                    Self::byte_spare(&mut held);
+                }
                 53 => {
                     counted(1)?;
                     // The reference words an uniterable argument with
                     // the name of its kind rather than the plain walk
-                    // refusal, since extend alone walks it this way.
+                    // refusal, since extend alone walks it this way. A
+                    // buffer argument may change the row while its
+                    // bytes are read, so it lands at the end the row
+                    // had before that read; a plain walk lands at the
+                    // end the row has once the walk is done.
+                    let buffered = matches!(Self::worth_of(&rest[0]).unwrap_or_else(|| rest[0].contents()), Value::Object(object) if self.class_value(&object.class_now(), "__buffer__").is_some());
+                    let endpoint = buffered.then(|| cell.borrow().len());
                     let more = match self.byte_taken(&rest[0]) {
                         Ok(more) => more,
                         Err(words) if words.contains("not iterable") => return Err(format!("TypeError: can't extend bytearray with {}", rest[0].core_kind())),
                         Err(words) => return Err(words),
                     };
                     if !more.is_empty() && ByteExport::active(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
-                    cell.borrow_mut().extend(more);
+                    let mut held = cell.borrow_mut();
+                    match endpoint {
+                        Some(mark) => { let at = mark.min(held.len()); held.splice(at..at, more); }
+                        None => held.extend(more),
+                    }
+                    Self::byte_spare(&mut held);
                 }
                 54 => {
                     counted(2)?;
@@ -19680,6 +19711,7 @@ impl<'a> Engine<'a> {
                 let extra = length.saturating_sub(bytes.len());
                 bytes.try_reserve(extra).map_err(|_| "MemoryError: ".to_string())?;
                 bytes.resize(length, 0);
+                Self::byte_spare(&mut bytes);
             }
             return Ok(Value::Null);
         }
@@ -23954,7 +23986,7 @@ impl Engine<'_> {
         let reverse = if reversed_walk { maker.clone() } else { native(Builtin::Reversed) };
         let iter = maker;
         let saved = cell.borrow().clone();
-        if saved.finished || matches!(&saved.source, CursorSource::Items(items, place) if *place >= items.len()) {
+        if saved.finished {
             match &saved.source {
                 CursorSource::Items(..) => {
                     let empty = match saved.walked.as_deref() {
@@ -23962,12 +23994,11 @@ impl Engine<'_> {
                         Some("list_reverseiterator" | "reversed") => return Ok(pack(vec![reverse.clone(), pack(vec![Value::array(Vec::new())])])),
                         Some("list_iterator") => Value::array(Vec::new()),
                         // A bytes walk already run out keeps nothing of
-                        // its kind and hands over an empty tuple; one
-                        // whose source was empty from the first step
-                        // keeps the empty source, as the reference does.
-                        Some("bytes_iterator" | "bytearray_iterator") if saved.finished => pack(Vec::new()),
-                        Some("bytes_iterator") => self.byte_make(Vec::new(), false),
-                        Some("bytearray_iterator") => self.byte_make(Vec::new(), true),
+                        // its kind and hands over an empty tuple. While
+                        // the last item is consumed but the failing step
+                        // has not yet run, the walk is unfinished and its
+                        // whole source travels below.
+                        Some("bytes_iterator" | "bytearray_iterator") => pack(Vec::new()),
                         _ => pack(Vec::new()),
                     };
                     return Ok(pack(vec![iter, pack(vec![empty])]));

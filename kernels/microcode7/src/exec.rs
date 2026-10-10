@@ -13416,9 +13416,17 @@ impl<'a> Machine<'a> {
         Ok(())
     }
 
-    fn octets(&self, values: Vec<u8>, changeable: bool) -> Value {
+    fn octets(&self, mut values: Vec<u8>, changeable: bool) -> Value {
+        if changeable { Self::octet_room(&mut values); }
         let lead = self.table.strings("ext.system.bytes.repr")[if changeable { 1 } else { 0 }].clone();
         Value::Octets { cell: Rc::new(RefCell::new(values)), changeable, lead: lead.into() }
+    }
+
+    /// Hold back one byte of the row for the trailing NUL the reference
+    /// counts in its allocation figure. The byte is genuinely there in
+    /// the row's storage; nothing invents the figure it reports.
+    fn octet_room(row: &mut Vec<u8>) {
+        if !row.is_empty() && row.capacity() == row.len() { row.reserve(1); }
     }
 
     /// The word the table spells one of the two byte kinds with. Those
@@ -14568,6 +14576,7 @@ impl<'a> Machine<'a> {
                     storage.try_reserve(size - previous).map_err(|_| String::from("MemoryError: "))?;
                 }
                 storage.resize(size, 0);
+                Self::octet_room(&mut storage);
                 return Ok(Value::Nil);
             }
             60 => {
@@ -14594,19 +14603,37 @@ impl<'a> Machine<'a> {
                 let rest = &values[1..];
                 let counted = |wanted: usize| if rest.len() == wanted { Ok(()) } else { Err(wrong()) };
                 match operation {
-                    52 => { counted(1)?; let byte = self.octet_index(&rest[0], false)?; if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); } cell.borrow_mut().push(byte); }
+                    52 => {
+                        counted(1)?;
+                        let byte = self.octet_index(&rest[0], false)?;
+                        if OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                        let mut row = cell.borrow_mut();
+                        row.push(byte);
+                        Self::octet_room(&mut row);
+                    }
                     53 => {
                         counted(1)?;
                         // An argument that will not be walked names its
                         // own kind in this one refusal, as extend alone
                         // reaches for a walk without a plain fallback.
+                        // An exporter may rewrite the row while its
+                        // bytes are gathered, so an export lands where
+                        // the row ended before the gathering; a walked
+                        // argument lands where the row ends afterwards.
+                        let exporting = matches!(rest[0].settled(), Value::Thing(instance) if self.inherited_entry(&instance.blueprint(), "__buffer__").is_some());
+                        let mark = exporting.then(|| cell.borrow().len());
                         let more = match self.octet_lengthening(&rest[0]) {
                             Ok(more) => more,
                             Err(words) if words.contains("not iterable") => return Err(format!("TypeError: can't extend bytearray with {}", rest[0].kind_word())),
                             Err(words) => return Err(words),
                         };
                         if !more.is_empty() && OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
-                        cell.borrow_mut().extend(more);
+                        let mut row = cell.borrow_mut();
+                        match mark {
+                            Some(end) => { let at = end.min(row.len()); row.splice(at..at, more); }
+                            None => row.extend(more),
+                        }
+                        Self::octet_room(&mut row);
                     }
                     54 => {
                         counted(2)?;
@@ -19612,7 +19639,9 @@ impl<'a> Machine<'a> {
                 match (&v[0], &changed) {
                     (Value::Octets { cell, changeable: true, .. }, Value::Octets { cell: content, .. }) => {
                         if OctetLease::held(cell) && cell.borrow().len() != content.borrow().len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
-                        cell.replace(content.borrow().to_vec());
+                        let mut held = cell.borrow_mut();
+                        *held = content.borrow().to_vec();
+                        Self::octet_room(&mut held);
                         v[0].clone()
                     }
                     _ => changed,
@@ -24681,7 +24710,9 @@ impl<'a> Machine<'a> {
             let (range, positions, contiguous) = self.span_selection(bounds, cell.borrow().len())?;
             if contiguous {
                 if OctetLease::held(cell) && range.len() != incoming.len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
-                cell.borrow_mut().splice(range, incoming);
+                let mut row = cell.borrow_mut();
+                row.splice(range, incoming);
+                Self::octet_room(&mut row);
             }
             else if positions.len() != incoming.len() {
                 // The refusal while bytes are held out comes before the
@@ -29281,7 +29312,7 @@ impl Machine<'_> {
         let reversed = if backwards { chosen.clone() } else { builtin(Prim::Backwards) };
         let snapshot = handle.borrow().clone();
         let mut constructor = if backwards { reversed.clone() } else { chosen };
-        if snapshot.done || matches!(&snapshot.kind, IteratorKind::Stored { entries, next } if *next >= entries.len()) {
+        if snapshot.done {
             let empty = match &snapshot.kind {
                 IteratorKind::Stored { .. } => Some(match snapshot.walks.as_deref() {
                     Some("str_iterator" | "str_ascii_iterator") => Value::text(""),
@@ -29291,11 +29322,11 @@ impl Machine<'_> {
                     }
                     Some("list_iterator") => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
                     // A run of octets walked completely out keeps no
-                    // trace of its kind and hands over an empty tuple;
-                    // one whose source began empty keeps its empty kind.
-                    Some("bytes_iterator" | "bytearray_iterator") if snapshot.done => tuple(Vec::new()),
-                    Some("bytes_iterator") => self.octets(Vec::new(), false),
-                    Some("bytearray_iterator") => self.octets(Vec::new(), true),
+                    // trace of its kind and hands over an empty tuple.
+                    // An unfinished run whose last item is consumed but
+                    // whose failing step has not run still reports its
+                    // whole source through the matching below.
+                    Some("bytes_iterator" | "bytearray_iterator") => tuple(Vec::new()),
                     _ => tuple(Vec::new()),
                 }),
                 IteratorKind::Living(home, _) => Some(match home.borrow().settled() {

@@ -2568,6 +2568,11 @@ impl<'a> Engine<'a> {
                 Some(Builtin::List | Builtin::Dict) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
                     initial.clear();
                 }
+                // A changeable byte row likewise starts empty: a class
+                // writing its own initializer must see the arguments.
+                Some(Builtin::Bytes(1)) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
+                    initial.clear();
+                }
                 Some(Builtin::Filter) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
                 }

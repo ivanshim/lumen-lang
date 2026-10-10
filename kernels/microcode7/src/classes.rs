@@ -2698,6 +2698,11 @@ impl<'a> Machine<'a> {
                     // primitive is asked only to allocate the empty thing
                     // and the class's method is handed the arguments.
                     Some(Prim::Listed | Prim::Dictionary) if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|key| self.inherited_entry(&class, key)).is_some() => Vec::new(),
+                    // A changeable byte row starts empty the same way;
+                    // a class writing its own initializer sees the
+                    // constructor arguments rather than losing them to
+                    // the native allocation.
+                    Some(Prim::Octets(1)) if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|key| self.inherited_entry(&class, key)).is_some() => Vec::new(),
                     Some(Prim::Filtered) if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
                     Some(Prim::Unchanging | Prim::Tupling) if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
                     _ => given.clone(),
