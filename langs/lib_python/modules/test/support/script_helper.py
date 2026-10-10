@@ -211,3 +211,34 @@ def run_test_script(script):
             raise AssertionError(f"{name} failed")
     else:
         assert_python_ok("-u", script, "-v")
+
+
+def kill_python(p):
+    """Run the given Popen process until completion and return stdout."""
+    p.stdin.close()
+    data = p.stdout.read()
+    p.stdout.close()
+    # try to cleanup the child so we don't appear to leak when running
+    # with regrtest -R.
+    p.wait()
+    subprocess._cleanup()
+    return data
+
+
+def make_zip_script(zip_dir, zip_basename, script_name, name_in_zip=None):
+    import zipfile
+    zip_filename = zip_basename + os.extsep + 'zip'
+    zip_name = os.path.join(zip_dir, zip_filename)
+    with zipfile.ZipFile(zip_name, 'w') as zip_file:
+        if name_in_zip is None:
+            parts = script_name.split(os.sep)
+            if len(parts) >= 2 and parts[-2] == '__pycache__':
+                from importlib.util import source_from_cache
+                from test.support.import_helper import make_legacy_pyc
+                legacy_pyc = make_legacy_pyc(source_from_cache(script_name))
+                name_in_zip = os.path.basename(legacy_pyc)
+                script_name = legacy_pyc
+            else:
+                name_in_zip = os.path.basename(script_name)
+        zip_file.write(script_name, name_in_zip)
+    return zip_name, os.path.join(zip_name, name_in_zip)

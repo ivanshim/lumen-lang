@@ -1730,3 +1730,22 @@ def _force_run(path, func, *args):
             print('re-run %s%r' % (func.__name__, args))
         os.chmod(path, stat.S_IRWXU)
         return func(*args)
+
+
+def reap_children():
+    """Reap any child process that has already finished.
+
+    A test that starts sub-processes calls this from its module teardown so
+    no finished child is left behind.
+    """
+    if not (hasattr(os, 'waitpid') and hasattr(os, 'WNOHANG')):
+        return
+    if not has_subprocess_support:
+        return
+    while True:
+        try:
+            pid, status = os.waitpid(-1, os.WNOHANG)
+        except OSError:
+            break
+        if pid == 0:
+            break
