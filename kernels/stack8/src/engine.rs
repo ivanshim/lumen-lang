@@ -3240,7 +3240,7 @@ impl<'a> Engine<'a> {
                     Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell,
                     value => Rc::new(RefCell::new(value)),
                 };
-                self.write_booked(book, &slot.ident, Some(Value::Bond(shared.clone())));
+                self.write_booked(book, &slot.ident, Some(Value::Bond(shared.clone())), Some(slot.far));
                 return Ok(shared);
             }
         }
@@ -3264,7 +3264,7 @@ impl<'a> Engine<'a> {
         match slot.near.first() {
             Some(&s) => frame[s] = v,
             None => {
-                if let Some(kept) = self.book_of(slot.far) { self.write_booked(kept, &slot.ident, Some(v.clone())); }
+                if let Some(kept) = self.book_of(slot.far) { self.write_booked(kept, &slot.ident, Some(v.clone()), Some(slot.far)); }
                 self.world[slot.far] = v;
             }
         }
@@ -3288,7 +3288,7 @@ impl<'a> Engine<'a> {
         }
         if slot.near.is_empty() {
             if let Some(kept) = self.book_of(slot.far) {
-                self.write_booked(kept, &slot.ident, None);
+                self.write_booked(kept, &slot.ident, None, Some(slot.far));
                 if let Some(fled) = self.carried.take() { return Err(fled); }
             }
             if !slot.ident.starts_with('#') && !self.lang.module_cache.is_empty() && self.module_slots.contains_key(&self.source) {
@@ -3873,14 +3873,18 @@ impl<'a> Engine<'a> {
     /// Fill positional places first, then the named ones. Gatherers
     /// keep what has no ordinary place, and defaults keep the holes.
     fn bind_call(&mut self, program: &Routine, args: Vec<Value>, rules: &[u8]) -> Flow<Vec<Value>> {
-        // The common call: as many plain arguments as there are plain
-        // places, none of them named or spread and none of them a hole.
-        // Such a row already stands in the order the frame wants, so it
-        // is handed over whole rather than taken apart and put together.
-        if args.len() == rules.len()
-            && rules.iter().all(|rule| *rule < 2)
-            && args.iter().all(|given| !matches!(given, Value::Tie(_) | Value::Blank)) {
-            return Ok(args);
+        // Ordered arguments need no unpacking when their remaining places
+        // already have defaults. Leave those places blank for the normal
+        // frame initialization, which still supplies the current default values.
+        let ordered = args.len();
+        if ordered <= rules.len()
+            && rules.iter().all(|rule| *rule <= 2)
+            && rules.iter().take(ordered).all(|rule| *rule < 2)
+            && args.iter().all(|given| !matches!(given, Value::Tie(_) | Value::Blank))
+            && (ordered..rules.len()).all(|slot| program.carried.contains(&slot)) {
+            let mut filled = args;
+            filled.resize(rules.len(), Value::Blank);
+            return Ok(filled);
         }
         // Unnamed Python calls may leave only defaulted places empty.
         // Keep the same holes that the general binder hands to the frame.
@@ -12720,12 +12724,12 @@ impl<'a> Engine<'a> {
                             self.registry.program_bound.insert(name.clone());
                         }
                         self.world.resize(self.registry.idents.len(), Value::Blank);
-                        if let Some(book) = self.book_of(at) { self.write_booked(book, &name, Some(value.clone())); }
+                        if let Some(book) = self.book_of(at) { self.write_booked(book, &name, Some(value.clone()), Some(at)); }
                         // Text run in a dictionary of its own is handed
                         // the names there too, the way the reference's
                         // wildcard import writes the given globals.
                         if let Some(reading) = self.reading_in {
-                            self.write_booked(Kept::Text(reading), &name, Some(value.clone()));
+                            self.write_booked(Kept::Text(reading), &name, Some(value.clone()), None);
                         }
                         match &self.world[at] {
                             Value::Bond(cell) => *cell.borrow_mut() = value,
@@ -26382,9 +26386,15 @@ fn key_spells(key: &Value, name: &str) -> bool {
 
 /// What a dictionary kept in a cell holds under a name, if anything.
 fn book_entry(book: &Rc<RefCell<Value>>, name: &str) -> Option<Value> {
+    compiled_book_entry(book, name, None)
+}
+
+/// Read the current entry using a stable compiled name where one is known.
+fn compiled_book_entry(book: &Rc<RefCell<Value>>, name: &str, binding: Option<usize>) -> Option<Value> {
     match &*book.borrow() {
         Value::Map(pairs) => {
-            let at = pairs.named_row(name).unwrap_or_else(|()| pairs.iter().position(|(key, _)| key_spells(key, name)));
+            let lookup = binding.map_or_else(|| pairs.named_row(name), |far| pairs.compiled_row(name, far));
+            let at = lookup.unwrap_or_else(|()| pairs.iter().position(|(key, _)| key_spells(key, name)));
             at.map(|at| pairs[at].1.clone())
         },
         _ => None,
@@ -26394,9 +26404,15 @@ fn book_entry(book: &Rc<RefCell<Value>>, name: &str) -> Option<Value> {
 /// Put a value under a name in such a dictionary, or take the name out
 /// of it where nothing is given.
 fn book_write(book: &Rc<RefCell<Value>>, name: &str, value: Option<Value>) {
+    compiled_book_write(book, name, value, None);
+}
+
+/// Resolve a compiled global store against the dictionary's current key order.
+fn compiled_book_write(book: &Rc<RefCell<Value>>, name: &str, value: Option<Value>, binding: Option<usize>) {
     if let Value::Map(pairs) = &mut *book.borrow_mut() {
         let pairs = Rc::make_mut(pairs);
-        let at = pairs.named_row(name).unwrap_or_else(|()| pairs.iter().position(|(key, _)| key_spells(key, name)));
+        let lookup = match binding { None => pairs.named_row(name), Some(far) => pairs.compiled_row(name, far) };
+        let at = lookup.unwrap_or_else(|()| pairs.iter().position(|(key, _)| key_spells(key, name)));
         match (at, value) {
             (Some(at), Some(held)) => pairs.overwrite_named_row(at, held),
             (Some(at), None) => { pairs.remove(at); }
@@ -26421,6 +26437,10 @@ impl Engine<'_> {
             if self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_some()) {
                 return Some(Kept::Outer);
             }
+        }
+        if self.module_books.is_empty() && self.text_books.is_empty() {
+            if self.outer_book.is_none() { return None; }
+            return Self::public_name(self.registry.idents.get(far)?).then_some(Kept::Outer);
         }
         let ident = self.registry.idents.get(far)?;
         if let Some(rest) = ident.strip_prefix("\0module:") {
@@ -26467,7 +26487,7 @@ impl Engine<'_> {
         match kept {
             Kept::Module(at) => {
                 if !Self::public_name(name) { return None; }
-                if let Some(held) = book_entry(&self.module_books[at].1, name) {
+                if let Some(held) = compiled_book_entry(&self.module_books[at].1, name, Some(far)) {
                     let value = match (&held, &self.world[far]) {
                         (Value::Bond(cell), Value::Bond(slot)) if Rc::ptr_eq(cell, slot) => cell.borrow().clone(),
                         _ => held,
@@ -26494,7 +26514,7 @@ impl Engine<'_> {
                         Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
                     });
                 }
-                if let Some(held) = book_entry(&book, name) { return Some(Ok(held)); }
+                if let Some(held) = compiled_book_entry(&book, name, Some(far)) { return Some(Ok(held)); }
                 if self.left_out(name, &self.world[far]) { return None; }
                 if let Some(held) = self.kept_by_module(name) { return Some(Ok(held)); }
                 Some(Err(format!("Undefined variable: {}", name)))
@@ -26568,10 +26588,10 @@ impl Engine<'_> {
     }
 
     /// Write a name into the dictionary it is kept in, or take it out.
-    fn write_booked(&mut self, kept: Kept, name: &str, value: Option<Value>) {
+    fn write_booked(&mut self, kept: Kept, name: &str, value: Option<Value>, binding: Option<usize>) {
         match kept {
-            Kept::Module(at) => if Self::public_name(name) { book_write(&self.module_books[at].1, name, value) },
-            Kept::Outer => if let Some(book) = &self.outer_book { book_write(book, name, value) },
+            Kept::Module(at) => if Self::public_name(name) { compiled_book_write(&self.module_books[at].1, name, value, binding) },
+            Kept::Outer => if let Some(book) = &self.outer_book { compiled_book_write(book, name, value, binding) },
             Kept::Text(at) => {
                 let book = &self.text_books[at];
                 let target = match &book.outer {

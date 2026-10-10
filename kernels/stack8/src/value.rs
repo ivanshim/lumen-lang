@@ -310,7 +310,7 @@ pub struct Traceback {
 #[derive(Debug)]
 pub struct MethodStamp { pub callback_held: std::cell::Cell<bool> }
 impl Drop for MethodStamp {
-    fn drop(&mut self) { if self.callback_held.get() { crate::faint::plain_departing(); } }
+    fn drop(&mut self) { crate::faint::plain_departing(self as *const Self as usize); }
 }
 
 #[derive(Debug, Clone)]
@@ -591,6 +591,7 @@ pub struct KeyedPairs {
     pub entry_budget: (usize, usize, bool),
     lookup: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
     names: RefCell<Option<Box<NameLookup>>>,
+    compiled_names: RefCell<Vec<Option<(Rc<str>, usize)>>>,
 }
 
 impl std::fmt::Debug for KeyedPairs {
@@ -631,6 +632,25 @@ impl KeyedPairs {
             NameLookup::Fixed(positions) => Ok(positions.get(name).copied()),
             NameLookup::Mutable => Err(()),
         }
+    }
+
+    /// Find a compiled name without hashing it again on every load or store.
+    /// Row mutations discard these addresses; value replacements preserve them.
+    pub fn compiled_row(&self, name: &str, binding: usize) -> Result<Option<usize>, ()> {
+        let known = self.compiled_names.borrow();
+        let prior = known.get(binding).and_then(Option::as_ref);
+        if let Some((_, row)) = prior.filter(|(spelling, _)| spelling.as_ref() == name) {
+            return Ok(Some(*row));
+        }
+        drop(known);
+        let row = self.named_row(name)?;
+        if let Some(position) = row {
+            let mut compiled = self.compiled_names.borrow_mut();
+            let needed = compiled.len().max(binding + 1);
+            compiled.resize_with(needed, || None);
+            compiled[binding] = Some((Rc::from(name), position));
+        }
+        Ok(row)
     }
 
     /// A namespace write used to borrow the rows mutably, advancing the
@@ -686,7 +706,7 @@ impl KeyedPairs {
     /// the clear-history the map already had, with each row's own place.
     pub fn kept(rows: Vec<(Value, Value)>, slots: Vec<usize>, span: usize, clear_epoch: u64, entry_budget: (usize, usize, bool)) -> Self {
         assert_eq!(rows.len(), slots.len());
-        KeyedPairs { rows, revision: next_map_revision(), span, clear_epoch, slots, entry_budget, lookup: RefCell::new(None), names: RefCell::new(None) }
+        KeyedPairs { rows, revision: next_map_revision(), span, clear_epoch, slots, entry_budget, lookup: RefCell::new(None), names: RefCell::new(None), compiled_names: RefCell::new(Vec::new()) }
     }
 
     fn exact_string(key: &Value) -> bool {
@@ -816,6 +836,7 @@ impl KeyedPairs {
         let at = self.rows.len();
         self.revision = next_map_revision();
         *self.names.borrow_mut() = None;
+        self.compiled_names.get_mut().clear();
         self.rows.push((key, value));
         Self::append_entry(&mut self.slots, &mut self.span, &mut self.entry_budget, &self.rows.last().expect("added row").0);
         self.lookup.borrow_mut().as_mut().expect("just settled").0.insert(keytext, at);
@@ -828,7 +849,7 @@ impl From<Vec<(Value, Value)>> for KeyedPairs {
         let slots = (0..span).collect();
         let width = if span == 0 { 1 } else { (span * 3).div_ceil(2).max(8).next_power_of_two() };
         let entry_budget = (width, width * 2 / 3 - span, rows.iter().all(|(key, _)| Self::exact_string(key)));
-        KeyedPairs { rows, revision: next_map_revision(), span, clear_epoch: 0, slots, entry_budget, lookup: RefCell::new(None), names: RefCell::new(None) }
+        KeyedPairs { rows, revision: next_map_revision(), span, clear_epoch: 0, slots, entry_budget, lookup: RefCell::new(None), names: RefCell::new(None), compiled_names: RefCell::new(Vec::new()) }
     }
 }
 
@@ -837,7 +858,7 @@ impl From<Vec<(Value, Value)>> for KeyedPairs {
 /// rows and never the rows it was copied from.
 impl Clone for KeyedPairs {
     fn clone(&self) -> KeyedPairs {
-        KeyedPairs { rows: self.rows.clone(), revision: self.revision, span: self.span, clear_epoch: self.clear_epoch, slots: self.slots.clone(), entry_budget: self.entry_budget, lookup: RefCell::new(None), names: RefCell::new(None) }
+        KeyedPairs { rows: self.rows.clone(), revision: self.revision, span: self.span, clear_epoch: self.clear_epoch, slots: self.slots.clone(), entry_budget: self.entry_budget, lookup: RefCell::new(None), names: RefCell::new(None), compiled_names: RefCell::new(Vec::new()) }
     }
 }
 
@@ -857,6 +878,7 @@ impl std::ops::DerefMut for KeyedPairs {
         self.revision = next_map_revision();
         *self.lookup.borrow_mut() = None;
         *self.names.borrow_mut() = None;
+        self.compiled_names.get_mut().clear();
         &mut self.rows
     }
 }
@@ -2863,13 +2885,13 @@ impl Drop for Generator {
 
 impl Drop for Members {
     fn drop(&mut self) {
-        crate::faint::plain_departing();
+        crate::faint::plain_departing(self as *const Self as usize);
     }
 }
 
 impl Drop for Class {
     fn drop(&mut self) {
-        crate::faint::plain_departing();
+        crate::faint::plain_departing(self as *const Self as usize);
     }
 }
 

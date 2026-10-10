@@ -1052,7 +1052,7 @@ pub struct Plan {
 
 impl Drop for Routine {
     fn drop(&mut self) {
-        crate::faint::plain_departing();
+        crate::faint::plain_departing(self as *const Self as usize);
     }
 }
 
