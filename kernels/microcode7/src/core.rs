@@ -171,6 +171,8 @@ impl Value {
             Self::Wrapped(186, _) => "method-wrapper",
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Wrapped(60, slot))
                 if matches!(slot.as_slice(), [Self::Text(kind), Self::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, ty)| ty == "wrapper_descriptor"))) => "method-wrapper",
+            // A module namespace uses the native dictionary descriptor kind.
+            Self::Wrapped(32, layout) if matches!(layout.get(2), Some(Self::Small(-1))) => "member_descriptor",
             Self::Wrapped(130, _) => "function",
             Self::Wrapped(132, _) => "method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
@@ -345,7 +347,7 @@ impl Value {
             Self::OctetKind { changeable, .. } => return Self::text(match changeable { true => "bytearray", false => "bytes" }).hash_number(),
             Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
-            Self::Wrapped(tag, contents) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60) => {
+            Self::Wrapped(tag, contents) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60 | 152..=158) => {
                 let mut total = i64::from(*tag);
                 for entry in contents.iter() { total = total.wrapping_mul(1_000_003) ^ entry.hash_number()?; }
                 total
@@ -356,7 +358,7 @@ impl Value {
             Self::Method(program, receiver, _) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,
             // A routine bound to a value hashes by the routine and by
             // where the value lies, never by asking the value itself.
-            Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => {
+            Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..) | Self::Wrapped(..) | Self::Intrinsic(..))) => {
                 let lies = match parts.get(1) { Some(Self::Thing(thing)) => std::rc::Rc::as_ptr(thing) as usize / 16, Some(other) => other.hash_number()? as usize, None => 0 };
                 parts[0].hash_number()? ^ lies as i64
             }

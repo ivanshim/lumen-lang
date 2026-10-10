@@ -43,8 +43,7 @@ path_hooks = []
 path_importer_cache = {}
 _recursion_limit = 1000
 
-# Startup flags retain the fixed library environment and the requested dev mode.
-_startup_environment = __posix('environ')[1]
+# Startup flags describe the library environment and requested development mode.
 class _Flags:
     debug = 0
     inspect = 0
@@ -59,7 +58,7 @@ class _Flags:
     quiet = 0
     hash_randomization = 0
     isolated = 1
-    dev_mode = _startup_environment.get(b'LUMEN_PYTHON_DEV_MODE', b'0') == b'1'
+    dev_mode = _host_environment('environ')[1].get(b'LUMEN_PYTHON_DEV_MODE') == b'1'
     utf8_mode = 1
     warn_default_encoding = 0
     safe_path = True
@@ -512,14 +511,6 @@ def _getframemodulename(depth=0):
     if not isinstance(depth, int):
         raise TypeError('an integer is required')
     return __frame_module(max(depth, 0) + 1)
-
-
-def settrace(func):
-    return __settrace(func)
-
-
-def gettrace():
-    return __gettrace()
 
 # Names supplied by the native importer and its source-backed adapters.
 

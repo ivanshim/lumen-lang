@@ -1,5 +1,6 @@
 pub mod text;
 mod unicode;
+mod multibyte;
 // Microcode kernel, fourth design: seven forms, the four of microcode4
 // and three the kernel lab measured worth a form of their own.
 //
@@ -24,7 +25,6 @@ pub mod form;
 pub mod data;
 pub mod ghost;
 mod core;
-mod multibyte;
 mod posix;
 mod complex;
 mod byteformat;

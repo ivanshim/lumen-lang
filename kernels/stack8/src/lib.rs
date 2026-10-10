@@ -1,5 +1,6 @@
 pub mod strings;
 mod unicode;
+mod multibyte;
 // Stack kernel, third design: eight words, the five of stack5 and three
 // fused from them where the measurements said a word earns its place.
 //
@@ -22,7 +23,6 @@ pub mod value;
 pub mod code;
 pub mod faint;
 mod core;
-mod multibyte;
 mod posix;
 mod complex;
 mod structpack;

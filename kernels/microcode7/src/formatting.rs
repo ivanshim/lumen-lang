@@ -85,6 +85,8 @@ impl Layout<'_> {
     }
 
     pub fn quote(&self, item: &Value, escaped: bool) -> Answer {
+        if let Value::Window(mapping, 'm') = item { let content = self.quote(&mapping.proxy_pairs(), escaped)?; return Ok(format!("mappingproxy({content})")); }
+
         Ok(match item {
             Value::Shared(cell) | Value::Mutable(cell, _) => return self.quote(&cell.borrow(), escaped),
             // A text is quoted by the hand that quotes it everywhere
@@ -225,6 +227,8 @@ impl Layout<'_> {
     }
 
     pub fn presented_value(&self, item: &Value, pattern: &str, convert: &str) -> Result<Value, String> {
+        if let Value::Shared(cell) | Value::Mutable(cell, _) = item { return self.presented_value(&cell.borrow(), pattern, convert); }
+        if matches!(item, Value::Window(_, 'm')) { return self.present(item, pattern, convert).map(|text| Value::text(&text)); }
         let plain = item.settled();
         if self.table.flag("ext.op.arithmetic.python_numbers") && matches!(plain, Value::Unpaired(_)) && (convert.is_empty() || convert == "s") {
             self.present(&Value::text(""), pattern, "")?;

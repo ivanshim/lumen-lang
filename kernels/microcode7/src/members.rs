@@ -222,6 +222,8 @@ impl Request<'_> {
             // answers the six category questions, each of which
             // reads one character at a time and never hands any of
             // them back out.
+            Value::Unpaired(numbers) if matches!(self.operation, "find" | "rfind" | "index" | "rindex" | "count" | "replace" | "lower" | "upper") => self.work_units(&numbers),
+            Value::Unpaired(numbers) if matches!(self.operation, "split" | "rsplit") => self.split_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "strip" | "lstrip" | "rstrip") => self.trim_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "startswith" | "endswith") => self.affix_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "isdigit"|"isalpha"|"isalnum"|"isspace"|"islower"|"isupper")=>self.on_text(&Value::category_text(&numbers)),
@@ -397,6 +399,9 @@ impl Request<'_> {
         Err(self.unknown())
     }
     fn split_text(&self,s:&str)->ResultValue{
+        if self.given.first().is_some_and(|v| matches!(v.settled(), Value::Unpaired(_))) {
+            return self.split_units(&s.chars().map(|c| c as u32).collect::<Vec<_>>());
+        }
         self.takes(0,2)?;let reverse=self.operation=="rsplit";let bound=self.number(1,-1)?;
         let maximum=if bound<0{usize::MAX}else{bound as usize};let mut chunks=Vec::new();
         let delimiter=match self.given.first(){Some(v) if !matches!(v,Value::Nil)=>Some(letters(v,self.complaint)?),_=>None};
@@ -421,6 +426,66 @@ impl Request<'_> {
         }
         if reverse{chunks.reverse();}
         Ok(Value::Vector(crate::tuples::Sequence::plain(chunks.iter().map(|part|Value::text(part)).collect::<Vec<_>>())).keep(true))
+    }
+    // Preserve surrogate characters while searching, replacing, or changing case.
+    pub(crate) fn work_units(&self, text: &[u32]) -> ResultValue {
+        let operation = self.operation;
+        if operation == "lower" || operation == "upper" {
+            self.takes(0, 0)?;
+            let work = if operation == "upper" { crate::text::Work::UPPER } else { crate::text::Work::LOWER };
+            let mut units = Vec::new();
+            let mut letters = String::new();
+            for &number in text {
+                if let Some(c) = char::from_u32(number) { letters.push(c); }
+                else {
+                    units.extend(crate::text::case_changed(&letters, work).chars().map(|c| c as u32));
+                    letters.clear(); units.push(number);
+                }
+            }
+            units.extend(crate::text::case_changed(&letters, work).chars().map(|c| c as u32));
+            return Ok(Value::characters(units));
+        }
+        self.takes(if operation == "replace" { 2 } else { 1 }, 3)?;
+        let sought = self.given[0].settled().character_numbers().ok_or_else(|| self.fail("arguments"))?;
+        if operation == "replace" {
+            let newer = self.given[1].settled().character_numbers().ok_or_else(|| self.fail("arguments"))?;
+            let count = self.given.get(2).map(|v| whole(v, self.complaint)).transpose()?.unwrap_or(-1);
+            let maximum = usize::try_from(count).unwrap_or(usize::MAX);
+            let (mut position, mut remaining) = (0, maximum);
+            let mut output = Vec::new();
+            loop {
+                if remaining > 0 && text[position..].starts_with(&sought) {
+                    output.extend(&newer); remaining -= 1;
+                    if !sought.is_empty() { position += sought.len(); continue; }
+                }
+                match text.get(position) { Some(&n) => { output.push(n); position += 1; }, None => break }
+            }
+            return Ok(Value::characters(output));
+        }
+        let beginning = self.number(1, 0)?;
+        let end = self.number(2, text.len() as i64)?;
+        let left = place(beginning, text.len()); let right = place(end, text.len());
+        let ordered = beginning <= text.len() as i64 && left <= right;
+        let slice = if ordered { &text[left..right] } else { &[] };
+        if operation == "count" {
+            let amount = if !ordered { 0 } else if sought.is_empty() { slice.len() + 1 } else {
+                let mut count = 0; let mut offset = 0;
+                while offset + sought.len() <= slice.len() {
+                    if slice[offset..].starts_with(&sought) { count += 1; offset += sought.len(); }
+                    else { offset += 1; }
+                }
+                count
+            };
+            return Ok(Value::Small(amount as i64));
+        }
+        let reverse = operation == "rfind" || operation == "rindex";
+        let location = if !ordered { None } else if sought.is_empty() { Some(if reverse { slice.len() } else { 0 }) }
+            else {
+                let mut positions = slice.windows(sought.len());
+                if reverse { positions.rposition(|part| part == sought) } else { positions.position(|part| part == sought) }
+            };
+        if location.is_none() && (operation == "index" || operation == "rindex") { return Err(self.fail("missing")); }
+        Ok(Value::Small(location.map(|n| (left + n) as i64).unwrap_or(-1)))
     }
     fn split_units(&self, units: &[u32]) -> ResultValue {
         self.takes(0, 2)?;

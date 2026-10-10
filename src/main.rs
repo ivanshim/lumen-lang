@@ -572,7 +572,6 @@ fn run_all() {
         } else { Path::new(&inv.file).parent().unwrap_or_else(|| Path::new("")).to_string_lossy().into_owned() });
         env::set_var("LUMEN_PYTHON_SEARCH_PATH", if inv.ignore_environment { String::new() } else { env::var("PYTHONPATH").unwrap_or_default() });
     }
-
     // Only an actual -m invocation carries module execution metadata;
     // a script child must not inherit its parent's module identity.
     if let Some(name) = &inv.module_name { std::env::set_var("LUMEN_RUN_MODULE", name); }

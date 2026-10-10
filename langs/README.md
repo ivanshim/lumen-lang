@@ -3202,10 +3202,17 @@ only. The extension labels so far, all from PHP:
   items as positional arguments. Quoted text spelling that sign remains
   text, as does text spelling `ext.syntax.call.spread.pairs`. Arrays, text and the keys of maps may
   be handed out; other values are refused in the words of
-  `ext.syntax.call.spread.amiss`.
+  `ext.syntax.call.spread.amiss`, which name the thing being called
+  before them and the kind handed over after. A lone spread standing as
+  the only argument in order is worded that way; a spread standing among
+  others is refused in the plainer words of `ext.syntax.call.spread.later`,
+  with no name of the callee.
 - `ext.syntax.call.spread.pairs`: a sign before a call argument handing
-  out a map as keyword arguments. A value which is no map, or a key which
-  is no string, is refused in `ext.syntax.call.spread.pairs.amiss` words.
+  out a map as keyword arguments. Any value whose `keys` member lists
+  its keys may be handed out, and a key which is no string is refused in
+  the words of `ext.syntax.call.spread.pairs.keys`. A value which is no
+  mapping is refused in `ext.syntax.call.spread.pairs.amiss` words,
+  which name the callee and the kind offered.
 - `ext.syntax.call.amiss`: plain words for arguments which do not fit the
   parameter list. `ext.syntax.call.amiss.missing`,
   `ext.syntax.call.amiss.unknown` and `ext.syntax.call.amiss.duplicate`
@@ -4514,6 +4521,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 |---|---|---|---|---|---|---|---|---|---|---|
 | `ext.block.lone_statement` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.builtin._random` | - | - | `__random` | - | - | - | - | - | - | - |
+| `ext.builtin.abc.instancecheck` | - | - | `__abc_instancecheck` | - | - | - | - | - | - | - |
 | `ext.builtin.abs` | - | - | `abs` | - | - | - | - | - | - | - |
 | `ext.builtin.all` | - | - | `all` | - | - | - | - | - | - | - |
 | `ext.builtin.annotation_call` | - | - | `__annotation_call__` | - | - | - | - | - | - | - |
@@ -5608,9 +5616,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.bind_names` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.call.chained` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread` | - | - | `*` | - | - | - | - | - | - | - |
-| `ext.syntax.call.spread.amiss` | - | - | `TypeError: argument after * must be an iterable` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread.amiss` | - | - | `TypeError: ` `argument after * must be an iterable, not ` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread.later` | - | - | `TypeError: Value after * must be an iterable, not ` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread.pairs` | - | - | `**` | - | - | - | - | - | - | - |
-| `ext.syntax.call.spread.pairs.amiss` | - | - | `TypeError: argument after ** must be a mapping with string keys` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread.pairs.amiss` | - | - | `TypeError: ` `argument after ** must be a mapping, not ` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread.pairs.keys` | - | - | `TypeError: keywords must be strings` | - | - | - | - | - | - | - |
 | `ext.syntax.collection.unwalkable` | - | - | `TypeError: 'object' object is not iterable` | - | - | - | - | - | - | - |
 | `ext.syntax.map.resized` | - | - | `RuntimeError: dictionary changed size during iteration` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread` | - | - | `**` | - | - | - | - | - | - | - |
@@ -6135,6 +6145,8 @@ Reassigning `__bases__` to the identical direct bases is allowed; changing bases
 still raises the existing unsupported-operation exception. The pure-Python
 `__future__.py` is also carried unchanged from v3.14.8.
 
+
+`ext.builtin.abc.instancecheck` supplies the native ABC instance-check boundary: cache lookup uses the standard weak registries, and subclass hooks run without an extra Python frame, as in CPython’s `_abc` accelerator. This lets protocol hooks distinguish checks made by `abc` from direct subclass checks.
 `ext.builtin.trace_native` registers a Python tracing callback, reads the active
 callback, and exposes native compiled instructions with their source positions.
 The instruction vocabulary belongs to each kernel; it is not CPython bytecode.
@@ -6168,3 +6180,9 @@ module. `-E` ignores Python environment configuration while preserving the
 process environment. Warning options retain CPython's environment-before-command
 order and first-occurrence deduplication; runtime warning filters then process
 that ordered list. Other language invocations retain their existing options.
+`ext.builtin.multibyte` names the Python-only CJK mapping primitive used by the multibyte codec state machines. It uses the codec port's released mapping tables; other languages leave it unregistered.
+`ext.stmt.class.detail.text_signature` names optional native callable signature metadata.
+`ext.stmt.class.detail.native.getsets` declares triples of module, native class, and getter names whose adapter implementations become read-only native data descriptors. Class access returns the descriptor; instance access validates its owner and calls the getter.
+
+Python text methods validate named error policies in development mode (`-X dev`). Private `__codec_encode` and `__codec_decode` spellings reuse the bytes encode/decode labels for low-level registry conversion, where unused policies remain lazy.
+`ext.builtin.multibyte` names the Python native CJK mapping primitive. It provides complete CJK character mappings, prefix validation, GB18030 ranges, and Unicode 16.0/3.2 normalization data to the Python codec state machines. Other languages do not register it.

@@ -66,13 +66,14 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
     let number = |i: usize| integer(&a[i]);
     let pathname = |i: usize| CString::new(raw(&a[i])?).map_err(|_| "ValueError: embedded null byte".to_owned());
     let output: Result<Value, i32> = unsafe { match op.as_ref() {
-        "locale_encoding" => Ok(bytes(CStr::from_ptr(libc::nl_langinfo(libc::CODESET)).to_bytes().to_vec())),
+
         "socket_hostname" => {
             let mut buffer = vec![0u8; 256];
             if libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) != 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
             else { let length = buffer.iter().position(|byte| *byte == 0).unwrap_or(buffer.len()); buffer.truncate(length); Ok(bytes(buffer)) }
         },
         "socket_hostbyaddr" => Ok(host_by_address(&a[0])?),
+        "locale_encoding" => Ok(bytes(CStr::from_ptr(libc::nl_langinfo(libc::CODESET)).to_bytes().to_vec())),
         "getpid" => Ok(Value::Small(libc::getpid() as i64)),
         "getuid" => Ok(Value::Small(libc::getuid() as i64)),
         "geteuid" => Ok(Value::Small(libc::geteuid() as i64)),

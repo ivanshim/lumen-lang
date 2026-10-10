@@ -900,7 +900,7 @@ pub fn view_kind(tag: &str) -> &'static str {
 /// The word CPython gives a walk taken backwards over a map's keys,
 /// values or pairs.
 pub fn reversed_view_kind(tag: &str) -> &'static str {
-    match tag { "keys" => "dict_reversekeyiterator", "values" => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
+    match tag { "keys" | "mapping" => "dict_reversekeyiterator", "values" => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
 }
 
 pub(super) enum Retention { Immortal, Owners(usize) }

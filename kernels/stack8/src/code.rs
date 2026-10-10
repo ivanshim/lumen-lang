@@ -517,8 +517,6 @@ pub enum Builtin {
     MemberSet,
     MemberGet,
     ProgramNamespace,
-    SetTrace,
-    GetTrace,
     ProductStep,
     FrameModule,
     ClassSeal,
