@@ -5551,8 +5551,14 @@ impl<'a> Engine<'a> {
                     let Some(Value::Class(next)) = value else { return Err("TypeError: __class__ must be set to a class".to_string().into()); };
                     let old = o.class_now();
                     let same_slots = self.same_slot_layout(&old, &next);
-                    if Self::own_class_value(&old, self.class_word("module")).is_none() || Self::own_class_value(&next, self.class_word("module")).is_none()
-                        || Self::kind_beneath(&old) != Self::kind_beneath(&next) || (!same_slots && (self.slots_named(&old) || self.slots_named(&next))) {
+                    // Native modules and subclasses without extra slots share their storage.
+                    let extra_slots = |class: &Class| std::iter::once(class).chain(class.lineage.borrow().iter().map(Rc::as_ref))
+                        .any(|base| self.slot_names(base).is_some_and(|names| !names.is_empty()));
+                    let old_module = self.module_holding(&subject).is_some() || Self::kind_beneath(&old).as_deref() == Some("module");
+                    let module_layout = old_module && Self::kind_beneath(&next).as_deref() == Some("module")
+                        && !extra_slots(&old) && !extra_slots(&next);
+                    if !module_layout && (Self::own_class_value(&old, self.class_word("module")).is_none() || Self::own_class_value(&next, self.class_word("module")).is_none()
+                        || Self::kind_beneath(&old) != Self::kind_beneath(&next) || (!same_slots && (self.slots_named(&old) || self.slots_named(&next)))) {
                         return Err("TypeError: __class__ assignment: object layout differs".to_string().into());
                     }
                     // What the slots hold is kept under the class that

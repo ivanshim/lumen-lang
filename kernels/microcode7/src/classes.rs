@@ -5928,10 +5928,25 @@ impl<'a> Machine<'a> {
                         Some(Value::Blueprint(next)) => {
                             let previous = t.blueprint();
                             let alike = self.alike_in_slots(&previous, &next);
-                            let compatible = Self::own_entry(&previous, self.detail("module")).is_some()
+                            // Module subclasses can replace the native class if no slot adds storage.
+                            let plain_module = |kind: &Blueprint| {
+                                if Self::native_beneath(kind).as_deref() != Some("module") { return false; }
+                                for base in std::iter::once(kind).chain(kind.ancestry.borrow().iter().map(Rc::as_ref)) {
+                                    if let Some(declared) = Self::own_entry(base, self.detail("slots")) {
+                                        match declared.settled() {
+                                            Value::Tuple(row) | Value::Vector(row) if row.is_empty() => {},
+                                            _ => return false,
+                                        }
+                                    }
+                                }
+                                true
+                            };
+                            let native_namespace = self.namespace_holding(&subject).is_some() && Self::native_beneath(&previous).is_none();
+                            let module_storage = (plain_module(&previous) || native_namespace) && plain_module(&next);
+                            let compatible = module_storage || (Self::own_entry(&previous, self.detail("module")).is_some()
                                 && Self::own_entry(&next, self.detail("module")).is_some()
                                 && Self::native_beneath(&previous) == Self::native_beneath(&next)
-                                && (alike || (!self.slots_named(&previous) && !self.slots_named(&next)));
+                                && (alike || (!self.slots_named(&previous) && !self.slots_named(&next))));
                             if !compatible { return Err("TypeError: __class__ assignment: object layout differs".to_owned().into()); }
                             // The worth a slot keeps stands under the key of
                             // the blueprint that declared it: move it over.
