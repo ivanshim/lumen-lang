@@ -22,12 +22,11 @@ def _to_file_args(args):
     while i < n:
         a = args[i]
         if a == '-c':
-            code = args[i + 1]
-            directory = tempfile.mkdtemp(prefix='script_helper_')
-            file = os.path.join(directory, 'code.py')
-            with open(file, 'w', encoding='utf-8') as out:
-                out.write(code)
-            i += 2
+            # The code goes to the interpreter as the code of -c, which
+            # runs it as a program named "<string>".
+            file = '-c'
+            rest = args[i + 1:]
+            break
         elif a == '-m' and i + 1 < n:
             file = '-m'
             rest = args[i + 1:]
@@ -68,6 +67,36 @@ def _interpreter_options(args):
                 options.append(argument)
             position += 1
     return options
+
+
+def _option_env(args):
+    # The -X options that mean something to the library are handed to the
+    # second interpreter as the environment variables that do the same.
+    env = {}
+    args = list(args)
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ('-c', '-m') or not a.startswith('-'):
+            break
+        if a == '-X' and i + 1 < len(args):
+            option = args[i + 1]
+            i += 2
+        elif a.startswith('-X') and len(a) > 2:
+            option = a[2:]
+            i += 1
+        else:
+            i += 1
+            continue
+        if option == 'dev':
+            env['PYTHONDEVMODE'] = '1'
+        elif option in ('utf8', 'utf8=1'):
+            env['PYTHONUTF8'] = '1'
+        elif option == 'utf8=0':
+            env['PYTHONUTF8'] = '0'
+        elif option == 'warn_default_encoding':
+            env['PYTHONWARNDEFAULTENCODING'] = '1'
+    return env
 
 
 def make_script(script_dir, script_basename, source, omit_suffix=False):
@@ -147,6 +176,7 @@ def _assert_python(expected_success, *args, **env_vars):
     file, rest = _to_file_args(args)
     cmd_line = [sys.executable] + _interpreter_options(args) + [file] + rest
     env = os.environ.copy()
+    env.update(_option_env(args))
     env.update(env_vars)
     p = subprocess.Popen(cmd_line, stdin=subprocess.PIPE,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -185,6 +215,7 @@ def spawn_python(*args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kw):
     file, rest = _to_file_args(args)
     cmd_line = [sys.executable] + _interpreter_options(args) + [file] + rest
     env = os.environ.copy()
+    env.update(_option_env(args))
     env['PYTHONPATH'] = os.pathsep.join(filter(None, sys.path))
     kw['env'] = env
     kw.setdefault('stdin', subprocess.PIPE)
@@ -197,6 +228,7 @@ def run_python_until_end(*args, **env_vars):
     file, rest = _to_file_args(args)
     cmd_line = [sys.executable] + _interpreter_options(args) + [file] + rest
     env = os.environ.copy()
+    env.update(_option_env(args))
     env.update(env_vars)
     p = subprocess.Popen(cmd_line, stdin=subprocess.PIPE,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,

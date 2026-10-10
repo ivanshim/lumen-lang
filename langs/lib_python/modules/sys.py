@@ -62,7 +62,16 @@ path_importer_cache = {}
 pycache_prefix = None
 _recursion_limit = 1000
 
-# Startup flags describe the library environment and requested development mode.
+def _environment(name):
+    import posix
+    value = posix.environ.get(name)
+    if value is None:
+        value = posix.environ.get(name.encode())
+    if isinstance(value, bytes):
+        value = value.decode()
+    return value
+
+# Stub: startup flags describe the fixed library environment.
 class _Flags:
     debug = 0
     inspect = 0
@@ -77,9 +86,19 @@ class _Flags:
     quiet = 0
     hash_randomization = 0
     isolated = 1
-    dev_mode = _host_environment('environ')[1].get(b'LUMEN_PYTHON_DEV_MODE') == b'1'
-    utf8_mode = 1
-    warn_default_encoding = 0
+    # The options that PYTHONDEVMODE, PYTHONUTF8 and
+    # PYTHONWARNDEFAULTENCODING (or -X dev, -X utf8, -X
+    # warn_default_encoding, which the helpers that start a second
+    # interpreter hand over as those) turn on or off, read when asked.
+    @property
+    def dev_mode(self):
+        return bool(_environment('PYTHONDEVMODE')) or _host_environment('environ')[1].get(b'LUMEN_PYTHON_DEV_MODE') == b'1'
+    @property
+    def utf8_mode(self):
+        return 0 if _environment('PYTHONUTF8') == '0' else 1
+    @property
+    def warn_default_encoding(self):
+        return 1 if _environment('PYTHONWARNDEFAULTENCODING') else 0
     safe_path = True
     int_max_str_digits = 4300
     gil = 1

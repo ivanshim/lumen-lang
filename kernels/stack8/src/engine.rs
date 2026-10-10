@@ -105,6 +105,19 @@ thread_local! {
 }
 
 
+/// Cancel and join a timer before its interpreter thread can disappear.
+struct HostAlarm {
+    deadline: std::time::Instant,
+    cancel: std::sync::mpsc::Sender<()>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+impl Drop for HostAlarm {
+    fn drop(&mut self) {
+        let _ = self.cancel.send(());
+        if let Some(worker) = self.worker.take() { let _ = worker.join(); }
+    }
+}
+
 pub struct Engine<'a> {
     native_protocol_positions: HashMap<String, usize, crate::value::FxBuildHasher>,
     contexts: crate::context::ContextStore,
@@ -339,6 +352,7 @@ pub struct Engine<'a> {
     /// one keeps its own way. Only a language taking signals up between
     /// statements ever writes here.
     signal_handlers: HashMap<i64, Value>,
+    alarm: Option<HostAlarm>,
     /// The member last found absent, and the object it was sought on,
     /// for the attribute fault that tells of it.
     absent_member: Option<(String, Value)>,
@@ -1669,7 +1683,7 @@ impl<'a> Engine<'a> {
             class_children: RefCell::new(HashMap::new()),
             read_already: RefCell::new(std::collections::HashSet::new()),
             carried: None,
-            signal_handlers: HashMap::new(),
+            signal_handlers: HashMap::new(), alarm: None,
             absent_member: None,
             absent_key: RefCell::new(None),
             complainer: RefCell::new(None),
@@ -2252,6 +2266,15 @@ impl<'a> Engine<'a> {
         self.collecting_cycles = true;
         let mut graph = self.cycle_graph(&[]);
         let mut group = graph.unreached();
+        // Nothing unreachable means nothing is said or cleared, so the
+        // heap is the same afterwards and the first walk still stands.
+        if group.is_empty() {
+            self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !graph.unowned(&function)));
+            drop(graph);
+            self.settle_departed();
+            self.collecting_cycles = false;
+            return 0;
+        }
         group.sort_by_key(|value| match value { Value::Object(object) => object.mark, _ => usize::MAX });
         for (callback, bearer) in crate::faint::clear_group(&group) {
             self.speak_ignoring(callback, vec![bearer], "callback");
@@ -4851,6 +4874,9 @@ impl<'a> Engine<'a> {
             if plan.async_context { self.perform(&Action::Awaited, 1)?; }
             let answer = self.drop_top()?;
             self.data.truncate(kept);
+            // The block is over: the place that held its manager lets go,
+            // so the manager may go with the block rather than the frame.
+            if !self.lang.syntax_members.is_empty() { self.forget_cell(cell, frame)?; }
             if matches!(&ending, Err(Fault::Thrown(_))) && self.special_truth(&answer)? {
                 self.data.truncate(depth);
                 return Ok(Passage::Along(plan.after));
@@ -5947,8 +5973,9 @@ impl<'a> Engine<'a> {
     }
 
     fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Rc<Instance>>) -> Option<Rc<Instance>> {
-        if self.lang.trace_fields.len() < 16 { return None; }
-        let keys = &self.lang.trace_fields;
+        let lang = self.lang;
+        if lang.trace_fields.len() < 16 { return None; }
+        let keys = &lang.trace_fields;
         let class = match &self.frame_class {
             Some(class) => class.clone(),
             None => {
@@ -6970,12 +6997,11 @@ impl<'a> Engine<'a> {
             if Self::map_cell(receiver).is_some_and(|cell| Self::map_size(&cell).1 != store.revision) { continue; }
             break (store, found, keyed);
         };
-        let pairs = store.to_vec();
         let mut budget = store.entry_budget;
         if let Some(index) = found {
-            let value = pairs[index].1.clone();
+            let value = store[index].1.clone();
             if operation == "pop" {
-                let mut remaining = pairs;
+                let mut remaining = store.to_vec();
                 remaining.remove(index);
                 let mut slots = store.slots_synced();
                 slots.remove(index);
@@ -6988,7 +7014,18 @@ impl<'a> Engine<'a> {
         }
         let value = args.get(1).cloned().unwrap_or(Value::Null);
         if operation == "setdefault" {
-            let mut grown = pairs;
+            // The new row goes into the map where it stands, so that the
+            // rows already there are not copied to make room for it.
+            if let Some(cell) = Self::map_cell(receiver) {
+                if crate::methods::reaches(&value, &cell, 0) || crate::methods::reaches(&keyed, &cell, 0) { return Err(self.lang.method_errors["unready"].clone()); }
+                drop(store);
+                let taken = std::mem::replace(&mut *cell.borrow_mut(), Value::Null);
+                let Value::Map(mut rows) = taken else { *cell.borrow_mut() = taken; return Err(self.lang.method_errors["unready"].clone()); };
+                store_insert_new(&mut rows, keyed, value.clone());
+                *cell.borrow_mut() = Value::Map(rows);
+                return Ok(value);
+            }
+            let mut grown = store.to_vec();
             grown.push((keyed, value.clone()));
             let (slots, span) = self.grown_slots(&grown, &store.slots_synced(), store.span, &mut budget);
             self.replace_map(receiver, grown, slots, span, budget)?;
@@ -17345,6 +17382,15 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
+    /// Preserve a handler's raised Python value across a native builtin boundary.
+    fn signal_checkpoint(&mut self) -> Res<()> {
+        match self.deliver_signals() {
+            Ok(()) => Ok(()),
+            Err(Fault::Note(words)) => Err(words),
+            Err(raised) => { self.carried = Some(raised); Err(self.special_fault()) }
+        }
+    }
+
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
         if !self.lang.compile_modes.is_empty() && matches!(builtin, Builtin::RunText | Builtin::Eval | Builtin::ReadyText | Builtin::Summon | Builtin::OuterNames | Builtin::NearNames) {
             return self.text_builtin(builtin, name, items);
@@ -18212,6 +18258,10 @@ impl<'a> Engine<'a> {
                 };
             }
         }
+        // What was read of the receiver above is let go before a map is
+        // written into, so that the map is held by its place alone and is
+        // written where it stands rather than copied.
+        drop(contents);
         if matches!(receiver.contents(), Value::Set(_)) {
             let method = match operation { "remove" => Some(Builtin::SetRemove), "pop" => Some(Builtin::SetPop), "clear" => Some(Builtin::SetClear), "copy" => Some(Builtin::SetCopy), "update" => Some(Builtin::SetUpdate), _ => None }
                 .or_else(|| self.lang.builtins.get(operation).copied().filter(|word| word.set_method()))
@@ -19193,7 +19243,23 @@ impl<'a> Engine<'a> {
     /// The bytes a value gives up to a row being lengthened: another
     /// row hands over its own, and anything that can be walked hands
     /// over one byte for each of its members.
+    /// The bytes an object that exports a buffer gives up, as the
+    /// buffer shows them whatever the items are; none for anything that
+    /// exports no buffer.
+    fn buffer_exported(&mut self, value: &Value) -> Res<Option<Vec<u8>>> {
+        let Value::Object(object) = value else { return Ok(None); };
+        if self.class_value(&object.class_now(), "__buffer__").is_none() { return Ok(None); }
+        let namespace = self.route_module("builtins")?;
+        let copier = self.member_of(namespace, "_buffer_bytes")?.ok_or_else(|| self.byte_fault("arguments"))?;
+        let copied = self.call_held(copier, vec![value.clone()])?;
+        match copied {
+            Value::Bytes(row, ..) => Ok(Some(row.borrow().clone())),
+            _ => Ok(None),
+        }
+    }
+
     fn byte_taken(&mut self, value: &Value) -> Res<Vec<u8>> {
+        if let Some(bytes) = self.buffer_exported(&value.contents())? { return Ok(bytes); }
         match &value.contents() {
             Value::Bytes(row, ..) => Ok(row.borrow().clone()),
             Value::Array(row) | Value::Tuple(row) => row.iter().map(|member| self.byte_index(member, false)).collect(),
@@ -19776,6 +19842,8 @@ impl<'a> Engine<'a> {
                     };
                     if !matches!(result, Value::Bytes(_, false, _)) { return Err(self.byte_fault("arguments")); }
                     result
+                } else if let Some(bytes) = self.buffer_exported(source)? {
+                    self.byte_make(bytes, false)
                 } else { Value::array(self.core_members(source)?) }
             } else {
                 if matches!(source, Value::Text(_) | Value::Codepoints(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.byte_fault("arguments")); }
@@ -19808,6 +19876,11 @@ impl<'a> Engine<'a> {
                         let mut row = Vec::new();
                         row.try_reserve_exact(count).map_err(|_| self.byte_fault("unready"))?;
                         row.resize(count, 0); row
+                    } else if task == 1 && matches!(value, Value::Object(_)) {
+                        match self.buffer_exported(value)? {
+                            Some(bytes) => bytes,
+                            None => self.byte_row(value, false)?,
+                        }
                     } else {
                         self.byte_row(value, task == 0)?
                     }
@@ -20586,6 +20659,12 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
+                if task == 1 && args.len() == 1 {
+                    if let Some(bytes) = self.buffer_exported(&args[0])? {
+                        let row = self.byte_make(bytes, false);
+                        return self.byte_call(task, &[row]);
+                    }
+                }
                 let gathered = matches!(task, 0 | 1) && args.len() == 1
                     && !matches!(args[0], Value::Bytes(..) | Value::Array(_) | Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_));
                 if gathered {
@@ -21158,7 +21237,17 @@ impl<'a> Engine<'a> {
             Builtin::Waited => {
                 arity(1)?;
                 let millionths = as_index(&args[0])?;
-                std::thread::sleep(std::time::Duration::from_micros(millionths as u64));
+                let mut requested = libc::timespec { tv_sec: (millionths / 1_000_000) as libc::time_t, tv_nsec: ((millionths % 1_000_000) * 1000) as libc::c_long };
+                self.signal_checkpoint()?;
+                loop {
+                    let mut rest = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+                    let code = unsafe { libc::nanosleep(&requested, &mut rest) };
+                    let error = std::io::Error::last_os_error();
+                    self.signal_checkpoint()?;
+                    if code == 0 { break; }
+                    if error.raw_os_error() != Some(libc::EINTR) { return Err(format!("OSError: {error}")); }
+                    requested = rest;
+                }
                 Value::Null
             }
             Builtin::NetAsk => {
@@ -21255,6 +21344,16 @@ impl<'a> Engine<'a> {
                     0 => {
                         arity(3)?;
                         let which = as_index(&args[1])? as i64;
+                        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+                        action.sa_sigaction = match args[2].contents() {
+                            Value::Small(0) => libc::SIG_DFL,
+                            Value::Small(1) => libc::SIG_IGN,
+                            _ => signal_arrived as *const () as usize,
+                        };
+                        unsafe { libc::sigemptyset(&mut action.sa_mask); }
+                        if unsafe { libc::sigaction(which as i32, &action, std::ptr::null_mut()) } != 0 {
+                            return Err(format!("OSError: {}", std::io::Error::last_os_error()));
+                        }
                         self.signal_handlers.insert(which, args[2].clone()).unwrap_or(Value::Null)
                     }
                     1 => {
@@ -21268,6 +21367,42 @@ impl<'a> Engine<'a> {
                         if (1..=64).contains(&which) {
                             SIGNALS_PENDING.fetch_or(1u64 << (which - 1), std::sync::atomic::Ordering::Relaxed);
                         }
+                        Value::Null
+                    }
+                    3 => {
+                        arity(2)?;
+                        let seconds = args[1].as_big()?.to_i32().ok_or("OverflowError: Python int too large to convert to C int")? as u32;
+                        let previous = self.alarm.take();
+                        let remaining = previous.as_ref().map_or(0, |timer| {
+                            let duration = timer.deadline.saturating_duration_since(std::time::Instant::now());
+                            duration.as_secs() + u64::from(duration.subsec_nanos() != 0)
+                        });
+                        drop(previous);
+                        if seconds != 0 {
+                            let delay = std::time::Duration::from_secs(u64::from(seconds));
+                            let deadline = std::time::Instant::now() + delay;
+                            let target = unsafe { libc::pthread_self() };
+                            let (cancel, wait) = std::sync::mpsc::channel();
+                            let worker = std::thread::Builder::new().stack_size(131072).spawn(move || {
+                                if matches!(wait.recv_timeout(delay), Err(std::sync::mpsc::RecvTimeoutError::Timeout)) {
+                                    unsafe { libc::pthread_kill(target, libc::SIGALRM); }
+                                }
+                            }).map_err(|error| format!("OSError: {error}"))?;
+                            self.alarm = Some(HostAlarm { deadline, cancel, worker: Some(worker) });
+                        }
+                        Value::Small(remaining as i64)
+                    }
+                    4 => {
+                        arity(1)?;
+                        unsafe {
+                            let mut blocked: libc::sigset_t = std::mem::zeroed();
+                            let mut before: libc::sigset_t = std::mem::zeroed();
+                            libc::sigfillset(&mut blocked);
+                            libc::pthread_sigmask(libc::SIG_BLOCK, &blocked, &mut before);
+                            if SIGNALS_PENDING.load(std::sync::atomic::Ordering::Relaxed) == 0 { libc::sigsuspend(&before); }
+                            libc::pthread_sigmask(libc::SIG_SETMASK, &before, std::ptr::null_mut());
+                        }
+                        self.signal_checkpoint()?;
                         Value::Null
                     }
                     _ => return Err(format!("{name}() knows no step {step}")),
@@ -26474,13 +26609,15 @@ impl Engine<'_> {
             return Self::public_name(self.registry.idents.get(far)?).then_some(Kept::Outer);
         }
         let ident = self.registry.idents.get(far)?;
-        if let Some(rest) = ident.strip_prefix("\0module:") {
-            let path = rest.splitn(3, ':').nth(1)?;
-            if let Some(at) = self.module_books.iter().position(|(name, _)| name == path) { return Some(Kept::Module(at)); }
+        if !self.module_books.is_empty() {
+            if let Some(rest) = ident.strip_prefix("\0module:") {
+                let path = rest.splitn(3, ':').nth(1)?;
+                if let Some(at) = self.module_books.iter().position(|(name, _)| name == path) { return Some(Kept::Module(at)); }
+            }
         }
         if self.outer_book.is_none() && self.text_books.is_empty() { return None; }
-        let name = self.registry.idents.get(far)?;
-        if !Self::public_name(name.rsplit(':').next().unwrap_or(name)) { return None; }
+        let name = ident;
+        if !Self::public_name(name.rfind(':').map_or(name.as_str(), |at| &name[at + 1..])) { return None; }
         if let Some(at) = self.text_books.iter().position(|book| far >= book.from && far < book.upto) { return Some(Kept::Text(at)); }
         if self.outer_book.is_some() && Self::public_name(name) {
             if self.lang.bind_names && !self.main_started && !self.lang.module_doc.contains(name) { return None; }
@@ -26952,6 +27089,17 @@ impl Engine<'_> {
     /// changed the module reads the change; before the module is read
     /// in, the kernel's own dictionary answers.
     fn builtin_from_module(&mut self, name: &str) -> Res<Option<Value>> {
+        // A name the module simply holds is read off its fields; building
+        // the whole namespace dictionary for one lookup made every
+        // import statement cost a copy of all the builtins.
+        if let Some(Value::Object(module)) = self.modules.get("builtins") {
+            let fields = module.fields.borrow();
+            if let Some((_, held)) = fields.iter().find(|(key, _)| key == name) {
+                if !name.starts_with(['\0', '#']) && !matches!(held.contents(), Value::Blank) {
+                    return Ok(Some(held.contents()));
+                }
+            }
+        }
         let dictionary = match self.modules.get("builtins").cloned() {
             Some(module) => {
                 let namespace = self.class_word("namespace").to_string();

@@ -38,11 +38,13 @@ def _path(path):
 
 
 def _fd(value):
+    if type(value) is int:
+        return value
     return _operator.index(value)
 
 
 def _cint(value):
-    number = _operator.index(value)
+    number = value if type(value) is int else _operator.index(value)
     if number < -2147483648 or number > 2147483647:
         raise OverflowError('Python int too large to convert to C int')
     return number
@@ -206,9 +208,12 @@ def times():
 
 
 def _stat(data):
-    nanos = tuple(data[i] * 1000000000 + data[i + 3] for i in (7, 8, 9))
-    times = tuple(data[i] + data[i + 3] / 1000000000 for i in (7, 8, 9))
-    return stat_result(data[:10] + times + nanos + data[13:16])
+    # All nineteen fields are known here, so the sequence checks of
+    # stat_result.__new__ have nothing left to decide.
+    second = 1000000000
+    nanos = (data[7] * second + data[10], data[8] * second + data[11], data[9] * second + data[12])
+    times = (data[7] + data[10] / second, data[8] + data[11] / second, data[9] + data[12] / second)
+    return _host('structseq_new', stat_result, data[:10], times + nanos + data[13:16])
 
 
 def stat(path, *, dir_fd=None, follow_symlinks=True):
@@ -614,6 +619,14 @@ def get_inheritable(fd, /):
 
 def set_inheritable(fd, inheritable, /):
     _call('set_inheritable', _cint(fd), bool(_cint(inheritable)))
+
+
+def get_blocking(fd, /):
+    return _call('get_blocking', _cint(fd))
+
+
+def set_blocking(fd, blocking, /):
+    _call('set_blocking', _cint(fd), bool(_cint(blocking)))
 
 
 def pipe():
