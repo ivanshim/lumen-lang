@@ -1392,7 +1392,7 @@ impl<'a> Machine<'a> {
         // A kind drawn with several parents stands under every one of
         // them, the whole of its gathered line holding each.
         second.map_or(false, |other| Self::fault_descends(other, ancestor))
-            || kind.ancestry().iter().any(|parent| Rc::ptr_eq(parent, ancestor))
+            || kind.ancestry.borrow().iter().any(|parent| Rc::ptr_eq(parent, ancestor))
             || kind.under().as_ref().map_or(false, |parent| Self::fault_descends(parent, ancestor))
     }
 
@@ -1876,7 +1876,7 @@ impl<'a> Machine<'a> {
                     let made = self.apply_class_member(new, vec![Value::Blueprint(kind.clone())])?;
                     if let Value::Thing(object) = made.settled() {
                         if self.is_fault_kind(&object.blueprint()) {
-                            let belongs = Rc::ptr_eq(&object.blueprint(), &kind) || object.blueprint().ancestry().iter().any(|base| Rc::ptr_eq(base, &kind));
+                            let belongs = Rc::ptr_eq(&object.blueprint(), &kind) || object.blueprint().ancestry.borrow().iter().any(|base| Rc::ptr_eq(base, &kind));
                             if belongs {
                                 if let Some(init) = self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|word| self.inherited_entry(&object.blueprint(), word)) {
                                     let owner = object.blueprint().clone();
@@ -16035,7 +16035,7 @@ impl<'a> Machine<'a> {
     /// copied before the class method fills it.
     fn frozen_beneath(value: &Value) -> bool {
         let Value::Thing(t) = value else { return false };
-        t.blueprint().name == "frozendict" || t.blueprint().ancestry().iter().any(|base| base.name == "frozendict")
+        t.blueprint().name == "frozendict" || t.blueprint().ancestry.borrow().iter().any(|base| base.name == "frozendict")
     }
 
     /// A frozendict's rows as a fresh map that may be written.
@@ -17605,7 +17605,7 @@ impl<'a> Machine<'a> {
                     let suppressed=match self.got_away.as_ref() {
                         Some(Escape::Thrown(Value::Thing(raised)))=>{
                             let origin=raised.blueprint();
-                            wanted.is_some_and(|name|origin.name==name || origin.ancestry().iter().any(|parent|parent.name==name))
+                            wanted.is_some_and(|name|origin.name==name || origin.ancestry.borrow().iter().any(|parent|parent.name==name))
                         },
                         Some(Escape::Error(note))=>wanted==note.split(':').next(),
                         None=>wanted==words.split(':').next(),
@@ -17624,7 +17624,7 @@ impl<'a> Machine<'a> {
                     Err(words)=>{
                         let kind=self.rules.words_ext_builtin_exceptions.get(8);
                         let ignored=match self.got_away.as_ref() {
-                            Some(Escape::Thrown(Value::Thing(error)))=>kind.is_some_and(|name|error.blueprint().name==*name || error.blueprint().ancestry().iter().any(|ancestor|ancestor.name==*name)),
+                            Some(Escape::Thrown(Value::Thing(error)))=>kind.is_some_and(|name|error.blueprint().name==*name || error.blueprint().ancestry.borrow().iter().any(|ancestor|ancestor.name==*name)),
                             _=>kind.map(String::as_str)==words.split(':').next(),
                         };
                         if ignored {self.got_away=None;continue;}
@@ -18890,7 +18890,7 @@ impl<'a> Machine<'a> {
             },
             (Prim::NextItem, [one]) => self.ask_special(one, 16, &[])?.ok_or_else(|| self.bad_answer())?,
             (Prim::Belongs, [one, Value::Blueprint(class)]) => {
-                let named = matches!(one, Value::Thing(t) if t.blueprint().goes_by(&class.name, false) || t.blueprint().ancestry().iter().any(|parent| parent.name == class.name));
+                let named = matches!(one, Value::Thing(t) if t.blueprint().goes_by(&class.name, false) || t.blueprint().ancestry.borrow().iter().any(|parent| parent.name == class.name));
                 // The run's own module objects answer to the native module kind.
                 let module = Self::native_beneath(class).as_deref() == Some("module") && self.namespace_holding(one).is_some();
                 Value::Flag(named || module)
@@ -28335,7 +28335,7 @@ impl<'a> Machine<'a> {
         let requested = asked.as_ref().map(Value::settled).or(implicit);
         let custom = requested.as_ref().is_some_and(|value| match value {
             Value::Intrinsic(Prim::SortOf, _) => false,
-            Value::Blueprint(class) => !self.builds_classes(class) && !class.ancestry().iter().any(|base| self.builds_classes(base)),
+            Value::Blueprint(class) => !self.builds_classes(class) && !class.ancestry.borrow().iter().any(|base| self.builds_classes(base)),
             _ => true,
         });
         let parents = if custom { Vec::new() } else { plain.iter().map(|value| self.parent_from_type(value)).collect::<Result<Vec<_>, _>>()? };
@@ -28346,9 +28346,9 @@ impl<'a> Machine<'a> {
                 let parent_builder = if let Value::Blueprint(plan) = kind.settled() { plan }
                     else if let Value::Intrinsic(_, spelling) = kind.settled() { self.native_kind(&spelling) }
                     else { self.parent_from_type(&kind)? };
-                let already_covers = Rc::ptr_eq(&choice, &parent_builder) || choice.ancestry().iter().any(|held| Rc::ptr_eq(held, &parent_builder));
+                let already_covers = Rc::ptr_eq(&choice, &parent_builder) || choice.ancestry.borrow().iter().any(|held| Rc::ptr_eq(held, &parent_builder));
                 if !already_covers {
-                    if parent_builder.ancestry().iter().any(|held| Rc::ptr_eq(held, &choice)) { choice = parent_builder; }
+                    if parent_builder.ancestry.borrow().iter().any(|held| Rc::ptr_eq(held, &choice)) { choice = parent_builder; }
                     else { return Err("TypeError: metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases".to_owned().into()); }
                 }
             }
@@ -28916,7 +28916,7 @@ impl<'a> Machine<'a> {
     fn escape_names(&self, escape: &Escape, kind: &str) -> bool {
         match escape {
             Escape::Error(words) => words.split(':').next() == Some(kind),
-            Escape::Thrown(Value::Thing(t)) => t.blueprint().name == kind || t.blueprint().ancestry().iter().any(|b| b.name == kind),
+            Escape::Thrown(Value::Thing(t)) => t.blueprint().name == kind || t.blueprint().ancestry.borrow().iter().any(|b| b.name == kind),
             _ => false,
         }
     }
@@ -31367,7 +31367,7 @@ impl Machine<'_> {
                 // language files under `answers`.
                 Ok(matches!(item, Value::Thing(t) if {
                     let held = &t.blueprint();
-                    held.goes_by(&class.name, false) || held.ancestry().iter().any(|p| p.goes_by(&class.name, false))
+                    held.goes_by(&class.name, false) || held.ancestry.borrow().iter().any(|p| p.goes_by(&class.name, false))
                 }))
             }
             Value::KindOf(Kind::Nothing) => Ok(matches!(item, Value::Nil)),

@@ -2276,14 +2276,14 @@ impl Blueprint {
     pub fn program(&self, name: &str) -> Option<Rc<Routine>> {
         match self.methods.iter().find(|(n, _)| n == name) {
             Some((_, p)) => Some(p.clone()),
-            None => self.under().as_ref().and_then(|u| u.program(name)),
+            None => self.under.borrow().as_ref().and_then(|u| u.program(name)),
         }
     }
 
     pub fn constant(&self, name: &str) -> Option<Value> {
         match self.constants.iter().find(|(n, _)| n == name) {
             Some((_, v)) => Some(v.clone()),
-            None => self.under().as_ref().and_then(|u| u.constant(name)),
+            None => self.under.borrow().as_ref().and_then(|u| u.constant(name)),
         }
     }
 
@@ -2292,7 +2292,7 @@ impl Blueprint {
         if self.shared.named(name, self.type_names.borrow().is_some()).is_some() {
             return Some(self.clone());
         }
-        self.under().as_ref().and_then(|u| u.keeper(name))
+        self.under.borrow().as_ref().and_then(|u| u.keeper(name))
     }
 
     pub fn built_on(&self, name: &str) -> bool {
@@ -2307,7 +2307,7 @@ impl Blueprint {
             false => self.name == name,
         };
         it
-            || self.under().as_ref().map_or(false, |u| u.goes_by(name, either_way))
+            || self.under.borrow().as_ref().map_or(false, |u| u.goes_by(name, either_way))
             || self.answers.iter().any(|a| a.goes_by(name, either_way))
     }
 
@@ -2316,7 +2316,7 @@ impl Blueprint {
     pub fn reach_of(&self, name: &str) -> Option<(Reach, String)> {
         match self.fields.iter().position(|(n, _)| n == name) {
             Some(at) => Some((self.reaches.get(at).copied().unwrap_or(Reach::Everywhere), self.name.clone())),
-            None => self.under().as_ref().and_then(|u| u.reach_of(name)),
+            None => self.under.borrow().as_ref().and_then(|u| u.reach_of(name)),
         }
     }
 

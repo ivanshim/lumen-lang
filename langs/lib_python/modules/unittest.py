@@ -4,6 +4,7 @@ _host_class_methods = __class_methods
 _host_clock = __clock
 _host_load_module = __load_module
 _host_program_namespace = __program_namespace
+_traceback_module = None
 
 # Assertions and the test lifecycle live beside the modules they serve.
 class SkipTest(Exception):
@@ -29,6 +30,11 @@ class _Raises:
     def __exit__(self, kind, value, traceback):
         if kind is None:
             raise AssertionError(_class_name(self.expected) + ' not raised')
+        if traceback is not None:
+            global _traceback_module
+            if _traceback_module is None:
+                _traceback_module = _host_load_module('traceback')
+            _traceback_module.clear_frames(traceback)
         if not isinstance(value, self.expected):
             return False
         self.exception = value.with_traceback(None)

@@ -917,8 +917,8 @@ impl<'a> Machine<'a> {
             seen.push(address);
             if class.fields.iter().any(|(key, held)| key == "\0also-under"
                 && matches!(held, Value::Blueprint(other) if visit(other, target, seen))) { return true; }
-            if class.parents().iter().any(|base| visit(base, target, seen)) { return true; }
-            class.under().as_ref().is_some_and(|base| visit(base, target, seen))
+            if class.parents.borrow().iter().any(|base| visit(base, target, seen)) { return true; }
+            class.under.borrow().as_ref().is_some_and(|base| visit(base, target, seen))
         }
         if Rc::ptr_eq(class, target) || class.ancestry.borrow().iter().any(|ancestor| Rc::ptr_eq(ancestor, target)) { return true; }
         visit(class, target, &mut Vec::new())

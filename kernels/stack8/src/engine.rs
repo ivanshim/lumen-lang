@@ -996,7 +996,7 @@ impl<'a> Engine<'a> {
             }
             // A class written with several bases is beneath each of
             // them, the whole of its gathered line holding every one.
-            if current.lineage().iter().any(|b| Rc::ptr_eq(b, wanted)) { return true; }
+            if current.lineage.borrow().iter().any(|b| Rc::ptr_eq(b, wanted)) { return true; }
             class = current.base();
         }
         false
@@ -1550,7 +1550,7 @@ impl<'a> Engine<'a> {
                     let made = self.class_apply(new, vec![Value::Class(class.clone())])?;
                     if let Value::Object(object) = &made {
                         if self.exception_class(&object.class_now()) {
-                            let belongs = Rc::ptr_eq(&object.class_now(), &class) || object.class_now().lineage().iter().any(|base| Rc::ptr_eq(base, &class));
+                            let belongs = Rc::ptr_eq(&object.class_now(), &class) || object.class_now().lineage.borrow().iter().any(|base| Rc::ptr_eq(base, &class));
                             if belongs {
                                 if let Some(init) = self.lang.constructor.clone().and_then(|key| self.class_value(&object.class_now(), &key)) {
                                     let class = object.class_now().clone();
@@ -7461,7 +7461,7 @@ impl<'a> Engine<'a> {
     /// into and is copied before the class method fills it.
     fn frozen_beneath(value: &Value) -> bool {
         let Value::Object(o) = value else { return false };
-        o.class_now().name == "frozendict" || o.class_now().lineage().iter().any(|base| base.name == "frozendict")
+        o.class_now().name == "frozendict" || o.class_now().lineage.borrow().iter().any(|base| base.name == "frozendict")
     }
 
     /// A frozendict's rows as a fresh map that may be written.
@@ -11705,7 +11705,7 @@ impl<'a> Engine<'a> {
         match self.carried.as_ref() {
             Some(Fault::Thrown(Value::Object(instance)))=>{
                 let class=instance.class_now();
-                class.name==*kind || class.lineage().iter().any(|base|base.name==*kind)
+                class.name==*kind || class.lineage.borrow().iter().any(|base|base.name==*kind)
             },
             Some(Fault::Note(note))=>note.split(':').next()==Some(kind.as_str()),
             None=>message.split(':').next()==Some(kind.as_str()),
@@ -25717,7 +25717,7 @@ impl Engine<'_> {
                     // The run's own module objects answer to the native module kind.
                     if kind == "module" && Self::own_kind(class).as_deref() == Some("module") && self.module_holding(value).is_some() { return Ok(true); }
                     return Ok(match value {
-                        Value::Object(o) => Rc::ptr_eq(&o.class_now(), class) || o.class_now().lineage().iter().any(|c| Rc::ptr_eq(c, class)),
+                        Value::Object(o) => Rc::ptr_eq(&o.class_now(), class) || o.class_now().lineage.borrow().iter().any(|c| Rc::ptr_eq(c, class)),
                         _ => Self::own_kind(class).is_some() && value.core_kind() == kind,
                     });
                 }
@@ -25729,7 +25729,7 @@ impl Engine<'_> {
             // `answers`.
             return Ok(matches!(value, Value::Object(o) if {
                 let held = &o.class_now();
-                held.named(&class.name, false) || held.lineage().iter().any(|b| b.named(&class.name, false))
+                held.named(&class.name, false) || held.lineage.borrow().iter().any(|b| b.named(&class.name, false))
             }));
         }
         // A thing of a class standing on a builtin kind is of that
@@ -27681,7 +27681,7 @@ impl Engine<'_> {
         let requested = asked.as_ref().map(Value::contents).or(implicit);
         let custom = requested.as_ref().is_some_and(|value| match value {
             Value::Native(Builtin::SortOf, _) => false,
-            Value::Class(class) => !self.is_metaclass_root(class) && !class.lineage().iter().any(|base| self.is_metaclass_root(base)),
+            Value::Class(class) => !self.is_metaclass_root(class) && !class.lineage.borrow().iter().any(|base| self.is_metaclass_root(base)),
             _ => true,
         });
         let parents = if custom { Vec::new() } else { plain.iter().map(|base| self.type_base(base)).collect::<Flow<Vec<_>>>()? };
@@ -27695,8 +27695,8 @@ impl Engine<'_> {
                             Value::Native(_, word) => self.kind_class(&word),
                             _ => self.type_base(&actual)?,
                         };
-                        if Rc::ptr_eq(&candidate, &other) || candidate.lineage().iter().any(|ancestor| Rc::ptr_eq(ancestor, &other)) { continue; }
-                        if other.lineage().iter().any(|ancestor| Rc::ptr_eq(ancestor, &candidate)) { candidate = other; }
+                        if Rc::ptr_eq(&candidate, &other) || candidate.lineage.borrow().iter().any(|ancestor| Rc::ptr_eq(ancestor, &other)) { continue; }
+                        if other.lineage.borrow().iter().any(|ancestor| Rc::ptr_eq(ancestor, &candidate)) { candidate = other; }
                         else { return Err("TypeError: metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases".into()); }
                     }
                     Some(Value::Class(candidate))

@@ -30,22 +30,22 @@ def _index(value):
     return operator.index(value)
 
 def _size(value):
-    if type(value) is int and -sys.maxsize - 1 <= value <= sys.maxsize:
+    if type(value) is int and _MINSIZE <= value <= _MAXSIZE:
         return value
     if value is None:
         return -1
     if not hasattr(type(value), '__index__'):
         raise TypeError("argument should be integer or None, not '" + type(value).__name__ + "'")
     result = _index(value)
-    if result > sys.maxsize or result < -sys.maxsize - 1:
+    if result > _MAXSIZE or result < _MINSIZE:
         raise OverflowError("cannot fit '" + type(value).__name__ + "' into an index-sized integer")
     return result
 
 def _ssize(value):
-    if type(value) is int and -sys.maxsize - 1 <= value <= sys.maxsize:
+    if type(value) is int and _MINSIZE <= value <= _MAXSIZE:
         return value
     value = _index(value)
-    if value > sys.maxsize or value < -sys.maxsize - 1:
+    if value > _MAXSIZE or value < _MINSIZE:
         raise OverflowError('Python int too large to convert to C ssize_t')
     return value
 
@@ -1169,7 +1169,7 @@ class _CheckedRaw:
             return None
         try:
             count = _index(count)
-            if count > sys.maxsize or count < -sys.maxsize - 1:
+            if count > _MAXSIZE or count < _MINSIZE:
                 raise ValueError('cannot fit int into an index-sized integer')
         except Exception as error:
             raise OSError('raw readinto() failed') from error

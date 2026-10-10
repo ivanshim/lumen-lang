@@ -2391,7 +2391,7 @@ impl Class {
     pub fn method(&self, name: &str) -> Option<Rc<Routine>> {
         match self.methods.iter().find(|(n, _)| n == name) {
             Some((_, p)) => Some(p.clone()),
-            None => self.base().as_ref().and_then(|b| b.method(name)),
+            None => self.base.borrow().as_ref().and_then(|b| b.method(name)),
         }
     }
 
@@ -2399,7 +2399,7 @@ impl Class {
     pub fn constant(&self, name: &str) -> Option<Value> {
         match self.constants.iter().find(|(n, _)| n == name) {
             Some((_, v)) => Some(v.clone()),
-            None => self.base().as_ref().and_then(|b| b.constant(name)),
+            None => self.base.borrow().as_ref().and_then(|b| b.constant(name)),
         }
     }
 
@@ -2408,7 +2408,7 @@ impl Class {
         if self.shared.read(name, self.python_names.borrow().is_some()).is_some() {
             return Some(self.clone());
         }
-        self.base().as_ref().and_then(|b| b.holder(name))
+        self.base.borrow().as_ref().and_then(|b| b.holder(name))
     }
 
     /// Whether this class is that one, stands on it, or answers to it.
@@ -2419,7 +2419,7 @@ impl Class {
             false => self.name == name,
         };
         same
-            || self.base().as_ref().map_or(false, |b| b.named(name, loosely))
+            || self.base.borrow().as_ref().map_or(false, |b| b.named(name, loosely))
             || self.answers.iter().any(|a| a.named(name, loosely))
     }
 
@@ -2434,7 +2434,7 @@ impl Class {
     pub fn reach_of(&self, name: &str) -> Option<(Reach, String)> {
         match self.fields.iter().position(|(n, _)| n == name) {
             Some(at) => Some((self.reaches.get(at).copied().unwrap_or(Reach::Open), self.name.clone())),
-            None => self.base().as_ref().and_then(|b| b.reach_of(name)),
+            None => self.base.borrow().as_ref().and_then(|b| b.reach_of(name)),
         }
     }
 

@@ -3485,6 +3485,10 @@ impl<'a> Compiler<'a> {
                     self.write(&leaving);
                     self.read(&manager);
                     self.act(Action::ContextEnter, 1);
+                    if lang.bind_names {
+                        let old_manager = self.cell_to_write(&manager);
+                        self.put(Instr::Forget(old_manager));
+                    }
                     leaving
                 };
                 let cell = self.cell_to_write(&watched);

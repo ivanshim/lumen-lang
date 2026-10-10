@@ -618,7 +618,7 @@ class Signature:
                       eval_str=False, annotation_format=1):
         if follow_wrapped:
             seen = set()
-            while hasattr(obj, '__wrapped__'):
+            while not isinstance(obj, type) and hasattr(obj, '__wrapped__'):
                 if id(obj) in seen:
                     raise ValueError('wrapper loop when unwrapping ' + repr(obj))
                 seen.add(id(obj))

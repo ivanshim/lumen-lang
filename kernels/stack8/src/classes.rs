@@ -797,8 +797,8 @@ impl<'a> Engine<'a> {
             seen.push(address);
             if class.fields.iter().any(|(key, held)| key == "\0also-beneath"
                 && matches!(held, Value::Class(other) if visit(other, target, seen))) { return true; }
-            if class.direct().iter().any(|base| visit(base, target, seen)) { return true; }
-            class.base().as_ref().is_some_and(|base| visit(base, target, seen))
+            if class.direct.borrow().iter().any(|base| visit(base, target, seen)) { return true; }
+            class.base.borrow().as_ref().is_some_and(|base| visit(base, target, seen))
         }
         if Rc::ptr_eq(class, target) || class.lineage.borrow().iter().any(|ancestor| Rc::ptr_eq(ancestor, target)) { return true; }
         visit(class, target, &mut Vec::new())
