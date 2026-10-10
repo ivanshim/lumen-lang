@@ -31,7 +31,9 @@ import sys as _sys
 _sys.meta_path = getattr(_sys, "meta_path", [_bootstrap.BuiltinImporter, _bootstrap.FrozenImporter])
 _sys.path_hooks = getattr(_sys, "path_hooks", [])
 _sys.path_importer_cache = getattr(_sys, "path_importer_cache", {})
-_bootstrap_external._install(_bootstrap)
+if not getattr(_sys, '_native_importers_installed', False):
+    _bootstrap_external._install(_bootstrap)
+    _sys._native_importers_installed = True
 
 # Describe native source imports with the same file-loader metadata.
 def _native_spec(module):
