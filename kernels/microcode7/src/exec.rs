@@ -27744,8 +27744,9 @@ impl<'a> Machine<'a> {
                     full_name = if name.is_empty() { anchor.to_owned() } else { format!("{anchor}.{name}") };
                 }
                 let namespace = self.load_namespace(&full_name)?;
-                if let Some(requests) = v.get(3).filter(|requests| requests.is_true()) {
-                    self.load_fromlist(&namespace, requests, false)?;
+                let bring_children = match v.get(3) { None => false, Some(fromlist) => self.object_truth(fromlist)? };
+                if bring_children {
+                    self.load_fromlist(&namespace, &v[3], false)?;
                     return Ok(namespace);
                 }
                 let result_name = if level == 0 { full_name.split('.').next().unwrap_or(&full_name).to_owned() }

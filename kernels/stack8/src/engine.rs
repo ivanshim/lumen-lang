@@ -27306,7 +27306,8 @@ impl Engine<'_> {
                 }
                 let loaded = (|| -> Flow<Value> {
                     let module = self.import_module(&absolute)?;
-                    if args.get(3).is_some_and(Value::is_true) {
+                    let requested = match args.get(3) { Some(names) => self.special_truth(names)?, None => false };
+                    if requested {
                         self.import_fromlist(&module, &args[3], false)?;
                         return Ok(module);
                     }
