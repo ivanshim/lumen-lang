@@ -1157,6 +1157,10 @@ impl<'a> Machine<'a> {
             }
         }
         let key=self.slot_key(thing,parts)?;
+        match parts.get(2) {
+            Some(Value::Wrapped(32, backing)) => return self.slot_value(thing, backing),
+            _ => (),
+        }
         let Value::Thing(t)=thing else{return Err(self.class_unready())};
         if matches!(parts.get(2), Some(Value::Small(-2))) {
             let saved = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").map(|entry| entry.1.clone());
@@ -1174,6 +1178,9 @@ impl<'a> Machine<'a> {
             return Err(self.detail("property.readonly").to_owned().into());
         }
         let key=self.slot_key(thing,parts)?;
+        if let Some(Value::Wrapped(32, _)) = parts.get(2) {
+            return Err(String::from("AttributeError: readonly attribute").into());
+        }
         let Value::Thing(t)=thing else{return Err(self.class_unready())};
         if matches!(parts.get(2), Some(Value::Small(-2))) { return self.install_namespace(t, replacement); }
 
@@ -6571,6 +6578,17 @@ impl<'a> Machine<'a> {
         self.table.prims.iter().find(|(_,p)|**p==target).map(|(w,_)|w.to_string()).unwrap_or_default()
     }
     pub(super) fn work_on_class(&mut self,op:u8,mut values:Vec<Value>)->Res {
+        if op == 29 && self.table.has_any("ext.builtin.readonly_member") {
+            if values.len() == 2 {
+                if let (Value::Text(spelling), Value::Wrapped(32, layout)) = (&values[0], &values[1]) {
+                    if Self::valid_slot_name(spelling) && layout.len() == 2 {
+                        let alias = vec![values[0].clone(), layout[1].clone(), values[1].clone()];
+                        return Ok(Self::wrap(32, alias));
+                    }
+                }
+            }
+            return Err(String::from("TypeError: read-only member requires a name and a native slot").into());
+        }
         if op == 27 && self.table.has_any("ext.builtin.partial_repr") {
             if values.len() != 2 { return Err(self.class_unready()); }
             let receiver = values[0].clone();

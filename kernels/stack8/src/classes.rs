@@ -1094,6 +1094,9 @@ impl<'a> Engine<'a> {
                 .map_or_else(|| Value::Fields(module.clone()), |(_, book)| book.clone()));
         }
         let place = self.slot_place(thing, parts)?;
+        if let Some(Value::Adapter(source)) = parts.get(2) {
+            return self.slot_read(thing, &source.1);
+        }
         let Value::Object(o) = thing else { return Err(self.class_refusal()) };
         if parts.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") {
             return Ok(o.fields.borrow().iter().find(|(key, _)| key == "\0namespace")
@@ -1109,6 +1112,9 @@ impl<'a> Engine<'a> {
             return Err(self.class_word("property.readonly").to_string().into());
         }
         let place = self.slot_place(thing, parts)?;
+        if matches!(parts.get(2), Some(Value::Adapter(_))) {
+            return Err("AttributeError: readonly attribute".into());
+        }
         let Value::Object(o) = thing else { return Err(self.class_refusal()) };
         if parts.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") {
             return self.replace_instance_namespace(o, value);
@@ -6277,6 +6283,15 @@ impl<'a> Engine<'a> {
         self.lang.builtins.iter().find(|(_,b)|**b==target).map(|(n,_)|n.clone()).unwrap_or_default()
     }
     pub(super) fn class_work(&mut self,which:u8,mut args:Vec<Value>)->Flow<Value> {
+        if which == 29 && !self.lang.readonly_member.is_empty() {
+            let [Value::Text(name), Value::Adapter(source)] = args.as_slice() else {
+                return Err("TypeError: read-only member requires a name and a native slot".into());
+            };
+            if !Self::valid_slot_name(name) || source.0 != 16 || source.1.len() != 2 {
+                return Err("TypeError: read-only member requires a name and a native slot".into());
+            }
+            return Ok(Self::adapter(16, vec![args[0].clone(), source.1[1].clone(), args[1].clone()]));
+        }
         if which == 27 && !self.lang.partial_repr.is_empty() {
             let [subject, Value::Class(base)] = args.as_slice() else {
                 return Err("TypeError: partial representation requires an instance and its base type".into());

@@ -39,7 +39,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_pickle", include_str!("_pickle.py"), "_pickle.py"),
     ("_picklebuffer", include_str!("_picklebuffer.py"), "_picklebuffer.py"),
     ("_py_abc", include_str!("_py_abc.py"), "_py_abc.py"),
-    ("_pydatetime", include_str!("_pydatetime.py"), "_pydatetime.py"),
+    ("_pydatetime", concat!(include_str!("_pydatetime.py"), "\n", include_str!("runtime_adapters/_pydatetime.py")), "_pydatetime.py"),
     ("_pydecimal", include_str!("_pydecimal.py"), "_pydecimal.py"),
     ("_pyio", include_str!("_pyio.py"), "_pyio.py"),
     ("_pylong", include_str!("_pylong.py"), "_pylong.py"),
