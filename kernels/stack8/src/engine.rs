@@ -15328,7 +15328,9 @@ impl<'a> Engine<'a> {
     }
 
     fn dyadic(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
-        if matches!(op, Action::Eq | Action::Ne) && !self.lang.syntax_warning_words.is_empty()
+        if matches!(op, Action::Eq | Action::Ne)
+            && matches!((a, b), (Value::Bytes(..), _) | (_, Value::Bytes(..)))
+            && !self.lang.syntax_warning_words.is_empty()
             && std::env::var("LUMEN_PYTHON_BYTES_WARNING").ok().and_then(|text| text.parse::<usize>().ok()).unwrap_or(0) != 0 {
             let counterpart = match (a, b) {
                 (Value::Bytes(_, mutable, _), other) | (other, Value::Bytes(_, mutable, _)) => Some((other, *mutable)),

@@ -19728,7 +19728,9 @@ impl<'a> Machine<'a> {
         if let (Prim::Hashed, [Value::Window(backing, 'm')]) = (op, v) {
             return self.prim(Prim::Hashed, name, &[backing.as_ref().clone()]);
         }
-        if matches!(op, Prim::Eq | Prim::Ne) && self.table.strings("ext.system.syntax_warnings").len() == 2
+        if matches!(op, Prim::Eq | Prim::Ne)
+            && matches!(v, [Value::Octets { .. }, _] | [_, Value::Octets { .. }])
+            && self.table.strings("ext.system.syntax_warnings").len() == 2
             && std::env::var("LUMEN_PYTHON_BYTES_WARNING").ok().and_then(|number| number.parse::<u32>().ok()).is_some_and(|level| level > 0) {
             if let [one, two] = v {
                 let other = match (one, two) {
