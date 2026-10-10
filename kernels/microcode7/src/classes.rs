@@ -2060,20 +2060,22 @@ impl<'a> Machine<'a> {
                     44 => {
                         if values.len() != 1 { return Err(String::from("TypeError: __annotate__() requires one argument").into()); }
                         let format = values[0].settled();
-                        let symbolic = matches!(format, Value::Small(3));
-                        let rejected = self.prim(Prim::Gt, "", &[format, Value::Small(3)])?;
+                        let rejected = self.prim(Prim::Gt, "", &[format.clone(), Value::Small(2)])?;
                         if rejected.is_true() { return Err(String::from("NotImplementedError: ").into()); }
                         // Carry the isolated scope into each class evaluator.
+                        let reading = self.armed_names.take();
                         match &kept[0] {
-                            Value::Blueprint(owner) => self.blueprint_annotation_values(owner, symbolic),
+                            Value::Blueprint(owner) => self.resolve_blueprint_annotations_by(owner, reading),
                             Value::Vector(rows) => {
                                 let mut annotations = Vec::new();
                                 for index in (0..rows.len()).step_by(2) {
                                     let Some(source) = rows.get(index + 1) else { break; };
                                     let source = source.settled();
                                     if matches!(source, Value::Unset) { continue; }
-                                    let found = self.annotation_entry(source, symbolic, None)?;
-                                    annotations.push((rows[index].clone(), found));
+                                    self.armed_names = reading.clone();
+                                    let found = match source { Value::Routine(_) | Value::Bound(..) => self.apply_class_member(source, Vec::new()), other => Ok(other) };
+                                    self.armed_names = None;
+                                    annotations.push((rows[index].clone(), found?));
                                 }
                                 let mapping = Value::Dict(Rc::new(annotations.into()));
                                 Ok(self.collection_cell(mapping))
@@ -3961,6 +3963,24 @@ impl<'a> Machine<'a> {
         None
     }
 
+    fn resolve_blueprint_annotations_by(&mut self, b: &Rc<Blueprint>, reading: Option<(Value, bool)>) -> Res {
+        let mut pairs=Vec::new();
+        // The entry is kept in a cell, as the blueprint's members are; keys
+        // and routines alternate along it.
+        if let Some(Value::Vector(row))=Self::own_entry(b,crate::data::ANNOTATE_WORD).map(|kept|kept.settled()) {
+            for pair in row.chunks(2) {
+                let [key,worth]=pair else{break};
+                let worth = worth.settled();
+                if matches!(worth, Value::Unset) { continue; }
+                self.armed_names = reading.clone();
+                let value=match worth {Value::Routine(_)|Value::Bound(..)=>self.apply_class_member(worth,Vec::new()),other=>Ok(other)};
+                self.armed_names = None;
+                pairs.push((key.clone(),value?));
+            }
+        }
+        let made=Value::Dict(Rc::new(pairs.into()));
+        Ok(self.collection_cell(made))
+    }
     fn annotation_entry(&mut self, worth: Value, symbolic: bool, declaring: Option<Rc<Blueprint>>) -> Res {
         let spelling = match &worth { Value::Routine(code) | Value::Bound(code, _) => code.annotation_spelling.clone(), _ => None };
         let outer_symbolic = self.symbolic_annotation.take();
@@ -5065,12 +5085,7 @@ impl<'a> Machine<'a> {
                 let result=Value::tuple(all);return Ok(if key==self.detail("order"){Self::wrap(3,vec![Self::wrap(0,vec![result]),Value::Blueprint(b.clone())])}else{result});
             }
             if self.rules.words_ext_stmt_class_detail_code_fields.get(10).is_some_and(|word| word == key) {
-                if let Some(own) = Self::own_entry(b, key).or_else(|| Self::own_entry(b, "__annotate_func__")) {
-                    return Ok(match own.settled() {
-                        Value::Wrapped(44, contents) if matches!(contents.first(), Some(Value::Vector(_))) => Self::wrap(44, vec![value.clone()]),
-                        entry => entry,
-                    });
-                }
+                if let Some(own) = Self::own_entry(b, key).or_else(|| Self::own_entry(b, "__annotate_func__")) { return Ok(own.settled()); }
                 let present = Self::own_entry(b, crate::data::ANNOTATE_WORD).is_some_and(|value| match value.settled() {
                     Value::Vector(row) => row.chunks(2).any(|entry| matches!(entry.get(1), Some(Value::Bound(code, _) | Value::Routine(code)) if !code.annotation_is_text)),
                     _ => false,

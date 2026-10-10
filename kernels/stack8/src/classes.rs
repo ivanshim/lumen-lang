@@ -2147,21 +2147,23 @@ impl<'a> Engine<'a> {
                 }
                 44 => {
                     if args.len() != 1 { return Err("TypeError: __annotate__() requires one argument".into()); }
-                    let forward = matches!(args[0].contents(), Value::Small(3));
-                    self.data.extend([args[0].clone(), Value::Small(3)]);
+                    self.data.extend([args[0].clone(), Value::Small(2)]);
                     self.perform(&Action::Gt, 2)?;
                     if self.drop_top()?.is_true() { return Err("NotImplementedError: ".into()); }
                     // Read class evaluators in the isolated lookup scope.
+                    let reading = self.armed_names.take();
                     match &w.1[0] {
-                        Value::Class(owner) => self.class_annotation_values(owner, forward),
+                        Value::Class(owner) => self.evaluate_class_annotations_by(owner, reading),
                         Value::Array(row) => {
                             let mut entries = Vec::new();
                             for pair in row.chunks(2) {
                                 let [key, evaluator] = pair else { break; };
                                 let evaluator = evaluator.contents();
                                 if matches!(evaluator, Value::Blank) { continue; }
-                                let value = self.annotation_value(evaluator, forward, None)?;
-                                entries.push((key.clone(), value));
+                                self.armed_names = reading.clone();
+                                let value = match evaluator { Value::Routine(_) | Value::Method(..) => self.class_apply(evaluator, Vec::new()), value => Ok(value) };
+                                self.armed_names = None;
+                                entries.push((key.clone(), value?));
                             }
                             Ok(self.keep_collection(Value::Map(Rc::new(entries.into()))))
                         }
@@ -4390,12 +4392,7 @@ impl<'a> Engine<'a> {
                 let annotate_word = self.lang.class_details.get("code.fields").and_then(|row| row.get(10));
                 if annotate_word.is_some_and(|word| word == name) {
                     let public = { let members = c.shared.borrow(); members.iter().find(|(key, _)| key == name).or_else(|| members.iter().find(|(key, _)| key == "__annotate_func__")).map(|(_, own)| own.contents()) };
-                    if let Some(own) = public {
-                        if matches!(&own, Value::Adapter(parts) if parts.0 == 44 && matches!(parts.1.first(), Some(Value::Array(_)))) {
-                            return Ok(Self::adapter(44, vec![subject.clone()]));
-                        }
-                        return Ok(own);
-                    }
+                    if let Some(own) = public { return Ok(own); }
                     let has_values = c.shared.borrow().iter().find(|(key, _)| key == crate::code::ANNOTATE_WORD)
                         .is_some_and(|(_, value)| matches!(value.contents(), Value::Array(row) if row.chunks(2).any(|entry| matches!(entry.get(1), Some(Value::Routine(code)) if !code.postponed_annotation))));
                     let has_values = c.shared.borrow().iter().find(|(key, _)| key == "\0annotation_strings").map_or(has_values, |(_, mode)| !mode.is_true());
@@ -5370,6 +5367,24 @@ impl<'a> Engine<'a> {
                 if matches!(routine, Value::Blank) { continue; }
                 let value = self.annotation_value(routine, forward, Some(c.clone()))?;
                 pairs.push((key.clone(),value));
+            }
+        }
+        let made=Value::Map(Rc::new(pairs.into()));
+        Ok(self.keep_collection(made))
+    }
+    fn evaluate_class_annotations_by(&mut self, c: &Rc<Class>, reading: Option<(Value, bool)>) -> Flow<Value> {
+        // The entry stands in a cell, as a class's members do.
+        let kept=c.shared.borrow().iter().find(|(n,_)|n==crate::code::ANNOTATE_WORD).map(|(_,v)|v.contents());
+        let mut pairs=Vec::new();
+        if let Some(Value::Array(row))=kept {
+            for pair in row.chunks(2) {
+                let [key,routine]=pair else {break};
+                let routine = routine.contents();
+                if matches!(routine, Value::Blank) { continue; }
+                self.armed_names = reading.clone();
+                let value=match routine {Value::Routine(_)|Value::Method(..)=>self.class_apply(routine,Vec::new()),other=>Ok(other)};
+                self.armed_names = None;
+                pairs.push((key.clone(),value?));
             }
         }
         let made=Value::Map(Rc::new(pairs.into()));
