@@ -15,6 +15,13 @@ class _Sentinel:
 DEFAULT = _Sentinel('DEFAULT')
 
 
+def _is_exception(obj):
+    # A fault stands for itself, whether given as an instance or as its
+    # class; a class that is not a fault is an ordinary callable.
+    return (isinstance(obj, BaseException)
+            or (isinstance(obj, type) and issubclass(obj, BaseException)))
+
+
 def _spec_names(spec):
     # A spec narrows the names a stand-in answers. A list or tuple
     # gives those names as it stands; anything else gives them as the
@@ -361,28 +368,21 @@ class AsyncMock(MagicMock):
         self.__dict__['_mock_await_args_list'].append(record)
         effect = self._side_effect
         if effect is not None:
-            if isinstance(effect, BaseException):
+            if _is_exception(effect):
                 raise effect
-            if isinstance(effect, type):
-                made = effect()
-                if isinstance(made, BaseException):
-                    raise made
-                return made
-            if callable(effect):
-                if inspect.iscoroutinefunction(effect):
-                    answer = await effect(*args, **kwargs)
-                else:
-                    answer = effect(*args, **kwargs)
-                if answer is not DEFAULT:
-                    return answer
-            else:
+            if not callable(effect):
                 try:
                     answer = next(effect)
                 except StopIteration:
                     # A StopIteration cannot travel through a coroutine.
                     raise StopAsyncIteration
-                if isinstance(answer, BaseException):
+                if _is_exception(answer):
                     raise answer
+            elif inspect.iscoroutinefunction(effect):
+                answer = await effect(*args, **kwargs)
+            else:
+                answer = effect(*args, **kwargs)
+            if answer is not DEFAULT:
                 return answer
         if self.return_value is DEFAULT:
             if self._mock_wraps is not None:
