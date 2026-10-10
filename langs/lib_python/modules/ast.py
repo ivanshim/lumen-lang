@@ -489,9 +489,8 @@ class AST:
                 import warnings
                 warnings.warn(name + ".__init__ missing 1 required positional argument: " + repr(field) + ". This will become an error in Python 3.15.", DeprecationWarning, stacklevel=2)
 
-    # Serialize the class, constructor placeholders and instance state.
     def __reduce__(self):
-        return type(self), (None,) * len(self._fields), self.__dict__
+        return type(self), (), self.__dict__
 
     # Keep all pickle protocols on the same node reduction.
     def __reduce_ex__(self, protocol):
