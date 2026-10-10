@@ -16436,37 +16436,6 @@ impl<'a> Machine<'a> {
     }
 
     fn ask_special(&mut self, subject: &Value, index: usize, tail: &[Value]) -> Result<Option<Value>, String> {
-        if index == 15 && self.table.flag("ext.stmt.type_parameters") {
-            let reader = self.appointment(subject, index);
-            let mut display = None;
-            if let Value::Thing(object) = subject {
-                if let Some(kind) = Self::native_word(&object.blueprint()) {
-                    if ["Union", "TypeVar", "ParamSpec", "ParamSpecArgs", "ParamSpecKwargs"].contains(&kind.as_str()) {
-                        display = Some(format!("typing.{kind}"));
-                    } else if kind == "SimpleNamespace" { display = Some("types.SimpleNamespace".to_owned()); }
-                }
-            }
-            if matches!(reader, Some(Value::Nil)) || (reader.is_none() && display.is_some()) {
-                let name = display.unwrap_or_else(|| subject.kind_word());
-                return Err(self.core_complaint("core.uniterable", &name));
-            }
-            if !matches!(subject, Value::Blueprint(_)) {
-                return self.dispatch_appointment(index, subject, tail, reader);
-            }
-        }
-        if let Value::Blueprint(class) = subject {
-            let factory = Self::builder_over(class);
-            if let Some(factory) = factory {
-                let entry = self.rules.specials.get(index).and_then(|word| self.inherited_entry(&factory, word));
-                if let Some(entry) = entry {
-                    // The inherited native hash slot must use the class identity fallback.
-                    if index == 8 && matches!(&entry, Value::Wrapped(60, _)) { return Ok(None); }
-                    let call = self.member_binding(entry, Some(subject.clone()), factory).and_then(|bound| self.apply_class_member(bound, tail.to_vec()));
-                    return call.map(Some).map_err(|escape| self.carried_native_fault(escape));
-                }
-            }
-            return Ok(None);
-        }
         // A proxy over a frame's names answers the mapping protocol
         // wherever a working asks after it by the member's own name,
         // not only where the primitive road reaches it.
@@ -16505,6 +16474,37 @@ impl<'a> Machine<'a> {
                 }
                 _ => {}
             }
+        }
+        if index == 15 && self.table.flag("ext.stmt.type_parameters") {
+            let reader = self.appointment(subject, index);
+            let mut display = None;
+            if let Value::Thing(object) = subject {
+                if let Some(kind) = Self::native_word(&object.blueprint()) {
+                    if ["Union", "TypeVar", "ParamSpec", "ParamSpecArgs", "ParamSpecKwargs"].contains(&kind.as_str()) {
+                        display = Some(format!("typing.{kind}"));
+                    } else if kind == "SimpleNamespace" { display = Some("types.SimpleNamespace".to_owned()); }
+                }
+            }
+            if matches!(reader, Some(Value::Nil)) || (reader.is_none() && display.is_some()) {
+                let name = display.unwrap_or_else(|| subject.kind_word());
+                return Err(self.core_complaint("core.uniterable", &name));
+            }
+            if !matches!(subject, Value::Blueprint(_)) {
+                return self.dispatch_appointment(index, subject, tail, reader);
+            }
+        }
+        if let Value::Blueprint(class) = subject {
+            let factory = Self::builder_over(class);
+            if let Some(factory) = factory {
+                let entry = self.rules.specials.get(index).and_then(|word| self.inherited_entry(&factory, word));
+                if let Some(entry) = entry {
+                    // The inherited native hash slot must use the class identity fallback.
+                    if index == 8 && matches!(&entry, Value::Wrapped(60, _)) { return Ok(None); }
+                    let call = self.member_binding(entry, Some(subject.clone()), factory).and_then(|bound| self.apply_class_member(bound, tail.to_vec()));
+                    return call.map(Some).map_err(|escape| self.carried_native_fault(escape));
+                }
+            }
+            return Ok(None);
         }
         let selected = self.appointment(subject, index);
         self.dispatch_appointment(index, subject, tail, selected)
