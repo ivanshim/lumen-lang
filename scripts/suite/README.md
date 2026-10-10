@@ -74,3 +74,13 @@ It records the provenance path and digest, and refuses to replace an existing
 binding. The inventory is an explicit assertion from the original run's owner;
 its hashes verify the files, not which interpreter produced them. If the
 original release cannot be established, rerun into a new directory instead.
+
+Reference counts preserve ordinary script entry points. Packages and files
+that declare a caller-module `DocTestSuite()` (also `DocTestSuite(None)`) import
+under the real `test` package and pass that module to unittest, including its
+`load_tests` hook. This gives doctest genuine module and type identity.
+`reference_entry.py` is the interpreter entry; `reference_layout.py` stages
+the suite beside the library without changing reference files or module names.
+Both count tools use this invocation. The Lambda checker uses the same helpers
+when packaged; `lambda-reference.patch` records the coordinator handler and
+packager update. Older checkouts without these helpers retain their old runner.
