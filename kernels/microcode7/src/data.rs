@@ -1264,8 +1264,8 @@ impl Value {
         }
         TEXT_PROPERTIES.with(|cell| {
             let mut notes = cell.borrow_mut();
-            notes.retain(|note| note.0.upgrade().is_some());
-            let found = notes.iter().position(|note| note.0.upgrade().is_some_and(|owner| Rc::ptr_eq(&owner, word)));
+            notes.retain(|note| note.0.strong_count() != 0);
+            let found = notes.iter().position(|note| std::ptr::eq(note.0.as_ptr(), Rc::as_ptr(word)));
             let note = if let Some(index) = found {
                 notes.remove(index)
             } else {
@@ -2927,4 +2927,17 @@ mod namespace_tests {
         assert_eq!(pairs.namespace_position("before"), Err(()));
         assert_eq!(pairs.namespace_position("after"), Err(()));
     }
+
+    #[test]
+    fn ascii_flags_follow_live_strings() {
+        for _ in 0..32 {
+            let ascii: Rc<str> = Rc::from("a".repeat(512));
+            let unicode: Rc<str> = Rc::from("é".repeat(256));
+            assert!(Value::ascii_letters(&ascii));
+            assert!(!Value::ascii_letters(&unicode));
+            assert!(Value::ascii_letters(&ascii));
+            assert!(!Value::ascii_letters(&unicode));
+        }
+    }
+
 }
