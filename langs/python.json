@@ -248,7 +248,7 @@
   ],
   "ext.stmt.fn.defaults.enclosing": true,
   "ext.stmt.class.annotations": [
-    "__annotations__"
+    "__annotations__", "annotationlib", "ForwardRef", "__owner__", "__forward_is_class__"
   ],
   "ext.stmt.class.called": [
     "__class_call__"
@@ -2794,6 +2794,16 @@
   "ext.stmt.async.generator.close.ignored": [
     "RuntimeError: async generator ignored GeneratorExit"
   ],
+  "ext.stmt.async.coroutine.warning": [
+    "warnings",
+    "warn_explicit",
+    "RuntimeWarning",
+    "coroutine '",
+    "' was never awaited",
+    "_warn_unawaited_coroutine"
+  ],
+  "ext.stmt.async.coroutine.fields": ["cr_code", "cr_frame", "cr_running", "cr_await", "cr_origin", "cr_suspended"],
+  "ext.stmt.async.coroutine.errors": ["RuntimeError: coroutine raised StopIteration", "TypeError: can't send non-None value to a just-started coroutine", "ValueError: coroutine already executing", "RuntimeError: coroutine ignored GeneratorExit", "RuntimeError: cannot reuse already awaited coroutine", "TypeError: '", "' object can't be awaited", "RuntimeError: coroutine is being awaited already", "TypeError: 'async with' received an object from ", " that does not implement __await__: ", "TypeError: 'async for' received an invalid object from __anext__: ", "TypeError: 'async for' received an object from __aiter__ that does not implement __anext__: "],
   "ext.stmt.async.generator.fields": [
     "ag_code",
     "ag_frame",
@@ -4174,5 +4184,15 @@
   ],
   "ext.builtin.multibyte": [
     "__multibyte_native"
+  ],
+  "ext.system.warnings": [
+    "_warnings",
+    "warn",
+    "warn_explicit",
+    "_filters_mutated",
+    "_filters_mutated_lock_held",
+    "_acquire_lock",
+    "_release_lock",
+    "_set_module"
   ]
 }

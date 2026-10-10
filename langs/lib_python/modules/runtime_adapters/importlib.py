@@ -28,3 +28,6 @@ def import_module(name, package=None):
         remainder = name[level:]
         name = parts[0] + '.' + remainder if remainder else parts[0]
     return __load_module(name)
+
+# The standard importlib package exposes its loader definitions.
+from . import machinery

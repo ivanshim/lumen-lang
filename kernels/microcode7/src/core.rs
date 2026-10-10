@@ -200,6 +200,7 @@ impl Value {
             Self::Wrapped(206, _) => "method-wrapper",
             Self::Wrapped(207, _) => "wrapper_descriptor",
             Self::Wrapped(143, _) => "function",
+            Self::Wrapped(64, _) => "coroutine_wrapper",
             Self::Wrapped(62, parts) => if matches!(parts.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
             // The entry __slots__ lays down for a name reads as a
             // member descriptor, the same word type() gives that accessor.
@@ -214,7 +215,6 @@ impl Value {
             // word, rather than off a value of it, is a descriptor: a
             // method's own kind, or a data member's, by the same
             // reckoning the repr gives it.
-            Self::Wrapped(32, fields) if matches!(fields.get(2), Some(Self::Small(-2))) => "getset_descriptor",
             Self::Wrapped(60, held) if held.len() > 2 => "classmethod_descriptor",
             Self::Wrapped(32, slots) => match slots.first().map(Value::bare).as_deref() {
                 Some("__dict__" | "__weakref__") => "getset_descriptor",

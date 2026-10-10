@@ -1652,6 +1652,7 @@ impl<'a> Engine<'a> {
         Ok(())
     }
     pub(super) fn class_apply(&mut self, callable: Value, mut args: Vec<Value>) -> Flow<Value> {
+        if let Some(missing) = self.annotation_operation(&callable) { return Err(missing.into()); }
         if let Value::Class(class)=&callable { self.validate_class_spreads(class, &args)?; }
         let callable = match callable {
             held @ (Value::Bond(_) | Value::Binding(_)) => self.what_it_spells(held),
@@ -2146,23 +2147,21 @@ impl<'a> Engine<'a> {
                 }
                 44 => {
                     if args.len() != 1 { return Err("TypeError: __annotate__() requires one argument".into()); }
-                    self.data.extend([args[0].clone(), Value::Small(2)]);
+                    let forward = matches!(args[0].contents(), Value::Small(3));
+                    self.data.extend([args[0].clone(), Value::Small(3)]);
                     self.perform(&Action::Gt, 2)?;
                     if self.drop_top()?.is_true() { return Err("NotImplementedError: ".into()); }
                     // Read class evaluators in the isolated lookup scope.
-                    let reading = self.armed_names.take();
                     match &w.1[0] {
-                        Value::Class(owner) => self.evaluate_class_annotations_by(owner, reading),
+                        Value::Class(owner) => self.class_annotation_values(owner, forward),
                         Value::Array(row) => {
                             let mut entries = Vec::new();
                             for pair in row.chunks(2) {
                                 let [key, evaluator] = pair else { break; };
                                 let evaluator = evaluator.contents();
                                 if matches!(evaluator, Value::Blank) { continue; }
-                                self.armed_names = reading.clone();
-                                let value = match evaluator { Value::Routine(_) | Value::Method(..) => self.class_apply(evaluator, Vec::new()), value => Ok(value) };
-                                self.armed_names = None;
-                                entries.push((key.clone(), value?));
+                                let value = self.annotation_value(evaluator, forward, None)?;
+                                entries.push((key.clone(), value));
                             }
                             Ok(self.keep_collection(Value::Map(Rc::new(entries.into()))))
                         }
@@ -3533,6 +3532,12 @@ impl<'a> Engine<'a> {
                 match next { Some(value) => subject = value, None => break }
             }
         }
+        if (self.is_coroutine(&subject) || matches!(&subject, Value::Adapter(parts) if parts.0 == 34))
+            && self.lang.class_details.get("root.members").is_some_and(|names| names.iter().skip(11).take(2).any(|word| word == name)) {
+            let member = self.root_member(name, None).expect("the root reduction descriptor");
+            return Ok(Self::adapter(3, vec![member, subject.clone()]));
+        }
+        if let Some(member) = self.coroutine_member(&subject, name)? { return Ok(member); }
         if matches!(&subject, Value::View(v) if v.1 == "mapping") && ["__getitem__", "__contains__", "__len__", "__iter__", "__reversed__", "__or__", "__ror__", "__ior__", "__hash__", "get", "keys", "values", "items", "copy"].contains(&name) {
             return Ok(Value::ValueMethod(Rc::new((subject, name.to_string()))));
         }
@@ -4390,7 +4395,12 @@ impl<'a> Engine<'a> {
                 let annotate_word = self.lang.class_details.get("code.fields").and_then(|row| row.get(10));
                 if annotate_word.is_some_and(|word| word == name) {
                     let public = { let members = c.shared.borrow(); members.iter().find(|(key, _)| key == name).or_else(|| members.iter().find(|(key, _)| key == "__annotate_func__")).map(|(_, own)| own.contents()) };
-                    if let Some(own) = public { return Ok(own); }
+                    if let Some(own) = public {
+                        if matches!(&own, Value::Adapter(parts) if parts.0 == 44 && matches!(parts.1.first(), Some(Value::Array(_)))) {
+                            return Ok(Self::adapter(44, vec![subject.clone()]));
+                        }
+                        return Ok(own);
+                    }
                     let has_values = c.shared.borrow().iter().find(|(key, _)| key == crate::code::ANNOTATE_WORD)
                         .is_some_and(|(_, value)| matches!(value.contents(), Value::Array(row) if row.chunks(2).any(|entry| matches!(entry.get(1), Some(Value::Routine(code)) if !code.postponed_annotation))));
                     let has_values = c.shared.borrow().iter().find(|(key, _)| key == "\0annotation_strings").map_or(has_values, |(_, mode)| !mode.is_true());
@@ -4453,6 +4463,9 @@ impl<'a> Engine<'a> {
                         else if name==self.class_word("get") {Some(10)} else if name==self.class_word("set") {Some(11)}
                         else if name==self.class_word("remove") {Some(12)} else {None};
                     if let Some(i)=index {
+                        if i == 2 && !self.lang.warning_backend.is_empty() && self.lang.constructor.as_deref() == Some(name) {
+                            return Ok(self.loose_members.borrow_mut().entry("root:initializer".into()).or_insert_with(|| Self::adapter(2, Vec::new())).clone());
+                        }
                         let state = if (10..=12).contains(&i) && !self.lang.class_builder.is_empty() { vec![Value::text(self.class_word("root"))] }
                             else if name == self.class_word("subclass") { vec![Value::text(name)] } else { Vec::new() };
                         return Ok(Self::adapter(i,state));
@@ -4892,11 +4905,11 @@ impl<'a> Engine<'a> {
                 if name == self.class_word("defaults") || name == self.class_word("keywords") || name == self.class_word("closure") { return Ok(Value::Null); }
                 if name == self.class_word("kind") { return Ok(Value::Class(self.kind_class("function"))); }
             }
-            Value::Adapter(w) if w.0==32 => {
+            Value::Adapter(w) if matches!(w.0, 32 | 34) => {
                 if ["send", "throw", "close"].contains(&name)
                     || self.lang.class_special.get(15).is_some_and(|word| word == name)
                     || self.lang.class_special.get(16).is_some_and(|word| word == name)
-                    || self.lang.async_generator_methods.get(3).is_some_and(|word| word == name) {
+                    || w.0 == 32 && self.lang.async_generator_methods.get(3).is_some_and(|word| word == name) {
                     return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
                 }
             }
@@ -5296,8 +5309,59 @@ impl<'a> Engine<'a> {
         c.shared.borrow_mut().push((word,made.clone()));
         Ok(made)
     }
-    fn evaluate_class_annotations(&mut self, c: &Rc<Class>) -> Flow<Value> { self.evaluate_class_annotations_by(c, None) }
-    fn evaluate_class_annotations_by(&mut self, c: &Rc<Class>, reading: Option<(Value, bool)>) -> Flow<Value> {
+    pub(super) fn annotation_name(&mut self, name: &str) -> Res<Option<Value>> {
+        if name.starts_with(['#', '\0']) { return Ok(None); }
+        let Some((body, owner, _)) = &self.annotation_scope else { return Ok(None); };
+        if !self.running_routine.as_ref().is_some_and(|running| Rc::ptr_eq(body, running)) { return Ok(None); }
+        let owner = owner.clone();
+        let words = self.lang.class_annotations.clone();
+        let namespace = self.import_module(&words[1]).map_err(|fault| fault.told(&self.wording()))?;
+        let constructor = self.class_get(namespace, &words[2], false).map_err(|fault| fault.told(&self.wording()))?;
+        let reference = self.class_apply(constructor, vec![Value::text(name)]).map_err(|fault| fault.told(&self.wording()))?;
+        self.class_write(reference.clone(), &words[3], Some(owner.map_or(Value::Null, Value::Class)), false).map_err(|fault| fault.told(&self.wording()))?;
+        self.class_write(reference.clone(), &words[4], Some(Value::Flag(true)), false).map_err(|fault| fault.told(&self.wording()))?;
+        if let Value::Object(object) = reference.contents() {
+            if let Some((_, _, names)) = &mut self.annotation_scope { names.push((Rc::downgrade(&object), name.to_owned())); }
+        }
+        Ok(Some(reference))
+    }
+
+    pub(super) fn annotation_operation(&mut self, subject: &Value) -> Option<String> {
+        let (body, _, names) = self.annotation_scope.as_ref()?;
+        if !self.running_routine.as_ref().is_some_and(|running| Rc::ptr_eq(body, running)) { return None; }
+        let Value::Object(object) = subject.contents() else { return None; };
+        let missing = names.iter().find_map(|(reference, name)| reference.upgrade().filter(|kept| Rc::ptr_eq(kept, &object))
+            .map(|_| format!("NameError: name '{name}' is not defined")));
+        missing
+    }
+
+    fn annotation_value(&mut self, routine: Value, forward: bool, owner: Option<Rc<Class>>) -> Flow<Value> {
+        let source = match &routine { Value::Routine(body) | Value::Method(_, body, _) => body.annotation_source.clone(), _ => None };
+        let saved_scope = self.annotation_scope.take();
+        if forward && source.is_some() {
+            let body = match &routine { Value::Routine(body) | Value::Method(_, body, _) => Some(body.clone()), _ => None };
+            self.annotation_scope = body.map(|body| (body, owner.clone(), Vec::new()));
+        }
+        let resolved = match routine {Value::Routine(_)|Value::Method(..)=>self.class_apply(routine,Vec::new()),other=>Ok(other)};
+        self.annotation_scope = saved_scope;
+        match resolved {
+            Err(fault) if forward && source.is_some() && (matches!(&fault, Fault::Note(words) if words.starts_with("NameError:"))
+                || matches!(&fault, Fault::Thrown(Value::Object(error)) if error.class_now().named(&self.lang.exceptions[10], false))) => {
+                let words = self.lang.class_annotations.clone();
+                let module = self.import_module(&words[1])?;
+                let factory = self.class_get(module, &words[2], false)?;
+                let reference = self.class_apply(factory, vec![Value::text(&source.unwrap())])?;
+                self.class_write(reference.clone(), &words[3], Some(owner.clone().map_or(Value::Null, Value::Class)), false)?;
+                self.class_write(reference.clone(), &words[4], Some(Value::Flag(true)), false)?;
+                Ok(reference)
+            }
+            other => other,
+        }
+    }
+    fn evaluate_class_annotations(&mut self, c: &Rc<Class>) -> Flow<Value> {
+        self.class_annotation_values(c, false)
+    }
+    fn class_annotation_values(&mut self, c: &Rc<Class>, forward: bool) -> Flow<Value> {
         // The entry stands in a cell, as a class's members do.
         let kept=c.shared.borrow().iter().find(|(n,_)|n==crate::code::ANNOTATE_WORD).map(|(_,v)|v.contents());
         let mut pairs=Vec::new();
@@ -5306,10 +5370,8 @@ impl<'a> Engine<'a> {
                 let [key,routine]=pair else {break};
                 let routine = routine.contents();
                 if matches!(routine, Value::Blank) { continue; }
-                self.armed_names = reading.clone();
-                let value=match routine {Value::Routine(_)|Value::Method(..)=>self.class_apply(routine,Vec::new()),other=>Ok(other)};
-                self.armed_names = None;
-                pairs.push((key.clone(),value?));
+                let value = self.annotation_value(routine, forward, Some(c.clone()))?;
+                pairs.push((key.clone(),value));
             }
         }
         let made=Value::Map(Rc::new(pairs.into()));
@@ -5568,17 +5630,17 @@ impl<'a> Engine<'a> {
                 if name == self.class_word("kind") {
                     let Some(Value::Class(next)) = value else { return Err("TypeError: __class__ must be set to a class".to_string().into()); };
                     let old = o.class_now();
-                    let same_slots = self.same_slot_layout(&old, &next);
                     if Self::own_class_value(&old, self.class_word("module")).is_none() || Self::own_class_value(&next, self.class_word("module")).is_none()
-                        || Self::kind_beneath(&old) != Self::kind_beneath(&next) || (!same_slots && (self.slots_named(&old) || self.slots_named(&next))) {
+                        || Self::kind_beneath(&old) != Self::kind_beneath(&next)
+                        || !self.assignment_layouts_agree(&old, &next) {
                         return Err("TypeError: __class__ assignment: object layout differs".to_string().into());
                     }
-                    // What the slots hold is kept under the class that
-                    // declares them, so it moves to the new class's keys.
-                    if same_slots {
-                        let (was, now) = (format!(":{:p}", Rc::as_ptr(&old)), format!(":{:p}", Rc::as_ptr(&next)));
-                        for (key, _) in o.fields.borrow_mut().iter_mut() {
-                            if key.starts_with("\0slot:") && key.ends_with(&was) { key.truncate(key.len() - was.len()); key.push_str(&now); }
+                    let from = format!(":{:p}", Rc::as_ptr(&old));
+                    let to = format!(":{:p}", Rc::as_ptr(&next));
+                    for (place, _) in o.fields.borrow_mut().iter_mut() {
+                        if place.starts_with("\0slot:") && place.ends_with(&from) {
+                            place.truncate(place.len() - from.len());
+                            place.push_str(&to);
                         }
                     }
                     *o.replacement_class.borrow_mut() = Some(next);
@@ -5825,11 +5887,11 @@ impl<'a> Engine<'a> {
             }
             // A cell takes what it holds, and taking that away leaves it
             // empty; it keeps nothing else.
-            Value::Adapter(w) if w.0==32 => {
+            Value::Adapter(w) if matches!(w.0, 32 | 34) => {
                 let known = ["send", "throw", "close", "__class__", "__doc__"].contains(&name)
                     || self.lang.class_special.get(15).is_some_and(|word| word == name)
                     || self.lang.class_special.get(16).is_some_and(|word| word == name)
-                    || self.lang.async_generator_methods.get(3).is_some_and(|word| word == name);
+                    || w.0 == 32 && self.lang.async_generator_methods.get(3).is_some_and(|word| word == name);
                 let message = if known { format!("AttributeError: '{}' object attribute '{}' is read-only", subject.core_kind(), name) }
                     else { format!("AttributeError: '{}' object has no attribute '{}' and no __dict__ for setting new attributes", subject.core_kind(), name) };
                 return Err(message.into());
@@ -5907,26 +5969,32 @@ impl<'a> Engine<'a> {
     }
     /// Whether the class, or one it stands on, names the members its
     /// things may hold. Such a thing keeps no namespace of its own.
-    /// The names a class declares for its slots, where it declares any.
-    fn slot_names(&self, c: &Class) -> Option<Vec<String>> {
-        let declared = Self::own_class_value(c, self.class_word("slots"))?;
-        Some(match declared.contents() {
-            Value::Tuple(items) | Value::Array(items) => items.iter().map(Value::plain).collect(),
-            single => vec![single.plain()],
-        })
-    }
-    /// Two classes that declare the very same slots, and stand on nothing
-    /// else that has any, lay their things out alike.
-    fn same_slot_layout(&self, one: &Class, other: &Class) -> bool {
-        let bare = |c: &Class| c.direct.iter().filter(|b| b.name != self.class_word("root")).all(|b| !self.slots_named(b));
-        match (self.slot_names(one), self.slot_names(other)) {
-            (Some(a), Some(b)) => a == b && bare(one) && bare(other),
-            _ => false,
-        }
-    }
     fn slots_named(&self,c:&Class)->bool {
         Self::own_class_value(c,self.class_word("slots")).is_some()
             || c.direct.iter().filter(|b|b.name!=self.class_word("root")).any(|b|self.slots_named(b))
+    }
+    fn assignment_layouts_agree(&self, first: &Rc<Class>, second: &Rc<Class>) -> bool {
+        if Rc::ptr_eq(first, second) { return true; }
+        if !self.slots_named(first) && !self.slots_named(second) { return true; }
+        let common_parent = match (&first.base, &second.base) {
+            (Some(a), Some(b)) => Rc::ptr_eq(a, b), _ => false,
+        };
+        if !common_parent || self.weak_layout(first) != self.weak_layout(second)
+            || self.slots_allow(first, self.class_word("namespace")) != self.slots_allow(second, self.class_word("namespace")) { return false; }
+        let names = |class: &Class| {
+            let declared = Self::own_class_value(class, self.class_word("slots")).map(|v| v.contents());
+            let fields = match declared {
+                Some(Value::Tuple(row) | Value::Array(row)) => row.to_vec(),
+                Some(Value::Map(row)) => row.iter().map(|(name, _)| name.clone()).collect(),
+                Some(value) => vec![value], None => Vec::new(),
+            };
+            let mut keys = fields.into_iter().filter_map(|field| match field {
+                Value::Text(word) if word.as_ref() != "__dict__" && word.as_ref() != "__weakref__" => Some(crate::compile::private_name(&class.name, &word)),
+                _ => None,
+            }).collect::<Vec<_>>();
+            keys.sort(); keys
+        };
+        names(first) == names(second)
     }
     /// Weak storage belongs to the instance layout, independently of its
     /// dictionary and of the native value kept in its fields.
@@ -6866,9 +6934,9 @@ impl<'a> Engine<'a> {
             names.sort();names.dedup();
             return Value::array(names.iter().map(|n|Value::text(n)).collect());
         }
-                if matches!(one, Value::Adapter(parts) if parts.0 == 32) {
+                if matches!(one, Value::Adapter(parts) if matches!(parts.0, 32 | 34)) {
                     let mut names = Vec::new();
-                    names.extend(self.lang.async_generator_methods.iter().skip(3).cloned());
+                    if matches!(one, Value::Adapter(parts) if parts.0 == 32) { names.extend(self.lang.async_generator_methods.get(3).cloned()); }
                     names.extend([15, 16].iter().filter_map(|index| self.lang.class_special.get(*index).cloned()));
                     for words in [&self.lang.yield_send, &self.lang.yield_throw, &self.lang.yield_close] {
                         names.extend(words.iter().cloned());
@@ -6881,6 +6949,12 @@ impl<'a> Engine<'a> {
         // few names a language gives it for stepping it by hand.
         if let Value::Generator(_)=one {
             let mut names=self.kind_member_names(one);
+                    if self.is_coroutine(one) {
+                        names.extend(self.lang.coroutine_fields.iter().cloned());
+                        names.extend(self.lang.async_generator_methods.get(3).cloned());
+                        names.sort(); names.dedup();
+                        return Value::array(names.iter().map(|word| Value::text(word)).collect());
+                    }
                     if self.is_async_generator(one) {
                         names.extend(self.lang.async_generator_methods.iter().take(3).cloned());
                         names.extend(self.lang.async_generator_fields.iter().cloned());
@@ -7299,7 +7373,10 @@ impl<'a> Engine<'a> {
         for class in &order[start + 1..] {
             if name == self.class_word("allocate") && Self::own_class_value(class, name).is_none() {
                 if let Some(word) = Self::own_kind(class) {
-                    if word != self.class_word("root") { return Ok(Some(Self::adapter(14, vec![Value::text(&word)]))); }
+                    if word != self.class_word("root") {
+                        let maker = Self::own_class_value(class, name).unwrap_or_else(|| Self::adapter(14, vec![Value::text(&word)]));
+                        return Ok(Some(maker));
+                    }
                 }
             }
             if self.exception_class(class) && self.exception_method_named(name) {

@@ -187,6 +187,7 @@ struct Invocation {
     /// A language to write the program in instead of running it (microcode11 only).
     emit: Option<Language>,
     program_args: Vec<String>,
+    warning_options: Vec<String>,
     python: Option<&'static python_versions::PythonVersion>,
     module_source: Option<String>,
     module_name: Option<String>,
@@ -727,6 +728,29 @@ fn run_all() {
     else { std::env::remove_var("LUMEN_RUN_MODULE"); }
     if let Some(version) = inv.python { std::env::set_var("LUMEN_PYTHON", version.release); }
 
+    // Carry Python startup warning options without confusing script arguments
+    // or splitting a message that itself contains a separator character.
+    if inv.language.name() == "python" {
+        let mut options = Vec::new();
+        if let Ok(environment) = env::var("PYTHONWARNINGS") {
+            options.extend(environment.split(',').filter(|part| !part.is_empty()).map(str::to_owned));
+        }
+        options.extend(inv.warning_options.iter().cloned());
+        let mut ordered = Vec::new();
+        for option in options {
+            ordered.retain(|previous| previous != &option);
+            ordered.push(option);
+        }
+        let encoded = ordered.iter().map(|option| format!("{}:{option}", option.chars().count())).collect::<String>();
+        env::set_var("LUMEN_WARNOPTIONS", encoded);
+    } else {
+        if !inv.warning_options.is_empty() {
+            eprintln!("Error: -W requires the Python language");
+            process::exit(2);
+        }
+        env::remove_var("LUMEN_WARNOPTIONS");
+    }
+
     let written = inv.module_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| fs::read(&inv.file).unwrap_or_else(|e| {
         eprintln!("Error: Failed to read {}: {}", inv.file, e);
         process::exit(1);
@@ -1076,6 +1100,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
 
     let mut module_name = None;
     let mut python_development = false;
+    let mut warning_options = Vec::new();
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
 
@@ -1137,6 +1162,22 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 }
                 python = Some(said(&rest[1]));
                 rest = &rest[2..];
+            }
+            Some(flag) if file.is_none() && (flag == "-W" || flag.starts_with("-W") && flag.len() > 2) => {
+                let option = if flag == "-W" {
+                    if rest.len() < 2 {
+                        eprintln!("Error: -W requires an argument");
+                        process::exit(2);
+                    }
+                    let option = said(&rest[1]);
+                    rest = &rest[2..];
+                    option
+                } else {
+                    let option = flag[2..].to_string();
+                    rest = &rest[1..];
+                    option
+                };
+                warning_options.push(option);
             }
             Some("--serve") => {
                 if rest.len() < 2 {
@@ -1402,7 +1443,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         language = Language::File { name: "python".to_string(), path, text };
         Some(version)
     } else { None };
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, python_development, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, python_development, warning_options, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.

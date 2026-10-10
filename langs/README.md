@@ -1674,6 +1674,12 @@ only. The extension labels so far, all from PHP:
   method declines an operation, leaving the other operand to answer.
   `ext.stmt.class.special.stop` names the fault which ends a walk, and
   `ext.stmt.async.stop` the fault which ends an asynchronous walk.
+  `ext.stmt.async.coroutine.fields` names a native coroutine’s code, live frame,
+  running state, await target, origin and suspension flag.
+  `ext.stmt.async.coroutine.errors` supplies its escaped StopIteration, initial
+  send, reentry, ignored exit and completed-coroutine reuse errors.
+  `ext.stmt.async.coroutine.warning` selects the warnings module, reporting
+  callable, RuntimeWarning category and message fragments for an unawaited body.
   `ext.stmt.async.generator.methods` names the native async generator methods
   for sending a value, throwing a fault and closing the suspended body;
   `ext.stmt.async.generator.fields` names its code, live frame, running
@@ -5337,6 +5343,9 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.assign.chain` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.assign.names.chained` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.async` | - | - | `async` | - | - | - | - | - | - | - |
+| `ext.stmt.async.coroutine.errors` | - | - | `RuntimeError: coroutine raised StopIteration` `TypeError: can't send non-None value to a just-started coroutine` `ValueError: coroutine already executing` `RuntimeError: coroutine ignored GeneratorExit` `RuntimeError: cannot reuse already awaited coroutine` `TypeError: '` `' object can't be awaited` `RuntimeError: coroutine is being awaited already` `TypeError: 'async with' received an object from ` ` that does not implement __await__: ` `TypeError: 'async for' received an invalid object from __anext__: ` `TypeError: 'async for' received an object from __aiter__ that does not implement __anext__: ` | - | - | - | - | - | - | - |
+| `ext.stmt.async.coroutine.fields` | - | - | `cr_code` `cr_frame` `cr_running` `cr_await` `cr_origin` `cr_suspended` | - | - | - | - | - | - | - |
+| `ext.stmt.async.coroutine.warning` | - | - | `warnings` `warn_explicit` `RuntimeWarning` `coroutine '` `' was never awaited` `_warn_unawaited_coroutine` | - | - | - | - | - | - | - |
 | `ext.stmt.async.generator.close.ignored` | - | - | `RuntimeError: async generator ignored GeneratorExit` | - | - | - | - | - | - | - |
 | `ext.stmt.async.generator.escaped` | - | - | `RuntimeError: async generator raised StopIteration` `RuntimeError: async generator raised StopAsyncIteration` | - | - | - | - | - | - | - |
 | `ext.stmt.async.generator.fields` | - | - | `ag_code` `ag_frame` `ag_running` `ag_await` | - | - | - | - | - | - | - |
@@ -5362,7 +5371,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.catch.tuple.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.catch.tuple.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class` | - | - | `class` | - | `class` | - | - | - | - | - |
-| `ext.stmt.class.annotations` | - | - | `__annotations__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.annotations` | - | - | `__annotations__` `annotationlib` `ForwardRef` `__owner__` `__forward_is_class__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.close` | - | - | `)` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.open` | - | - | `(` | - | - | - | - | - | - | - |
 | `ext.stmt.class.bases.resolve` | - | - | `__mro_entries__` `__orig_bases__` | - | - | - | - | - | - | - |
@@ -5747,6 +5756,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.text.bytes` | - | - | - | - | `true` | - | - | - | - | - |
 | `ext.system.untrue.empty_array` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.system.untrue.text` | - | - | - | - | `0` | - | - | - | - | - |
+| `ext.system.warnings` | - | - | `_warnings` `warn` `warn_explicit` `_filters_mutated` `_filters_mutated_lock_held` `_acquire_lock` `_release_lock` `_set_module` | - | - | - | - | - | - | - |
 | `ext.text.format` | - | - | `format` | - | - | - | - | - | - | - |
 | `ext.text.format.align.string` | - | - | `ValueError: '=' alignment not allowed in string format specifier` | - | - | - | - | - | - | - |
 | `ext.text.format.alternate.character` | - | - | `ValueError: Alternate form (#) not allowed with integer format specifier 'c'` | - | - | - | - | - | - | - |

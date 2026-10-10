@@ -400,6 +400,7 @@ pub enum Prim {
     NativeFrame,
     HeapNative,
     ContextStore,
+    WarningOperation(u8),
     ReduceNative,
     ProductStep,
     RebuildNative,
@@ -832,6 +833,7 @@ pub struct Routine {
     /// The compiled definition shared by independently created functions.
     pub definition: Option<Rc<Routine>>,
     pub annotation_is_text: bool,
+    pub annotation_spelling: Option<String>,
     pub annotation_protocol: bool,
     /// Whether the routine's own name reads, while annotations are being read
     /// in the forward-reference format, may stand for a reference.

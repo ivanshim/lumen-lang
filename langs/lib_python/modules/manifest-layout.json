@@ -2,7 +2,10 @@
   "files": {
     "collections": "collections/__init__.py",
     "unittest": "unittest/__init__.py",
-    "urllib": "urllib/__init__.py"
+    "urllib": "urllib/__init__.py",
+    "unittest.case": "unittest/case.py",
+    "unittest.result": "unittest/result.py",
+    "asyncio": "asyncio/__init__.py"
   },
   "aliases": {
     "os.path": "path",
@@ -23,7 +26,10 @@
     "abc": "runtime_adapters/abc.py",
     "codecs": "runtime_adapters/codecs.py",
     "ast": "runtime_adapters/ast.py",
-    "sys": "runtime_adapters/sys.py"
+    "sys": "runtime_adapters/sys.py",
+    "_py_warnings": "runtime_adapters/warnings.py",
+    "importlib._bootstrap": "runtime_adapters/importlib_bootstrap.py",
+    "unittest": "runtime_adapters/unittest_bindings.py"
   },
   "replacements": {
     "annotationlib": "runtime_adapters/native_annotationlib.py",
@@ -34,6 +40,10 @@
     "test.support.import_helper": "runtime_adapters/native_test_support_import_helper.py",
     "test.support.socket_helper": "runtime_adapters/native_test_support_socket_helper.py",
     "test.support.threading_helper": "runtime_adapters/native_test_support_threading_helper.py",
-    "warnings": "runtime_adapters/native_warnings.py"
+    "importlib._bootstrap_external": "runtime_adapters/importlib_external.py"
+  },
+  "names": {
+    "runtime_sources/unittest_case.py": "unittest.case",
+    "runtime_sources/unittest_result.py": "unittest.result"
   }
 }

@@ -193,7 +193,7 @@ were compared to their documented source module or C implementation. The
 previous 120-entry re-pin inventory was recovered from repository history
 for the inventory comparison; the new rows below record every audited file.
 
-Hashes apply to file bodies after the single `# Source: CPython` provenance
+Hashes apply to file bodies after the single PSF provenance
 line, where present. Adapter hashes deliberately differ; no claim of
 byte-for-byte provenance is made for them. A dash means no same-path release
 source exists. Full working measurements are in ignored `probe/`.
@@ -566,3 +566,35 @@ honestly when those extensions are unavailable.
 `python-3.14.8/test_pathlib/__main__.py` is a local package runner, like the dataclasses runner. It calls the unchanged upstream package's `load_tests` hook; it is not a copied CPython reference file.
 
 `python-3.14.8/test_lumen_pathlib_{join,join_posix,join_windows,read,write,copy}.py` are local package-context runners for unchanged upstream modules. They add no assertions or skips and are not CPython reference copies.
+## Warnings library coverage
+
+`test_warnings/` is a library suite (profile 1.0), not part of the core
+language score. Its five upstream files are preserved byte for byte. The
+embedded test package and its helper files retain upstream bodies beneath
+PSF provenance headers so `test.test_warnings` imports through the runtime.
+`warnings.py` and `_py_warnings.py` also retain complete upstream bodies.
+Separate runtime adapters preserve the existing private capture interface.
+Both Python kernels provide a native `_warnings` module with filter and once
+registries, warning emission, revision invalidation and lock operations. The
+module is advertised through `_imp` and `sys.builtin_module_names`; its warning
+functions are native kernel callables. The public library bodies and original
+importlib source files remain unchanged. The external bootstrap adapter changes
+only its warning backend import and provenance docstring, preserving positions.
+
+Fresh imports exercise both upstream variants without changing the import
+helper or skip logic. A custom finder can still make `_warnings` unavailable;
+the resulting upstream collection error remains honest. Real caller frames,
+source-loader metadata and the standard warning recorder are shared runtime
+behavior rather than reference-test substitutions. The real `unittest.case`
+and `unittest.result` sources are registered from separate source files so the
+existing unittest implementation and its directory remain untouched.
+
+The unchanged warnings suite now collects 197 methods on each full kernel,
+with 176 passing, 10 skipped by the existing suite and 11 nonpassing methods
+(11 failures and no errors), compared with zero collected methods before the
+native backend. Remaining cases expose subprocess option/module startup and
+resource finalization. The 13 original semantic probes and ten additional
+native/runtime probes match CPython on both kernels. Signature annotation reads
+honor the requested format and reuse resolved annotation dictionaries; native
+base allocation respects declared allocators, and compatible slotted class
+assignment preserves stored values. No copied test or library body is edited.

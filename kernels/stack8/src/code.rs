@@ -783,6 +783,7 @@ pub enum Builtin {
     NativeFrame,
     HeapNative,
     ContextNative,
+    WarningBackend(u8),
     ReduceNative,
     RebuildNative,
     CharAtIndex,
@@ -931,6 +932,7 @@ impl Builtin {
 #[derive(Clone, Debug)]
 pub struct Routine {
     pub postponed_annotation: bool,
+    pub annotation_source: Option<String>,
     pub checks_annotation_format: bool,
     /// Whether the routine is one whose own name reads, while annotations are
     /// being read in the forward-reference format, may stand for a reference.

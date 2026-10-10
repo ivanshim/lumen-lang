@@ -353,18 +353,19 @@ pub fn departing(dying: &mut Instance) {
 /// A walk is going. One asleep inside a try is rebuilt around its own
 /// frame and queued, so that its last parts run as the language asks.
 pub fn walk_departing(dying: &mut Generator) {
-    let asleep = dying.started && !dying.closed && !dying.finalized && dying.program.is_some();
+    let unawaited = !dying.started && dying.program.as_ref().is_some_and(|body| body.code_flags & 128 != 0);
+    let asleep = (dying.started || unawaited) && !dying.closed && !dying.finalized && dying.program.is_some();
     if asleep && LAST_WORD.try_with(|w| w.borrow().is_some()).unwrap_or(false) {
         // Build only while the queue is alive. A rejected try_with must
         // not drop a captured suspended body and recursively rebuild it.
         let _ = UNFINISHED.try_with(|q| {
             let again = Generator {
-                name: dying.name.clone(), qualified: dying.qualified.clone(), trace_frame: dying.trace_frame.take(), suspended_position: dying.suspended_position,
+                name: dying.name.clone(), qualified: dying.qualified.clone(), coroutine_identity: dying.coroutine_identity, coroutine_origin: dying.coroutine_origin.clone(), async_hooks_initialized: dying.async_hooks_initialized, async_finalizer: dying.async_finalizer.clone(), trace_frame: dying.trace_frame.take(), suspended_position: dying.suspended_position,
                 program: dying.program.clone(),
                 frame: std::mem::take(&mut dying.frame),
                 stack: std::mem::take(&mut dying.stack),
                 pc: dying.pc,
-                started: true,
+                started: dying.started,
                 closed: false,
                 finalized: false,
                 waiting: dying.waiting,
@@ -634,6 +635,8 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         }
         Value::Generator(g) => {
             if let Ok(g) = g.try_borrow() {
+                out.push(g.coroutine_origin.clone());
+                out.push(g.async_finalizer.clone());
                 out.extend(g.trace_frame.iter().map(|f| Value::Object(f.clone())));
                 out.extend(g.program.iter().map(|p| Value::Routine(p.clone())));
                 out.extend(g.frame.iter().cloned());
@@ -650,6 +653,10 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                     match &step.phase {
                         Phase::Arm(_, v) => out.push(v.clone()),
                         Phase::Last(Ending::Thrown(v), _) => out.push(v.clone()),
+                        Phase::ContextExit(left, walk, _) => {
+                            out.push(walk.clone());
+                            if let Ending::Thrown(value) = left { out.push(value.clone()); }
+                        }
                         _ => {}
                     }
                 }
@@ -910,6 +917,8 @@ impl Graph {
                 Value::Generator(g) => {
                     if let Ok(mut g) = g.try_borrow_mut() {
                         g.closed = true;
+                        grave.push(std::mem::replace(&mut g.coroutine_origin, Value::Null));
+                        grave.push(std::mem::replace(&mut g.async_finalizer, Value::Null));
                         grave.extend(g.frame.drain(..));
                         grave.extend(g.stack.drain(..));
                         grave.extend(g.items.drain(..));
@@ -945,7 +954,7 @@ impl Graph {
 /// Whether a walk in the graph is asleep inside a try, so that closing
 /// it is the finalisation the language asks for.
 pub fn asleep(walk: &Rc<RefCell<Generator>>) -> bool {
-    walk.try_borrow().map_or(false, |g| g.started && !g.closed && !g.finalized && g.program.is_some())
+    walk.try_borrow().map_or(false, |g| (g.started || g.program.as_ref().is_some_and(|code| code.code_flags & 128 != 0)) && !g.closed && !g.finalized && g.program.is_some())
 }
 
 /// Compare weak targets by identity, including classes and builtin types.

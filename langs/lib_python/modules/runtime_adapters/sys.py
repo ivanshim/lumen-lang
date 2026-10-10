@@ -1,10 +1,6 @@
 # Names of the standard-library modules registered in the source manifest.
 stdlib_module_names = frozenset(('__future__', '_bisect', '_blake2', '_buffer', '_codec_idna', '_codec_names', '_codecs', '_collections', '_collections_abc', '_colorize', '_contextvars', '_csv', '_decimal', '_digest', '_encoding_aliases', '_heapq', '_imp', '_io', '_json', '_locale', '_markupbase', '_md5', '_namedtuple', '_object_reduce', '_operator', '_ordering', '_os_pathlike', '_py_abc', '_pydatetime', '_pydecimal', '_pyio', '_pylong', '_pyrepl', '_random', '_random_seed', '_sha1', '_sha2', '_sha3', '_sre', '_sre_validation', '_stat', '_statistics', '_string', '_strptime', '_struct', '_template_core', '_thread', '_tokenize', '_types', '_warnings', '_weakref', '_weakrefset', 'abc', 'annotationlib', 'argparse', 'array', 'ast', 'atexit', 'base64', 'binascii', 'bisect', 'builtins', 'calendar', 'cmath', 'codecs', 'codeop', 'collections', 'colorsys', 'compression', 'concurrent', 'configparser', 'contextlib', 'contextvars', 'copy', 'copyreg', 'csv', 'ctypes', 'dataclasses', 'datetime', 'decimal', 'difflib', 'dis', 'doctest', 'encodings', 'enum', 'errno', 'fnmatch', 'fractions', 'functools', 'gc', 'genericpath', 'getopt', 'gettext', 'glob', 'graphlib', 'gzip', 'hashlib', 'heapq', 'hmac', 'html', 'http', 'importlib', 'inspect', 'io', 'ipaddress', 'itertools', 'json', 'keyword', 'linecache', 'locale', 'logging', 'marshal', 'math', 'ntpath', 'numbers', 'operator', 'optparse', 'os', 'pathlib', 'pdb', 'pickle', 'pkgutil', 'platform', 'posix', 'posixpath', 'pprint', 'pty', 'py_compile', 'pydoc', 'queue', 'quopri', 'random', 're', 'reprlib', 'sched', 'secrets', 'select', 'shlex', 'shutil', 'signal', 'socket', 'sre_compile', 'sre_constants', 'sre_parse', 'stat', 'statistics', 'string', 'struct', 'subprocess', 'sys', 'sysconfig', 'tempfile', 'textwrap', 'threading', 'time', 'timeit', 'token', 'tokenize', 'traceback', 'types', 'typing', 'unicodedata', 'unittest', 'urllib', 'warnings', 'weakref', 'zlib'))
 
-# Return the runtime's live reference count for reference-backed values.
-def getrefcount(value):
-    return __reference_count(value)
-
 # Read the host's string-to-string option map without importing the JSON package.
 _xoptions = {}
 _options_environment = __posix('environ')[1]
@@ -17,8 +13,7 @@ while _options_cursor < len(_options_text) and _options_text[_options_cursor] !=
     if _options_text[_options_cursor:_options_cursor + 1] == ',':
         _options_cursor += 1
 
-# Expose the warning options supplied to this process.
-warnoptions = []
+# Combine CLI warning options with the native startup parser.
 _warning_text = _options_environment.get(b'LUMEN_PYTHON_WARNOPTIONS', b'[]').decode('utf-8')
 _warning_cursor = 1
 while _warning_cursor < len(_warning_text) and _warning_text[_warning_cursor] != ']':

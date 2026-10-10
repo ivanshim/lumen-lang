@@ -791,7 +791,59 @@ pub fn reversed_window_kind(portion: char) -> &'static str {
     match portion { 'k' | 'm' => "dict_reversekeyiterator", 'v' => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
 }
 
+pub(super) enum ReferenceState { Permanent, Counted(usize) }
+
+impl ReferenceState {
+    pub(super) fn as_python(self) -> i64 {
+        if let Self::Counted(owners) = self { owners as i64 }
+        else { i64::from(0xc000_0000_u32) }
+    }
+}
+
 impl Value {
+    pub(super) fn ownership_count(&self) -> Option<ReferenceState> {
+        // These identities are encoded in the value itself and cannot be
+        // deallocated. Copying one never creates or releases a heap owner.
+        if matches!(self, Self::Nil | Self::Flag(_) | Self::Small(_) | Self::Ellipsis
+            | Self::Intrinsic(..) | Self::OctetKind { .. } | Self::Channel(_)
+            | Self::Refusal(_)) { return Some(ReferenceState::Permanent); }
+        if let Value::Shared(binding) = self {
+            return match &*binding.borrow() {
+                Value::Vector(_) | Value::Dict(_) => Some(ReferenceState::Counted(Rc::strong_count(binding))),
+                captured => captured.ownership_count(),
+            };
+        }
+        let count = match self {
+            Value::Thing(t) | Value::Attributes(t) => Rc::strong_count(t),
+            Value::Tuple(t) | Value::Vector(t) | Value::Row(t) | Value::Arguments(t) | Value::Span(t) => Rc::strong_count(t),
+            Value::Generator(t) => Rc::strong_count(t),
+            Value::Text(t) | Value::Refusal(t) => Rc::strong_count(t),
+            Value::Huge(t) => Rc::strong_count(t),
+            Value::Frac(t) => Rc::strong_count(t),
+            Value::Complex(t) => Rc::strong_count(t),
+            Value::Mutable(t, _) => Rc::strong_count(t),
+            Value::Iterator(t) => Rc::strong_count(t),
+            Value::Backtrace(t) => Rc::strong_count(t),
+            Value::Member(t, _) | Value::Window(t, _) => Rc::strong_count(t),
+            Value::Unpaired(t) => Rc::strong_count(t),
+            Value::Cursor(t) => Rc::strong_count(t),
+            Value::Octets { cell, .. } => Rc::strong_count(cell),
+            Value::Export(t) => Rc::strong_count(t),
+            Value::Progression(t) => Rc::strong_count(t),
+            Value::TextRow(t, _) => Rc::strong_count(t),
+            Value::Set(t) => Rc::strong_count(t),
+            Value::Dict(t) => Rc::strong_count(t),
+            Value::Couple(t) => Rc::strong_count(t),
+            Value::Blueprint(t) => Rc::strong_count(t),
+            Value::Routine(t) | Value::Bound(t, _) => Rc::strong_count(t),
+            Value::Method(_, _, t) => Rc::strong_count(t),
+            Value::Adorned(t) => Rc::strong_count(t),
+            Value::Dim(t) => Rc::strong_count(t),
+            _ => return None,
+        };
+        Some(ReferenceState::Counted(count))
+    }
+
     pub fn method(code: Rc<Routine>, receiver: Rc<Thing>) -> Value { Value::Method(code, receiver, Rc::new(MethodMark)) }
 
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Sequence::tuple(parts)) }
@@ -1838,6 +1890,9 @@ impl Value {
             Value::Generator(generator) => {
                 if let Ok(state) = generator.try_borrow() {
                     if !state.titles[1].is_empty() {
+                        if state.of.as_ref().is_some_and(|code| code.flags & 128 != 0) {
+                            return format!("<coroutine object {} at 0x{:x}>", state.titles[1], if state.coroutine_address != 0 { state.coroutine_address } else { Rc::as_ptr(generator) as usize });
+                        }
                         return format!("<generator object {} at 0x1>", state.titles[1]);
                     }
                 }
@@ -1884,6 +1939,7 @@ impl Value {
             // around the routine they hold, as CPython writes them.
             Value::Wrapped(4, parts) => format!("<staticmethod({})>", parts[0].bare()),
             Value::Wrapped(5, parts) => format!("<classmethod({})>", parts[0].bare()),
+            Value::Wrapped(64, fields) => format!("<coroutine_wrapper object at 0x{:x}>", Rc::as_ptr(fields) as usize),
             Value::Wrapped(..) => "<member wrapper>".into(),
             Value::Tuple(items) => {
                 let among = Among::members(self);
