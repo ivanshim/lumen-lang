@@ -4503,7 +4503,7 @@ impl<'a> Machine<'a> {
         let Value::Thing(thing) = subject else { return None };
         let named = |key: &String| names.iter().any(|word| word == key);
         let actual=thing.blueprint();
-        if self.table.has_class_order&&!actual.ancestry().is_empty() {
+        if self.table.has_class_order&&!actual.ancestry.borrow().is_empty() {
             for blueprint in actual.resolution().iter().map(Rc::as_ref) {
                 let entry=blueprint.shared.borrow().iter().find(|(key,_)|named(key)).map(|(_,v)|v.clone())
                     .or_else(||blueprint.methods.iter().find(|(key,_)|named(key)).map(|(_,body)|Value::Routine(body.clone())));
@@ -16072,9 +16072,9 @@ impl<'a> Machine<'a> {
         }
         let Value::Thing(thing) = subject else { return None };
         let actual=thing.blueprint();
-        if self.table.has_class_order&&!actual.ancestry().is_empty() {
+        if self.table.has_class_order&&!actual.ancestry.borrow().is_empty() {
             for blueprint in actual.resolution().iter().map(Rc::as_ref) {
-                if let Some(entry)=blueprint.shared.borrow().iter().find(|(key,_)|key==word).map(|(_,v)|v.clone()) {
+                if let Some(entry)=blueprint.shared.named(word, self.names_in_calls) {
                     if Self::native_word(&blueprint).is_some() && matches!(&entry, Value::Wrapped(60, _)) { return None; }
                     return Some(entry);
                 }

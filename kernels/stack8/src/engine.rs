@@ -5685,7 +5685,7 @@ impl<'a> Engine<'a> {
         let Value::Object(object) = value else { return None };
         let named = |name: &String| names.iter().any(|word| word == name);
         let actual = object.class_now();
-        if self.lang.fuller_classes && !actual.lineage().is_empty() {
+        if self.lang.fuller_classes && !actual.lineage.borrow().is_empty() {
             for current in actual.order().iter().map(Rc::as_ref) {
                 if let Some((_, Value::Routine(routine))) = current.shared.borrow().iter().find(|(n, _)| named(n)) { return Some(routine.clone()); }
                 if let Some((_, routine)) = current.methods.iter().find(|(n, _)| named(n)) { return Some(routine.clone()); }
@@ -7534,10 +7534,10 @@ impl<'a> Engine<'a> {
         let Value::Object(object) = value else { return None };
         let named = self.lang.class_special.get(place)?;
         let actual = object.class_now();
-        if self.lang.fuller_classes && !actual.lineage().is_empty() {
+        if self.lang.fuller_classes && !actual.lineage.borrow().is_empty() {
             for current in actual.order().iter().map(Rc::as_ref) {
-                if let Some((_, value)) = current.shared.borrow().iter().find(|(n, _)| n == named) {
-                    if Self::own_kind(&current).is_some() && matches!(value, Value::Adapter(slot) if slot.0 == 29) { return None; }
+                if let Some(value) = current.shared.read(named, self.lang.bind_names) {
+                    if Self::own_kind(&current).is_some() && matches!(&value, Value::Adapter(slot) if slot.0 == 29) { return None; }
                     return Some(value.clone());
                 }
                 if let Some((_, routine)) = current.methods.iter().find(|(n, _)| n == named) { return Some(Value::Routine(routine.clone())); }
