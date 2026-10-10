@@ -9039,13 +9039,14 @@ impl<'a> Machine<'a> {
         }
         if self.names_in_calls && self.detail("descriptor.get") == name {
             if word == "function" { return Some(Value::Wrapped(31, Rc::new(Vec::new()).into())); }
-            if matches!(word.as_str(), "classmethod" | "staticmethod" | "property") { return Some(Value::Wrapped(78, Rc::new(Vec::new()).into())); }
+            if matches!(word.as_str(), "classmethod" | "staticmethod") { return Some(Value::Wrapped(78, Rc::new(Vec::new()).into())); }
+            if word == "property" { return Some(Value::Wrapped(50, Rc::new(Vec::new()).into())); }
         }
-        // A property also writes and deletes; those hooks stand beside
-        // the reader on the kind.
-        if self.names_in_calls && word == "property"
-            && (self.detail("descriptor.set") == name || self.detail("descriptor.delete") == name) {
-            return Some(Value::Wrapped(78, Rc::new(Vec::new()).into()));
+        // A property also writes and deletes, through its own workings:
+        // a hook called directly reaches the accessor it names.
+        if self.names_in_calls && word == "property" {
+            if self.detail("descriptor.set") == name { return Some(Value::Wrapped(51, Rc::new(Vec::new()).into())); }
+            if self.detail("descriptor.delete") == name { return Some(Value::Wrapped(52, Rc::new(Vec::new()).into())); }
         }
         if word == "function" && (name == self.detail("code") || name == self.detail("globals")) {
             return Some(self.kind_entry(&word, name));

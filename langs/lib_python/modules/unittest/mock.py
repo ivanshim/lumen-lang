@@ -3,6 +3,8 @@
 # written: an attribute of a thing already in hand, replaced by a stand-in
 # that records calls, supports flat specs and class patch decoration.
 
+import inspect
+
 class _Sentinel:
     def __init__(self, word):
         self.word = word
@@ -309,34 +311,13 @@ def _async_stand_in_step(*args, **kwargs):
 _ASYNC_CODE = _async_stand_in_step.__code__.replace(co_flags=128 | 4 | 8)
 
 
-class _AwaitAnswer:
-    # What a call on an asynchronous stand-in hands back. Awaiting it
-    # records the await beside the call and answers with the stand-in's
-    # own answer, as the reference's asynchronous stand-in does.
-    def __init__(self, owner, args, kwargs, answer):
-        self.owner = owner
-        self.answer = answer
-        self.args = args
-        self.kwargs = kwargs
-
-    def __await__(self):
-        # The await is counted where it happens, not where the call was
-        # made, so a call left unawaited leaves the count alone.
-        owner = self.owner
-        owner._mock_await_count += 1
-        owner._mock_await_args = _Call(self.args, self.kwargs)
-        owner._mock_await_args_list.append(owner._mock_await_args)
-        if False:
-            yield None
-        return self.answer
-
-
 class AsyncMock(MagicMock):
-    # A stand-in for something awaited. It answers the same questions a
-    # MagicMock answers, and beside them keeps how many times it was
-    # awaited and the arguments of the last await. Its own code stands
-    # for a coroutine, so a reader asking whether it is an asynchronous
-    # callable is told yes; its calls hand back something to await.
+    # A stand-in for something awaited. Its own code stands for a
+    # coroutine, so a reader asking whether it is an asynchronous
+    # callable is told yes. A call is written down where it is made and
+    # hands back a coroutine; the effect, the wrapped callable and the
+    # answer are settled when that coroutine is awaited, as the
+    # reference settles them.
     def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None):
         MagicMock.__init__(self, name, return_value, side_effect, wraps)
         self.__dict__['_mock_await_count'] = 0
@@ -365,8 +346,51 @@ class AsyncMock(MagicMock):
         return self._mock_await_args_list
 
     def __call__(self, *args, **kwargs):
-        answer = Mock.__call__(self, *args, **kwargs)
-        return _AwaitAnswer(self, args, kwargs, answer)
+        # The call stands on the stand-in at once; only awaiting it runs
+        # the effect, so a call left unawaited changes nothing.
+        self.called = True
+        self.call_count += 1
+        self.call_args = _Call(args, kwargs)
+        self.call_args_list.append(self.call_args)
+        return self._execute_mock_call(args, kwargs)
+
+    async def _execute_mock_call(self, args, kwargs):
+        self.__dict__['_mock_await_count'] += 1
+        record = _Call(args, kwargs)
+        self.__dict__['_mock_await_args'] = record
+        self.__dict__['_mock_await_args_list'].append(record)
+        effect = self._side_effect
+        if effect is not None:
+            if isinstance(effect, BaseException):
+                raise effect
+            if isinstance(effect, type):
+                made = effect()
+                if isinstance(made, BaseException):
+                    raise made
+                return made
+            if callable(effect):
+                if inspect.iscoroutinefunction(effect):
+                    answer = await effect(*args, **kwargs)
+                else:
+                    answer = effect(*args, **kwargs)
+                if answer is not DEFAULT:
+                    return answer
+            else:
+                try:
+                    answer = next(effect)
+                except StopIteration:
+                    # A StopIteration cannot travel through a coroutine.
+                    raise StopAsyncIteration
+                if isinstance(answer, BaseException):
+                    raise answer
+                return answer
+        if self.return_value is DEFAULT:
+            if self._mock_wraps is not None:
+                if inspect.iscoroutinefunction(self._mock_wraps):
+                    return await self._mock_wraps(*args, **kwargs)
+                return self._mock_wraps(*args, **kwargs)
+            self.return_value = Mock(name='()')
+        return self.return_value
 
     def reset_mock(self, *args, **kwargs):
         Mock.reset_mock(self)

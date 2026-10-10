@@ -98,16 +98,18 @@ impl<'a> Engine<'a> {
             direct: vec![root.clone()], lineage: RefCell::new(ancestry), base: Some(root), answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: crate::value::ClassMembers::new(hooks), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None) });
         if !self.lang.class_builder.is_empty() && matches!(self.lang.builtins.get(word), Some(Builtin::ClassTool(9..=11))) {
-            c.shared.borrow_mut().push((self.class_word("descriptor.get").to_string(), Self::adapter(79, vec![])));
+            let property_kind = self.lang.builtins.get(word) == Some(&Builtin::ClassTool(11));
+            // The wrapper kinds read through the method-wrapper hook; a
+            // property reads, writes and deletes through its own
+            // workings, so a hook called directly reaches the accessor.
+            let reader = if property_kind { Self::adapter(20, vec![]) } else { Self::adapter(79, vec![]) };
+            c.shared.borrow_mut().push((self.class_word("descriptor.get").to_string(), reader));
             if self.lang.builtins.get(word) == Some(&Builtin::ClassTool(9)) {
                 c.shared.borrow_mut().push((self.class_word("call").to_string(), Self::adapter(80, vec![])));
             }
-            // The property kind writes as well as reads, so it carries
-            // the two writing hooks beside the reading one, as the
-            // reference's own property type does.
-            if self.lang.builtins.get(word) == Some(&Builtin::ClassTool(11)) {
-                c.shared.borrow_mut().push((self.class_word("descriptor.set").to_string(), Self::adapter(79, vec![])));
-                c.shared.borrow_mut().push((self.class_word("descriptor.delete").to_string(), Self::adapter(79, vec![])));
+            if property_kind {
+                c.shared.borrow_mut().push((self.class_word("descriptor.set").to_string(), Self::adapter(21, vec![])));
+                c.shared.borrow_mut().push((self.class_word("descriptor.delete").to_string(), Self::adapter(22, vec![])));
             }
         }
         if word == "classmethod_descriptor" && !self.class_word("descriptor.get").is_empty() {

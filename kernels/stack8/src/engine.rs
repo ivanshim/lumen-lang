@@ -7415,15 +7415,16 @@ impl<'a> Engine<'a> {
         if self.lang.bind_names && name == self.class_word("descriptor.get") {
             match word.as_ref() {
                 "function" => return Some(Self::adapter(15, vec![])),
-                "staticmethod" | "classmethod" | "property" => return Some(Self::adapter(79, vec![])),
+                "staticmethod" | "classmethod" => return Some(Self::adapter(79, vec![])),
+                "property" => return Some(Self::adapter(20, vec![])),
                 _ => {},
             }
         }
-        // A property also writes and deletes, and says so through the
-        // two hooks its kind carries beside the reader.
-        if self.lang.bind_names && word.as_ref() == "property"
-            && [self.class_word("descriptor.set"), self.class_word("descriptor.delete")].contains(&name) {
-            return Some(Self::adapter(79, vec![]));
+        // A property also writes and deletes, through its own workings:
+        // a hook called directly reaches the accessor it names.
+        if self.lang.bind_names && word.as_ref() == "property" {
+            if name == self.class_word("descriptor.set") { return Some(Self::adapter(21, vec![])); }
+            if name == self.class_word("descriptor.delete") { return Some(Self::adapter(22, vec![])); }
         }
         if word.as_ref() == "function" && [self.class_word("code"), self.class_word("globals")].contains(&name) {
             return Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]));

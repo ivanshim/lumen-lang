@@ -100,15 +100,18 @@ impl<'a> Machine<'a> {
             parents:vec![root.clone()],ancestry:RefCell::new(ranks),under:Some(root),answers:Vec::new(),fields:Vec::new(),
             reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".to_owned(),Value::text(word))],shared: crate::data::BlueprintEntries::new(protocols),weak_slot:Cell::new(None),has_slot_storage: false, sealed:Cell::new(false), order_supplied:Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None)});
         if !self.rules.words_ext_stmt_class_builder.is_empty() && matches!(self.table.prims.get(word), Some(Prim::ClassWork(9..=11))) {
-            kind.shared.borrow_mut().push((self.detail("descriptor.get").to_owned(), Self::wrap(78, Vec::new())));
+            let property_kind = self.table.prims.get(word) == Some(&Prim::ClassWork(11));
+            // The wrapper kinds read through the method-wrapper hook; a
+            // property reads, writes and deletes through its own
+            // workings, so a hook called directly reaches the accessor.
+            let reader = if property_kind { Self::wrap(50, Vec::new()) } else { Self::wrap(78, Vec::new()) };
+            kind.shared.borrow_mut().push((self.detail("descriptor.get").to_owned(), reader));
             if self.table.prims.get(word) == Some(&Prim::ClassWork(9)) {
                 kind.shared.borrow_mut().push((self.detail("call").to_owned(), Self::wrap(79, Vec::new())));
             }
-            // The property kind also carries the two writing hooks, as
-            // the reference's property type keeps them beside its reader.
-            if self.table.prims.get(word) == Some(&Prim::ClassWork(11)) {
-                kind.shared.borrow_mut().push((self.detail("descriptor.set").to_owned(), Self::wrap(78, Vec::new())));
-                kind.shared.borrow_mut().push((self.detail("descriptor.delete").to_owned(), Self::wrap(78, Vec::new())));
+            if property_kind {
+                kind.shared.borrow_mut().push((self.detail("descriptor.set").to_owned(), Self::wrap(51, Vec::new())));
+                kind.shared.borrow_mut().push((self.detail("descriptor.delete").to_owned(), Self::wrap(52, Vec::new())));
             }
         }
         if word == "classmethod_descriptor" && self.protocol_spelled() {
