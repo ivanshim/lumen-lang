@@ -215,7 +215,8 @@ class Mock:
             raise AttributeError(name)
         # An assertion name the stand-in does not carry is a misspelling,
         # not a child: the reference refuses it rather than answering it.
-        if name.startswith(('assert', 'assret', 'asert', 'aseert', 'assrt')):
+        # (a name the spec lists got past the check above and is allowed)
+        if self._mock_methods is None and name.startswith(('assert', 'assret', 'asert', 'aseert', 'assrt')):
             raise AttributeError(name)
         child = Mock(name=name)
         setattr(self, name, child)
