@@ -207,6 +207,13 @@ fn final_sigma(letters: &[char], at: usize) -> bool {
 }
 
 pub(crate) fn recase(s: &str, op: TextOp) -> String {
+    if s.is_ascii() {
+        match op {
+            TextOp::Upper => return s.to_ascii_uppercase(),
+            TextOp::Lower | TextOp::Casefold => return s.to_ascii_lowercase(),
+            _ => {},
+        }
+    }
     let letters: Vec<char> = s.chars().collect();
     let mut prior = false;
     let mut answer = String::new();
@@ -832,4 +839,16 @@ pub(crate) fn character_length(text: &Rc<str>) -> usize {
         entries.insert(address, (Rc::downgrade(text), count));
         count
     })
+}
+
+#[cfg(test)]
+mod recase_tests {
+    use super::{recase, TextOp};
+    #[test]
+    fn ascii_and_unicode_case_changes() {
+        assert_eq!(recase("Az09\x1f", TextOp::Upper), "AZ09\x1f");
+        assert_eq!(recase("Az09\x1f", TextOp::Casefold), "az09\x1f");
+        assert_eq!(recase("Straße ΣΟΣ", TextOp::Lower), "straße σος");
+        assert_eq!(recase("Straße ΣΟΣ", TextOp::Upper), "STRASSE ΣΟΣ");
+    }
 }

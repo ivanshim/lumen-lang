@@ -34,20 +34,3 @@ _StandardStream.encoding = 'utf-8'
 # Read the live teardown state after normal exit callbacks have completed.
 def is_finalizing():
     return __program_namespace()['__program_finalizing']
-
-# Native errors retain the command diagnostic while their frames remain inspectable.
-_traceback_uncaught = _show_uncaught
-def _show_uncaught(exc):
-    if excepthook is __excepthook__ and not _xoptions and argv[0] not in ('-c', '-m'):
-        for field in ('\0diagnostic', '\0report'):
-            diagnostic = getattr(exc, field, None)
-            if diagnostic is not None:
-                kind, message = __current_fault(exc)
-                prefix = kind + ': '
-                if message.startswith(prefix):
-                    message = message[len(prefix):]
-                stderr.write((prefix + message if message else kind) + '\n')
-                return
-    _traceback_uncaught(exc)
-
-__uncaught(_show_uncaught)

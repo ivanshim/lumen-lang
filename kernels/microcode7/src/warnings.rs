@@ -307,6 +307,10 @@ impl Machine<'_> {
 
 impl Machine<'_> {
     fn import_from_finders(&mut self, qualified: &str) -> Result<Option<Value>, String> {
+        let parent_path = if let Some((parent, _)) = qualified.rsplit_once('.') {
+            let owner = self.load_namespace(parent)?;
+            self.attribute(&owner, "__path__").unwrap_or(Value::Nil)
+        } else { Value::Nil };
         let Some(system) = self.imported.get("sys").cloned() else { return Ok(None); };
         if self.attribute(&system, "meta_path").is_none() { return Ok(None); }
         let searchers = self.warning_get(system, "meta_path")?;
@@ -331,10 +335,12 @@ impl Machine<'_> {
                     if exists { return Ok(None); }
                     continue;
                 }
-                let specification = self.warning_send(searcher, "find_spec", vec![Value::text(qualified), Value::Nil, Value::Nil])?;
+                let specification = self.warning_send(searcher, "find_spec", vec![Value::text(qualified), parent_path.clone(), Value::Nil])?;
                 if matches!(specification.settled(), Value::Nil) { continue; }
                 let loader = self.warning_get(specification.clone(), "loader")?;
-                let mut namespace = self.warning_send(loader.clone(), "create_module", vec![specification.clone()])?;
+                let mut namespace = if let Some(bootstrap) = self.imported.get("importlib._bootstrap").cloned() {
+                    self.warning_send(bootstrap, "module_from_spec", vec![specification.clone()])?
+                } else { self.warning_send(loader.clone(), "create_module", vec![specification.clone()])? };
                 if matches!(namespace.settled(), Value::Nil) {
                     let of = self.native_kind("module"); self.made += 1;
                     namespace = Value::Thing(Rc::new(Thing { of, reclassified: RefCell::new(None),
@@ -343,6 +349,11 @@ impl Machine<'_> {
                 if let Value::Thing(module) = &namespace { module.holds.borrow_mut().push((String::from("__spec__"), specification)); }
                 self.imported.insert(qualified.to_owned(), namespace.clone()); self.namespace_places.borrow_mut().take(); self.refresh_import_table(qualified);
                 self.warning_send(loader, "exec_module", vec![namespace.clone()])?;
+                if let Some((parent, child)) = qualified.rsplit_once('.') {
+                    if let Some(owner) = self.imported.get(parent).cloned() {
+                        self.core_primitive(Prim::SetMember, "setattr", vec![owner, Value::text(child), namespace.clone()], Vec::new())?;
+                    }
+                }
                 return Ok(Some(namespace));
             }
             Ok(None)

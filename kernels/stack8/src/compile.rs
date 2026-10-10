@@ -6868,9 +6868,6 @@ impl<'a> Compiler<'a> {
         let module_slot = self.gensym("class_module");
         let module_name = lang.module_names.first().cloned().unwrap_or_default();
         let mut shared: Vec<(String, String)> = Vec::new();
-        if let Some(word)=lang.class_firstline.first() {
-            self.constant(Value::Small(first_row as i64));let slot=self.gensym("class_line");self.write(&slot);shared.push((word.clone(),slot));
-        }
         if !parameters.is_empty() {
             for parameter in parameters { self.read(parameter); }
             self.act(Action::MakeTuple, parameters.len());

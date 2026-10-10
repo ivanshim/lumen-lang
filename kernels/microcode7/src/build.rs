@@ -37,7 +37,6 @@ thread_local! {
 /// `uncertain` holds those names, whose places are glanced at when the
 /// class is built rather than read outright.
 struct ClassParts {
-    assigned_attributes: Vec<String>,
     lexical_members: Vec<String>,
     completed_class: Address,
     needs_class_cell: bool,
@@ -5462,7 +5461,7 @@ impl<'a> Builder<'a> {
         self.class_globals.push((self.layers.len(), Vec::new()));
         self.class_met.push(Vec::new());
         let completed_class = self.gensym("completed_class");
-        self.under_way.push(ClassParts { assigned_attributes: Vec::new(), lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(), self_writes: std::collections::BTreeSet::new(),
+        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(), self_writes: std::collections::BTreeSet::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // The body uses the metaclass's actual mapping from its first statement.
@@ -5524,13 +5523,8 @@ impl<'a> Builder<'a> {
         self.class_met.pop();
         self.within = previous;
         self.named_before = named_outside;
-        let mut parts = self.under_way.pop().expect("class body");
-        if let Some(word)=table.single("ext.stmt.class.detail.static.attributes") {
-            parts.assigned_attributes.sort_unstable();parts.assigned_attributes.dedup();
-            let attributes=Value::tuple(parts.assigned_attributes.iter().map(|attribute|Value::text(attribute)).collect());
-            let target=self.read_to_write(parts.book.as_ref().expect("class namespace").ident.as_ref());
-            setup.push(prim_call(Prim::ClassWork(19),vec![target,constant(Value::text(word)),constant(attributes)]));
-        }
+        let parts = self.under_way.pop().expect("class body");
+
         if !parts.annotated_names.is_empty() && table.has_any("ext.stmt.class.annotations") {
             let row = parts.annotated_names.iter().flat_map(|(key, routine)| [key.clone(), routine.clone()]).collect();
             let book = parts.book.as_ref().expect("class namespace");
@@ -5688,7 +5682,7 @@ impl<'a> Builder<'a> {
         self.class_globals.push((self.layers.len(), Vec::new()));
         self.class_met.push(Vec::new());
         let completed_class = self.gensym("completed_class");
-        self.under_way.push(ClassParts { assigned_attributes: Vec::new(), lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(), self_writes: std::collections::BTreeSet::new(),
+        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(), self_writes: std::collections::BTreeSet::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // A body that spells `locals` or `vars` anywhere in it is

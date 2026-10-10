@@ -6354,8 +6354,8 @@ impl<'a> Machine<'a> {
     fn stand_at_instruction(&self, at: i64) {
         if let Some(activation) = &self.active_trace {
             // activation stores its private instruction position at index 7.
-            if let Some((_, value)) = activation.holds.borrow_mut().get_mut(7) {
-                *value = Value::Small(at);
+            if let Some((_, Value::Small(value))) = activation.holds.borrow_mut().get_mut(7) {
+                *value = at;
             }
         }
     }
@@ -21496,7 +21496,7 @@ impl<'a> Machine<'a> {
                     (2, Some(Value::Flag(true))) => self.sys_path_source(&v[0].bare()).map(|entry| entry.0).or_else(|| self.library_module_file(&v[0].bare())).map_or(Value::Nil, |file| Value::text(&file)),
                     (2, Some(Value::Text(selector))) if selector.as_ref() == "source" => {
                         let name = v[0].bare();
-                        match self.sys_path_source(&name) {
+                        match self.sys_path_source(&name).or_else(|| self.library_module_file(&name).and_then(|file| std::fs::read(&file).ok().map(|source| (file, source)))) {
                             Some((_, raw)) => {
                                 let tokenize = self.load_namespace("_tokenize")?;
                                 let decoder = self.attribute(&tokenize, "_decode_source").ok_or("ImportError: source decoder is unavailable")?;
@@ -27839,7 +27839,7 @@ impl Machine<'_> {
             }
         }
         let full = format!("{path}.{wanted}");
-        if (self.table.strings("ext.system.module.path").first().map(String::as_str).is_none() && self.library_sources.contains_key(&full)) || self.sys_path_source(&full).is_some() || (self.imported.contains_key(&full) && self.import_cache_names(&full)) { return self.load_namespace(&full); }
+        if (self.table.strings("ext.system.module.path").first().map(String::as_str).is_none() && self.library_sources.contains_key(&full)) || self.sys_path_source(&full).is_some() || self.library_sources.contains_key(&full) && self.library_module_file(&full).is_some() || (self.imported.contains_key(&full) && self.import_cache_names(&full)) { return self.load_namespace(&full); }
         Err(self.import_member_fault(path, wanted))
     }
 
@@ -27982,9 +27982,6 @@ impl<'a> Machine<'a> {
             self.frames_named.last().is_some_and(|running| running.globe.is_some() && Rc::as_ptr(running) as usize == *body)
         });
         if scoped && self.world_book.is_some() { return Some(Held::World); }
-        if self.namespace_books.is_empty() && self.readings.is_empty() {
-            return (self.world_book.is_some() && Self::visible_name(self.idents.get(at)?)).then_some(Held::World);
-        }
         if let Some(word) = self.idents.get(at).and_then(|w| w.strip_prefix("\0import/")) {
             let (owner, _) = word.rsplit_once('/')?;
             for (index, (path, _)) in self.namespace_books.iter().enumerate() {

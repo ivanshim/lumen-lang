@@ -1,1 +1,1 @@
-Traceback (most recent call last):
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte

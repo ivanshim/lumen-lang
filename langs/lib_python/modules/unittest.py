@@ -31,7 +31,7 @@ class _Raises:
             raise AssertionError(_class_name(self.expected) + ' not raised')
         if not isinstance(value, self.expected):
             return False
-        self.exception = value
+        self.exception = value.with_traceback(None)
         # An exception's string is its own message, the way CPython's
         # assertRaisesRegex reads it; a `message` attribute on the
         # exception is not the same thing (argparse's ArgumentError

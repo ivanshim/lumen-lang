@@ -6515,8 +6515,8 @@ impl<'a> Engine<'a> {
             }
             if let Some(active) = &self.trace_frame {
                 // make_frame keeps the private instruction position in slot 8.
-                if let Some((_, position)) = active.fields.borrow_mut().get_mut(8) {
-                    *position = Value::Small(pc as i64);
+                if let Some((_, Value::Small(position))) = active.fields.borrow_mut().get_mut(8) {
+                    *position = pc as i64;
                 }
             }
             match &instrs[pc] {
@@ -22355,7 +22355,7 @@ impl<'a> Engine<'a> {
                 }
                 if args.len() == 2 && matches!(&args[1], Value::Text(mode) if mode.as_ref() == "source") {
                     let name = args[0].display(&sp);
-                    if let Some((_, source)) = self.sys_path_source(&name) {
+                    if let Some((_, source)) = self.sys_path_source(&name).or_else(|| self.library_module_file(&name).and_then(|file| std::fs::read(&file).ok().map(|source| (file, source)))) {
                         let tokenizer = self.route_module("_tokenize")?;
                         let decode = self.member_of(tokenizer, "_decode_source")?.ok_or("ImportError: source decoder is unavailable")?;
                         let input = self.byte_make(source, false);
@@ -27236,7 +27236,7 @@ impl Engine<'_> {
             }
         }
         let child = format!("{path}.{name}");
-        if (self.lang.module_path.is_none() && self.module_sources.contains_key(&child)) || self.sys_path_source(&child).is_some() || (self.modules.contains_key(&child) && self.module_cache_names(&child)) { return self.import_module(&child); }
+        if (self.lang.module_path.is_none() && self.module_sources.contains_key(&child)) || self.sys_path_source(&child).is_some() || self.module_sources.contains_key(&child) && self.library_module_file(&child).is_some() || (self.modules.contains_key(&child) && self.module_cache_names(&child)) { return self.import_module(&child); }
         Err(self.import_member_fault(path, name).into())
     }
 
@@ -27377,10 +27377,6 @@ impl Engine<'_> {
             if self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_some()) {
                 return Some(Kept::Outer);
             }
-        }
-        if self.module_books.is_empty() && self.text_books.is_empty() {
-            if self.outer_book.is_none() { return None; }
-            return Self::public_name(self.registry.idents.get(far)?).then_some(Kept::Outer);
         }
         let ident = self.registry.idents.get(far)?;
         if !self.module_books.is_empty() {
@@ -28130,7 +28126,7 @@ impl Engine<'_> {
         // The program's own globals dictionary is not filed as any
         // module's, but a write into it can still stand a name over a
         // builtin; reading a name consults it while this stands.
-        if self.outer_book.as_ref().is_some_and(|book| Rc::ptr_eq(book, cell)) {
+        if self.main_book.as_ref().or(self.outer_book.as_ref()).is_some_and(|book| Rc::ptr_eq(book, cell)) {
             // The outermost dictionary is the main program's own,
             // however far from it the write is made; its reader is the
             // code written in the file the run began from.

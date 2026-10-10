@@ -161,6 +161,13 @@ pub(crate) fn expression(value: &Value, words: Names) -> String {
 fn blank(letter: char) -> bool { matches!(letter,'\u{1c}'..='\u{1f}') || letter.is_whitespace() }
 
 pub(crate) fn case_changed(word: &str, work: Work) -> String {
+    if word.is_ascii() {
+        match work {
+            Work::UPPER => return word.to_ascii_uppercase(),
+            Work::LOWER | Work::CASEFOLD => return word.to_ascii_lowercase(),
+            _ => {},
+        }
+    }
     let characters: Vec<_>=word.chars().collect();
     characters.iter().enumerate().map(|(i,&letter)| {
         let lower=match work {
@@ -833,4 +840,16 @@ pub(crate) fn extent_of_string(subject: &Rc<str>) -> usize {
         lengths.insert(identity, (Rc::downgrade(subject), measured));
         measured
     })
+}
+
+#[cfg(test)]
+mod recase_tests {
+    use super::{case_changed, Work};
+    #[test]
+    fn ascii_and_unicode_case_changes() {
+        assert_eq!(case_changed("Az09\x1f", Work::UPPER), "AZ09\x1f");
+        assert_eq!(case_changed("Az09\x1f", Work::CASEFOLD), "az09\x1f");
+        assert_eq!(case_changed("Straße ΣΟΣ", Work::LOWER), "straße σος");
+        assert_eq!(case_changed("Straße ΣΟΣ", Work::UPPER), "STRASSE ΣΟΣ");
+    }
 }

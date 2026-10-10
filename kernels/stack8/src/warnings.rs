@@ -284,6 +284,10 @@ impl Engine<'_> {
 
 impl Engine<'_> {
     fn finder_import(&mut self, path: &str) -> Flow<Option<Value>> {
+        let parent_path = if let Some((parent, _)) = path.rsplit_once('.') {
+            let owner = self.import_module(parent)?;
+            self.member_of(owner, "__path__")?.unwrap_or(Value::Null)
+        } else { Value::Null };
         let Some(sys) = self.modules.get("sys").cloned() else { return Ok(None); };
         let Some(finders) = self.member_of(sys, "meta_path")? else { return Ok(None); };
         let finders = self.core_members(&finders)?;
@@ -306,10 +310,12 @@ impl Engine<'_> {
                     if self.lang.warning_backend.first().is_some_and(|word| word == path) || self.module_sources.contains_key(path) || self.sys_path_source(path).is_some() { return Ok(None); }
                     continue;
                 }
-                let spec = self.warning_method(finder, "find_spec", vec![Value::text(path), Value::Null, Value::Null])?;
+                let spec = self.warning_method(finder, "find_spec", vec![Value::text(path), parent_path.clone(), Value::Null])?;
                 if matches!(spec.contents(), Value::Null) { continue; }
                 let loader = self.warning_member(spec.clone(), "loader")?;
-                let mut module = self.warning_method(loader.clone(), "create_module", vec![spec.clone()])?;
+                let mut module = if let Some(bootstrap) = self.modules.get("importlib._bootstrap").cloned() {
+                    self.warning_method(bootstrap, "module_from_spec", vec![spec.clone()])?
+                } else { self.warning_method(loader.clone(), "create_module", vec![spec.clone()])? };
                 if matches!(module.contents(), Value::Null) {
                     let class = self.kind_class("module"); self.made += 1;
                     module = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class,
@@ -318,6 +324,11 @@ impl Engine<'_> {
                 if let Value::Object(object) = &module { object.fields.borrow_mut().push(("__spec__".into(), spec)); }
                 self.modules.insert(path.to_string(), module.clone()); self.module_addresses_ready.set(false); self.refresh_module_cache(path);
                 self.warning_method(loader, "exec_module", vec![module.clone()])?;
+                if let Some((parent, child)) = path.rsplit_once('.') {
+                    if let Some(owner) = self.modules.get(parent).cloned() {
+                        self.core_call(Builtin::SetAttr, "setattr", vec![owner, Value::text(child), module.clone()], Vec::new())?;
+                    }
+                }
                 return Ok(Some(module));
             }
             Ok(None)
