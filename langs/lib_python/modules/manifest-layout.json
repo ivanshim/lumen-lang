@@ -32,7 +32,8 @@
     "unittest": "runtime_adapters/unittest_bindings.py",
     "builtins": "runtime_adapters/builtins.py",
     "unicodedata": "runtime_adapters/unicodedata.py",
-    "traceback": "runtime_adapters/traceback.py"
+    "traceback": "runtime_adapters/traceback.py",
+    "io": "runtime_adapters/io.py"
   },
   "replacements": {
     "annotationlib": "runtime_adapters/native_annotationlib.py",

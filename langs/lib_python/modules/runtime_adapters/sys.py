@@ -34,3 +34,11 @@ _StandardStream.encoding = 'utf-8'
 # Read the live teardown state after normal exit callbacks have completed.
 def is_finalizing():
     return __program_namespace()['__program_finalizing']
+
+# Startup flags read the host environment without a late module import.
+def _environment(name):
+    environment = _host_environment('environ')[1]
+    value = environment.get(name)
+    if value is None:
+        value = environment.get(name.encode())
+    return value.decode() if isinstance(value, bytes) else value

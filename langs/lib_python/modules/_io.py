@@ -599,10 +599,19 @@ class StringIO(_TextIOBase):
 # state. Import is delayed because io declares the ABCs that _pyio registers.
 _methods = {}
 
+_pyio_module = None
+
+def _text_runtime():
+    global _pyio_module
+    if _pyio_module is None:
+        import _pyio as module
+        _pyio_module = module
+    return _pyio_module
+
 def _method(instance, kind, name):
     member = _methods.get((kind, name))
     if member is None:
-        import _pyio
+        _pyio = _text_runtime()
         member = _methods[(kind, name)] = getattr(getattr(_pyio, kind), name)
     return member.__get__(instance, type(instance))
 
@@ -621,7 +630,7 @@ def _install_text_helpers():
     # itself (the decoded-chars pair, the chunk reader, the cookie
     # packers). Left to __getattr__ each call cost three; standing in the
     # class they are found as any method is.
-    import _pyio
+    _pyio = _text_runtime()
     _TEXT_HELPERS.append(True)
     own = vars(TextIOWrapper)
     for name, value in list(vars(_pyio.TextIOWrapper).items()):
@@ -631,7 +640,7 @@ def _install_text_helpers():
             setattr(TextIOWrapper, name, value)
 
 def _text_function(name):
-    import _pyio
+    _pyio = _text_runtime()
     function = _TEXT[name] = getattr(_pyio.TextIOWrapper, name)
     return function
 
@@ -672,7 +681,7 @@ class TextIOWrapper(_TextIOBase):
             self.flush()
         self._pending = []
         self._pending_count = 0
-        import _pyio
+        _pyio = _text_runtime()
         if not _TEXT_HELPERS:
             _install_text_helpers()
         self._initialized = False
@@ -725,7 +734,7 @@ class TextIOWrapper(_TextIOBase):
         encoding = _text_option(encoding, 'encoding')
         errors = _text_option(errors, 'errors')
         if encoding is not None and encoding != 'locale':
-            import codecs
+            codecs = _text_runtime().codecs
             codecs.lookup(encoding.split('\0', 1)[0])
         if line_buffering is not None:
             line_buffering = bool(_whence(line_buffering))
@@ -733,12 +742,12 @@ class TextIOWrapper(_TextIOBase):
             write_through = bool(_whence(write_through))
         return _method(self, 'TextIOWrapper', 'reconfigure')(encoding=encoding, errors=errors, newline=newline, line_buffering=line_buffering, write_through=write_through)
     def _get_encoder(self):
-        import codecs
+        codecs = _text_runtime().codecs
         factory = codecs.getincrementalencoder(self._encoding.split('\0', 1)[0])
         self._encoder = factory(self._errors.split('\0', 1)[0])
         return self._encoder
     def _get_decoder(self):
-        import codecs
+        codecs = _text_runtime().codecs
         create = codecs.getincrementaldecoder(self._encoding.split('\0', 1)[0])
         decoded = create(self._errors.split('\0', 1)[0])
         if self._readuniversal:
@@ -929,7 +938,7 @@ class TextIOWrapper(_TextIOBase):
 
 class IncrementalNewlineDecoder:
     def __init__(self, decoder, translate, errors='strict'):
-        import _pyio
+        _pyio = _text_runtime()
         self._impl = _pyio.IncrementalNewlineDecoder(decoder, translate, errors)
     def decode(self, input, final=False):
         return self._impl.decode(input, final)
@@ -1248,7 +1257,7 @@ def _buffered_impl(kind):
     # at every step.
     impl = _IMPLS.get(kind)
     if impl is None:
-        import _pyio
+        _pyio = _text_runtime()
         base = getattr(_pyio, kind)
         class _Impl(base):
             raw = None
@@ -1446,7 +1455,7 @@ class BufferedRandom(BufferedReader):
 
 class BufferedRWPair(BufferedReader):
     def __init__(self, reader, writer, buffer_size=DEFAULT_BUFFER_SIZE):
-        import _pyio
+        _pyio = _text_runtime()
         self._implementation = _pyio.BufferedRWPair(reader, writer, buffer_size)
         self._live = self._implementation
     # Forward resource warnings to each actual raw stream of the pair.
