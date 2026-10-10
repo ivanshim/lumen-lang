@@ -10665,3 +10665,29 @@
 {"t":"2026-10-10T00:37:15Z","event":"review-started","job":"stdlib-bytes-followup","review":"review-auto-stdlib-bytes-followup-0036"}
 {"t":"2026-10-10T00:44:03Z","event":"exited","job":"review-auto-stdlib-bytes-followup-0036","code":0}
 {"t":"2026-10-10T00:52:56Z","event":"exited","job":"dsflash-frame-dspro","code":0}
+{"t":"2026-10-10T00:55:01Z","event":"integrity","job":"stdlib-bytes-followup","review":"review-auto-stdlib-bytes-followup-0036","commit":"e5b59d052","model":"deepseek-flash","round":1,"note":"REJECT (integrity): fabricated bytearray.__alloc__ len+1 to satisfy test_bytes asserts; also hex sep export, __init__ export bypass, mc7 immutable receiver/arity, _testlimitedcapi mapping acceptance; test_bytes 187->213 both; clean check 1196/0 -> returns/stdlib-bytes-followup.md; integrity -> Sol"}
+{"t":"2026-10-10T00:55:01Z","event":"handed-over","job":"stdlib-bytes-followup","to":"gpt-6.1-sol","note":"integrity mark at DS Flash skips low rungs -> brief-stdlib-bytes-followup-sol.md, same branch/worktree, head e5b59d052; sol-new stdlib-bytes-followup-sol queued"}
+{"t":"2026-10-10T00:55:11Z","event":"exited","job":"dsflash-genericalias-astra","code":0}
+{"t":"2026-10-10T00:55:18Z","event":"started","job":"stdlib-bytes-followup-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-10T00:56:14Z","event":"accepted","job":"integrate-21h","batch":"21h","commit":"ad8d18533","note":"coordinator: final check on ad8d18533 1196/0, gates ok, 0 regression/disagree/broken; length changes coverage only (s8 bytes 227->274 ByteArrayAsStringTest completes; s8 tokenize 132->126 TestRoundtrip timeout); 12 branches; s8 11764->12949/14167, mc7 11666->12811/14030, 185 files; contextlib +33% s8/+56% mc7 timing only (21f glob precedent); mc7 io 431 = 21g (pathlib branch said 432)"}
+{"t":"2026-10-10T00:56:14Z","event":"integrated","job":"integrate-21h","batch":"21h","pr":543,"commit":"fcff0410","note":"HISTORY.md 1bk added; pushed batch21h, PR #543 opened, pr-merge-watch running"}
+{"t":"2026-10-10T00:56:14Z","event":"follow-up","job":"integrate-21h","text":"test_contextlib run time +33% stack8 (83->111s) / +56% microcode7 (137->214s) since batch 21h, counts unchanged; new subject"}
+{"t":"2026-10-10T00:56:24Z","event":"note","text":"toolkit-sync: committed and pushed"}
+{"t":"2026-10-10T00:56:46Z","event":"quota","codex_week_used":80,"codex_credits":0,"claude_week_used":26,"claude_5h_used":2,"deepseek_usd":235.89}
+{"t":"2026-10-10T00:56:52Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":80,"expected":83.6,"gap":-3.6,"status":"ok"}
+{"t":"2026-10-10T00:57:02Z","event":"finished","job":"dsflash-frame-dspro","exit_time":"2026-10-10T00:52:56Z"}
+{"t":"2026-10-10T00:57:02Z","event":"review-queued","job":"dsflash-frame-dspro","review":"review-auto-dsflash-frame-dspro-0056"}
+{"t":"2026-10-10T00:57:04Z","event":"checkin","status":"done","actions":"ACCEPT integrate-21h (ad8d18533; 1196/0, gates ok, 0 regression/disagree/broken; length changes coverage only; s8 11764->12949/14167, mc7 11666->12811/14030, 185 files); HISTORY.md 1bk fcff0410, pushed batch21h, opened PR #543, pr-merge-watch started; INTEGRITY stdlib-bytes-followup (DS Flash; fabricated bytearray.__alloc__ len+1 + 4 general-path bugs) -> returns/stdlib-bytes-followup.md, handed over to Sol, brief-stdlib-bytes-followup-sol.md, sol-new queued; prune-merged freed 0MB; luna FINDINGS appended","notes":"follow-up: contextlib +33% s8/+56% mc7 run time since 21h (counts unchanged); dsflash-frame-dspro finished, auto-review pending; DS Flash 2/12, 10 idle: no Flash-sized subject or F/E follow-up left; DS Pro idle; Haiku dunder-all-haiku; Sonnet struct-sonnet; Sol 10/11 non-review + bytes-followup-sol queued; Astra genericalias-astra (doctest/compile astra held, Codex 80% >= 75%); box load 7.1/8, 11.4G avail, disk 74%; Mac disk 87%; Claude 5h 1%/week 26%; luna gap -3.6 ok, alert = OpenClaw relay (expected)"}
+{"t":"2026-10-10T00:57:04Z","event":"finished","job":"dsflash-genericalias-astra","exit_time":"2026-10-10T00:55:11Z"}
+{"t":"2026-10-10T00:57:04Z","event":"review-queued","job":"dsflash-genericalias-astra","review":"review-auto-dsflash-genericalias-astra-0057"}
+{"t":"2026-10-10T00:59:47Z","event":"exited","job":"stdlib-pydoc","code":0}
+{"t":"2026-10-10T01:00:18Z","event":"review-started","job":"dsflash-frame-dspro","review":"review-auto-dsflash-frame-dspro-0056"}
+{"t":"2026-10-10T01:02:15Z","event":"finished","job":"stdlib-pydoc","exit_time":"2026-10-10T00:59:47Z"}
+{"t":"2026-10-10T01:02:15Z","event":"review-queued","job":"stdlib-pydoc","review":"review-auto-stdlib-pydoc-0102"}
+{"t":"2026-10-10T01:03:34Z","event":"exited","job":"review-auto-dsflash-frame-dspro-0056","code":0}
+{"t":"2026-10-10T01:05:18Z","event":"review-started","job":"dsflash-genericalias-astra","review":"review-auto-dsflash-genericalias-astra-0057"}
+{"t":"2026-10-10T01:06:04Z","event":"exited","job":"dsflash-struct-sonnet","code":0}
+{"t":"2026-10-10T01:07:20Z","event":"finished","job":"dsflash-struct-sonnet","exit_time":"2026-10-10T01:06:04Z"}
+{"t":"2026-10-10T01:07:20Z","event":"review-queued","job":"dsflash-struct-sonnet","review":"review-auto-dsflash-struct-sonnet-0107"}
+{"t":"2026-10-10T01:09:52Z","event":"exited","job":"review-auto-dsflash-genericalias-astra-0057","code":0}
+{"t":"2026-10-10T01:10:19Z","event":"review-started","job":"stdlib-pydoc","review":"review-auto-stdlib-pydoc-0102"}
