@@ -79,6 +79,7 @@ pub enum Prim {
     ReadMember,
     ProgramNames,
     /// The name of the module the routine a frame runs was written in.
+    ReferenceCount,
     FrameModule,
     /// Mark a class unchangeable: no member writes, no standing as a base.
     ClassSeal,
@@ -757,6 +758,7 @@ pub enum Form {
 #[derive(Debug, Clone)]
 pub struct Clause {
     pub source_line: u32,
+    pub reraise_position: Option<Box<Form>>,
     pub classes: Vec<String>,
     pub choices: Option<Vec<Form>>,
     pub grouped: bool,
@@ -956,6 +958,7 @@ impl Form {
                 for clause in clauses {
                     if let Some(choices) = &mut clause.choices { for choice in choices { choice.number_instructions(next); } }
                     clause.body.number_instructions(next);
+                    if let Some(cleanup) = &mut clause.reraise_position { cleanup.number_instructions(next); }
                 }
                 for child in [otherwise, last].into_iter().flatten() { child.number_instructions(next); }
             }
@@ -1152,5 +1155,73 @@ impl Routine {
         });
         adjusted.literals = literals;
         Ok(adjusted)
+    }
+}
+
+impl Form {
+    pub fn position_rows(&self, entries: &mut Vec<[Option<u32>; 4]>, inherited: [Option<u32>; 4]) {
+        let current = match self {
+            Self::OnLine(row, _, _) => [Some(*row), Some(*row), None, None],
+            Self::Located((start, column, end, stop), _, _) => [Some(*start), Some(*end), Some(*column), Some(*stop)],
+            _ => inherited,
+        };
+        entries.push(current);
+        match self {
+            Self::Located(_, _, inner) | Self::OnLine(_, _, inner) => {
+                inner.position_rows(entries, current);
+            }
+            Self::Const(Value::Routine(body)) if body.frameless => {
+                body.body.position_rows(entries, current);
+            }
+            Self::Write(_, inner) | Self::Tie(_, inner)
+            | Self::ShareItem(_, inner) | Self::ShareField(inner, _) | Self::ShareOwn(inner, _)
+            | Self::ShareCalled(inner) | Self::ForgetCalled(inner) | Self::ReadyCalled(inner)
+            | Self::Muted(inner) | Self::Silenced(inner) | Self::Called(inner)
+            | Self::CellOrSaid(_, _, _, inner) | Self::HeldEither(_, _, _, inner) => inner.position_rows(entries, current),
+            Self::Apply(callee, args) => {
+                if let Callee::Code(target) = callee { target.position_rows(entries, current); }
+                for argument in args { argument.position_rows(entries, current); }
+            }
+            Self::Dyad { a, b, .. } => {
+                for input in [a, b] {
+                    if let Input::Form(form) = input { form.position_rows(entries, current); }
+                }
+            }
+            Self::Cycle { test, body, step, otherwise, .. } => {
+                test.position_rows(entries, current);
+                body.position_rows(entries, current);
+                for child in [step, otherwise].into_iter().flatten() { child.position_rows(entries, current); }
+            }
+            Self::Attempt { body, clauses, last, otherwise, .. } => {
+                body.position_rows(entries, current);
+                for clause in clauses {
+                    if let Some(choices) = &clause.choices { for choice in choices { choice.position_rows(entries, current); } }
+                    clause.body.position_rows(entries, current);
+                    if let Some(cleanup) = &clause.reraise_position { cleanup.position_rows(entries, current); }
+                }
+                for child in [otherwise, last].into_iter().flatten() { child.position_rows(entries, current); }
+            }
+            Self::Class { values, .. } => {
+                for value in values { value.position_rows(entries, current); }
+            }
+            Self::Assert { condition, message } => {
+                condition.position_rows(entries, current);
+                message.position_rows(entries, current);
+            }
+            Self::Fits { value, kinds, .. } => {
+                value.position_rows(entries, current);
+                for kind in kinds { kind.position_rows(entries, current); }
+            }
+            Self::SharePlace(_, keys) => { for key in keys { key.position_rows(entries, current); } }
+            Self::ShareWithin(value, keys) => {
+                value.position_rows(entries, current);
+                for key in keys { key.position_rows(entries, current); }
+            }
+            Self::ForgetWithin(left, right) | Self::TieCalled(left, right) | Self::CallWrite(left, right) => {
+                left.position_rows(entries, current);
+                right.position_rows(entries, current);
+            }
+            _ => {}
+        }
     }
 }

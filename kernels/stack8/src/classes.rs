@@ -3154,6 +3154,8 @@ impl<'a> Engine<'a> {
     fn attribute_from_hook(&self, failure: Fault, subject: &Value, name: &str) -> Fault {
         let Fault::Thrown(Value::Object(error)) = &failure else { return failure };
         if !self.attribute_fault(&failure) { return failure; }
+        // An inner attribute lookup already identifies its own receiver.
+        if error.fields.borrow().iter().any(|(key, value)| self.lang.absent_name_member.as_ref() == Some(key) && !matches!(value.contents(), Value::Null)) { return failure; }
         let qualified = match subject {
             Value::Class(class) => format!("type object '{}' has no attribute '{name}'", self.qualified_class(class)),
             Value::Object(instance) if !self.lang.module_names.is_empty() && Self::kind_beneath(&instance.class_now()).as_deref() == Some("module") => {
@@ -3266,6 +3268,10 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
+        if matches!(&value, Value::Native(Builtin::ClassTool(30), _)) {
+            if let Some(receiver) = subject { return Ok(Self::adapter(3, vec![value, receiver])); }
+            return Ok(value);
+        }
         if let (Value::Native(Builtin::Text(_), word), Some(receiver)) = (&value, &subject) {
             if word.contains('.') { return Ok(Self::adapter(3, vec![value.clone(), receiver.clone()])); }
         }
@@ -3830,6 +3836,10 @@ impl<'a> Engine<'a> {
             if name == self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
         }
         let raw = subject.contents();
+        if matches!(&raw, Value::Object(module) if module.fields.borrow().iter().any(|(key, _)| key == "\0module-owner" || key == "\0namespace")
+            && !module.fields.borrow().iter().any(|(key, _)| key == name)) {
+            if let Some(directory) = self.builtin_directory_method(&raw, name) { return Ok(directory); }
+        }
         if matches!(raw, Value::Ellipsis | Value::Declined(_)) && [79, 81].iter().any(|slot| self.lang.class_special.get(*slot).is_some_and(|word| word == name)) {
             return Ok(Value::ValueMethod(Rc::new((raw, name.to_owned()))));
         }
@@ -3874,6 +3884,11 @@ impl<'a> Engine<'a> {
             return Ok(self.named_kind(&raw));
         }
         if let Value::Object(object) = &subject {
+            if self.lang.trace_fields.get(27).is_some_and(|word| word == name)
+                && self.frame_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &object.class_now())) {
+                let routine = match object.fields.borrow()[6].1.clone() { Value::Routine(body) => body, _ => unreachable!() };
+                return self.routine_builtins(&routine);
+            }
             if let Some(value) = self.frame_member(object, name) { return Ok(value); }
         }
         if let Value::Generator(generator) = &subject {
@@ -4806,6 +4821,9 @@ impl<'a> Engine<'a> {
             }
             Value::Adapter(w) if w.0==7 => {
                 if let Value::Routine(f)=&w.1[0] {
+                    if self.lang.class_details.get("code.replace").and_then(|words| words.get(2)).is_some_and(|word| word == name) {
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), "code_positions".to_owned()))));
+                    }
                     if self.lang.class_details.get("code.replace").and_then(|words| words.first()).map_or(false, |word| word == name) {
                         return Ok(Value::ValueMethod(Rc::new((subject.clone(), "code_replace".to_string()))));
                     }
@@ -4814,7 +4832,7 @@ impl<'a> Engine<'a> {
                         let words = |v: &[String]| Value::tuple(v.iter().map(|s| Value::text(s)).collect());
                         let value = match field {
                             0 => Value::text(if f.ident.starts_with("#generator") { "<genexpr>" } else if f.ident == "<program>" { self.lang.trace_fields.get(10).map_or("<module>", String::as_str) } else { &f.ident }),
-                            1 => Value::text(&f.qualified),
+                            1 => Value::text(if !f.qualified.is_empty() { &f.qualified } else if f.ident == "<program>" { self.lang.trace_fields.get(10).map_or("<module>", String::as_str) } else { &f.ident }),
                             2 => number(f.parameter_rules.as_ref().map_or(0, |v| v.iter().filter(|r| **r == 1).count())),
                             3 => number(f.parameter_rules.as_ref().map_or(0, |v| v.iter().filter(|r| **r == 2).count())),
                             4 => number(f.local_names.len()),
@@ -6532,6 +6550,41 @@ impl<'a> Engine<'a> {
         self.lang.builtins.iter().find(|(_,b)|**b==target).map(|(n,_)|n.clone()).unwrap_or_default()
     }
     pub(super) fn class_work(&mut self,which:u8,mut args:Vec<Value>)->Flow<Value> {
+        if which == 30 && !self.lang.partial_call_words.is_empty() {
+            let mut supplied = Vec::new();
+            let mut keywords = Vec::new();
+            for (key, value) in self.call_items(args)? {
+                if let Some(key) = key { keywords.push((key, value)); } else { supplied.push(value); }
+            }
+            if supplied.is_empty() { return Err("TypeError: descriptor '__call__' requires a 'functools.partial' object".into()); }
+            let partial = supplied.remove(0);
+            let function = self.class_get(partial.clone(), "func", false)?;
+            let stored = self.class_get(partial.clone(), "args", false)?.contents();
+            let Value::Tuple(stored) = stored else { return Err("TypeError: partial arguments must be a tuple".into()); };
+            let count = self.class_get(partial.clone(), "_phcount", false)?;
+            let Value::Small(count) = count.contents() else { return Err(self.class_refusal()); };
+            let mut positional = stored.to_vec();
+            if count > 0 {
+                if supplied.len() < count as usize {
+                    return Err(format!("TypeError: missing positional arguments in 'partial' call; expected at least {count}, got {}", supplied.len()).into());
+                }
+                let merger = self.class_get(partial.clone(), "_merger", false)?;
+                positional.extend(supplied.iter().cloned());
+                let merged = self.class_apply(merger, vec![Value::tuple(positional)])?.contents();
+                let Value::Tuple(merged) = merged else { return Err(self.class_refusal()); };
+                positional = merged.to_vec();
+                positional.extend(supplied.into_iter().skip(count as usize));
+            } else { positional.extend(supplied); }
+            let defaults = self.class_get(partial, "keywords", false)?.contents();
+            let Value::Map(defaults) = defaults else { return Err("TypeError: partial keywords must be a dictionary".into()); };
+            let mut options: Vec<(String, Value)> = defaults.iter().map(|(key, value)| (key.plain(), value.clone())).collect();
+            for (key, value) in keywords {
+                if let Some((_, held)) = options.iter_mut().find(|(word, _)| *word == key) { *held = value; }
+                else { options.push((key, value)); }
+            }
+            positional.extend(options.into_iter().map(|(key, value)| Value::Tie(Rc::new((Value::text(&key), value)))));
+            return self.class_apply(function, positional);
+        }
         if which == 27 && !self.lang.partial_repr.is_empty() {
             let [subject, Value::Class(base)] = args.as_slice() else {
                 return Err("TypeError: partial representation requires an instance and its base type".into());

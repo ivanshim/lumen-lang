@@ -55,8 +55,4 @@ def _partial_repr(self, _base=partial):
     return __partial_repr__(self, _base)
 
 partial.__repr__ = recursive_repr()(_partial_repr)
-# The reference's partial is a C object whose call contributes no frame
-# to the Python frame chain. Keep the same attribution for this Python
-# implementation by marking its call as frame-less, which the runtime
-# honours when a frame walks its links.
-partial.__call__ = __native_frame__(partial.__call__)
+partial.__call__ = __partial_call

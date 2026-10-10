@@ -47,7 +47,9 @@
   "ext.builtin.posix": [
     "__posix"
   ],
-  "ext.builtin.loader.source": ["__loader_source"],
+  "ext.builtin.loader.source": [
+    "__loader_source"
+  ],
   "ext.builtin.file.exists": [
     "__file_exists"
   ],
@@ -1135,7 +1137,8 @@
     "cr_running",
     "gi_yieldfrom",
     "__unused_python314_generator_state__",
-    "tb_lasti"
+    "tb_lasti",
+    "f_builtins"
   ],
   "ext.builtin.exceptions.traceback.member": [
     "__traceback__"
@@ -2905,7 +2908,8 @@
   ],
   "ext.stmt.class.detail.code.replace": [
     "replace",
-    "co_linetable"
+    "co_linetable",
+    "co_positions"
   ],
   "ext.stmt.class.detail.argcount": [
     "co_argcount"
@@ -4154,6 +4158,8 @@
   ],
   "ext.builtin.iter.stop_value": [],
   "ext.builtin.iter.stop_exception": [],
+  "ext.builtin.partial.call": ["__partial_call"],
+  "ext.builtin.system.refcount": ["__reference_count"],
   "ext.builtin.bytes.escape_decode": [
     "__escape_decode_native__"
   ],

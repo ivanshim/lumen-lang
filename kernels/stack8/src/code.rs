@@ -31,6 +31,7 @@ pub struct Attempt {
 #[derive(Debug, Clone)]
 pub struct Taking {
     pub line: u32,
+    pub reraise_position: Option<usize>,
     pub kinds: Vec<(usize, usize)>,
     pub held: Option<Cell>,
     pub body: (usize, usize),
@@ -46,6 +47,7 @@ impl Attempt {
         };
         span(&mut self.body, &mut at);
         for clause in &mut self.clauses {
+            if let Some(position) = &mut clause.reraise_position { *position = at(*position); }
             for kind in &mut clause.kinds { span(kind, &mut at); }
             span(&mut clause.body, &mut at);
         }
@@ -518,6 +520,7 @@ pub enum Builtin {
     MemberGet,
     ProgramNamespace,
     ProductStep,
+    ReferenceCount,
     FrameModule,
     ClassSeal,
     Bytes(u8),

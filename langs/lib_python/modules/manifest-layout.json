@@ -21,7 +21,9 @@
     "_collections_abc": "runtime_adapters/_collections_abc.py",
     "importlib": "runtime_adapters/importlib.py",
     "abc": "runtime_adapters/abc.py",
-    "codecs": "runtime_adapters/codecs.py"
+    "codecs": "runtime_adapters/codecs.py",
+    "ast": "runtime_adapters/ast.py",
+    "sys": "runtime_adapters/sys.py"
   },
   "replacements": {
     "annotationlib": "runtime_adapters/native_annotationlib.py",

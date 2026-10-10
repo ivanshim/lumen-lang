@@ -135,7 +135,11 @@ fn with_library(kernel: &str, language: &str, source: String) -> String {
         format!("__native_round = round\n{}\nround = __native_round\ndel __native_round\nimport sys", library)
     } else { library };
     let lead = source.len() - source.trim_start().len();
-    if !prologue.is_empty() && !source[..lead].contains('\n') && source[lead..].starts_with(prologue) {
+    let standalone = language != "python" || source.get(lead + prologue.len()..).is_some_and(|tail| {
+        let tail = tail.trim_start_matches([' ', '\t']);
+        tail.is_empty() || tail.starts_with(['\n', '\r', '#'])
+    });
+    if !prologue.is_empty() && standalone && !source[..lead].contains('\n') && source[lead..].starts_with(prologue) {
         let cut = lead + prologue.len();
         return format!("{}\n{}\n{}", &source[..cut], library, &source[cut..]);
     }
@@ -414,6 +418,33 @@ fn utf8_file_source(written: &[u8], bytes: &[u8], signed: bool, declared: bool, 
     process::exit(1);
 }
 
+/// Decode source with the same CPython-derived legacy mapping data as codecs.
+fn legacy_source(bytes: &[u8], encoding: &str, given: &str) -> String {
+    static TABLES: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+    let tables = TABLES.get_or_init(|| serde_json::from_str(include_str!("../langs/lib_python/modules/_legacy_charmaps.json")).expect("valid codec mapping data"));
+    let rows = tables[encoding].as_array().expect("a registered mapping family");
+    let first = if encoding == "gbk" { 0x81 } else { 0xa1 };
+    let mut text = String::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let lead = bytes[at];
+        if lead < 128 { text.push(char::from(lead)); at += 1; continue; }
+        let mapped = if lead >= first && lead <= 0xfe && at + 1 < bytes.len() {
+            let trail = bytes[at + 1];
+            let column = if encoding == "gbk" && (0x40..=0xfe).contains(&trail) && trail != 0x7f {
+                Some(usize::from(trail - 0x40 - u8::from(trail > 0x7f)))
+            } else if encoding == "gb2312" && (0xa1..=0xfe).contains(&trail) { Some(usize::from(trail - 0xa1)) } else { None };
+            column.and_then(|column| rows[usize::from(lead - first)].as_str()?.chars().nth(column)).filter(|character| *character != '\0')
+        } else { None };
+        if let Some(character) = mapped { text.push(character); at += 2; }
+        else {
+            eprintln!("SyntaxError: encoding problem: {encoding} ({given})");
+            process::exit(1);
+        }
+    }
+    text
+}
+
 /// Read a Python file according to PEP 263: a UTF-8 signature is
 /// discarded before it reaches the lexer, and a coding word in a
 /// comment among the first two lines names how the rest decodes. The
@@ -452,6 +483,8 @@ fn python_file_source(written: Vec<u8>, given: &str) -> String {
             bytes.iter().copied().map(char::from).collect()
         }
         "latin1" | "latin" | "iso88591" | "isolatin1" => bytes.iter().copied().map(char::from).collect(),
+        "gbk" | "cp936" | "ms936" | "936" => legacy_source(bytes, "gbk", given),
+        "gb2312" | "gb231280" | "euccn" | "chinese" | "csiso58gb231280" => legacy_source(bytes, "gb2312", given),
         "cp437" | "437" | "ibm437" => decode_with_upper(bytes, CP437_UPPER),
         "cp1251" => decode_with_upper(bytes, CP1251_UPPER),
         "iso88597" => decode_with_upper(bytes, ISO88597_UPPER),
@@ -716,7 +749,14 @@ fn run_all() {
 
     // Every program runs on top of its language's library.
     let given_lines = source.lines().count();
-    let source = with_library(&inv.kernel, inv.language.name(), source);
+    let command_source = (inv.language.name() == "python" && inv.file == "<string>" && inv.module_source.is_some()).then(|| source.clone());
+    // Initialize the language library before registering a command's code.
+    // Command strings have no filesystem source and share the interactive cache.
+    let source = if let Some(text) = command_source {
+        let literal = serde_json::to_string(&text).expect("a source string can be quoted");
+        let registered = format!("__import__('linecache')._register_code(compile({literal}, '<string>', 'exec'), {literal}, '<string>')\n{source}");
+        with_library(&inv.kernel, inv.language.name(), registered)
+    } else { with_library(&inv.kernel, inv.language.name(), source) };
     // How many lines the library put before the program's own text, so
     // that a kernel can name the line a program was written on rather
     // than the line of the two run together.
@@ -1027,6 +1067,13 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut python: Option<String> = None;
     let mut file: Option<String> = None;
     let mut module_source = None;
+    let mut python_bytes_warning = 0usize;
+    // Startup transfers belong to one invocation; child processes parse their
+    // own flags rather than inheriting these internal option records.
+    for option in ["LUMEN_PYTHON_BYTES_WARNING", "LUMEN_PYTHON_WARNOPTIONS", "LUMEN_PYTHON_XOPTIONS", "LUMEN_PYTHON_NO_SITE", "LUMEN_PYTHON_UNBUFFERED"] {
+        env::remove_var(option);
+    }
+
     let mut module_name = None;
     let mut python_development = false;
     // Whether the run was asked only to name itself and stop.
@@ -1158,19 +1205,59 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 rest = &rest[used..];
                 break;
             }
-            // Code given on the command line, as the reference takes it:
-            // it runs as a program named "<string>", and what stands
-            // after it belongs to the program.
-            Some("-c") if file.is_none() && (python.is_some() || language.as_ref().is_some_and(|held| held.name() == "python") || env::var("LUMEN_LANG").is_ok_and(|held| held == "python")) => {
-                if rest.len() < 2 {
-                    eprintln!("Error: -c requires code");
-                    process::exit(1);
-                }
-                file = Some("<string>".to_string());
+            // Python command strings retain their conventional virtual filename.
+            Some("-c") if file.is_none() && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                if rest.len() < 2 { usage(program); }
                 module_source = Some(said(&rest[1]));
-                language = Some(Language::Named("python".to_string()));
+                file = Some("<string>".to_owned());
+                language = Some(Language::Named("python".to_owned()));
                 rest = &rest[2..];
                 break;
+            }
+            // These Python startup switches describe services already isolated
+            // from site imports and configure byte diagnostics before execution.
+            Some(flag) if file.is_none() && (flag == "-S" || flag == "-u"
+                || flag.len() > 1 && flag.starts_with('-') && flag[1..].chars().all(|letter| letter == 'b'))
+                && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                if flag == "-S" { env::set_var("LUMEN_PYTHON_NO_SITE", "1"); }
+                else if flag == "-u" { env::set_var("LUMEN_PYTHON_UNBUFFERED", "1"); }
+                else {
+                    let previous = python_bytes_warning;
+                    python_bytes_warning = previous + flag.len() - 1;
+                    env::set_var("LUMEN_PYTHON_BYTES_WARNING", python_bytes_warning.to_string());
+                }
+                language = Some(Language::Named("python".to_owned()));
+                rest = &rest[1..];
+            }
+            // Preserve Python warning options in command-line order.
+            Some(flag) if file.is_none() && (flag == "-W" || flag.starts_with("-W"))
+                && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                let (option, used) = if flag == "-W" {
+                    if rest.len() < 2 { usage(program); }
+                    (said(&rest[1]), 2)
+                } else { (flag[2..].to_owned(), 1) };
+                let mut options: Vec<String> = env::var("LUMEN_PYTHON_WARNOPTIONS").ok()
+                    .and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+                options.push(option);
+                env::set_var("LUMEN_PYTHON_WARNOPTIONS", serde_json::to_string(&options).unwrap());
+                language = Some(Language::Named("python".to_owned()));
+                rest = &rest[used..];
+            }
+            // Apply Python's debug-range switch before compiling any code.
+            Some(flag) if file.is_none() && (flag == "-X" || flag.starts_with("-X"))
+                && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                let (option, used) = if flag == "-X" {
+                    if rest.len() < 2 { usage(program); }
+                    (said(&rest[1]), 2)
+                } else { (flag[2..].to_owned(), 1) };
+                let (key, value) = option.split_once('=').unwrap_or((&option, "True"));
+                let mut options: std::collections::BTreeMap<String, String> = env::var("LUMEN_PYTHON_XOPTIONS").ok()
+                    .and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+                options.insert(key.to_owned(), value.to_owned());
+                env::set_var("LUMEN_PYTHON_XOPTIONS", serde_json::to_string(&options).unwrap());
+                if key == "no_debug_ranges" { env::set_var("PYTHONNODEBUGRANGES", "1"); }
+                language = Some(Language::Named("python".to_owned()));
+                rest = &rest[used..];
             }
             Some("-d") if file.is_none() => {
                 if rest.len() < 2 {
@@ -1208,6 +1295,16 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 rest = &rest[1..];
             }
             _ => break,
+        }
+    }
+
+    if let Ok(setting) = env::var("LUMEN_PYTHON_BYTES_WARNING") {
+        let level = setting.parse::<usize>().unwrap_or(0);
+        if level != 0 {
+            let mut options: Vec<String> = env::var("LUMEN_PYTHON_WARNOPTIONS").ok()
+                .and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+            options.push(format!("{}::BytesWarning", if level > 1 { "error" } else { "default" }));
+            env::set_var("LUMEN_PYTHON_WARNOPTIONS", serde_json::to_string(&options).unwrap());
         }
     }
 
