@@ -436,6 +436,24 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             }
             return Ok(Value::characters(result));
         }
+        if matches!(work, PARTITION | RPARTITION) {
+            if input.len() != 2 { return Err(complaint(table, "arguments")); }
+            let separator = unpack(&input[1]).map_err(|_| format!("TypeError: {}() argument must be str, not {}", if work == PARTITION { "partition" } else { "rpartition" }, input[1].kind_word()))?;
+            if separator.is_empty() { return Err(String::from("ValueError: empty separator")); }
+            let last = numbers.len().checked_sub(separator.len());
+            let seek = |at: usize| numbers[at..at + separator.len()] == separator[..];
+            let found = match last {
+                None => None,
+                Some(last) if work == PARTITION => (0..=last).find(|&at| seek(at)),
+                Some(last) => (0..=last).rev().find(|&at| seek(at)),
+            };
+            let (front, middle, back) = match found {
+                Some(at) => (numbers[..at].to_vec(), separator.clone(), numbers[at + separator.len()..].to_vec()),
+                None if work == RPARTITION => (Vec::new(), Vec::new(), numbers.to_vec()),
+                None => (numbers.to_vec(), Vec::new(), Vec::new()),
+            };
+            return Ok(Value::tuple(vec![Value::characters(front), Value::characters(middle), Value::characters(back)]));
+        }
         if matches!(work,SPLIT|RSPLIT) && input.len()<4 {
             let delimiter=match input.get(1){Some(item) if !matches!(item,Value::Nil)=>Some(unpack(item)?),_=>None};
             if matches!(&delimiter,Some(row) if row.len()==0){return Err(String::from("ValueError: empty separator"))}

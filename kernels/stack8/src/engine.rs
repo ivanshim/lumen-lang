@@ -18814,7 +18814,7 @@ impl<'a> Engine<'a> {
             if !matches!(held, Value::Complex(_)) { return Ok(match held { Value::Flag(b) => Value::Small(i64::from(b)), number => number }); }
             return Ok(crate::complex::made(self.lang, a,-b));
         }
-        if !named.is_empty() && !matches!(operation, "sort" | "split" | "rsplit" | "format" | "update" | "encode") {
+        if !named.is_empty() && !matches!(operation, "sort" | "split" | "rsplit" | "replace" | "format" | "update" | "encode") {
             let name = self.lang.value_methods.iter().find(|(_, op)| op.as_str() == operation).map(|(word, _)| word.as_str()).unwrap_or(operation);
             return Err(Self::named_fault(&self.lang.call_builtin_amiss, name));
         }

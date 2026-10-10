@@ -108,9 +108,16 @@ pub fn keywords(op: TextOp, args: &mut Vec<Value>, named: Vec<(String, Value)>, 
     let initial = args.len();
     let method = checked_name(op);
     if !named.is_empty() && !method.is_empty() {
-        if !matches!(op, TextOp::Expandtabs | TextOp::Splitlines) { return Err(format!("TypeError: str.{method}() takes no keyword arguments")); }
-        let total = initial.saturating_sub(1) + named.len();
-        if total > 1 { return Err(format!("TypeError: {method}() takes at most 1 argument ({total} given)")); }
+        match op {
+            TextOp::Expandtabs | TextOp::Splitlines => {
+                let total = initial.saturating_sub(1) + named.len();
+                if total > 1 { return Err(format!("TypeError: {method}() takes at most 1 argument ({total} given)")); }
+            }
+            // Replace also takes count by name, after its two
+            // positional-only arguments; the loop below lays it down.
+            TextOp::Replace => {}
+            _ => return Err(format!("TypeError: str.{method}() takes no keyword arguments")),
+        }
     }
     let mut used = Vec::new();
     for (key, value) in named {
@@ -124,6 +131,7 @@ pub fn keywords(op: TextOp, args: &mut Vec<Value>, named: Vec<(String, Value)>, 
             TextOp::Encode if fits("encoding") => 1,
             TextOp::Encode if fits("errors") => 2,
             TextOp::Replace if fits("count") => 3,
+            TextOp::Replace => return Err(fault(lang, "arguments")),
             _ if !method.is_empty() => return Err(format!("TypeError: '{key}' is an invalid keyword argument for {method}()")),
             _ => return Err(fault(lang, "arguments")),
         };

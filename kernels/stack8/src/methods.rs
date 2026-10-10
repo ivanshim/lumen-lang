@@ -215,7 +215,13 @@ pub fn answered(value: &Value, operation: &str) -> bool {
 pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)], words: &Wording, fault: &dyn Fn(&str) -> String, absent: &dyn Fn(&Value, &str) -> String, allow_cycles: bool) -> Answer {
     let mut supplied = args.to_vec();
     if !names.is_empty() && !matches!(op, "format" | "update" | "encode") {
-        let slots: &[&str] = match op { "split" | "rsplit" => &["sep", "maxsplit"], _ => &[] };
+        let slots: &[&str] = match op {
+            "split" | "rsplit" => &["sep", "maxsplit"],
+            // Replace keeps old and new positional-only and takes one
+            // name, count, in the third place.
+            "replace" => &["", "", "count"],
+            _ => &[],
+        };
         for (name, v) in names {
             let Some(at) = slots.iter().position(|s| s == name) else { return Err(fault("arguments")); };
             if at < args.len() { return Err(fault("arguments")); }
@@ -331,7 +337,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
         // empty piece stands at the near edge of the window.
         Value::Codepoints(row) if matches!(op, "find" | "rfind" | "index" | "rindex") => {
             arity(1, 3)?;
-            let sought = a[0].contents().text_codes().ok_or_else(|| fault("string"))?;
+            let sought = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
             let edge = |given: Option<&Value>, otherwise: i64| -> Result<i64, String> {
                 match given.map(Value::contents) { None | Some(Value::Null) => Ok(otherwise), Some(v) => integer(&v, fault) }
             };
@@ -355,13 +361,62 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             if place.is_none() && matches!(op, "index" | "rindex") { return Err(fault("substring")); }
             return Ok(Value::Small(place.map_or(-1, |at| at as i64)));
         }
+        // A count walks the selected window the same way, never letting
+        // one match keep the next from being found after it.
+        Value::Codepoints(row) if op == "count" => {
+            arity(1, 3)?;
+            let sought = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            let edge = |given: Option<&Value>, otherwise: i64| -> Result<i64, String> {
+                match given.map(Value::contents) { None | Some(Value::Null) => Ok(otherwise), Some(v) => integer(&v, fault) }
+            };
+            let last = row.len() as i64;
+            let mut low = edge(a.get(1), 0)?;
+            let mut high = edge(a.get(2), last)?;
+            if low < 0 { low = (last + low).max(0); }
+            if high < 0 { high = (last + high).max(0); }
+            let past = low > last;
+            let low = low.clamp(0, last) as usize;
+            let high = high.clamp(0, last) as usize;
+            if past || low > high { return Ok(Value::Small(0)); }
+            if sought.is_empty() { return Ok(Value::Small((high - low) as i64 + 1)); }
+            let window = &row[low..high];
+            let mut total = 0i64;
+            let mut at = 0usize;
+            while at + sought.len() <= window.len() {
+                if window[at..at + sought.len()] == sought[..] { total += 1; at += sought.len(); } else { at += 1; }
+            }
+            return Ok(Value::Small(total));
+        }
+        // A cut at the first or the last separator hands the three parts
+        // back, each keeping the code units it was made of.
+        Value::Codepoints(row) if op == "partition" || op == "rpartition" => {
+            arity(1, 1)?;
+            let separator = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            if separator.is_empty() { return Err(fault("separator")); }
+            let backwards = op == "rpartition";
+            let mut found = None;
+            let mut at = 0usize;
+            while at + separator.len() <= row.len() {
+                if row[at..at + separator.len()] == separator[..] {
+                    found = Some(at);
+                    if !backwards { break; }
+                }
+                at += 1;
+            }
+            let (front, middle, back) = match found {
+                Some(at) => (row[..at].to_vec(), separator.clone(), row[at + separator.len()..].to_vec()),
+                None if backwards => (Vec::new(), Vec::new(), row.to_vec()),
+                None => (row.to_vec(), Vec::new(), Vec::new()),
+            };
+            return Ok(Value::tuple(vec![Value::from_codes(front), Value::from_codes(middle), Value::from_codes(back)]));
+        }
         // Every run the pattern matches is swapped for the replacement,
         // no more often than the count allows; an empty pattern stands
         // before every unit and once past the last one.
         Value::Codepoints(row) if op == "replace" => {
             arity(2, 3)?;
-            let sought = a[0].contents().text_codes().ok_or_else(|| fault("string"))?;
-            let instead = a[1].contents().text_codes().ok_or_else(|| fault("string"))?;
+            let sought = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            let instead = a[1].contents().text_codes().ok_or_else(|| fault("arguments"))?;
             let limit = a.get(2).map_or(Ok(-1), |v| whole_count(v, fault))?;
             let allowed = if limit < 0 { usize::MAX } else { limit as usize };
             let mut answer = Vec::with_capacity(row.len() + instead.len());
