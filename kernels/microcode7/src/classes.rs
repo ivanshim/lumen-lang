@@ -877,7 +877,7 @@ impl<'a> Machine<'a> {
         Ok(())
     }
     fn namespace_entry(&mut self, blueprint:&Rc<Blueprint>, word:&str)->Res<Option<Value>> {
-        if self.inherited_entry(blueprint,"\0type-keys").is_none() { return Ok(self.inherited_entry(blueprint,word)); }
+        if !self.has_nonstring_class_keys || self.inherited_entry(blueprint,"\0type-keys").is_none() { return Ok(self.inherited_entry(blueprint,word)); }
         let resolution=blueprint.resolution();
         let target=self.hash_key(&Value::text(word))?;
         for parent in resolution.into_iter() {
@@ -1199,6 +1199,7 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn assemble_class(&mut self,title:String,parents:Vec<Rc<Blueprint>>,mut entries:Vec<(String,Value)>,
         builder:Option<Rc<Blueprint>>,handed:Vec<Value>,title_object:Value)->Res {
+        self.has_nonstring_class_keys |= entries.iter().any(|(key, _)| key == "\0type-keys");
         let mut class_cell = None;
         let cell_word = self.detail("classcell").to_owned();
         if !cell_word.is_empty() {
@@ -6482,6 +6483,7 @@ impl<'a> Machine<'a> {
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
+        self.has_nonstring_class_keys |= key == "\0type-keys";
         if let Some(dictionary)=self.decorator_dictionary(&subject)? {
             if key=="__wrapped__" || key==self.detail("function") || key==self.detail("abstractmethod") {return Err(self.readonly_attribute(&subject,key));}
             if key==self.detail("namespace") {

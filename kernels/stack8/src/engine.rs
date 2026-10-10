@@ -126,6 +126,7 @@ pub struct Engine<'a> {
     warning_module: Option<Value>,
     warning_bound: Option<Value>,
     finder_active: std::collections::HashSet<String>,
+    has_nonstring_class_keys: bool,
     trace_frame: Option<Rc<Instance>>,
     /// Routines whose frames a frame walk hides, as C routines are
     /// absent from a Python frame chain in the reference.
@@ -1617,7 +1618,7 @@ impl<'a> Engine<'a> {
             opened_descriptors: HashMap::new(),
             native_exceptions,
             contexts: crate::context::ContextStore::default(),
-            warning_revision: 0, warning_lock_depth: 0, warning_module: None, warning_bound: None, finder_active: std::collections::HashSet::new(),
+            warning_revision: 0, warning_lock_depth: 0, warning_module: None, warning_bound: None, finder_active: std::collections::HashSet::new(), has_nonstring_class_keys: false,
             member_words: [
                 lang.class_details.get("name").and_then(|list| list.first()).map_or("", String::as_str),
                 lang.class_details.get("qualified").and_then(|list| list.first()).map_or("", String::as_str),

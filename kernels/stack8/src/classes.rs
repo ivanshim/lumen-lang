@@ -749,7 +749,7 @@ impl<'a> Engine<'a> {
         Ok(made)
     }
     fn class_dictionary_value(&mut self, class:&Rc<Class>, name:&str)->Flow<Option<Value>> {
-        if self.class_value(class,"\0type-keys").is_none() { return Ok(self.class_value(class,name)); }
+        if !self.has_nonstring_class_keys || self.class_value(class,"\0type-keys").is_none() { return Ok(self.class_value(class,name)); }
         let order = class.order();
         let wanted = self.special_key(&Value::text(name))?;
         for owner in order {
@@ -1062,6 +1062,7 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn forge_class(&mut self, name: String, bases: Vec<Rc<Class>>, mut members: Vec<(String, Value)>,
         maker: Option<Rc<Class>>, carried: Vec<Value>, title_value: Value) -> Flow<Value> {
+        self.has_nonstring_class_keys |= members.iter().any(|(key, _)| key == "\0type-keys");
         let mut class_cell = None;
         let cell_word = self.class_word("classcell").to_owned();
         if !cell_word.is_empty() {
@@ -6000,6 +6001,7 @@ impl<'a> Engine<'a> {
         Ok(self.keep_collection(made))
     }
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
+        self.has_nonstring_class_keys |= name == "\0type-keys";
         if matches!(&subject,Value::Object(instance) if Self::own_kind(&instance.class_now()).as_deref()==Some("struct_time")) {
             if ["tm_year","tm_mon","tm_mday","tm_hour","tm_min","tm_sec","tm_wday","tm_yday","tm_isdst","tm_zone","tm_gmtoff"].contains(&name) {return Err("AttributeError: readonly attribute".into())}
             return Err(format!("AttributeError: 'time.struct_time' object has no attribute '{name}'").into());
