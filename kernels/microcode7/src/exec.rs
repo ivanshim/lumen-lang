@@ -18279,6 +18279,18 @@ impl<'a> Machine<'a> {
         one.equals(other)
     }
 
+    /// The dict shape a value takes part in a `==` between maps with:
+    /// an object's own attribute pairs are turned into a plain Dict so
+    /// the shared `dicts_equal` road (which calls each pair's `__eq__`)
+    /// weighs them, while every other value is left exactly as it is.
+    fn dict_side(&self, value: &Value) -> Value {
+        let settled = value.settled();
+        match settled {
+            Value::Attributes(held) => Value::Dict(Rc::new(self.attribute_entries(&held).into())),
+            other => other,
+        }
+    }
+
     /// Whether two maps hold the same pairs, key for key, by the very
     /// road the subscript takes rather than `equal_contents`'s
     /// `one_place`/`equals`, which cannot call a key's own `__eq__`:
@@ -23057,7 +23069,15 @@ impl<'a> Machine<'a> {
                 Value::Flag(alike != (op == Prim::Ne))
             }
             Prim::Eq | Prim::Ne if self.rules.unordered_maps => {
-                let alike = match (&v[0], &v[1]) {
+                // An object's __dict__ reads as a dict but is served as
+                // the object's own attribute pairs, so a plain
+                // (Value::Dict, Value::Dict) match never sees it and the
+                // pair's own __eq__ is never asked. Settle each side into
+                // the Dict shape first, so dicts_equal weighs the pairs
+                // instead of equal_contents, whose one_place/equals road
+                // cannot call a custom __eq__ at all.
+                let (left, right) = (self.dict_side(&v[0]), self.dict_side(&v[1]));
+                let alike = match (&left, &right) {
                     (Value::Dict(one), Value::Dict(other)) => self.dicts_equal(one, other)?,
                     _ => match self.native_sequence_equal(op, v)? {
                         Some(equal) => equal,
@@ -24724,6 +24744,8 @@ impl<'a> Machine<'a> {
             let place = if let Value::Small(n) = at {
                 let n = if *n < 0 { row.len() as i128 + i128::from(*n) } else { i128::from(*n) };
                 usize::try_from(n).ok()
+            } else if self.works_sequences() && matches!(at, Value::Flag(_)) {
+                at.as_big()?.to_usize()
             } else { as_index(at).ok() };
             return place.and_then(|p| row.get(p)).cloned().ok_or_else(|| format!("\0{}: {}", self.table.strings("ext.system.fault.class.index").first().map(String::as_str).unwrap_or_default(), self.table.strings("ext.system.fault.index").first().map(String::as_str).unwrap_or_default()));
         }
@@ -29615,6 +29637,21 @@ impl Machine<'_> {
     }
 
     fn native_reduce(&self, value: &Value) -> Value {
+        // A code value reduces to its own parts -- the source it was
+        // read from, the name it was read under, and the mode and flags
+        // that ride with it -- so a compiled module written out is read
+        // back as the very code it was and run again.
+        if let Value::Thing(t) = value {
+            if t.blueprint().name == "code" {
+                let fields = t.holds.borrow();
+                let words = self.table.strings("ext.builtin.compile.parameters");
+                let held = |key: &str| fields.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()).unwrap_or(Value::Nil);
+                let source = words.get(0).map(|w| held(w.as_str())).unwrap_or(Value::Nil);
+                let filename = words.get(1).map(|w| held(w.as_str())).unwrap_or(Value::Nil);
+                let mode = words.get(2).map(|w| held(w.as_str())).unwrap_or(Value::Nil);
+                return Value::tuple(vec![Value::text("code"), source, filename, mode, held("co_flags"), held("co_firstlineno"), held("co_consts")]);
+            }
+        }
         if let Value::Blueprint(b) = value {
             return Value::tuple(vec![Value::text("class"), Value::text(&b.name)]);
         }
@@ -29691,6 +29728,22 @@ impl Machine<'_> {
                     }
                     _ => Ok(cursor),
                 }
+            }
+            "code" => {
+                let get = |i: usize| parts.get(i).cloned().unwrap_or(Value::Nil);
+                let words = self.table.strings("ext.builtin.compile.parameters");
+                let key = |i: usize| words.get(i).map(String::as_str).unwrap_or("");
+                let kind = self.code_blueprint();
+                let holds = vec![
+                    (key(0).to_string(), get(1)),
+                    (key(1).to_string(), get(2)),
+                    (key(2).to_string(), get(3)),
+                    ("co_flags".to_string(), get(4)),
+                    ("co_firstlineno".to_string(), get(5)),
+                    ("co_consts".to_string(), get(6)),
+                ];
+                self.made += 1;
+                Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: kind, holds: RefCell::new(holds), turn: self.made })))
             }
             _ => Err(malformed()),
         }

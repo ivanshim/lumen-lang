@@ -342,7 +342,19 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     // The same arguments as a list. The file the run was started with
     // stands first in it, as the system that started the run counts it.
     if lang.args_list.is_some() || lang.args_count.is_some() {
-        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "file").map(|(.., v, _)| v.clone());
+        // sys.argv[0] is the path the run was started with: the given
+        // path for a directory, but the resolved file for a script or
+        // -m, whose co_filename and __spec__.origin already name it; the
+        // two must agree or a module filter keyed on __main__ misses.
+        // Only Python runs a directory as the __main__.py inside it, so
+        // only Python reads the given path back for argv[0]; every other
+        // language keeps the resolved file it has always kept.
+        let as_directory = lang.python_numbers
+            && std::env::var("LUMEN_RUN_MODULE").map_or(false, |name| name == "__main__");
+        let wanted = if as_directory { "given" } else { "file" };
+        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == wanted)
+            .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == "file"))
+            .map(|(.., v, _)| v.clone());
         let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
         all.extend(program_args.iter().map(|a| Value::text(a)));
         if let Some(name) = &lang.args_count {

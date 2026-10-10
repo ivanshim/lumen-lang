@@ -24240,6 +24240,21 @@ impl Engine<'_> {
     }
 
     fn native_reduce(&self, value: &Value) -> Value {
+        // A code value reduces to its own parts -- the source it was
+        // read from, the name it was read under, and the mode and flags
+        // that ride with it -- so a compiled module written out is read
+        // back as the very code it was and run again.
+        if let Value::Object(object) = value {
+            if self.lang.compile_kind.as_deref() == Some(object.class_now().name.as_str()) {
+                let fields = object.fields.borrow();
+                let held = |key: &str| fields.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()).unwrap_or(Value::Null);
+                let words = &self.lang.compile_parameters;
+                let source = words.get(0).map(|w| held(w.as_str())).unwrap_or(Value::Null);
+                let filename = words.get(1).map(|w| held(w.as_str())).unwrap_or(Value::Null);
+                let mode = words.get(2).map(|w| held(w.as_str())).unwrap_or(Value::Null);
+                return Value::tuple(vec![Value::text("code"), source, filename, mode, held("co_flags"), held("co_firstlineno"), held("co_consts")]);
+            }
+        }
         if let Value::Class(c) = value {
             return Value::tuple(vec![Value::text("class"), Value::text(&c.name)]);
         }
@@ -24316,6 +24331,22 @@ impl Engine<'_> {
                     }
                     _ => Ok(cursor),
                 }
+            }
+            "code" => {
+                let get = |i: usize| parts.get(i).cloned().unwrap_or(Value::Null);
+                let words = &self.lang.compile_parameters;
+                let key = |i: usize| words.get(i).map(String::as_str).unwrap_or("");
+                let fields = vec![
+                    (key(0).to_string(), get(1)),
+                    (key(1).to_string(), get(2)),
+                    (key(2).to_string(), get(3)),
+                    ("co_flags".to_string(), get(4)),
+                    ("co_firstlineno".to_string(), get(5)),
+                    ("co_consts".to_string(), get(6)),
+                ];
+                let class = self.code_class();
+                self.made += 1;
+                Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made })))
             }
             _ => Err(malformed()),
         }
