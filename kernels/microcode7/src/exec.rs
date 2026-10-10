@@ -3943,6 +3943,10 @@ impl<'a> Machine<'a> {
         }
         if self.has_class_order() {
             if slot.ident.as_ref()==self.rules.detail_root {if let Some(c)=&self.ancestor{return Ok(Value::Blueprint(c.clone()));}}
+            // A builtin word the language's own module holds is read
+            // from there first: the kernel's kind marker answers only
+            // where that module has nothing of the name.
+            if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
             if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::Wrapped(8,Rc::new(vec![Value::text(&slot.ident)]).into()));}
         }
         if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
@@ -5731,9 +5735,16 @@ impl<'a> Machine<'a> {
         let words = self.rules.trace_words;
         if words.len() <= 15 { return None; }
         if self.activation_kind.is_none() {
+            // The reference's frame type carries each attribute as a
+            // descriptor of its own, so a kind question about the type's
+            // f_locals reads one there rather than finding the type bare.
+            let mut shared = vec![(self.detail("module").to_owned(), Value::text("builtins"))];
+            for name in ["f_back", "f_code", "f_globals", "f_lasti", "f_lineno", "f_locals", "f_trace", "f_trace_lines"] {
+                shared.push((name.to_owned(), self.kind_entry("frame", name)));
+            }
             self.activation_kind = Some(Rc::new(Blueprint { name: words[9].to_string(), under: None, presentation: Some(format!("<class '{}'>", words[9])),
                 parents: Vec::new(), ancestry: std::cell::RefCell::new(Vec::new()), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                answers: Vec::new(), constants: Vec::new(), shared: crate::data::BlueprintEntries::new(vec![(self.detail("module").to_owned(), Value::text("builtins"))]), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None) }));
+                answers: Vec::new(), constants: Vec::new(), shared: crate::data::BlueprintEntries::new(shared), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None) }));
         }
         let body = Value::Bound(routine.clone(), environment.clone());
         let code = Value::Nil;

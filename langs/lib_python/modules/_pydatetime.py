@@ -643,7 +643,7 @@ class timedelta:
     # arbitrarily; the exact rationale originally specified in the docstring
     # was "Because I felt like it."
 
-    __slots__ = '_days', '_seconds', '_microseconds', '_hashcode'
+    __slots__ = 'days', '_seconds', '_microseconds', '_hashcode'
 
     def __new__(cls, days=0, seconds=0, microseconds=0,
                 milliseconds=0, minutes=0, hours=0, weeks=0):
@@ -752,7 +752,7 @@ class timedelta:
             raise OverflowError("timedelta # of days is too large: %d" % d)
 
         self = object.__new__(cls)
-        self._days = d
+        self.days = d
         self._seconds = s
         self._microseconds = us
         self._hashcode = -1
@@ -760,8 +760,8 @@ class timedelta:
 
     def __repr__(self):
         args = []
-        if self._days:
-            args.append("days=%d" % self._days)
+        if self.days:
+            args.append("days=%d" % self.days)
         if self._seconds:
             args.append("seconds=%d" % self._seconds)
         if self._microseconds:
@@ -776,10 +776,10 @@ class timedelta:
         mm, ss = divmod(self._seconds, 60)
         hh, mm = divmod(mm, 60)
         s = "%d:%02d:%02d" % (hh, mm, ss)
-        if self._days:
+        if self.days:
             def plural(n):
                 return n, abs(n) != 1 and "s" or ""
-            s = ("%d day%s, " % plural(self._days)) + s
+            s = ("%d day%s, " % plural(self.days)) + s
         if self._microseconds:
             s = s + ".%06d" % self._microseconds
         return s
@@ -789,12 +789,8 @@ class timedelta:
         return ((self.days * 86400 + self.seconds) * 10**6 +
                 self.microseconds) / 10**6
 
-    # Read-only field accessors
-    @property
-    def days(self):
-        """days"""
-        return self._days
-
+    # The reference exposes days as the slot's own member descriptor;
+    # the other two keep their readers.
     @property
     def seconds(self):
         """seconds"""
@@ -809,7 +805,7 @@ class timedelta:
         if isinstance(other, timedelta):
             # for CPython compatibility, we cannot use
             # our __class__ here, but need a real timedelta
-            return timedelta(self._days + other._days,
+            return timedelta(self.days + other.days,
                              self._seconds + other._seconds,
                              self._microseconds + other._microseconds)
         return NotImplemented
@@ -820,7 +816,7 @@ class timedelta:
         if isinstance(other, timedelta):
             # for CPython compatibility, we cannot use
             # our __class__ here, but need a real timedelta
-            return timedelta(self._days - other._days,
+            return timedelta(self.days - other.days,
                              self._seconds - other._seconds,
                              self._microseconds - other._microseconds)
         return NotImplemented
@@ -833,7 +829,7 @@ class timedelta:
     def __neg__(self):
         # for CPython compatibility, we cannot use
         # our __class__ here, but need a real timedelta
-        return timedelta(-self._days,
+        return timedelta(-self.days,
                          -self._seconds,
                          -self._microseconds)
 
@@ -841,7 +837,7 @@ class timedelta:
         return self
 
     def __abs__(self):
-        if self._days < 0:
+        if self.days < 0:
             return -self
         else:
             return self
@@ -850,7 +846,7 @@ class timedelta:
         if isinstance(other, int):
             # for CPython compatibility, we cannot use
             # our __class__ here, but need a real timedelta
-            return timedelta(self._days * other,
+            return timedelta(self.days * other,
                              self._seconds * other,
                              self._microseconds * other)
         if isinstance(other, float):
@@ -862,7 +858,7 @@ class timedelta:
     __rmul__ = __mul__
 
     def _to_microseconds(self):
-        return ((self._days * (24*3600) + self._seconds) * 1000000 +
+        return ((self.days * (24*3600) + self._seconds) * 1000000 +
                 self._microseconds)
 
     def __floordiv__(self, other):
@@ -941,14 +937,14 @@ class timedelta:
         return self._hashcode
 
     def __bool__(self):
-        return (self._days != 0 or
+        return (self.days != 0 or
                 self._seconds != 0 or
                 self._microseconds != 0)
 
     # Pickle support.
 
     def _getstate(self):
-        return (self._days, self._seconds, self._microseconds)
+        return (self.days, self._seconds, self._microseconds)
 
     def __reduce__(self):
         return (self.__class__, self._getstate())
