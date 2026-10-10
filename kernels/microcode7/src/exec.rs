@@ -10955,11 +10955,6 @@ impl<'a> Machine<'a> {
                     }.map(|program| self.code_handle(&program));
                     let mut holds = item.holds.borrow_mut();
                     if let Some(code) = code { holds[1].1 = code; }
-                    if let Value::Bound(_, environment) = &holds[5].1 {
-                        for place in environment.cells.borrow_mut().iter_mut() {
-                            if !matches!(place, Value::Shared(_)) { *place = Value::Unset; }
-                        }
-                    }
                     holds[5].1 = Value::Nil;
                     holds[3].1 = Value::Dict(Rc::new(Vec::new().into()));
                     holds[6].1 = Value::Nil;
