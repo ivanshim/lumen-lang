@@ -5606,8 +5606,8 @@ impl<'a> Machine<'a> {
             }
             if Self::names_a_kind(op) && self.table.single("ext.stmt.class.constructor") == Some(key) { return Ok(self.common_initialiser()); }
             if Self::names_a_kind(op) && key != self.detail("kind") {
-                let native_class = self.native_kind(&word);
-                if let Some(inherited) = self.from_the_root(key, true, &native_class) { return Ok(inherited); }
+                let root = self.common_ancestor();
+                if let Some(inherited) = self.from_the_root(key, true, &root) { return Ok(inherited); }
             }
         }
         if self.native_class_spelling("bytes") && (key == "__buffer__" || key == "__release_buffer__") {
