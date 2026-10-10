@@ -477,5 +477,67 @@ def call(*args, **kwargs):
     return _Call(args, kwargs)
 
 
+class _OpenHandle(MagicMock):
+    def __init__(self, read_data):
+        MagicMock.__init__(self, name='handle')
+        self._read_data = read_data
+        self._position = 0
+        self.read = Mock(name='read', side_effect=self._read)
+        self.readline = Mock(name='readline', side_effect=self._readline)
+        self.readlines = Mock(name='readlines', side_effect=self._readlines)
+        self.write = Mock(name='write', return_value=None)
+        self.close = Mock(name='close', return_value=None)
+        self._magic['__enter__'] = Mock(name='__enter__', return_value=self)
+        self._magic['__iter__'].side_effect = self._iterate
+
+    def __enter__(self):
+        return self._magic['__enter__']()
+
+    def _read(self, size=-1):
+        start = self._position
+        end = len(self._read_data) if size is None or size < 0 else min(start + size, len(self._read_data))
+        self._position = end
+        return self._read_data[start:end]
+
+    def _readline(self, size=-1):
+        start = self._position
+        newline = b'\n' if isinstance(self._read_data, bytes) else '\n'
+        end = self._read_data.find(newline, start)
+        end = len(self._read_data) if end < 0 else end + 1
+        if size is not None and size >= 0:
+            end = min(end, start + size)
+        self._position = end
+        return self._read_data[start:end]
+
+    def _readlines(self, hint=-1):
+        result = []
+        total = 0
+        while self._position < len(self._read_data):
+            line = self._readline()
+            result.append(line)
+            total += len(line)
+            if hint > 0 and total >= hint:
+                break
+        return result
+
+    def _iterate(self):
+        while self._position < len(self._read_data):
+            yield self.readline()
+
+
+def mock_open(mock=None, read_data=''):
+    if not isinstance(read_data, (str, bytes)):
+        raise TypeError('initial_value must be str or bytes, not ' + type(read_data).__name__)
+    if mock is None:
+        mock = MagicMock(name='open')
+    handle = _OpenHandle(read_data)
+    mock.return_value = handle
+    def reset_data(*args, **kwargs):
+        handle._position = 0
+        return DEFAULT
+    mock.side_effect = reset_data
+    return mock
+
+
 def __getattr__(name):
     raise 'NotImplementedError: unittest.mock.' + name + ' is not supported'

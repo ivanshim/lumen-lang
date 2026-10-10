@@ -514,6 +514,18 @@ def _letter_quote(tok, c):
     if c != quote:
         _backup(tok, c)
     while end_quote_size != quote_size:
+        # Ordinary buffered text needs no per-character tokenizer calls.
+        cur = tok.cur
+        end = tok.inp
+        chars = tok.bufc
+        for special in (quote, '\\', '\n'):
+            try:
+                end = chars.index(special, cur, end)
+            except ValueError:
+                pass
+        if end != cur:
+            end_quote_size = 0
+            tok.cur = end
         c = _nextc(tok)
         if c is None or (quote_size == 1 and c == '\n'):
             tok.cur = tok.start + 1

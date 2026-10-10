@@ -769,7 +769,7 @@ pub fn window_kind(portion: char) -> &'static str {
 /// The word CPython gives a walk taken backwards over a map's keys,
 /// values or pairs.
 pub fn reversed_window_kind(portion: char) -> &'static str {
-    match portion { 'k' => "dict_reversekeyiterator", 'v' => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
+    match portion { 'k' | 'm' => "dict_reversekeyiterator", 'v' => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
 }
 
 impl Value {
@@ -931,10 +931,18 @@ impl Value {
             Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
             Value::Wrapped(8, names) => Ok(format!("kind/{names:?}")),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
-            Value::Wrapped(tag, items) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60) => {
+            Value::Wrapped(tag, items) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60 | 152..=158) => {
                 let mut address = format!("native/{tag}");
                 for item in items.iter() { address.push_str(&format!("/{:?}", item.hash_address()?)); }
                 Ok(address)
+            }
+            // Bound callables keep a key by function and receiver identity.
+            Value::Wrapped(3, parts) if parts.len() == 2 => {
+                let receiver = match &parts[1] {
+                    Value::Thing(object) => format!("receiver/{:p}", Rc::as_ptr(object)),
+                    other => other.hash_address()?,
+                };
+                Ok(format!("method/{:?}/{receiver:?}", parts[0].hash_address()?))
             }
             Value::Wrapped(4..=7, items) => Ok(format!("wrapper/{:p}", Rc::as_ptr(items))),
             Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
@@ -1840,6 +1848,11 @@ impl Value {
             Value::Wrapped(32, fields) if matches!(fields.get(2), Some(Value::Small(-2))) => match &fields[1] {
                 Value::Blueprint(owner) => format!("<attribute '{}' of '{}' objects>", fields[0].bare(), owner.name),
                 _ => "<member wrapper>".into(),
+            },
+            Value::Wrapped(205, layout) => {
+                if let Value::Blueprint(declaring) = &layout[0] {
+                    format!("<attribute '{}' of '{}' objects>", layout[1].bare(), declaring.name)
+                } else { String::from("<member wrapper>") }
             },
             Value::Wrapped(60, parts) => match parts.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {

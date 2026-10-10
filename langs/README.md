@@ -3202,10 +3202,17 @@ only. The extension labels so far, all from PHP:
   items as positional arguments. Quoted text spelling that sign remains
   text, as does text spelling `ext.syntax.call.spread.pairs`. Arrays, text and the keys of maps may
   be handed out; other values are refused in the words of
-  `ext.syntax.call.spread.amiss`.
+  `ext.syntax.call.spread.amiss`, which name the thing being called
+  before them and the kind handed over after. A lone spread standing as
+  the only argument in order is worded that way; a spread standing among
+  others is refused in the plainer words of `ext.syntax.call.spread.later`,
+  with no name of the callee.
 - `ext.syntax.call.spread.pairs`: a sign before a call argument handing
-  out a map as keyword arguments. A value which is no map, or a key which
-  is no string, is refused in `ext.syntax.call.spread.pairs.amiss` words.
+  out a map as keyword arguments. Any value whose `keys` member lists
+  its keys may be handed out, and a key which is no string is refused in
+  the words of `ext.syntax.call.spread.pairs.keys`. A value which is no
+  mapping is refused in `ext.syntax.call.spread.pairs.amiss` words,
+  which name the callee and the kind offered.
 - `ext.syntax.call.amiss`: plain words for arguments which do not fit the
   parameter list. `ext.syntax.call.amiss.missing`,
   `ext.syntax.call.amiss.unknown` and `ext.syntax.call.amiss.duplicate`
@@ -4514,6 +4521,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 |---|---|---|---|---|---|---|---|---|---|---|
 | `ext.block.lone_statement` | - | - | `true` | - | `true` | - | - | - | - | - |
 | `ext.builtin._random` | - | - | `__random` | - | - | - | - | - | - | - |
+| `ext.builtin.abc.instancecheck` | - | - | `__abc_instancecheck` | - | - | - | - | - | - | - |
 | `ext.builtin.abs` | - | - | `abs` | - | - | - | - | - | - | - |
 | `ext.builtin.all` | - | - | `all` | - | - | - | - | - | - | - |
 | `ext.builtin.annotation_call` | - | - | `__annotation_call__` | - | - | - | - | - | - | - |
@@ -5416,6 +5424,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.namespace` | - | - | `__dict__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace.amiss` | - | - | `TypeError: __dict__ must be set to a dictionary, not a '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.namespace.kept` | - | - | `TypeError: cannot delete __dict__` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.native.getsets` | - | - | `builtins` `memoryview` `obj format itemsize strides readonly c_contiguous contiguous f_contiguous nbytes ndim shape` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.native.protocols` | - | - | `str` `__add__ __contains__ __eq__ __format__ __ge__ __getitem__ __getnewargs__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __mod__ __mul__ __ne__ __new__ __repr__ __rmod__ __rmul__ __sizeof__ __str__` `int` `__abs__ __add__ __and__ __bool__ __ceil__ __divmod__ __eq__ __float__ __floor__ __floordiv__ __format__ __ge__ __getnewargs__ __gt__ __hash__ __index__ __int__ __invert__ __le__ __lshift__ __lt__ __mod__ __mul__ __ne__ __neg__ __new__ __or__ __pos__ __pow__ __radd__ __rand__ __rdivmod__ __repr__ __rfloordiv__ __rlshift__ __rmod__ __rmul__ __ror__ __round__ __rpow__ __rrshift__ __rshift__ __rsub__ __rtruediv__ __rxor__ __sizeof__ __sub__ __truediv__ __trunc__ __xor__` `bool` `__and__ __invert__ __new__ __or__ __rand__ __repr__ __ror__ __rxor__ __xor__` `float` `__abs__ __add__ __bool__ __ceil__ __divmod__ __eq__ __float__ __floor__ __floordiv__ __format__ __ge__ __getformat__ __getnewargs__ __gt__ __hash__ __int__ __le__ __lt__ __mod__ __mul__ __ne__ __neg__ __new__ __pos__ __pow__ __radd__ __rdivmod__ __repr__ __rfloordiv__ __rmod__ __rmul__ __round__ __rpow__ __rsub__ __rtruediv__ __sub__ __truediv__ __trunc__` `complex` `__abs__ __add__ __bool__ __complex__ __eq__ __format__ __ge__ __getnewargs__ __gt__ __hash__ __le__ __lt__ __mul__ __ne__ __neg__ __new__ __pos__ __pow__ __radd__ __repr__ __rmul__ __rpow__ __rsub__ __rtruediv__ __sub__ __truediv__` `list` `__add__ __class_getitem__ __contains__ __delitem__ __eq__ __ge__ __getitem__ __gt__ __hash__ __iadd__ __imul__ __init__ __iter__ __le__ __len__ __lt__ __mul__ __ne__ __new__ __repr__ __reversed__ __rmul__ __setitem__ __sizeof__` `tuple` `__add__ __class_getitem__ __contains__ __eq__ __ge__ __getitem__ __getnewargs__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __mul__ __ne__ __new__ __repr__ __rmul__` `dict` `__class_getitem__ __contains__ __delitem__ __eq__ __ge__ __getitem__ __gt__ __hash__ __init__ __ior__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __or__ __repr__ __reversed__ __ror__ __setitem__ __sizeof__` `set` `__and__ __class_getitem__ __contains__ __eq__ __ge__ __gt__ __hash__ __iand__ __init__ __ior__ __isub__ __iter__ __ixor__ __le__ __len__ __lt__ __ne__ __new__ __or__ __rand__ __reduce__ __repr__ __ror__ __rsub__ __rxor__ __sizeof__ __sub__ __xor__` `frozenset` `__and__ __class_getitem__ __contains__ __eq__ __ge__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __or__ __rand__ __reduce__ __repr__ __ror__ __rsub__ __rxor__ __sizeof__ __sub__ __xor__` `bytes` `__add__ __buffer__ __bytes__ __contains__ __eq__ __ge__ __getitem__ __getnewargs__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __mod__ __mul__ __ne__ __new__ __repr__ __rmod__ __rmul__ __str__` `bytearray` `__add__ __alloc__ __buffer__ __contains__ __delitem__ __eq__ __ge__ __getitem__ __gt__ __hash__ __iadd__ __imul__ __init__ __iter__ __le__ __len__ __lt__ __mod__ __mul__ __ne__ __new__ __reduce__ __reduce_ex__ __release_buffer__ __repr__ __rmod__ __rmul__ __setitem__ __sizeof__ __str__` `range` `__bool__ __contains__ __eq__ __ge__ __getitem__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __reduce__ __repr__ __reversed__` `slice` `__eq__ __ge__ __gt__ __hash__ __le__ __lt__ __ne__ __new__ __reduce__ __repr__` `enumerate` `__class_getitem__ __iter__ __new__ __next__ __reduce__` `zip` `__iter__ __new__ __next__ __reduce__ __setstate__` `map` `__iter__ __new__ __next__ __reduce__ __setstate__` `filter` `__iter__ __new__ __next__ __reduce__` `reversed` `__iter__ __length_hint__ __new__ __next__ __reduce__ __setstate__` `list_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `list_reverseiterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `tuple_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `str_ascii_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `str_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `range_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `longrange_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `set_iterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_keyiterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_valueiterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_itemiterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_reversekeyiterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_reversevalueiterator` `__iter__ __length_hint__ __next__ __reduce__` `dict_reverseitemiterator` `__iter__ __length_hint__ __next__ __reduce__` `bytes_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `bytearray_iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` `callable_iterator` `__iter__ __next__ __reduce__` `dict_keys` `__and__ __contains__ __eq__ __ge__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __or__ __rand__ __repr__ __reversed__ __ror__ __rsub__ __rxor__ __sub__ __xor__` `dict_values` `__iter__ __len__ __repr__ __reversed__` `dict_items` `__and__ __contains__ __eq__ __ge__ __gt__ __hash__ __iter__ __le__ __len__ __lt__ __ne__ __or__ __rand__ __repr__ __reversed__ __ror__ __rsub__ __rxor__ __sub__ __xor__` `mappingproxy` `__class_getitem__ __contains__ __eq__ __ge__ __getitem__ __gt__ __hash__ __ior__ __iter__ __le__ __len__ __lt__ __ne__ __new__ __or__ __repr__ __reversed__ __ror__ __str__` `generator` `__class_getitem__ __del__ __iter__ __next__ __repr__ __sizeof__` `iterator` `__iter__ __length_hint__ __next__ __reduce__ __setstate__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.order` | - | - | `mro` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.original.bases` | - | - | `__orig_bases__` | - | - | - | - | - | - | - |
@@ -5441,6 +5450,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.subclass` | - | - | `__init_subclass__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.subclasses` | - | - | `__subclasses__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.text.amiss` | - | - | `TypeError: ` ` must be set to a string object` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.text_signature` | - | - | `__text_signature__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.type_params` | - | - | `__type_params__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.unready` | - | - | `NotImplementedError: this class operation is not supported` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.varnames` | - | - | `co_varnames` | - | - | - | - | - | - | - |
@@ -5602,9 +5612,11 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.call.bind_names` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.call.chained` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread` | - | - | `*` | - | - | - | - | - | - | - |
-| `ext.syntax.call.spread.amiss` | - | - | `TypeError: argument after * must be an iterable` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread.amiss` | - | - | `TypeError: ` `argument after * must be an iterable, not ` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread.later` | - | - | `TypeError: Value after * must be an iterable, not ` | - | - | - | - | - | - | - |
 | `ext.syntax.call.spread.pairs` | - | - | `**` | - | - | - | - | - | - | - |
-| `ext.syntax.call.spread.pairs.amiss` | - | - | `TypeError: argument after ** must be a mapping with string keys` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread.pairs.amiss` | - | - | `TypeError: ` `argument after ** must be a mapping, not ` | - | - | - | - | - | - | - |
+| `ext.syntax.call.spread.pairs.keys` | - | - | `TypeError: keywords must be strings` | - | - | - | - | - | - | - |
 | `ext.syntax.collection.unwalkable` | - | - | `TypeError: 'object' object is not iterable` | - | - | - | - | - | - | - |
 | `ext.syntax.map.resized` | - | - | `RuntimeError: dictionary changed size during iteration` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread` | - | - | `**` | - | - | - | - | - | - | - |
@@ -6129,6 +6141,8 @@ Reassigning `__bases__` to the identical direct bases is allowed; changing bases
 still raises the existing unsupported-operation exception. The pure-Python
 `__future__.py` is also carried unchanged from v3.14.8.
 
+
+`ext.builtin.abc.instancecheck` supplies the native ABC instance-check boundary: cache lookup uses the standard weak registries, and subclass hooks run without an extra Python frame, as in CPython’s `_abc` accelerator. This lets protocol hooks distinguish checks made by `abc` from direct subclass checks.
 `ext.builtin.trace_native` registers a Python tracing callback, reads the active
 callback, and exposes native compiled instructions with their source positions.
 The instruction vocabulary belongs to each kernel; it is not CPython bytecode.
@@ -6136,3 +6150,8 @@ The instruction vocabulary belongs to each kernel; it is not CPython bytecode.
 `ext.builtin.static_namespace` reads stored namespaces and class linearizations
 without invoking attribute hooks, metaclass properties, or other descriptors.
 `ext.builtin.multibyte` names the Python-only CJK mapping primitive used by the multibyte codec state machines. It uses the codec port's released mapping tables; other languages leave it unregistered.
+`ext.stmt.class.detail.text_signature` names optional native callable signature metadata.
+`ext.stmt.class.detail.native.getsets` declares triples of module, native class, and getter names whose adapter implementations become read-only native data descriptors. Class access returns the descriptor; instance access validates its owner and calls the getter.
+
+Python text methods validate named error policies in development mode (`-X dev`). Private `__codec_encode` and `__codec_decode` spellings reuse the bytes encode/decode labels for low-level registry conversion, where unused policies remain lazy.
+`ext.builtin.multibyte` names the Python native CJK mapping primitive. It provides complete CJK character mappings, prefix validation, GB18030 ranges, and Unicode 16.0/3.2 normalization data to the Python codec state machines. Other languages do not register it.
