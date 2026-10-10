@@ -10,4 +10,6 @@ def object_hasattrstring(obj, name):
 
 
 def __getattr__(name):
+    if name.startswith('__') and name.endswith('__'):
+        raise AttributeError("module '_testlimitedcapi' has no attribute '" + name + "'")
     raise 'NotImplementedError: _testlimitedcapi.' + name + ' is not supported'
