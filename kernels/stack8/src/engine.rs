@@ -16996,27 +16996,9 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        if self.lang.bind_names && matches!(builtin, Builtin::Bytes(0 | 1)) && !named.is_empty() {
+        if self.lang.bind_names && matches!(builtin, Builtin::Bytes(0 | 1)) {
             let word = match builtin { Builtin::Bytes(0) => "bytes", _ => "bytearray" };
-            if args.len() > 3 { return Err(format!("TypeError: {word}() takes at most 3 arguments ({} given)", args.len())); }
-            let mut fields: Vec<Option<Value>> = (0..3).map(|at| args.get(at).cloned()).collect();
-            for (key, value) in std::mem::take(&mut named) {
-                let at = ["source", "encoding", "errors"].iter().position(|name| *name == key)
-                    .ok_or_else(|| format!("TypeError: {word}() got an unexpected keyword argument '{key}'"))?;
-                if fields[at].is_some() {
-                    return Err(format!("TypeError: argument for {word}() given by name ('{key}') and position ({})", at + 1));
-                }
-                fields[at] = Some(value);
-            }
-            for (at, parameter) in [(1, "encoding"), (2, "errors")] {
-                if let Some(value) = &fields[at] {
-                    let raw = Self::worth_of(value).unwrap_or_else(|| value.contents());
-                    if !matches!(raw, Value::Text(_) | Value::Codepoints(_)) {
-                        let kind = if matches!(raw, Value::Null) { "None".to_string() } else { Self::type_argument_kind(value) };
-                        return Err(format!("TypeError: {word}() argument '{parameter}' must be str, not {kind}"));
-                    }
-                }
-            }
+            let fields = self.byte_constructor_fields(word, &args, std::mem::take(&mut named))?;
             let source_is_text = fields[0].as_ref().is_some_and(|value| matches!(Self::worth_of(value).unwrap_or_else(|| value.contents()), Value::Text(_) | Value::Codepoints(_)));
             match (fields[1].is_some(), fields[2].is_some(), source_is_text) {
                 (true, _, false) => return Err("TypeError: encoding without a string argument".into()),
@@ -17213,7 +17195,7 @@ impl<'a> Engine<'a> {
             let bare = Self::worth_of(receiver).unwrap_or_else(|| receiver.contents());
             if let Value::Bytes(row, true, _) = bare {
                 if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
-                return Ok(Value::Small(row.borrow().len() as i64 + 1));
+                return Ok(Value::Small(row.borrow().capacity() as i64));
             }
         }
         if operation == "__bytes__" {
@@ -17224,9 +17206,6 @@ impl<'a> Engine<'a> {
             }
         }
         if operation == "__init__" {
-            // Building a changeable run afresh reads the very words the
-            // constructor reads, so every source it takes works here.
-            // Every other kind's __init__ runs on through the plain road.
             let bare = Self::worth_of(receiver).unwrap_or_else(|| receiver.contents());
             let on_the_class = matches!(bare, Value::Native(Builtin::Bytes(1), _));
             if on_the_class || matches!(bare, Value::Bytes(_, true, _)) {
@@ -17241,11 +17220,8 @@ impl<'a> Engine<'a> {
                 };
                 let held = Self::worth_of(&target).unwrap_or_else(|| target.contents());
                 let Value::Bytes(row, true, _) = held else { return Err(self.lang.method_errors["arguments"].clone()); };
-                let mut items: Vec<(Option<String>, Value)> = given.into_iter().map(|value| (None, value)).collect();
-                items.extend(named.into_iter().map(|(key, value)| (Some(key), value)));
-                let made = self.builtin_call(Builtin::Bytes(1), "bytearray", items)?;
-                let Value::Bytes(fresh, true, _) = made.contents() else { return Err("TypeError: bytearray.__init__ is unready".into()); };
-                *row.borrow_mut() = fresh.borrow().clone();
+                let fields = self.byte_constructor_fields("bytearray", &given, named)?;
+                self.byte_reinitialize(&row, fields)?;
                 return Ok(Value::Null);
             }
         }
@@ -18755,6 +18731,94 @@ impl<'a> Engine<'a> {
         Ok(row.clone())
     }
 
+    // Bind constructor arguments without calling source code or changing storage.
+    fn byte_constructor_fields(&self, word: &str, args: &[Value], named: Vec<(String, Value)>) -> Res<[Option<Value>; 3]> {
+        if args.len() > 3 { return Err(format!("TypeError: {word}() takes at most 3 arguments ({} given)", args.len())); }
+        let mut fields = [args.first().cloned(), args.get(1).cloned(), args.get(2).cloned()];
+        for (key, value) in named {
+            let at = ["source", "encoding", "errors"].iter().position(|name| *name == key)
+                .ok_or_else(|| format!("TypeError: {word}() got an unexpected keyword argument '{key}'"))?;
+            if fields[at].is_some() { return Err(format!("TypeError: argument for {word}() given by name ('{key}') and position ({})", at + 1)); }
+            fields[at] = Some(value);
+        }
+        for (at, parameter) in [(1, "encoding"), (2, "errors")] {
+            if let Some(value) = &fields[at] {
+                let raw = Self::worth_of(value).unwrap_or_else(|| value.contents());
+                if !matches!(raw, Value::Text(_) | Value::Codepoints(_)) {
+                    let kind = if matches!(raw, Value::Null) { "None".to_string() } else { Self::type_argument_kind(value) };
+                    return Err(format!("TypeError: {word}() argument '{parameter}' must be str, not {kind}"));
+                }
+                if raw.plain().contains('\0') { return Err("ValueError: embedded null character".into()); }
+            }
+        }
+        Ok(fields)
+    }
+
+    // Clear through resize protection, then populate the same cell as callbacks run.
+    fn byte_reinitialize(&mut self, cell: &Rc<RefCell<Vec<u8>>>, fields: [Option<Value>; 3]) -> Res<()> {
+        let target = Value::Bytes(cell.clone(), true, Rc::from("bytearray"));
+        self.byte_work(57, &[target.clone()], false)?;
+        let text = fields[0].as_ref().is_some_and(|v| matches!(Self::worth_of(v).unwrap_or_else(|| v.contents()), Value::Text(_) | Value::Codepoints(_)));
+        if !text && (fields[1].is_some() || fields[2].is_some()) {
+            return Err(format!("TypeError: {} without a string argument", if fields[1].is_some() { "encoding" } else { "errors" }));
+        }
+        let Some(source) = &fields[0] else { return Ok(()); };
+        if text {
+            if fields[1].is_none() { return Err("TypeError: string argument without an encoding".into()); }
+            let args: Vec<Value> = fields.into_iter().flatten().collect();
+            let made = self.byte_work(1, &args, false)?;
+            let Value::Bytes(row, ..) = made else { return Err(self.byte_fault("arguments")); };
+            let content = row.borrow().clone();
+            self.byte_work(62, &[target, Value::Small(content.len() as i64)], false)?;
+            cell.borrow_mut().copy_from_slice(&content);
+            return Ok(());
+        }
+        if let Some(count) = self.byte_count(source)? {
+            if count.is_negative() { return Err(self.byte_fault("negative")); }
+            let size = count.to_isize().ok_or_else(|| self.sequence_oversize())?;
+            self.byte_work(62, &[target, Value::Small(size as i64)], false)?;
+            cell.borrow_mut().fill(0);
+            return Ok(());
+        }
+        let bare = Self::worth_of(source).unwrap_or_else(|| source.contents());
+        let buffer = matches!(bare, Value::Bytes(..)) || matches!(&bare, Value::Object(o) if self.class_value(&o.class_now(), "__buffer__").is_some());
+        if buffer {
+            let mut held = Vec::new();
+            let result = (|| {
+                let view = if matches!(bare, Value::Bytes(..)) {
+                    self.byte_buffer_open(source, &mut held)?
+                } else {
+                    let acquired = (|| -> Flow<Value> {
+                        let module = self.import_module("builtins")?;
+                        let acquire = self.class_get(module, "_buffer_view", false)?;
+                        self.class_apply(acquire, vec![source.clone(), Value::Small(284), Value::text("")])
+                    })();
+                    let view = acquired.map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                    held.push(view.clone());
+                    view
+                };
+                let content = self.byte_buffer_read(&view)?;
+                self.byte_work(62, &[target, Value::Small(content.len() as i64)], false)?;
+                cell.borrow_mut().copy_from_slice(&content);
+                Ok(())
+            })();
+            return self.byte_buffers_close(held, result);
+        }
+        if let Value::Array(items) | Value::Tuple(items) = &bare {
+            if items.iter().all(|v| matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_))) {
+                self.byte_work(62, &[target, Value::Small(items.len() as i64)], false)?;
+                for (at, item) in items.iter().enumerate() { cell.borrow_mut()[at] = self.byte_number(item, false)?; }
+                return Ok(());
+            }
+        }
+        let walk = self.core_iterator(source)?;
+        while let Some(item) = self.core_step(&walk)? {
+            let byte = self.byte_index(&item, false)?;
+            self.byte_work(52, &[target.clone(), Value::Small(i64::from(byte))], false)?;
+        }
+        Ok(())
+    }
+
     fn byte_make(&self, row: Vec<u8>, mutable: bool) -> Value {
         Value::Bytes(Rc::new(RefCell::new(row)), mutable, Rc::from(self.lang.byte_words["ext.system.bytes.repr"][usize::from(mutable)].as_str()))
     }
@@ -19732,17 +19796,12 @@ impl<'a> Engine<'a> {
             let result = match task {
                 3 if given.len() <= 1 => return self.byte_decode(&row, self.byte_codec(given.first())?),
                 4 if given.len() <= 2 => {
-                    // The count of a separator of a kind this kernel
-                    // does not know is read first, and reading it may
-                    // run the program's code and change the row; a row
-                    // changed out from under that reading is refused
-                    // rather than read as stale bytes.
+                    let _export = mutable.then(|| ByteExport::acquire(cell));
                     if let Some(sep @ Value::Object(_)) = given.first() {
-                        let before = cell.borrow().len();
-                        self.builtin_call(Builtin::Length, "len", vec![(None, sep.clone())])?;
-                        if cell.borrow().len() != before { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                        let length = self.builtin_call(Builtin::Length, "len", vec![(None, sep.clone())])?;
+                        if length.as_big()? != BigInt::one() { return Err("ValueError: sep must be length 1.".into()); }
                     }
-                    return self.byte_hex(&row, given);
+                    return self.byte_hex(&cell.borrow(), given);
                 }
                 6 | 7 if given.is_empty() => row.iter().map(|b| if task == 6 { b.to_ascii_uppercase() } else { b.to_ascii_lowercase() }).collect(),
                 8 if given.len() <= 2 => {

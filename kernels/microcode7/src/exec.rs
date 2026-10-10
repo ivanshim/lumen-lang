@@ -10123,16 +10123,13 @@ impl<'a> Machine<'a> {
                 if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
                 if name == "__alloc__" {
                     if !changeable { return Err(self.method_fault("arguments").into()); }
-                    return Ok(Value::Small(cell.borrow().len() as i64 + 1));
+                    return Ok(Value::Small(cell.borrow().capacity() as i64));
                 }
                 if changeable { return Err(self.method_fault("arguments").into()); }
                 return Ok(self.octets(cell.borrow().clone(), false));
             }
         }
         if name == "__init__" {
-            // Building a changeable run afresh reads the very words the
-            // constructor reads, so every source it takes works here.
-            // Every other kind's __init__ runs on through the plain road.
             let bare = Self::underlying(receiver).map(|held| held.settled()).unwrap_or_else(|| receiver.settled());
             let on_the_class = matches!(bare, Value::Intrinsic(Prim::Octets(1), _));
             if on_the_class || matches!(bare, Value::Octets { changeable: true, .. }) {
@@ -10146,19 +10143,9 @@ impl<'a> Machine<'a> {
                     (receiver.clone(), arguments)
                 };
                 let held = Self::underlying(&target).map(|value| value.settled()).unwrap_or_else(|| target.settled());
-                let Value::Octets { cell, .. } = held else { return Err(self.method_fault("arguments").into()); };
-                let mut slots: [Option<Value>; 3] = [given.first().cloned(), given.get(1).cloned(), given.get(2).cloned()];
-                for (key, supplied) in keywords {
-                    let at = match key.as_str() { "source" => 0, "encoding" => 1, "errors" => 2,
-                        _ => return Err(format!("TypeError: bytearray() got an unexpected keyword argument '{key}'").into()) };
-                    if slots[at].replace(supplied).is_some() {
-                        return Err(format!("TypeError: argument for bytearray() given by name ('{key}') and position ({})", at + 1).into());
-                    }
-                }
-                let inputs: Vec<Value> = slots.into_iter().flatten().collect();
-                let made = self.prim_values(Prim::Octets(1), "bytearray", &inputs).map_err(Escape::from)?;
-                let Value::Octets { cell: fresh, .. } = made.settled() else { return Err(String::from("TypeError: bytearray.__init__ is unready").into()); };
-                *cell.borrow_mut() = fresh.borrow().clone();
+                let Value::Octets { cell, changeable: true, .. } = held else { return Err(self.method_fault("arguments").into()); };
+                let bound = self.octet_formals("bytearray", &given, keywords)?;
+                self.initialize_octets(&cell, bound).map_err(|note| self.got_away.take().unwrap_or(Escape::Error(note)))?;
                 return Ok(Value::Nil);
             }
         }
@@ -11693,29 +11680,9 @@ impl<'a> Machine<'a> {
             for held in positional.iter_mut() { if matches!(held, Value::Unset) { *held = Value::Nil; } }
             return Ok(None);
         }
-        if matches!(op, Prim::Octets(0 | 1)) && self.rules.names_shadow_builtins && !keywords.is_empty() {
+        if matches!(op, Prim::Octets(0 | 1)) && self.rules.names_shadow_builtins {
             let constructor = if op == Prim::Octets(0) { "bytes" } else { "bytearray" };
-            if positional.len() > 3 {
-                return Err(format!("TypeError: {constructor}() takes at most 3 arguments ({} given)", positional.len()).into());
-            }
-            let mut slots = [positional.first().cloned(), positional.get(1).cloned(), positional.get(2).cloned()];
-            for (key, supplied) in keywords {
-                let place = match key.as_str() { "source" => 0, "encoding" => 1, "errors" => 2,
-                    _ => return Err(format!("TypeError: {constructor}() got an unexpected keyword argument '{key}'").into()),
-                };
-                if slots[place].replace(supplied).is_some() {
-                    return Err(format!("TypeError: argument for {constructor}() given by name ('{key}') and position ({})", place + 1).into());
-                }
-            }
-            for position in 1..=2 {
-                if let Some(supplied) = &slots[position] {
-                    let ordinary = Self::underlying(supplied).unwrap_or_else(|| supplied.settled());
-                    if !matches!(ordinary, Value::Text(_) | Value::Unpaired(_)) {
-                        let kind = if matches!(ordinary, Value::Nil) { String::from("None") } else { Self::type_argument_kind(supplied) };
-                        return Err(format!("TypeError: {constructor}() argument '{}' must be str, not {kind}", ["source", "encoding", "errors"][position]).into());
-                    }
-                }
-            }
+            let slots = self.octet_formals(constructor, positional, keywords)?;
             if slots[1].is_some() || slots[2].is_some() {
                 let text = slots[0].as_ref().is_some_and(|value| matches!(Self::underlying(value).unwrap_or_else(|| value.settled()), Value::Text(_) | Value::Unpaired(_)));
                 if !text {
@@ -13347,6 +13314,108 @@ impl<'a> Machine<'a> {
         }
     }
 
+    // Parse the byte constructor's three positions before invoking user callbacks.
+    fn octet_formals(&self, constructor: &str, given: &[Value], names: Vec<(String, Value)>) -> Result<[Option<Value>; 3], String> {
+        if given.len() > 3 {
+            return Err(format!("TypeError: {constructor}() takes at most 3 arguments ({} given)", given.len()));
+        }
+        let mut slots = [given.first().cloned(), given.get(1).cloned(), given.get(2).cloned()];
+        for (name, input) in names {
+            let place = match name.as_str() {
+                "source" => 0, "encoding" => 1, "errors" => 2,
+                _ => return Err(format!("TypeError: {constructor}() got an unexpected keyword argument '{name}'")),
+            };
+            if slots[place].replace(input).is_some() {
+                return Err(format!("TypeError: argument for {constructor}() given by name ('{name}') and position ({})", place + 1));
+            }
+        }
+        for position in 1..=2 {
+            let Some(supplied) = &slots[position] else { continue; };
+            let ordinary = Self::underlying(supplied).unwrap_or_else(|| supplied.settled());
+            if !matches!(ordinary, Value::Text(_) | Value::Unpaired(_)) {
+                let kind = if matches!(ordinary, Value::Nil) { String::from("None") } else { Self::type_argument_kind(supplied) };
+                return Err(format!("TypeError: {constructor}() argument '{}' must be str, not {kind}", ["source", "encoding", "errors"][position]));
+            }
+            if ordinary.bare().contains('\0') { return Err(String::from("ValueError: embedded null character")); }
+        }
+        Ok(slots)
+    }
+
+    // Reuse the mutable receiver and expose each appended item to subsequent callbacks.
+    fn initialize_octets(&mut self, bytes: &Rc<RefCell<Vec<u8>>>, slots: [Option<Value>; 3]) -> Result<(), String> {
+        let receiver = Value::Octets { cell: bytes.clone(), changeable: true, lead: Rc::from("bytearray") };
+        self.octet_work(57, &[receiver.clone()], false)?;
+        let is_text = slots[0].as_ref().is_some_and(|v| matches!(Self::underlying(v).unwrap_or_else(|| v.settled()), Value::Text(_) | Value::Unpaired(_)));
+        if !is_text {
+            if slots[1].is_some() { return Err("TypeError: encoding without a string argument".to_owned()); }
+            if slots[2].is_some() { return Err("TypeError: errors without a string argument".to_owned()); }
+        }
+        let Some(input) = slots[0].as_ref() else { return Ok(()); };
+        if is_text {
+            if slots[1].is_none() { return Err("TypeError: string argument without an encoding".to_owned()); }
+            let given = slots.into_iter().flatten().collect::<Vec<_>>();
+            let result = self.octet_work(1, &given, false)?;
+            let Value::Octets { cell, .. } = result else { return Err(self.octet_error("arguments")); };
+            let copied = cell.borrow().to_vec();
+            self.octet_work(62, &[receiver, Value::Small(copied.len() as i64)], false)?;
+            bytes.borrow_mut().copy_from_slice(&copied);
+            return Ok(());
+        }
+        if let Some(quantity) = self.octet_count(input)? {
+            if quantity < BigInt::zero() { return Err(self.octet_error("negative")); }
+            let length = quantity.to_isize().ok_or_else(|| self.repeating_too_wide())?;
+            self.octet_work(62, &[receiver, Value::Small(length as i64)], false)?;
+            bytes.borrow_mut().fill(0);
+            return Ok(());
+        }
+        let raw = Self::underlying(input).unwrap_or_else(|| input.settled());
+        let readable = match &raw {
+            Value::Octets { .. } => true,
+            Value::Thing(t) => self.inherited_entry(&t.blueprint(), "__buffer__").is_some(),
+            _ => false,
+        };
+        if readable {
+            let mut exports = vec![];
+            let result = (|| {
+                let window = match raw {
+                    Value::Octets { .. } => self.octet_window(input, &mut exports)?,
+                    _ => {
+                        let opened = (|| -> Res {
+                            let namespace = self.load_namespace("builtins")?;
+                            let acquire = self.read_class_member(namespace, "_buffer_view", false)?;
+                            self.apply_class_member(acquire, vec![input.clone(), Value::Small(284), Value::text("")])
+                        })().map_err(|escape| self.carried_native_fault(escape))?;
+                        exports.push(opened.clone());
+                        opened
+                    }
+                };
+                let copied = self.octet_snapshot(&window)?;
+                self.octet_work(62, &[receiver, Value::Small(copied.len() as i64)], false)?;
+                bytes.borrow_mut().copy_from_slice(&copied);
+                Ok(())
+            })();
+            return self.finish_octet_windows(exports, result);
+        }
+        if let Value::Vector(items) | Value::Tuple(items) = &raw {
+            if items.iter().all(|item| matches!(item.kind(), Some(Kind::Whole | Kind::Truth))) {
+                self.octet_work(62, &[receiver, Value::Small(items.len() as i64)], false)?;
+                for place in 0..items.len() { bytes.borrow_mut()[place] = self.octet_item(&items[place], false)?; }
+                return Ok(());
+            }
+        }
+        let iterator = self.iterated_value(input)?;
+        loop {
+            match self.next_value(&iterator)? {
+                None => break,
+                Some(item) => {
+                    let next = self.octet_index(&item, false)?;
+                    self.octet_work(52, &[receiver.clone(), Value::Small(next.into())], false)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn octets(&self, values: Vec<u8>, changeable: bool) -> Value {
         let lead = self.table.strings("ext.system.bytes.repr")[if changeable { 1 } else { 0 }].clone();
         Value::Octets { cell: Rc::new(RefCell::new(values)), changeable, lead: lead.into() }
@@ -14692,19 +14761,12 @@ impl<'a> Machine<'a> {
             match operation {
                 3 if args.len() < 2 => return self.octets_to_text(&content, self.octet_encoding(args.first())?),
                 4 if args.len() <= 2 => {
-                    // The count of a separator of a kind this kernel
-                    // does not know is read first, and reading it may
-                    // run the program's code and change the row; a row
-                    // changed out from under that reading is refused
-                    // rather than read as stale bytes.
-                    if let Some(sep) = args.first() {
-                        if matches!(sep.settled(), Value::Thing(_)) {
-                            let before = cell.borrow().len();
-                            if let Err(away) = self.ask_special(sep, 10, &[]) { self.got_away = Some(Escape::Error(away)); return Err(String::new()); }
-                            if cell.borrow().len() != before { return Err(String::from("BufferError: Existing exports of data: object cannot be re-sized")); }
-                        }
+                    let _lease = if *changeable { Some(OctetLease::new(cell)) } else { None };
+                    if let Some(separator) = args.first().filter(|v| matches!(v.settled(), Value::Thing(_))) {
+                        let measured = self.prim_values(Prim::Length, "len", &[separator.clone()])?;
+                        if measured.as_big()? != BigInt::from(1) { return Err("ValueError: sep must be length 1.".to_owned()); }
                     }
-                    return self.octets_in_hex(&content, args);
+                    return self.octets_in_hex(&cell.borrow(), args);
                 }
                 6 | 7 if args.is_empty() => {
                     result = if operation == 6 { content.to_ascii_uppercase() } else { content.to_ascii_lowercase() };

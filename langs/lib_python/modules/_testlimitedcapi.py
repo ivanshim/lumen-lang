@@ -9,21 +9,29 @@ def object_hasattrstring(obj, name):
     return 1 if hasattr(obj, name.decode()) else 0
 
 
+def _sequence(obj):
+    # Native sequence slots are supported; other kinds are truthfully refused.
+    if isinstance(obj, dict):
+        raise TypeError("mapping has no sequence slot")
+    if not isinstance(obj, (bytes, bytearray, str, list, tuple, range)):
+        raise NotImplementedError("sequence slots for this receiver are unsupported")
+
+
 def sequence_getitem(obj, i):
-    # The raw one-place sequence read. For a kind whose own one-place
-    # read is its subscript -- bytes and bytearray both -- the two are
-    # the very same working, so the subscript is the honest answer.
+    # Read through a supported native sequence slot.
+    _sequence(obj)
     return obj[i]
 
 
 def sequence_setitem(obj, i, value):
-    # The raw one-place sequence write, the subscript again for these
-    # kinds.
+    # Write through a supported native sequence slot.
+    _sequence(obj)
     obj[i] = value
 
 
 def sequence_delitem(obj, i):
-    # The raw sequence place given up, the subscript again.
+    # Delete through a supported native sequence slot.
+    _sequence(obj)
     del obj[i]
 
 
