@@ -1,9 +1,9 @@
 // Modules kept as source until a program asks for them.
 pub static MODULES: &[(&str, &str, &str)] = &[
     ("__future__", include_str!("__future__.py"), "__future__.py"),
+    ("_abc", include_str!("_abc.py"), "_abc.py"),
     ("_ast", include_str!("_ast.py"), "_ast.py"),
     ("_ast_unparse", include_str!("_ast_unparse.py"), "_ast_unparse.py"),
-    ("_abc", include_str!("_abc.py"), "_abc.py"),
     ("_bisect", include_str!("_bisect.py"), "_bisect.py"),
     ("_blake2", include_str!("_blake2.py"), "_blake2.py"),
     ("_buffer", include_str!("_buffer.py"), "_buffer.py"),
