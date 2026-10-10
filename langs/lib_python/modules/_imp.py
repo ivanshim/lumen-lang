@@ -114,9 +114,11 @@ def _namespace_portion_spec(name, search):
     return spec
 
 # The bootstrap asks again when the parent search path has moved or the
-# finder caches were cleared, so rescan the path it hands over.
+# finder caches were cleared: answer as the path finder does, so a regular
+# package or module found on the path wins and the bootstrap keeps its path.
 def _namespace_path_finder(name, path):
-    return _namespace_portion_spec(name, path)
+    from importlib._bootstrap_external import PathFinder
+    return PathFinder._get_spec(name, path)
 
 # Build the module a name's directories answer for when no source is
 # found: a namespace package, whose search path and loader are the
