@@ -315,11 +315,11 @@ fn watch_ghost(ghost: &Ghost) {
 
 /// The farewell method of a class, looked for among its programs first
 /// and then among the values it keeps for itself.
-pub fn farewell_of(class: &Blueprint) -> Option<Value> {
+pub fn farewell_of(class: &Rc<Blueprint>) -> Option<Value> {
     FAREWELL_NAME.try_with(|stored| {
         let borrowed = stored.borrow();
         let word = borrowed.as_ref()?;
-        class.program(word).map(|body| Value::Routine(body.clone())).or_else(|| {
+        class.program(word).map(Value::Routine).or_else(|| {
             let owner = class.keeper(word)?;
             let entries = owner.shared.borrow();
             entries.iter().find_map(|(key, item)| (key == word).then(|| item.clone()))
@@ -647,7 +647,7 @@ impl Knot {
                         for (_, v) in shared.iter() { held(out, v); }
                     }
                     for (_, p) in &b.methods { out.push(Knot::Held(Value::Routine(p.clone()))); }
-                    for parent in b.under.iter().chain(b.ancestry.borrow().iter()).chain(&b.parents).chain(&b.answers) {
+                    for parent in b.under().iter().chain(&b.ancestry()).chain(&b.parents()).chain(&b.answers) {
                         out.push(Knot::Held(Value::Blueprint(parent.clone())));
                     }
                 }
@@ -766,6 +766,30 @@ fn external_knots(knot: Knot, out: &mut Vec<Knot>) {
 }
 
 impl Web {
+    pub fn heap_values(&self) -> Vec<Value> {
+        // The collector also owns compiled routines and lexical frames.
+        // Publish function instances with their retained defining environments,
+        // rather than exposing the unbound code nodes used for tracing.
+        let functions: HashMap<usize, Value> = NOTABLE.try_with(|notable| {
+            notable.borrow().0.iter().filter_map(|weak| {
+                let value=weak.revive()?;
+                match &value {
+                    Value::Bound(code,_) if code.definition.is_some()=>Some((Rc::as_ptr(code) as usize,value)),
+                    _=>None,
+                }
+            }).collect()
+        }).unwrap_or_default();
+        self.strands.values().filter_map(|strand| match &strand.knot {
+            Knot::Held(Value::Couple(_) | Value::Row(_) | Value::Arguments(_))=>None,
+            Knot::Held(Value::Vector(_) | Value::Dict(_))=>None,
+            Knot::Held(Value::Routine(code))=>functions.get(&(Rc::as_ptr(code) as usize)).cloned(),
+            Knot::Held(Value::Attributes(instance))=>Some(Value::Thing(instance.clone())),
+            Knot::Held(Value::Shared(cell)) if !matches!(&*cell.borrow(),Value::Vector(_)|Value::Dict(_)|Value::Set(_)|Value::Mutable(..))=>None,
+            Knot::Held(value)=>Some(value.clone()),
+            Knot::Frame(_)=>None,
+        }).collect()
+    }
+
     /// Woven from the notable things still about.
     pub fn from_notable(extra: Vec<Knot>, live: Vec<Knot>) -> Web {
         let mut bookkeeping = HashMap::new();

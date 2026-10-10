@@ -1,4 +1,3 @@
-# Source: CPython Lib/traceback.py at v3.14.8 / 8e6e75d9102e; PSF License.
 """Extract, format and print information about Python stack traces."""
 
 import collections.abc

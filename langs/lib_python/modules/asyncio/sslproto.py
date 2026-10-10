@@ -1,6 +1,3 @@
-# CPython v3.14.8 Lib source, unchanged below this header.
-# Copyright (c) Python Software Foundation; PSF License: tests/python-3.14.8/LICENSE.
-
 # Contains code from https://github.com/MagicStack/uvloop/tree/v0.16.0
 # SPDX-License-Identifier: PSF-2.0 AND (MIT OR Apache-2.0)
 # SPDX-FileCopyrightText: Copyright (c) 2015-2021 MagicStack Inc.  http://magic.io

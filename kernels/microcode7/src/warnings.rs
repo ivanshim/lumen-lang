@@ -315,7 +315,7 @@ impl Machine<'_> {
         let answer = (|| {
             for searcher in searchers {
                 // The compiled-in source roster uses its own loader, after custom finders.
-                if self.library_sources.contains_key(qualified) {
+                if self.library_sources.contains_key(qualified) || self.sys_path_source(qualified).is_some() {
                     if let Value::Thing(instance) = searcher.settled() {
                         let kind = instance.blueprint();
                         if kind.name.rsplit('.').next() == Some("SourceFinder")

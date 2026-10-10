@@ -768,6 +768,9 @@ impl KeyedPairs {
         self.revision = next_map_revision();
         *self.lookup.borrow_mut() = None;
         *self.names.borrow_mut() = None;
+        for cached in self.compiled_names.get_mut() {
+            if cached.as_ref().is_some_and(|(_, row)| *row == self.rows.len()) { *cached = None; }
+        }
         Some(pair)
     }
 
@@ -804,6 +807,10 @@ impl KeyedPairs {
         self.revision = next_map_revision();
         *self.lookup.borrow_mut() = None;
         *self.names.borrow_mut() = None;
+        for cached in self.compiled_names.get_mut() {
+            if cached.as_ref().is_some_and(|(_, row)| *row == at) { *cached = None; }
+            else if let Some((_, row)) = cached { if *row > at { *row -= 1; } }
+        }
         self.rows.remove(at);
         self.slots.remove(at);
     }
@@ -823,6 +830,7 @@ impl KeyedPairs {
         self.entry_budget = (1, 0, true);
         *self.lookup.borrow_mut() = None;
         *self.names.borrow_mut() = None;
+        self.compiled_names.get_mut().clear();
         self.rows.clear();
         self.slots.clear();
     }
@@ -1021,9 +1029,23 @@ impl Value {
         match self {
             Value::Bond(cell) | Value::Collection(cell, _) | Value::Binding(cell) => cell.borrow().proxy_dictionary(),
             Value::View(proxy) if proxy.1 == "mapping" => proxy.0.proxy_dictionary(),
-            Value::Class(class) => Value::Map(Rc::new(class.shared.borrow().iter()
-                .filter(|(key, _)| !key.starts_with(['\0', '#']))
-                .map(|(key, value)| (Value::text(key), value.clone())).collect())),
+            Value::Class(class) => {
+                let fields=class.shared.borrow();
+                let mut pairs:Vec<_>=fields.iter().filter(|(key,_)|!key.starts_with(['\0','#'])).map(|(key,value)|(Value::text(key),value.clone())).collect();
+                if let Some((_,Value::Map(extra)))=fields.iter().find(|(key,_)|key=="\0type-keys") {pairs.extend(extra.iter().cloned());}
+                if let Some((_,Value::Tuple(order)))=fields.iter().find(|(name,_)|name=="\0type-order") {
+                    let mut ordered=Vec::with_capacity(pairs.len());
+                    for original in order.iter() {
+                        let original=match original {Value::Hashed(pair)=>&pair.0,other=>other};
+                        if let Some(index)=pairs.iter().position(|(candidate,_)| {
+                            let candidate=match candidate {Value::Hashed(pair)=>&pair.0,other=>other};
+                            match (original,candidate) {(Value::Text(left),Value::Text(right))=>left==right,_=>original.same_value(candidate)}
+                        }) {ordered.push(pairs.remove(index));}
+                    }
+                    ordered.extend(pairs);pairs=ordered;
+                }
+                Value::Map(Rc::new(pairs.into()))
+            },
             other => other.contents(),
         }
     }
@@ -1539,6 +1561,7 @@ impl Value {
             (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
             (Value::Text(x), Value::Text(y)) => Rc::ptr_eq(x, y),
             (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+            (Value::Bytes(x, ..), Value::Bytes(y, ..)) => Rc::ptr_eq(x, y),
             // A cell asked after twice is the one cell: the wrappers
             // differ, the storage they look into is one.
             (Value::Adapter(x), Value::Adapter(y)) if x.0 == 31 && y.0 == 31 => match (x.1.first(), y.1.first()) {
@@ -1944,7 +1967,7 @@ impl Value {
         let held = self.contents();
         if let Value::Object(object) = &held {
             let class = object.class_now();
-            let string = std::iter::once(class.as_ref()).chain(class.lineage.borrow().iter().map(Rc::as_ref))
+            let string = std::iter::once(class.as_ref()).chain(class.lineage().iter().map(Rc::as_ref))
                 .any(|base| base.constants.iter().any(|(key, value)| key == "\0kind" && matches!(value, Value::Text(word) if word.as_ref() == "str")));
             if string {
                 if let Some((_, text)) = object.fields.borrow().iter().find(|(key, _)| key == "\0worth") { return text.contents(); }
@@ -2030,9 +2053,10 @@ impl Value {
             // nothing and is written with the kind it belongs to; a data
             // member reads the same way, but under CPython's own word
             // for the descriptor that carries it.
-            Value::Adapter(w) if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") => {
-                let owner = match &w.1[1] { Value::Class(c) => c.name.as_str(), _ => "" };
-                format!("<attribute '{}' of '{}' objects>", w.1[0].plain(), owner)
+            Value::Adapter(metadata) if metadata.0==250 => format!("<attribute '{}' of 'type' objects>",metadata.1[0].plain()),
+            Value::Adapter(w) if w.0 == 16 => match w.1.as_slice() {
+                [Value::Text(name), Value::Class(owner), ..] => format!("<{} '{}' of '{}' objects>", if w.1.len()>2 || name.as_ref()=="__weakref__" {"attribute"} else {"member"}, name, owner.name),
+                _ => "<member wrapper>".to_owned(),
             },
             Value::Adapter(w) if w.0 == 205 => match &w.1[1] {
                 Value::Class(owner) => format!("<attribute '{}' of '{}' objects>", w.1[2].plain(), owner.name),
@@ -2048,8 +2072,8 @@ impl Value {
             // A routine wrapped as a static or class method reads as the
             // wrapping builtin around the routine it holds, as CPython
             // writes it.
-            Value::Adapter(w) if w.0 == 4 => format!("<staticmethod({})>", w.1[0].plain()),
-            Value::Adapter(w) if w.0 == 5 => format!("<classmethod({})>", w.1[0].plain()),
+            Value::Adapter(w) if w.0 == 4 => format!("<staticmethod({})>", if matches!(w.1[0],Value::Null){"None".to_owned()}else{w.1[0].plain()}),
+            Value::Adapter(w) if w.0 == 5 => format!("<classmethod({})>", if matches!(w.1[0],Value::Null){"None".to_owned()}else{w.1[0].plain()}),
             Value::Adapter(parts) if parts.0 == 34 => format!("<coroutine_wrapper object at 0x{:x}>", Rc::as_ptr(parts) as usize),
             Value::Adapter(_) => "<member wrapper>".to_string(),
             Value::Object(o) => o.fields.borrow().iter().find(|(key, _)| key == "\0typing_repr")
@@ -2298,14 +2322,17 @@ impl ClassMembers {
 /// and the values it keeps for itself.
 #[derive(Debug)]
 pub struct Class {
+    pub mro_place: std::cell::RefCell<Vec<usize>>,
+    pub mro_ready: std::cell::Cell<bool>,
+    pub base_epoch: std::cell::Cell<u64>,
     /// Python heap-type names, the module label, and the original
     /// qualification used by the existing string-based lexical super lookup.
     pub python_names: RefCell<Option<(Value, Value, String, Value)>>,
     pub lineage: RefCell<Vec<Rc<Class>>>,
-    pub direct: Vec<Rc<Class>>,
+    pub direct: RefCell<Vec<Rc<Class>>>,
     pub outline: Option<String>,
     pub name: String,
-    pub base: Option<Rc<Class>>,
+    pub base: RefCell<Option<Rc<Class>>>,
     /// The classes of method names only that this one answers to.
     pub answers: Vec<Rc<Class>>,
     pub fields: Vec<(String, Value)>,
@@ -2334,6 +2361,15 @@ pub struct Class {
 }
 
 impl Class {
+    pub fn order(self: &Rc<Self>) -> Vec<Rc<Class>> {
+        let mut result=self.lineage();
+        for at in self.mro_place.borrow().iter() {result.insert((*at).min(result.len()),self.clone());}
+        result
+    }
+    pub fn lineage(&self) -> Vec<Rc<Class>> {self.lineage.borrow().clone()}
+    pub fn direct(&self) -> Vec<Rc<Class>> {self.direct.borrow().clone()}
+    pub fn base(&self) -> Option<Rc<Class>> {self.base.borrow().clone()}
+
     pub(super) fn python_title(&self) -> Option<String> {
         let names = self.python_names.borrow();
         let (short, qualified, module_key, _) = names.as_ref()?;
@@ -2352,27 +2388,27 @@ impl Class {
 
     /// The program of that name, in this class or the nearest one
     /// beneath it that has one.
-    pub fn method(&self, name: &str) -> Option<&Rc<Routine>> {
+    pub fn method(&self, name: &str) -> Option<Rc<Routine>> {
         match self.methods.iter().find(|(n, _)| n == name) {
-            Some((_, p)) => Some(p),
-            None => self.base.as_ref().and_then(|b| b.method(name)),
+            Some((_, p)) => Some(p.clone()),
+            None => self.base().as_ref().and_then(|b| b.method(name)),
         }
     }
 
     /// The constant of that name, looked for the same way.
-    pub fn constant(&self, name: &str) -> Option<&Value> {
+    pub fn constant(&self, name: &str) -> Option<Value> {
         match self.constants.iter().find(|(n, _)| n == name) {
-            Some((_, v)) => Some(v),
-            None => self.base.as_ref().and_then(|b| b.constant(name)),
+            Some((_, v)) => Some(v.clone()),
+            None => self.base().as_ref().and_then(|b| b.constant(name)),
         }
     }
 
     /// The class holding a value of that name for itself.
-    pub fn holder(&self, name: &str) -> Option<&Class> {
+    pub fn holder(self: &Rc<Self>, name: &str) -> Option<Rc<Class>> {
         if self.shared.read(name, self.python_names.borrow().is_some()).is_some() {
-            return Some(self);
+            return Some(self.clone());
         }
-        self.base.as_ref().and_then(|b| b.holder(name))
+        self.base().as_ref().and_then(|b| b.holder(name))
     }
 
     /// Whether this class is that one, stands on it, or answers to it.
@@ -2383,7 +2419,7 @@ impl Class {
             false => self.name == name,
         };
         same
-            || self.base.as_ref().map_or(false, |b| b.named(name, loosely))
+            || self.base().as_ref().map_or(false, |b| b.named(name, loosely))
             || self.answers.iter().any(|a| a.named(name, loosely))
     }
 
@@ -2395,10 +2431,10 @@ impl Class {
 
     /// How far a member of that name may be reached from, and the class
     /// that says so: the nearest one declaring it, this class first.
-    pub fn reach_of(&self, name: &str) -> Option<(Reach, &str)> {
+    pub fn reach_of(&self, name: &str) -> Option<(Reach, String)> {
         match self.fields.iter().position(|(n, _)| n == name) {
-            Some(at) => Some((self.reaches.get(at).copied().unwrap_or(Reach::Open), self.name.as_str())),
-            None => self.base.as_ref().and_then(|b| b.reach_of(name)),
+            Some(at) => Some((self.reaches.get(at).copied().unwrap_or(Reach::Open), self.name.clone())),
+            None => self.base().as_ref().and_then(|b| b.reach_of(name)),
         }
     }
 
@@ -2410,17 +2446,12 @@ impl Class {
     /// Ask whether an inherited public field exists without constructing
     /// the complete instance layout or cloning its names and values.
     pub fn has_public_field(&self, name: &str) -> bool {
-        let mut current = Some(self);
-        while let Some(class) = current {
-            if class.fields.iter().enumerate().any(|(at, (key, _))|
-                key == name && class.reaches.get(at) != Some(&Reach::Hidden)) { return true; }
-            current = class.base.as_deref();
-        }
-        false
+        self.fields.iter().enumerate().any(|(at,(key,_))|key==name && self.reaches.get(at)!=Some(&Reach::Hidden))
+            || self.base().is_some_and(|parent|parent.has_public_field(name))
     }
 
     pub fn all_fields(&self) -> Vec<(String, Value)> {
-        let mut all = self.base.as_ref().map_or_else(Vec::new, |b| b.all_fields());
+        let mut all = self.base().as_ref().map_or_else(Vec::new, |b| b.all_fields());
         for (at, (name, value)) in self.fields.iter().enumerate() {
             let alone = self.reaches.get(at) == Some(&Reach::Hidden);
             let filed = match alone {

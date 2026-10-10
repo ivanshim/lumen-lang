@@ -62,8 +62,8 @@ class _NotWarns:
 
     def __enter__(self):
         import warnings
-        self.manager = warnings.catch_warnings(record=True, _internal=True)
-        self.manager.__enter__()
+        self.manager = warnings.catch_warnings(record=True)
+        self.records = self.manager.__enter__()
         warnings.simplefilter('always', self.expected)
         return self
 
@@ -71,7 +71,7 @@ class _NotWarns:
         self.manager.__exit__(kind, value, traceback)
         if kind is not None:
             return False
-        for record in self.manager.records:
+        for record in self.records:
             if isinstance(record.message, self.expected):
                 raise AssertionError(repr(record.message) + ' triggered')
         return False
@@ -964,7 +964,7 @@ class _Warns:
 
     def __enter__(self):
         import warnings
-        self.manager = warnings.catch_warnings(record=True, _internal=True)
+        self.manager = warnings.catch_warnings(record=True)
         self.records = self.manager.__enter__()
         self.warnings = self.records
         warnings.simplefilter('always', self.expected)
@@ -978,7 +978,7 @@ class _Warns:
         first_matching = None
         matched = False
         non_matching = []
-        for record in self.manager.records:
+        for record in self.records:
             if isinstance(record.message, self.expected):
                 if first_matching is None:
                     first_matching = record.message
@@ -1108,7 +1108,7 @@ class TextTestRunner:
             mark = 'x'
             description = 'expected failure'
         elif len(result.unexpectedSuccesses) > unexpected:
-            mark = 'u'
+            mark = 'F'  # An unexpected success is a failing test result.
             description = 'unexpected success'
         if self.verbosity > 1:
             self._write(description + '\n')

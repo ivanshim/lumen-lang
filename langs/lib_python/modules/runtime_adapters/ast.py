@@ -622,9 +622,9 @@ class TypeIgnore(AST):
 _CharacterParse = parse
 
 def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
-          feature_version=None, optimize=-1):
+          feature_version=None, optimize=-1, fold_debug=False):
     tree = _CharacterParse(source, filename, mode, type_comments=type_comments,
-                           feature_version=feature_version, optimize=optimize)
+                           feature_version=feature_version, optimize=optimize, fold_debug=fold_debug)
     wide_columns = len(source.encode('utf-8')) != len(source)
     if not type_comments and not wide_columns:
         return tree
@@ -800,7 +800,9 @@ class _Parser(_InlineStatementParser):
         token = self.peek()
         if token.kind == 'name' and token.text in ('def', 'class', 'if', 'for', 'while', 'try', 'with', 'async', 'match'):
             _syntax('invalid syntax')
-        return self.parse_stmt()
+        if token.kind == 'name' and token.text in ('return', 'raise', 'assert', 'pass', 'break', 'continue', 'yield', 'del', 'lambda'):
+            return _InlineStatementParser.parse_stmt(self)
+        return _ExpressionParser.parse_simple_stmt(self)
 
 # The optimized syntax-tree flag folds the compile-time debugging name.
 def _fold_debug_names(node, enabled):

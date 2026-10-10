@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/urllib/response.py; PSF License.
 """Response classes used by urllib.
 
 The base class, addbase, defines a minimal file-like interface,

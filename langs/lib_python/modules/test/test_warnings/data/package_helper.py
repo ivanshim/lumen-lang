@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 / 8e6e75d9102e, Lib/test/test_warnings/data/package_helper.py; PSF License.
 # helper to the helper for testing skip_file_prefixes.
 
 import os

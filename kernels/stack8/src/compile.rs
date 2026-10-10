@@ -1980,7 +1980,7 @@ impl<'a> Compiler<'a> {
             formal_kinds.insert(0, None);
         }
         formal_kinds.truncate(formals.len());
-        let asynchronous = (name == "<comprehension>" || name == "<genexpr>" || name.starts_with("#generator")) && self.piece().asynchronous;
+        let asynchronous = name == "<genexpr>" || (name == "<comprehension>" || name.starts_with("#generator")) && self.piece().asynchronous;
         let except_star_start = self.except_star_nesting;
         self.pieces.push(Piece { python_fallthrough: false, asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
             outermost: false,
@@ -3472,15 +3472,20 @@ impl<'a> Compiler<'a> {
                     self.write(&leaving);
                     self.read(&manager);
                     self.act(Action::AsyncContext(false), 1);
+                    self.act(Action::Awaited, 1);
                     if lang.bind_names {
                         let old_manager = self.cell_to_write(&manager);
                         self.put(Instr::Forget(old_manager));
                     }
                     leaving
                 } else {
+                    let leaving = self.gensym("leaving");
+                    self.read(&manager);
+                    self.act(Action::ContextExit, 1);
+                    self.write(&leaving);
                     self.read(&manager);
                     self.act(Action::ContextEnter, 1);
-                    manager
+                    leaving
                 };
                 let cell = self.cell_to_write(&watched);
                 let mark = self.put(Instr::Attempt(Box::new(Attempt { context: Some(cell), async_context: asynchronous, body: (0, 0), clauses: Vec::new(), otherwise: None, last: None, after: 0 })));
@@ -6863,6 +6868,9 @@ impl<'a> Compiler<'a> {
         let module_slot = self.gensym("class_module");
         let module_name = lang.module_names.first().cloned().unwrap_or_default();
         let mut shared: Vec<(String, String)> = Vec::new();
+        if let Some(word)=lang.class_firstline.first() {
+            self.constant(Value::Small(first_row as i64));let slot=self.gensym("class_line");self.write(&slot);shared.push((word.clone(),slot));
+        }
         if !parameters.is_empty() {
             for parameter in parameters { self.read(parameter); }
             self.act(Action::MakeTuple, parameters.len());
@@ -8610,11 +8618,27 @@ impl<'a> Compiler<'a> {
         let mut protected = Vec::new();
         for at in begin..end {
             let word = &self.tokens[at];
+            if word.shape != Shape::Sign { continue; }
             match word.lexeme.as_str() {
                 "[" | "(" => {
                     let nested = protected.last().copied().unwrap_or(false);
                     let attached = at > begin && self.tokens[at - 1].shape == Shape::Instr;
-                    protected.push(nested || attached);
+                    // Arithmetic inside a receiver is read, even when the
+                    // receiver is a parenthesized expression or a display.
+                    let closing = if word.lexeme == "(" { ")" } else { "]" };
+                    let mut level = 0;
+                    let mut receiver = false;
+                    for later in at..end {
+                        if self.tokens[later].shape != Shape::Sign { continue; }
+                        if self.tokens[later].lexeme == word.lexeme { level += 1; }
+                        if self.tokens[later].lexeme == closing { level -= 1; }
+                        if level == 0 {
+                            receiver = self.tokens.get(later + 1).filter(|_| later + 1 < end)
+                                .is_some_and(|next| next.shape == Shape::Sign && matches!(next.lexeme.as_str(), "." | "[" | "("));
+                            break;
+                        }
+                    }
+                    protected.push(nested || attached || receiver);
                 }
                 "]" | ")" => { protected.pop(); }
                 "+" if !protected.iter().any(|scope| *scope) => return true,
@@ -8985,6 +9009,7 @@ impl<'a> Compiler<'a> {
         self.writing_place = saved_place;
         expression?;
         if !self.lang.class_special.is_empty() && self.on_writing()
+            && self.tokens[target_at].shape == Shape::Instr
             && self.tokens.get(target_at + 1).map_or(false, |t| Lang::spells(&self.lang.pipe_words, &t.spelling())) {
             let end = self.pos;
             self.piece().instrs.truncate(from);
@@ -9705,7 +9730,7 @@ impl<'a> Compiler<'a> {
                 // within a class body's methods, names a static
                 // attribute of the class being read, as the reference
                 // gathers them for __static_attributes__.
-                if !self.lang.class_builder.is_empty() && !self.gathered.is_empty() {
+                if !self.lang.class_builder.is_empty() && !self.gathered.is_empty() && !self.in_class_body() {
                     if let [Instr::Read(place)] = rest {
                         if place.ident.as_ref() == "self" { self.gathering().attributes.insert(member.to_string()); }
                     }
@@ -10571,7 +10596,7 @@ impl<'a> Compiler<'a> {
             && !lang.exceptions.iter().any(|w| w == tok.spelling())
             && !self.piece().idents.contains(&tok.lexeme) {
             self.take();
-            let class = crate::value::Class { direct: Vec::new(), lineage: std::cell::RefCell::new(Vec::new()), outline: None, name: tok.lexeme.clone(), base: None, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: crate::value::ClassMembers::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: std::cell::RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None) };
+            let class = crate::value::Class { direct: std::cell::RefCell::new(Vec::new()), lineage: std::cell::RefCell::new(Vec::new()), outline: None, name: tok.lexeme.clone(), base: std::cell::RefCell::new(None), answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: crate::value::ClassMembers::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: std::cell::RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from, origin);
         }
@@ -10833,7 +10858,7 @@ impl<'a> Compiler<'a> {
                 let parent = self.within.as_ref().map(|(name, base)| if self.lang.class_details.get("root").map_or(false, |v|!v.is_empty()) {name.clone()} else {base.clone().unwrap_or_default()});
                 let member = lang.member_mark.clone().filter(|m| self.at_symbol(m));
                 if extra == 0 && parent.is_some() && self.method_self.is_some() && !self.gathered.is_empty()
-                    && (member.is_none() || self.look_ahead(2).lexeme != call.open) {
+                    && (!lang.class_builder.is_empty() || member.is_none() || self.look_ahead(2).lexeme != call.open) {
                     self.gathering().needs_class_cell = true;
                     self.gathering().class_cell_protocol = true;
                     let cell = self.gathering().class_cell.clone();

@@ -180,6 +180,7 @@ pub enum Action {
     Delegate,
     MakeTuple,
     Adorn(u8),
+    ContextExit,
     ContextEnter,
     AsyncContextEnter,
     SettleObjects,
@@ -640,6 +641,7 @@ pub enum Builtin {
     /// Find and break the rounds of values nothing reaches any more
     /// (ext.builtin.gc.collect).
     Collect,
+    TrackedObjects,
     /// Whether a path names a file, a directory, or nothing.
     FileKind,
     // The source of the file the run was started with.

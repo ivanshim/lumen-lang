@@ -1,6 +1,3 @@
-# CPython v3.14.8 Lib source, unchanged below this header.
-# Copyright (c) Python Software Foundation; PSF License: tests/python-3.14.8/LICENSE.
-
 """Event loop using a selector and related classes.
 
 A selector is a "notify-when-ready" multiplexer.  For a subclass which

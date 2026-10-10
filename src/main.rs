@@ -1112,19 +1112,6 @@ fn parse_args(args: &[OsString]) -> Invocation {
     // Options may precede the file; `--lang` may also follow it directly.
     loop {
         match rest.first().and_then(|a| a.to_str()) {
-            Some("-X") if file.is_none() => {
-                if rest.len() < 2 { usage(program); }
-                if said(&rest[1]) != "dev" {
-                    eprintln!("Error: unsupported Python -X option '{}'", said(&rest[1]));
-                    process::exit(2);
-                }
-                python_development = true;
-                rest = &rest[2..];
-            }
-            Some("-Xdev") if file.is_none() => {
-                python_development = true;
-                rest = &rest[1..];
-            }
             Some("--kernel") if file.is_none() => {
                 if rest.len() < 2 {
                     usage(program);
@@ -1297,6 +1284,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 options.insert(key.to_owned(), value.to_owned());
                 env::set_var("LUMEN_PYTHON_XOPTIONS", serde_json::to_string(&options).unwrap());
                 if key == "no_debug_ranges" { env::set_var("PYTHONNODEBUGRANGES", "1"); }
+                if key == "dev" { python_development = true; }
                 language = Some(Language::Named("python".to_owned()));
                 rest = &rest[used..];
             }

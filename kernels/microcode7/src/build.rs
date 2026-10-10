@@ -37,6 +37,7 @@ thread_local! {
 /// `uncertain` holds those names, whose places are glanced at when the
 /// class is built rather than read outright.
 struct ClassParts {
+    assigned_attributes: Vec<String>,
     lexical_members: Vec<String>,
     completed_class: Address,
     needs_class_cell: bool,
@@ -3835,18 +3836,12 @@ impl<'a> Builder<'a> {
                 let manager = self.gensym("manager");
                 let manager_read = Form::Read(manager.clone());
                 steps.push(Form::Write(manager.clone(), Box::new(value)));
-                let watched = if asynchronous {
-                    // An asynchronous manager is entered by its own word;
-                    // its leaving method, bound now, stands in the watched
-                    // place and is called with the outcome at the end.
-                    let leaving = self.gensym("leaving");
-                    steps.push(Form::Write(leaving.clone(), Box::new(self.located(bounds, prim_call(Prim::AsyncContext(true), vec![manager_read.clone()])))));
-                    value = prim_call(Prim::AsyncContext(false), vec![manager_read]);
-                    leaving
-                } else {
-                    value = prim_call(Prim::StartContext, vec![manager_read]);
-                    manager.clone()
-                };
+                let watched = self.gensym("leaving");
+                let capture = if asynchronous { Prim::AsyncContext(true) } else { Prim::BindLeaving };
+                let entering = if asynchronous { Prim::AsyncContext(false) } else { Prim::StartContext };
+                steps.push(Form::Write(watched.clone(), Box::new(self.located(bounds, prim_call(capture, vec![manager_read.clone()])))));
+                value = prim_call(entering, vec![manager_read]);
+                if asynchronous { value = prim_call(Prim::AwaitResult, vec![value]); }
                 value = self.located(bounds, value);
                 let entered = self.gensym("entered");
                 steps.push(Form::Write(entered.clone(), Box::new(value)));
@@ -5467,7 +5462,7 @@ impl<'a> Builder<'a> {
         self.class_globals.push((self.layers.len(), Vec::new()));
         self.class_met.push(Vec::new());
         let completed_class = self.gensym("completed_class");
-        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(), self_writes: std::collections::BTreeSet::new(),
+        self.under_way.push(ClassParts { assigned_attributes: Vec::new(), lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(), self_writes: std::collections::BTreeSet::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // The body uses the metaclass's actual mapping from its first statement.
@@ -5529,7 +5524,13 @@ impl<'a> Builder<'a> {
         self.class_met.pop();
         self.within = previous;
         self.named_before = named_outside;
-        let parts = self.under_way.pop().expect("class body");
+        let mut parts = self.under_way.pop().expect("class body");
+        if let Some(word)=table.single("ext.stmt.class.detail.static.attributes") {
+            parts.assigned_attributes.sort_unstable();parts.assigned_attributes.dedup();
+            let attributes=Value::tuple(parts.assigned_attributes.iter().map(|attribute|Value::text(attribute)).collect());
+            let target=self.read_to_write(parts.book.as_ref().expect("class namespace").ident.as_ref());
+            setup.push(prim_call(Prim::ClassWork(19),vec![target,constant(Value::text(word)),constant(attributes)]));
+        }
         if !parts.annotated_names.is_empty() && table.has_any("ext.stmt.class.annotations") {
             let row = parts.annotated_names.iter().flat_map(|(key, routine)| [key.clone(), routine.clone()]).collect();
             let book = parts.book.as_ref().expect("class namespace");
@@ -5687,7 +5688,7 @@ impl<'a> Builder<'a> {
         self.class_globals.push((self.layers.len(), Vec::new()));
         self.class_met.push(Vec::new());
         let completed_class = self.gensym("completed_class");
-        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(), self_writes: std::collections::BTreeSet::new(),
+        self.under_way.push(ClassParts { assigned_attributes: Vec::new(), lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(), self_writes: std::collections::BTreeSet::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // A body that spells `locals` or `vars` anywhere in it is
@@ -8347,10 +8348,27 @@ impl<'a> Builder<'a> {
         let mut inside = Vec::new();
         for index in span.clone() {
             let token = &self.tokens[index];
+            match token.shape { Shape::Sign => {}, _ => continue }
             if token.lexeme == "[" || token.lexeme == "(" {
                 let carries = inside.iter().any(|scope| *scope);
                 let indexing = index > span.start && self.tokens[index - 1].shape == Shape::Bare;
-                inside.push(carries || indexing);
+                // A grouping followed by a trailer computes the object of
+                // an attribute or subscript target, rather than a target itself.
+                let mut depth = 1;
+                let right = if token.lexeme == "[" { "]" } else { ")" };
+                let mut cursor = index + 1;
+                while cursor < span.end && depth > 0 {
+                    let mark = if self.tokens[cursor].shape == Shape::Sign {
+                        self.tokens[cursor].lexeme.as_str()
+                    } else { "" };
+                    if mark == token.lexeme { depth += 1; }
+                    if mark == right { depth -= 1; }
+                    cursor += 1;
+                }
+                let trailer = depth == 0 && cursor < span.end
+                    && self.tokens[cursor].shape == Shape::Sign
+                    && [".", "(", "["].contains(&self.tokens[cursor].lexeme.as_str());
+                inside.push(carries || indexing || trailer);
             } else if token.lexeme == "]" || token.lexeme == ")" {
                 inside.pop();
             } else if token.lexeme == "+" && !inside.iter().any(|scope| *scope) {
@@ -8822,7 +8840,7 @@ impl<'a> Builder<'a> {
         if self.on_writing() || boundary && self.on_any("ext.stmt.annotation") {
             while let Form::Located(_, _, child) = expr { expr = *child; }
         }
-        if self.on_writing() && self.table.has_any("ext.stmt.class.special") {
+        if self.on_writing() && self.table.has_any("ext.stmt.class.special") && self.tokens[began].shape == Shape::Bare {
             if self.tokens.get(began + 1).map_or(false, |token| self.table.spells("op.pipe", &token.spelling())) {
                 let assignment = self.pos;
                 self.pos = began;
@@ -9454,7 +9472,7 @@ impl<'a> Builder<'a> {
                 // within a class body's methods, names a static
                 // attribute of the class being read, as the reference
                 // gathers them for __static_attributes__.
-                if self.table.has_any("ext.stmt.class.builder") && !self.under_way.is_empty() {
+                if self.table.has_any("ext.stmt.class.builder") && !self.under_way.is_empty() && !self.in_class_body() {
                     if let (Form::Read(holder), Form::Const(Value::Text(property))) = (&thing, &named) {
                         if holder.ident.as_ref() == "self" { self.parts().self_writes.insert(property.to_string()); }
                     }
@@ -10120,10 +10138,9 @@ impl<'a> Builder<'a> {
             && !table.spells("ext.builtin.exceptions", &t.spelling())
             && !self.layers.last().unwrap().idents.contains(&t.lexeme) {
             self.advance();
-            let plan = crate::data::Blueprint { parents: Vec::new(), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
-                name: t.lexeme.clone(), under: None, methods: vec![], shared: crate::data::BlueprintEntries::new(vec![]),
-                fields: vec![], constants: vec![], reaches: vec![], answers: vec![], weak_slot: std::cell::Cell::new(None), has_slot_storage: false, sealed: std::cell::Cell::new(false), order_supplied: std::cell::Cell::new(false), supplied_order: std::cell::RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None),
-            };
+            let plan = crate::data::Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
+                name: t.lexeme.clone(), under: std::cell::RefCell::new(None), methods: vec![], shared: crate::data::BlueprintEntries::new(vec![]),
+                fields: vec![], constants: vec![], reaches: vec![], answers: vec![], weak_slot: std::cell::Cell::new(None), has_slot_storage: false, sealed: std::cell::Cell::new(false), order_supplied: std::cell::Cell::new(false), supplied_order: std::cell::RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
             return self.subscript(constant(Value::Blueprint(Rc::new(plan))), origin);
         }
         // The words for the lone value and the one a method declines with
@@ -10346,7 +10363,7 @@ impl<'a> Builder<'a> {
                         return self.subscript(made, origin);
                     }
                     (true, Some(_), Some(receiver), member) if !self.under_way.is_empty()
-                        && (member.is_none() || self.glance(2).lexeme != open) => {
+                        && (table.has_any("ext.stmt.class.builder") || member.is_none() || self.glance(2).lexeme != open) => {
                         self.parts().needs_class_cell = true;
                         self.parts().class_cell_protocol = true;
                         let private = self.parts().completed_class.ident.to_string();

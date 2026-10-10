@@ -165,7 +165,8 @@ impl Value {
             // A member of a row, a map or a text, handed over bound to
             // what it was read from, is one of the builtin's own.
             Value::ValueMethod(method) if method.1 == "classmethod_bind" => "method-wrapper",
-            Value::ValueMethod(method) if Self::loose_member_descriptor(&method.0.core_kind(), &method.1).is_some_and(|(_, form)| form == "wrapper_descriptor") => "method-wrapper",
+            Value::ValueMethod(method) if matches!(method.1.as_str(), "__next__" | "__buffer__" | "__release_buffer__") => "method-wrapper",
+            Value::ValueMethod(bound) if Self::loose_member_descriptor(&bound.0.contents().core_kind(), &bound.1).is_some_and(|(_, kind)| kind == "wrapper_descriptor") => "method-wrapper",
             Value::Native(..) | Value::ValueMethod(_) | Value::TextMethod(..) => "builtin_function_or_method",
             // A method or a data member read off a builtin kind's own
             // word, rather than off a value of it, is a descriptor: a
@@ -191,6 +192,7 @@ impl Value {
             Value::Adapter(w) if w.0 == 63 => "method_descriptor",
             Value::Adapter(w) if w.0 == 64 => "builtin_function_or_method",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(draw)) if draw.0 == 63) => "builtin_function_or_method",
+            Value::Adapter(metadata) if metadata.0==250 => "getset_descriptor",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(draw)) if draw.0 == 29) => {
                 let Some(Value::Adapter(descriptor)) = w.1.first() else { unreachable!() };
                 let wrapper = descriptor.1.len() == 2 && matches!(descriptor.1.as_slice(), [Value::Text(kind), Value::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, form)| form == "wrapper_descriptor"));
@@ -205,10 +207,9 @@ impl Value {
             Value::Adapter(w) if w.0 == 15 => if w.1.is_empty() { "wrapper_descriptor" } else { "method-wrapper" },
             Value::Adapter(w) if w.0 == 16 => if w.1.first().is_some_and(|name| matches!(name.plain().as_str(), "__dict__" | "__weakref__")) { "getset_descriptor" } else { "member_descriptor" },
             Value::Adapter(w) if w.0 == 79 => "wrapper_descriptor",
-            Value::Adapter(w) if matches!(w.0, 1 | 2 | 10..=12 | 19 | 30 | 36 | 119 | 235 | 236) => "wrapper_descriptor",
+            Value::Adapter(w) if matches!(w.0, 1 | 2 | 10..=12 | 19 | 36 | 119 | 235 | 236 | 247 | 248) => "wrapper_descriptor",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Native(..))) =>
                 if matches!(w.1.get(1), Some(Value::Class(_))) { "method" } else { "builtin_function_or_method" },
-            Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(method)) if method.0 == 29 && method.1.get(2).is_some_and(Value::is_true)) => "builtin_function_or_method",
             Value::Adapter(w) if w.0 == 3 => if matches!(w.1.first(), Some(Value::Routine(_))) { "method" } else { "method-wrapper" },
             Value::Adapter(w) if w.0 == 4 => "staticmethod",
             Value::Adapter(w) if w.0 == 5 => "classmethod",
@@ -305,24 +306,26 @@ impl Value {
             Value::Codepoints(row) => Some(py_hash_codes(row.iter().copied())),
             Value::Text(s) => Some(py_hash_codes(s.chars().map(|c| c as u32))),
             Value::Bytes(bytes, false, _) => Some(py_hash_bytes(&bytes.borrow())),
+            Value::ValueMethod(bound) => {
+                let receiver = match &bound.0 {
+                    Value::Binding(cell) | Value::Bond(cell) => (std::rc::Rc::as_ptr(cell) as usize >> 4) as i64,
+                    Value::Collection(cell, _) => (std::rc::Rc::as_ptr(cell) as usize >> 4) as i64,
+                    Value::Array(items) => (std::rc::Rc::as_ptr(items) as usize >> 4) as i64,
+                    Value::Map(items) => (std::rc::Rc::as_ptr(items) as usize >> 4) as i64,
+                    Value::Set(items) => (std::rc::Rc::as_ptr(items) as usize >> 4) as i64,
+                    Value::Object(object) => (std::rc::Rc::as_ptr(object) as usize >> 4) as i64,
+                    Value::Bytes(cell, ..) => (std::rc::Rc::as_ptr(cell) as usize >> 4) as i64,
+                    other => other.core_hash()?,
+                };
+                Some(finish(receiver ^ Value::text(&bound.1).core_hash()?))
+            }
             Value::Native(_, name) => Value::Text(name.clone()).core_hash(),
             Value::ByteKind(mutable, _) => Value::text(if *mutable { "bytearray" } else { "bytes" }).core_hash(),
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
             Value::Adapter(parts) if parts.0 == 7 => Self::code_field_hash(self),
             Value::Method(owner, code, _) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
-            Value::ValueMethod(bound) => {
-                let owner = match &bound.0 {
-                    Value::Object(object) => (std::rc::Rc::as_ptr(object) as usize >> 4) as i64,
-                    Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) => (std::rc::Rc::as_ptr(cell) as usize >> 4) as i64,
-                    Value::Array(row) => (std::rc::Rc::as_ptr(row) as usize >> 4) as i64,
-                    Value::Map(pairs) => (std::rc::Rc::as_ptr(pairs) as usize >> 4) as i64,
-                    Value::Set(set) => (std::rc::Rc::as_ptr(set) as usize >> 4) as i64,
-                    Value::Bytes(buffer, _, _) => (std::rc::Rc::as_ptr(buffer) as usize >> 4) as i64,
-                    value => value.core_hash()?,
-                };
-                Some(finish(owner ^ Value::text(&bound.1).core_hash()?))
-            }
+
             Value::Adapter(bound) if bound.0 == 3 && matches!(bound.1.first(), Some(Value::Adapter(method)) if method.0 == 29) || bound.0 == 3 && matches!(bound.1.first(), Some(Value::Native(..))) => {
                 let owner = match bound.1.get(1)? {
                     Value::Object(object) => (std::rc::Rc::as_ptr(object) as usize >> 4) as i64,
@@ -407,6 +410,19 @@ impl Value {
             // kind's word and the member's name -- so two readings of the
             // same member, and of the same member on the same kind, hash
             // alike, and one may be a key in a map or a member of a set.
+            Value::Adapter(bound) if bound.0 == 3 && bound.1.len() == 2 => {
+                let owner = &bound.1[1];
+                let identity = match owner {
+                    Value::Object(object) => (std::rc::Rc::as_ptr(object) as usize >> 4) as i64,
+                    Value::Bond(place) | Value::Binding(place) | Value::Collection(place, _) => (std::rc::Rc::as_ptr(place) as usize >> 4) as i64,
+                    Value::Array(row) => (std::rc::Rc::as_ptr(row) as usize >> 4) as i64,
+                    Value::Map(book) => (std::rc::Rc::as_ptr(book) as usize >> 4) as i64,
+                    Value::Set(group) => (std::rc::Rc::as_ptr(group) as usize >> 4) as i64,
+                    Value::Bytes(row, ..) => (std::rc::Rc::as_ptr(row) as usize >> 4) as i64,
+                    _ => owner.core_hash()?,
+                };
+                Some(finish(bound.1[0].core_hash()? ^ identity))
+            }
             Value::Adapter(held) => {
                 let mut h = 2870177450012600261u64;
                 for part in held.1.iter() {

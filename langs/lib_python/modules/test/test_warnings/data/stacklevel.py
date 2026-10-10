@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 / 8e6e75d9102e, Lib/test/test_warnings/data/stacklevel.py; PSF License.
 # Helper module for testing stacklevel and skip_file_prefixes arguments
 # of warnings.warn()
 

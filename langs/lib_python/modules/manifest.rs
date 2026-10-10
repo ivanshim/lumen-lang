@@ -118,7 +118,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("base64", include_str!("base64.py"), "base64.py"),
     ("binascii", include_str!("binascii.py"), "binascii.py"),
     ("bisect", include_str!("bisect.py"), "bisect.py"),
-    ("builtins", include_str!("builtins.py"), "builtins.py"),
+    ("builtins", concat!(include_str!("builtins.py"), "\n", include_str!("runtime_adapters/builtins.py")), "builtins.py"),
     ("calendar", include_str!("calendar.py"), "calendar.py"),
     ("cmath", include_str!("cmath.py"), "cmath.py"),
     ("cmd", include_str!("cmd.py"), "cmd.py"),
@@ -385,6 +385,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("secrets", include_str!("secrets.py"), "secrets.py"),
     ("select", include_str!("select.py"), "select.py"),
     ("selectors", include_str!("selectors.py"), "selectors.py"),
+    ("shelve", include_str!("shelve.py"), "shelve.py"),
     ("shlex", include_str!("shlex.py"), "shlex.py"),
     ("shutil", include_str!("shutil.py"), "shutil.py"),
     ("signal", include_str!("signal.py"), "signal.py"),
@@ -436,6 +437,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("test.test_dataclasses.dataclass_module_2", include_str!("test/test_dataclasses/dataclass_module_2.py"), "test/test_dataclasses/dataclass_module_2.py"),
     ("test.test_dataclasses.dataclass_module_2_str", include_str!("test/test_dataclasses/dataclass_module_2_str.py"), "test/test_dataclasses/dataclass_module_2_str.py"),
     ("test.test_dataclasses.dataclass_textanno", include_str!("test/test_dataclasses/dataclass_textanno.py"), "test/test_dataclasses/dataclass_textanno.py"),
+    ("test.test_dbm", include_str!("test/test_dbm.py"), "test/test_dbm.py"),
     ("test.test_email", include_str!("test/test_email/__init__.py"), "test/test_email/__init__.py"),
     ("test.test_email.__main__", include_str!("test/test_email/__main__.py"), "test/test_email/__main__.py"),
     ("test.test_email.test__encoded_words", include_str!("test/test_email/test__encoded_words.py"), "test/test_email/test__encoded_words.py"),
@@ -511,8 +513,6 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("zipfile._path", include_str!("zipfile/_path/__init__.py"), "zipfile/_path/__init__.py"),
     ("zipfile._path.glob", include_str!("zipfile/_path/glob.py"), "zipfile/_path/glob.py"),
     ("zlib", include_str!("zlib.py"), "zlib.py"),
-    ("shelve", include_str!("shelve.py"), "shelve.py"),
-    ("test.test_dbm", include_str!("test/test_dbm.py"), "test/test_dbm.py"),
 ];
 
 // Non-package aliases initialize real source with their embedded parent.

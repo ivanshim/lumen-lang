@@ -1,6 +1,3 @@
-# CPython v3.14.8 Lib source, unchanged below this header.
-# Copyright (c) Python Software Foundation; PSF License: tests/python-3.14.8/LICENSE.
-
 """The asyncio package, tracking PEP 3156."""
 
 # flake8: noqa

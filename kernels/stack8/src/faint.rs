@@ -312,7 +312,7 @@ fn note_death() {
 }
 
 /// The routine a class says its last words with, where it has one.
-pub fn last_word_of(class: &Class) -> Option<Value> {
+pub fn last_word_of(class: &Rc<Class>) -> Option<Value> {
     LAST_WORD.try_with(|w| {
         let name = w.borrow();
         let name = name.as_deref()?;
@@ -320,7 +320,8 @@ pub fn last_word_of(class: &Class) -> Option<Value> {
             return Some(Value::Routine(program.clone()));
         }
         let holder = class.holder(name)?;
-        holder.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.clone())
+        let answer=holder.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.clone());
+        answer
     }).ok().flatten()
 }
 
@@ -630,8 +631,8 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                 out.extend(shared.iter().map(|(_, v)| v.clone()));
             }
             out.extend(c.methods.iter().map(|(_, p)| Value::Routine(p.clone())));
-            out.extend(c.base.iter().map(|b| Value::Class(b.clone())));
-            out.extend(c.lineage.borrow().iter().chain(&c.direct).chain(&c.answers).map(|b| Value::Class(b.clone())));
+            out.extend(c.base().iter().map(|b| Value::Class(b.clone())));
+            out.extend(c.lineage().iter().chain(&c.direct()).chain(&c.answers).map(|b| Value::Class(b.clone())));
         }
         Value::Generator(g) => {
             if let Ok(g) = g.try_borrow() {
@@ -771,6 +772,21 @@ fn external_places(value: Value, out: &mut Vec<Value>) {
 }
 
 impl Graph {
+    /// The actual owners in this collector snapshot, once per heap identity.
+    /// Returning clones retains their existing Python identities.
+    pub fn tracked_objects(&self) -> Vec<Value> {
+        self.order.iter().filter_map(|place|self.nodes.get(place)).filter_map(|node| {
+            match &node.held {
+                Value::Fields(object)=>Some(Value::Object(object.clone())),
+                Value::Tie(_) | Value::Hashed(_)=>None,
+                Value::Array(_) | Value::Map(_)=>None,
+                Value::Binding(cell)=>Some(Value::Adapter(Rc::new((31,vec![Value::Binding(cell.clone())])))),
+                Value::Bond(cell) if !matches!(&*cell.borrow(),Value::Array(_)|Value::Map(_)|Value::Set(_)|Value::Collection(..))=>None,
+                value=>Some(value.clone()),
+            }
+        }).collect()
+    }
+
     /// Everything reachable from the remembered candidates still alive.
     pub fn from_candidates(extra: Vec<Value>, live: Vec<Value>) -> Graph {
         let mut bookkeeping = Places::default();

@@ -1,6 +1,3 @@
-# CPython v3.14.8 Lib source, unchanged below this header.
-# Copyright (c) Python Software Foundation; PSF License: tests/python-3.14.8/LICENSE.
-
 """Various Windows specific bits and pieces."""
 
 import sys

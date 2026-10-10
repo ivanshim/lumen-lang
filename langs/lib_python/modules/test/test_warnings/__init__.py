@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 / 8e6e75d9102e, Lib/test/test_warnings/__init__.py; PSF License.
 from contextlib import contextmanager
 import linecache
 import logging

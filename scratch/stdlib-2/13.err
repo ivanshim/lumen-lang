@@ -1,1 +1,1 @@
-ValueError: I/O operation on closed file
+Traceback (most recent call last):

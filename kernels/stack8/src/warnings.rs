@@ -291,7 +291,7 @@ impl Engine<'_> {
         let result: Res<Option<Value>> = (|| {
             for finder in finders {
                 // Embedded source uses the native loader; custom finders still precede it.
-                if self.module_sources.contains_key(path) {
+                if self.module_sources.contains_key(path) || self.sys_path_source(path).is_some() {
                     if let Value::Object(instance) = finder.contents() {
                         let kind = instance.class_now();
                         if kind.name.rsplit('.').next() == Some("SourceFinder")

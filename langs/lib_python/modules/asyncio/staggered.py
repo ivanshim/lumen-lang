@@ -1,6 +1,3 @@
-# CPython v3.14.8 Lib source, unchanged below this header.
-# Copyright (c) Python Software Foundation; PSF License: tests/python-3.14.8/LICENSE.
-
 """Support for running coroutines in parallel with staggered start times."""
 
 __all__ = 'staggered_race',

@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 / 8e6e75d9102e, Lib/_py_warnings.py; PSF License.
 """Python part of the warnings subsystem."""
 
 import sys

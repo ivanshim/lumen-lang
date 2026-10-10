@@ -1,6 +1,3 @@
-# CPython v3.14.8 Lib source, unchanged below this header.
-# Copyright (c) Python Software Foundation; PSF License: tests/python-3.14.8/LICENSE.
-
 """Event loop and event loop policy."""
 
 # Contains code from https://github.com/MagicStack/uvloop/tree/v0.16.0
