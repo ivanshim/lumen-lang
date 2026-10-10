@@ -1727,8 +1727,8 @@ def _nested_fstring_at(source, i):
 def _fstring_end(source, i):
     # i at the opening quote of an f-string literal; answers the index
     # just past the closing quote, the quote and the closing quote's
-    # index. Inside a replacement field every brace is structural; only
-    # in the text between them are {{ and }} escapes.
+    # index. Dictionary/set braces nest in the expression, while format
+    # specs open replacement fields; {{ and }} escape literal text only.
     n = len(source)
     q = source[i]
     if source[i:i + 3] == q * 3:
@@ -1752,20 +1752,26 @@ def _fstring_end(source, i):
             if depth == 0 and source[i + 1:i + 2] == '{':
                 i += 2
                 continue
-            depth += 1
-            in_spec.append(False)
-            brackets.append(0)
+            if depth > 0 and not in_spec[-1]:
+                brackets[-1] += 1
+            else:
+                depth += 1
+                in_spec.append(False)
+                brackets.append(0)
             i += 1
             continue
         if c == '}':
             if depth == 0 and source[i + 1:i + 2] == '}':
                 i += 2
                 continue
-            depth -= 1
-            if in_spec:
-                in_spec.pop()
-            if brackets:
-                brackets.pop()
+            if depth > 0 and not in_spec[-1] and brackets[-1] > 0:
+                brackets[-1] -= 1
+            else:
+                depth -= 1
+                if in_spec:
+                    in_spec.pop()
+                if brackets:
+                    brackets.pop()
             i += 1
             continue
         if depth > 0:
@@ -2117,7 +2123,7 @@ def _formatted(source, i, row, col, raw, multi, template=False):
                           lineno=srow, col_offset=scol,
                           end_lineno=row, end_col_offset=col + 1)
     if template:
-        node = Interpolation(value=value, str=source[expr_start:expr_end].strip(),
+        node = Interpolation(value=value, str=source[expr_start:expr_end],
                              conversion=conv, format_spec=spec, lineno=srow,
                              col_offset=scol, end_lineno=row, end_col_offset=col + 1)
     i, row, col = _adv(source, i, 1, row, col)
