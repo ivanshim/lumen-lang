@@ -22,6 +22,8 @@ pub mod value;
 pub mod code;
 pub mod faint;
 mod core;
+mod cache;
+mod multibyte;
 mod posix;
 mod complex;
 mod structpack;
@@ -342,7 +344,12 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     // The same arguments as a list. The file the run was started with
     // stands first in it, as the system that started the run counts it.
     if lang.args_list.is_some() || lang.args_count.is_some() {
-        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "file").map(|(.., v, _)| v.clone());
+        let directory_run = lang.python_numbers
+            && std::env::var("LUMEN_RUN_MODULE").is_ok_and(|module| module == "__main__");
+        let fallback = if directory_run { "given" } else { "file" };
+        let file = ["argv0", fallback, "file"].iter().find_map(|key|
+            request.iter().find(|(scope, name, ..)| scope == "SELF" && name == key)
+                .map(|(_, _, value, _)| value.clone()));
         let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
         all.extend(program_args.iter().map(|a| Value::text(a)));
         if let Some(name) = &lang.args_count {
@@ -473,6 +480,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         }
         // A program may put a routine in the way of a value nobody
         // took; the run says nothing of its own where one took it up.
+        let interrupted = machine.fault_names(&fault, "KeyboardInterrupt");
         let handled = machine.taken_up(&fault);
         if !handled {
             machine.ended_uncaught(&fault);
@@ -484,7 +492,9 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         }
         machine.let_things_go();
         machine.let_go_all();
-        return Err(if handled && !lang.exceptions.is_empty() { String::from("\0") } else { fault.told(&machine.names()) });
+        let mut report = if handled && !lang.exceptions.is_empty() { String::from("\0") } else { fault.told(&machine.names()) };
+        if interrupted { report.push_str("\u{1}SIGINT"); }
+        return Err(report);
     }
     if let Err(after) = machine.run_when_done() {
         machine.ended_uncaught(&after);
@@ -555,7 +565,6 @@ fn put_step(into: &mut Vec<(Value, Value)>, steps: &[&str], value: Value) {
     into[at].1 = Value::Map(std::rc::Rc::new(inside.into()));
 }
 mod sre;
-mod multibyte;
 
 
 mod statistics;

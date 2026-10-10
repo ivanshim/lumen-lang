@@ -26,8 +26,8 @@ def exec_builtin(module):
 def extension_suffixes():
     return []
 
-# Bytecode marker from the pinned CPython pycore_magic_number.h.
-pyc_magic_number_token = 168627833
+# Marker of the active kernel compiled-code cache ABI.
+pyc_magic_number_token = _code_abi()[1]
 check_hash_based_pycs = 'default'
 
 _import_lock_depth = 0
@@ -81,6 +81,14 @@ class _NativeLoader:
         # The source-backed native create operation initializes the namespace.
         pass
 
+# This interpreter carries source modules, with no frozen code table.
+def find_frozen(name, withdata=False):
+    return None
+
+# Cached code carries the source location through its nested definitions.
+def _fix_co_filename(code, path):
+    return _code_filename(code, path)
+
 # Initialize native source modules with the public import machinery.
 def _initialize_source_module(module, name, filename):
     from importlib._bootstrap_external import spec_from_file_location
@@ -108,7 +116,7 @@ def _source_hash_round(v):
     v[2] = ((v[2] << 32) | (v[2] >> 32)) & mask
 
 # Hash source bytes with CPython's magic-number-keyed SipHash-1-3.
-def source_hash(key, source):
+def source_hash(key, source, /):
     import operator
     key = operator.index(key)
     if key < -(1 << 63) or key >= 1 << 63:

@@ -724,7 +724,7 @@ class FileIO(_RawIOBase):
     def _dealloc_warn(self, source):
         if getattr(self, '_fd', -1) >= 0 and self._closefd and not self.closed:
             import warnings
-            warnings.warn('unclosed file ' + repr(self), ResourceWarning, stacklevel=2, source=source)
+            warnings.warn('unclosed file ' + repr(source), ResourceWarning, stacklevel=2, source=source)
     def __init__(self, file, mode='r', closefd=True, opener=None):
         import os
         if getattr(self, '_fd', -1) >= 0:

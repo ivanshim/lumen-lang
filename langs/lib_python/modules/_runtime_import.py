@@ -113,6 +113,13 @@ class SourceLoader:
             raise ImportError('loader for ' + self.name + ' cannot handle ' + fullname)
         return self.path
 
+    def get_code(self, fullname):
+        import sys
+        self.get_filename(fullname)
+        if fullname in sys.builtin_module_names:
+            return None
+        return compile(self.get_source(fullname), self.path, 'exec')
+
     def get_source(self, fullname):
         self.get_filename(fullname)
         return _load_module(fullname, 'source')
