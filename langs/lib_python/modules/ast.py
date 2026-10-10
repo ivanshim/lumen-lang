@@ -1,8 +1,7 @@
 # Python 3.14 AST nodes, a source reader and the standard tree helper algorithms.
 # The node schema follows CPython's ASDL; helpers and the unparser retain their
 # upstream algorithms. Source outside this reader's grammar fails visibly.
-# Optimized trees, complete type-comment attachment, and compiler validation
-# beyond the checks below remain unsupported rather than returning invented trees.
+# Source reading and compilation validate node structure before generating code.
 
 PyCF_ONLY_AST = 1024
 PyCF_TYPE_COMMENTS = 4096
@@ -94,6 +93,7 @@ def _read_string(source, i, prefix):
     # i points at the opening quote. Returns the decoded value and the
     # index just past the closing quote.
     n = len(source)
+    literal_start = i - len(prefix)
     quote = source[i]
     if source[i:i + 3] == quote * 3:
         closer = quote * 3
@@ -117,7 +117,7 @@ def _read_string(source, i, prefix):
                 units.append(source[i + 1])
                 i += 2
                 continue
-            piece, i = _read_escape(source, i + 1, is_bytes)
+            piece, i = _read_escape(source, i + 1, is_bytes, literal_start if is_bytes else None)
             if piece is not None:
                 units.append(piece)
             continue
@@ -134,7 +134,7 @@ def _read_string(source, i, prefix):
         return (bytes(numbers), i)
     return (''.join(units), i)
 
-def _warn_invalid_escape(text):
+def _warn_invalid_escape(text, source, index):
     # An escape the reader does not know is still kept, but the reference
     # warns about it, naming the text it read and the spelling that would
     # have been meant.
@@ -147,14 +147,20 @@ def _warn_invalid_escape(text):
             SyntaxWarning, stacklevel=3)
     except SyntaxWarning as error:
         # The parser promotes an invalid-escape warning treated as an error.
-        raise SyntaxError(str(error).replace(
-            ' Such sequences will not work in the future.', '')) from None
+        message = str(error).replace(' Such sequences will not work in the future.', '')
+        line = source[:index].count('\n') + 1
+        offset = len(source[:index].rsplit('\n', 1)[-1]) + 1
+        source_line = source.split('\n')[line - 1] + '\n'
+        raise SyntaxError(message, ('<unknown>', line, offset, source_line, line, offset + len(text))) from None
 
-def _read_escape(source, i, is_bytes):
+def _read_escape(source, i, is_bytes, literal_start=None):
     # i points just past the backslash. Returns the replacement text (or
     # None for a continued line) and the index past the escape.
     n = len(source)
     c = source[i]
+    warning_at = i - 1
+    if literal_start is not None and '\n' not in source[literal_start:warning_at]:
+        warning_at = literal_start
     if c == '\n':
         return (None, i + 1)
     if c in _SIMPLE_ESCAPES:
@@ -169,12 +175,12 @@ def _read_escape(source, i, is_bytes):
         return _read_hex(source, i + 1, 2, '\\x')
     if c == 'u':
         if is_bytes:
-            _warn_invalid_escape('\\u')
+            _warn_invalid_escape('\\u', source, warning_at)
             return ('\\u', i + 1)
         return _read_hex(source, i + 1, 4, '\\u')
     if c == 'U':
         if is_bytes:
-            _warn_invalid_escape('\\U')
+            _warn_invalid_escape('\\U', source, warning_at)
             return ('\\U', i + 1)
         return _read_hex(source, i + 1, 8, '\\U')
     if c == 'N' and not is_bytes:
@@ -195,7 +201,7 @@ def _read_escape(source, i, is_bytes):
         return (named, close + 1)
     # An unknown escape keeps the backslash, as Python does, and warns.
     text = '\\' + c
-    _warn_invalid_escape(text)
+    _warn_invalid_escape(text, source, warning_at)
     return (text, i + 1)
 
 def _read_hex(source, i, width, label):
@@ -239,7 +245,11 @@ def _real(body, source):
         if floating:
             return float(body)
         return int(body)
-    except Exception:
+    except ValueError as error:
+        if str(error).startswith('Exceeds the limit '):
+            import sys
+            message = 'Exceeds the limit (' + str(sys.get_int_max_str_digits()) + ' digits) for integer string conversion: value has ' + str(len(body.lstrip('+-'))) + ' digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits.'
+            raise SyntaxError(message) from None
         _malformed(source)
 
 class _Reader:
@@ -442,10 +452,12 @@ class AST:
 
     # Apply ASDL defaults while preserving the deprecated incomplete constructors.
     def __init__(self, *args, **kwargs):
-        import warnings
         cls = type(self)
         name = cls.__name__
-        fields = self._fields
+        try:
+            fields = cls._fields
+        except AttributeError:
+            raise AttributeError("type object '" + cls.__module__ + '.' + cls.__qualname__ + "' has no attribute '_fields'") from None
         if len(args) > len(fields):
             raise TypeError(name + ' constructor takes at most ' + str(len(fields)) + ' positional arguments')
         for index, value in enumerate(args):
@@ -455,6 +467,7 @@ class AST:
             setattr(self, field, value)
         for field, value in kwargs.items():
             if field not in fields and field not in self._attributes:
+                import warnings
                 warnings.warn(name + ".__init__ got an unexpected keyword argument " + repr(field) + ". This is deprecated and will be removed in Python 3.15.", DeprecationWarning, stacklevel=2)
             setattr(self, field, value)
         types = getattr(cls, '_field_types', None)
@@ -464,6 +477,7 @@ class AST:
             if field in kwargs:
                 continue
             if field not in types:
+                import warnings
                 warnings.warn('Field ' + repr(field) + ' is missing from ' + name + '._field_types', DeprecationWarning, stacklevel=2)
                 continue
             typ = types[field]
@@ -472,7 +486,16 @@ class AST:
             elif typ is expr_context:
                 setattr(self, field, Load())
             elif not hasattr(cls, field):
+                import warnings
                 warnings.warn(name + ".__init__ missing 1 required positional argument: " + repr(field) + ". This will become an error in Python 3.15.", DeprecationWarning, stacklevel=2)
+
+    # Serialize the class, constructor placeholders and instance state.
+    def __reduce__(self):
+        return type(self), (None,) * len(self._fields), self.__dict__
+
+    # Keep all pickle protocols on the same node reduction.
+    def __reduce_ex__(self, protocol):
+        return self.__reduce__()
 
     # Replace only declared class fields and attributes, keeping shallow values.
     def __replace__(self, **changes):
@@ -493,7 +516,38 @@ class AST:
 
     # Represent the actual fields, without source positions or private parser state.
     def __repr__(self):
-        return type(self).__name__ + '(' + ', '.join(field + '=' + repr(value) for field, value in iter_fields(self)) + ')'
+        return _node_repr(self, 0)
+
+
+# Limit nested nodes to three levels, as the native AST repr does.
+def _node_repr(value, depth):
+    if isinstance(value, AST):
+        name = type(value).__name__
+        if depth >= 3:
+            return name + '(...)'
+        return name + '(' + ', '.join(field + '=' + _node_repr(child, depth + 1)
+                                     for field, child in iter_fields(value)) + ')'
+    if isinstance(value, list):
+        if len(value) > 2:
+            return '[' + _node_repr(value[0], depth) + ', ..., ' + _node_repr(value[-1], depth) + ']'
+        return '[' + ', '.join(_node_repr(child, depth) for child in value) + ']'
+    return repr(value)
+
+
+class slice(AST):
+    """Deprecated base class for slice nodes."""
+
+class Index(slice):
+    """Deprecated index wrapper; return the index expression itself."""
+    # Preserve the historic constructor that returns its argument.
+    def __new__(cls, value, **kwargs):
+        return value
+
+class ExtSlice(slice):
+    """Deprecated slice wrapper; use a Tuple expression instead."""
+    # Preserve the historic multidimensional slice constructor.
+    def __new__(cls, dims=(), **kwargs):
+        return Tuple(list(dims), Load(), **kwargs)
 
 
 class mod(AST):
@@ -1890,7 +1944,13 @@ def _lex(source, start, end, row, col, for_field, comments=None):
                 toks.append(tok)
                 i, row, col = after, erow, ecol
                 continue
-            toks.append(_Tok('name', word, srow, scol, srow, scol + len(source[i:j].encode('utf-8'))))
+            normalized = word
+            if not word.isascii():
+                import unicodedata
+                normalized = unicodedata.normalize('NFKC', word)
+                if not isinstance(normalized, str) or normalized != word:
+                    _validate_identifier(normalized)
+            toks.append(_Tok('name', normalized, srow, scol, srow, scol + len(source[i:j].encode('utf-8'))))
             col += len(source[i:j].encode('utf-8'))
             i = j
             continue
@@ -3421,7 +3481,7 @@ def _tree_for_compile(source, filename, mode, type_comments, optimize):
     return parse(source, filename, mode, type_comments=bool(type_comments),
                  optimize=optimize, fold_debug=True)
 
-def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
+def _parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
           feature_version=None, optimize=-1, fold_debug=False):
     if isinstance(source, AST):
         # A tree goes back through the reader only where its shape suits
@@ -3466,9 +3526,14 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         if parser.peek().kind != 'end':
             _syntax('invalid syntax')
         tree = FunctionType(argtypes=argtypes, returns=returns)
-        _check_features(tree, feature_version)
-        return tree
+        _check_features(tree, feature_version, source)
+        return _optimize_ast(tree, optimize) if optimize > 0 else tree
     if mode == 'eval':
+        for line in source.split('\n'):
+            if line.strip() and not line.lstrip().startswith('#'):
+                if line[:1] in (' ', '\t'):
+                    raise IndentationError('unexpected indent')
+                break
         toks = _lex(source, 0, len(source), 1, 0, False)
         parser = _Parser(source, toks, optimize, fold_debug)
         while parser.peek().kind == 'newline':
@@ -3481,8 +3546,8 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         if parser.peek().kind != 'end':
             _syntax('invalid syntax')
         tree = Expression(body=node)
-        _check_features(tree, feature_version)
-        return tree
+        _check_features(tree, feature_version, source)
+        return _optimize_ast(tree, optimize) if optimize > 0 else tree
     if mode not in ('exec', 'single'):
         raise ValueError("compile() mode must be 'exec', 'eval', 'single' or 'func_type'")
     comments = []
@@ -3503,8 +3568,22 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         if not tree.body:
             raise SyntaxError('invalid syntax')
         tree = Interactive(body=tree.body)
-    _check_features(tree, feature_version)
-    return tree
+    _check_features(tree, feature_version, source)
+    return _optimize_ast(tree, optimize) if optimize > 0 else tree
+
+
+# Attach the caller's filename to located syntax errors from literal decoding.
+def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
+          feature_version=None, optimize=-1, fold_debug=False):
+    try:
+        return _parse(source, filename, mode, type_comments=type_comments,
+                      feature_version=feature_version, optimize=optimize,
+                      fold_debug=fold_debug)
+    except SyntaxError as error:
+        if error.lineno is not None:
+            raise type(error)(error.msg, (filename, error.lineno, error.offset,
+                                         error.text, error.end_lineno, error.end_offset)) from None
+        raise
 
 def dump(
     node, annotate_fields=True, include_attributes=False,
@@ -4030,7 +4109,7 @@ def _literal_node(node_or_string):
     return _convert(node_or_string)
 
 # Enforce older grammar versions on the resulting syntax tree.
-def _check_features(tree, version):
+def _check_features(tree, version, source=None):
     if version is None:
         return
     if isinstance(version, tuple):
@@ -4049,6 +4128,10 @@ def _check_features(tree, version):
             minimum = 8
         elif isinstance(node, Match):
             minimum = 10
+        elif isinstance(node, ExceptHandler) and isinstance(node.type, Tuple) and source is not None:
+            line = source.split('\n')[node.type.lineno - 1].encode('utf-8')
+            if line[node.type.col_offset:node.type.col_offset + 1] != b'(':
+                minimum = 14
         elif isinstance(node, TryStar):
             minimum = 11
         elif isinstance(node, (TypeAlias, type_param)) or getattr(node, 'type_params', []):
@@ -4061,6 +4144,71 @@ def _check_features(tree, version):
             minimum = 13
         if version < minimum:
             raise SyntaxError(type(node).__name__ + ' is only supported in Python 3.' + str(minimum) + ' and greater')
+
+
+# Fold literal pattern expressions without changing ordinary arithmetic trees.
+def _fold_pattern_value(node):
+    if isinstance(node, Constant) or not _pattern_value(node):
+        return node
+    if isinstance(node, (UnaryOp, BinOp)):
+        return copy_location(Constant(value=_literal_node(node)), node)
+    return node
+
+# Convert simple positional string conversions while retaining evaluation order.
+def _format_tree(node):
+    if not isinstance(node.op, Mod) or not isinstance(node.left, Constant) or type(node.left.value) is not str or not isinstance(node.right, Tuple):
+        return node
+    text = node.left.value
+    values = []
+    literal = ''
+    index = 0
+    argument = 0
+    while index < len(text):
+        if text[index] != '%':
+            literal += text[index]
+            index += 1
+            continue
+        if index + 1 == len(text):
+            return node
+        conversion = text[index + 1]
+        index += 2
+        if conversion == '%':
+            literal += '%'
+            continue
+        if conversion not in 'sra' or argument >= len(node.right.elts) or isinstance(node.right.elts[argument], Starred):
+            return node
+        if literal:
+            values.append(copy_location(Constant(value=literal), node))
+            literal = ''
+        values.append(copy_location(FormattedValue(value=node.right.elts[argument], conversion=ord(conversion)), node))
+        argument += 1
+    if argument != len(node.right.elts):
+        return node
+    if literal:
+        values.append(copy_location(Constant(value=literal), node))
+    return copy_location(JoinedStr(values=values), node)
+
+# Optimize pattern literals, string conversions and level-two docstrings.
+def _optimize_ast(node, level):
+    for field, value in iter_fields(node):
+        if isinstance(value, AST):
+            setattr(node, field, _optimize_ast(value, level))
+        elif isinstance(value, list):
+            setattr(node, field, [_optimize_ast(child, level) if isinstance(child, AST) else child for child in value])
+    if isinstance(node, MatchValue):
+        node.value = _fold_pattern_value(node.value)
+    elif isinstance(node, MatchMapping):
+        node.keys = [_fold_pattern_value(key) for key in node.keys]
+    elif isinstance(node, BinOp):
+        return _format_tree(node)
+    if level == 2 and isinstance(node, (Module, FunctionDef, AsyncFunctionDef, ClassDef)) and node.body:
+        first = node.body[0]
+        if isinstance(first, Expr) and isinstance(first.value, Constant) and isinstance(first.value.value, str):
+            node.body = node.body[1:]
+            if not node.body and not isinstance(node, Module):
+                node.body = [Pass(lineno=first.lineno, col_offset=first.col_offset,
+                                  end_lineno=first.lineno, end_col_offset=first.col_offset + 4)]
+    return node
 
 # Route compile's AST-only flags through the same public parser.
 def _compile_ast(source, filename, mode, flags, optimize=-1, feature_version=None):
@@ -4094,6 +4242,8 @@ def _validate_node(node, active=None):
     if not isinstance(node, AST):
         raise TypeError('expected AST, got ' + repr(type(node).__name__))
     cls = type(node)
+    if cls in (mod, stmt, expr, expr_context, boolop, operator, unaryop, cmpop, excepthandler, pattern, type_ignore, type_param):
+        raise TypeError('expected some sort of ' + cls.__name__ + ', but got ' + repr(node))
     category = 'stmt' if isinstance(node, stmt) else 'expr' if isinstance(node, expr) else cls.__name__
     for attr in ('lineno', 'col_offset'):
         if attr in node._attributes:
@@ -4104,9 +4254,9 @@ def _validate_node(node, active=None):
     for attr in ('end_lineno', 'end_col_offset'):
         if attr in node._attributes and getattr(node, attr, None) is not None and not isinstance(getattr(node, attr), int):
             raise ValueError('invalid integer value: ' + str(getattr(node, attr)))
-    if getattr(node, 'end_lineno', None) is not None and node.end_lineno < node.lineno:
+    if getattr(node, 'end_lineno', None) is not None and (node.end_lineno < node.lineno or (node.lineno < 0 and node.end_lineno != node.lineno)):
         raise ValueError('AST node line range (' + str(node.lineno) + ', ' + str(node.end_lineno) + ') is not valid')
-    if getattr(node, 'end_col_offset', None) is not None and node.end_lineno == node.lineno and node.end_col_offset < node.col_offset:
+    if getattr(node, 'end_col_offset', None) is not None and node.end_lineno == node.lineno and (node.end_col_offset < node.col_offset or (node.col_offset < 0 and node.end_col_offset != node.col_offset)):
         raise ValueError('line ' + str(node.lineno) + ', column ' + str(node.col_offset) + '-' + str(node.end_col_offset) + ' is not a valid range')
     for field in node._fields:
         if not hasattr(node, field):
@@ -4120,16 +4270,28 @@ def _validate_node(node, active=None):
             for item in value:
                 if item is None and ((isinstance(node, arguments) and field == 'kw_defaults') or (isinstance(node, Dict) and field == 'keys')):
                     continue
+                if item is None and element_type in (expr, stmt):
+                    raise ValueError('None disallowed in ' + ('expression' if element_type is expr else 'statement') + ' list')
+                if element_type is str:
+                    _validate_identifier(item)
                 if not isinstance(item, element_type):
                     raise TypeError('expected some sort of ' + element_type.__name__ + ', but got ' + repr(item))
                 if isinstance(item, AST):
                     _validate_node(item, active)
         elif value is None and getattr(cls, field, ...) is None:
             continue
+        elif value is None and not isinstance(value, typ):
+            raise ValueError("field '" + field + "' is required for " + cls.__name__)
+        elif typ is str:
+            if not isinstance(value, str):
+                raise TypeError('AST identifier must be of type str')
         elif not isinstance(value, typ):
             raise TypeError('expected ' + str(typ) + ', but got ' + repr(value))
         elif isinstance(value, AST):
             _validate_node(value, active)
+        if field in ('id', 'name', 'arg', 'attr', 'asname', 'rest') and isinstance(value, str):
+            _validate_identifier(value)
+    _validate_shape(node)
     if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef, For, AsyncFor, While, If, With, AsyncWith, ExceptHandler, Try, TryStar)) and not node.body:
         raise ValueError('empty body on ' + cls.__name__)
     if isinstance(node, Assign) and not node.targets:
@@ -4149,6 +4311,117 @@ def _validate_node(node, active=None):
         _validate_constant(node.value)
     active.remove(identity)
 
+
+# Reject constant spellings in identifier fields, including aliases and captures.
+def _validate_identifier(value):
+    if not isinstance(value, str):
+        raise TypeError('AST identifier must be of type str')
+    if value in ('True', 'False', 'None'):
+        raise ValueError("identifier field can't represent '" + value + "' constant")
+
+# Check structural constraints before an invalid tree reaches the unparser.
+def _validate_shape(node):
+    name = type(node).__name__
+    if isinstance(node, (Import, ImportFrom, Global, Nonlocal)) and not node.names:
+        raise ValueError('empty names on ' + name)
+    if isinstance(node, ImportFrom) and node.level is not None and node.level < 0:
+        raise ValueError('Negative ImportFrom level')
+    if isinstance(node, (With, AsyncWith)) and not node.items:
+        raise ValueError('empty items on ' + name)
+    if isinstance(node, Raise) and node.exc is None and node.cause is not None:
+        raise ValueError('Raise with cause but no exception')
+    if isinstance(node, (Try, TryStar)):
+        if not node.handlers and not node.finalbody:
+            raise ValueError(name + ' has neither except handlers nor finalbody')
+        if not node.handlers and node.orelse:
+            raise ValueError(name + ' has orelse but no except handlers')
+    if isinstance(node, arguments):
+        for parameter in node.posonlyargs + node.args + node.kwonlyargs:
+            _validate_contexts(parameter)
+        if len(node.defaults) > len(node.posonlyargs) + len(node.args):
+            raise ValueError('more positional defaults than args on arguments')
+        if len(node.kw_defaults) != len(node.kwonlyargs):
+            raise ValueError('length of kwonlyargs is not the same as kw_defaults on arguments')
+    if isinstance(node, (ListComp, SetComp, DictComp, GeneratorExp)) and not node.generators:
+        raise ValueError('comprehension with no generators')
+    if isinstance(node, Match):
+        if not node.cases:
+            raise ValueError('empty cases on Match')
+        for case in node.cases:
+            _validate_pattern(case.pattern)
+
+# Accept only literals and dotted names where pattern grammar requires a value.
+def _pattern_value(node, singleton=False):
+    if isinstance(node, Constant):
+        return type(node.value) in (int, float, complex, str, bytes) or (singleton and (node.value is None or type(node.value) is bool))
+    if isinstance(node, Attribute):
+        root = node
+        while isinstance(root, Attribute):
+            root = root.value
+        return isinstance(root, Name)
+    if isinstance(node, UnaryOp):
+        return isinstance(node.op, USub) and isinstance(node.operand, Constant) and type(node.operand.value) in (int, float, complex)
+    if isinstance(node, BinOp) and isinstance(node.op, (Add, Sub)):
+        left = node.left.operand if isinstance(node.left, UnaryOp) and isinstance(node.left.op, USub) else node.left
+        return isinstance(left, Constant) and type(left.value) in (int, float) and isinstance(node.right, Constant) and type(node.right.value) is complex
+    return False
+
+# Validate pattern structure while allowing star captures only inside sequences.
+def _validate_pattern(node, star=False):
+    if isinstance(node, MatchValue):
+        if not _pattern_value(node.value):
+            if isinstance(node.value, Constant):
+                raise ValueError('unexpected constant inside of a literal pattern')
+            raise ValueError('patterns may only match literals and attribute lookups')
+    elif isinstance(node, MatchSingleton):
+        if node.value is not None and type(node.value) is not bool:
+            raise ValueError('MatchSingleton can only contain True, False and None')
+    elif isinstance(node, MatchStar):
+        if not star:
+            raise ValueError("can't use MatchStar here")
+        if node.name is not None:
+            _validate_identifier(node.name)
+            if node.name == '_':
+                raise ValueError("can't capture name '_' in patterns")
+    elif isinstance(node, MatchAs):
+        if node.name is not None:
+            _validate_identifier(node.name)
+            if node.name == '_':
+                raise ValueError("can't capture name '_' in patterns")
+        if node.pattern is not None:
+            if node.name is None:
+                raise ValueError('MatchAs must specify a target name if a pattern is given')
+            _validate_pattern(node.pattern)
+    elif isinstance(node, MatchSequence):
+        for child in node.patterns:
+            _validate_pattern(child, True)
+    elif isinstance(node, MatchOr):
+        if len(node.patterns) < 2:
+            raise ValueError('MatchOr requires at least 2 patterns')
+        for child in node.patterns:
+            _validate_pattern(child)
+    elif isinstance(node, MatchMapping):
+        if len(node.keys) != len(node.patterns):
+            raise ValueError('MatchMapping has different number of keys and patterns')
+        if node.rest is not None:
+            _validate_identifier(node.rest)
+            if node.rest == '_':
+                raise ValueError("can't capture name '_' in patterns")
+        for key in node.keys:
+            if not _pattern_value(key, True):
+                raise ValueError('patterns may only match literals and attribute lookups')
+        for child in node.patterns:
+            _validate_pattern(child)
+    elif isinstance(node, MatchClass):
+        if not isinstance(node.cls, (Name, Attribute)) or (isinstance(node.cls, Attribute) and not _pattern_value(node.cls)):
+            raise ValueError('MatchClass cls field can only contain Name or Attribute nodes.')
+        if len(node.kwd_attrs) != len(node.kwd_patterns):
+            raise ValueError('MatchClass has different number of keyword attributes and patterns')
+        for attr in node.kwd_attrs:
+            _validate_identifier(attr)
+        for child in node.patterns + node.kwd_patterns:
+            _validate_pattern(child)
+
 # Compile the current tree rather than replaying the text from which it was parsed.
 def _compile_source(tree, mode):
     expected = {'exec': Module, 'eval': Expression, 'single': Interactive}.get(mode)
@@ -4158,7 +4431,14 @@ def _compile_source(tree, mode):
         raise TypeError('expected ' + expected.__name__ + ' node, got ' + type(tree).__name__)
     _validate_node(tree)
     _validate_contexts(tree)
-    source = unparse(tree)
+    from _ast_unparse import Unparser
+    class _CodeUnparser(Unparser):
+        # Lower the nullable relative-import level as the compiler's zero default.
+        def visit_ImportFrom(self, node):
+            if node.level is None:
+                node = node.__replace__(level=0)
+            return super().visit_ImportFrom(node)
+    source = _CodeUnparser().visit(tree) + ('\n' if mode != 'eval' else '')
     generated = parse(source, mode='exec' if mode == 'single' else mode)
     if mode == 'single':
         generated = Interactive(body=generated.body)
@@ -4191,7 +4471,10 @@ def _validate_contexts(node, context=Load):
         raise ValueError("expression which can't be assigned to in " + context.__name__ + ' context')
     if hasattr(node, 'ctx') and not isinstance(node.ctx, context):
         raise ValueError('expression must have ' + context.__name__ + ' context but has ' + type(node.ctx).__name__ + ' instead')
-    for field, value in iter_fields(node):
+    fields = list(iter_fields(node))
+    if isinstance(node, (ListComp, SetComp, DictComp, GeneratorExp)):
+        fields = [(field, value) for field, value in fields if field == 'generators'] + [(field, value) for field, value in fields if field != 'generators']
+    for field, value in fields:
         expected = Load
         if field == 'targets' and isinstance(node, (Assign, Delete)):
             expected = Del if isinstance(node, Delete) else Store
@@ -4219,3 +4502,60 @@ def _validate_constant(value):
     if type(value) in (tuple, frozenset):
         for item in value:
             _validate_constant(item)
+
+
+# Parse source files and standard input through the public AST CLI.
+def main(args=None):
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(color=True)
+    parser.add_argument('infile', nargs='?', default='-',
+                        help='the file to parse; defaults to stdin')
+    parser.add_argument('-m', '--mode', default='exec',
+                        choices=('exec', 'single', 'eval', 'func_type'),
+                        help='specify what kind of code must be parsed')
+    parser.add_argument('--no-type-comments', default=True, action='store_false',
+                        help="don't add information about type comments")
+    parser.add_argument('-a', '--include-attributes', action='store_true',
+                        help='include attributes such as line numbers and '
+                             'column offsets')
+    parser.add_argument('-i', '--indent', type=int, default=3,
+                        help='indentation of nodes (number of spaces)')
+    parser.add_argument('--feature-version',
+                        type=str, default=None, metavar='VERSION',
+                        help='Python version in the format 3.x '
+                             '(for example, 3.10)')
+    parser.add_argument('-O', '--optimize',
+                        type=int, default=-1, metavar='LEVEL',
+                        help='optimization level for parser (default -1)')
+    parser.add_argument('--show-empty', default=False, action='store_true',
+                        help='show empty lists and fields in dump output')
+    args = parser.parse_args(args)
+
+    if args.infile == '-':
+        name = '<stdin>'
+        source = sys.stdin.buffer.read()
+    else:
+        name = args.infile
+        with open(args.infile, 'rb') as infile:
+            source = infile.read()
+
+    # Process feature_version
+    feature_version = None
+    if args.feature_version:
+        try:
+            major, minor = map(int, args.feature_version.split('.', 1))
+        except ValueError:
+            parser.error('Invalid format for --feature-version; '
+                         'expected format 3.x (for example, 3.10)')
+
+        feature_version = (major, minor)
+
+    tree = parse(source, name, args.mode, type_comments=args.no_type_comments,
+                 feature_version=feature_version, optimize=args.optimize)
+    print(dump(tree, include_attributes=args.include_attributes,
+               indent=args.indent, show_empty=args.show_empty))
+
+if __name__ == '__main__':
+    main()
