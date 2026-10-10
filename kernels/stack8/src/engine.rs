@@ -19438,8 +19438,27 @@ impl<'a> Engine<'a> {
         };
         let seek = |hay: &[u8], needle: &[u8], last: bool| -> Option<usize> {
             let most = hay.len().checked_sub(needle.len())?;
-            if last { (0..=most).rev().find(|&i| hay[i..].starts_with(needle)) }
-            else { (0..=most).find(|&i| hay[i..].starts_with(needle)) }
+            // Keep short comparisons cheap; reuse matched prefixes for long needles.
+            if needle.len() <= 8 {
+                return if last { (0..=most).rev().find(|&i| hay[i..].starts_with(needle)) }
+                    else { (0..=most).find(|&i| hay[i..].starts_with(needle)) };
+            }
+            let symbol = |index: usize| needle[if last { needle.len() - index - 1 } else { index }];
+            let mut borders = vec![0usize; needle.len()];
+            for index in 1..needle.len() {
+                let mut border = borders[index - 1];
+                while border > 0 && symbol(border) != symbol(index) { border = borders[border - 1]; }
+                borders[index] = border + usize::from(symbol(border) == symbol(index));
+            }
+            let (mut offset, mut prefix) = (0usize, 0usize);
+            while offset < hay.len() {
+                let byte = hay[if last { hay.len() - offset - 1 } else { offset }];
+                if byte == symbol(prefix) { offset += 1; prefix += 1; }
+                else if prefix > 0 { prefix = borders[prefix - 1]; }
+                else { offset += 1; }
+                if prefix == needle.len() { return Some(if last { hay.len() - offset } else { offset - prefix }); }
+            }
+            None
         };
         match task {
             // Whether the row opens or closes with any of the parts

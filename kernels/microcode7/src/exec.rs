@@ -14670,8 +14670,29 @@ impl<'a> Machine<'a> {
         let scan = |haystack: &[u8], part: &[u8], backward: bool| -> Option<usize> {
             let last = haystack.len().checked_sub(part.len())?;
             let places = 0..=last;
-            if backward { places.rev().find(|&i| haystack[i..].starts_with(part)) }
-            else { places.into_iter().find(|&i| haystack[i..].starts_with(part)) }
+            // Long periodic needles must not rescan their prefix at every byte.
+            if part.len() <= 8 {
+                return if backward { places.rev().find(|&i| haystack[i..].starts_with(part)) }
+                    else { places.into_iter().find(|&i| haystack[i..].starts_with(part)) };
+            }
+            let needle_at = |at: usize| part[if backward { part.len() - 1 - at } else { at }];
+            let mut fallback = vec![0usize; part.len()];
+            let mut matched = 0usize;
+            for at in 1..part.len() {
+                while matched != 0 && needle_at(at) != needle_at(matched) { matched = fallback[matched - 1]; }
+                if needle_at(at) == needle_at(matched) { matched += 1; }
+                fallback[at] = matched;
+            }
+            matched = 0;
+            for at in 0..haystack.len() {
+                let byte = haystack[if backward { haystack.len() - 1 - at } else { at }];
+                while matched != 0 && byte != needle_at(matched) { matched = fallback[matched - 1]; }
+                if byte == needle_at(matched) { matched += 1; }
+                if matched == part.len() {
+                    return Some(if backward { haystack.len() - 1 - at } else { at + 1 - part.len() });
+                }
+            }
+            None
         };
         let blank = |n: &u8| n.is_ascii_whitespace() || *n == 11;
         match operation {
