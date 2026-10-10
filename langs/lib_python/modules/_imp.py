@@ -69,6 +69,11 @@ class _NativeFinder:
 
     @staticmethod
     def find_distributions(*args, **kwargs):
+        import sys
+        from importlib._bootstrap_external import PathFinder
+        # The standard finder already searches these same distribution paths.
+        if any(finder is PathFinder for finder in sys.meta_path):
+            return iter(())
         from importlib.metadata import MetadataPathFinder
         return MetadataPathFinder.find_distributions(*args, **kwargs)
 

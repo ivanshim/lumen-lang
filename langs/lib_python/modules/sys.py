@@ -700,3 +700,6 @@ def set_asyncgen_hooks(firstiter=_asyncgen_hook_missing, finalizer=_asyncgen_hoo
 
 def is_finalizing():
     return __trace_native__(9)
+
+# The builtin interface has no filesystem origin after bridge initialization.
+globals().pop('__file__', None)
