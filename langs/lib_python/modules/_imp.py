@@ -64,9 +64,18 @@ def _zip_archive_and_member(location):
             return head, os.sep.join(parts[cut:])
     return None
 
-# Whether a member stands in an archive.
+# Whether an archive lookup is already running. Reading an archive needs
+# the file and archive libraries, and importing either of those runs the
+# source search again; while this is set the lookup answers nothing, so
+# the libraries finish their own import before an archive is read.
+_zip_reading = False
+
+# Whether a member stands in an archive. Called once the loader exists,
+# when the file and archive libraries are already loaded.
 def _zip_member_exists(archive, member):
-    import zipfile
+    import os, zipfile
+    if not os.path.isfile(archive) or not _zip_archive_named(archive):
+        return False
     with zipfile.ZipFile(archive) as handle:
         return member in handle.namelist()
 
@@ -75,57 +84,71 @@ def _zip_member_exists(archive, member):
 # file and bytes, or None when the archive holds neither a package
 # directory nor a module file for the leaf.
 def _zip_module_source(where, leaf):
-    if not _zip_archive_hinted(where):
+    global _zip_reading
+    if _zip_reading or not _zip_archive_hinted(where):
         return None
-    import os, zipfile
-    split = _zip_archive_and_member(where)
-    if split is None:
-        return None
-    archive, inner = split
-    prefix = inner.replace(os.sep, '/')
-    if prefix:
-        prefix += '/'
-    wanted = [prefix + leaf + '/__init__.py', prefix + leaf + '.py']
+    _zip_reading = True
     try:
-        with zipfile.ZipFile(archive) as handle:
-            present = handle.namelist()
-            for member in wanted:
-                if member in present:
-                    return (os.path.join(archive, member.replace('/', os.sep)),
-                            handle.read(member))
-    except (OSError, zipfile.BadZipFile):
+        # Resolve the archive before the archive library is reached for,
+        # so an ordinary name or a missing file is answered without it.
+        import os
+        split = _zip_archive_and_member(where)
+        if split is None:
+            return None
+        archive, inner = split
+        import zipfile
+        prefix = inner.replace(os.sep, '/')
+        if prefix:
+            prefix += '/'
+        wanted = [prefix + leaf + '/__init__.py', prefix + leaf + '.py']
+        try:
+            with zipfile.ZipFile(archive) as handle:
+                present = handle.namelist()
+                for member in wanted:
+                    if member in present:
+                        return (os.path.join(archive, member.replace('/', os.sep)),
+                                handle.read(member))
+        except (OSError, zipfile.BadZipFile):
+            return None
         return None
-    return None
+    finally:
+        _zip_reading = False
 
 # The directory a namespace portion names inside an archive: the archive's
 # own member directory when it stands there without an __init__.py,
 # spelled the way the reference spells it, so the namespace reader can
 # resolve it back through the archive.
 def _zip_namespace_portion(where, leaf):
+    global _zip_reading
     # An ordinary search-path directory is not worth reaching for the
     # archive library over, and reaching for it while the library is
     # still forming would import it from under its own import.
-    if not _zip_archive_hinted(where):
+    if _zip_reading or not _zip_archive_hinted(where):
         return None
-    import os, zipfile
-    split = _zip_archive_and_member(where)
-    if split is None:
-        return None
-    archive, inner = split
-    prefix = inner.replace(os.sep, '/')
-    if prefix:
-        prefix += '/'
-    member = prefix + leaf
+    _zip_reading = True
     try:
-        with zipfile.ZipFile(archive) as handle:
-            names = handle.namelist()
-    except (OSError, zipfile.BadZipFile):
-        return None
-    if member + '/__init__.py' in names:
-        return None
-    if not any(name.startswith(member + '/') for name in names):
-        return None
-    return os.path.join(where, leaf)
+        import os
+        split = _zip_archive_and_member(where)
+        if split is None:
+            return None
+        archive, inner = split
+        import zipfile
+        prefix = inner.replace(os.sep, '/')
+        if prefix:
+            prefix += '/'
+        member = prefix + leaf
+        try:
+            with zipfile.ZipFile(archive) as handle:
+                names = handle.namelist()
+        except (OSError, zipfile.BadZipFile):
+            return None
+        if member + '/__init__.py' in names:
+            return None
+        if not any(name.startswith(member + '/') for name in names):
+            return None
+        return os.path.join(where, leaf)
+    finally:
+        _zip_reading = False
 
 # The loader for a module read out of an archive. It answers the source
 # loader contract: the module's own file, its bytes read from the member,
