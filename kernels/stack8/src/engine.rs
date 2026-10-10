@@ -26571,7 +26571,7 @@ impl Engine<'_> {
     /// __file__ the way CPython takes them, with the unknown-location
     /// wording where the module carries no file of its own.
     fn import_member_fault_from(&mut self, module: &Value, name: &str) -> String {
-        let modname = match self.class_get(module.clone(), "__name__", false) {
+        let modname = match self.class_get(module.clone(), "__name__", false).map(|value| Self::worth_of(&value).unwrap_or_else(|| value.contents())) {
             Ok(Value::Text(named)) => named.to_string(),
             _ => "<unknown module name>".to_string(),
         };
@@ -26581,7 +26581,7 @@ impl Engine<'_> {
         let told = if self.lang.module_path.is_some() && self.module_initializing(&modname) {
             format!("ImportError: cannot import name '{name}' from partially initialized module '{modname}' (most likely due to a circular import)")
         } else { told };
-        let location = match self.class_get(module.clone(), "__file__", false) {
+        let location = match self.class_get(module.clone(), "__file__", false).map(|value| value.contents()) {
             Ok(Value::Text(file)) => file.to_string(),
             _ => "unknown location".to_string(),
         };

@@ -27084,10 +27084,10 @@ impl Machine<'_> {
     /// __file__ the way CPython takes them, with the unknown-location
     /// wording where the module carries no file of its own.
     fn import_member_fault_from(&mut self, module: &Value, wanted: &str) -> String {
-        let modname = match self.read_class_member(module.clone(), "__name__", false) {
-            Ok(Value::Text(named)) => named.to_string(),
-            _ => "<unknown module name>".to_owned(),
-        };
+        let named = self.read_class_member(module.clone(), "__name__", false).ok()
+            .map(|entry| Self::underlying(&entry).unwrap_or_else(|| entry.settled()));
+        let modname = if let Some(Value::Text(text)) = named { text.to_string() }
+            else { "<unknown module name>".to_owned() };
         let told = match self.table.strings("ext.stmt.import.member.missing") {
             [head, mid, tail] => format!("{head}{wanted}{mid}{modname}{tail}"),
             _ => format!("ImportError: cannot import name '{wanted}' from '{modname}'"),
@@ -27095,7 +27095,7 @@ impl Machine<'_> {
         let told = if self.table.has_any("ext.system.module.path") && self.import_is_pending(&modname) {
             format!("ImportError: cannot import name '{wanted}' from partially initialized module '{modname}' (most likely due to a circular import)")
         } else { told };
-        let location = match self.read_class_member(module.clone(), "__file__", false) {
+        let location = match self.read_class_member(module.clone(), "__file__", false).map(|entry| entry.settled()) {
             Ok(Value::Text(file)) => file.to_string(),
             _ => "unknown location".to_owned(),
         };
