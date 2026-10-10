@@ -213,6 +213,10 @@ class Mock:
             raise AttributeError(name)
         if self._mock_methods is not None and name not in self._mock_methods:
             raise AttributeError(name)
+        # An assertion name the stand-in does not carry is a misspelling,
+        # not a child: the reference refuses it rather than answering it.
+        if name.startswith(('assert', 'assret', 'asert', 'aseert', 'assrt')):
+            raise AttributeError(name)
         child = Mock(name=name)
         setattr(self, name, child)
         return child
@@ -389,7 +393,7 @@ class AsyncMock(MagicMock):
                 if inspect.iscoroutinefunction(self._mock_wraps):
                     return await self._mock_wraps(*args, **kwargs)
                 return self._mock_wraps(*args, **kwargs)
-            self.return_value = Mock(name='()')
+            self.return_value = AsyncMock(name='()')
         return self.return_value
 
     def reset_mock(self, *args, **kwargs):
@@ -397,6 +401,54 @@ class AsyncMock(MagicMock):
         self.__dict__['_mock_await_count'] = 0
         self.__dict__['_mock_await_args'] = None
         self.__dict__['_mock_await_args_list'] = []
+
+    def assert_awaited(self):
+        if self.await_count == 0:
+            raise AssertionError('Expected ' + (self._mock_name or 'mock') + ' to have been awaited.')
+
+    def assert_awaited_once(self):
+        if self.await_count != 1:
+            raise AssertionError('Expected ' + (self._mock_name or 'mock') + ' to have been awaited once. Awaited ' + str(self.await_count) + ' times.')
+
+    def assert_awaited_with(self, *args, **kwargs):
+        wanted = (args, kwargs)
+        if self.await_args is None:
+            raise AssertionError('Expected await: ' + repr(wanted) + '\nNot awaited')
+        if self.await_args != wanted:
+            raise AssertionError('Expected await: ' + repr(wanted) + '\nActual: ' + repr(self.await_args))
+
+    def assert_awaited_once_with(self, *args, **kwargs):
+        self.assert_awaited_once()
+        self.assert_awaited_with(*args, **kwargs)
+
+    def assert_any_await(self, *args, **kwargs):
+        wanted = (args, kwargs)
+        for made in self.await_args_list:
+            if made == wanted:
+                return
+        raise AssertionError(repr(wanted) + ' await not found')
+
+    def assert_has_awaits(self, calls, any_order=False):
+        expected = list(calls)
+        made = list(self.await_args_list)
+        if not any_order:
+            for at in range(len(made) - len(expected) + 1):
+                if made[at:at + len(expected)] == expected:
+                    return
+            raise AssertionError('Awaits not found.\nExpected: ' + repr(expected) + '\nActual: ' + repr(made))
+        rest = list(made)
+        missing = []
+        for one in expected:
+            try:
+                rest.remove(one)
+            except ValueError:
+                missing.append(one)
+        if missing:
+            raise AssertionError(repr(tuple(missing)) + ' not all found in await list')
+
+    def assert_not_awaited(self):
+        if self.await_count != 0:
+            raise AssertionError('Expected ' + (self._mock_name or 'mock') + ' to not have been awaited. Awaited ' + str(self.await_count) + ' times.')
 
 
 class _Patch:
