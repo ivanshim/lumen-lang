@@ -10320,6 +10320,7 @@ impl<'a> Engine<'a> {
             }
         }
         if let (Action::At, Value::Map(entries)) = (op, a) {
+            if let Some(fault) = self.unkeyable(b) { return Err(fault); }
             let wanted = self.special_key(b)?;
             let mut settled = false;
             if let Ok(keytext) = wanted.member_key() {
