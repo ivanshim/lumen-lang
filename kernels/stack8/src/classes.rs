@@ -113,9 +113,11 @@ impl<'a> Engine<'a> {
                 ("__or__".to_string(), 6), ("__ror__".to_string(), 7)] {
                 hooks.push((name, Self::adapter(124, vec![Value::Small(mode)])));
             }
-            // Pickling and hashing read the origin and the arguments, in the support module.
-            for (name, helper) in [("__reduce__", "_alias_reduce"), ("__hash__", "_alias_hash"), ("__getitem__", "_alias_getitem")] {
-                hooks.push((name.into(), Self::adapter(240, vec![Value::text(helper)])));
+            if !self.lang.type_parameters {
+                // Pickling and hashing read the origin and the arguments, in the support module.
+                for (name, helper) in [("__reduce__", "_alias_reduce"), ("__hash__", "_alias_hash"), ("__getitem__", "_alias_getitem")] {
+                    hooks.push((name.into(), Self::adapter(240, vec![Value::text(helper)])));
+                }
             }
         }
         if word == "function" && self.lang.type_parameters {
@@ -341,7 +343,16 @@ impl<'a> Engine<'a> {
     }
     /// The builtin kind a class stands on, through any of its line.
     pub(super) fn kind_beneath(c: &Class) -> Option<String> {
-        std::iter::once(c).chain(c.lineage.borrow().iter().map(Rc::as_ref)).find_map(Self::own_kind)
+        let lineage = c.lineage.borrow();
+        let mut generic = None;
+        for ancestor in std::iter::once(c).chain(lineage.iter().map(Rc::as_ref)) {
+            if let Some(kind) = Self::own_kind(ancestor) {
+                // Generic supplies typing hooks, not another native storage layout.
+                if kind != "Generic" { return Some(kind); }
+                generic = Some(kind);
+            }
+        }
+        generic
     }
 
     /// Whether a class stands on the builtin kind named, through any of
@@ -2435,7 +2446,7 @@ impl<'a> Engine<'a> {
                         if Self::own_kind(&c).as_deref() != Some("function") { return Err(format!("TypeError: function.__new__({0}): {0} is not a subtype of function", c.name).into()); }
                         return self.class_make(c, args);
                     }
-                    if Self::kind_beneath(&c).as_deref()!=Some(word.as_str()) {return Err(format!("TypeError: {word}.__new__({0}): {0} is not a subtype of {word}",c.name).into())}
+                    if !Self::kind_among(&c, &word) {return Err(format!("TypeError: {word}.__new__({0}): {0} is not a subtype of {word}",c.name).into())}
                     let given = if matches!(self.lang.builtins.get(&word), Some(Builtin::Set | Builtin::List | Builtin::Dict)) { Vec::new() } else { args };
                     self.thing_of_kind(c, &word, given)
                 }
@@ -2954,6 +2965,7 @@ impl<'a> Engine<'a> {
             !matches!(value, Value::Adapter(entry) if entry.0 == 14)
                 || Self::own_class_value(&c, self.class_word("allocate")).is_some()
         });
+        let custom_allocation = allocation.is_some();
         // A metaclass called outright makes a class, the way the kind
         // builtin does, from a name, bases and a namespace.
         let makes_classes = self.is_metaclass_root(&c) || c.lineage.borrow().iter().any(|b| self.is_metaclass_root(b));
@@ -3009,7 +3021,7 @@ impl<'a> Engine<'a> {
                 self.track_live_object(o);
             }
             if Rc::ptr_eq(&o.class_now(),&c) || o.class_now().lineage.borrow().iter().any(|b| Rc::ptr_eq(b,&c)) {
-                let init = self.lang.constructor.as_deref().and_then(|n| self.class_value(&o.class_now(),n));
+                let init = self.lang.constructor.as_deref().and_then(|n| self.class_value(&o.class_now(),n)).filter(|slot| !matches!(slot, Value::Adapter(parts) if parts.0 == 2 && parts.1.is_empty()));
                 if let Some(f) = init {
                     let answer = if self.native_reference_slot(&f, &object) {
                         let mut direct = Vec::with_capacity(args.len() + 1);
@@ -3028,7 +3040,7 @@ impl<'a> Engine<'a> {
                     }
                     let name = self.lang.constructor.clone().unwrap_or_default();
                     self.value_method(&worth, &name, positional, keywords)?;
-                } else if kind.is_none() && self.class_value(&c,self.class_word("allocate")).is_none() {
+                } else if kind.is_none() && !custom_allocation {
                     if !self.call_items(args)?.is_empty() { self.root_refuses_arguments(&c,true)?; }
                 }
             }
@@ -3040,7 +3052,10 @@ impl<'a> Engine<'a> {
     /// naming the root where the class wrote over the one working and
     /// the class where it wrote over neither.
     fn root_refuses_arguments(&self, c: &Rc<Class>, allocating: bool) -> Flow<()> {
-        let made_own = self.class_value(c,self.class_word("allocate")).is_some_and(|value| !matches!(value, Value::Adapter(parts) if parts.0 == 1 && parts.1.is_empty()));
+        let made_own = self.class_value(c,self.class_word("allocate")).filter(|slot| {
+            !matches!(slot, Value::Adapter(parts) if parts.0 == 14)
+                || Self::own_class_value(c, self.class_word("allocate")).is_some()
+        }).is_some_and(|value| !matches!(value, Value::Adapter(parts) if parts.0 == 1 && parts.1.is_empty()));
         let built_own = self.lang.constructor.as_deref().map_or(false,|n| self.class_value(c,n).is_some_and(|f| !matches!(f, Value::Adapter(a) if a.0 == 2 && a.1.is_empty())));
         let (own, other, part) = if allocating {(made_own, built_own, "arguments.new")} else {(built_own, made_own, "arguments.init")};
         let (part, named) = if own {(part, self.class_word("root").to_string())}

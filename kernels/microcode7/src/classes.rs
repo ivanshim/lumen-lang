@@ -113,8 +113,10 @@ impl<'a> Machine<'a> {
             let names = [self.detail("allocate"), "__repr__", "__call__", "__mro_entries__", "__eq__"];
             protocols.extend(names.iter().enumerate().map(|(i, n)| (n.to_string(), Self::wrap(125, vec![Value::Small(i as i64)]))));
             // Reading the origin and arguments, the support module pickles and hashes an alias.
-            protocols.extend([("__reduce__", "_alias_reduce"), ("__hash__", "_alias_hash"), ("__getitem__", "_alias_getitem")]
-                .iter().map(|(name, helper)| (name.to_string(), Self::wrap(240, vec![Value::text(helper)]))));
+            if !self.table.flag("ext.stmt.type_parameters") {
+                protocols.extend([("__reduce__", "_alias_reduce"), ("__hash__", "_alias_hash"), ("__getitem__", "_alias_getitem")]
+                    .iter().map(|(name, helper)| (name.to_string(), Self::wrap(240, vec![Value::text(helper)]))));
+            }
             protocols.push(("__or__".to_owned(), Self::wrap(125, vec![Value::Small(6)])));
             protocols.push(("__ror__".to_owned(), Self::wrap(125, vec![Value::Small(7)])));
         }
@@ -364,7 +366,14 @@ impl<'a> Machine<'a> {
         Some(value.clone())
     }
     pub(super) fn native_beneath(b:&Blueprint)->Option<String> {
-        std::iter::once(b).chain(b.ancestry.borrow().iter().map(Rc::as_ref)).find_map(Self::native_word)
+        let chain = b.ancestry.borrow();
+        let mut typing_parent = None;
+        // A typing-only parent must not hide the concrete container family.
+        std::iter::once(b).chain(chain.iter().map(Rc::as_ref)).find_map(|parent| {
+            let spelling = Self::native_word(parent)?;
+            if spelling == "Generic" { typing_parent = Some(spelling); None }
+            else { Some(spelling) }
+        }).or(typing_parent)
     }
 
     /// Whether a blueprint stands on the native kind named, through any
@@ -2539,7 +2548,7 @@ impl<'a> Machine<'a> {
                             if !valid { return Err(format!("TypeError: function.__new__({0}): {0} is not a subtype of function", c.name).into()); }
                             return self.construct_ordered(c, values);
                         }
-                        if Self::native_beneath(&c).as_deref()!=Some(word.as_str()){return Err(format!("TypeError: {word}.__new__({0}): {0} is not a subtype of {word}",c.name).into())}
+                        if !Self::native_among(&c, word.as_str()){return Err(format!("TypeError: {word}.__new__({0}): {0} is not a subtype of {word}",c.name).into())}
                         if matches!(self.table.prims.get(&word), Some(Prim::Uniques | Prim::Listed | Prim::Dictionary)) { values.clear(); }
                         self.thing_over_native(c,&word,values)
                     }
