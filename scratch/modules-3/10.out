@@ -1,0 +1,5 @@
+dict proxy ok
+OrderedDict proxy ok
+Mapping proxy ok
+live mappings and signatures ok
+completion parameters ok

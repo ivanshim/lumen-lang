@@ -8910,6 +8910,12 @@ impl<'a> Engine<'a> {
     }
 
     fn special_truth(&mut self, value: &Value) -> Res<bool> {
+        if let Some(view @ Value::View(_)) = Self::view_in(value) {
+            if matches!(&view, Value::View(v) if v.1 == "mapping") {
+                let length = self.builtin(Builtin::Length, "len", &mut vec![view])?;
+                return self.special_truth(&length);
+            }
+        }
         if let Value::Fields(o) = value { return Ok(!self.fields_entries(o).is_empty()); }
         if matches!(value, Value::Declined(_)) { return Err(self.core_fault("core.bool.declined", "")); }
         if let Some(answer) = self.special_call(value, 9, Vec::new())? {
@@ -25071,6 +25077,14 @@ impl Engine<'_> {
     fn core_call(&mut self, b: Builtin, name: &str, mut args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         use num_integer::Integer;
         use num_traits::{Signed, Zero};
+        if args.len() == 1 && named.is_empty() {
+            if let Some(view @ Value::View(_)) = Self::view_in(&args[0]) {
+                if matches!(&view, Value::View(v) if v.1 == "mapping") {
+                    if b == Builtin::Bool { return self.special_truth(&view).map(Value::Flag); }
+                    if b == Builtin::Iter { return self.builtin(b, name, &mut vec![view]); }
+                }
+            }
+        }
         if b == Builtin::Hash && args.len() == 1 && named.is_empty() {
             if let Some(Value::View(view)) = Self::view_in(&args[0]) {
                 if view.1 == "mapping" { return self.builtin(Builtin::Hash, "hash", &mut vec![view.0.clone()]); }

@@ -16285,6 +16285,10 @@ impl<'a> Machine<'a> {
     }
 
     fn object_truth(&mut self, subject: &Value) -> Result<bool, String> {
+        if let Some(window @ Value::Window(_, 'm')) = Self::window_inside(subject) {
+            let length = self.prim(Prim::Length, "len", &[window])?;
+            return self.object_truth(&length);
+        }
         if let Value::Attributes(t) = subject { return Ok(!self.attribute_entries(t).is_empty()); }
         if matches!(subject, Value::Refusal(_)) { return Err(self.core_complaint("core.bool.declined", "")); }
         match self.ask_special(subject, 9, &[])? {
@@ -18953,6 +18957,12 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if matches!(op, Prim::Invert | Prim::AsTruth | Prim::Truthful) && v.len() == 1 {
+            if let Some(window @ Value::Window(_, 'm')) = Self::window_inside(&v[0]) {
+                let truth = self.object_truth(&window)?;
+                return Ok(Value::Flag(if op == Prim::Invert { !truth } else { truth }));
+            }
+        }
         if op == Prim::UnicodeDecomposition { return crate::sre::decompose(v); }
         // Exact machine integers need neither index hooks nor big-integer conversion.
         // Other receivers keep the normal argument and numeric protocol checks.
@@ -30528,6 +30538,11 @@ impl Machine<'_> {
     }
 
     pub(super) fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
+        if op == Prim::Truthful && input.len() == 1 && keywords.is_empty() {
+            if let Some(window @ Value::Window(_, 'm')) = Self::window_inside(&input[0]) {
+                return self.object_truth(&window).map(Value::Flag);
+            }
+        }
         if op == Prim::Ordered && !input.is_empty() {
             if let Some(Value::Window(mapping, 'm')) = Self::window_inside(&input[0]) { if !matches!(mapping.settled(), Value::Blueprint(_)) { input[0] = mapping.settled(); } }
         }
