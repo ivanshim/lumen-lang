@@ -3053,7 +3053,7 @@ impl<'a> Engine<'a> {
     /// the class where it wrote over neither.
     fn root_refuses_arguments(&self, c: &Rc<Class>, allocating: bool) -> Flow<()> {
         let made_own = self.class_value(c,self.class_word("allocate")).filter(|slot| {
-            !matches!(slot, Value::Adapter(parts) if parts.0 == 14)
+            !matches!(slot, Value::Adapter(parts) if parts.0 == 14 && parts.1.first().is_some_and(|word| word.plain() == "Generic"))
                 || Self::own_class_value(c, self.class_word("allocate")).is_some()
         }).is_some_and(|value| !matches!(value, Value::Adapter(parts) if parts.0 == 1 && parts.1.is_empty()));
         let built_own = self.lang.constructor.as_deref().map_or(false,|n| self.class_value(c,n).is_some_and(|f| !matches!(f, Value::Adapter(a) if a.0 == 2 && a.1.is_empty())));
