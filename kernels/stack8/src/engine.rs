@@ -25710,11 +25710,15 @@ impl Engine<'_> {
 
     /// Search sys.path for a root module, or the parent package path for
     /// a child. Initializer directories and file names are made absolute.
-    fn sys_path_source(&self, path: &str) -> Option<(String, Vec<u8>)> {
+    fn sys_path_source(&mut self, path: &str) -> Option<(String, Vec<u8>)> {
         let (owner, word, leaf) = match path.rsplit_once('.') {
             Some((parent, child)) => (parent, self.lang.module_path.as_deref()?, child),
             None => ("sys", "path", path),
         };
+        // A namespace path recomputes its rows only when asked; ask
+        // before reading, so the rows a moved search path stands on
+        // are the ones the candidates below are looked for in.
+        self.refresh_namespace_path(owner, word);
         let items = self.search_path_rows(owner, word)?;
         let mut locations = std::collections::HashMap::new();
         let mut directories = std::collections::HashSet::new();
@@ -25751,6 +25755,26 @@ impl Engine<'_> {
             }
         }
         None
+    }
+
+    /// Ask a namespace path for the rows it stands in now. Its own
+    /// iteration recalculates them when the parent search path has
+    /// moved or the finder caches were cleared; a plain package path
+    /// is not one of the bootstrap's objects and is left alone.
+    fn refresh_namespace_path(&mut self, owner: &str, word: &str) {
+        let held = match self.modules.get(owner) {
+            Some(Value::Object(space)) => space.fields.borrow().iter().find(|(name, _)| name == word).map(|(_, value)| value.clone()),
+            _ => None,
+        };
+        let mut value = match held { Some(value) => value, None => return };
+        while let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = value {
+            value = cell.borrow().clone();
+        }
+        let namespace = matches!(&value, Value::Object(holder) if holder.fields.borrow().iter().any(|(name, _)| name == "_path_finder"));
+        if !namespace { return; }
+        let Some(native) = self.modules.get("_imp").cloned() else { return };
+        let Ok(Some(touch)) = self.member_of(native, "_refresh_namespace_path") else { return };
+        let _ = self.call_held(touch, vec![value]);
     }
 
     /// The rows a package keeps for its search path: the plain list an

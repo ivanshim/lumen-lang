@@ -26230,10 +26230,14 @@ impl Machine<'_> {
 
     /// A dotted name uses its owner's current search directories. Ordinary
     /// names use sys.path; regular packages precede files in each directory.
-    fn sys_path_source(&self, path: &str) -> Option<(String, Vec<u8>)> {
+    fn sys_path_source(&mut self, path: &str) -> Option<(String, Vec<u8>)> {
         let (space_name, attribute, filename) = if let Some((head, tail)) = path.rsplit_once('.') {
             (head, self.table.strings("ext.system.module.path").first().map(String::as_str)?, tail)
         } else { ("sys", "path", path) };
+        // A namespace path recomputes its rows only when asked; ask
+        // before reading, so the rows a moved search path stands on
+        // are the ones the candidates below are looked for in.
+        self.refresh_namespace_path(space_name, attribute);
         let items = self.search_path_rows(space_name, attribute)?;
         let mut sources = std::collections::HashMap::new();
         let mut virtual_dirs = std::collections::HashSet::new();
@@ -26271,6 +26275,26 @@ impl Machine<'_> {
             }
         }
         None
+    }
+
+    /// Ask a namespace path for the rows it stands in now. Its own
+    /// iteration recomputes them when the parent search path has moved
+    /// or the finder caches were cleared; a plain package path is not
+    /// one of the bootstrap's objects and is left alone.
+    fn refresh_namespace_path(&mut self, space_name: &str, attribute: &str) {
+        let held = match self.imported.get(space_name) {
+            Some(Value::Thing(space)) => space.holds.borrow().iter().find(|entry| entry.0 == attribute).map(|entry| entry.1.clone()),
+            _ => None,
+        };
+        let mut value = match held { Some(value) => value, None => return };
+        while let Value::Shared(cell) | Value::Mutable(cell, _) = value {
+            value = cell.borrow().clone();
+        }
+        let namespace = matches!(&value, Value::Thing(holder) if holder.holds.borrow().iter().any(|entry| entry.0 == "_path_finder"));
+        if !namespace { return; }
+        let Some(native) = self.imported.get("_imp").cloned() else { return };
+        let Ok(touch) = self.namespace_item(&native, "_imp", "_refresh_namespace_path") else { return };
+        let _ = self.apply_held(touch, vec![value]);
     }
 
     /// The rows a namespace keeps for its search path: the plain vector an

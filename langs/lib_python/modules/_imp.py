@@ -93,22 +93,12 @@ def _initialize_source_module(module, name, filename):
     if spec is not None:
         _init_module_attrs(spec, module, override=True)
 
-# Build the module a name's directories answer for when no source is
-# found: a namespace package, whose search path and loader are the
-# bootstrap's own, and whose body is nothing.
-def _initialize_namespace_module(name):
+# The directories on a search path that make a name a namespace
+# portion, as the reference finder counts them: a matching directory
+# with no __init__.py in it, kept in search-path order.
+def _namespace_portion_spec(name, search):
     import os
-    import sys
-    from importlib._bootstrap import ModuleSpec, _new_module, _init_module_attrs
-    from importlib._bootstrap_external import _NamespacePath
-    parent = name.rpartition('.')[0]
-    if parent:
-        holder = sys.modules.get(parent)
-        if holder is None:
-            return None
-        search = list(holder.__path__)
-    else:
-        search = list(sys.path)
+    from importlib._bootstrap import ModuleSpec
     leaf = name.rpartition('.')[2]
     portions = []
     for entry in search:
@@ -120,15 +110,42 @@ def _initialize_namespace_module(name):
     if not portions:
         return None
     spec = ModuleSpec(name, None, origin=None, is_package=True)
-    spec.submodule_search_locations = _NamespacePath(name, portions, _namespace_path_finder)
+    spec.submodule_search_locations = portions
+    return spec
+
+# The bootstrap asks again when the parent search path has moved or the
+# finder caches were cleared, so rescan the path it hands over.
+def _namespace_path_finder(name, path):
+    return _namespace_portion_spec(name, path)
+
+# Build the module a name's directories answer for when no source is
+# found: a namespace package, whose search path and loader are the
+# bootstrap's own, and whose body is nothing.
+def _initialize_namespace_module(name):
+    import sys
+    from importlib._bootstrap import _new_module, _init_module_attrs
+    from importlib._bootstrap_external import _NamespacePath
+    parent = name.rpartition('.')[0]
+    if parent:
+        holder = sys.modules.get(parent)
+        if holder is None:
+            return None
+        search = list(holder.__path__)
+    else:
+        search = list(sys.path)
+    spec = _namespace_portion_spec(name, search)
+    if spec is None:
+        return None
+    spec.submodule_search_locations = _NamespacePath(
+        name, list(spec.submodule_search_locations), _namespace_path_finder)
     module = _new_module(name)
     _init_module_attrs(spec, module, override=True)
     return module
 
-# A later cache invalidation asks the finder again; the portions already
-# measured stand, so answer with no replacement spec.
-def _namespace_path_finder(name, path):
-    return None
+# Read a namespace path through its own iterator, which is what asks
+# the bootstrap to recompute the portions from the parent's search path.
+def _refresh_namespace_path(path):
+    list(path)
 
 # Mix one SipHash round with unsigned 64-bit arithmetic.
 def _source_hash_round(v):
