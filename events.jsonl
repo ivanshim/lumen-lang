@@ -10793,3 +10793,22 @@
 {"t":"2026-10-10T03:34:16Z","event":"returned","job":"stdlib-inspect-followup","review":"review-auto-stdlib-inspect-followup-0314","commit":"566de499c","round":2,"model":"deepseek-flash","note":"(2nd DS Flash return -> FAILED; integrity ok; check 1196/0 gates ok; inspect selection 45->52 both; blockers: AsyncMock side_effect class/DEFAULT/iterable exception-class dispatch, tests/README provenance columns swapped) -> returns/stdlib-inspect-followup-return2.md"}
 {"t":"2026-10-10T03:34:16Z","event":"handed-over","job":"stdlib-inspect-followup","to":"deepseek-v4-pro","note":"2 DS Flash returns; DS Pro free -> brief-stdlib-inspect-followup-dspro.md, same branch/worktree, head 566de499c; started ds-run.sh dsh stdlib-inspect-followup-dspro"}
 {"t":"2026-10-10T03:34:38Z","event":"resumed","job":"dsflash-code-module-followup","model":"deepseek-flash","session":"session-802bf034-0c4b-4d59-b613-a467fa227bda"}
+{"t":"2026-10-10T03:35:00Z","event":"quota","codex_week_used":84,"codex_credits":0,"claude_week_used":26,"claude_5h_used":5,"deepseek_usd":235.16}
+{"t":"2026-10-10T03:35:06Z","event":"finished","job":"dsflash-interactive-sol","exit_time":"2026-10-10T03:32:45Z"}
+{"t":"2026-10-10T03:35:06Z","event":"review-queued","job":"dsflash-interactive-sol","review":"review-auto-dsflash-interactive-sol-0335"}
+{"t":"2026-10-10T03:35:06Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":84,"expected":88.9,"gap":-4.9,"status":"ok"}
+{"t":"2026-10-10T03:35:17Z","event":"checkin","status":"done","actions":"ACCEPT dsflash-reprlib-sol (3bdb83b14, fix/dsflash-reprlib, 21i; reprlib 30->31/33 both, check 1196/0 gates ok); RETURN dsflash-code-module-followup (1st DS Flash; 3 introduced IO regressions) -> or-resume queued (dsh session-802bf034); RETURN dsflash-unparse-sol (1st Sol; f-string dict-brace scanner SyntaxError) -> sol-resume queued; RETURN stdlib-inspect-followup (2nd DS Flash -> FAILED; AsyncMock side_effect dispatch, README hash columns) -> handed over to DS Pro (free), brief-stdlib-inspect-followup-dspro.md, ds-run.sh dsh started; prune-merged freed 0MB","notes":"dsflash-interactive-sol finished, review-queue.sh will queue its review; DS Flash 3/12 + 1 queued, no other Flash-sized subject left; DS Pro inspect-followup; Haiku idle; Sonnet idle; Sol 7 non-review + unparse resume queued; Astra idle, held doctest/compile astra (Codex 84% >= 75%); box load 3.2/8, 12.2G avail, disk 80%; Mac disk 86%; Claude 5h 4%/week 26%; PR #543 CI in progress, pr-merge-watch running; luna gap -4.9 ok, no new alerts"}
+{"t":"2026-10-10T03:36:53Z","event":"note","text":"PR #543 merge notice: sent message 8096"}
+{"t":"2026-10-10T03:36:54Z","event":"note","text":"PR #543: completed success"}
+{"t":"2026-10-10T03:36:55Z","event":"merged","pr":543,"branch":"batch21h","main":"39d6fe873"}
+{"t":"2026-10-10T03:39:39Z","event":"resumed","job":"dsflash-unparse-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-10T03:44:39Z","event":"review-started","job":"dsflash-interactive-sol","review":"review-auto-dsflash-interactive-sol-0335"}
+{"t":"2026-10-10T03:45:33Z","event":"exited","job":"claude-types-sol","code":0}
+{"t":"2026-10-10T03:47:28Z","event":"exited","job":"review-auto-dsflash-interactive-sol-0335","code":0}
+{"t":"2026-10-10T03:48:19Z","event":"exited","job":"stdlib-bytes-followup-sol","code":0}
+{"t":"2026-10-10T03:50:23Z","event":"finished","job":"claude-types-sol","exit_time":"2026-10-10T03:45:33Z"}
+{"t":"2026-10-10T03:50:23Z","event":"review-queued","job":"claude-types-sol","review":"review-auto-claude-types-sol-0350"}
+{"t":"2026-10-10T03:50:27Z","event":"finished","job":"stdlib-bytes-followup-sol","exit_time":"2026-10-10T03:48:19Z"}
+{"t":"2026-10-10T03:50:27Z","event":"review-queued","job":"stdlib-bytes-followup-sol","review":"review-auto-stdlib-bytes-followup-sol-0350"}
+{"t":"2026-10-10T03:50:40Z","event":"review-started","job":"claude-types-sol","review":"review-auto-claude-types-sol-0350"}
+{"t":"2026-10-10T03:54:35Z","event":"exited","job":"review-auto-claude-types-sol-0350","code":0}
