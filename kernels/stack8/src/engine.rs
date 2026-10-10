@@ -25511,7 +25511,10 @@ impl Engine<'_> {
             },
             None => match self.module_sources.get(path).filter(|_| parent.is_none() || registering_alias || self.lang.module_path.is_none()).cloned() {
                 Some(source) => (source, self.library_module_file(path)),
-                None => return Err(Self::named_fault(&self.lang.import_missing, path).into()),
+                None => {
+                    if let Some(module) = self.namespace_module(path)? { return Ok(module); }
+                    return Err(Self::named_fault(&self.lang.import_missing, path).into());
+                },
             },
         };
         if self.lang.module_path.is_none() {
@@ -25712,17 +25715,7 @@ impl Engine<'_> {
             Some((parent, child)) => (parent, self.lang.module_path.as_deref()?, child),
             None => ("sys", "path", path),
         };
-        let Value::Object(space) = self.modules.get(owner)? else { return None };
-        let held = space.fields.borrow().iter().find(|(name, _)| name == word).map(|(_, v)| v.clone())?;
-        let mut value = held;
-        while let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = value {
-            value = cell.borrow().clone();
-        }
-        let items = match value {
-            Value::Array(items) => items,
-            Value::Tuple(items) if self.lang.module_path.is_some() => items,
-            _ => return None,
-        };
+        let items = self.search_path_rows(owner, word)?;
         let mut locations = std::collections::HashMap::new();
         let mut directories = std::collections::HashSet::new();
         if self.lang.module_path.is_some() {
@@ -25758,6 +25751,58 @@ impl Engine<'_> {
             }
         }
         None
+    }
+
+    /// The rows a package keeps for its search path: the plain list an
+    /// ordinary package holds, or the directories behind the bootstrap's
+    /// own namespace-path object, filed under `_path`.
+    fn search_path_rows(&self, owner: &str, word: &str) -> Option<Vec<Value>> {
+        let Value::Object(space) = self.modules.get(owner)? else { return None };
+        let held = space.fields.borrow().iter().find(|(name, _)| name == word).map(|(_, value)| value.clone())?;
+        let mut value = held;
+        while let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = value {
+            value = cell.borrow().clone();
+        }
+        let behind = match &value {
+            Value::Object(holder) => holder.fields.borrow().iter().find(|(name, _)| name == "_path").map(|(_, inner)| inner.clone()),
+            _ => None,
+        };
+        if let Some(mut inner) = behind {
+            while let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = inner {
+                inner = cell.borrow().clone();
+            }
+            value = inner;
+        }
+        match value {
+            Value::Array(items) => Some(items.iter().cloned().collect()),
+            Value::Tuple(items) if self.lang.module_path.is_some() => Some(items.iter().cloned().collect()),
+            _ => None,
+        }
+    }
+
+    /// The module a name's directories answer for when no source stands
+    /// there: the bootstrap's own namespace helper builds it, so its
+    /// search path, spec and loader match the reference's, and nothing
+    /// is run for a body it does not have.
+    fn namespace_module(&mut self, path: &str) -> Res<Option<Value>> {
+        if !self.modules.contains_key("importlib._bootstrap_external") { return Ok(None); }
+        let Some(native) = self.modules.get("_imp").cloned() else { return Ok(None) };
+        let Some(build) = self.member_of(native, "_initialize_namespace_module")? else { return Ok(None) };
+        let made = self.call_held(build, vec![Value::text(path)])?;
+        if matches!(made, Value::Null) { return Ok(None); }
+        self.modules.insert(path.to_string(), made.clone());
+        self.refresh_module_cache(path);
+        if let Some((above, name)) = path.rsplit_once('.') {
+            if let Some(Value::Object(parent)) = self.modules.get(above) {
+                let mut fields = parent.fields.borrow_mut();
+                match fields.iter_mut().find(|(word, _)| word == name) {
+                    Some((_, Value::Bond(place))) => *place.borrow_mut() = made.clone(),
+                    Some((_, place)) => *place = made.clone(),
+                    None => fields.push((name.to_string(), made.clone())),
+                }
+            }
+        }
+        Ok(Some(made))
     }
 
     /// An embedded source has a manifest location even without a disk file.
