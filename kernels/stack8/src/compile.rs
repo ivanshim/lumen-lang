@@ -1120,7 +1120,8 @@ impl<'a> Compiler<'a> {
     }
 
     fn ast_operation_location(&mut self) {
-        if self.on_assign() { return; }
+        // Target recognition consumes instructions, so keep metadata out of targets.
+        if self.writing_place || self.on_writing() { return; }
         if let Some(start) = self.ast_expression_starts.as_ref().and_then(|starts| starts.last()).copied() {
             if self.pos > start { let location = self.expression_location(start); self.put(location); }
         }
@@ -10337,7 +10338,7 @@ if self.barry_as_flufl && word != "<>" && matches!(action, Action::Ne) && self.a
     fn string_piece(&mut self) -> Res<()> {
         let token = self.take();
         match token.shape {
-            Shape::Bytes => self.constant(Value::Bytes(Rc::new(std::cell::RefCell::new(token.lexeme.chars().map(|c| c as u8).collect())), false,
+            Shape::Bytes => self.constant(Value::quoted_bytes(token.lexeme.chars().map(|c| c as u8).collect(),
                 Rc::from(self.lang.byte_words["ext.system.bytes.repr"][0].as_str()))),
             Shape::Codepoints => self.constant(Value::from_codes(token.lexeme.split(',').map(|n| n.parse::<u32>().unwrap()).collect())),
             Shape::Quote => self.constant(Value::text(&token.lexeme)),

@@ -9911,8 +9911,8 @@ if self.barry_as_flufl && first != "<>" && matches!(binary.prim, Prim::Ne) && TR
     fn quotation(&mut self) -> Res<Form> {
         let start = self.advance();
         if start.shape == Shape::ByteQuote {
-            return Ok(constant(Value::Octets { cell: Rc::new(std::cell::RefCell::new(start.lexeme.chars().map(|c| c as u8).collect())), changeable: false,
-                lead: Rc::from(self.table.strings("ext.system.bytes.repr")[0].as_str()) }));
+            return Ok(constant(Value::quoted_octets(start.lexeme.chars().map(|c| c as u8).collect(),
+                Rc::from(self.table.strings("ext.system.bytes.repr")[0].as_str()))));
         }
         if start.shape == Shape::CharacterRow {
             let numbers = start.lexeme.split_whitespace().map(|word| word.parse().unwrap()).collect();
