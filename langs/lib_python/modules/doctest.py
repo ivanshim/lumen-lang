@@ -415,6 +415,8 @@ def _module_name_of(obj):
         return name
     if isinstance(obj, str):
         return obj
+    if isinstance(obj, dict):
+        return obj.get('__name__', '__main__')
     name = getattr(obj, '__name__', None)
     if name is None:
         return '__main__'
@@ -427,14 +429,12 @@ def _docstring_of_module(names):
 
 # ---------------------------------------------------------------- running
 
-def _exception_detail(error, message, namespace=None):
+def _exception_detail(error, message):
     """The last line of a traceback: the kind and, after it, the message."""
     if isinstance(error, BaseException):
         kind = error.__class__
-        detail = kind.__name__
+        detail = kind.__qualname__
         module = kind.__module__
-        if module == '__main__' and namespace is not None:
-            module = namespace.get('__name__', module)
         if module != 'builtins' and module != '__main__':
             detail = module + '.' + detail
         text = str(error)
@@ -686,7 +686,7 @@ class DocTestRunner:
             if error is None:
                 return where + _difference(example, got) + \
                     'No exception was raised.\n'
-            detail = _exception_detail(error, message, globs)
+            detail = _exception_detail(error, message)
             wanted = _wanted_detail(example.want)
             if flags & IGNORE_EXCEPTION_DETAIL:
                 got_kind = _plain_kind(_split_detail(detail)[0])
@@ -699,7 +699,7 @@ class DocTestRunner:
                 'Expected the exception:\n' + _indented(wanted) + \
                 'Got the exception:\n' + _indented(detail)
         if error is not None:
-            detail = _exception_detail(error, message, globs)
+            detail = _exception_detail(error, message)
             return where + 'Failed example:\n' + _indented(example.source) + \
                 'Expected:\n' + _indented(example.want) + \
                 'Got an unexpected exception:\n' + _indented(detail)
@@ -793,18 +793,8 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
     """A unittest suite of the examples found in a module's docstrings."""
     if test_finder is None:
         test_finder = DocTestFinder()
-    if module is None and globs is None:
-        names = __program_namespace()
-        path = names.get('__file__', '')
-        # A program run straight from the Python suite names itself the
-        # way `python -m test <name>` names it, however the file was laid
-        # out beneath the suite: the basename alone decides. The path is
-        # not trusted, since the host may copy or link the suite under a
-        # name of its own.
-        basename = path.rsplit('/', 1)[-1]
-        if basename.startswith('test_') and path.endswith('.py'):
-            globs = _copy_dict(names)
-            globs['__name__'] = 'test.' + basename[:-3]
+    if module is None:
+        module = sys._getframe(1).f_globals
     tests = test_finder.find(module, None, None, globs, extraglobs)
     suite = unittest.TestSuite()
     optionflags = options.get('optionflags', 0)

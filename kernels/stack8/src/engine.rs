@@ -6031,7 +6031,7 @@ impl<'a> Engine<'a> {
     }
 
     fn locals_proxy(&self, value: &Value) -> Option<Rc<Instance>> {
-        let Value::Object(proxy) = value else { return None };
+        let Value::Object(proxy) = value.contents() else { return None };
         // The proxy is found by the very class it was made from, not by
         // its name: an ordinary class a program calls FrameLocalsProxy
         // is no proxy of ours and keeps its own members.
@@ -6306,6 +6306,28 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Ok(Value::Null)
+            }
+            "__or__" | "__ior__" => {
+                if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
+                let other = if let Some(peer) = self.locals_proxy(&args[0]) {
+                    self.locals_live_pairs(&peer)
+                } else if let Value::Map(entries) = args[0].contents() {
+                    entries.to_vec()
+                } else {
+                    return Ok(Value::Declined(Rc::from("NotImplemented")));
+                };
+                if operation == "__ior__" {
+                    for (key, value) in other { self.locals_assign(proxy, &key, value)?; }
+                    return Ok(Value::Object(proxy.clone()));
+                }
+                let mut combined = self.locals_live_pairs(proxy);
+                for (key, value) in other {
+                    match self.locals_locate(&combined, &key)? {
+                        Some(index) => combined[index].1 = value,
+                        None => combined.push((key, value)),
+                    }
+                }
+                Ok(Value::Map(Rc::new(combined.into())))
             }
             "__reduce__" | "__reduce_ex__" => Err("TypeError: cannot pickle 'FrameLocalsProxy' object".to_string()),
             _ => Err(self.lang.method_errors["arguments"].clone()),
@@ -9608,6 +9630,14 @@ impl<'a> Engine<'a> {
             if let Some(repeated) = self.sequence_in_place(true, held, by)? { return Ok(Some(repeated)); }
         }
         let thing = held.contents();
+        if place == 58 && self.lang.or_maps {
+            if let Some(proxy) = self.locals_proxy(&thing) {
+                let result = self.locals_method(&proxy, "__ior__", vec![by.clone()], Vec::new())?;
+                return if matches!(result, Value::Declined(_)) {
+                    self.special_dyad(&Action::BitEither, held, by).map(Some)
+                } else { Ok(Some(result)) };
+            }
+        }
         if place == 58 && self.lang.or_maps && matches!(thing, Value::Fields(_)) {
             self.value_method(held, "update", vec![by.clone()], Vec::new())?;
             return Ok(Some(held.clone()));
@@ -10147,6 +10177,21 @@ impl<'a> Engine<'a> {
             // kind that could, has no working at all: the reference
             // names the sign and both kinds rather than reading the
             // worth beneath.
+            if matches!(op, Action::BitEither) && !matches!(a.contents(), Value::Map(_)) && self.locals_proxy(a).is_none() {
+                if let Some(proxy) = self.locals_proxy(b) {
+                    // The reflected native union reads the left operand as a mapping.
+                    let keys = self.class_get(a.clone(), "keys", false).map_err(|fault| { self.carried = Some(fault); String::new() })?;
+                    let supplied = self.call_held(keys, Vec::new())?;
+                    let walk = self.core_iterator(&supplied)?;
+                    let mut merged = Vec::new();
+                    while let Some(key) = self.core_step(&walk)? {
+                        let value = self.special_dyad(&Action::At, a, &key)?;
+                        self.map_enter(&mut merged, key, value)?;
+                    }
+                    for (key, value) in self.locals_live_pairs(&proxy) { self.map_enter(&mut merged, key, value)?; }
+                    return Ok(Value::Map(Rc::new(merged.into())));
+                }
+            }
             if direct >= 18 && !joining_kinds && declined && !native_side {
                 let sign = self.sign_of(op);
                 return Err(self.operands_complaint(&sign, a, b));
@@ -18085,7 +18130,7 @@ impl<'a> Engine<'a> {
 
     pub(super) fn value_method(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         if let Some(proxy) = self.locals_proxy(receiver) {
-            if ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__len__", "__iter__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&operation) {
+            if ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__len__", "__iter__", "__or__", "__ior__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&operation) {
                 return self.locals_method(&proxy, operation, args, named);
             }
         }

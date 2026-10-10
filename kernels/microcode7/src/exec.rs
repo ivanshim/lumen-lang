@@ -6528,25 +6528,20 @@ impl<'a> Machine<'a> {
                 Ok(Some(Value::Flag(equal == (operation == Prim::Eq))))
             }
             Prim::BitsEither if operands.len() == 2 => {
-                let other = if anchor == 0 { &operands[1] } else { &operands[0] };
-                if !matches!(other.settled(), Value::Dict(_) | Value::Thing(_)) {
-                    return Err(Escape::Error(String::from("TypeError: unsupported operand type(s) for |: 'FrameLocalsProxy' and 'object'")));
-                }
-                let mut pairs = self.locals_live_pairs(&proxy);
-                if let Some(more) = self.locals_pair_only(other)? {
-                    for (key, value) in more {
-                        match self.locals_extra_locator(&pairs, &key)? { Some(at) => pairs[at].1 = value, None => pairs.push((key, value)) }
-                    }
+                let other = &operands[1 - anchor];
+                let Some(other_pairs) = self.locals_pair_only(other)? else { return Ok(None) };
+                let proxy_pairs = self.locals_live_pairs(&proxy);
+                let (mut pairs, incoming) = if anchor == 0 { (proxy_pairs, other_pairs) } else { (other_pairs, proxy_pairs) };
+                for (key, value) in incoming {
+                    match self.locals_extra_locator(&pairs, &key)? { Some(at) => pairs[at].1 = value, None => pairs.push((key, value)) }
                 }
                 Ok(Some(Value::Dict(Rc::new(pairs.into()))))
             }
             Prim::SetAssign(0) if operands.len() == 2 && anchor == 0 => {
-                if !matches!(operands[1].settled(), Value::Dict(_) | Value::Thing(_)) {
-                    return Err(Escape::Error(String::from("TypeError: unsupported operand type(s) for |=: 'FrameLocalsProxy' and 'object'")));
-                }
-                if let Some(more) = self.locals_pair_only(&operands[1])? {
-                    for (key, value) in more { self.locals_write(&proxy, &key, value)?; }
-                }
+                let Some(more) = self.locals_pair_only(&operands[1])? else {
+                    return self.prim(Prim::BitsEither, "|", operands).map(Some).map_err(Escape::from);
+                };
+                for (key, value) in more { self.locals_write(&proxy, &key, value)?; }
                 Ok(Some(operands[0].clone()))
             }
             Prim::Dictionary if operands.len() == 1 => Ok(Some(Value::Dict(Rc::new(self.locals_live_pairs(&proxy).into())))),
@@ -6655,6 +6650,24 @@ impl<'a> Machine<'a> {
                     }
                 }
                 Ok(Value::Nil)
+            }
+            "__or__" | "__ior__" => {
+                if arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
+                match self.locals_pair_only(&arguments[0])? {
+                    Some(more) if operation == "__ior__" => {
+                        for (key, held) in more { self.locals_write(proxy, &key, held)?; }
+                        Ok(Value::Thing(proxy.clone()))
+                    }
+                    Some(more) => {
+                        let mut entries = self.locals_live_pairs(proxy);
+                        for (key, held) in more {
+                            if let Some(at) = self.locals_extra_locator(&entries, &key)? { entries[at].1 = held; }
+                            else { entries.push((key, held)); }
+                        }
+                        Ok(Value::Dict(Rc::new(entries.into())))
+                    }
+                    None => Ok(Value::Refusal(Rc::from("NotImplemented"))),
+                }
             }
             "__reduce__" | "__reduce_ex__" => Err(String::from("TypeError: cannot pickle 'FrameLocalsProxy' object").into()),
             _ => Err(self.method_fault("arguments").into()),
@@ -18037,6 +18050,20 @@ impl<'a> Machine<'a> {
             // kind that could, has no working at all: the reference
             // names the sign and both kinds rather than reading the
             // worth beneath.
+            if operation == Prim::BitsEither && self.locals_proxy(right).is_some() {
+                // A reflected proxy union requires the earlier operand's mapping protocol.
+                let getter = self.read_class_member(left.clone(), "keys", false).map_err(|fault| self.suspension_fault(fault))?;
+                let offered = self.apply_within(getter, Vec::new())?;
+                let cursor = self.iterated_value(&offered)?;
+                let mut entries = Vec::new();
+                while let Some(key) = self.next_value(&cursor)? {
+                    let held = self.prim(Prim::At, "", &[left.clone(), key.clone()])?;
+                    self.map_enter(&mut entries, key, held)?;
+                }
+                let retained = self.locals_proxy(right).expect("the right operand is a proxy");
+                for (key, held) in self.locals_live_pairs(&retained) { self.map_enter(&mut entries, key, held)?; }
+                return Ok(Some(Value::Dict(Rc::new(entries.into()))));
+            }
             if forward >= 18 && !joining_kinds && declined && !native_side {
                 let sign = self.written_as(&operation);
                 return Err(self.operands_refused(&sign, left, right));
