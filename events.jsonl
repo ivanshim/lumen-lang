@@ -10612,3 +10612,26 @@
 {"t":"2026-10-09T23:50:42Z","event":"review-queued","job":"dsflash-reprlib","review":"review-auto-dsflash-reprlib-2350"}
 {"t":"2026-10-09T23:51:06Z","event":"review-started","job":"dsflash-reprlib","review":"review-auto-dsflash-reprlib-2350"}
 {"t":"2026-10-09T23:52:07Z","event":"exited","job":"dsflash-dataclasses-sol","code":0}
+{"t":"2026-10-09T23:53:32Z","event":"accepted","job":"dsflash-modulefinder-sol","review":"review-auto-dsflash-modulefinder-sol-2335","batch":"21i","commit":"73a92b5fc","branch":"fix/dsflash-modulefinder","model":"gpt-6.1-sol","note":"(Sol hand-over after DS Flash integrity mark) test_modulefinder absent->17/17 both kernels; importlib/modulefinder copies sha256-exact v3.14.8, fabricated co_code removed; check 1196/0 gates ok, independence 0; carries accepted stdlib-code/unpack/dictviews/memoryview/py_compile ancestors - dedupe; conflicts vs batch21h in mc7 build.rs/classes.rs/exec.rs, stack8 classes.rs/compile.rs/engine.rs, tests/README.md; calendar/tokenize stack8 length = coverage, coordinator re-certify"}
+{"t":"2026-10-09T23:53:32Z","event":"returned","job":"stdlib-inspect-followup","review":"review-auto-stdlib-inspect-followup-2330","commit":"3359d6b3c","round":1,"model":"deepseek-flash","note":"(1st DS Flash return; integrity ok; check 1196/0 gates ok; inspect selection 45->52 both; blockers: property hooks bound to staticmethod adapter, AsyncMock evaluates side_effect at call time / not a coroutine) -> returns/stdlib-inspect-followup.md"}
+{"t":"2026-10-09T23:53:32Z","event":"queued","job":"stdlib-inspect-followup","model":"deepseek-flash","line":"or-resume stdlib-inspect-followup deepseek-flash session-0d364092-2e0f-40e1-a33b-e9e28b434813","note":"1st return resume, same dsh session"}
+{"t":"2026-10-09T23:54:22Z","event":"quota","codex_week_used":77,"codex_credits":0,"claude_week_used":25,"claude_5h_used":13,"deepseek_usd":236.61}
+{"t":"2026-10-09T23:54:25Z","event":"exited","job":"review-auto-dsflash-reprlib-2350","code":0}
+{"t":"2026-10-09T23:54:27Z","event":"luna-meter","reset":"2026-10-09T01:54:16Z","metered":77,"expected":80.5,"gap":-3.5,"status":"ok"}
+{"t":"2026-10-09T23:54:34Z","event":"checkin","status":"done","actions":"ACCEPT dsflash-modulefinder-sol (batch 21i; modulefinder absent->17/17 both kernels); RETURN stdlib-inspect-followup (1st DS Flash; property hooks + AsyncMock timing) -> returns/stdlib-inspect-followup.md, or-resume queued (dsh session-0d364092); prune-merged freed 0MB; luna FINDINGS appended","notes":"DS Flash 3/12 + inspect-followup resume queued, 8 idle: no Flash-sized subject or F/E follow-up left; DS Pro frame-dspro; Haiku dunder-all-haiku; Sonnet struct-sonnet; Sol 11/12 (10 non-review + review reprlib) + interactive-sol/unparse-sol queued; dataclasses-sol finished, review pending; Astra genericalias-astra (doctest-astra held, Codex 77% >= 75%); box load 5.0/8, 12.1G avail, disk 74%; Mac disk 87%; Claude 5h 13%/week 25%; no open PR (integrate-21h running); luna gap -3.5 ok"}
+{"t":"2026-10-09T23:55:48Z","event":"finished","job":"dsflash-dataclasses-sol","exit_time":"2026-10-09T23:52:07Z"}
+{"t":"2026-10-09T23:55:48Z","event":"review-queued","job":"dsflash-dataclasses-sol","review":"review-auto-dsflash-dataclasses-sol-2355"}
+{"t":"2026-10-09T23:56:07Z","event":"started","job":"dsflash-interactive-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-10T00:01:09Z","event":"resumed","job":"stdlib-inspect-followup","model":"deepseek-flash","session":"session-0d364092-2e0f-40e1-a33b-e9e28b434813"}
+{"t":"2026-10-10T00:01:27Z","event":"exited","job":"dsflash-dbm","code":0}
+{"t":"2026-10-10T00:06:00Z","event":"finished","job":"dsflash-dbm","exit_time":"2026-10-10T00:01:27Z"}
+{"t":"2026-10-10T00:06:00Z","event":"review-queued","job":"dsflash-dbm","review":"review-auto-dsflash-dbm-0005"}
+{"t":"2026-10-10T00:06:11Z","event":"review-started","job":"dsflash-dataclasses-sol","review":"review-auto-dsflash-dataclasses-sol-2355"}
+{"t":"2026-10-10T00:08:44Z","event":"exited","job":"dsflash-pyclbr-sol","code":0}
+{"t":"2026-10-10T00:09:18Z","event":"exited","job":"stdlib-compile","code":0}
+{"t":"2026-10-10T00:09:27Z","event":"exited","job":"review-auto-dsflash-dataclasses-sol-2355","code":0}
+{"t":"2026-10-10T00:11:09Z","event":"finished","job":"dsflash-pyclbr-sol","exit_time":"2026-10-10T00:08:44Z"}
+{"t":"2026-10-10T00:11:09Z","event":"review-queued","job":"dsflash-pyclbr-sol","review":"review-auto-dsflash-pyclbr-sol-0011"}
+{"t":"2026-10-10T00:11:12Z","event":"started","job":"dsflash-unparse-sol","model":"gpt-6.1-sol"}
+{"t":"2026-10-10T00:11:13Z","event":"finished","job":"stdlib-compile","exit_time":"2026-10-10T00:09:18Z"}
+{"t":"2026-10-10T00:11:13Z","event":"review-queued","job":"stdlib-compile","review":"review-auto-stdlib-compile-0011"}
