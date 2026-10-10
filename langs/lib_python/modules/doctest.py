@@ -90,6 +90,8 @@ def set_unittest_reportflags(flags):
     return old
 
 
+master = None
+
 class DocTestFailure(Exception):
     def __init__(self, test, example, got):
         self.test = test
@@ -108,9 +110,10 @@ class TestResults:
     """What testmod and testfile report: how many examples were run and
     how many of them failed."""
 
-    def __init__(self, failed, attempted):
+    def __init__(self, failed, attempted, *, skipped=0):
         self.failed = failed
         self.attempted = attempted
+        self.skipped = skipped
 
     def __len__(self):
         return 2
@@ -707,6 +710,12 @@ class DocTestRunner:
             return None
         return where + _difference(example, got)
 
+    def merge(self, other):
+        self.failures += other.failures
+        self.tries += other.tries
+        self.skips += other.skips
+        self.reports.extend(other.reports)
+
     def summarize(self, verbose=None):
         for report in self.reports:
             print(self.DIVIDER)
@@ -882,13 +891,8 @@ def DocFileTest(path, **options):
     relative = options.get('module_relative', True)
     if package is not None and not relative:
         raise ValueError('Package may only be specified for module-relative paths.')
-    if relative:
-        if path.startswith('/'):
-            raise ValueError('Module-relative files may not have absolute paths')
-        namespace = _namespace_of(package)
-        path = os.path.join(os.path.dirname(namespace.get('__file__', '')), path)
-    with open(path, encoding=options.get('encoding', 'utf-8')) as source:
-        text = source.read()
+    text, path = _load_testfile(path, package, relative,
+                                options.get('encoding') or 'utf-8')
     globs = _copy_dict(options.get('globs') or {})
     globs.update(options.get('extraglobs') or {})
     globs.setdefault('__name__', '__main__')
@@ -902,9 +906,28 @@ def testfile(filename, module_relative=True, name=None, package=None,
              globs=None, verbose=None, report=True, optionflags=0,
              extraglobs=None, raise_on_error=False, parser=None,
              encoding=None):
-    raise NotImplementedError(
-        'doctest.testfile needs to read ' + str(filename) +
-        ' from disk, which this library cannot do')
+    import os
+    global master
+    if package is not None and not module_relative:
+        raise ValueError('Package may only be specified for module-relative paths.')
+    text, filename = _load_testfile(filename, package, module_relative,
+                                    encoding or 'utf-8')
+    if name is None:
+        name = os.path.basename(filename)
+    namespace = _copy_dict(globs or {})
+    namespace.update(extraglobs or {})
+    namespace.setdefault('__name__', '__main__')
+    runner_class = DebugRunner if raise_on_error else DocTestRunner
+    runner = runner_class(verbose=verbose, optionflags=optionflags)
+    parser = parser or DocTestParser()
+    runner.run(parser.get_doctest(text, namespace, name, filename, 0))
+    if report:
+        runner.summarize()
+    if master is None:
+        master = runner
+    else:
+        master.merge(runner)
+    return TestResults(runner.failures, runner.tries, skipped=runner.skips)
 
 
 def testmod(m=None, name=None, globs=None, verbose=None, report=True,

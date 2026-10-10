@@ -425,6 +425,9 @@ series is retained, in a window of two series; only 3.14 is registered today.
 
 | `langs/lib_python/modules/runtime_adapters/native_test_importlib_util.py` | Adapted from `Lib/test/test_importlib/util.py`; general helpers retain their bodies, extension availability is checked by the upstream extension-test guards | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
+| `python-3.14.8/test/relimport.py` | `Lib/test/relimport.py`, copied byte for byte; SHA-256 `b61ce17b00a1338fca815852eae64f7c819b9ed34a6f5c40ee189ff32312d8fc` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/test/relimport.py` | `Lib/test/relimport.py`, copied byte for byte; SHA-256 `b61ce17b00a1338fca815852eae64f7c819b9ed34a6f5c40ee189ff32312d8fc` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+
 The `python-3.14.8/test/` package and its support, import, threading, OS, script, and
 pseudo-terminal helpers are also preserved byte for byte at that commit. `Lib/test/datetimetester.py` is preserved, with its source header, in
 `langs/lib_python/modules/test/datetimetester.py`. The embedded runtime support

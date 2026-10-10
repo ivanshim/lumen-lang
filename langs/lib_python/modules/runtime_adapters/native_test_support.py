@@ -1871,3 +1871,24 @@ def _force_run(path, func, *args):
             print('re-run %s%r' % (func.__name__, args))
         os.chmod(path, stat.S_IRWXU)
         return func(*args)
+
+
+class ResourceDenied(unittest.SkipTest):
+    pass
+
+
+def requires(resource, msg=None):
+    if not is_resource_enabled(resource):
+        if msg is None:
+            msg = "Use of the %r resource not enabled" % resource
+        raise ResourceDenied(msg)
+    if resource in {"network", "urlfetch"} and not has_socket_support:
+        raise ResourceDenied("No socket support")
+
+
+def has_no_debug_ranges():
+    try:
+        import _testcapi
+    except ImportError:
+        raise unittest.SkipTest("_testinternalcapi required")
+    return not _testcapi.config_get('code_debug_ranges')
