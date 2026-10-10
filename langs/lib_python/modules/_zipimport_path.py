@@ -28,5 +28,13 @@ def load(spec):
     module = _bootstrap._load_unlocked(spec)
     parent, separator, child = spec.name.rpartition('.')
     if separator:
-        setattr(sys.modules[parent], child, module)
+        bind(parent, child, module)
     return module
+
+
+def bind(parent, child, module):
+    try:
+        setattr(sys.modules[parent], child, module)
+    except AttributeError:
+        import warnings
+        warnings.warn(f"Cannot set an attribute on {parent!r} for child module {child!r}", ImportWarning)

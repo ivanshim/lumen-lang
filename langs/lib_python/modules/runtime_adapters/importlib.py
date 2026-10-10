@@ -60,5 +60,6 @@ def _native_import(name):
         raise ModuleNotFoundError(f"No module named {name!r}", name=name)
     module = _bootstrap._load(spec)
     if parent is not None:
-        setattr(parent, child, module)
+        from _zipimport_path import bind
+        bind(parent_name, child, module)
     return module

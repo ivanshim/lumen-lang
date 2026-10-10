@@ -1774,6 +1774,11 @@ impl<'a> Machine<'a> {
                 return remaining.split_once(missing[1].as_str()).map(|pair| pair.0.into());
             }
         }
+        let partial = " from partially initialized module '";
+        if let Some(start) = told.find(partial) {
+            let title = &told[start + partial.len()..];
+            return title.find("'").map(|end| title[..end].to_string());
+        }
         let [head, mid, close] = self.table.strings("ext.stmt.import.member.missing") else { return None };
         let after_head = told.strip_prefix(head.as_str())?;
         let at = after_head.find(mid.as_str())?;
@@ -3407,6 +3412,15 @@ impl<'a> Machine<'a> {
                 // the way a name fault's own name is.
                 if self.table.strings("ext.stmt.import.member.missing").first().map_or(false, |head| told.trim_start_matches('\0').starts_with(head.as_str())) {
                     if let Some(source) = self.import_source_not_there(told) { written.push((self.rules.words_ext_builtin_exceptions_name.first().map(String::as_str), Value::text(&source))); }
+                    if told.ends_with(')') {
+                        if let Some(offset) = told.rfind(" (") {
+                            let location = &told[offset + 2..told.len() - 1];
+                            if location != "unknown location" && location != "most likely due to a circular import" {
+                                let mut entries = object.holds.borrow_mut();
+                                if let Some((_, value)) = entries.iter_mut().find(|(key, _)| key == "path") { *value = Value::text(location); }
+                            }
+                        }
+                    }
                 }
                 if self.stands_under(&object.blueprint(), 42) {
                     let absent = self.import_source_not_there(told).map(|module| Value::text(&module));
@@ -10031,12 +10045,48 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn imported_attribute(value: &Value, word: &str) -> Option<Value> {
+        if let Value::Thing(space) = value {
+            for (key, item) in space.holds.borrow().iter() {
+                if key == word { return Some(item.settled()); }
+                if key == "_namespace" {
+                    if let Value::Dict(book) = item.settled() {
+                        return book.iter().find(|(name, _)| spells_key(name, word)).map(|(_, item)| item.settled());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn import_is_pending(&self, name: &str) -> bool {
+        if self.importing.contains(name) { return true; }
+        let Some(value) = self.cached_import(name) else { return false };
+        let Some(spec) = Self::imported_attribute(&value, "__spec__") else { return false };
+        match Self::imported_attribute(&spec, "_initializing") { Some(flag) => flag.is_true(), None => false }
+    }
+
+    pub(super) fn namespace_absence_message(&self, title: &str, wanted: &str) -> String {
+        let child = format!("{title}.{wanted}");
+        match (self.import_is_pending(title), self.import_is_pending(&child)) {
+            (true, _) => {
+                let place = match self.namespace_file_path(title) { Some(file) => format!(" from '{file}'"), None => String::new() };
+                format!("partially initialized module '{title}'{place} has no attribute '{wanted}' (most likely due to a circular import)")
+            }
+            (_, true) => format!("cannot access submodule '{wanted}' of module '{title}' (most likely due to a circular import)"),
+            _ => format!("module '{title}' has no attribute '{wanted}'"),
+        }
+    }
+
     /// The complaint for a member sought on a namespace or on a kind.
     /// CPython names each by its own name rather than by the kind it is
     /// of, and words the two differently. Nothing for anything else.
     pub(super) fn member_named_missing(&self, value: &Value, name: &str) -> String {
         let settled = value.settled();
         if let Some(path) = self.namespace_holding(&settled) {
+            if self.table.has_any("ext.system.module.path") {
+                return ["AttributeError: ", &self.namespace_absence_message(&path, name)].concat();
+            }
             return Self::member_worded(self.table.strings("ext.builtin.member.absent.module"), &path, name);
         }
         if self.table.has_any("ext.builtin.member.absent.module") {
@@ -20522,7 +20572,12 @@ impl<'a> Machine<'a> {
                     let namespace = self.load_namespace(&path)?;
                     match &v[1] {
                         Value::Nil => self.load_namespace(path.split('.').next().unwrap_or(&path))?,
-                        _ => namespace,
+                        requests => {
+                            if self.table.has_any("ext.system.module.path") && !self.is_our_namespace(&namespace, &path) {
+                                self.load_fromlist(&namespace, requests, false)?;
+                            }
+                            namespace
+                        },
                     }
                 } else {
                     // A __import__ of the program's own is called with
@@ -20560,7 +20615,15 @@ impl<'a> Machine<'a> {
                     // whatever the answer's own reading raises standing.
                     match self.read_class_member(v[0].clone(), &v[2].bare(), false) {
                         Ok(value) => value,
-                        Err(escape) if self.missing_member_escape(&escape) => return Err(self.import_member_fault_from(&v[0], &v[2].bare())),
+                        Err(escape) if self.missing_member_escape(&escape) => {
+                            let owner = self.read_class_member(v[0].clone(), "__name__", false).ok();
+                            let full = match owner { Some(Value::Text(word)) => Some(format!("{}.{}", word, v[2].bare())), _ => None };
+                            if let Some(found) = full.as_deref().and_then(|word| self.cached_import(word)) {
+                                found
+                            } else {
+                                return Err(self.import_member_fault_from(&v[0], &v[2].bare()));
+                            }
+                        },
                         Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
                     }
                 }
@@ -26466,9 +26529,13 @@ impl Machine<'_> {
                     Some(namespace) => return Ok(namespace),
                     None => {}
                 }
-                let has_directories = if let Value::Thing(parent) = &parent_value {
-                    parent.holds.borrow().iter().any(|entry| entry.0 == attribute)
-                } else { false };
+                let has_directories = match self.read_class_member(parent_value.clone(), &attribute, false) {
+                    Ok(_) => true,
+                    Err(escape) => {
+                        if !self.missing_member_escape(&escape) { return Err(self.suspension_fault(escape)); }
+                        false
+                    }
+                };
                 if let Some(cached) = self.imported.get(path) {
                     if self.importing.contains(path) || self.import_cache_names(path) { return Ok(cached.clone()); }
                 }
@@ -26723,12 +26790,22 @@ impl Machine<'_> {
         };
         self.imported.insert(path.to_owned(), value.clone());
         if let Some((owner, name)) = split {
-            if let Some(Value::Thing(parent)) = self.imported.get(owner) {
-                let mut holdings = parent.holds.borrow_mut();
-                if let Some(at) = holdings.iter().position(|entry| entry.0 == name) {
-                    if let Value::Shared(link) = &holdings[at].1 { *link.borrow_mut() = value.clone(); }
-                    else { holdings[at].1 = value.clone(); }
-                } else { holdings.push((name.into(), value.clone())); }
+            let parent = self.cached_import(owner).or_else(|| self.imported.get(owner).cloned());
+            if let Some(parent) = parent {
+                if !self.is_our_namespace(&parent, owner) {
+                    let helper = self.load_namespace("_zipimport_path")?;
+                    let attach = self.member_text(helper, "bind")?;
+                    match self.apply_within(attach, vec![Value::text(owner), Value::text(name), value.clone()]) {
+                        Ok(_) => (),
+                        Err(message) => { self.importing.remove(path); return Err(message); }
+                    }
+                } else if let Value::Thing(space) = parent {
+                    let mut holdings = space.holds.borrow_mut();
+                    if let Some(at) = holdings.iter().position(|entry| entry.0 == name) {
+                        if let Value::Shared(link) = &holdings[at].1 { *link.borrow_mut() = value.clone(); }
+                        else { holdings[at].1 = value.clone(); }
+                    } else { holdings.push((name.into(), value.clone())); }
+                }
             }
         }
         let cache_owner = self.table.strings("ext.system.module.cache").first().cloned();
@@ -26876,12 +26953,9 @@ impl Machine<'_> {
     /// Whether a value standing on the stack is the kernel's own
     /// namespace read in under this path, and not a value the program's
     /// own __import__ answered with.
-    fn is_our_namespace(&self, value: &Value, path: &str) -> bool {
+    fn is_our_namespace(&self, value: &Value, _path: &str) -> bool {
         let Value::Thing(space) = value else { return false };
-        if let Some(Value::Thing(cached)) = self.cached_import(path) {
-            if Rc::ptr_eq(space, &cached) { return true; }
-        }
-        self.imported.values().any(|known| matches!(known, Value::Thing(other) if Rc::ptr_eq(space, other)))
+        space.blueprint().parents.is_empty() && space.holds.borrow().iter().any(|entry| entry.0 == "\0loaded-module")
     }
 
     /// Bring in from-list children while preserving missing dependency errors.
@@ -26980,6 +27054,7 @@ impl Machine<'_> {
                 },
             }
         }
+        if self.table.has_any("ext.system.module.path") { return Err(self.import_member_fault_from(value, wanted)); }
         Err(self.import_member_fault(path, wanted))
     }
 
@@ -26992,6 +27067,10 @@ impl Machine<'_> {
         let told = match self.table.strings("ext.stmt.import.member.missing") {
             [head, mid, tail] => format!("{head}{wanted}{mid}{path}{tail}"),
             _ => format!("ImportError: cannot import name '{wanted}' from '{path}'"),
+        };
+        let told = match (self.table.has_any("ext.system.module.path"), self.import_is_pending(path)) {
+            (true, true) => format!("ImportError: cannot import name '{wanted}' from partially initialized module '{path}' (most likely due to a circular import)"),
+            _ => told,
         };
         match self.namespace_file_path(path) {
             Some(file) => format!("{told} ({file})"),
@@ -27013,6 +27092,9 @@ impl Machine<'_> {
             [head, mid, tail] => format!("{head}{wanted}{mid}{modname}{tail}"),
             _ => format!("ImportError: cannot import name '{wanted}' from '{modname}'"),
         };
+        let told = if self.table.has_any("ext.system.module.path") && self.import_is_pending(&modname) {
+            format!("ImportError: cannot import name '{wanted}' from partially initialized module '{modname}' (most likely due to a circular import)")
+        } else { told };
         let location = match self.read_class_member(module.clone(), "__file__", false) {
             Ok(Value::Text(file)) => file.to_string(),
             _ => "unknown location".to_owned(),
@@ -27027,10 +27109,11 @@ impl Machine<'_> {
     fn namespace_file_path(&self, path: &str) -> Option<String> {
         if self.table.strings("ext.system.module.path").first().map(String::as_str).is_some() {
             let word = self.table.strings("ext.system.source.file").first().map(String::as_str)?;
-            let Value::Thing(module) = self.imported.get(path)? else { return None; };
-            let held = module.holds.borrow().iter().find(|entry| entry.0 == word)?.1.clone();
-            let value = match held { Value::Shared(link) => link.borrow().clone(), other => other };
-            return match value { Value::Text(file) => Some(file.to_string()), _ => None };
+            let value = self.cached_import(path).or_else(|| self.imported.get(path).cloned())?;
+            match Self::imported_attribute(&value, word) {
+                Some(Value::Text(file)) => return Some(file.to_string()),
+                _ => return None,
+            }
         }
         if !self.library_sources.contains_key(path) { return None; }
         Some(format!("langs/lib_python/modules/{}.py", path.replace('.', "/")))

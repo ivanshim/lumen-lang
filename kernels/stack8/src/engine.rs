@@ -1371,6 +1371,9 @@ impl<'a> Engine<'a> {
                 if let Some(last) = rest.find(ending.as_str()) { return Some(rest[..last].to_owned()); }
             }
         }
+        if let Some((_, remaining)) = told.split_once(" from partially initialized module '") {
+            return remaining.split_once("'").map(|(module, _)| module.to_owned());
+        }
         let [head, mid, close] = self.lang.import_member_missing.as_slice() else { return None };
         let after_head = told.strip_prefix(head.as_str())?;
         let at = after_head.find(mid.as_str())?;
@@ -2665,6 +2668,10 @@ impl<'a> Engine<'a> {
                 // way a name fault's own name is.
                 if self.lang.import_member_missing.first().map_or(false, |head| told.trim_start_matches('\0').starts_with(head.as_str())) {
                     if let Some(module) = self.absent_import(told) { filled.push((&self.lang.absent_name_member, Value::text(&module))); }
+                    if let Some((_, file)) = told.rsplit_once(" (").filter(|(_, file)| file.ends_with(')') && *file != "unknown location)" && *file != "most likely due to a circular import)") {
+                        object.fields.borrow_mut().iter_mut().filter(|(key, _)| key == "path")
+                            .for_each(|(_, value)| *value = Value::text(&file[..file.len() - 1]));
+                    }
                 }
                 if self.stands_on(&object.class_now(), 42) {
                     if let Some(module) = self.absent_import(told) { filled.push((&self.lang.absent_name_member, Value::text(&module))); }
@@ -7527,13 +7534,45 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn stored_module_member(module: &Value, name: &str) -> Option<Value> {
+        let Value::Object(object) = module else { return None };
+        let fields = object.fields.borrow();
+        if let Some((_, namespace)) = fields.iter().find(|(key, _)| key == "_namespace") {
+            if let Value::Map(entries) = namespace.contents() {
+                return entries.iter().find_map(|(key, value)| key_spells(key, name).then(|| value.contents()));
+            }
+        }
+        fields.iter().find(|(key, _)| key == name).map(|(_, value)| value.contents())
+    }
+
+    fn module_initializing(&self, path: &str) -> bool {
+        self.importing.contains(path) || self.module_cache_value(path)
+            .and_then(|module| Self::stored_module_member(&module, "__spec__"))
+            .and_then(|spec| Self::stored_module_member(&spec, "_initializing"))
+            .is_some_and(|flag| flag.is_true())
+    }
+
+    pub(super) fn module_absence_text(&self, path: &str, member: &str) -> String {
+        if self.module_initializing(path) {
+            let origin = self.module_file_path(path).map(|file| format!(" from '{file}'")).unwrap_or_default();
+            return format!("partially initialized module '{path}'{origin} has no attribute '{member}' (most likely due to a circular import)");
+        }
+        if self.module_initializing(&format!("{path}.{member}")) {
+            return format!("cannot access submodule '{member}' of module '{path}' (most likely due to a circular import)");
+        }
+        format!("module '{path}' has no attribute '{member}'")
+    }
+
     /// The complaint for a member sought on a module or on a kind, both
     /// of which CPython words by their own name rather than by the kind
     /// they are of. Nothing for anything else, and nothing where the
     /// language words no such complaint.
     pub(super) fn member_named_amiss(&self, value: &Value, name: &str) -> String {
         let held = value.contents();
-        if let Some(path) = self.module_holding(&held) { return Self::member_said(&self.lang.member_absent_module, &path, name); }
+        if let Some(path) = self.module_holding(&held) {
+            if self.lang.module_path.is_some() { return format!("AttributeError: {}", self.module_absence_text(&path, name)); }
+            return Self::member_said(&self.lang.member_absent_module, &path, name);
+        }
         if self.lang.member_absent_module.is_some() && matches!(&held, Value::Object(o) if Self::kind_beneath(&o.class_now()).as_deref() == Some("module")) {
             return format!("AttributeError: module has no attribute '{name}'");
         }
@@ -12655,7 +12694,16 @@ impl<'a> Engine<'a> {
                     let module = self.import_module(path)?;
                     match style {
                         ImportStyle::Plain => self.import_module(path.split('.').next().unwrap_or(path))?,
-                        _ => module,
+                        _ => {
+                            if self.lang.module_path.is_some() && !self.is_builtin_module(&module, path) {
+                                let names = match style {
+                                    ImportStyle::Names(words) => words.iter().map(|word| Value::text(word)).collect(),
+                                    _ => vec![Value::text("*")],
+                                };
+                                self.import_fromlist(&module, &Value::tuple(names), false)?;
+                            }
+                            module
+                        }
                     }
                 } else {
                     // A __import__ of the program's own is called with
@@ -12692,7 +12740,16 @@ impl<'a> Engine<'a> {
                     // whatever the answer's own reading raises standing.
                     match self.class_get(module.clone(), name, false) {
                         Ok(value) => value,
-                        Err(fault) if self.attribute_fault(&fault) => return Err(self.import_member_fault_from(&module, name).into()),
+                        Err(fault) if self.attribute_fault(&fault) => {
+                            let cached = match self.class_get(module.clone(), "__name__", false) {
+                                Ok(Value::Text(owner)) => self.module_cache_value(&format!("{owner}.{name}")),
+                                _ => None,
+                            };
+                            match cached {
+                                Some(value) => value,
+                                None => return Err(self.import_member_fault_from(&module, name).into()),
+                            }
+                        },
                         Err(fault) => return Err(fault),
                     }
                 }
@@ -26015,7 +26072,11 @@ impl Engine<'_> {
                     if matches!(cached, Value::Null) { return Err(format!("ModuleNotFoundError: import of {path} halted; None in sys.modules").into()); }
                     return Ok(cached);
                 }
-                let package = matches!(owner, Value::Object(ref module) if module.fields.borrow().iter().any(|(name, _)| name == &word));
+                let package = match self.class_get(owner.clone(), &word, false) {
+                    Ok(_) => true,
+                    Err(fault) if self.attribute_fault(&fault) => false,
+                    Err(fault) => return Err(fault),
+                };
                 if let Some(held) = self.modules.get(path) {
                     if self.importing.contains(path) || self.module_cache_names(path) { return Ok(held.clone()); }
                 }
@@ -26242,12 +26303,23 @@ impl Engine<'_> {
         let module = self.module_cache_value(path).unwrap_or(module);
         self.modules.insert(path.to_string(), module.clone());
         if let Some((above, name)) = parent {
-            if let Some(Value::Object(parent)) = self.modules.get(above) {
-                let mut fields = parent.fields.borrow_mut();
-                match fields.iter_mut().find(|(word, _)| word == name) {
-                    Some((_, Value::Bond(place))) => *place.borrow_mut() = module.clone(),
-                    Some((_, place)) => *place = module.clone(),
-                    None => fields.push((name.to_string(), module.clone())),
+            if let Some(parent_module) = self.module_cache_value(above).or_else(|| self.modules.get(above).cloned()) {
+                if self.is_builtin_module(&parent_module, above) {
+                    if let Value::Object(parent) = parent_module {
+                        let mut fields = parent.fields.borrow_mut();
+                        match fields.iter_mut().find(|(word, _)| word == name) {
+                            Some((_, Value::Bond(place))) => *place.borrow_mut() = module.clone(),
+                            Some((_, place)) => *place = module.clone(),
+                            None => fields.push((name.to_string(), module.clone())),
+                        }
+                    }
+                } else {
+                    let bridge = self.import_module("_zipimport_path")?;
+                    let bind = self.class_get(bridge, "bind", false)?;
+                    if let Err(fault) = self.class_apply(bind, vec![Value::text(above), Value::text(name), module.clone()]) {
+                        self.importing.remove(path);
+                        return Err(fault);
+                    }
                 }
             }
         }
@@ -26384,13 +26456,8 @@ impl Engine<'_> {
     /// Whether a value on the stack is the kernel's own module standing
     /// under this path: read in by the import itself, and not a value the
     /// program's own __import__ answered with.
-    fn is_builtin_module(&self, module: &Value, path: &str) -> bool {
-        let same_module = |known: &Value| match (known, module) {
-            (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
-            _ => false,
-        };
-        self.modules.values().any(same_module)
-            || self.module_cache_value(path).as_ref().is_some_and(same_module)
+    fn is_builtin_module(&self, module: &Value, _path: &str) -> bool {
+        matches!(module, Value::Object(object) if object.class_now().direct.is_empty() && object.fields.borrow().iter().any(|(key, _)| key == "\0module-owner"))
     }
 
     /// Load requested children of a package, leaving absent children for from-import to diagnose.
@@ -26475,7 +26542,9 @@ impl Engine<'_> {
                 Err(fault) => return Err(fault),
             }
         }
-        Err(self.import_member_fault(path, name).into())
+        let fault = if self.lang.module_path.is_some() { self.import_member_fault_from(module, name) }
+            else { self.import_member_fault(path, name) };
+        Err(fault.into())
     }
 
     /// The words for a member a module has not: the name and the
@@ -26487,6 +26556,9 @@ impl Engine<'_> {
         let pieces = &self.lang.import_member_missing;
         let told = if pieces.len() == 3 { format!("{}{name}{}{path}{}", pieces[0], pieces[1], pieces[2]) }
             else { format!("ImportError: cannot import name '{name}' from '{path}'") };
+        let told = if self.lang.module_path.is_some() && self.module_initializing(path) {
+            format!("ImportError: cannot import name '{name}' from partially initialized module '{path}' (most likely due to a circular import)")
+        } else { told };
         match self.module_file_path(path) {
             Some(file) => format!("{told} ({file})"),
             None => told,
@@ -26506,6 +26578,9 @@ impl Engine<'_> {
         let pieces = &self.lang.import_member_missing;
         let told = if pieces.len() == 3 { format!("{}{name}{}{modname}{}", pieces[0], pieces[1], pieces[2]) }
             else { format!("ImportError: cannot import name '{name}' from '{modname}'") };
+        let told = if self.lang.module_path.is_some() && self.module_initializing(&modname) {
+            format!("ImportError: cannot import name '{name}' from partially initialized module '{modname}' (most likely due to a circular import)")
+        } else { told };
         let location = match self.class_get(module.clone(), "__file__", false) {
             Ok(Value::Text(file)) => file.to_string(),
             _ => "unknown location".to_string(),
@@ -26520,10 +26595,8 @@ impl Engine<'_> {
     fn module_file_path(&self, path: &str) -> Option<String> {
         if self.lang.module_path.is_some() {
             let word = self.lang.source_bindings.iter().find(|(part, _)| part == "file")?.1.as_str();
-            let Value::Object(module) = self.modules.get(path)? else { return None; };
-            let held = module.fields.borrow().iter().find(|(name, _)| name == word)?.1.clone();
-            let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other };
-            return match value { Value::Text(file) => Some(file.to_string()), _ => None };
+            let module = self.module_cache_value(path).or_else(|| self.modules.get(path).cloned())?;
+            return Self::stored_module_member(&module, word).and_then(|value| match value { Value::Text(file) => Some(file.to_string()), _ => None });
         }
         if !self.module_sources.contains_key(path) { return None; }
         Some(format!("langs/lib_python/modules/{}.py", path.replace('.', "/")))

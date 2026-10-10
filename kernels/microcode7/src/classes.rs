@@ -3110,7 +3110,7 @@ impl<'a> Machine<'a> {
                     held.iter().find(|(name, _)| name == "__name__").map(|(_, item)| item)
                 };
                 let label = title.and_then(|item| match item.settled() { Value::Text(word) => Some(word.to_string()), _ => None });
-                label.map_or_else(|| format!("module has no attribute '{key}'"), |label| format!("module '{label}' has no attribute '{key}'"))
+                label.map_or_else(|| format!("module has no attribute '{key}'"), |label| self.namespace_absence_message(&label, key))
             }
             Value::Thing(thing) => format!("'{}' object has no attribute '{key}'", self.full_class_name(&thing.blueprint())),
             _ => return escaped,
