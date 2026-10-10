@@ -6479,14 +6479,11 @@ impl<'a> Machine<'a> {
     }
 
     fn locals_pair_only(&mut self, source: &Value) -> Res<Option<Vec<(Value, Value)>>> {
-        match source.settled() {
-            Value::Dict(entries) => Ok(Some(entries.iter().cloned().collect())),
-            Value::Thing(thing) => match self.locals_proxy(&Value::Thing(thing.clone())) {
-                Some(proxy) => Ok(Some(self.locals_live_pairs(&proxy))),
-                None => Ok(None),
-            },
-            _ => Ok(None),
-        }
+        if let Some(proxy) = self.locals_proxy(source) { return Ok(Some(self.locals_live_pairs(&proxy))); }
+        let held = source.settled();
+        let native = Self::underlying(&held).unwrap_or(held).settled();
+        if let Value::Dict(entries) = native { Ok(Some(entries.iter().cloned().collect())) }
+        else { Ok(None) }
     }
 
     /// The workings a proxy over a frame's names answers on the
@@ -6529,6 +6526,8 @@ impl<'a> Machine<'a> {
             }
             Prim::BitsEither if operands.len() == 2 => {
                 let other = &operands[1 - anchor];
+                // A left dictionary subclass can supply its own forward operator.
+                if anchor == 1 && self.appointed(other, 65).is_some() { return Ok(None); }
                 let Some(other_pairs) = self.locals_pair_only(other)? else { return Ok(None) };
                 let proxy_pairs = self.locals_live_pairs(&proxy);
                 let (mut pairs, incoming) = if anchor == 0 { (proxy_pairs, other_pairs) } else { (other_pairs, proxy_pairs) };

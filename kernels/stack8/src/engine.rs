@@ -6295,7 +6295,8 @@ impl<'a> Engine<'a> {
             "update" => {
                 if args.len() > 1 { return Err(self.lang.method_errors["arguments"].clone()); }
                 if let Some(source) = args.first() {
-                    let held = source.contents();
+                    let held = if self.locals_proxy(source).is_some() { source.contents() }
+                        else { Self::worth_of(source).unwrap_or_else(|| source.contents()).contents() };
                     match &held {
                         Value::Map(map) => { for (key, value) in map.iter() { self.locals_assign(proxy, key, value.clone())?; } }
                         Value::Object(other) if self.locals_class.as_ref().is_some_and(|known| Rc::ptr_eq(known, &other.class_now())) => {
@@ -6311,7 +6312,7 @@ impl<'a> Engine<'a> {
                 if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
                 let other = if let Some(peer) = self.locals_proxy(&args[0]) {
                     self.locals_live_pairs(&peer)
-                } else if let Value::Map(entries) = args[0].contents() {
+                } else if let Value::Map(entries) = Self::worth_of(&args[0]).unwrap_or_else(|| args[0].contents()).contents() {
                     entries.to_vec()
                 } else {
                     return Ok(Value::Declined(Rc::from("NotImplemented")));
