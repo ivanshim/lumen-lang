@@ -1008,8 +1008,11 @@ class TextTestRunner:
             if not test._module_fixture('setUpModule', result):
                 test._module_fixture('doModuleCleanups', result)
                 return None
+            # A base class with no test methods still lands in the suite as
+            # an empty child, and class fixtures belong to test cases, so an
+            # empty suite sets nothing up.
             try:
-                if test._fixture('setUpClass', result):
+                if test.countTestCases() > 0 and test._fixture('setUpClass', result):
                     try:
                         for member in test.tests:
                             self._run(member, result)
@@ -1186,6 +1189,9 @@ def _select_tests(suite, names):
         return suite if cls in names or cls + '.' + method in names or suite.id() in names else None
     selected = TestSuite()
     selected.class_ = suite.class_
+    # A package's per-module suites hold the module fixtures; a selection
+    # must keep them so setUpModule still runs for the chosen classes.
+    selected.module_namespace = suite.module_namespace
     for test in suite:
         kept = _select_tests(test, names)
         if kept is not None:
