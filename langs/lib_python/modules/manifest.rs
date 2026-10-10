@@ -465,6 +465,8 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("zipfile._path", include_str!("zipfile/_path/__init__.py"), "zipfile/_path/__init__.py"),
     ("zipfile._path.glob", include_str!("zipfile/_path/glob.py"), "zipfile/_path/glob.py"),
     ("zlib", include_str!("zlib.py"), "zlib.py"),
+    ("shelve", include_str!("shelve.py"), "shelve.py"),
+    ("test.test_dbm", include_str!("test/test_dbm.py"), "test/test_dbm.py"),
 ];
 
 // Non-package aliases initialize real source with their embedded parent.

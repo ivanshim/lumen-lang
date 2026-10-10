@@ -13372,8 +13372,20 @@ impl<'a> Engine<'a> {
                         return self.perform(&Action::Invoke(name.clone()), count + 1);
                     }
                 }
-                let Value::Object(o) = subject else {
-                    return Err(format!("Cannot call method '{}' on a value that is not an object", name).into());
+                let o = match subject {
+                    Value::Object(o) => o,
+                    other => {
+                        // A suspension's own method named on anything
+                        // else is an ordinary member: reading it is
+                        // what raises the missing-attribute complaint.
+                        if [&self.lang.yield_send, &self.lang.yield_close, &self.lang.yield_throw].iter().any(|words| Lang::spells(words, name)) {
+                            let member = self.class_get(other, name, false)?;
+                            let answer = self.class_apply(member, args)?;
+                            self.data.push(answer);
+                            return Ok(());
+                        }
+                        return Err(format!("Cannot call method '{}' on a value that is not an object", name).into());
+                    }
                 };
                 let method = o.class_now().method(&name).cloned();
                 // A class may answer for a call it does not have: where
@@ -21643,10 +21655,22 @@ impl<'a> Engine<'a> {
                     return Ok(current);
                 }
                 arity(0)?;
-                Value::Map(Rc::new(self.registry.idents.iter().zip(&self.world).filter_map(|(name, value)| {
+                let mut rows: Vec<(Value, Value)> = self.registry.idents.iter().zip(&self.world).filter_map(|(name, value)| {
                     if name.starts_with('\0') || name.contains(crate::code::OF_A_CLASS) || matches!(value, Value::Blank) { None }
                     else { Some((Value::text(name), value.clone())) }
-                }).collect()))
+                }).collect();
+                // A name bound after the reading -- a write through the
+                // dictionary globals() hands out among them -- lives only
+                // in the outermost dictionary, and a namespace a reader
+                // asks for must carry it too.
+                let book = self.outer_book_made();
+                if let Value::Map(pairs) = book.borrow().clone() {
+                    for (key, value) in pairs.iter() {
+                        let Some(word) = Self::globals_key_word(key) else { continue };
+                        if !rows.iter().any(|(seen, _)| Self::globals_key_word(seen).as_deref() == Some(word.as_str())) { rows.push((key.clone(), value.clone())); }
+                    }
+                }
+                Value::Map(Rc::new(rows.into()))
             }
             // The module the routine running `depth` frames up the call
             // chain answers as its own: the same walk the

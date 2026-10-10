@@ -7550,8 +7550,19 @@ impl<'a> Machine<'a> {
                             return self.value_of(&call, frame);
                         }
                     }
-                    let Value::Thing(thing) = subject else {
-                        return Err(format!("Cannot call '{}' on something that is not an object", called).into());
+                    let thing = match subject {
+                        Value::Thing(thing) => thing,
+                        other => {
+                            // The name a sleeping body answers to,
+                            // asked of anything else, is a plain
+                            // member: its absence is what is told.
+                            if ["ext.stmt.yield.send", "ext.stmt.yield.close", "ext.stmt.yield.throw"].iter()
+                                .any(|label| self.table.spells(label, &called)) {
+                                let told = self.member_missing(&other, &called);
+                                if !told.is_empty() { return Err(told.into()); }
+                            }
+                            return Err(format!("Cannot call '{}' on something that is not an object", called).into());
+                        }
                     };
                     let program = thing.blueprint().program(&called).cloned();
                     // A class may answer for a call it does not have:
@@ -20720,11 +20731,25 @@ impl<'a> Machine<'a> {
                     return at.map(Value::Thing).ok_or_else(|| String::from("ValueError: call stack is not deep enough"));
                 }
                 n(0)?;
-                let cells = self.outermost.cells.borrow();
                 let mut bindings = Vec::new();
-                for (word, value) in self.idents.iter().zip(cells.iter()) {
-                    if !word.starts_with('\0') && !word.contains('\0') && !matches!(value, Value::Unset) {
-                        bindings.push((Value::text(word), value.clone()));
+                {
+                    let cells = self.outermost.cells.borrow();
+                    for (word, value) in self.idents.iter().zip(cells.iter()) {
+                        if !word.starts_with('\0') && !word.contains('\0') && !matches!(value.settled(), Value::Unset) {
+                            bindings.push((Value::text(word), value.clone()));
+                        }
+                    }
+                }
+                // A name the run bound after it started -- through the
+                // dictionary globals() hands out, among others -- is
+                // held only by the outermost book, so the namespace a
+                // reader is handed has to gather it from there as well.
+                let extra = self.world_kept();
+                if let Value::Dict(pairs) = extra.borrow().clone() {
+                    for (key, value) in pairs.iter() {
+                        if !matches!(value.settled(), Value::Unset) && !bindings.iter().any(|(kept, _)| kept.equals(key)) {
+                            bindings.push((key.clone(), value.clone()));
+                        }
                     }
                 }
                 Value::Dict(Rc::new(bindings.into()))
@@ -27053,6 +27078,11 @@ impl<'a> Machine<'a> {
 
     /// Write a slot's name into the dictionary it lives in, or strike it out.
     fn booked_write(&mut self, at: usize, name: &str, worth: Option<Value>) {
+        // Clearing a Python binding removes the dictionary key as well
+        // as its slot; an exception target must not remain as an unset value.
+        let worth = if self.names_in_calls && self.rules.closes_over {
+            worth.filter(|value| !matches!(value.settled(), Value::Unset))
+        } else { worth };
         match self.book_holding(at) {
             Some(Held::Namespace(index)) => if Self::visible_name(name) { set_down(&self.namespace_books[index].1, name, worth) },
             Some(Held::World) => if let Some(book) = &self.world_book { set_down(book, name, worth) },

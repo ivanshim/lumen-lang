@@ -91,6 +91,10 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `langs/lib_python/modules/email/` | `Lib/email/`: every Python source, unchanged beneath a PSF provenance header | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/codecs.py`, `stringprep.py`, `encodings/` | `Lib/codecs.py`, `Lib/stringprep.py`, and all 115 `Lib/encodings/` wrapper bodies, unchanged beneath provenance headers; reused from the signed codec port | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
+| `python-3.14.8/test_dbm_dumb.py`, `test_shelve.py` | `Lib/test/test_dbm_dumb.py`, `Lib/test/test_shelve.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/dbm/__init__.py`, `dbm/dumb.py`, `shelve.py` | `Lib/dbm/__init__.py`, `Lib/dbm/dumb.py`, `Lib/shelve.py`, unchanged beneath a PSF provenance header; `dbm.gnu`, `dbm.ndbm` and `dbm.sqlite3` stay absent so `dbm` falls back honestly | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/test/test_dbm.py` | `Lib/test/test_dbm.py`, copied byte for byte, providing the `dbm_iterator` that `test_shelve` imports | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+
 The `python-3.14.8/test/` package and its support, import, threading, OS, script, and
 pseudo-terminal helpers are also preserved byte for byte at that commit. `Lib/test/datetimetester.py` is preserved, with its source header, in
 `langs/lib_python/modules/test/datetimetester.py`. The embedded runtime support
