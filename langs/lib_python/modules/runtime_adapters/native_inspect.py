@@ -85,26 +85,136 @@ def getdoc(object):
     return cleandoc(doc)
 
 
-FrameInfo = collections.namedtuple(
-    'FrameInfo', 'frame filename lineno function code_context index')
+# The two records CPython hands a caller for a frame and for that
+# frame's own place in its source, each carrying code positions.
+_Traceback = collections.namedtuple(
+    'Traceback', 'filename lineno function code_context index')
 
 
-def stack(context=1):
-    # The kernel keeps the calls in progress as frame objects the
-    # program reaches through sys._getframe; walk their f_back chain
-    # from the caller of this function outwards, as CPython does.
+class Traceback(_Traceback):
+    def __new__(cls, filename, lineno, function, code_context, index, *, positions=None):
+        instance = super().__new__(cls, filename, lineno, function, code_context, index)
+        instance.positions = positions
+        return instance
+
+    def __repr__(self):
+        return ('Traceback(filename={!r}, lineno={!r}, function={!r}, '
+                'code_context={!r}, index={!r}, positions={!r})'.format(
+                    self.filename, self.lineno, self.function, self.code_context,
+                    self.index, self.positions))
+
+
+_FrameInfo = collections.namedtuple('_FrameInfo', ('frame',) + _Traceback._fields)
+
+
+class FrameInfo(_FrameInfo):
+    def __new__(cls, frame, filename, lineno, function, code_context, index, *, positions=None):
+        instance = super().__new__(cls, frame, filename, lineno, function, code_context, index)
+        instance.positions = positions
+        return instance
+
+    def __repr__(self):
+        return ('FrameInfo(frame={!r}, filename={!r}, lineno={!r}, function={!r}, '
+                'code_context={!r}, index={!r}, positions={!r})'.format(
+                    self.frame, self.filename, self.lineno, self.function,
+                    self.code_context, self.index, self.positions))
+
+
+def isframe(object):
+    """Return true if the object is a frame object."""
+    return isinstance(object, types.FrameType)
+
+
+def istraceback(object):
+    """Return true if the object is a traceback object."""
+    return isinstance(object, types.TracebackType)
+
+
+def _code_positions(lineno):
+    # The kernel keeps a frame's line but not its instruction columns,
+    # so the four figures stand as CPython's do when no position is
+    # known; the line itself is the frame's own.
+    import dis
+    values = (lineno, None, None, None)
+    try:
+        return dis.Positions(*values)
+    except TypeError:
+        return dis.Positions(values)
+
+
+def _frame_source_lines(frame):
+    filename = frame.f_code.co_filename
+    import linecache
+    lines = linecache.getlines(filename)
+    if lines:
+        return lines
+    try:
+        with open(filename, encoding='utf-8') as handle:
+            return handle.readlines()
+    except OSError:
+        return None
+
+
+def getframeinfo(frame, context=1):
+    """Get the filename, line, function and source window of a frame."""
+    if istraceback(frame):
+        line = frame.tb_lineno
+        frame = frame.tb_frame
+    else:
+        line = frame.f_lineno
+    if not isframe(frame):
+        raise TypeError('{!r} is not a frame or traceback object'.format(frame))
+    if context > 0:
+        start = line - 1 - context // 2
+        lines = _frame_source_lines(frame)
+        if lines is None:
+            lines = index = None
+        else:
+            start = max(0, min(start, len(lines) - context))
+            lines = lines[start:start + context]
+            index = line - 1 - start
+    else:
+        lines = index = None
+    return Traceback(frame.f_code.co_filename, line, frame.f_code.co_name,
+                     lines, index, positions=_code_positions(line))
+
+
+def getouterframes(frame, context=1):
+    """Frame records from this frame outwards through its callers."""
     records = []
-    frame = sys._getframe(1)
     while frame is not None:
-        code = frame.f_code
-        records.append(FrameInfo(
-            frame, code.co_filename, frame.f_lineno, code.co_name, None, None))
+        info = getframeinfo(frame, context)
+        records.append(FrameInfo(*(frame,) + tuple(info), positions=info.positions))
         frame = frame.f_back
     return records
 
 
+def getinnerframes(tb, context=1):
+    """Frame records from this traceback inwards through its frames."""
+    records = []
+    while tb is not None:
+        info = getframeinfo(tb, context)
+        records.append(FrameInfo(*(tb.tb_frame,) + tuple(info), positions=info.positions))
+        tb = tb.tb_next
+    return records
+
+
 def currentframe():
-    raise 'NotImplementedError: inspect.currentframe needs a frame object, which this runtime does not keep'
+    """Return the frame of the caller or None if this is not possible."""
+    return sys._getframe(1) if hasattr(sys, '_getframe') else None
+
+
+def stack(context=1):
+    """Return records for the stack above the caller's frame."""
+    return getouterframes(sys._getframe(1), context)
+
+
+def trace(context=1):
+    """Return records for the stack below the current exception."""
+    exception = getattr(sys, 'exception', None)
+    exc = exception() if exception is not None else None
+    tb = None if exc is None else exc.__traceback__
+    return getinnerframes(tb, context)
 
 
 def getgeneratorstate(generator):
