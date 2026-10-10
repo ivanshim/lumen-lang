@@ -396,6 +396,7 @@ pub enum Prim {
     BinaryAscii,
     NamespaceRead,
     TraceBridge,
+    NativeFrame,
     HeapNative,
     ContextStore,
     ReduceNative,

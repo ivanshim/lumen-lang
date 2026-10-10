@@ -777,6 +777,7 @@ pub enum Builtin {
     BinAscii,
     StaticNamespace,
     TraceNative,
+    NativeFrame,
     HeapNative,
     ContextNative,
     ReduceNative,

@@ -600,6 +600,12 @@ pub struct Machine<'a> {
     /// has asked for it: from then on those names are read out of it
     /// and written into it, so either side sees the other's writing.
     world_book: Option<Rc<RefCell<Value>>>,
+    /// The main program's own namespace, kept apart from the book a
+    /// call may swap in and out, so an outer-name answer is steady.
+    main_world: Option<Rc<RefCell<Value>>>,
+    /// Routines whose frames a frame walk hides, as C routines are
+    /// absent from a Python frame chain in the reference.
+    native_frame_routines: std::collections::HashSet<usize>,
     supplied_books: Vec<Option<Rc<RefCell<Value>>>>,
     /// Each text read into dictionaries handed over: the slots it was
     /// given, the dictionary its names live in, and the outer one for
@@ -2053,6 +2059,8 @@ impl<'a> Machine<'a> {
             namespace_books: Vec::new(),
             within_spare: false,
             world_book: None,
+            main_world: None,
+            native_frame_routines: std::collections::HashSet::new(),
             supplied_books: Vec::new(),
             readings: Vec::new(),
             reading_now: None,
@@ -5846,6 +5854,16 @@ impl<'a> Machine<'a> {
         }
         let body = Value::Bound(routine.clone(), environment.clone());
         let code = Value::Nil;
+        // A routine marked native has no frame of its own on the Python
+        // frame chain: its own link is the caller's frame, and a child
+        // reaches past it the same way, as a walk past a C routine does.
+        let hidden = self.native_frame_routines.contains(&(Rc::as_ptr(routine) as usize));
+        let parent = match parent {
+            Some(p) if p.holds.borrow().iter().any(|(word, held)| word == "\0native" && matches!(held, Value::Flag(true))) => {
+                match p.holds.borrow()[2].1.clone() { Value::Thing(grand) => Some(grand), _ => None }
+            }
+            other => other,
+        };
         let mut entries = Vec::with_capacity(11);
         entries.push((words[4].to_string(), Value::Small(routine.declared_on as i64)));
         entries.push((words[5].to_string(), code));
@@ -5859,6 +5877,7 @@ impl<'a> Machine<'a> {
             entries.push(("f_trace".to_owned(), Value::Nil));
             entries.push(("f_trace_lines".to_owned(), Value::Flag(true)));
         }
+        entries.push(("\0native".to_owned(), Value::Flag(hidden)));
         self.made += 1;
         Some(Rc::new(Thing { reclassified: RefCell::new(None), of: self.activation_kind.as_ref().unwrap().clone(), turn: self.made, holds: RefCell::new(entries) }))
     }
@@ -23855,7 +23874,7 @@ impl<'a> Machine<'a> {
                 if v.is_empty() { Value::tuple(Vec::new()) }
                 else { n(1)?; Value::tuple(self.gathered_members(&v[0])?) }
             }
-            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::ZlibNative | Prim::BinaryFormat | Prim::BinaryAscii | Prim::ContextStore | Prim::NamespaceRead | Prim::TraceBridge | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
+            Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::ZlibNative | Prim::BinaryFormat | Prim::BinaryAscii | Prim::ContextStore | Prim::NamespaceRead | Prim::TraceBridge | Prim::NativeFrame | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
@@ -27621,7 +27640,7 @@ impl<'a> Machine<'a> {
     /// The world's dictionary, made from the outermost cells the first
     /// time it is wanted and kept beside them after.
     fn world_kept(&mut self) -> Rc<RefCell<Value>> {
-        if let Some(book) = &self.world_book { return book.clone(); }
+        if let Some(book) = &self.main_world { return book.clone(); }
         let mut entries = Vec::new();
         {
             let cells = self.outermost.cells.borrow();
@@ -27641,7 +27660,8 @@ impl<'a> Machine<'a> {
             if !entries.iter().any(|(key, _)| spells_key(key, word)) { entries.push((Value::text(word), Value::Shared(natives.clone()))); }
         }
         let book = Rc::new(RefCell::new(Value::Dict(Rc::new(entries.into()))));
-        self.world_book = Some(book.clone());
+        self.main_world = Some(book.clone());
+        if self.world_book.is_none() { self.world_book = Some(book.clone()); }
         book
     }
 
@@ -27736,7 +27756,13 @@ impl<'a> Machine<'a> {
     /// names under, where it was read in as one: the module's own
     /// members, never the outermost names it was read in from.
     fn space_book_of(&mut self) -> Option<Rc<RefCell<Value>>> {
-        let program = self.frames_named.last()?;
+        let program = self.frames_named.last()?.clone();
+        self.space_book_for(&program)
+    }
+
+    /// The same book, asked of a named program rather than of the one
+    /// now running: a callback reads the module it was read in as.
+    fn space_book_for(&mut self, program: &Routine) -> Option<Rc<RefCell<Value>>> {
         let path = program.written_in.as_ref().and_then(|file| self.loaded_spaces.get(file.as_ref()))?.to_owned();
         let Some(Value::Thing(module)) = self.imported.get(&path).cloned() else { return None };
         if let Some(book) = self.space_books.get(&path).cloned() {
@@ -29535,7 +29561,7 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 impl Machine<'_> {
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | ZlibNative | BinaryFormat | BinaryAscii | ContextStore | NamespaceRead | TraceBridge | HeapNative | ReduceNative | RebuildNative)
+        matches!(op, Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | ZlibNative | BinaryFormat | BinaryAscii | ContextStore | NamespaceRead | TraceBridge | NativeFrame | HeapNative | ReduceNative | RebuildNative)
     }
 
     pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -30888,6 +30914,18 @@ impl Machine<'_> {
                     _ => Err("TypeError: invalid tracing operation".into()),
                 }
             }
+            NativeFrame => {
+                require(1, 1)?;
+                // A routine whose frame the reference implementation keeps
+                // off the Python frame chain, as a C routine's is: the
+                // function itself comes back, marked for the frame maker.
+                let program = match input[0].settled() {
+                    Value::Bound(body, _) | Value::Routine(body) => body,
+                    _ => return Err("TypeError: native_frame() argument must be a function".into()),
+                };
+                self.native_frame_routines.insert(Rc::as_ptr(&program) as usize);
+                Ok(input[0].clone())
+            }
             HeapNative => {
                 require(2, 3)?;
                 self.heap_work(&input[0], &input[1].settled().bare(), input.get(2).cloned())
@@ -31298,6 +31336,12 @@ impl Machine<'_> {
             }
             Rounded => {
                 require(1, 2)?;
+                // A rounding belongs to a number, a boolean, or a value
+                // that answers __round__ itself; any other value is told
+                // it has no such method, not that rounding is unsupported.
+                if self.table.flag("ext.op.arithmetic.python_numbers") && !matches!(input[0], Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Frac(_)) {
+                    return Err(format!("TypeError: type {} doesn't define __round__ method", input[0].kind_word()));
+                }
                 let ndigits = match input.get(1) { None | Some(Value::Nil) => None, Some(v) => Some(whole(v)?) };
                 // A float past every number, or the one that is not a
                 // number at all, carries no rounding of its own: asked
