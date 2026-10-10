@@ -14,9 +14,10 @@ verbose = False
 is_wasi = sys.platform == "wasi"
 is_emscripten = sys.platform == "emscripten"
 is_wasm32 = is_emscripten or is_wasi
-Py_DEBUG = False
+Py_DEBUG = hasattr(sys, "gettotalrefcount")
+Py_TRACE_REFS = hasattr(sys, "getobjects")
 Py_GIL_DISABLED = False
-MS_WINDOWS = False
+MS_WINDOWS = sys.platform == "win32"
 MAX_Py_ssize_t = sys.maxsize
 NHASHBITS = 64
 _TPFLAGS_BASETYPE = 1024
@@ -456,12 +457,18 @@ class SuppressCrashReport:
                     pass
 
 def run_in_subinterp(code):
-    _check_tracemalloc()
-    try:
-        import _testcapi
-    except ImportError:
-        raise unittest.SkipTest("requires _testcapi")
-    return _testcapi.run_in_subinterp(code)
+    raise unittest.SkipTest("subinterpreters are not supported")
+
+
+def run_in_subinterp_with_config(code, *, own_gil=None, **config):
+    if own_gil is not None:
+        assert 'gil' not in config, (own_gil, config)
+    raise unittest.SkipTest("subinterpreters are not supported")
+
+
+def requires_gil_enabled(msg="needs the GIL enabled"):
+    return unittest.skipIf(Py_GIL_DISABLED, msg)
+
 
 def check_free_after_iterating(test, iter, cls, args=()):
     done = False

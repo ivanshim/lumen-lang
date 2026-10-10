@@ -569,7 +569,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("test.test_importlib.test_util", include_str!("test/test_importlib/test_util.py"), "test/test_importlib/test_util.py"),
     ("test.test_importlib.test_windows", include_str!("test/test_importlib/test_windows.py"), "test/test_importlib/test_windows.py"),
     ("test.test_importlib.threaded_import_hangers", include_str!("test/test_importlib/threaded_import_hangers.py"), "test/test_importlib/threaded_import_hangers.py"),
-    ("test.test_importlib.util", include_str!("test/test_importlib/util.py"), "test/test_importlib/util.py"),
+    ("test.test_importlib.util", include_str!("runtime_adapters/native_test_importlib_util.py"), "test/test_importlib/util.py"),
     ("test.test_iter", include_str!("test/test_iter.py"), "test/test_iter.py"),
     ("test.test_math", include_str!("test/test_math.py"), "test/test_math.py"),
     ("test.test_weakref", include_str!("test/test_weakref.py"), "test/test_weakref.py"),

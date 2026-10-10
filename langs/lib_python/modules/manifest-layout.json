@@ -41,7 +41,8 @@
     "test.support.import_helper": "runtime_adapters/native_test_support_import_helper.py",
     "test.support.socket_helper": "runtime_adapters/native_test_support_socket_helper.py",
     "test.support.threading_helper": "runtime_adapters/native_test_support_threading_helper.py",
-    "warnings": "runtime_adapters/native_warnings.py"
+    "warnings": "runtime_adapters/native_warnings.py",
+    "test.test_importlib.util": "runtime_adapters/native_test_importlib_util.py"
   },
   "preludes": {
     "zipimport": "runtime_adapters/zipimport_bootstrap.py"

@@ -423,6 +423,8 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `langs/lib_python/modules/zipfile/_path/__init__.py` | `Lib/zipfile/_path/__init__.py`, dependency of importlib readers/metadata, copied byte for byte; SHA-256 `319c002564b7deca9ca9dc913f5d06bc32a2f376d291094afa635558af6e17ff` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/zipfile/_path/glob.py` | `Lib/zipfile/_path/glob.py`, dependency of importlib readers/metadata, copied byte for byte; SHA-256 `d84da9b313d40544a87657a0ea2f9cf719416fd3c3450724c5d2dde5b475d2b5` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
+| `langs/lib_python/modules/runtime_adapters/native_test_importlib_util.py` | Adapted from `Lib/test/test_importlib/util.py`; general helpers retain their bodies, extension availability is checked by the upstream extension-test guards | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+
 The `python-3.14.8/test/` package and its support, import, threading, OS, script, and
 pseudo-terminal helpers are also preserved byte for byte at that commit. `Lib/test/datetimetester.py` is preserved, with its source header, in
 `langs/lib_python/modules/test/datetimetester.py`. The embedded runtime support
