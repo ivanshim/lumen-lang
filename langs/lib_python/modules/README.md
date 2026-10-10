@@ -40,10 +40,10 @@ behavior and the newer integrated suite inventory are retained.
 
 `types.py` is the unchanged CPython v3.14.8 `Lib/types.py` (sha256
 8c54d3d5ffc1d1204237e6c69b25c27c7b05b483128f185eeed9ba7ef2229ac2); it star-imports
-`_types`, the runtime's stand-in for `Modules/_typesmodule.c`, whose names are
+`_types`, the runtime export layer corresponding to `Modules/_typesmodule.c`, whose names are
 the runtime's own kinds (the pure fallback in `types.py` reads the same values)
 including the native mapping proxy, plus helpers for unions and subscripted
-kinds. `CapsuleType` is absent because there is no runtime C-API capsule kind. `_datetime` has no C accelerator behind
+kinds. `CapsuleType` binds the native opaque-pointer value kind, whose owned name and finalizer keep native resources alive across value clones. `_datetime` has no C accelerator behind
 it: it re-exports the classes of `_pydatetime`, the very objects `datetime`
 exposes, and has no `datetime_CAPI` capsule.
 

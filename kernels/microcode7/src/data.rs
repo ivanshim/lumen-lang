@@ -225,6 +225,7 @@ impl Drop for MethodMark {
 
 #[derive(Clone)]
 pub enum Value {
+    Opaque(Rc<crate::capsule::PointerCapsule>),
     Unpaired(Rc<[u32]>),
     Mutable(Rc<RefCell<Value>>, bool),
     Member(Rc<Value>, String),
@@ -769,7 +770,7 @@ pub fn window_kind(portion: char) -> &'static str {
 /// The word CPython gives a walk taken backwards over a map's keys,
 /// values or pairs.
 pub fn reversed_window_kind(portion: char) -> &'static str {
-    match portion { 'k' => "dict_reversekeyiterator", 'v' => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
+    match portion { 'k' | 'm' => "dict_reversekeyiterator", 'v' => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
 }
 
 impl Value {
@@ -900,6 +901,7 @@ impl Value {
 
     pub fn hash_address(&self) -> Result<String, &'static str> {
         match self {
+            Value::Opaque(held) => Ok(format!("capsule/{:p}", Rc::as_ptr(held))),
             Value::Tuple(items) | Value::Row(items) => {
                 let parts = items.iter().map(Value::hash_address).collect::<Result<Vec<_>, _>>()?;
                 Ok(format!("row:{parts:?}"))
@@ -931,10 +933,18 @@ impl Value {
             Value::Blueprint(class) => Ok(format!("blueprint/{:p}", Rc::as_ptr(class))),
             Value::Wrapped(8, names) => Ok(format!("kind/{names:?}")),
             Value::Routine(program) => Ok(format!("code/{:p}", Rc::as_ptr(program))),
-            Value::Wrapped(tag, items) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60) => {
+            Value::Wrapped(tag, items) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60 | 152..=158) => {
                 let mut address = format!("native/{tag}");
                 for item in items.iter() { address.push_str(&format!("/{:?}", item.hash_address()?)); }
                 Ok(address)
+            }
+            // Bound callables keep a key by function and receiver identity.
+            Value::Wrapped(3, parts) if parts.len() == 2 => {
+                let receiver = match &parts[1] {
+                    Value::Thing(object) => format!("receiver/{:p}", Rc::as_ptr(object)),
+                    other => other.hash_address()?,
+                };
+                Ok(format!("method/{:?}/{receiver:?}", parts[0].hash_address()?))
             }
             Value::Wrapped(4..=7, items) => Ok(format!("wrapper/{:p}", Rc::as_ptr(items))),
             Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
@@ -1225,6 +1235,7 @@ impl Value {
 
     pub fn kind(&self) -> Option<Kind> {
         Some(match self {
+            Value::Opaque(_) => return None,
             Value::Small(_) | Value::Huge(_) => Kind::Whole,
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
             Value::Text(_) | Value::Unpaired(_) => Kind::Chars,
@@ -1283,7 +1294,7 @@ impl Value {
             Value::Unpaired(_) => return Err("ValueError: invalid literal for int()".to_string()),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
             Value::TextRow(..) | Value::Arguments(_) | Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
-            Value::Wrapped(..) | Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
+            Value::Opaque(_) | Value::Wrapped(..) | Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::TextCall { .. } | Value::Adorned(_) | Value::Dim(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Mutable(place, _) => return place.borrow().as_big(),
@@ -1387,6 +1398,7 @@ impl Value {
         if let Value::Attributes(held) = self { return held.entries_shown().equals(other); }
         if let Value::Attributes(held) = other { return self.equals(&held.entries_shown()); }
         match (self, other) {
+            (Value::Opaque(left), Value::Opaque(right)) => return Rc::ptr_eq(left, right),
             (Value::TextRow(a, fixed), Value::TextRow(b, closed)) => return fixed == closed && a == b,
             (Value::Span(a), Value::Span(b)) => return a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::TextRow(words, false), Value::Vector(values)) | (Value::Vector(values), Value::TextRow(words, false)) => {
@@ -1543,6 +1555,7 @@ impl Value {
     /// place of their own.
     pub fn one_place(&self, other: &Value) -> bool {
         match (self, other) {
+            (Value::Opaque(left), Value::Opaque(right)) => Rc::ptr_eq(left, right),
             (Value::Shared(x), _) | (Value::Mutable(x, _), _) => x.borrow().one_place(other),
             (_, Value::Shared(y)) | (_, Value::Mutable(y, _)) => self.one_place(&y.borrow()),
             (Value::Frac(x), Value::Frac(y)) => Rc::ptr_eq(x, y),
@@ -1573,6 +1586,7 @@ impl Value {
             items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect()
         };
         match (self, other) {
+            (Value::Opaque(left), Value::Opaque(right)) => Rc::ptr_eq(left, right),
             (Value::Vector(a), Value::Vector(b)) => alike(&numbered(a), &numbered(b)),
             (Value::Dict(a), Value::Dict(b)) => alike(a, b),
             // Written with keys or written without, an array is an
@@ -1763,6 +1777,7 @@ impl Value {
     }
     pub fn bare(&self) -> String {
         match self {
+            Value::Opaque(held) => held.written(),
             Value::Complex(pair) => crate::complex::written(pair),
             Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient) + "j",
             Value::Mutable(place, _) => within_cell(place, Value::bare),
@@ -1850,6 +1865,11 @@ impl Value {
             Value::Wrapped(32, fields) if matches!(fields.get(2), Some(Value::Small(-2))) => match &fields[1] {
                 Value::Blueprint(owner) => format!("<attribute '{}' of '{}' objects>", fields[0].bare(), owner.name),
                 _ => "<member wrapper>".into(),
+            },
+            Value::Wrapped(205, layout) => {
+                if let Value::Blueprint(declaring) = &layout[0] {
+                    format!("<attribute '{}' of '{}' objects>", layout[1].bare(), declaring.name)
+                } else { String::from("<member wrapper>") }
             },
             Value::Wrapped(60, parts) => match parts.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {

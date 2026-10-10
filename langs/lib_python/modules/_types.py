@@ -21,16 +21,33 @@ import sys
 ModuleType = type(sys)
 
 
+# Export the runtime types used by class namespaces and sys.implementation.
+# Their identity and native protocols are shared by every construction path.
+MappingProxyType = type(type.__dict__)
+SimpleNamespace = __namespace_type()
+
+
+# What a kind is called. A builtin kind answers to __name__ but is not
+# found by getattr, so the name is asked for directly.
+def _kind_name(kind):
+    try:
+        name = str(kind.__qualname__)
+        home = kind.__module__
+    except BaseException:
+        try:
+            return str(kind.__name__)
+        except BaseException:
+            return repr(kind)
+    if home in ('builtins', None):
+        return name
+    return str(home) + '.' + name
+
+
+# Generic aliases use the runtime's type, including iterable unpacking,
+# substitution, and identity shared with builtin subscriptions.
 GenericAlias = type(list[int])
 
-# These kinds are the runtime's own; the names here are the kinds the
-# pure fallback in types.py reads off the same values.
-# The runtime's own mapping proxy: the kind class dictionaries are read through.
-MappingProxyType = type(type.__dict__)
-SimpleNamespace = type(sys.implementation)
 UnionType = type(int | str)
-
-
 # What a built union (int | str) answers when it is subscripted, pickled
 # or hashed; the runtime hands the union itself to each.
 def _substituted(thing, item):
@@ -190,4 +207,5 @@ try:
 except TypeError as _exc:
     TracebackType = type(_exc.__traceback__)
     FrameType = type(_exc.__traceback__.tb_frame)
-__all__ = ['NoneType', 'FunctionType', 'LambdaType', 'CodeType', 'CellType', 'MethodType', 'BuiltinFunctionType', 'BuiltinMethodType', 'WrapperDescriptorType', 'MethodWrapperType', 'MethodDescriptorType', 'ClassMethodDescriptorType', 'GetSetDescriptorType', 'MemberDescriptorType', 'GeneratorType', 'CoroutineType', 'AsyncGeneratorType', 'FrameType', 'TracebackType', 'EllipsisType', 'NotImplementedType', 'UnionType', 'ModuleType', 'MappingProxyType', 'SimpleNamespace', 'GenericAlias']
+CapsuleType = __capsule_type()
+__all__ = ['CapsuleType', 'NoneType', 'FunctionType', 'LambdaType', 'CodeType', 'CellType', 'MethodType', 'BuiltinFunctionType', 'BuiltinMethodType', 'WrapperDescriptorType', 'MethodWrapperType', 'MethodDescriptorType', 'ClassMethodDescriptorType', 'GetSetDescriptorType', 'MemberDescriptorType', 'GeneratorType', 'CoroutineType', 'AsyncGeneratorType', 'FrameType', 'TracebackType', 'EllipsisType', 'NotImplementedType', 'UnionType', 'ModuleType', 'MappingProxyType', 'SimpleNamespace', 'GenericAlias']

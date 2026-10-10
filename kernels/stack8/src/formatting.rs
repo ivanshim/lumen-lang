@@ -207,6 +207,7 @@ impl Writer<'_> {
     }
 
     pub fn field_value(&self, value: &Value, spec: &str, conversion: &str) -> Result<Value> {
+        if let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = value { return self.field_value(&cell.borrow(), spec, conversion); }
         if Self::proxied(value).is_some() { return self.field(value, spec, conversion).map(|s| Value::text(&s)); }
         let held = value.contents();
         if self.lang.python_numbers && matches!(held, Value::Codepoints(_)) && matches!(conversion, "" | "s") {
@@ -233,6 +234,7 @@ impl Writer<'_> {
                 _ => self.field(&dictionary, spec, conversion),
             };
         }
+        if let Value::Bond(cell) | Value::Collection(cell, _) = value { return self.field(&cell.borrow(), spec, conversion); }
         if matches!(value, Value::Bond(_) | Value::Collection(..) | Value::View(_)) { return self.field(&value.contents(), spec, conversion); }
         if !conversion.is_empty() {
             let text = match conversion {

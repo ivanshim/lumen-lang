@@ -226,6 +226,9 @@ pub struct Generator {
     /// whether the body is on its way back to where it left off.
     pub resume: Vec<Step>,
     pub resuming: bool,
+    /// Whether the body stands on the stack right now, so that entering
+    /// it again is refused the way the reference refuses it.
+    pub running: bool,
     /// The faults the body itself is handling, kept while it sleeps so
     /// that what is raised next stands behind them.
     pub held: Vec<Value>,
@@ -242,7 +245,7 @@ impl Generator {
         Self { name: String::new(), qualified: String::new(), named: [None, None], trace_frame: None, suspended_position: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, finalized: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None, reversed_walk: None,
-            resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
+            resume: Vec::new(), resuming: false, running: false, held: Vec::new(), hurled: None, walked: None }
     }
 }
 
@@ -315,6 +318,7 @@ impl Drop for MethodStamp {
 
 #[derive(Debug, Clone)]
 pub enum Value {
+    Capsule(Rc<crate::capsule::NativeCapsule>),
     Codepoints(Rc<Vec<u32>>),
     Collection(Rc<RefCell<Value>>, bool),
     ValueMethod(Rc<(Value, String)>),
@@ -898,7 +902,7 @@ pub fn view_kind(tag: &str) -> &'static str {
 /// The word CPython gives a walk taken backwards over a map's keys,
 /// values or pairs.
 pub fn reversed_view_kind(tag: &str) -> &'static str {
-    match tag { "keys" => "dict_reversekeyiterator", "values" => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
+    match tag { "keys" | "mapping" => "dict_reversekeyiterator", "values" => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
 }
 
 impl Value {
@@ -1287,6 +1291,7 @@ impl Value {
             return Ok(format!("n{}/{}", p / &common, q / common));
         }
         match self {
+            Value::Capsule(capsule) => Ok(format!("capsule/{:p}", Rc::as_ptr(capsule))),
             Value::Flag(b) => Ok(format!("n{}/1", u8::from(*b))),
             Value::Codepoints(row) => Ok(format!("codepoints:{row:?}")),
             Value::Text(s) => Ok(format!("s{}", s)),
@@ -1373,6 +1378,7 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Capsule(_) => true,
             Value::Complex(z) => z.real != 0.0 || z.imag != 0.0,
             Value::Imaginary(n, _) => *n != 0.0,
             Value::Collection(cell, _) => cell.borrow().is_true(),
@@ -1419,7 +1425,7 @@ impl Value {
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
             Value::Words(..) | Value::Set(_) | Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
-            Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
+            Value::Capsule(_) | Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().as_big(),
             Value::TextMethod(..) | Value::Descriptor(_) | Value::Faint(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Collection(cell, _) => cell.borrow().as_big(),
@@ -1439,6 +1445,7 @@ impl Value {
     /// pointer.
     pub fn same_value(&self, other: &Value) -> bool {
         match (self, other) {
+            (Value::Capsule(a), Value::Capsule(b)) => Rc::ptr_eq(a, b),
             (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
             (Value::Native(x, a), Value::Native(y, b)) => x == y && a == b,
             (Value::ByteKind(x, _), Value::ByteKind(y, _)) => x == y,
@@ -1545,6 +1552,7 @@ impl Value {
         // before the number tower is entered or a cell is looked into.
         // These three are the great bulk of all the asking.
         match (self, other) {
+            (Value::Capsule(a), Value::Capsule(b)) => return Rc::ptr_eq(a, b),
             (Value::Small(here), Value::Small(there)) => return here == there,
             (Value::Huge(here), Value::Huge(there)) => return here == there,
             (Value::Text(here), Value::Text(there)) => return here == there,
@@ -1670,6 +1678,7 @@ impl Value {
     /// worth alone. Nothing for kinds that have no place of their own.
     pub fn same_place(&self, other: &Value) -> bool {
         match (self, other) {
+            (Value::Capsule(a), Value::Capsule(b)) => Rc::ptr_eq(a, b),
             (Value::Adapter(first),Value::Adapter(second))=>Rc::ptr_eq(first,second),
             (Value::Bond(x), _) => x.borrow().same_place(other),
             (_, Value::Bond(y)) => self.same_place(&y.borrow()),
@@ -1871,6 +1880,7 @@ impl Value {
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
+            Value::Capsule(capsule) => capsule.representation(),
             Value::Complex(z) => crate::complex::shown(z),
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
             Value::Collection(cell, _) => shown_once(cell, "[...]", |held| held.plain()),
@@ -1946,6 +1956,10 @@ impl Value {
             Value::Adapter(w) if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") => {
                 let owner = match &w.1[1] { Value::Class(c) => c.name.as_str(), _ => "" };
                 format!("<attribute '{}' of '{}' objects>", w.1[0].plain(), owner)
+            },
+            Value::Adapter(w) if w.0 == 205 => match &w.1[1] {
+                Value::Class(owner) => format!("<attribute '{}' of '{}' objects>", w.1[2].plain(), owner.name),
+                _ => "<member wrapper>".to_string(),
             },
             Value::Adapter(w) if w.0 == 29 => match w.1.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
