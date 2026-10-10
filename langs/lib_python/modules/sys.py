@@ -611,3 +611,5 @@ path_importer_cache = {}
 path_hooks = [_zip_path_hook, _file_path_hook]
 import _imp
 meta_path = [_PathFinder, _SourceFinder(), _imp._NativeFinder]
+
+stdlib_module_names = frozenset(__load_module('', 'names'))

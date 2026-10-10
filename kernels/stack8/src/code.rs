@@ -1080,8 +1080,8 @@ impl Routine {
         if supplied.len() != self.code_constants.len() {
             return Err("NotImplementedError: changing the constant table length is unavailable".into());
         }
-        let replacements: Vec<Value> = supplied.iter().map(|value| match value.contents() {
-            Value::Adapter(parts) if parts.0 == 7 => parts.1[0].clone(),
+        let replacements: Vec<Value> = supplied.iter().zip(&self.code_constants).map(|(value, original)| match value.contents() {
+            Value::Adapter(parts) if parts.0 == 7 && matches!(original, Value::Routine(_)) => parts.1[0].clone(),
             other => other,
         }).collect();
         let embedded = self.embedded_integers.clone().unwrap_or_else(|| self.code_constants.iter()

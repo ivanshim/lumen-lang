@@ -4406,9 +4406,9 @@ impl<'a> Engine<'a> {
             _ => None,
         });
         let supplied = namespace.is_some();
-        let restoring = program.globe.is_none() && !self.function_books.is_empty();
+        let restoring = namespace.is_none() && (program.globe.is_some() || !self.function_books.is_empty());
         let earlier = if supplied || restoring {
-            let next = namespace.or_else(|| self.function_books.first().cloned().flatten());
+            let next = namespace.or_else(|| program.globe.is_none().then(|| self.function_books.first().cloned().flatten()).flatten());
             Some(std::mem::replace(&mut self.outer_book, next))
         } else { None };
         if supplied { self.function_books.push(earlier.clone().flatten()); }
@@ -6078,7 +6078,10 @@ impl<'a> Engine<'a> {
         }
     }
 
-    fn record_trace(&mut self, raised: &Value, _program: &Routine) {
+    fn record_trace(&mut self, raised: &Value, program: &Routine) {
+        if self.lang.module_path.is_some() && program.written_in.as_ref().and_then(|file| self.module_slots.get(file)).is_some_and(|(_, module)| {
+            matches!(module.as_str(), "importlib._bootstrap" | "importlib._bootstrap_external" | "_zipimport_path" | "_runtime_import") || module == "importlib" && program.ident == "_native_import"
+        }) { return; }
         let Value::Object(object) = raised else { return };
         if !self.exception_class(&object.class_now()) || self.lang.trace_fields.len() < 11 { return; }
         let Some(frame) = self.trace_frame.clone() else { return };
@@ -7552,7 +7555,31 @@ impl<'a> Engine<'a> {
             .is_some_and(|flag| flag.is_true())
     }
 
+    fn module_shadow_hint(&self, path: &str) -> Option<String> {
+        let module = self.module_cache_value(path)?;
+        let spec = Self::stored_module_member(&module, "__spec__")?;
+        let Value::Text(origin) = Self::stored_module_member(&spec, "origin")? else { return None };
+        let system = self.modules.get("sys")?;
+        let entries = Self::stored_module_member(system, "path")?;
+        let first = match entries { Value::Array(items) | Value::Tuple(items) => items.first()?.contents(), _ => return None };
+        let Value::Text(directory) = first else { return None };
+        let directory = if directory.is_empty() { std::env::current_dir().ok()? } else { std::path::PathBuf::from(directory.as_ref()) };
+        let source = std::path::Path::new(origin.as_ref());
+        let containing = if source.file_name()?.to_str()? == "__init__.py" { source.parent()?.parent()? } else { source.parent()? };
+        if std::fs::canonicalize(containing).ok()? != std::fs::canonicalize(directory).ok()? { return None; }
+        let Value::Set(names) = Self::stored_module_member(system, "stdlib_module_names")? else { return None };
+        let standard = names.borrow().held.values().any(|value| matches!(value.contents(), Value::Text(word) if word.as_ref() == path));
+        if standard {
+            Some(format!(" (consider renaming '{origin}' since it has the same name as the standard library module named '{path}' and prevents importing that standard library module)"))
+        } else if self.module_initializing(path) {
+            Some(format!(" (consider renaming '{origin}' if it has the same name as a library you intended to import)"))
+        } else { None }
+    }
+
     pub(super) fn module_absence_text(&self, path: &str, member: &str) -> String {
+        if let Some(hint) = self.module_shadow_hint(path) {
+            return format!("module '{path}' has no attribute '{member}'{hint}");
+        }
         if self.module_initializing(path) {
             let origin = self.module_file_path(path).map(|file| format!(" from '{file}'")).unwrap_or_default();
             return format!("partially initialized module '{path}'{origin} has no attribute '{member}' (most likely due to a circular import)");
@@ -12758,6 +12785,15 @@ impl<'a> Engine<'a> {
                 let module = self.drop_top()?;
                 if let Value::Object(object) = module {
                     let fields = object.fields.borrow().clone();
+                    let owner = self.class_get(Value::Object(object.clone()), "__name__", false)?.contents().plain();
+                    if !fields.iter().any(|(key, _)| key == "__all__") {
+                        let dictionary = self.class_get(Value::Object(object.clone()), "__dict__", false)?;
+                        for key in self.comprehension_items(&dictionary)? {
+                            if !matches!(key.contents(), Value::Text(_)) {
+                                return Err(format!("TypeError: Key in {owner}.__dict__ must be str, not {}", key.core_kind()).into());
+                            }
+                        }
+                    }
                     // A module naming its __all__ is read out by exactly
                     // those names, the way the reference reads a
                     // wildcard import; what else it keeps stays its own.
@@ -12770,7 +12806,7 @@ impl<'a> Engine<'a> {
                             for item in self.comprehension_items(&held)? {
                                 match item {
                                     Value::Text(word) => names.push(word.to_string()),
-                                    other => return Err(format!("TypeError: Item in {}.__all__ must be str, not {}", object.class.name, other.core_kind()).into()),
+                                    other => return Err(format!("TypeError: Item in {}.__all__ must be str, not {}", owner, other.core_kind()).into()),
                                 }
                             }
                             Some(names)
@@ -21660,6 +21696,10 @@ impl<'a> Engine<'a> {
             // What the run has bound under a name, by name: the
             // classes, and the routines.
             Builtin::ModuleLoad => {
+                if args.len() == 2 && matches!(&args[1], Value::Text(mode) if mode.as_ref() == "names") {
+                    let names: std::collections::BTreeSet<_> = self.module_sources.keys().map(|word| word.split('.').next().unwrap_or(word).to_string()).collect();
+                    return Ok(Value::tuple(names.iter().map(|word| Value::text(word)).collect()));
+                }
                 if args.len() == 2 {
                     let path = args[0].display(&sp);
                     if matches!(args[1], Value::Flag(false)) { return Ok(Value::Flag(self.module_sources.contains_key(&path) || self.sys_path_source(&path).is_some())); }
@@ -26545,7 +26585,14 @@ impl Engine<'_> {
         if package {
             match self.import_module(&child) {
                 Ok(value) => return Ok(value),
-                Err(Fault::Note(ref text)) if self.lang.import_missing.first().is_some_and(|head| text.starts_with(head)) && self.absent_import(text).as_deref() == Some(child.as_str()) => {},
+                Err(fault) if self.fault_names(&fault, "ModuleNotFoundError") => {
+                    let missing = match &fault {
+                        Fault::Note(text) => self.absent_import(text),
+                        Fault::Thrown(error) => self.class_get(error.clone(), "name", false).ok().map(|held| held.contents().plain()),
+                        _ => None,
+                    };
+                    if missing.as_deref() != Some(child.as_str()) { return Err(fault); }
+                },
                 Err(fault) => return Err(fault),
             }
         }
@@ -26585,6 +26632,7 @@ impl Engine<'_> {
         let pieces = &self.lang.import_member_missing;
         let told = if pieces.len() == 3 { format!("{}{name}{}{modname}{}", pieces[0], pieces[1], pieces[2]) }
             else { format!("ImportError: cannot import name '{name}' from '{modname}'") };
+        if let Some(hint) = self.module_shadow_hint(&modname) { return format!("{told}{hint}"); }
         let told = if self.lang.module_path.is_some() && self.module_initializing(&modname) {
             format!("ImportError: cannot import name '{name}' from partially initialized module '{modname}' (most likely due to a circular import)")
         } else { told };
@@ -29287,11 +29335,21 @@ impl Engine<'_> {
             let fields = code.fields.borrow();
             let Some((_, Value::Routine(program))) = fields.iter().find(|(key, _)| key == "\0compiled_program") else { return Err("ValueError: no compiled instruction graph".into()); };
             let Some((_, Value::Text(bindings))) = fields.iter().find(|(key, _)| key == "\0compiled_bindings") else { return Err("ValueError: no compiled bindings".into()); };
-            let bindings: serde_json::Value = serde_json::from_str(bindings).map_err(|e| format!("ValueError: {e}"))?;
+            let mut scope: crate::compile::Registry = serde_json::from_str(bindings).map_err(|e| format!("ValueError: {e}"))?;
             let program = if fields.iter().any(|(key, _)| key == "\0replace_constants") {
                 let values = fields.iter().find_map(|(key, value)| match (key.as_str(), value) { ("co_consts", Value::Tuple(values)) => Some(values), _ => None }).ok_or("ValueError: missing code constants")?;
-                Rc::new(program.replacing_constants(values)?)
+                let mut relocated = values.to_vec();
+                for (index, value) in relocated.iter_mut().enumerate() {
+                    if matches!(program.code_constants.get(index), Some(Value::Routine(_))) { continue; }
+                    if !matches!(value.contents(), Value::Adapter(parts) if parts.0 == 7) { continue; }
+                    let writer = self.lang.code_cache[0].clone();
+                    let Value::Bytes(bytes, ..) = self.code_cache(&writer, vec![value.clone()])? else { return Err(self.source_unready()); };
+                    let packet = serde_json::from_slice(&bytes.borrow()).map_err(|e| format!("ValueError: {e}"))?;
+                    *value = Self::adapter(7, vec![Value::Routine(crate::cache::program(packet, &mut scope)?)]);
+                }
+                Rc::new(program.replacing_constants(&relocated)?)
             } else { program.clone() };
+            let bindings = serde_json::to_value(scope).map_err(|e| format!("ValueError: {e}"))?;
             let (graph, origins, routines) = crate::cache::encoded(&program)?;
             let mode = match fields[2].1 { Value::Small(n) => n, _ => return Err("ValueError: invalid code mode".into()) };
             let packet = serde_json::json!({"abi": "lumen-stack8-v5", "file": fields[1].1.plain(),

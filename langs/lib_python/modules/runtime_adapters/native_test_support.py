@@ -939,6 +939,8 @@ def load_package_tests(pkg_dir, loader, standard_tests, pattern):
                                         pattern=pattern)
     except NotImplementedError:
         package_tests = _discover_package_tests(pkg_dir, loader, top_dir, pattern)
+    if package_tests.countTestCases() == 0:
+        package_tests = _discover_package_tests(pkg_dir, loader, top_dir, pattern)
     standard_tests.addTests(package_tests)
     return standard_tests
 

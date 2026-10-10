@@ -891,6 +891,8 @@ honestly when those extensions are unavailable.
 | `stringprep.py` | `52618dbafb21fac84147d4241a364b08d1f0d803806cb86e4fcb921c200c754d` |
 | `encodings/cp273.py` | `6c6aec3b213ea3aebc2c526dd4d121c95d4a25a2fc928a87cd80f8448988185f` |
 | `encodings/mbcs.py` | `f6ed445ed537c9f856d8defe8b56505727737d0dc9348d0a877abedab4bdd864` |
+| `langs/lib_python/modules/runtime_adapters/code_test_support.py` | Restored accepted runtime overlay; compiled `co_positions()` capability query and upstream late-deletion helper from `Lib/test/support/__init__.py` | 3.14.8 / `v3.14.8` | Runtime capability adapter | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/runtime_adapters/test_package.py` | Restored accepted package-path binding for relocated reference suites | Runtime adapter | Local suite layout | [PSF](python-3.14.8/LICENSE) |
 
 
 

@@ -6022,6 +6022,14 @@ impl<'a> Machine<'a> {
     }
 
     fn save_traceback(&mut self, value: &Value, repeat: bool) {
+        if self.table.has_any("ext.system.module.path") {
+            let internal = self.loaded_spaces.get(&self.written_in).is_some_and(|name| match name.as_str() {
+                "importlib._bootstrap" | "importlib._bootstrap_external" | "_runtime_import" | "_zipimport_path" => true,
+                "importlib" => self.active_trace.as_ref().is_some_and(|frame| matches!(frame.holds.borrow().get(5).map(|entry| &entry.1), Some(Value::Bound(body, _)) if body.ident == "_native_import")),
+                _ => false,
+            });
+            if internal { return; }
+        }
         let Value::Thing(raised) = value else { return };
         let keys = self.rules.trace_words;
         if keys.len() < 11 { return; }
@@ -10066,7 +10074,31 @@ impl<'a> Machine<'a> {
         match Self::imported_attribute(&spec, "_initializing") { Some(flag) => flag.is_true(), None => false }
     }
 
+    fn namespace_shadow_notice(&self, title: &str) -> Option<String> {
+        let namespace = self.cached_import(title)?;
+        let metadata = Self::imported_attribute(&namespace, "__spec__")?;
+        let filename = match Self::imported_attribute(&metadata, "origin")? { Value::Text(word) => word, _ => return None };
+        let sys = self.imported.get("sys")?;
+        let search = Self::imported_attribute(sys, "path")?;
+        let head = match search { Value::Vector(row) | Value::Tuple(row) => row.first()?.settled(), _ => return None };
+        let Value::Text(head) = head else { return None };
+        let root = match head.as_ref() { "" => std::env::current_dir().ok()?, text => std::path::PathBuf::from(text) };
+        let file = std::path::PathBuf::from(filename.as_ref());
+        let mut directory = file.parent()?;
+        if file.file_name()? == "__init__.py" { directory = directory.parent()?; }
+        let matches_search = directory.canonicalize().ok()? == root.canonicalize().ok()?;
+        if !matches_search { return None; }
+        let inventory = match Self::imported_attribute(sys, "stdlib_module_names")? { Value::Set(store) => store, _ => return None };
+        let standard = inventory.borrow().entries.iter().any(|(_, entry)| matches!(entry.settled(), Value::Text(word) if word.as_ref() == title));
+        match (standard, self.import_is_pending(title)) {
+            (true, _) => Some(format!(" (consider renaming '{filename}' since it has the same name as the standard library module named '{title}' and prevents importing that standard library module)")),
+            (_, true) => Some(format!(" (consider renaming '{filename}' if it has the same name as a library you intended to import)")),
+            _ => None,
+        }
+    }
+
     pub(super) fn namespace_absence_message(&self, title: &str, wanted: &str) -> String {
+        if let Some(notice) = self.namespace_shadow_notice(title) { return format!("module '{title}' has no attribute '{wanted}'{notice}"); }
         let child = format!("{title}.{wanted}");
         match (self.import_is_pending(title), self.import_is_pending(&child)) {
             (true, _) => {
@@ -20631,6 +20663,14 @@ impl<'a> Machine<'a> {
             Prim::SpreadModule => {
                 if let Value::Thing(namespace) = &v[0] {
                     let names = namespace.holds.borrow().clone();
+                    let canonical = self.read_class_member(v[0].clone(), "__name__", false).map_err(|away| { self.got_away = Some(away); self.bad_answer() })?.settled().bare();
+                    if names.iter().all(|(word, _)| word != "__all__") {
+                        let attributes = self.read_class_member(v[0].clone(), "__dict__", false).map_err(|away| { self.got_away = Some(away); self.bad_answer() })?;
+                        for member in self.core_collect(&attributes)? {
+                            if let Value::Text(_) = member.settled() { continue; }
+                            return Err(format!("TypeError: Key in {canonical}.__dict__ must be str, not {}", member.kind_word()));
+                        }
+                    }
                     // A module naming its __all__ is read out by exactly
                     // those names, the way the reference reads a
                     // wildcard import; what else it keeps stays its own.
@@ -20641,7 +20681,7 @@ impl<'a> Machine<'a> {
                             for item in self.core_collect(&entry)? {
                                 match item {
                                     Value::Text(word) => wanted.push(word.to_string()),
-                                    other => return Err(format!("TypeError: Item in {}.__all__ must be str, not {}", namespace.of.name, other.kind_word()).into()),
+                                    other => return Err(format!("TypeError: Item in {}.__all__ must be str, not {}", canonical, other.kind_word()).into()),
                                 }
                             }
                             Some(wanted)
@@ -20728,6 +20768,11 @@ impl<'a> Machine<'a> {
                 self.make_instance(kind, v.to_vec()).map_err(|fault| self.suspension_fault(fault))?
             }
             Prim::LoadModule => {
+                if v.len() == 2 && matches!(&v[1], Value::Text(query) if query.as_ref() == "names") {
+                    let mut inventory: Vec<_> = self.library_sources.keys().map(|name| name.split('.').next().unwrap_or(name).to_owned()).collect();
+                    inventory.sort(); inventory.dedup();
+                    return Ok(Value::tuple(inventory.into_iter().map(|name| Value::text(&name)).collect()));
+                }
                 match (v.len(), v.get(1)) {
                     (2, Some(Value::Flag(false))) => Value::Flag(self.library_sources.contains_key(&v[0].bare()) || self.sys_path_source(&v[0].bare()).is_some()),
                     (2, Some(Value::Flag(true))) => self.sys_path_source(&v[0].bare()).map(|entry| entry.0).or_else(|| self.library_module_file(&v[0].bare())).map_or(Value::Nil, |file| Value::text(&file)),
@@ -27048,8 +27093,12 @@ impl Machine<'_> {
             match self.load_namespace(&full) {
                 Ok(child) => return Ok(child),
                 Err(text) => {
-                    let missing = self.table.strings("ext.stmt.import.missing").first().is_some_and(|head| text.starts_with(head));
-                    if !missing || self.import_source_not_there(&text).as_deref() != Some(full.as_str()) { return Err(text); }
+                    let absent = match self.got_away.as_ref() {
+                        Some(Escape::Thrown(Value::Thing(error))) if error.blueprint().goes_by("ModuleNotFoundError", false) => error.holds.borrow().iter().find(|(key, _)| key == "name").map(|(_, value)| value.settled().bare()),
+                        None | Some(Escape::Error(_)) => self.import_source_not_there(&text),
+                        _ => None,
+                    };
+                    if absent.as_deref() != Some(full.as_str()) { return Err(text); }
                     self.got_away = None;
                 },
             }
@@ -27092,6 +27141,7 @@ impl Machine<'_> {
             [head, mid, tail] => format!("{head}{wanted}{mid}{modname}{tail}"),
             _ => format!("ImportError: cannot import name '{wanted}' from '{modname}'"),
         };
+        if let Some(notice) = self.namespace_shadow_notice(&modname) { return format!("{told}{notice}"); }
         let told = if self.table.has_any("ext.system.module.path") && self.import_is_pending(&modname) {
             format!("ImportError: cannot import name '{wanted}' from partially initialized module '{modname}' (most likely due to a circular import)")
         } else { told };
@@ -31846,10 +31896,25 @@ impl Machine<'_> {
             let attributes = object.holds.borrow();
             let routine = attributes.iter().find(|(name, _)| name == "\0native_forms").and_then(|(_, value)| match value { Value::Routine(body) => Some(body.clone()), _ => None }).ok_or("ValueError: code has no compiled forms")?;
             let names = attributes.iter().find(|(name, _)| name == "\0form_names").and_then(|(_, value)| match value { Value::Text(text) => Some(text), _ => None }).ok_or("ValueError: code bindings are unavailable")?;
-            let metadata: serde_json::Value = serde_json::from_str(names).map_err(|e| format!("ValueError: {e}"))?;
+            let mut metadata: serde_json::Value = serde_json::from_str(names).map_err(|e| format!("ValueError: {e}"))?;
             let routine = if attributes.iter().any(|(name, _)| name == "\0literal_overrides") {
                 let replacement = attributes.iter().find_map(|(name, value)| if name == "co_consts" { if let Value::Tuple(row) = value { Some(row) } else { None } } else { None }).ok_or("ValueError: unavailable code literals")?;
-                Rc::new(routine.with_literals(replacement)?)
+                let mut adjusted = replacement.to_vec();
+                let mut identifiers: Vec<String> = serde_json::from_value(metadata["globals"].clone()).map_err(|error| format!("ValueError: {error}"))?;
+                for index in 0..adjusted.len() {
+                    let foreign = matches!(adjusted[index].settled(), Value::Wrapped(7, _)) && !matches!(routine.literals.get(index), Some(Value::Routine(_)));
+                    if foreign {
+                        let spelling = self.table.strings("ext.builtin.code.cache")[0].clone();
+                        let packed = self.archive_code(&spelling, &[adjusted[index].clone()])?;
+                        let Value::Octets { cell, .. } = packed else { return Err(self.source_refused()); };
+                        let record = serde_json::from_slice(&cell.borrow()).map_err(|error| format!("ValueError: {error}"))?;
+                        let imported = crate::cache::forms(record, &identifiers, None, None, None)?;
+                        identifiers = imported.globals;
+                        adjusted[index] = Value::Wrapped(7, Rc::new(vec![Value::Routine(imported.program)]).into());
+                    }
+                }
+                metadata["globals"] = serde_json::json!(identifiers);
+                Rc::new(routine.with_literals(&adjusted)?)
             } else { routine };
             let (body, spellings, bodies) = crate::cache::serialize_forms(routine)?;
             let manner = match attributes[2].1 { Value::Small(n) => n, _ => return Err("ValueError: invalid compiled mode".into()) };

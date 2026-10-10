@@ -142,3 +142,26 @@ def source_hash(key, source, /):
     for _ in range(3):
         _source_hash_round(v)
     return (v[0] ^ v[1] ^ v[2] ^ v[3]).to_bytes(8, 'little')
+
+
+def create_dynamic(spec, file=None):
+    import os
+    name = spec.name
+    origin = os.fspath(spec.origin)
+    if '\x00' in name or (b'\x00' in origin if isinstance(origin, bytes) else '\x00' in origin):
+        raise ValueError('embedded null character')
+    raise ImportError('dynamic extension loading is not supported', name=name, path=origin)
+
+
+def get_frozen_object(name, data=None):
+    if data is None:
+        raise ImportError(f"No such frozen object named {name!r}", name=name)
+    import marshal
+    import types
+    try:
+        code = marshal.loads(data)
+    except (EOFError, ValueError, TypeError, UnicodeError):
+        raise ImportError(f"Frozen object named {name!r} is invalid", name=name) from None
+    if not isinstance(code, types.CodeType):
+        raise ImportError(f"Frozen object named {name!r} is invalid", name=name)
+    return code

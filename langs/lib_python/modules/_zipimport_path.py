@@ -18,7 +18,9 @@ def find(fullname, path):
                 source_file = os.path.abspath(spec.origin)
                 # Some embedded packages retain a flat source file and a virtual initializer.
                 virtual_package = native_file.endswith('/__init__.py') and not os.path.isfile(native_file)
-                if source_file == native_file or virtual_package and source_file == native_file[:-12] + '.py':
+                library_root = os.path.dirname(os.path.dirname(_bootstrap_external.__file__))
+                embedded = source_file.startswith(library_root + os.sep)
+                if embedded and (source_file == native_file or virtual_package and source_file == native_file[:-12] + '.py'):
                     return None
         return spec
     return None

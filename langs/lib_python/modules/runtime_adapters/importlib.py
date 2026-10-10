@@ -42,6 +42,8 @@ def _native_spec(module):
         spec = _bootstrap_external.spec_from_file_location(name, filename)
     if spec is not None:
         _bootstrap._init_module_attrs(spec, module, override=True)
+        if spec.origin == 'built-in' and hasattr(module, '__file__'):
+            del module.__file__
 
 from _runtime_import import SourceLoader as _BootstrapSourceLoader
 for _module in list(_sys.modules.values()):

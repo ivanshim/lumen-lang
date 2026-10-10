@@ -1149,11 +1149,11 @@ impl Routine {
             return Err("NotImplementedError: changing the constant table length is unavailable".into());
         }
         let mut literals = Vec::new();
-        for value in values {
-            literals.push(match value.settled() {
-                Value::Wrapped(7, parts) => parts[0].clone(),
-                plain => plain,
-            });
+        for (index, value) in values.iter().enumerate() {
+            let replacement = value.settled();
+            literals.push(if matches!(self.literals[index], Value::Routine(_)) {
+                match replacement { Value::Wrapped(7, parts) => parts[0].clone(), other => other }
+            } else { replacement });
         }
         let inline = self.immediate_slots.clone().unwrap_or_else(|| self.literals.iter().map(|value|
             if let Value::Small(n) = value { *n >= 0 && *n < 256 } else { false }).collect());
