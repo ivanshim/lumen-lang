@@ -30285,7 +30285,7 @@ impl Machine<'_> {
         let standing = if op == Prim::GetMember { input.first().cloned() } else { None };
         if !matches!(op, Prim::IdentityOf | Prim::HeapNative | Prim::ContextStore | Prim::TraceBridge | Prim::NamespaceRead) {
             for (position, item) in input.iter_mut().enumerate() {
-                if op == Prim::SetMember && position == 2 { continue; }
+                if matches!(op, Prim::SetMember | Prim::GetMember) && position == 2 { continue; }
                 if op == Prim::Dictionary && item.kind_word() == "mappingproxy" { *item = item.proxy_pairs(); continue; }
                 // `isinstance` asks after a view itself, not after the
                 // row its members would stand as, so that a claim made
