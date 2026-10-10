@@ -75,6 +75,8 @@ def _zip_member_exists(archive, member):
 # file and bytes, or None when the archive holds neither a package
 # directory nor a module file for the leaf.
 def _zip_module_source(where, leaf):
+    if not _zip_archive_hinted(where):
+        return None
     import os, zipfile
     split = _zip_archive_and_member(where)
     if split is None:
@@ -100,6 +102,11 @@ def _zip_module_source(where, leaf):
 # spelled the way the reference spells it, so the namespace reader can
 # resolve it back through the archive.
 def _zip_namespace_portion(where, leaf):
+    # An ordinary search-path directory is not worth reaching for the
+    # archive library over, and reaching for it while the library is
+    # still forming would import it from under its own import.
+    if not _zip_archive_hinted(where):
+        return None
     import os, zipfile
     split = _zip_archive_and_member(where)
     if split is None:
