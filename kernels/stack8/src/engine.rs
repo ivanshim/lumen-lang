@@ -25054,6 +25054,13 @@ impl Engine<'_> {
         // A cursor over a list, or over a window upon a map, reads it as
         // it stands, so what iter is handed is looked at before its
         // cell is opened.
+        if b == Builtin::Iter && args.len() == 1 {
+            if let Some(Value::View(proxy)) = Self::view_in(&args[0]) {
+                if proxy.1 == "mapping" && matches!(proxy.0.contents(), Value::Object(_)) {
+                    return self.core_iterator(&proxy.0.contents());
+                }
+            }
+        }
         let living = if b == Builtin::Iter && args.len() == 1 { self.living_source(&args[0]) } else { None };
         let window = match (b, args.first()) { (Builtin::Repr, Some(Value::View(view))) => Some(view.clone()), _ => None };
         // A member read by name is bound to the value as it stands, so

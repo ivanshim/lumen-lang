@@ -36,7 +36,6 @@ def unwrap(func, *, stop=None):
 # Coroutine recognition follows CPython v3.14.8 inspect; PSF License.
 import functools
 import types
-_void = object()
 _is_coroutine_mark = object()
 
 def ismethod(object):
@@ -232,3 +231,10 @@ def stack(context=1):
 def currentframe():
     # The frame of the caller of currentframe.
     return sys._getframe(1)
+
+
+def isabstract(object):
+    """Recognize abstract classes through their abstract method metadata."""
+    if not isinstance(object, type):
+        return False
+    return bool(getattr(object, '__abstractmethods__', False))
