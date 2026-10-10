@@ -139,11 +139,16 @@ def _warn_invalid_escape(text):
     # warns about it, naming the text it read and the spelling that would
     # have been meant.
     import warnings
-    warnings.warn(
-        '"%s" is an invalid escape sequence. Such sequences will not '
-        'work in the future. Did you mean "%s"? A raw string is also '
-        'an option.' % (text, text.replace('\\', '\\\\')),
-        SyntaxWarning, stacklevel=3)
+    try:
+        warnings.warn(
+            '"%s" is an invalid escape sequence. Such sequences will not '
+            'work in the future. Did you mean "%s"? A raw string is also '
+            'an option.' % (text, text.replace('\\', '\\\\')),
+            SyntaxWarning, stacklevel=3)
+    except SyntaxWarning as error:
+        # The parser promotes an invalid-escape warning treated as an error.
+        raise SyntaxError(str(error).replace(
+            ' Such sequences will not work in the future.', '')) from None
 
 def _read_escape(source, i, is_bytes):
     # i points just past the backslash. Returns the replacement text (or
@@ -2368,9 +2373,8 @@ class _Parser:
 
     # Parse statement grammar independently from the tree consumers.
     def match_runs_to_colon(self):
-        # `match` opens a match statement only when a ':' follows its
-        # subject on the same logical line; otherwise it is an ordinary
-        # name (a target, a call, an operand), as the reference reads it.
+        # A match header ends with ':' and a newline; annotation and
+        # lambda colons do not end the header, and ';' ends the statement.
         depth = 0
         j = self.at + 1
         while j < len(self.toks):
@@ -2382,8 +2386,11 @@ class _Parser:
                     depth += 1
                 elif tok.text in ')]}':
                     depth -= 1
-                elif tok.text == ':' and depth == 0:
-                    return True
+                elif depth == 0:
+                    if tok.text == ';':
+                        return False
+                    if tok.text == ':' and self.toks[j + 1].kind == 'newline':
+                        return True
             j += 1
         return False
 
