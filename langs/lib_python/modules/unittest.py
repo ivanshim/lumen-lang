@@ -6,6 +6,13 @@ _host_load_module = __load_module
 _host_program_namespace = __program_namespace
 _traceback_module = None
 
+def _clear_exception_frames(traceback):
+    if traceback is not None:
+        global _traceback_module
+        if _traceback_module is None:
+            _traceback_module = _host_load_module('traceback')
+        _traceback_module.clear_frames(traceback)
+
 # Assertions and the test lifecycle live beside the modules they serve.
 class SkipTest(Exception):
     pass
@@ -30,13 +37,9 @@ class _Raises:
     def __exit__(self, kind, value, traceback):
         if kind is None:
             raise AssertionError(_class_name(self.expected) + ' not raised')
-        if traceback is not None:
-            global _traceback_module
-            if _traceback_module is None:
-                _traceback_module = _host_load_module('traceback')
-            _traceback_module.clear_frames(traceback)
         if not isinstance(value, self.expected):
             return False
+        _clear_exception_frames(traceback)
         self.exception = value.with_traceback(None)
         # An exception's string is its own message, the way CPython's
         # assertRaisesRegex reads it; a `message` attribute on the
@@ -275,8 +278,15 @@ class TestCase:
     def assertRaises(self, expected, *args, **keywords):
         if len(args) == 0:
             return _Raises(expected)
-        with _Raises(expected):
+        try:
             args[0](*args[1:], **keywords)
+        except BaseException as error:
+            if not isinstance(error, expected):
+                raise
+            _clear_exception_frames(error.__traceback__)
+            error.with_traceback(None)
+            return
+        raise AssertionError(_class_name(expected) + ' not raised')
 
     def assertRaisesRegex(self, expected, phrase, *args, **keywords):
         if len(args) == 0:
