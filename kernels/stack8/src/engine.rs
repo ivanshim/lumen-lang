@@ -26081,6 +26081,19 @@ impl Engine<'_> {
                         Value::Null
                     }
                     Value::Small(9) => Value::Flag(self.finalizing),
+                    Value::Small(10) if args.len() == 2 => {
+                        let mut link = args[1].clone();
+                        if !matches!(link, Value::Trace(_) | Value::Null) { return Ok(Value::Flag(false)); }
+                        while let Value::Trace(current) = link {
+                            match self.value_method(&Value::Object(current.frame.clone()), "clear", Vec::new(), Vec::new()) {
+                                Ok(_) => (),
+                                Err(message) if message.starts_with("RuntimeError:") => (),
+                                Err(message) => return Err(message),
+                            }
+                            link = current.next.borrow().clone();
+                        }
+                        Value::Flag(true)
+                    }
                     Value::Small(5) if args.len() == 2 => Value::Small(args[1].retained_count().ok_or("NotImplementedError: this value has no ownership identity")?.python_count()),
                     _ => return Err("TypeError: invalid tracing operation".into()),
                 }

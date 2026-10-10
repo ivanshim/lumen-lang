@@ -488,7 +488,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("tomllib._parser", include_str!("tomllib/_parser.py"), "tomllib/_parser.py"),
     ("tomllib._re", include_str!("tomllib/_re.py"), "tomllib/_re.py"),
     ("tomllib._types", include_str!("tomllib/_types.py"), "tomllib/_types.py"),
-    ("traceback", include_str!("traceback.py"), "traceback.py"),
+    ("traceback", concat!(include_str!("traceback.py"), "\n", include_str!("runtime_adapters/traceback.py")), "traceback.py"),
     ("types", include_str!("types.py"), "types.py"),
     ("typing", include_str!("typing.py"), "typing.py"),
     ("unicodedata", concat!(include_str!("unicodedata.py"), "\n", include_str!("runtime_adapters/unicodedata.py")), "unicodedata.py"),

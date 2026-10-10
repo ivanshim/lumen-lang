@@ -31745,6 +31745,19 @@ impl Machine<'_> {
                     [Value::Small(7), callback] => { self.agen_callbacks.0 = callback.clone(); Ok(Value::Nil) }
                     [Value::Small(8), callback] => { self.agen_callbacks.1 = callback.clone(); Ok(Value::Nil) }
                     [Value::Small(9)] => Ok(Value::Flag(self.shutting_down)),
+                    [Value::Small(10), traceback] => {
+                        let mut link = traceback.clone();
+                        if !matches!(link, Value::Backtrace(_) | Value::Nil) { return Ok(Value::Flag(false)); }
+                        while let Value::Backtrace(current) = link {
+                            match self.value_member(&Value::Thing(current.activation.clone()), "clear", Vec::new(), Vec::new()) {
+                                Ok(_) => (),
+                                Err(Escape::Error(message)) if message.starts_with("RuntimeError:") => (),
+                                Err(escape) => return Err(self.carried_native_fault(escape)),
+                            }
+                            link = current.following.borrow().clone();
+                        }
+                        Ok(Value::Flag(true))
+                    }
                     [Value::Small(5), subject] => subject.ownership_count().map(|state| Value::Small(state.as_python()))
                         .ok_or_else(|| "NotImplementedError: this value has no ownership identity".into()),
                     _ => Err("TypeError: invalid tracing operation".into()),
