@@ -203,19 +203,24 @@ class TestCase:
         return getattr(self, '_test_module', '__main__') + '.' + _class_name(self) + '.' + self._method
 
     def assertNotEqual(self, a, b, msg=None):
-        self._check(a != b, str(a) + ' == ' + str(b), msg)
+        if not (a != b):
+            self._check(False, str(a) + ' == ' + str(b), msg)
 
     def assertTrue(self, value, msg=None):
-        self._check(not not value, str(value) + ' is not true', msg)
+        if not value:
+            self._check(False, str(value) + ' is not true', msg)
 
     def assertFalse(self, value, msg=None):
-        self._check(not value, str(value) + ' is not false', msg)
+        if value:
+            self._check(False, str(value) + ' is not false', msg)
 
     def assertIs(self, a, b, msg=None):
-        self._check(a is b, str(a) + ' is not ' + str(b), msg)
+        if a is not b:
+            self._check(False, str(a) + ' is not ' + str(b), msg)
 
     def assertIsNot(self, a, b, msg=None):
-        self._check(a is not b, 'unexpected identity', msg)
+        if a is b:
+            self._check(False, 'unexpected identity', msg)
 
     def assertIsNone(self, value, msg=None):
         self.assertIs(value, None, msg)
@@ -224,13 +229,16 @@ class TestCase:
         self.assertIsNot(value, None, msg)
 
     def assertIn(self, member, container, msg=None):
-        self._check(member in container, str(member) + ' not found in ' + str(container), msg)
+        if member not in container:
+            self._check(False, str(member) + ' not found in ' + str(container), msg)
 
     def assertNotIn(self, member, container, msg=None):
-        self._check(member not in container, str(member) + ' unexpectedly found', msg)
+        if member in container:
+            self._check(False, str(member) + ' unexpectedly found', msg)
 
     def assertIsInstance(self, value, kind, msg=None):
-        self._check(isinstance(value, kind), 'value is not an instance of the requested class', msg)
+        if not isinstance(value, kind):
+            self._check(False, 'value is not an instance of the requested class', msg)
 
     def assertGreater(self, a, b, msg=None):
         if not (a > b):
@@ -258,7 +266,8 @@ class TestCase:
             close = difference <= delta
         else:
             close = difference < 0.5 * 10 ** (-places)
-        self._check(a == b or close, str(a) + ' != ' + str(b) + ' within tolerance', msg)
+        if not (a == b or close):
+            self._check(False, str(a) + ' != ' + str(b) + ' within tolerance', msg)
 
     def assertCountEqual(self, first, second, msg=None):
         left = list(first)
@@ -332,17 +341,17 @@ class TestCase:
     def shortDescription(self):
         return None
 
-    def assertNotIsSubclass(self, cls, superclass, msg=None):
-        self._check(not issubclass(cls, superclass), _representation(cls) + ' is a subclass of ' + _representation(superclass), msg)
-
     def assertIsSubclass(self, cls, superclass, msg=None):
-        self._check(issubclass(cls, superclass), _representation(cls) + ' is not a subclass of ' + _representation(superclass), msg)
+        if not issubclass(cls, superclass):
+            self._check(False, _representation(cls) + ' is not a subclass of ' + _representation(superclass), msg)
 
     def assertNotIsSubclass(self, cls, superclass, msg=None):
-        self._check(not issubclass(cls, superclass), _representation(cls) + ' is a subclass of ' + _representation(superclass), msg)
+        if issubclass(cls, superclass):
+            self._check(False, _representation(cls) + ' is a subclass of ' + _representation(superclass), msg)
 
     def assertNotIsInstance(self, value, kind, msg=None):
-        self._check(not isinstance(value, kind), _representation(value) + ' is an instance of the requested class', msg)
+        if isinstance(value, kind):
+            self._check(False, _representation(value) + ' is an instance of the requested class', msg)
 
     def assertNotAlmostEqual(self, a, b, places=None, msg=None, delta=None):
         if delta is not None and places is not None:
@@ -354,7 +363,8 @@ class TestCase:
             close = difference <= delta
         else:
             close = difference < 0.5 * 10 ** (-places)
-        self._check(not (a == b or close), _representation(a) + ' == ' + _representation(b) + ' within tolerance', msg)
+        if a == b or close:
+            self._check(False, _representation(a) + ' == ' + _representation(b) + ' within tolerance', msg)
 
     def assertSequenceEqual(self, first, second, msg=None, seq_type=None):
         if seq_type is not None:
@@ -421,20 +431,25 @@ class TestCase:
 
     def assertHasAttr(self, obj, name, msg=None):
         marker = _Context()
-        self._check(getattr(obj, name, marker) is not marker, 'attribute ' + _representation(name) + ' is missing', msg)
+        if getattr(obj, name, marker) is marker:
+            self._check(False, 'attribute ' + _representation(name) + ' is missing', msg)
 
     def assertNotHasAttr(self, obj, name, msg=None):
         marker = _Context()
-        self._check(getattr(obj, name, marker) is marker, 'attribute ' + _representation(name) + ' is present', msg)
+        if getattr(obj, name, marker) is not marker:
+            self._check(False, 'attribute ' + _representation(name) + ' is present', msg)
 
     def assertStartsWith(self, text, prefix, msg=None):
-        self._check(text[:len(prefix)] == prefix, _representation(text) + ' does not start with ' + _representation(prefix), msg)
+        if not (text[:len(prefix)] == prefix):
+            self._check(False, _representation(text) + ' does not start with ' + _representation(prefix), msg)
 
     def assertNotStartsWith(self, text, prefix, msg=None):
-        self._check(text[:len(prefix)] != prefix, _representation(text) + ' starts with ' + _representation(prefix), msg)
+        if not (text[:len(prefix)] != prefix):
+            self._check(False, _representation(text) + ' starts with ' + _representation(prefix), msg)
 
     def assertEndsWith(self, text, suffix, msg=None):
-        self._check(suffix == '' or text[-len(suffix):] == suffix, _representation(text) + ' does not end with ' + _representation(suffix), msg)
+        if not (suffix == '' or text[-len(suffix):] == suffix):
+            self._check(False, _representation(text) + ' does not end with ' + _representation(suffix), msg)
 
     def _tail_type_check(self, text, tails, msg):
         # A prefix or suffix handed a kind it cannot compare fails with
