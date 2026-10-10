@@ -1,11 +1,14 @@
 # What a program can find out about the things it is made of.
 #
 # Functions expose code objects and generators expose their suspended
-# frames and running state. The interpreter does not keep a Python-level
-# list of all active calls, so stack() and currentframe() remain unavailable.
-# The helpers below use the available code and frame details.
+# frames and running state. The kernel hands a program the calls in
+# progress one frame at a time through sys._getframe, so stack() walks
+# that chain; currentframe() still has no single-frame answer. The
+# helpers below use the available code and frame details.
 
+import collections
 import functools
+import sys
 import types
 import annotationlib
 
@@ -82,13 +85,22 @@ def getdoc(object):
     return cleandoc(doc)
 
 
+FrameInfo = collections.namedtuple(
+    'FrameInfo', 'frame filename lineno function code_context index')
+
+
 def stack(context=1):
-    # CPython walks the calls in progress and hands back a record for
-    # each, with the frame, the file and the line. No kernel here keeps
-    # the calls in progress as anything a program can reach, so an empty
-    # list would read as a program called from nowhere, which is never
-    # true. It refuses instead.
-    raise 'NotImplementedError: inspect.stack needs the calls in progress as objects, which this runtime does not keep'
+    # The kernel keeps the calls in progress as frame objects the
+    # program reaches through sys._getframe; walk their f_back chain
+    # from the caller of this function outwards, as CPython does.
+    records = []
+    frame = sys._getframe(1)
+    while frame is not None:
+        code = frame.f_code
+        records.append(FrameInfo(
+            frame, code.co_filename, frame.f_lineno, code.co_name, None, None))
+        frame = frame.f_back
+    return records
 
 
 def currentframe():
