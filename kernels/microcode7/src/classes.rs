@@ -7517,10 +7517,16 @@ impl<'a> Machine<'a> {
             }
         }
         // An instance of precisely the requested Python type needs no
-        // hook call; subtype and reported-class questions still do.
+        // hook call; ordinary real subtypes also precede reported-class reads.
         if self.names_in_calls && !class_only {
             match (subject, choice) {
-                (Value::Thing(thing), Value::Blueprint(kind)) if Rc::ptr_eq(&thing.blueprint(), kind) => return Ok(true),
+                (Value::Thing(thing), Value::Blueprint(kind)) => {
+                    let actual = thing.blueprint();
+                    if Rc::ptr_eq(&actual, kind)
+                        || actual.ancestry.borrow().iter().any(|base| Rc::ptr_eq(base, kind)) && Self::builder_over(kind).is_none() {
+                        return Ok(true);
+                    }
+                },
                 _ => (),
             }
         }

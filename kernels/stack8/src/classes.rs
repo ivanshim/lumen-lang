@@ -7054,7 +7054,11 @@ impl<'a> Engine<'a> {
         // metaclass or reading an instance's reported __class__.
         if !subclass && self.lang.bind_names {
             if let (Value::Object(object), Value::Class(class)) = (value, wanted) {
-                if Rc::ptr_eq(&object.class_now(), class) { return Ok(true); }
+                let actual = object.class_now();
+                if Rc::ptr_eq(&actual, class)
+                    || actual.lineage.borrow().iter().any(|base| Rc::ptr_eq(base, class)) && Self::maker_beneath(class).is_none() {
+                    return Ok(true);
+                }
             }
         }
         // Native storage fixes these values' builtin type. None can supply
