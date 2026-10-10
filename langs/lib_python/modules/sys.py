@@ -237,6 +237,7 @@ class _BinaryOutput(_StandardStream):
         return os.isatty(self.fileno())
 
 class _Output(_StandardStream):
+    encoding = "utf-8"
     _fd = 1
     def __init__(self):
         self.buffer = _BinaryOutput()
@@ -254,6 +255,7 @@ class _Output(_StandardStream):
         return os.isatty(self.fileno())
 
 class _Error(_StandardStream):
+    encoding = "utf-8"
     _fd = 2
     def __init__(self):
         self.buffer = _BinaryOutput(True)
