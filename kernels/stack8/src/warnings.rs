@@ -283,36 +283,6 @@ impl Engine<'_> {
 }
 
 impl Engine<'_> {
-    fn finder_import(&mut self, path: &str) -> Flow<Option<Value>> {
-        let Some(sys) = self.modules.get("sys").cloned() else { return Ok(None); };
-        let Some(finders) = self.member_of(sys, "meta_path")? else { return Ok(None); };
-        let finders = self.core_members(&finders)?;
-        self.finder_active.insert(path.to_string());
-        let result: Res<Option<Value>> = (|| {
-            for finder in finders {
-                let own_finder = self.modules.get("_imp").and_then(|module| match module { Value::Object(object) => object.fields.borrow().iter().find(|(word, _)| word == "_NativeFinder").map(|(_, value)| value.clone()), _ => None });
-                if own_finder.is_some_and(|own| own.contents().equals(&finder.contents())) {
-                    if self.lang.warning_backend.first().is_some_and(|word| word == path) || self.module_sources.contains_key(path) || self.sys_path_source(path).is_some() { return Ok(None); }
-                    continue;
-                }
-                let spec = self.warning_method(finder, "find_spec", vec![Value::text(path), Value::Null, Value::Null])?;
-                if matches!(spec.contents(), Value::Null) { continue; }
-                let loader = self.warning_member(spec.clone(), "loader")?;
-                let module = self.warning_method(loader.clone(), "create_module", vec![spec.clone()])?;
-                if matches!(module.contents(), Value::Null) { return Err("ImportError: finder loader did not create a module".into()); }
-                if let Value::Object(object) = &module { object.fields.borrow_mut().push(("__spec__".into(), spec)); }
-                self.modules.insert(path.to_string(), module.clone()); self.module_addresses_ready.set(false); self.refresh_module_cache(path);
-                self.warning_method(loader, "exec_module", vec![module.clone()])?;
-                return Ok(Some(module));
-            }
-            Ok(None)
-        })();
-        self.finder_active.remove(path);
-        result.map_err(|message| self.carried.take().unwrap_or(Fault::Note(message)))
-    }
-}
-
-impl Engine<'_> {
     fn source_loader_metadata(&mut self, name: &str, namespace: &Value) -> Flow<()> {
         if self.lang.module_path.is_none() { return Ok(()); }
         let loader = self.modules.get("_imp").and_then(|module| match module {

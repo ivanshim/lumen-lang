@@ -935,7 +935,7 @@ pub fn view_kind(tag: &str) -> &'static str {
 /// The word CPython gives a walk taken backwards over a map's keys,
 /// values or pairs.
 pub fn reversed_view_kind(tag: &str) -> &'static str {
-    match tag { "keys" => "dict_reversekeyiterator", "values" => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
+    match tag { "keys" | "mapping" => "dict_reversekeyiterator", "values" => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
 }
 
 /// Inline identities have no allocation to release. They remain canonical
@@ -2045,6 +2045,10 @@ impl Value {
             Value::Adapter(w) if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") => {
                 let owner = match &w.1[1] { Value::Class(c) => c.name.as_str(), _ => "" };
                 format!("<attribute '{}' of '{}' objects>", w.1[0].plain(), owner)
+            },
+            Value::Adapter(w) if w.0 == 205 => match &w.1[1] {
+                Value::Class(owner) => format!("<attribute '{}' of '{}' objects>", w.1[2].plain(), owner.name),
+                _ => "<member wrapper>".to_string(),
             },
             Value::Adapter(w) if w.0 == 29 => match w.1.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {

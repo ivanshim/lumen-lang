@@ -306,38 +306,6 @@ impl Machine<'_> {
 }
 
 impl Machine<'_> {
-    fn import_from_finders(&mut self, qualified: &str) -> Result<Option<Value>, String> {
-        let Some(system) = self.imported.get("sys").cloned() else { return Ok(None); };
-        if self.attribute(&system, "meta_path").is_none() { return Ok(None); }
-        let searchers = self.warning_get(system, "meta_path")?;
-        let searchers = self.gathered_members(&searchers)?;
-        self.finding_import.insert(qualified.to_owned());
-        let answer = (|| {
-            for searcher in searchers {
-                let builtin_searcher = self.imported.get("_imp").and_then(|module| match module { Value::Thing(object) => object.holds.borrow().iter().find(|field| field.0 == "_NativeFinder").map(|field| field.1.clone()), _ => None });
-                if builtin_searcher.is_some_and(|native| native.settled().equals(&searcher.settled())) {
-                    let exists = self.table.strings("ext.system.warnings").first().is_some_and(|word| word == qualified) || self.library_sources.contains_key(qualified) || self.sys_path_source(qualified).is_some();
-                    if exists { return Ok(None); }
-                    continue;
-                }
-                let specification = self.warning_send(searcher, "find_spec", vec![Value::text(qualified), Value::Nil, Value::Nil])?;
-                if matches!(specification.settled(), Value::Nil) { continue; }
-                let loader = self.warning_get(specification.clone(), "loader")?;
-                let namespace = self.warning_send(loader.clone(), "create_module", vec![specification.clone()])?;
-                if matches!(namespace.settled(), Value::Nil) { return Err(String::from("ImportError: finder loader did not create a module")); }
-                if let Value::Thing(module) = &namespace { module.holds.borrow_mut().push((String::from("__spec__"), specification)); }
-                self.imported.insert(qualified.to_owned(), namespace.clone()); self.namespace_places.borrow_mut().take(); self.refresh_import_table(qualified);
-                self.warning_send(loader, "exec_module", vec![namespace.clone()])?;
-                return Ok(Some(namespace));
-            }
-            Ok(None)
-        })();
-        self.finding_import.remove(qualified);
-        answer
-    }
-}
-
-impl Machine<'_> {
     fn source_namespace_metadata(&mut self, qualified: &str, value: &Value) -> Result<(), String> {
         if !self.table.has_any("ext.system.module.path") { return Ok(()); }
         let read_export = |module: &Value, wanted: &str| match module {

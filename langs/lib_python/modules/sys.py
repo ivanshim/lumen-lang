@@ -39,6 +39,10 @@ implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
+from _runtime_import import SourceFinder as _SourceFinder, make_spec as _make_spec, find_custom as _find_custom
+meta_path = [_SourceFinder()]
+path_hooks = []
+path_importer_cache = {}
 _recursion_limit = 1000
 
 # Startup flags describe the library environment and requested development mode.
@@ -509,14 +513,6 @@ def _getframemodulename(depth=0):
         raise TypeError('an integer is required')
     return __frame_module(max(depth, 0) + 1)
 
-
-def settrace(func):
-    return __settrace(func)
-
-
-def gettrace():
-    return __gettrace()
-
 # Names supplied by the native importer and its source-backed adapters.
 builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_weakref', '_io', 'posix', 'marshal', '_warnings')
 
@@ -540,8 +536,6 @@ def getdefaultencoding():
     return "utf-8"
 
 
-# Source and native modules participate in the same finder protocol.
-meta_path = []
 
 
 def getrefcount(object, /):

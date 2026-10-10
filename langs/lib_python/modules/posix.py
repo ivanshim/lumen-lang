@@ -553,6 +553,10 @@ class DirEntry:
             return stat.S_ISREG(self.stat(follow_symlinks=follow_symlinks).st_mode)
         except FileNotFoundError:
             return False
+    # Report the absence of Windows junctions on the POSIX filesystem.
+    def is_junction(self):
+        return False
+
     def is_dir(self, *, follow_symlinks=True):
         if self._type and (self._type != 10 or not follow_symlinks):
             return self._type == 4

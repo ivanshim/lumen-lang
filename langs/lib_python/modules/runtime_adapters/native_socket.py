@@ -110,6 +110,9 @@ IPPROTO_TCP = 6
 IPPROTO_UDP = 17
 TCP_NODELAY = 1
 SOCK_RAW = 3
+# An omitted timeout is distinct from None, which requests blocking I/O.
+_GLOBAL_DEFAULT_TIMEOUT = object()
+
 # Read the operating system hostname through the existing Python host bridge.
 def gethostname():
     return _call('socket_hostname').decode('utf-8', 'surrogateescape')
