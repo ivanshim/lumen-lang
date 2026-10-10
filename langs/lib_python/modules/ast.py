@@ -186,7 +186,13 @@ def _read_escape(source, i, is_bytes):
         if close >= n:
             raise 'SyntaxError: malformed \\N character escape'
         import unicodedata
-        return (unicodedata.lookup(source[i + 2:close]), close + 1)
+        try:
+            named = unicodedata.lookup(source[i + 2:close])
+        except KeyError:
+            named = None
+        if named is None or len(named) != 1:
+            raise 'SyntaxError: unknown Unicode character name'
+        return (named, close + 1)
     # An unknown escape keeps the backslash, as Python does, and warns.
     text = '\\' + c
     _warn_invalid_escape(text)

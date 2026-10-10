@@ -8,6 +8,7 @@ const LIMIT: usize = 1024 * 1024;
 const SLOTS: usize = 256;
 thread_local! {
     static ENABLED: Cell<bool> = const { Cell::new(false) };
+    static EMPTY: Rc<Vec<Value>> = Rc::new(Vec::new());
     static FREE: RefCell<Released> = const { RefCell::new(Released { rows: Vec::new(), bytes: 0 }) };
 }
 
@@ -55,6 +56,9 @@ impl Items {
 
     pub fn tuple(parts: Vec<Value>) -> Self {
         let recycle = ENABLED.with(Cell::get);
+        if recycle && parts.is_empty() {
+            return Self { storage: EMPTY.with(Rc::clone), recycle: false };
+        }
         let stored = if recycle {
             FREE.with(|free| {
                 let mut free = free.borrow_mut();
@@ -103,6 +107,15 @@ impl Drop for Scope {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn empty_python_tuples_share_storage_without_aliasing_lists() {
+        let _scope = Scope::enter(true);
+        let first = Items::tuple(Vec::new());
+        let second = Items::tuple(Vec::new());
+        let array = Items::plain(Vec::new());
+        assert_eq!(Rc::as_ptr(&first), Rc::as_ptr(&second));
+        assert_ne!(Rc::as_ptr(&first), Rc::as_ptr(&array));
+    }
     #[test]
     fn final_owner_releases_elements_and_recycles_actual_storage() {
         let _scope = Scope::enter(true);
