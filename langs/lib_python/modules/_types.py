@@ -22,118 +22,10 @@ import sys
 ModuleType = type(sys)
 
 
-# A reading of a mapping that cannot be written through. A reading is
-# only made over a mapping; a list, a tuple or a bare value is refused
-# by kind, as the reference refuses it.
-class MappingProxyType:
-    def __init__(self, mapping):
-        if isinstance(mapping, (list, tuple)) or not hasattr(mapping, '__getitem__'):
-            raise TypeError('mappingproxy() argument must be a mapping, not '
-                            + type(mapping).__name__)
-        self._mapping = mapping
-
-    def __getitem__(self, key):
-        return self._mapping[key]
-
-    def __setitem__(self, key, value):
-        raise TypeError("'mappingproxy' object does not support item assignment")
-
-    def __delitem__(self, key):
-        raise TypeError("'mappingproxy' object does not support item deletion")
-
-    def __len__(self):
-        return len(self._mapping)
-
-    def __iter__(self):
-        return iter(list(self._mapping))
-
-    def __contains__(self, key):
-        return key in self._mapping
-
-    def get(self, key, default=None):
-        if key in self._mapping:
-            return self._mapping[key]
-        return default
-
-    def keys(self):
-        return list(self._mapping)
-
-    def values(self):
-        gathered = []
-        for key in list(self._mapping):
-            gathered.append(self._mapping[key])
-        return gathered
-
-    def items(self):
-        gathered = []
-        for key in list(self._mapping):
-            gathered.append((key, self._mapping[key]))
-        return gathered
-
-    def copy(self):
-        return self._mapping.copy()
-
-    def __eq__(self, other):
-        if isinstance(other, MappingProxyType):
-            return self.copy() == other.copy()
-        return self.copy() == other
-
-    # A reading stands for the mapping it reads when the union sign
-    # reaches it, on either side. Either side that is itself a reading
-    # is unwrapped first, and the ordinary union then runs on the
-    # mappings themselves, so a mapping's own answer and the kind it
-    # answers with are kept: a mapping whose union is its own returns
-    # that answer through the reading as well. A reading cannot be
-    # written through with the in-place sign.
-    def __or__(self, other):
-        right = other._mapping if isinstance(other, MappingProxyType) else other
-        return self._mapping | right
-
-    def __ror__(self, other):
-        left = other._mapping if isinstance(other, MappingProxyType) else other
-        return left | self._mapping
-
-    def __ior__(self, other):
-        raise TypeError("'|=' is not supported by mappingproxy; use '|' instead")
-
-    def __repr__(self):
-        return 'mappingproxy(' + repr(self._mapping) + ')'
-
-
-# The reference names this kind mappingproxy, and types.MappingProxyType
-# is that kind, so the name a type prints is the reference's.
-MappingProxyType.__name__ = 'mappingproxy'
-
-
-# A bag of named values, compared by the names it carries.
-class SimpleNamespace:
-    def __init__(self, **keywords):
-        for name in list(keywords):
-            setattr(self, name, keywords[name])
-
-    def _fields(self):
-        gathered = {}
-        for name in list(self.__dict__):
-            gathered[name] = self.__dict__[name]
-        return gathered
-
-    def __eq__(self, other):
-        if isinstance(other, SimpleNamespace):
-            return self._fields() == other._fields()
-        return NotImplemented
-
-    def __ne__(self, other):
-        answer = self.__eq__(other)
-        if answer is NotImplemented:
-            return answer
-        return not answer
-
-    def __repr__(self):
-        fields = self._fields()
-        shown = []
-        for name in sorted(list(fields)):
-            shown.append(name + '=' + repr(fields[name]))
-        return 'namespace(' + ', '.join(shown) + ')'
+# Export the runtime types used by class namespaces and sys.implementation.
+# Their identity and native protocols are shared by every construction path.
+MappingProxyType = type(type.__dict__)
+SimpleNamespace = __namespace_type()
 
 
 # What a kind is called. A builtin kind answers to __name__ but is not
@@ -152,78 +44,9 @@ def _kind_name(kind):
     return str(home) + '.' + name
 
 
-# A kind named with the kinds it was given, as list[int] is.
-class GenericAlias:
-    def __init__(self, origin, args):
-        self.__origin__ = origin
-        if isinstance(args, tuple):
-            self.__args__ = args
-        else:
-            self.__args__ = (args,)
-        parameters = []
-        for arg in self.__args__:
-            found = (arg,) if type(arg).__name__ in ('TypeVar', 'ParamSpec', 'TypeVarTuple') else getattr(arg, '__parameters__', ())
-            for parameter in found:
-                if parameter not in parameters:
-                    parameters.append(parameter)
-        self.__parameters__ = tuple(parameters)
-        self.__unpacked__ = False
-
-    def __call__(self, *args, **keywords):
-        return self.__origin__(*args, **keywords)
-
-    def __eq__(self, other):
-        if isinstance(other, GenericAlias):
-            return self.__origin__ is other.__origin__ and self.__args__ == other.__args__
-        return NotImplemented
-
-    def __repr__(self):
-        shown = []
-        for given in self.__args__:
-            shown.append(_kind_name(given))
-        return _kind_name(self.__origin__) + '[' + ', '.join(shown) + ']'
-
-    def __iter__(self):
-        return _GenericAliasIterator(self)
-
-
-class _UnpackedGenericAlias:
-    def __init__(self, alias):
-        self.__origin__ = alias.__origin__
-        self.__args__ = alias.__args__
-        self.__unpacked__ = True
-        self._alias = alias
-
-    def __repr__(self):
-        return '*' + repr(self._alias)
-
-    def __eq__(self, other):
-        if isinstance(other, _UnpackedGenericAlias):
-            return self._alias == other._alias
-        return NotImplemented
-
-
-class _GenericAliasIterator:
-    def __init__(self, alias):
-        self.alias = alias
-        self.done = False
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        if self.done:
-            raise StopIteration
-        self.done = True
-        return _UnpackedGenericAlias(self.alias)
-
-    def __reduce__(self):
-        import builtins
-        factory = builtins.__dict__['iter']
-        if self.done:
-            return (factory, ((),))
-        return (factory, (self.alias,))
-
+# Generic aliases use the runtime's type, including iterable unpacking,
+# substitution, and identity shared with builtin subscriptions.
+GenericAlias = type(list[int])
 
 
 NoneType = type(None)

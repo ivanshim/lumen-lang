@@ -304,10 +304,38 @@ fn split_units_text(args: &[Value], reverse: bool, lang: &Lang) -> Result<Value,
 }
 
 pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording) -> Result<Value, String> {
+    if let Some(Value::Codepoints(points)) = args.first() {
+        if matches!(op, TextOp::Lower | TextOp::Upper | TextOp::Casefold | TextOp::Swapcase) {
+            if args.len() != 1 { return Err(format!("TypeError: str.{}() takes no arguments ({} given)", _name, args.len()-1)); }
+            let mut output = Vec::new(); let mut scalar_run = String::new();
+            for point in points.iter().copied().chain(std::iter::once(0x110000)) {
+                if let Some(character) = char::from_u32(point) { scalar_run.push(character); }
+                else {
+                    let changed = run(op,_name,&[Value::text(&scalar_run)],lang,words)?;
+                    output.extend(changed.text_codes().unwrap_or_default());
+                    if point <= 0x10ffff { output.push(point); }
+                    scalar_run.clear();
+                }
+            }
+            return Ok(Value::from_codes(output));
+        }
+    }
     let opened: Vec<Value> = args.iter().map(Value::contents).collect();
     let args = opened.as_slice();
 
     use TextOp::*;
+    // Native descriptors use the same code-point operations as bound methods.
+    let unit_operation = match op { Find => "find", Rfind => "rfind", Index => "index", Rindex => "rindex", Count => "count", Replace => "replace", Lower => "lower", Upper => "upper", _ => "" };
+    if !unit_operation.is_empty() && matches!(args.first(), Some(Value::Text(_) | Value::Codepoints(_)))
+        && args.iter().take(3).any(|v| matches!(v, Value::Codepoints(_))) {
+        return crate::methods::codepoint_operation(&args[0].text_codes().unwrap(), unit_operation, &args[1..], &|key| fault(lang, key));
+    }
+    // Native and bound splitting share the code-point path for surrogate text.
+    if matches!(op, Split | Rsplit) && matches!(args.first(), Some(Value::Text(_) | Value::Codepoints(_)))
+        && args.iter().take(2).any(|v| matches!(v, Value::Codepoints(_))) {
+        return crate::methods::call(&args[0], if op == Rsplit { "rsplit" } else { "split" }, &args[1..], &[], words,
+            &|reason| fault(lang, reason), &|_, _| fault(lang, "receiver"), true);
+    }
     if op == Maketrans {
         return translated_table(args,lang);
     }
