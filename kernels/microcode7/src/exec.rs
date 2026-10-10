@@ -16074,24 +16074,22 @@ impl<'a> Machine<'a> {
         let Value::Thing(thing) = subject else { return None };
         let actual=thing.blueprint();
         if self.table.has_class_order&&!actual.ancestry.borrow().is_empty() {
-            for blueprint in actual.resolution().iter().map(Rc::as_ref) {
+            // A native slot stops the search even without a Python override.
+            return Self::lookup_ordered(&actual, |blueprint| {
                 if let Some(entry)=blueprint.shared.named(word, self.names_in_calls) {
-                    if Self::native_word(&blueprint).is_some() && matches!(&entry, Value::Wrapped(60, _)) { return None; }
-                    return Some(entry);
+                    if Self::native_word(blueprint).is_some() && matches!(&entry, Value::Wrapped(60, _)) { return Some(None); }
+                    return Some(Some(entry));
                 }
-                if let Some((_,body))=blueprint.methods.iter().find(|(key,_)|key==word){return Some(Value::Routine(body.clone()));}
-                // The primitive slot is an entry at this C3 position.
-                // Its existing native dispatch uses the retained underlying
-                // value, before any entry of a later mixin can be considered.
+                if let Some((_,body))=blueprint.methods.iter().find(|(key,_)|key==word){return Some(Some(Value::Routine(body.clone())));}
                 if let Some(spelling) = Self::native_word(blueprint).filter(|spelling| self.native_declares_protocol(spelling, word)) {
                     if let Some(sample) = self.kind_stand_in(&spelling) {
-                        if self.native_member(&sample, word) { return None; }
-                        if index == 8 { return Some(Value::Nil); }
+                        if self.native_member(&sample, word) { return Some(None); }
+                        if index == 8 { return Some(Some(Value::Nil)); }
                     }
                 }
-                if index==8&&names.get(2).is_some_and(|equal|blueprint.methods.iter().any(|(key,_)|key==equal)||blueprint.shared.named(equal, self.names_in_calls).is_some()){return Some(Value::Nil);}
-            }
-            return None;
+                if index==8&&names.get(2).is_some_and(|equal|blueprint.methods.iter().any(|(key,_)|key==equal)||blueprint.shared.named(equal, self.names_in_calls).is_some()){return Some(Some(Value::Nil));}
+                None
+            }).flatten();
         }
         let mut blueprint = actual.clone();
         loop {

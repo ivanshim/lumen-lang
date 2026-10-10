@@ -1824,7 +1824,7 @@ impl<'a> Engine<'a> {
             None
         }).unwrap_or(false)
     }
-    fn ordered_lookup<T>(c: &Class, mut visit: impl FnMut(&Class) -> Option<T>) -> Option<T> {
+    pub(super) fn ordered_lookup<T>(c: &Class, mut visit: impl FnMut(&Class) -> Option<T>) -> Option<T> {
         if c.mro_adopted.get() {
             return c.adopted_order.borrow().iter().filter_map(std::rc::Weak::upgrade).find_map(|base| visit(&base));
         }

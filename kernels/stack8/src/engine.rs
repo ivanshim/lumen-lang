@@ -7536,24 +7536,22 @@ impl<'a> Engine<'a> {
         let named = self.lang.class_special.get(place)?;
         let actual = object.class_now();
         if self.lang.fuller_classes && !actual.lineage.borrow().is_empty() {
-            for current in actual.order().iter().map(Rc::as_ref) {
+            // A native slot stops the search even without a Python override.
+            return Self::ordered_lookup(&actual, |current| {
                 if let Some(value) = current.shared.read(named, self.lang.bind_names) {
-                    if Self::own_kind(&current).is_some() && matches!(&value, Value::Adapter(slot) if slot.0 == 29) { return None; }
-                    return Some(value.clone());
+                    if Self::own_kind(current).is_some() && matches!(&value, Value::Adapter(slot) if slot.0 == 29) { return Some(None); }
+                    return Some(Some(value));
                 }
-                if let Some((_, routine)) = current.methods.iter().find(|(n, _)| n == named) { return Some(Value::Routine(routine.clone())); }
-                // Native slots participate here in C3 order. The ordinary
-                // native dispatch below executes them on the retained worth;
-                // a later mixin cannot override a slot already found.
-                if let Some(word) = Self::own_kind(&current).filter(|word| self.kind_owns_protocol(word, named)) {
+                if let Some((_, routine)) = current.methods.iter().find(|(n, _)| n == named) { return Some(Some(Value::Routine(routine.clone()))); }
+                if let Some(word) = Self::own_kind(current).filter(|word| self.kind_owns_protocol(word, named)) {
                     if let Some(sample) = self.kind_sample(&word) {
-                        if self.native_special(&sample, named) { return None; }
-                        if place == 8 { return Some(Value::Null); }
+                        if self.native_special(&sample, named) { return Some(None); }
+                        if place == 8 { return Some(Some(Value::Null)); }
                     }
                 }
-                if place == 8 && self.lang.class_special.get(2).is_some_and(|eq| current.methods.iter().any(|(n, _)| n == eq) || current.shared.read(eq, self.lang.bind_names).is_some()) { return Some(Value::Null); }
-            }
-            return None;
+                if place == 8 && self.lang.class_special.get(2).is_some_and(|eq| current.methods.iter().any(|(n, _)| n == eq) || current.shared.read(eq, self.lang.bind_names).is_some()) { return Some(Some(Value::Null)); }
+                None
+            }).flatten();
         }
         let mut class = Some(actual.clone());
         while let Some(current) = class {

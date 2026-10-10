@@ -1922,7 +1922,7 @@ impl<'a> Machine<'a> {
             }
         }).unwrap_or(false)
     }
-    fn lookup_ordered<T>(owner: &Blueprint, mut lookup: impl FnMut(&Blueprint) -> Option<T>) -> Option<T> {
+    pub(super) fn lookup_ordered<T>(owner: &Blueprint, mut lookup: impl FnMut(&Blueprint) -> Option<T>) -> Option<T> {
         if !owner.order_supplied.get() {
             return lookup(owner).or_else(|| owner.ancestry.borrow().iter().find_map(|base| lookup(base)));
         }
