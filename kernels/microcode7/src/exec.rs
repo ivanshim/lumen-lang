@@ -28969,7 +28969,8 @@ impl<'a> Machine<'a> {
         // The program's own world dictionary is not filed as any loaded
         // space's, but a write into it can still stand a name over a
         // builtin; reading a name consults it while this stands.
-        if self.world_book.as_ref().is_some_and(|book| Rc::ptr_eq(book, cell)) {
+        if self.main_world.as_ref().is_some_and(|main| Rc::ptr_eq(main, cell))
+            || self.world_book.as_ref().is_some_and(|book| Rc::ptr_eq(book, cell)) {
             // The world dictionary is the main program's own, however
             // far from it the write is made; its reader is the code
             // written in the file the run began from.
