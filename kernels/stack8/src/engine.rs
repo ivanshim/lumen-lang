@@ -27243,12 +27243,15 @@ impl Engine<'_> {
                 // up, and an empty name is only a relative import's, all
                 // as the reference has it.
                 if args.len() > 5 { return Err(format!("TypeError: __import__() takes at most 5 arguments ({} given)", args.len())); }
-                let level = match args.get(4).map(Value::contents) {
-                    None | Some(Value::Null) => 0i64,
-                    Some(Value::Small(n)) => n,
-                    Some(Value::Flag(b)) => i64::from(b),
-                    Some(other) => return Err(format!("TypeError: __import__() argument 5 must be int, not {}", other.core_kind()).into()),
-                };
+                let level = if let Some(given) = args.get(4) {
+                    let value = given.contents();
+                    let stored = Self::worth_of(&value).unwrap_or_else(|| value.clone()).contents();
+                    let whole = match stored {
+                        integer @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => integer,
+                        _ => self.special_index(&value)?.ok_or_else(|| self.core_fault("core.integer", &value.core_kind()))?,
+                    };
+                    whole.as_big()?.to_i32().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_owned())?
+                } else { 0 };
                 if level < 0 { return Err("ValueError: level must be >= 0".to_string()); }
                 if let Some(given) = args.first() {
                     let base=Self::worth_of(given).unwrap_or_else(||given.contents());
@@ -27271,7 +27274,7 @@ impl Engine<'_> {
                 if name.is_empty() && level == 0 { return Err("ValueError: Empty module name".to_string()); }
                 let mut absolute = name.to_string();
                 if level > 0 {
-                    let globe = args.get(1).map(Value::contents);
+                    let globe = args.get(1).map(|value| Self::worth_of(value).unwrap_or_else(|| value.contents()).contents());
                     if !matches!(globe, Some(Value::Map(_) | Value::Fields(_))) { return Err("TypeError: globals must be a dict".into()); }
                     let asked = |word: &str| match &globe {
                         Some(Value::Map(pairs)) => pairs.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == word)).map(|(_, held)| held.contents()),
@@ -27284,12 +27287,12 @@ impl Engine<'_> {
                         _ => match asked("__spec__") {
                             Some(found) if !matches!(found, Value::Null) => {
                                 let parent = self.class_get(found, "parent", false).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
-                                let Value::Text(parent) = parent.contents() else { return Err("TypeError: __spec__.parent must be a string".into()) };
+                                let Value::Text(parent) = Self::worth_of(&parent).unwrap_or_else(|| parent.contents()) else { return Err("TypeError: __spec__.parent must be a string".into()) };
                                 parent.to_string()
                             },
                             _ => {
                                 self.warn_like(31, "can't resolve package from __spec__ or __package__, falling back on __name__ and __path__")?;
-                                match asked("__name__") {
+                                match asked("__name__").map(|value| Self::worth_of(&value).unwrap_or(value)) {
                                     Some(Value::Text(named)) => if asked("__path__").is_some() { named.to_string() } else { named.rsplit_once('.').map(|(head, _)| head.to_string()).unwrap_or_default() },
                                     Some(_) => return Err("TypeError: __name__ must be a string".into()),
                                     None => return Err("KeyError: '__name__' not in globals".into()),

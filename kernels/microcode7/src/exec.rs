@@ -27677,11 +27677,15 @@ impl<'a> Machine<'a> {
             // the reference has it.
             Prim::Summon => {
                 if v.len() > 5 { return Err(format!("TypeError: __import__() takes at most 5 arguments ({} given)", v.len())); }
-                let level = match v.get(4).map(Value::settled) {
-                    None | Some(Value::Nil) | Some(Value::Unset) => 0i64,
-                    Some(Value::Small(n)) => n,
-                    Some(Value::Flag(b)) => i64::from(b),
-                    Some(other) => return Err(format!("TypeError: __import__() argument 5 must be int, not {}", other.kind_word())),
+                let level = match v.get(4) {
+                    None => 0,
+                    Some(argument) => {
+                        let value = argument.settled();
+                        let plain = Self::underlying(&value).unwrap_or_else(|| value.clone()).settled();
+                        let number = if matches!(plain.kind(), Some(Kind::Whole | Kind::Truth)) { plain }
+                            else { self.stood_for_whole(&value)?.ok_or_else(|| self.core_complaint("core.integer", &value.kind_word()))? };
+                        number.as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?
+                    }
                 };
                 if level < 0 { return Err("ValueError: level must be >= 0".to_owned()); }
                 if let Some(given) = v.first() {
@@ -27705,7 +27709,7 @@ impl<'a> Machine<'a> {
                 if name.is_empty() && level == 0 { return Err("ValueError: Empty module name".to_owned()); }
                 let mut full_name = name.to_string();
                 if level != 0 {
-                    let globe = v.get(1).map(Value::settled);
+                    let globe = v.get(1).map(|source| match Self::underlying(source) { Some(base) => base.settled(), None => source.settled() });
                     match &globe {
                         Some(Value::Attributes(_) | Value::Dict(_)) => (),
                         _ => return Err(String::from("TypeError: globals must be a dict")),
@@ -27721,13 +27725,13 @@ impl<'a> Machine<'a> {
                         _ => {
                             if let Some(spec) = asked("__spec__").filter(|spec| !matches!(spec, Value::Nil)) {
                                 let value = self.read_class_member(spec, "parent", false).map_err(|escape| self.carried_native_fault(escape))?;
-                                match value.settled() {
+                                match Self::underlying(&value).unwrap_or_else(|| value.settled()) {
                                     Value::Text(text) => text.to_string(),
                                     _ => return Err(String::from("TypeError: __spec__.parent must be a string")),
                                 }
                             } else {
                                 self.warn_like(31, "can't resolve package from __spec__ or __package__, falling back on __name__ and __path__").map_err(|escape| self.carried_native_fault(escape))?;
-                                match asked("__name__") {
+                                match asked("__name__").map(|held| Self::underlying(&held).unwrap_or(held)) {
                                     Some(Value::Text(text)) if asked("__path__").is_some() => text.to_string(),
                                     Some(Value::Text(text)) => text.rsplit_once('.').map_or(String::new(), |pair| pair.0.to_owned()),
                                     Some(_) => return Err(String::from("TypeError: __name__ must be a string")),
