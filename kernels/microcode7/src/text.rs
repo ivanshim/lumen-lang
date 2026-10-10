@@ -8,6 +8,7 @@ use std::rc::Rc;
 use num_traits::ToPrimitive;
 
 #[derive(Hash, Eq, PartialEq, Copy, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Work {
     NEWARGS, SPLITLINES, PARTITION, RPARTITION, EXPANDTABS, SWAPCASE, CASEFOLD,
     CAPITALIZE, TITLE, ISTITLE, ISIDENTIFIER, ISPRINTABLE, ISDECIMAL,
@@ -266,7 +267,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
 
     use Work::*;
     // A descriptor search keeps the original Python character sequence.
-    let code_work = match work { FIND => "find", RFIND => "rfind", INDEX => "index", RINDEX => "rindex", COUNT => "count", REPLACE => "replace", LOWER => "lower", UPPER => "upper", _ => "" };
+    let code_work = match work { FIND => "find", RFIND => "rfind", INDEX => "index", RINDEX => "rindex", REPLACE => "replace", LOWER => "lower", UPPER => "upper", _ => "" };
     if code_work != "" && matches!(input.first(), Some(Value::Text(_) | Value::Unpaired(_)))
         && input.iter().take(3).any(|v| matches!(v, Value::Unpaired(_))) {
         let failure = |reason: &str| complaint(table, reason);
@@ -290,9 +291,41 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     if work==REPR {
         return if input.len()==1 {Ok(Value::text(&expression(&input[0],names)))} else {Err(complaint(table,"arguments"))};
     }
+    if work == COUNT && input.iter().take(2).any(|item| matches!(item, Value::Unpaired(_))) {
+        match input.len() {
+            0 | 1 => return Err(String::from("TypeError: count expected at least 1 argument, got 0")),
+            amount if amount > 4 => return Err(format!("TypeError: count expected at most 3 arguments, got {}", amount - 1)),
+            _ => {}
+        }
+        let units = |item: &Value| match item {
+            Value::Text(word) => Some(word.chars().map(u32::from).collect::<Vec<_>>()),
+            Value::Unpaired(row) => Some(row.to_vec()),
+            _ => None,
+        };
+        let haystack = units(&input[0]).ok_or_else(|| complaint(table, "receiver"))?;
+        let sought = units(&input[1]).ok_or_else(|| format!("TypeError: count() argument 1 must be str, not {}", input[1].kind_word()))?;
+        let size = haystack.len();
+        let endpoint = |slot: usize, usual: i64| -> Result<usize, String> {
+            let supplied = match input.get(slot) { None | Some(Value::Nil) => usual, Some(value) => count(value, table).map_err(|_| String::from("TypeError: slice indices must be integers or None or have an __index__ method"))? };
+            let adjusted = if supplied.is_negative() { (size as i64).saturating_add(supplied).max(0) } else { supplied };
+            Ok((adjusted as usize).min(size.saturating_add(1)))
+        };
+        let begin = endpoint(2, 0)?;
+        let end = endpoint(3, size as i64)?.min(size);
+        let answer = if begin > end { 0 } else if sought.is_empty() { end - begin + 1 } else {
+            let mut next = 0;
+            haystack[begin..end].windows(sought.len()).enumerate().filter(|(at, window)| {
+                if *at < next || *window != sought.as_slice() { return false; }
+                next = *at + sought.len();
+                true
+            }).count()
+        };
+        return Ok(Value::Small(answer as i64));
+    }
     if input.iter().any(|operand| match operand { Value::Unpaired(_) => true, Value::Tuple(parts) => parts.to_vec().iter().any(|part| matches!(part, Value::Unpaired(_))), _ => false }) {
         let numbers=match input.first(){Some(Value::Unpaired(row))=>row.clone(),Some(Value::Text(word))=>Rc::from(word.chars().map(u32::from).collect::<Vec<_>>()),_=>return Err(complaint(table,"receiver"))};
         let unpack=|item:&Value|match item {Value::Unpaired(row)=>Ok(row.to_vec()),Value::Text(word)=>Ok(word.chars().map(u32::from).collect::<Vec<_>>()),other=>Err(format!("TypeError: must be str, not {}",other.kind_word()))};
+        let count=|item:&Value|item.as_big()?.to_i64().ok_or_else(||String::from("OverflowError: Python int too large to convert to C ssize_t"));
         if work == SPLITLINES {
             let given = Given { tail: &input[1..], table };
             if given.tail.len() > 1 { return Err(given.bad("arguments")); }
@@ -307,8 +340,6 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             if !rest.is_empty() { result.push(Value::characters(rest.to_vec())); }
             return Ok(Value::Vector(crate::tuples::Sequence::plain(result)));
         }
-
-
         if matches!(work, LOWER | UPPER | CASEFOLD | SWAPCASE) {
             if input.len() > 1 { return Err(format!("TypeError: str.{}() takes no arguments ({} given)", _name.rsplit('.').next().unwrap_or(_name), input.len()-1)); }
             let mut result: Vec<u32> = Vec::new();
@@ -344,8 +375,8 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
                 return Ok(Value::tuple(trio));
             }
             let width = numbers.len() as i64;
-            let begin = match g.tail.get(1) { Some(Value::Nil) | None => 0, Some(v) => count(v, table)? };
-            let stop = match g.tail.get(2) { Some(Value::Nil) | None => width, Some(v) => count(v, table)? };
+            let begin = match g.tail.get(1) { Some(Value::Nil) | None => 0, Some(v) => crate::text::count(v, table)? };
+            let stop = match g.tail.get(2) { Some(Value::Nil) | None => width, Some(v) => crate::text::count(v, table)? };
             let lower = if begin < 0 { begin.saturating_add(width).max(0) } else { begin };
             let upper = if stop < 0 { stop.saturating_add(width).max(0) } else { stop.min(width) };
             if work != COUNT {
@@ -374,8 +405,6 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             }
             return Ok(Value::Small(total));
         }
-
-        let count=|item:&Value|item.as_big()?.to_i64().ok_or_else(||String::from("OverflowError: Python int too large to convert to C ssize_t"));
         if matches!(work, STRIP | LSTRIP | RSTRIP) {
             let method = if work == STRIP { "strip" } else if work == LSTRIP { "lstrip" } else { "rstrip" };
             if input.len() >= 3 { return Err(format!("TypeError: {method} expected at most 1 argument, got {}", input.len() - 1)); }

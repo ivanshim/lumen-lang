@@ -5339,7 +5339,9 @@ impl<'a> Machine<'a> {
             }
             if self.namespace_holding(&value).is_some() {
                 let handler = t.holds.borrow().iter().find_map(|(word, held)| if word == "__getattr__" { Some(held.settled()) } else { None });
-                if let Some(handler) = handler { return self.apply_class_member(handler, vec![Value::text(key)]).map(|answer| answer.settled()); }
+                if let Some(handler) = handler {
+                    if !matches!(handler, Value::Unset) { return self.apply_class_member(handler, vec![Value::text(key)]).map(|answer| answer.settled()); }
+                }
             }
         }else if let Value::Method(code,t,_)=&value {
             if key==self.detail("receiver"){return Ok(Value::Thing(t.clone()));}
@@ -5636,6 +5638,9 @@ impl<'a> Machine<'a> {
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
+        let replacement = if self.namespace_holding(&subject).is_some() {
+            replacement.map(|item| item.keep(false))
+        } else { replacement };
         // Compact Python dictionaries need no native layout work. Hooks and
         // data descriptors still take precedence, and expanded storage stays
         // on the regular namespace path.
@@ -5954,7 +5959,10 @@ impl<'a> Machine<'a> {
                 if self.namespace_holding(&subject).is_some() {
                     self.space_member_mirror(t, key, &replacement);
                     let link = t.holds.borrow().iter().find(|(k, _)| k == key).and_then(|(_, held)| match held { Value::Shared(link) => Some(link.clone()), _ => None });
-                    if let (Some(link), Some(v)) = (link.as_ref(), replacement.clone()) { *link.borrow_mut() = self.collection_cell(v.settled()); return Ok(Value::Nil); }
+                    if let (Some(link), Some(v)) = (link.as_ref(), replacement.clone()) {
+                        if !matches!(&v, Value::Shared(other) | Value::Mutable(other, _) if Rc::ptr_eq(link, other)) { *link.borrow_mut() = self.collection_cell(v); }
+                        return Ok(Value::Nil);
+                    }
                     if replacement.is_none() {
                         // The cell is emptied first, so the name is gone
                         // from compiled readings of it too; a name that
@@ -5972,7 +5980,7 @@ impl<'a> Machine<'a> {
                             _ => None,
                         });
                         if let Some(Value::Shared(cell)) = again {
-                            *cell.borrow_mut() = self.collection_cell(v.settled());
+                            *cell.borrow_mut() = self.collection_cell(v);
                             Self::change_entry(&mut t.holds.borrow_mut(), key, Some(Value::Shared(cell)));
                             return Ok(Value::Nil);
                         }
@@ -7739,9 +7747,14 @@ impl<'a> Machine<'a> {
         let lookup_order = Self::resolution_order(&actual);
         for base in &lookup_order {
             if passed {
-                if key == self.detail("allocate") && Self::own_entry(base, key).is_none() {
-                    if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
-                        return Ok(Some(Self::wrap(14, vec![Value::text(&native)])));
+                if key == self.detail("allocate") {
+                    if Self::native_word(base).as_deref() == Some("GenericAlias") {
+                        if let Some(entry) = Self::own_entry(base, key) { return Ok(Some(self.member_binding(entry, None, actual.clone())?)); }
+                    }
+                    if Self::own_entry(base, key).is_none() {
+                        if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
+                            return Ok(Some(Self::wrap(14, vec![Value::text(&native)])));
+                        }
                     }
                 }
                 if self.is_fault_kind(base) && self.fault_method_word(key) {

@@ -7,10 +7,46 @@ _host_environment = __posix
 argv = __program_namespace()['__program_argv']
 # Where a name that is `import`ed is looked for: a directory put here
 # is searched, in order, before the library carried inside this run.
-# The isolated default contains the library's own source location.
-# Callers add other directories explicitly; a program's directory is not
-# placed ahead of the embedded library merely because it contains a script.
+# Keep the safe-path default without implicitly adding the script directory.
+# Explicit PYTHONPATH entries precede the embedded library in their given order.
+# Normalize a POSIX search entry against the startup directory.
+def _absolute_search_entry(entry, cwd):
+    if not entry.startswith('/'):
+        entry = cwd + '/' + entry
+    prefix = '//' if entry.startswith('//') and not entry.startswith('///') else '/'
+    pieces = []
+    for piece in entry.split('/'):
+        if piece in ('', '.'):
+            continue
+        if piece == '..':
+            if pieces:
+                pieces.pop()
+        else:
+            pieces.append(piece)
+    return prefix + '/'.join(pieces)
+
+
 path = [__file__.rsplit('/', 1)[0]]
+_path_host = __host_info()
+_safe_path = _path_host[3].get('LUMEN_PYTHON_SAFE_PATH') == '1'
+if not _safe_path:
+    _startup_file = __program_namespace().get('__file__', '')
+    if _startup_file in ('<string>', '<stdin>'):
+        path.insert(0, '')
+    elif _startup_file == '-m':
+        path.insert(0, _path_host[0])
+    else:
+        path.insert(0, _startup_file.rsplit('/', 1)[0])
+_ignore_environment = int(_path_host[3].get('LUMEN_PYTHON_IGNORE_ENV') == '1')
+_python_path = '' if _ignore_environment else _path_host[3].get('PYTHONPATH', '')
+if _python_path:
+    _search_paths = []
+    for _entry in _python_path.split(':'):
+        _entry = _absolute_search_entry(_entry, _path_host[0])
+        if _entry not in _search_paths:
+            _search_paths.append(_entry)
+    _environment_at = 0 if _safe_path else 1
+    path[_environment_at:_environment_at] = _search_paths
 maxsize = 9223372036854775807
 # Where a written bytecode cache would live, and whether one is
 # written: the reference reads both while naming a cache file.
@@ -26,7 +62,7 @@ platform = 'linux'
 # of measuring this kernel against machinery it does not have.
 _Implementation = __namespace_type()
 implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
-                                 hexversion=0x000200f0, cache_tag='lumen-314')
+                                 hexversion=0x000200f0, cache_tag=_code_abi()[0])
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
@@ -45,16 +81,16 @@ class _Flags:
     dont_write_bytecode = 1
     no_user_site = 1
     no_site = 1
-    ignore_environment = 1
+    ignore_environment = _ignore_environment
     verbose = 0
     bytes_warning = 0
     quiet = 0
     hash_randomization = 0
-    isolated = 1
+    isolated = 0
     dev_mode = _host_environment('environ')[1].get(b'LUMEN_PYTHON_DEV_MODE') == b'1'
     utf8_mode = 1
     warn_default_encoding = 0
-    safe_path = True
+    safe_path = _safe_path
     int_max_str_digits = 4300
     gil = 1
     thread_inherit_context = 0
@@ -162,7 +198,12 @@ class _StandardStream:
     def flush(self):
         self._ensure_open()
 
+    def fileno(self):
+        self._ensure_open()
+        return self._fd
+
 class _BinaryInput(_StandardStream):
+    _fd = 0
     def read(self, size=-1):
         self._ensure_open()
         return _host_stream_read(size, False, True)
@@ -179,20 +220,24 @@ class _BinaryInput(_StandardStream):
             raise StopIteration
         return line
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _BinaryOutput(_StandardStream):
     def __init__(self, error=False):
         self.error = error
+        self._fd = 2 if error else 1
     def write(self, data):
         self._ensure_open()
         return _host_stream_write(data, self.error, True)
     def flush(self):
         self._ensure_open()
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _Output(_StandardStream):
+    _fd = 1
     def __init__(self):
         self.buffer = _BinaryOutput()
     def write(self, *args, **keywords):
@@ -205,9 +250,11 @@ class _Output(_StandardStream):
         self._ensure_open()
 
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _Error(_StandardStream):
+    _fd = 2
     def __init__(self):
         self.buffer = _BinaryOutput(True)
     def write(self, *args, **keywords):
@@ -220,7 +267,8 @@ class _Error(_StandardStream):
         self._ensure_open()
 
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _Input(_BinaryInput):
     def __init__(self):
@@ -234,7 +282,8 @@ class _Input(_BinaryInput):
         return _host_stream_read(size, True)
 
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 stdout = _Output()
 stderr = _Error()
@@ -283,7 +332,7 @@ def exit(*args, **kwargs):
 # is warned about, once, and treated as '0' for that call.
 def breakpointhook(*args, **kws):
     import os
-    value = os.environ.get('PYTHONBREAKPOINT')
+    value = None if flags.ignore_environment else os.environ.get('PYTHONBREAKPOINT')
     if value is None or value == '':
         import pdb
         return pdb.set_trace(*args, **kws)
@@ -512,6 +561,15 @@ def getfilesystemencodeerrors():
     return "surrogateescape"
 
 
+# Explicit module runs search the working directory before the embedded
+# library. File runs retain the isolated default search path.
+if __program_namespace().get('__spec__') is not None:
+    _cwd_error, _cwd_bytes = __posix('cwd')
+    if _cwd_error:
+        raise OSError(_cwd_error, 'cannot resolve the working directory')
+    path.insert(0, _cwd_bytes.decode('utf-8', 'surrogateescape'))
+    flags.isolated = 0
+    flags.safe_path = False
 
 def gettrace():
     return __trace_native__(0)
@@ -521,3 +579,34 @@ def settrace(trace):
     __trace_native__(1, trace)
 def getdefaultencoding():
     return "utf-8"
+
+# Resolve path entries lazily so bootstrap imports can use the native source reader.
+def _zip_path_hook(path):
+    from zipimport import zipimporter
+    return zipimporter(path)
+
+# Build the source finder only when an ordinary directory is first searched.
+def _file_path_hook(path):
+    from importlib._bootstrap_external import FileFinder, _get_supported_file_loaders
+    return FileFinder.path_hook(*_get_supported_file_loaders())(path)
+
+# Delegate path searching to the upstream finder and its importer cache.
+class _PathFinder:
+    @classmethod
+    def find_spec(cls, fullname, path=None, target=None):
+        from importlib._bootstrap_external import PathFinder
+        return PathFinder.find_spec(fullname, path, target)
+
+    @classmethod
+    def invalidate_caches(cls):
+        from importlib._bootstrap_external import _NamespacePath
+        for path, finder in list(path_importer_cache.items()):
+            if finder is None or not path.startswith('/'):
+                del path_importer_cache[path]
+            elif hasattr(finder, 'invalidate_caches'):
+                finder.invalidate_caches()
+        _NamespacePath._epoch += 1
+
+path_importer_cache = {}
+path_hooks = [_zip_path_hook, _file_path_hook]
+meta_path = [_PathFinder, _SourceFinder()]

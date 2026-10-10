@@ -15,12 +15,10 @@ def format_tb(tb, limit=None, exc=None):
         line = item.tb_lineno
         entry = '  File "' + filename + '", line ' + str(line) + ', in ' + code.co_name + '\n'
         try:
-            import builtins
-            with builtins.open(filename) as source:
-                contents = source.read()
-            if contents[:1] == '\ufeff':
-                contents = contents[1:]
-            lines = contents.splitlines()
+            import linecache
+            lines = linecache.getlines(filename, item.tb_frame.f_globals)
+            if lines and lines[0][:1] == '\ufeff':
+                lines[0] = lines[0][1:]
             shown = lines[line - 1].strip()
             mark = None
             if isinstance(exc, AssertionError) and shown.startswith('assert '):
@@ -42,6 +40,15 @@ def format_tb(tb, limit=None, exc=None):
             pass
         result.append(entry)
     return result
+
+
+# Write traceback frames to the selected text stream.
+def print_tb(tb, limit=None, file=None):
+    if file is None:
+        import sys
+        file = sys.stderr
+    for line in format_tb(tb, limit):
+        file.write(line)
 
 
 def format_exception_only(exc, value=None):
@@ -159,9 +166,8 @@ class FrameSummary:
         if self._line is None:
             self._line = ''
             try:
-                import builtins
-                with builtins.open(self.filename) as source:
-                    self._line = source.read().splitlines()[self.lineno - 1].strip()
+                import linecache
+                self._line = linecache.getline(self.filename, self.lineno).strip()
             except (OSError, IndexError):
                 pass
         return self._line.strip()
@@ -220,6 +226,8 @@ def extract_tb(tb, limit=None):
     frames = []
     while tb is not None:
         code = tb.tb_frame.f_code
+        import linecache
+        linecache.lazycache(code.co_filename, tb.tb_frame.f_globals)
         frame = FrameSummary(code.co_filename, tb.tb_lineno, code.co_name)
         frame.end_lineno = tb.tb_end_lineno
         frame.colno = tb.tb_colno
@@ -235,6 +243,8 @@ def extract_stack(f=None, limit=None):
         f = sys._getframe(1)
     frames = []
     while f is not None:
+        import linecache
+        linecache.lazycache(f.f_code.co_filename, f.f_globals)
         frames.append(FrameSummary(f.f_code.co_filename, f.f_lineno, f.f_code.co_name))
         f = f.f_back
     frames = _limited_frames(frames, limit)
