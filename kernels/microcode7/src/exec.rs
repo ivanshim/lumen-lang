@@ -26250,7 +26250,7 @@ impl Machine<'_> {
                         virtual_dirs.insert(directory.to_path_buf());
                         parent = directory.parent();
                     }
-                    sources.insert(location, name);
+                    sources.insert(location, name.clone());
                 }
             }
         }
@@ -26264,7 +26264,7 @@ impl Machine<'_> {
             for location in choices {
                 if self.table.strings("ext.system.module.path").first().map(String::as_str).is_some() {
                     if let Some(resolved) = library_location(&location, Some(&virtual_dirs)) {
-                        if let Some(text) = sources.get(&resolved).and_then(|name| self.library_sources.get(*name)) {
+                        if let Some(text) = sources.get(&resolved).and_then(|name| self.library_sources.get(name)) {
                             return Some((resolved.to_string_lossy().into_owned(), text.as_bytes().to_vec()));
                         }
                     }
@@ -26273,8 +26273,44 @@ impl Machine<'_> {
                     return Some((made_absolute(&location.to_string_lossy()), text));
                 }
             }
+            // A search-path entry may itself be an archive, or a directory
+            // inside one: a module there is read out of the archive, the
+            // way the reference's own zip importer reads it. Only a name
+            // that names an archive is asked about, so the ordinary search
+            // never reaches into the library before it is ready.
+            if Self::looks_archived(dir.as_ref()) {
+                if let Some(found) = self.zip_source(dir.as_ref(), filename) {
+                    return Some(found);
+                }
+            }
         }
         None
+    }
+
+    /// Whether a search-path entry names an archive that may hold a module.
+    fn looks_archived(where_: &str) -> bool {
+        let folded = where_.to_ascii_lowercase();
+        folded.contains(".zip") || folded.contains(".egg") || folded.contains(".whl")
+    }
+
+    /// A module read out of an archive on the search path: ask the library
+    /// for the member's own file and bytes, the way the reference zip
+    /// importer reads a module out of an archive.
+    fn zip_source(&mut self, where_: &str, leaf: &str) -> Option<(String, Vec<u8>)> {
+        let library = self.imported.get("_imp").cloned()?;
+        let reader = self.namespace_item(&library, "_imp", "_zip_module_source").ok()?;
+        let answer = self.apply_held(reader, vec![Value::text(where_), Value::text(leaf)]).ok()?;
+        let mut answer = answer;
+        while let Value::Shared(cell) | Value::Mutable(cell, _) = answer {
+            answer = cell.borrow().clone();
+        }
+        let Value::Tuple(parts) = answer else { return None };
+        if parts.len() != 2 { return None; }
+        let Value::Text(file) = &parts[0] else { return None };
+        let Value::Octets { cell, .. } = &parts[1] else { return None };
+        let file = file.to_string();
+        let bytes = cell.borrow().clone();
+        Some((file, bytes))
     }
 
     /// Ask a namespace path for the rows it stands in now. Its own
@@ -27769,7 +27805,19 @@ impl<'a> Machine<'a> {
                         _ => return Err("ImportError: attempted relative import with no known parent package".to_owned()),
                     }
                 }
-                self.load_namespace(&name)
+                let fromlist = match v.get(3).map(Value::settled) {
+                    None | Some(Value::Nil) => false,
+                    Some(Value::Tuple(items)) => !items.is_empty(),
+                    Some(Value::Vector(items)) => !items.is_empty(),
+                    Some(other) => !matches!(other, Value::Nil),
+                };
+                let module = self.load_namespace(&name)?;
+                if fromlist { return Ok(module); }
+                // Without a fromlist the reference answers the top-level
+                // package the dotted name stands under.
+                let top = name.split('.').next().unwrap_or(&name);
+                if top == name.as_ref() { return Ok(module); }
+                self.load_namespace(top)
             }
             Prim::Prepare => self.text_prepared(name, v),
             _ => self.text_performed(op == Prim::Weigh, name, v),

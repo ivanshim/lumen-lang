@@ -25727,7 +25727,7 @@ impl Engine<'_> {
                 if let Some(file) = self.library_module_file(name) {
                     let location = std::path::PathBuf::from(file);
                     for directory in location.ancestors().skip(1) { directories.insert(directory.to_path_buf()); }
-                    locations.insert(location, name);
+                    locations.insert(location, name.clone());
                 }
             }
         }
@@ -25744,7 +25744,7 @@ impl Engine<'_> {
                 // eligible only at a directory in the actual search list.
                 if self.lang.module_path.is_some() {
                     if let Some(location) = module_location(std::path::Path::new(&file), Some(&directories)) {
-                        if let Some(source) = locations.get(&location).and_then(|name| self.module_sources.get(*name)) {
+                        if let Some(source) = locations.get(&location).and_then(|name| self.module_sources.get(name)) {
                             return Some((location.to_string_lossy().into_owned(), source.as_bytes().to_vec()));
                         }
                     }
@@ -25753,8 +25753,44 @@ impl Engine<'_> {
                     return Some((made_absolute(&file), source));
                 }
             }
+            // A search-path entry may itself be an archive, or a directory
+            // inside one: a module there is read out of the archive, the
+            // way the reference's own zip importer reads it. Only a name
+            // that names an archive is asked about, so the ordinary search
+            // never reaches into the library before it is ready.
+            if Self::looks_archived(directory) {
+                if let Some(found) = self.zip_module_source(directory, leaf) {
+                    return Some(found);
+                }
+            }
         }
         None
+    }
+
+    /// Whether a search-path entry names an archive that may hold a module.
+    fn looks_archived(where_: &str) -> bool {
+        let folded = where_.to_ascii_lowercase();
+        folded.contains(".zip") || folded.contains(".egg") || folded.contains(".whl")
+    }
+
+    /// A module read out of an archive on the search path: ask the library
+    /// for the member's own file and bytes, the way the reference zip
+    /// importer reads a module out of an archive.
+    fn zip_module_source(&mut self, where_: &str, leaf: &str) -> Option<(String, Vec<u8>)> {
+        let library = self.modules.get("_imp").cloned()?;
+        let reader = self.member_of(library, "_zip_module_source").ok()??;
+        let answer = self.call_held(reader, vec![Value::text(where_), Value::text(leaf)]).ok()?;
+        let mut answer = answer;
+        while let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = answer {
+            answer = cell.borrow().clone();
+        }
+        let Value::Tuple(parts) = answer else { return None };
+        if parts.len() != 2 { return None; }
+        let Value::Text(file) = &parts[0] else { return None };
+        let Value::Bytes(source, ..) = &parts[1] else { return None };
+        let file = file.to_string();
+        let bytes = source.borrow().clone();
+        Some((file, bytes))
     }
 
     /// Ask a namespace path for the rows it stands in now. Its own
@@ -27329,8 +27365,25 @@ impl Engine<'_> {
                         _ => return Err("ImportError: attempted relative import with no known parent package".to_string()),
                     }
                 }
+                let fromlist = match args.get(3).map(Value::contents) {
+                    None | Some(Value::Null) => false,
+                    Some(Value::Tuple(items)) => !items.is_empty(),
+                    Some(Value::Array(items)) => !items.is_empty(),
+                    Some(other) => !matches!(other, Value::Null),
+                };
                 match self.import_module(&name) {
-                    Ok(module) => Ok(module),
+                    Ok(module) => {
+                        if fromlist { return Ok(module); }
+                        // Without a fromlist the reference answers the
+                        // top-level package the dotted name stands under.
+                        let top = name.split('.').next().unwrap_or(&name);
+                        if top == name.as_ref() { return Ok(module); }
+                        match self.import_module(top) {
+                            Ok(top) => Ok(top),
+                            Err(Fault::Note(told)) => Err(told),
+                            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+                        }
+                    }
                     Err(Fault::Note(told)) => Err(told),
                     Err(fled) => { self.carried = Some(fled); Err(String::new()) }
                 }
