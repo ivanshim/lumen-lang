@@ -108,7 +108,7 @@ class Struct:
                 try:
                     if not isinstance(value, float):
                         value = float(value)
-                except (TypeError, ValueError):
+                except BaseException:
                     raise error('required argument is not a float')
             elif code in 'FD':
                 if not isinstance(value, (int, float, complex)) and not hasattr(type(value), '__complex__') and not hasattr(type(value), '__float__') and not hasattr(type(value), '__index__'):
