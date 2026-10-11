@@ -9690,6 +9690,13 @@ impl<'a> Engine<'a> {
     }
 
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        let plain_number = |value: &Value| matches!(value, Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_) | Value::Flag(_));
+        let numerical_work = self.lang.python_numbers && matches!(op,
+            Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power);
+        if (numerical_work || matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge))
+            && plain_number(a) && plain_number(b) {
+            return self.dyadic(op, a, b);
+        }
         if matches!(op, Action::SetWrite(0)) && matches!(Self::view_in(a), Some(Value::View(v)) if v.1 == "mapping") { return Err("TypeError: '|=' is not supported by mappingproxy; use '|' instead".into()); }
 
         if matches!(op, Action::Eq | Action::Ne) {
@@ -9739,13 +9746,6 @@ impl<'a> Engine<'a> {
                     && (matches!(one.1.first(), Some(Value::Adapter(method)) if method.0 == 29) || matches!(one.1.first(), Some(Value::Native(..))))
                     && (matches!(two.1.first(), Some(Value::Adapter(method)) if method.0 == 29) || matches!(two.1.first(), Some(Value::Native(..)))))) {
             return Ok(Value::Flag(a.equals(b) != matches!(op, Action::Ne)));
-        }
-        let plain_number = |value: &Value| matches!(value, Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_) | Value::Flag(_));
-        let numerical_work = self.lang.python_numbers && matches!(op,
-            Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power);
-        if (numerical_work || matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge))
-            && plain_number(a) && plain_number(b) {
-            return self.dyadic(op, a, b);
         }
         if let (Action::At, Value::View(proxy)) = (op, a) {
             if proxy.1 == "mapping" { return self.special_dyad(op, &proxy.0.proxy_dictionary(), b); }

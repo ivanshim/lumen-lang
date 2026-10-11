@@ -19673,6 +19673,34 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        // Exact native integers cannot supply user slots or collection
+        // behavior. Their arithmetic still uses the normal numeric rules.
+        if let [Value::Small(_), Value::Small(right)] = v {
+            if matches!(op, Prim::Plus | Prim::Minus | Prim::Times)
+                || *right != 0 && matches!(op, Prim::IntDiv | Prim::Mod) {
+                return self.number_work(op, v);
+            }
+        }
+        if self.rules.has_any_ext_stmt_class_special && matches!(op, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
+            let native_order = match v {
+                [Value::Text(a), Value::Text(b)] => Some(a.cmp(b)),
+                [Value::Small(a), Value::Small(b)] => Some(a.cmp(b)),
+                _ => None,
+            };
+            if let Some(ordering) = native_order {
+                let yes = match op {
+                    Prim::Eq => ordering.is_eq(), Prim::Ne => !ordering.is_eq(),
+                    Prim::Lt => ordering.is_lt(), Prim::Le => !ordering.is_gt(),
+                    Prim::Gt => ordering.is_gt(), _ => !ordering.is_lt(),
+                };
+                return Ok(Value::Flag(yes));
+            }
+        }
+        // Python native numbers cannot invoke mapping, sequence or descriptor hooks.
+        if self.python_numbers && matches!(op, Prim::Plus | Prim::Minus | Prim::Times)
+            && matches!(v, [Value::Small(_) | Value::Huge(_) | Value::Frac(_), Value::Small(_) | Value::Huge(_) | Value::Frac(_)]) {
+            return self.number_work(op, v);
+        }
         if op == Prim::At { if let Some(subject) = v.first() { if let Some(fault) = self.symbolic_access(subject) { return Err(fault); } } }
         if op == Prim::UnicodeDecomposition { return crate::sre::decompose(v); }
         // Exact machine integers need neither index hooks nor big-integer conversion.
@@ -19772,14 +19800,6 @@ impl<'a> Machine<'a> {
             let dictionary=mapping.proxy_pairs();
             return self.prim(op,name,&[dictionary,key.settled()]);
         }
-        // Exact native integers cannot supply user slots or collection
-        // behavior. Their arithmetic still uses the normal numeric rules.
-        if let [Value::Small(_), Value::Small(right)] = v {
-            if matches!(op, Prim::Plus | Prim::Minus | Prim::Times)
-                || *right != 0 && matches!(op, Prim::IntDiv | Prim::Mod) {
-                return self.number_work(op, v);
-            }
-        }
         if self.rules.map_union && matches!(op, Prim::BitsEither | Prim::SetAssign(0)) {
             fn mapping(value: &Value) -> Option<Value> {
                 match value {
@@ -19797,21 +19817,6 @@ impl<'a> Machine<'a> {
                 if left.is_some() || right.is_some() {
                     return self.prim(op, name, &[left.unwrap_or_else(|| a.clone()), right.unwrap_or_else(|| b.clone())]);
                 }
-            }
-        }
-        if self.rules.has_any_ext_stmt_class_special && matches!(op, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
-            let native_order = match v {
-                [Value::Text(a), Value::Text(b)] => Some(a.cmp(b)),
-                [Value::Small(a), Value::Small(b)] => Some(a.cmp(b)),
-                _ => None,
-            };
-            if let Some(ordering) = native_order {
-                let yes = match op {
-                    Prim::Eq => ordering.is_eq(), Prim::Ne => !ordering.is_eq(),
-                    Prim::Lt => ordering.is_lt(), Prim::Le => !ordering.is_gt(),
-                    Prim::Gt => ordering.is_gt(), _ => !ordering.is_lt(),
-                };
-                return Ok(Value::Flag(yes));
             }
         }
         if op == Prim::Reckon {

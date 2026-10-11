@@ -1237,9 +1237,7 @@ impl<'a> Compiler<'a> {
         }
         // The class's kind word where the unit holds no name of its own
         // for it is the hidden cell an enclosing unit closes over.
-        if !self.piece().idents.iter().any(|named| named == name) {
-            if let Some(cell) = self.class_cell_read(name) { return Cell { moving, ..cell }; }
-        }
+        if let Some(cell) = self.class_cell_read(name) { return Cell { moving, ..cell }; }
         if self.lang.closes_over && !self.discovering {
             if let Some(cell) = self.enclosing_cell(self.pieces.len() - 1, name) { return Cell { moving, ..cell }; }
         }
@@ -1555,7 +1553,7 @@ impl<'a> Compiler<'a> {
     fn class_cell_read(&mut self, name: &str) -> Option<Cell> {
         let words = self.lang.class_details.get("kind")?;
         if self.lang.class_builder.is_empty() || !self.lang.closes_over || self.discovering || !words.iter().any(|word| word == name) { return None; }
-        if !self.in_class_body() { return None; }
+        if !self.in_class_body() || self.piece().idents.iter().any(|named| named == name) { return None; }
         let at = self.gathered.len().checked_sub(2)?;
         self.gathered[at].needs_class_cell = true;
         self.gathered[at].class_cell_protocol = true;

@@ -1403,9 +1403,7 @@ impl<'a> Builder<'a> {
         }
         // The class's kind word where the routine keeps no name of its
         // own for it is the hidden cell a class around closes over.
-        if !self.layers.last().map_or(false, |layer| layer.idents.iter().any(|named| named == name)) {
-            if let Some(slot) = self.class_cell_read(name) { return slot; }
-        }
+        if let Some(slot) = self.class_cell_read(name) { return slot; }
         if let Some(slot) = self.aliased(name) {
             return slot;
         }
@@ -1639,6 +1637,7 @@ impl<'a> Builder<'a> {
     fn class_cell_read(&mut self, name: &str) -> Option<Address> {
         if !self.table.has_any("ext.stmt.class.builder") || !self.table.spells("ext.stmt.class.detail.kind", name) { return None; }
         if !self.table.flag("ext.stmt.function.closes_over") || self.survey || !self.in_class_body() { return None; }
+        if self.layers.last().is_some_and(|layer| layer.idents.iter().any(|named| named == name)) { return None; }
         let at = self.under_way.len().checked_sub(2)?;
         self.under_way[at].needs_class_cell = true;
         self.under_way[at].class_cell_protocol = true;

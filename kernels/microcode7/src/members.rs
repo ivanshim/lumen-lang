@@ -24,26 +24,26 @@ pub struct Request<'a> {
 /// The names each builtin kind answers to, a line of words to a kind:
 /// what CPython keeps in the type's own namespace. A kind answers its
 /// own alone, so a tuple has no append however a list has one.
-const KIND_MEMBERS: &[(&str, &str)] = &[
-    ("str", "upper lower title capitalize swapcase strip lstrip rstrip split rsplit join replace find rfind index rindex count startswith endswith \
-             isdigit isalpha isalnum isspace islower isupper center ljust rjust zfill format encode"),
-    ("list", "append extend insert pop remove sort reverse copy clear index count"),
-    ("dict", "get keys values items setdefault update pop popitem copy clear fromkeys"),
-    ("bytearray", "copy"),
-    ("tuple", "index count"),
-    ("range", "index count"),
-    ("int", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__"),
-    ("bool", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__"),
-    ("float", "real imag conjugate as_integer_ratio is_integer hex __floor__ __ceil__"),
-    ("complex", "real imag conjugate"),
+const KIND_MEMBERS: &[(&str, &[&str])] = &[
+    ("str", &["upper", "lower", "title", "capitalize", "swapcase", "strip", "lstrip", "rstrip", "split", "rsplit", "join", "replace", "find", "rfind", "index", "rindex", "count", "startswith", "endswith", "isdigit", "isalpha", "isalnum", "isspace", "islower", "isupper", "center", "ljust", "rjust", "zfill", "format", "encode"]),
+    ("list", &["append", "extend", "insert", "pop", "remove", "sort", "reverse", "copy", "clear", "index", "count"]),
+    ("dict", &["get", "keys", "values", "items", "setdefault", "update", "pop", "popitem", "copy", "clear", "fromkeys"]),
+    ("bytearray", &["copy"]),
+    ("tuple", &["index", "count"]),
+    ("range", &["index", "count"]),
+    ("int", &["bit_length", "bit_count", "numerator", "denominator", "real", "imag", "conjugate", "as_integer_ratio", "is_integer", "__index__", "__truediv__"]),
+    ("bool", &["bit_length", "bit_count", "numerator", "denominator", "real", "imag", "conjugate", "as_integer_ratio", "is_integer", "__index__", "__truediv__"]),
+    ("float", &["real", "imag", "conjugate", "as_integer_ratio", "is_integer", "hex", "__floor__", "__ceil__"]),
+    ("complex", &["real", "imag", "conjugate"]),
 ];
 
 /// Whether a value of this kind answers to a member of that name.
 pub fn answers_to(value: &Value, operation: &str) -> bool {
-    if matches!(value.settled(), Value::Attributes(_)) { return operation == "clear"; }
-    let kind = value.settled().kind_word();
+    let value = value.settled();
+    if matches!(value, Value::Attributes(_)) { return operation == "clear"; }
+    let kind = value.kind_word();
     KIND_MEMBERS.iter().find(|(named, _)| *named == kind)
-        .map_or(false, |(_, words)| words.split_whitespace().any(|word| word == operation))
+        .is_some_and(|(_, words)| words.contains(&operation))
 }
 
 /// Whether the table above is the whole of what a value's kind answers
