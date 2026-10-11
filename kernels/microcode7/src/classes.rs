@@ -3815,8 +3815,37 @@ impl<'a> Machine<'a> {
     /// What a routine holds of its own under a name: its name, full name
     /// or account as the program wrote them, the namespace handed to it,
     /// or an entry of the namespace it keeps.
+    fn routine_member_key(value: &Value) -> Option<(u8, usize, usize)> {
+        match value {
+            Value::Routine(code) => Some((0, Rc::as_ptr(code) as usize, 0)),
+            Value::Bound(code, frame) => Some((1, Rc::as_ptr(code) as usize, Rc::as_ptr(frame) as usize)),
+            Value::Method(code, receiver, _) => Some((2, Rc::as_ptr(code) as usize, Rc::as_ptr(receiver) as usize)),
+            _ => None,
+        }
+    }
+    fn routine_member_index(&self, value: &Value) -> Option<usize> {
+        let identity = Self::routine_member_key(value);
+        if let Some(identity) = identity {
+            if let Some(found) = self.routine_member_positions.borrow().get(&identity).copied() {
+                match found {
+                    None => return None,
+                    Some(at) if self.routine_members.get(at).is_some_and(|(key, _)|
+                        key.revive().is_some_and(|key| key.equals(value))) => return Some(at),
+                    _ => {},
+                }
+            }
+        }
+        let found = self.routine_members.iter().position(|(key, _)| key.revive().is_some_and(|key| key.equals(value)));
+        if let Some(identity) = identity {
+            let mut positions = self.routine_member_positions.borrow_mut();
+            // Misses hold no weak owner, so bound the address-only cache too.
+            if positions.len() >= self.routine_members.len().saturating_mul(2).max(256) { positions.clear(); }
+            positions.insert(identity, found);
+        }
+        found
+    }
     fn routine_holding(&self,value:&Value,key:&str)->Option<Value> {
-        let (_,members)=self.routine_members.iter().find(|(f,_)|f.revive().is_some_and(|key| key.equals(value)))?;
+        let members=&self.routine_members[self.routine_member_index(value)?].1;
         let holds=members.holds.borrow();
         let annotation_key = format!("\0{key}\0");
         if let Some((_, value)) = holds.iter().find(|(word, _)| *word == annotation_key) { return Some(value.clone()); }
@@ -3830,7 +3859,8 @@ impl<'a> Machine<'a> {
         }
     }
     fn routine_holding_names(&self,value:&Value)->Vec<String> {
-        let Some((_,members))=self.routine_members.iter().find(|(f,_)|f.revive().is_some_and(|key| key.equals(value))) else{return Vec::new()};
+        let Some(at)=self.routine_member_index(value) else{return Vec::new()};
+        let members=&self.routine_members[at].1;
         let holds=members.holds.borrow();
         match holds.iter().find(|(k,_)|k==Self::HANDED) {
             Some((_,book))=>match book.settled() {Value::Dict(entries)=>entries.iter().filter_map(|(k,_)|if let Value::Text(t)=k{Some(t.to_string())}else{None}).collect(),_=>Vec::new()},
@@ -4412,7 +4442,7 @@ impl<'a> Machine<'a> {
         fresh
     }
     pub(super) fn routine_storage(&mut self, code: &Value) -> usize {
-        match self.routine_members.iter().position(|(candidate, _)| candidate.revive().is_some_and(|key| key.equals(code))) {
+        match self.routine_member_index(code) {
             Some(found) => found,
             None => {
                 let of = self.common_ancestor(); self.made += 1;
@@ -4420,13 +4450,17 @@ impl<'a> Machine<'a> {
                 let entry = (crate::ghost::ghost_of(code).expect("routine is weakly held"), holder);
                 // Reuse a dead function's slot without moving live indices;
                 // a caller can keep an index while annotation code reenters.
-                if let Some(vacant) = self.routine_members.iter().position(|(key, _)| key.departed()) {
+                let at = if let Some(vacant) = self.routine_members.iter().position(|(key, _)| key.departed()) {
                     self.routine_members[vacant] = entry;
                     vacant
                 } else {
                     self.routine_members.push(entry);
                     self.routine_members.len() - 1
+                };
+                if let Some(identity) = Self::routine_member_key(code) {
+                    self.routine_member_positions.borrow_mut().insert(identity, Some(at));
                 }
+                at
             }
         }
     }
