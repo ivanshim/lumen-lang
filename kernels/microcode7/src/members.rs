@@ -187,7 +187,7 @@ impl Request<'_> {
     }
     fn replace(&self,new_value:Value)->ResultValue {
         let Value::Mutable(cell,_) = self.target else{return Err(self.fail("unready"));};
-        if circular(&new_value,cell,0) {return Err(self.fail("unready"));}
+        if !matches!(new_value, Value::Vector(_)) && circular(&new_value,cell,0) {return Err(self.fail("unready"));}
         cell.replace(new_value);
         Ok(Value::Nil)
     }

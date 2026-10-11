@@ -11300,8 +11300,7 @@ impl<'a> Machine<'a> {
         // list already occupies. This comes first of all: further down
         // the contents are read out into a worth of their own, and a
         // list two worths hold must be copied before either may write
-        // to it. The member coming in is looked at for a way home to
-        // the cell; the ones already there were looked at on the way in.
+        // to it. A member keeps its cell, including a reference to this list.
         if name == "append" && keywords.is_empty() && arguments.len() == 1 {
             let storage = match receiver {
                 Value::Mutable(cell, _) if !self.names_in_calls => Some(cell.clone()),
@@ -11310,7 +11309,6 @@ impl<'a> Machine<'a> {
             };
             if let Some(cell) = storage {
                 if matches!(&*cell.borrow(), Value::Vector(_)) {
-                    if crate::members::circular(&arguments[0], &cell, 1) { return Err(self.method_fault("unready").into()); }
                     if let Value::Vector(members) = &mut *cell.borrow_mut() { Rc::make_mut(members).push(arguments[0].clone()); }
                     return Ok(Value::Nil);
                 }
