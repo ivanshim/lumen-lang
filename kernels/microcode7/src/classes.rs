@@ -2835,7 +2835,10 @@ impl<'a> Machine<'a> {
                 };
                 if recognized {
                     let namespace = options[1].clone().ok_or_else(|| String::from("TypeError: function() missing required argument 'globals'"))?;
-                    if !matches!(namespace.settled(), Value::Dict(_)) { return Err(String::from("TypeError: function() argument 'globals' must be dict").into()); }
+                    if !matches!(namespace.settled(), Value::Dict(_))
+                        && !Self::underlying(&namespace).is_some_and(|worth| matches!(worth.settled(), Value::Dict(_))) {
+                        return Err(String::from("TypeError: function() argument 'globals' must be dict").into());
+                    }
                     let title = match options[2].as_ref().map(Value::settled) {
                         Some(title @ Value::Text(_)) => title,
                         None | Some(Value::Nil) => Value::text("<module>"),
@@ -2860,7 +2863,10 @@ impl<'a> Machine<'a> {
             let Some(Value::Wrapped(7, body)) = options[0].as_ref().map(Value::settled) else { return Err(String::from("TypeError: function() argument 'code' must be code").into()); };
             let Some(Value::Routine(origin) | Value::Bound(origin, _)) = body.first() else { return Err(String::from("TypeError: function() argument 'code' must be code").into()); };
             let Some(globals) = options[1].clone() else { return Err(String::from("TypeError: function() missing required argument 'globals'").into()); };
-            if !matches!(globals.settled(), Value::Dict(_)) { return Err(String::from("TypeError: function() argument 'globals' must be dict").into()); }
+            if !matches!(globals.settled(), Value::Dict(_))
+                && !Self::underlying(&globals).is_some_and(|worth| matches!(worth.settled(), Value::Dict(_))) {
+                return Err(String::from("TypeError: function() argument 'globals' must be dict").into());
+            }
             let mut fresh = (**origin).clone();
             fresh.globe = Some(globals.clone());
             fresh.born = Some(self.builtins_here());

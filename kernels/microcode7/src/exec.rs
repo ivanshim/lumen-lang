@@ -13797,8 +13797,16 @@ impl<'a> Machine<'a> {
 
     fn explicit_globals(program: &Routine) -> Option<Rc<RefCell<Value>>> {
         match program.globe.as_ref()? {
-            Value::Shared(cell) | Value::Mutable(cell, _) if matches!(cell.borrow().settled(), Value::Dict(_)) => Some(cell.clone()),
-            globals @ Value::Dict(_) => Some(Rc::new(RefCell::new(globals.clone()))),
+            Value::Shared(cell) | Value::Mutable(cell, _) => {
+                let settled = cell.borrow().settled();
+                if matches!(settled, Value::Dict(_) | Value::Attributes(_))
+                    || Self::underlying(&settled).is_some_and(|worth| matches!(worth.settled(), Value::Dict(_))) {
+                    return Some(cell.clone());
+                }
+                None
+            }
+            globals @ Value::Dict(_) | globals @ Value::Attributes(_) => Some(Rc::new(RefCell::new(globals.clone()))),
+            globals @ Value::Thing(_) if Self::underlying(globals).is_some_and(|worth| matches!(worth.settled(), Value::Dict(_))) => Some(Rc::new(RefCell::new(globals.clone()))),
             _ => None,
         }
     }
@@ -28086,6 +28094,12 @@ impl<'a> Machine<'a> {
             for (index, (path, _)) in self.namespace_books.iter().enumerate() {
                 if owner == path { return Some(Held::Namespace(index)); }
             }
+            // Text read with a dict-subclass globals reads imported names
+            // through that dictionary's mapping protocol (its `__missing__`),
+            // not the module they were imported from.
+            if self.world_book.as_ref().is_some_and(|book| matches!(&*book.borrow(), Value::Thing(_))) {
+                return Some(Held::World);
+            }
         }
         if self.world_book.is_none() && self.readings.is_empty() { return None; }
         let ident = self.idents.get(at)?;
@@ -28098,7 +28112,11 @@ impl<'a> Machine<'a> {
                 || self.rules.words_ext_system_module_name.contains(ident)
                 || self.table.strings("ext.system.source.file").contains(ident)
                 || self.table.strings("ext.system.module.doc").contains(ident)
-                || self.world_book.as_ref().is_some_and(|book| looked_up(book, ident).is_some());
+                || self.world_book.as_ref().is_some_and(|book| match &*book.borrow() {
+                    Value::Dict(_) => looked_up(book, ident).is_some(),
+                    Value::Thing(_) => true,
+                    _ => false,
+                });
             if self.names_in_calls && !source_member { return None; }
             return Some(Held::World);
         }
@@ -28140,6 +28158,14 @@ impl<'a> Machine<'a> {
                     }
                     return Some(Ok(found));
                 }
+                let namespace_book = self.namespace_books[index].1.clone();
+                if matches!(&*namespace_book.borrow(), Value::Thing(_)) {
+                    match self.booked_get(&namespace_book, name) {
+                        Ok(Some(worth)) => return Some(Ok(worth)),
+                        Ok(None) => {}
+                        Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
+                    }
+                }
                 let cell = self.outermost.cells.borrow().get(at)?.settled();
                 if self.passed_over(name, &cell) { None } else {
                     // A name the namespace's own book does not hold is
@@ -28151,10 +28177,20 @@ impl<'a> Machine<'a> {
                 }
             }
             Held::World => {
-                let book = self.world_book.as_ref()?;
-                if let Some(worth) = looked_up_slot(book, name, Some(at)) {
+                let book = self.world_book.clone()?;
+                if let Some(worth) = looked_up_slot(&book, name, Some(at)) {
                     if self.names_the_builtins(name) && self.is_our_natives(&worth) { return Some(self.builtins_stand_in()); }
                     return Some(Ok(worth));
+                }
+                if matches!(&*book.borrow(), Value::Thing(_)) {
+                    match self.booked_get(&book, name) {
+                        Ok(Some(worth)) => {
+                            if self.names_the_builtins(name) && self.is_our_natives(&worth) { return Some(self.builtins_stand_in()); }
+                            return Some(Ok(worth));
+                        }
+                        Ok(None) => {}
+                        Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
+                    }
                 }
                 let cell = self.outermost.cells.borrow()[at].clone();
                 if self.passed_over(name, &cell) { return None; }
