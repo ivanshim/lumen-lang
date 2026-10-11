@@ -135,7 +135,8 @@ struct Fork {
 
 pub struct Builder<'a> {
     indexes_globals: bool,
-    global_positions: HashMap<String, usize>,
+    global_positions: HashMap<String, (usize, usize)>,
+    globals_indexed: usize,
     lexical_origin: Rc<str>,
     surveyed: HashMap<usize, ScopeWords>,
     survey: bool,
@@ -689,7 +690,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, member_temps: Vec::new(), gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { indexes_globals: table.flag("ext.syntax.call.bind_names"), global_positions: HashMap::new(), globals_indexed: 0, lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, member_temps: Vec::new(), gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -1296,26 +1297,26 @@ impl<'a> Builder<'a> {
 
     // ---------- names
 
-    // Cache positive addresses on Python's append-only global roster.
-    // Validate the name at the cached position, so a changed roster falls
-    // back to the original first-match search rather than retaining a value.
-    fn global_at(&mut self, name: &str) -> usize {
-        let indexed = self.indexes_globals;
-        let top = &mut self.layers[0];
-        if indexed {
-            if let Some(at) = self.global_positions.get(name).copied() {
-                if top.idents.get(at).is_some_and(|found| found == name) { return at; }
-            }
+    /// Index appended global names once, preserving both first and last matches.
+    fn global_position(&mut self, name: &str, last: bool) -> Option<usize> {
+        let names = &self.layers[0].idents;
+        if !self.indexes_globals {
+            return if last { names.iter().rposition(|word| word == name) }
+                else { names.iter().position(|word| word == name) };
         }
-        let at = match top.idents.iter().position(|n| n == name) {
-            Some(i) => i,
-            None => {
-                top.idents.push(name.to_string());
-                top.idents.len() - 1
-            }
-        };
-        if indexed { self.global_positions.insert(name.to_owned(), at); }
-        at
+        for at in self.globals_indexed..names.len() {
+            self.global_positions.entry(names[at].clone()).and_modify(|pair| pair.1 = at).or_insert((at, at));
+        }
+        self.globals_indexed = names.len();
+        self.global_positions.get(name).map(|pair| if last { pair.1 } else { pair.0 })
+    }
+
+    /// Read the first global slot, adding a name only when absent.
+    fn global_at(&mut self, name: &str) -> usize {
+        if let Some(at) = self.global_position(name, false) { return at; }
+        let names = &mut self.layers[0].idents;
+        names.push(name.to_owned());
+        names.len() - 1
     }
 
     /// The binding a read reaches: the nearest owner that has the name,
@@ -1513,12 +1514,13 @@ impl<'a> Builder<'a> {
         let depth = 0;
         let last = self.layers.len() - 1;
         for i in (0..=last).rev() {
+            let global = if i == 0 { self.global_position(name, true) } else { None };
             let scope = &mut self.layers[i];
             match scope.holds {
                 // Makes no frame when it runs.
                 Holds::Nothing => continue,
                 Holds::Fresh | Holds::Every => {
-                    let index = match scope.idents.iter().rposition(|n| n == name) {
+                    let index = match if i == 0 { global } else { scope.idents.iter().rposition(|n| n == name) } {
                         Some(i) => i,
                         None => {
                             scope.idents.push(name.to_string());
