@@ -748,8 +748,8 @@ struct Strand {
 /// and whatever has one, or is reached from something that has one, the
 /// program can still get at. The rest it cannot.
 pub struct Web {
-    strands: HashMap<usize, Strand>,
-    bookkeeping: HashMap<usize, usize>,
+    strands: HashMap<usize, Strand, crate::table::FxBuildHasher>,
+    bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>,
 }
 
 /// An inline value is an engine root even though it has no shared
@@ -792,7 +792,7 @@ impl Web {
 
     /// Woven from the notable things still about.
     pub fn from_notable(extra: Vec<Knot>, live: Vec<Knot>) -> Web {
-        let mut bookkeeping = HashMap::new();
+        let mut bookkeeping = HashMap::default();
         for knot in &extra {
             let parts = match knot {
                 Knot::Held(value) => Knot::Held(value.clone()).parts(),
@@ -820,8 +820,8 @@ impl Web {
         }
     }
 
-    fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize>) -> Web {
-        let mut strands: HashMap<usize, Strand> = HashMap::new();
+    fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>) -> Web {
+        let mut strands: HashMap<usize, Strand, crate::table::FxBuildHasher> = HashMap::default();
         let mut frontier: Vec<usize> = Vec::new();
         for root in roots.into_iter().flat_map(Knot::parts) {
             if let Some(place) = root.place() {
