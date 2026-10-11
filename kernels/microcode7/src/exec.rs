@@ -13268,13 +13268,15 @@ impl<'a> Machine<'a> {
     /// The name the outermost names go by, where the language gives
     /// them one: the namespace a routine written there belongs to.
     pub(super) fn type_parameter_home(&self) -> Value {
-        let namespace = self.reading_now.and_then(|index| self.readings.get(index));
-        match namespace {
-            Some(names) => looked_up(names.outer.as_ref().unwrap_or(&names.near), "__name__").unwrap_or(Value::Nil),
-            None => match &self.world_book {
-                Some(book) => looked_up(book, "__name__").unwrap_or(Value::Nil),
-                None => self.namespace_named().map_or(Value::Nil, |name| Value::text(&name)),
-            },
+        if let Some(names) = self.reading_now.and_then(|index| self.readings.get(index)) {
+            return looked_up(names.outer.as_ref().unwrap_or(&names.near), "__name__").unwrap_or(Value::Nil);
+        }
+        // A routine running out of a registered namespace answers with that
+        // namespace's name; only the program's own frames fall to the book.
+        if let Some(name) = self.namespace_named() { return Value::text(&name); }
+        match &self.world_book {
+            Some(book) => looked_up(book, "__name__").unwrap_or(Value::Nil),
+            None => Value::Nil,
         }
     }
 
@@ -28494,6 +28496,15 @@ impl<'a> Machine<'a> {
             let root = self.common_ancestor();
             entries.retain(|(word, _)| !spells_key(word, self.rules.detail_root));
             entries.push((Value::text(self.rules.detail_root), Value::Blueprint(root)));
+        }
+        // The dictionary of builtins goes by the builtins module's name,
+        // as the reference's own dictionary of builtins does, so a class
+        // body run from it still reads `__name__`.
+        if let (Some(word), Some(named)) = (self.table.strings("ext.system.module.name").first().cloned(),
+                                            self.table.strings("ext.system.names.module").first().cloned()) {
+            if !entries.iter().any(|(key, _)| key.bare() == word) {
+                entries.push((Value::text(&word), Value::text(&named)));
+            }
         }
         // The parent word belongs to every dictionary of builtins: it
         // is read from here wherever the builtins are read from, as the

@@ -3802,8 +3802,12 @@ impl<'a> Engine<'a> {
         if let Some(reading) = self.reading_in.and_then(|at| self.text_books.get(at)) {
             return book_entry(reading.outer.as_ref().unwrap_or(&reading.near), "__name__").unwrap_or(Value::Null);
         }
+        // A routine running from a registered module answers with that
+        // module's name; only the program's own frames fall back to the
+        // outermost book, as they always did.
+        if let Some(name) = self.module_named() { return Value::text(&name); }
         if let Some(book) = &self.outer_book { return book_entry(book, "__name__").unwrap_or(Value::Null); }
-        self.module_named().map_or(Value::Null, |name| Value::text(&name))
+        Value::Null
     }
 
     fn module_named(&self) -> Option<String> {
@@ -27732,6 +27736,14 @@ impl Engine<'_> {
         let mut pairs = Vec::with_capacity(names.len());
         for name in names {
             if let Some(held) = self.native_named(&name) { pairs.push((Value::text(&name), held)); }
+        }
+        // The dictionary of builtins goes by the builtins module's name,
+        // as the reference's own dictionary of builtins does, so a class
+        // body run from it still reads `__name__`.
+        if let (Some(word), Some(named)) = (self.lang.module_names.first().cloned(), self.lang.names_module.first().cloned()) {
+            if !pairs.iter().any(|(key, _)| key.plain() == word) {
+                pairs.push((Value::text(&word), Value::text(&named)));
+            }
         }
         // The parent word belongs to every dictionary of builtins: it
         // is read from here wherever the builtins are read from, as the
