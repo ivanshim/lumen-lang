@@ -3973,7 +3973,7 @@ impl<'a> Machine<'a> {
         // reads is a stand-in, whatever it is bound to.
         if Rc::ptr_eq(&f, &self.outermost) && !Rc::ptr_eq(frame, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0') {
             if let Some((names, true)) = self.annotation_scope(frame) {
-                let copied = self.frames_named.last().is_some_and(|routine| routine.globe.is_some());
+                let copied = self.frames_named.last().is_some_and(|routine| replaced_globe(routine));
                 if copied {
                     if let Some(value) = self.world_book.as_ref().and_then(|book| looked_up(book, &slot.ident)) { return Ok(value); }
                 }
@@ -4120,7 +4120,7 @@ impl<'a> Machine<'a> {
     fn store(&mut self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
         // A copied annotation namespace owns its global writes.
         if !slot.ident.starts_with('#') && Rc::ptr_eq(ascend(frame, slot.up), &self.outermost)
-            && self.annotation_scope(frame).is_some() && self.frames_named.last().is_some_and(|running| running.globe.is_some()) {
+            && self.annotation_scope(frame).is_some() && self.frames_named.last().is_some_and(|running| replaced_globe(running)) {
             if let Some(book) = self.world_book.clone() {
                 let content = self.collection_cell(value);
                 set_down(&book, &slot.ident, Some(content));
@@ -7330,7 +7330,7 @@ impl<'a> Machine<'a> {
             Form::Forget(slot) => {
                 let f = ascend(frame, slot.up);
                 if Rc::ptr_eq(f, &self.outermost) && self.annotation_scope(frame).is_some()
-                    && self.frames_named.last().is_some_and(|routine| routine.globe.is_some()) {
+                    && self.frames_named.last().is_some_and(|routine| replaced_globe(routine)) {
                     if let Some(book) = &self.world_book {
                         set_down(book, &slot.ident, None);
                         return Ok(Value::Nil);
@@ -10650,6 +10650,16 @@ impl<'a> Machine<'a> {
             Rc::new(instance)
         } else {
             program.clone()
+        };
+        // A routine made while a function runs on replacement globals that
+        // are a dict subclass reads names through those globals as well.
+        let bound = match self.frames_named.last().and_then(|maker| maker.globe.clone()) {
+            Some(book @ Value::Thing(_)) if !matches!((&bound.globe, &book), (Some(Value::Thing(held)), Value::Thing(maker)) if Rc::ptr_eq(held, maker)) => {
+                let mut kept = (*bound).clone();
+                kept.globe = Some(book);
+                Rc::new(kept)
+            }
+            _ => bound,
         };
         if (!self.rules.specials.is_empty() && !bound.frameless) || crate::ghost::bidding() {
             crate::ghost::note(crate::ghost::Ghost::Bound(Rc::downgrade(&bound), Rc::downgrade(&environment)));
@@ -28039,6 +28049,16 @@ fn looked_up(book: &Rc<RefCell<Value>>, name: &str) -> Option<Value> {
     looked_up_slot(book, name, None)
 }
 
+/// Whether a routine runs on globals handed to it, rather than on the
+/// namespace of the module its code was compiled in.
+fn replaced_globe(routine: &Routine) -> bool {
+    match &routine.globe {
+        Some(Value::Shared(cell) | Value::Mutable(cell, _)) => !matches!(&*cell.borrow(), Value::Attributes(_)),
+        Some(Value::Attributes(_)) | None => false,
+        Some(_) => true,
+    }
+}
+
 /// Read through a namespace's structural index when the compiler gave a slot.
 fn looked_up_slot(book: &Rc<RefCell<Value>>, name: &str, slot: Option<usize>) -> Option<Value> {
     if let Value::Attributes(space) = &*book.borrow() {
@@ -28086,19 +28106,19 @@ impl<'a> Machine<'a> {
     /// reading it belongs to, else the world's once that has been asked for.
     fn book_holding(&self, at: usize) -> Option<Held> {
         let scoped = self.annotation_scopes.last().is_some_and(|(_, _, _, body)| {
-            self.frames_named.last().is_some_and(|running| running.globe.is_some() && Rc::as_ptr(running) as usize == *body)
+            self.frames_named.last().is_some_and(|running| replaced_globe(running) && Rc::as_ptr(running) as usize == *body)
         });
         if scoped && self.world_book.is_some() { return Some(Held::World); }
         if let Some(word) = self.idents.get(at).and_then(|w| w.strip_prefix("\0import/")) {
-            let (owner, _) = word.rsplit_once('/')?;
-            for (index, (path, _)) in self.namespace_books.iter().enumerate() {
-                if owner == path { return Some(Held::Namespace(index)); }
-            }
             // Text read with a dict-subclass globals reads imported names
             // through that dictionary's mapping protocol (its `__missing__`),
             // not the module they were imported from.
             if self.world_book.as_ref().is_some_and(|book| matches!(&*book.borrow(), Value::Thing(_))) {
                 return Some(Held::World);
+            }
+            let (owner, _) = word.rsplit_once('/')?;
+            for (index, (path, _)) in self.namespace_books.iter().enumerate() {
+                if owner == path { return Some(Held::Namespace(index)); }
             }
         }
         if self.world_book.is_none() && self.readings.is_empty() { return None; }
