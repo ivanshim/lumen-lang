@@ -10260,7 +10260,11 @@ impl<'a> Engine<'a> {
                 return self.dyadic(op, a, b);
             }
         }
-        let (left, right) = (Self::worth_of(a).map(|w| w.contents()), Self::worth_of(b).map(|w| w.contents()));
+        let left = Self::worth_of(a).map(|w| w.contents());
+        // Mapping keys retain their own hash and equality, including native subclasses.
+        let mapping_key = matches!(op, Action::At | Action::Toward | Action::Apart)
+            && matches!(left.as_ref().unwrap_or(a), Value::Map(_));
+        let right = if mapping_key { None } else { Self::worth_of(b).map(|w| w.contents()) };
         if left.is_some() || right.is_some() {
             if let (Action::At | Action::Toward | Action::Apart, Some(Value::Map(entries)), Value::Object(o)) = (op, &left, a) {
                 if let Some(method) = self.lang.missing_key.as_deref().and_then(|word| self.class_value(&o.class_now(), word)) {
