@@ -27360,7 +27360,7 @@ impl Machine<'_> {
         if self.world_shadow_applies() {
             if let Some(book) = &self.world_book {
                 let found = match book.try_borrow().ok().as_deref() {
-                    Some(Value::Dict(rows)) => rows.iter().find(|(key, _)| Self::space_dictionary_name(key).as_deref() == Some(word)).map(|(_, held)| held.settled()),
+                    Some(Value::Dict(rows)) => rows.iter().find(|(key, _)| match key { Value::Text(text) => text.as_ref() == word, _ => Self::space_dictionary_name(key).as_deref() == Some(word) }).map(|(_, held)| held.settled()),
                     _ => None,
                 };
                 if let Some(held) = found { if !matches!(held, Value::Unset) { return Some(held); } }
