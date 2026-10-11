@@ -1942,6 +1942,12 @@ impl<'a> Builder<'a> {
             if self.annotation_lookup && !parameter && !name.starts_with('#') {
                 let only_global = entries.iter().any(|entry| entry == name);
                 let class = class.clone();
+                for enclosing in self.under_way.iter_mut().rev() {
+                    if enclosing.completed_class.ident.as_ref() == class {
+                        enclosing.class_cell_protocol |= name == "__class__";
+                        break;
+                    }
+                }
                 let live = self.under_way.iter().rev().find(|body| body.completed_class.ident.as_ref() == class).and_then(|body| body.book.clone());
                 let receiver = Form::Glance(self.address_to_read(&class));
                 let outside = self.routine("<annotation fallback>", Holds::Every, Traps::Naught, Vec::new(), 0, |b| {

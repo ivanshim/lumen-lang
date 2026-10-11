@@ -1471,6 +1471,11 @@ impl<'a> Compiler<'a> {
             if self.reading_annotation && !local_type && !name.starts_with('#') {
                 let global_fallback = members.contains(name);
                 let owner = owner.clone();
+                if name == "__class__" {
+                    if let Some(body) = self.gathered.iter_mut().rev().find(|body| body.class_cell == owner) {
+                        body.class_cell_protocol = true;
+                    }
+                }
                 let book = self.gathered.iter().rev().find(|body| body.class_cell == owner).and_then(|body| body.book.clone());
                 self.glance(&owner);
                 self.constant(Value::text(name));
