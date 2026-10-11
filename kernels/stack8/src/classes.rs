@@ -1011,6 +1011,9 @@ impl<'a> Engine<'a> {
             cursor+=1;
         }
         let saved=family.iter().map(|member|(member.clone(),member.direct(),member.base(),member.lineage(),member.mro_place.borrow().clone(),member.mro_ready.get(),member.base_epoch.get())).collect::<Vec<_>>();
+        let cached_bases=Self::own_class_value(class,"\0bases-tuple");
+        // Re-entrant mro hooks must see the proposed bases, not the old tuple.
+        class.shared.borrow_mut().retain(|(name, _)| name != "\0bases-tuple");
         let serial=class.base_epoch.get().wrapping_add(1);class.base_epoch.set(serial);
         class.direct.replace(parents);class.base.replace(Some(primary));
         let mut pending=family;
@@ -1026,6 +1029,7 @@ impl<'a> Engine<'a> {
         }
         if let Some(error)=fault {
             if class.base_epoch.get()==serial {
+                if let Some(tuple)=cached_bases {class.shared.borrow_mut().push(("\0bases-tuple".into(),tuple));}
                 for (member,parents,primary,order,positions,ready,epoch) in saved {
                     if touched.iter().any(|(pointer,stamp)|*pointer==Rc::as_ptr(&member)&&*stamp==member.base_epoch.get()) {
                         member.direct.replace(parents);member.base.replace(primary);member.lineage.replace(order);
