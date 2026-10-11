@@ -42,9 +42,9 @@ thread_local! {
 /// The global names, each with a slot.
 #[derive(Default)]
 pub struct Registry {
-    index: HashMap<String, usize>,
-    module_index: HashMap<String, HashMap<String, usize>>,
-    wildcard_index: HashMap<usize, (usize, HashMap<String, usize>)>,
+    index: HashMap<String, usize, crate::value::FxBuildHasher>,
+    module_index: HashMap<String, HashMap<String, usize, crate::value::FxBuildHasher>, crate::value::FxBuildHasher>,
+    wildcard_index: HashMap<usize, (usize, HashMap<String, usize, crate::value::FxBuildHasher>), crate::value::FxBuildHasher>,
     pub idents: Vec<String>,
     /// Whether the next reading is of one expression alone, as text
     /// handed over to be weighed is: nothing may follow it. The mark is
