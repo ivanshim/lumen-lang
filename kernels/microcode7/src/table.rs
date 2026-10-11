@@ -24,7 +24,7 @@ enum Entry {
 }
 
 /// How many places the table keeps to guess where a label is.
-const GUESSES: usize = 1024;
+const GUESSES: usize = 8192;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Infix {
