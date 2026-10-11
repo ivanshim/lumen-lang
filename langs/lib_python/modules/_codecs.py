@@ -22,8 +22,13 @@ unregister = _runtime.unregister
 lookup = _runtime.lookup
 register_error = _runtime.register_error
 lookup_error = _runtime.lookup_error
-encode = _runtime.encode
-decode = _runtime.decode
+# Define public entry points here so global pickles restore their real module.
+def encode(obj, encoding='utf-8', errors=_runtime._default_errors):
+    return _runtime.encode(obj, encoding, errors)
+
+# Delegate decoding while retaining the public codec module identity.
+def decode(obj, encoding='utf-8', errors=_runtime._default_errors):
+    return _runtime.decode(obj, encoding, errors)
 
 # Preserve C-function attribute behavior when codecs attach helpers to classes.
 class _CodecCall:
