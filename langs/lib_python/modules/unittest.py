@@ -12,8 +12,7 @@ def _clear_exception_frames(traceback):
         return
     global _traceback_module
     if _traceback_module is None:
-        import sys
-        _traceback_module = sys.modules.get('traceback')
+        _traceback_module = _host_load_module('traceback', 'cached')
     if _traceback_module is not None:
         _traceback_module.clear_frames(traceback)
     elif not _host_clear_traceback(10, traceback):

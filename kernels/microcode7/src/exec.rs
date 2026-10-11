@@ -21535,6 +21535,7 @@ impl<'a> Machine<'a> {
                     return Ok(Value::Nil);
                 }
                 match (v.len(), v.get(1)) {
+                    (2, Some(Value::Text(mode))) if mode.as_ref() == "cached" => self.cached_import(&v[0].bare()).unwrap_or(Value::Nil),
                     (2, Some(Value::Flag(false))) => Value::Flag(self.table.strings("ext.system.warnings").first().is_some_and(|word| word == &v[0].bare()) || self.library_sources.contains_key(&v[0].bare()) || self.sys_path_source(&v[0].bare()).is_some()),
                     (2, Some(Value::Flag(true))) => self.sys_path_source(&v[0].bare()).map(|entry| entry.0).or_else(|| self.library_module_file(&v[0].bare())).map_or(Value::Nil, |file| Value::text(&file)),
                     (2, Some(Value::Text(selector))) if selector.as_ref() == "source" => {
@@ -32470,9 +32471,9 @@ impl Machine<'_> {
             if member != &words[1] { continue; }
             let read = slot.settled();
             if let Value::Dict(pairs) = read {
-                for (key, item) in pairs.iter() {
-                    if spells_key(key, sought) { return Some(item.settled()); }
-                }
+                let found = pairs.namespace_position(sought)
+                    .unwrap_or_else(|()| pairs.iter().position(|(key, _)| spells_key(key, sought)));
+                if let Some(at) = found { return Some(pairs[at].1.settled()); }
             }
         }
         None

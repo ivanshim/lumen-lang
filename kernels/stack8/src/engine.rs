@@ -22375,6 +22375,7 @@ impl<'a> Engine<'a> {
                 }
                 if args.len() == 2 {
                     let path = args[0].display(&sp);
+                    if matches!(&args[1], Value::Text(mode) if mode.as_ref() == "cached") { return Ok(self.module_cache_value(&path).unwrap_or(Value::Null)); }
                     if matches!(args[1], Value::Flag(false)) { return Ok(Value::Flag(self.lang.warning_backend.first().is_some_and(|word| word == &path) || self.module_sources.contains_key(&path) || self.sys_path_source(&path).is_some())); }
                     if matches!(args[1], Value::Flag(true)) { return Ok(self.sys_path_source(&path).map(|(file, _)| file).or_else(|| self.library_module_file(&path)).map_or(Value::Null, |file| Value::text(&file))); }
                 }
@@ -29908,9 +29909,9 @@ impl Engine<'_> {
         let fields = module.fields.borrow();
         let held = &fields.iter().find(|(word, _)| word == member)?.1;
         let Value::Map(entries) = held.contents() else { return None };
-        entries.iter().find_map(|(key, value)| {
-            key_spells(key, path).then(|| value.contents())
-        })
+        let row = entries.named_row(path).unwrap_or_else(|()|
+            entries.iter().position(|(key, _)| key_spells(key, path)));
+        row.map(|at| entries[at].1.contents())
     }
 
     fn module_cache_names(&self, path: &str) -> bool {
