@@ -21511,7 +21511,8 @@ impl<'a> Machine<'a> {
                                 None => entries.push((name.clone(), saved)),
                             }
                         }
-                        if self.rules.names_shadow_builtins {
+                        // Ordinary imported names already use their shared global slots.
+                        if self.rules.names_shadow_builtins && self.table.prims.contains_key(&name) {
                             *self.wildcard_source.borrow_mut() = None;
                             self.wildcard_names.entry(self.written_in.clone())
                                 .or_default().insert(name, slot);
