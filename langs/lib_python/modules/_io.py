@@ -4,6 +4,7 @@
 import operator
 import sys
 from builtins import _buffer_view
+_memory = __bytes_memory__
 
 DEFAULT_BUFFER_SIZE = 128 * 1024
 _SSIZE_MAX = sys.maxsize
@@ -272,10 +273,9 @@ class BytesIO(_BufferedIOBase):
     seekable = readable
     def read(self, size=-1):
         if type(size) is int:
-            if size > _SSIZE_MAX or size < _SSIZE_MIN:
-                raise OverflowError("cannot fit 'int' into an index-sized integer")
-        else:
-            size = _size(size)
+            result, self._pos = _memory(self._data, self._pos, size, self._closed, 0)
+            return result
+        size = _size(size)
         if self._closed:
             raise ValueError('I/O operation on closed file.')
         end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
@@ -296,10 +296,9 @@ class BytesIO(_BufferedIOBase):
     readinto1 = readinto
     def readline(self, size=-1):
         if type(size) is int:
-            if size > _SSIZE_MAX or size < _SSIZE_MIN:
-                raise OverflowError("cannot fit 'int' into an index-sized integer")
-        else:
-            size = _size(size)
+            result, self._pos = _memory(self._data, self._pos, size, self._closed, 1)
+            return result
+        size = _size(size)
         if self._closed:
             raise ValueError('I/O operation on closed file.')
         end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
@@ -315,19 +314,7 @@ class BytesIO(_BufferedIOBase):
     def write(self, b):
         # Immutable exact bytes need no temporary export or snapshot.
         if type(b) is bytes:
-            if self._closed:
-                raise ValueError('I/O operation on closed file.')
-            if _export(self._data, True):
-                raise BufferError('Existing exports of data: object cannot be re-sized')
-            n = len(b)
-            if not n:
-                return 0
-            if self._pos > _SSIZE_MAX - n:
-                raise OverflowError('new position too large')
-            if self._pos > len(self._data):
-                self._data.extend(b'\0' * (self._pos - len(self._data)))
-            self._data[self._pos:self._pos + n] = b
-            self._pos += n
+            n, self._pos = _memory(self._data, self._pos, b, self._closed, 2)
             return n
         with _get_buffer(b) as view:
             if not view.c_contiguous:

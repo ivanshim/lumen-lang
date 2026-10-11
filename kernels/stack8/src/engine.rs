@@ -19281,7 +19281,48 @@ impl<'a> Engine<'a> {
         Ok(result)
     }
 
+    // Read or write bounded memory-stream storage without intermediate Python slices.
+    fn byte_memory(&self, args: &[Value]) -> Res<Value> {
+        let [Value::Bytes(storage, true, _), Value::Small(position), input, Value::Flag(closed), Value::Small(mode)] = args else {
+            return Err("TypeError: invalid memory stream arguments".into());
+        };
+        let position = usize::try_from(*position).map_err(|_| "ValueError: negative memory stream position")?;
+        if *mode == 2 {
+            let Value::Bytes(source, false, _) = input else { return Err("TypeError: memory stream write requires bytes".into()); };
+            if *closed { return Err("ValueError: I/O operation on closed file.".into()); }
+            if ByteExport::active(storage) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+            let source = source.borrow();
+            let next = position.checked_add(source.len()).filter(|n| *n <= i64::MAX as usize).ok_or("OverflowError: new position too large")?;
+            if !source.is_empty() {
+                let mut data = storage.borrow_mut();
+                if next > data.len() {
+                    let extra = next - data.len();
+                    data.try_reserve(extra).map_err(|_| "MemoryError: ")?;
+                    data.resize(next, 0);
+                }
+                data[position..next].copy_from_slice(&source);
+            }
+            return Ok(Value::tuple(vec![Value::Small(source.len() as i64), Value::Small(next as i64)]));
+        }
+        if !matches!(mode, 0 | 1) { return Err("ValueError: invalid memory stream operation".into()); }
+        let size = match input {
+            Value::Small(n) => *n,
+            Value::Huge(n) => n.to_i64().ok_or("OverflowError: cannot fit 'int' into an index-sized integer")?,
+            _ => return Err("TypeError: memory stream read requires an integer".into()),
+        };
+        if *closed { return Err("ValueError: I/O operation on closed file.".into()); }
+        let data = storage.borrow();
+        let mut end = if size < 0 { data.len() } else { position.saturating_add(size as usize).min(data.len()) };
+        if end <= position { end = position; }
+        else if *mode == 1 {
+            if let Some(offset) = data[position..end].iter().position(|byte| *byte == b'\n') { end = position + offset + 1; }
+        }
+        let bytes = if end == position { Vec::new() } else { data[position..end].to_vec() };
+        Ok(Value::tuple(vec![self.byte_make(bytes, false), Value::Small(end as i64)]))
+    }
+
     fn byte_work(&mut self, task: u8, args: &[Value], signed: bool) -> Res<Value> {
+        if task == 65 { return self.byte_memory(args); }
         if task == 64 {
             let [text] = args else { return Err("TypeError: intern() takes exactly one argument".into()); };
             return match text {

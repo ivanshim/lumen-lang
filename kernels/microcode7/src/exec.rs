@@ -14200,7 +14200,57 @@ impl<'a> Machine<'a> {
         Ok(output)
     }
 
+    // Keep memory-stream transfers proportional to the bytes requested or supplied.
+    fn memory_octets(&self, supplied: &[Value]) -> Result<Value, String> {
+        if supplied.len() != 5 { return Err("TypeError: invalid memory stream arguments".to_owned()); }
+        let (buffer, cursor, closed, action) = match (&supplied[0], &supplied[1], &supplied[3], &supplied[4]) {
+            (Value::Octets { cell, changeable: true, .. }, Value::Small(at), Value::Flag(shut), Value::Small(action)) =>
+                (cell, usize::try_from(*at).map_err(|_| String::from("ValueError: negative memory stream position"))?, *shut, *action),
+            _ => return Err(String::from("TypeError: invalid memory stream arguments")),
+        };
+        match action {
+            0 | 1 => {
+                let requested = match &supplied[2] {
+                    Value::Small(n) => *n,
+                    Value::Huge(n) => n.to_i64().ok_or_else(|| String::from("OverflowError: cannot fit 'int' into an index-sized integer"))?,
+                    _ => return Err(String::from("TypeError: memory stream read requires an integer")),
+                };
+                if closed { return Err(String::from("ValueError: I/O operation on closed file.")); }
+                let bytes = buffer.borrow();
+                let available = bytes.len().saturating_sub(cursor);
+                let mut count = if requested < 0 { available } else { available.min(requested as usize) };
+                if action == 1 && count > 0 {
+                    count = bytes[cursor..cursor + count].iter().position(|n| *n == 10).map_or(count, |n| n + 1);
+                }
+                let selected = if count == 0 { Vec::new() } else { bytes[cursor..cursor + count].to_vec() };
+                Ok(Value::tuple(vec![self.octets(selected, false), Value::Small((cursor + count) as i64)]))
+            }
+            2 => {
+                let Value::Octets { cell: incoming, changeable: false, .. } = &supplied[2] else {
+                    return Err(String::from("TypeError: memory stream write requires bytes"));
+                };
+                if closed { return Err(String::from("ValueError: I/O operation on closed file.")); }
+                if OctetLease::held(buffer) { return Err(String::from("BufferError: Existing exports of data: object cannot be re-sized")); }
+                let bytes = incoming.borrow();
+                let stop = cursor.checked_add(bytes.len()).filter(|n| *n <= i64::MAX as usize)
+                    .ok_or_else(|| String::from("OverflowError: new position too large"))?;
+                if bytes.len() > 0 {
+                    let mut target = buffer.borrow_mut();
+                    if stop > target.len() {
+                        let extra = stop - target.len();
+                        target.try_reserve(extra).map_err(|_| String::from("MemoryError: "))?;
+                        target.resize(stop, 0);
+                    }
+                    target[cursor..stop].copy_from_slice(&bytes);
+                }
+                Ok(Value::tuple(vec![Value::Small(bytes.len() as i64), Value::Small(stop as i64)]))
+            }
+            _ => Err(String::from("ValueError: invalid memory stream operation")),
+        }
+    }
+
     fn octet_work(&mut self, operation: u8, values: &[Value], negative_allowed: bool) -> Result<Value, String> {
+        if operation == 65 { return self.memory_octets(values); }
         if operation == 2 { return self.convert_text(true, &[], values, true); }
         if operation == 64 {
             if values.len() != 1 { return Err("TypeError: intern() takes exactly one argument".to_owned()); }

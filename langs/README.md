@@ -4551,6 +4551,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytes.join` | - | - | `join` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.lower` | - | - | `lower` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.maketrans` | - | - | `bytes.maketrans` `bytearray.maketrans` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.memory` | - | - | `__bytes_memory__` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.replace` | - | - | `replace` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.resize` | - | - | `resize` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.signed` | - | - | `signed` | - | - | - | - | - | - | - |
@@ -6136,3 +6137,5 @@ The instruction vocabulary belongs to each kernel; it is not CPython bytecode.
 `ext.builtin.static_namespace` reads stored namespaces and class linearizations
 without invoking attribute hooks, metaclass properties, or other descriptors.
 `ext.builtin.multibyte` names the Python-only CJK mapping primitive used by the multibyte codec state machines. It uses the codec port's released mapping tables; other languages leave it unregistered.
+
+`ext.builtin.bytes.memory` supplies bounded byte-storage reads, newline reads and exact-bytes writes for memory streams. It checks index-sized bounds, closed storage and outstanding exports before changing bytes, returning the result and next position. Python adapters keep conversion hooks and subclass dispatch.
