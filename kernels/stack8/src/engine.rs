@@ -242,7 +242,7 @@ pub struct Engine<'a> {
     /// but only for code written in that file, whose globals the
     /// dictionary is.
     outer_globals_source: Option<Rc<str>>,
-    wildcard_slots: HashMap<Rc<str>, HashMap<String, usize>>,
+    wildcard_slots: HashMap<Rc<str>, HashMap<String, usize, crate::value::FxBuildHasher>, crate::value::FxBuildHasher>,
     module_slots: HashMap<Rc<str>, (usize, String), crate::value::FxBuildHasher>,
     module_books: Vec<(String, Rc<RefCell<Value>>)>,
     book_source: Option<Rc<str>>,
@@ -1755,7 +1755,7 @@ impl<'a> Engine<'a> {
             changed_builtins: std::collections::HashSet::new(),
             outer_globals_source: None,
             native_stack_start: &lang as *const &Lang as usize,
-            wildcard_slots: HashMap::new(),
+            wildcard_slots: HashMap::with_hasher(crate::value::FxBuildHasher::default()),
             module_slots: HashMap::with_hasher(crate::value::FxBuildHasher::default()),
             module_books: Vec::new(),
             book_source: None,

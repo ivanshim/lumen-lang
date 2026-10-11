@@ -596,7 +596,7 @@ pub struct Machine<'a> {
     // These dictionaries remain strongly owned by the module inventory.
     globals_by_cell: HashMap<usize, String>,
     native_slots: HashMap<String, usize>,
-    wildcard_names: HashMap<Rc<str>, std::collections::BTreeMap<String, usize>>,
+    wildcard_names: HashMap<Rc<str>, HashMap<String, usize, crate::table::FxBuildHasher>, crate::table::FxBuildHasher>,
     wildcard_source: RefCell<Option<(Rc<str>, (bool, bool))>>,
     namespace_places: RefCell<Option<HashMap<usize, String>>>,
     revised_namespaces: std::collections::HashSet<Rc<str>>,
@@ -2074,7 +2074,7 @@ impl<'a> Machine<'a> {
             space_books: HashMap::new(),
             globals_by_cell: HashMap::new(),
             native_slots: table.strings("ext.stmt.class.special").iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
-            wildcard_names: HashMap::new(),
+            wildcard_names: HashMap::with_hasher(crate::table::FxBuildHasher::default()),
             wildcard_source: RefCell::new(None),
             namespace_places: RefCell::new(None),
             revised_namespaces: std::collections::HashSet::new(),
