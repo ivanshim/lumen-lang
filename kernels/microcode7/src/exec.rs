@@ -10763,21 +10763,6 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
-        // Exact native searches need no descriptor, coroutine or index hooks.
-        if self.names_in_calls && matches!(receiver, Value::Text(_)) && keywords.is_empty()
-            && arguments.len() <= 3 && matches!(arguments.first(), Some(Value::Text(_)))
-            && arguments.iter().skip(1).all(|value| matches!(value, Value::Nil | Value::Flag(_) | Value::Small(_)))
-            && !self.native_slot_names.contains_key(name)
-            && self.rules.words_ext_stmt_class_detail_root_members.get(9).map(String::as_str) != Some(name) {
-            if let Some(work) = crate::text::named_work(name) {
-                use crate::text::Work;
-                if matches!(work, Work::COUNT | Work::FIND | Work::RFIND | Work::INDEX | Work::RINDEX | Work::STARTSWITH | Work::ENDSWITH) {
-                    let mut values = Vec::with_capacity(arguments.len() + 1);
-                    values.push(receiver.clone()); values.extend(arguments);
-                    return crate::text::apply(self.table, work, name, &values, self.wording()).map_err(Escape::from);
-                }
-            }
-        }
         let initializing=self.rules.words_ext_stmt_class_constructor.first().is_some_and(|word|word==name);
         if self.has_class_order() && initializing && matches!(receiver.settled(),Value::Octets{changeable:true,..}) {
             let callable=self.kind_entry("bytearray",name);
@@ -19758,6 +19743,16 @@ impl<'a> Machine<'a> {
                 && v.iter().skip(2).all(|value| matches!(value, Value::Nil | Value::Flag(_) | Value::Small(_)));
             if self.names_in_calls && searching && exact {
                 return crate::text::apply(self.table, work, name, v, self.wording());
+            }
+            if self.names_in_calls
+                && matches!(work, Work::SPLIT | Work::RSPLIT | Work::PARTITION | Work::RPARTITION | Work::REPLACE
+                    | Work::STRIP | Work::LSTRIP | Work::RSTRIP | Work::REMOVEPREFIX | Work::REMOVESUFFIX
+                    | Work::LOWER | Work::UPPER | Work::CASEFOLD)
+                && matches!(v.first(), Some(Value::Text(_)))
+                && v.iter().skip(1).all(|value| matches!(value, Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Nil)) {
+                // Exact native transforms retain the primitive's validation and mutable-result handling.
+                let output = self.dispatch_primitive(op, name, v)?;
+                return Ok(self.collection_cell(output));
             }
         }
         if (op == Prim::SetAssign(0) || matches!(op, Prim::Landing(slot) if self.table.landing_working(slot) == Prim::SetAssign(0))) && v.first().and_then(Self::window_inside).is_some_and(|value| matches!(value, Value::Window(_, 'm'))) { return Err(String::from("TypeError: '|=' is not supported by mappingproxy; use '|' instead")); }
