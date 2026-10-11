@@ -4,10 +4,11 @@ _host_class_methods = __class_methods
 _host_clock = __clock
 _host_load_module = __load_module
 _host_program_namespace = __program_namespace
+_host_clear_traceback = __trace_native__
 _traceback_module = None
 
 def _clear_exception_frames(traceback):
-    if traceback is not None:
+    if traceback is not None and not _host_clear_traceback(10, traceback):
         global _traceback_module
         if _traceback_module is None:
             _traceback_module = _host_load_module('traceback')
