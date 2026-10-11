@@ -365,6 +365,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("runpy", include_str!("runpy.py"), "runpy.py"),
     ("runtime_adapters.copyreg", include_str!("runtime_adapters/copyreg.py"), "runtime_adapters/copyreg.py"),
     ("runtime_adapters.native_http_client", include_str!("runtime_adapters/native_http_client.py"), "runtime_adapters/native_http_client.py"),
+    ("runtime_adapters.native_inspect", include_str!("runtime_adapters/native_inspect.py"), "runtime_adapters/native_inspect.py"),
     ("sched", include_str!("sched.py"), "sched.py"),
     ("secrets", include_str!("secrets.py"), "secrets.py"),
     ("select", include_str!("select.py"), "select.py"),
