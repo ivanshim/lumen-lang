@@ -528,6 +528,17 @@ def open(*args, **kwargs):
 
 # One-dimensional views use byte offsets into the original storage. A slice
 # keeps those offsets, and a cast groups them without copying the storage.
+def _buffer_hook(owner, name):
+    kind = type(owner)
+    for base in kind.__mro__:
+        namespace = vars(base)
+        if name in namespace:
+            member = namespace[name]
+            bind = getattr(type(member), '__get__', None)
+            return bind(member, owner, kind) if bind is not None else member
+    return None
+
+
 class memoryview:
     def __buffer__(self, flags, /):
         from _buffer import getbuffer
@@ -544,9 +555,17 @@ class memoryview:
         self._object = object.obj if isinstance(object, memoryview) else object
         self._owner = None
         self._owner_view = None
-        if not isinstance(object, (memoryview, bytes, bytearray, array)) and hasattr(type(object), '__buffer__'):
+        kind = type(object)
+        native = (memoryview, bytes, bytearray, array)
+        custom = not isinstance(object, native)
+        if not custom and kind is not memoryview and kind is not bytes and kind is not bytearray and kind is not array:
+            for base in kind.__mro__:
+                if '__buffer__' in vars(base):
+                    custom = base is not memoryview and base is not bytes and base is not bytearray and base is not array
+                    break
+        if custom and hasattr(kind, '__buffer__'):
             self._owner = object
-            object = type(object).__buffer__(object, flags)
+            object = _buffer_hook(object, '__buffer__')(flags)
             if not isinstance(object, memoryview):
                 raise TypeError('__buffer__ returned non-memoryview')
             self._owner_view = object
@@ -875,9 +894,9 @@ class memoryview:
         self._export = None
         self._object = None
         if self._owner is not None:
-            callback = getattr(type(self._owner), '__release_buffer__', None)
+            callback = _buffer_hook(self._owner, '__release_buffer__')
             if callback is not None:
-                callback(self._owner, self._owner_view)
+                callback(self._owner_view)
             self._owner = None
             self._owner_view = None
 
