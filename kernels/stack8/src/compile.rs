@@ -137,9 +137,7 @@ impl Registry {
             idents: Vec::with_capacity(count),
             ..Self::default()
         };
-        for at in 0..count {
-            registry.idents.push(format!("\0outside:{at}"));
-        }
+        registry.leave_outside(count);
         registry
     }
 
@@ -13493,7 +13491,7 @@ fn operand_of(w: &Instr) -> Option<Operand> {
 /// The peephole: where four or three or two of the five instrs spell one
 /// of the three fused ones, that one replaces them. Jump targets move
 /// with the instrs; a group is left alone if a jump lands inside it.
-fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
+fn peephole(mut instrs: Vec<Instr>) -> Vec<Instr> {
     let mut targets = vec![false; instrs.len() + 1];
     for w in &instrs {
         if let Instr::Skip(t) = w {
@@ -13572,7 +13570,7 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
             }
             None => {
                 map[i] = out.len();
-                out.push(instrs[i].clone());
+                out.push(std::mem::replace(&mut instrs[i], Instr::Nothing));
                 i += 1;
             }
         }
