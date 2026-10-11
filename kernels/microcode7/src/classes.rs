@@ -1829,10 +1829,14 @@ impl<'a> Machine<'a> {
                             return symbolic.map_err(Escape::Error);
                         }
                         match values[0].settled() {
-                            Value::Blueprint(class) => { if let Some(entry) = Self::own_entry(&class, &values[1].bare()) { return Ok(entry.settled()); } },
+                            Value::Blueprint(class) => {
+                                if let Some(entry) = Self::own_entry(&class, &values[1].bare()) { return Ok(entry.settled()); }
+                                if values[1].bare() == "__class__" { return Ok(Value::Blueprint(class)); }
+                            },
                             Value::Dim(reference) => {
                                 if let Some(Value::Blueprint(owner)) = reference.revive() {
                                     if let Some(entry) = Self::own_entry(&owner, &values[1].bare()) { return Ok(entry.settled()); }
+                                    if values[1].bare() == "__class__" { return Ok(Value::Blueprint(owner)); }
                                 }
                             },
                             _ if values.get(3).is_some_and(|book| !matches!(book.settled(), Value::Nil)) => {

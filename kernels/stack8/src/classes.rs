@@ -1932,9 +1932,11 @@ impl<'a> Engine<'a> {
                     }
                     if let Value::Class(owner) = args[0].contents() {
                         if let Some(value) = Self::own_class_value(&owner, &args[1].plain()) { return Ok(value.contents()); }
+                        if args[1].plain() == "__class__" { return Ok(Value::Class(owner)); }
                     } else if let Value::Faint(reference) = args[0].contents() {
                         if let Some(Value::Class(owner)) = reference.revive() {
                             if let Some(value) = Self::own_class_value(&owner, &args[1].plain()) { return Ok(value.contents()); }
+                            if args[1].plain() == "__class__" { return Ok(Value::Class(owner)); }
                         }
                     } else if args.get(3).is_some_and(|book| !matches!(book.contents(), Value::Null)) {
                         let Value::Tuple(found) = self.class_namespace_read(vec![args[3].clone(), args[1].clone()])? else { unreachable!() };
