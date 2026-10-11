@@ -8,10 +8,16 @@ _host_clear_traceback = __trace_native__
 _traceback_module = None
 
 def _clear_exception_frames(traceback):
-    if traceback is not None and not _host_clear_traceback(10, traceback):
-        global _traceback_module
-        if _traceback_module is None:
-            _traceback_module = _host_load_module('traceback')
+    if traceback is None:
+        return
+    global _traceback_module
+    if _traceback_module is None:
+        import sys
+        _traceback_module = sys.modules.get('traceback')
+    if _traceback_module is not None:
+        _traceback_module.clear_frames(traceback)
+    elif not _host_clear_traceback(10, traceback):
+        _traceback_module = _host_load_module('traceback')
         _traceback_module.clear_frames(traceback)
 
 # Assertions and the test lifecycle live beside the modules they serve.
