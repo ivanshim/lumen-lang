@@ -25022,6 +25022,10 @@ impl Engine<'_> {
         if b == Builtin::Tuple && args.len() == 1 {
             if let Some(Value::View(view)) = Self::view_in(&args[0]) { if view.1 == "mapping" && matches!(view.0.contents(), Value::Object(_)) { return self.comprehension_items(&view.0.contents()).map(Value::tuple); } }
         }
+        // The walk of a read-only view over a thing of the map kind is that thing's own.
+        if b == Builtin::Iter && args.len() == 1 {
+            if let Some(Value::View(view)) = Self::view_in(&args[0]) { if view.1 == "mapping" && matches!(view.0.contents(), Value::Object(_)) { args[0] = view.0.contents(); } }
+        }
         if b == Builtin::Sorted && !args.is_empty() {
             if let Some(Value::View(view)) = Self::view_in(&args[0]) { if view.1 == "mapping" && !matches!(view.0.contents(), Value::Class(_)) { args[0] = view.0.contents(); } }
         }

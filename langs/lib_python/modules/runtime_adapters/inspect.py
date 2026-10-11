@@ -36,8 +36,6 @@ def unwrap(func, *, stop=None):
 # Coroutine recognition follows CPython v3.14.8 inspect; PSF License.
 import functools
 import types
-_void = object()
-_is_coroutine_mark = object()
 
 def ismethod(object):
     """Return true if the object is an instance method."""
