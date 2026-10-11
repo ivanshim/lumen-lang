@@ -56,6 +56,10 @@ impl FxHasher {
 
 impl std::hash::Hasher for FxHasher {
     #[inline]
+    fn write_usize(&mut self, word: usize) {
+        self.add(word);
+    }
+    #[inline]
     fn write(&mut self, mut bytes: &[u8]) {
         while bytes.len() >= 8 {
             self.add(usize::from_ne_bytes(bytes[..8].try_into().unwrap()));
