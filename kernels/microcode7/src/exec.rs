@@ -664,7 +664,7 @@ pub struct Machine<'a> {
     native_kinds: Vec<(String, Rc<Blueprint>)>,
     native_kind_names: RefCell<HashMap<String, std::collections::HashSet<String>>>,
     routine_members: Vec<(crate::ghost::Ghost, Rc<Thing>)>,
-    routine_member_positions: RefCell<HashMap<(u8, usize, usize), Option<usize>, crate::table::FxBuildHasher>>,
+    routine_member_positions: HashMap<(u8, usize, usize), usize, crate::table::FxBuildHasher>,
     reaping: bool,
     loose_entries: RefCell<HashMap<(String, String), Value>>,
     stack_origin: usize,
@@ -2098,7 +2098,7 @@ impl<'a> Machine<'a> {
             body_namespace: None,
             code_kind: None,
             member_inventories: RefCell::new(HashMap::new()),
-            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: RefCell::new(HashMap::default()), reaping: false, loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
+            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: HashMap::default(), reaping: false, loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
             stack_origin: &table as *const &Table as usize,
             descriptor_files: std::collections::BTreeMap::new(),
             table,
@@ -3139,7 +3139,7 @@ impl<'a> Machine<'a> {
         // the web just woven still describes the machine: reuse it.
         if original.is_empty() {
             self.routine_members.retain(|(function, _)| function.revive().is_some_and(|function| !web.unowned(&function)));
-            self.routine_member_positions.borrow_mut().clear();
+            self.reindex_routine_members();
             drop(web);
             self.attend_to_gone();
             self.reaping = false;
@@ -3174,7 +3174,7 @@ impl<'a> Machine<'a> {
         let lost = checked.remaining(original);
         let found = lost.len();
         self.routine_members.retain(|(function, _)| function.revive().is_some_and(|function| !checked.unowned(&function)));
-        self.routine_member_positions.borrow_mut().clear();
+        self.reindex_routine_members();
 
         let taken = Web::cut(&lost);
         drop(lost);

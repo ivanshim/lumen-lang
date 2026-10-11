@@ -3823,26 +3823,26 @@ impl<'a> Machine<'a> {
             _ => None,
         }
     }
+    fn routine_member_weak_key(value: &crate::ghost::Ghost) -> Option<(u8, usize, usize)> {
+        use crate::ghost::Ghost;
+        match value {
+            Ghost::Routine(code) => Some((0, code.as_ptr() as usize, 0)),
+            Ghost::Bound(code, frame) => Some((1, code.as_ptr() as usize, frame.as_ptr() as usize)),
+            Ghost::Method(code, receiver, _) => Some((2, code.as_ptr() as usize, receiver.as_ptr() as usize)),
+            _ => None,
+        }
+    }
+    pub(super) fn reindex_routine_members(&mut self) {
+        self.routine_member_positions = self.routine_members.iter().enumerate()
+            .filter_map(|(at, (key, _))| Self::routine_member_weak_key(key).map(|key| (key, at))).collect();
+    }
     fn routine_member_index(&self, value: &Value) -> Option<usize> {
-        let identity = Self::routine_member_key(value);
-        if let Some(identity) = identity {
-            if let Some(found) = self.routine_member_positions.borrow().get(&identity).copied() {
-                match found {
-                    None => return None,
-                    Some(at) if self.routine_members.get(at).is_some_and(|(key, _)|
-                        key.revive().is_some_and(|key| key.equals(value))) => return Some(at),
-                    _ => {},
-                }
-            }
+        if let Some(identity) = Self::routine_member_key(value) {
+            let at = *self.routine_member_positions.get(&identity)?;
+            return self.routine_members.get(at).and_then(|(key, _)|
+                key.revive().is_some_and(|key| key.equals(value)).then_some(at));
         }
-        let found = self.routine_members.iter().position(|(key, _)| key.revive().is_some_and(|key| key.equals(value)));
-        if let Some(identity) = identity {
-            let mut positions = self.routine_member_positions.borrow_mut();
-            // Misses hold no weak owner, so bound the address-only cache too.
-            if positions.len() >= self.routine_members.len().saturating_mul(2).max(256) { positions.clear(); }
-            positions.insert(identity, found);
-        }
-        found
+        self.routine_members.iter().position(|(key, _)| key.revive().is_some_and(|key| key.equals(value)))
     }
     fn routine_holding(&self,value:&Value,key:&str)->Option<Value> {
         let members=&self.routine_members[self.routine_member_index(value)?].1;
@@ -4450,16 +4450,18 @@ impl<'a> Machine<'a> {
                 let entry = (crate::ghost::ghost_of(code).expect("routine is weakly held"), holder);
                 // Reuse a dead function's slot without moving live indices;
                 // a caller can keep an index while annotation code reenters.
+                let identity = Self::routine_member_weak_key(&entry.0);
                 let at = if let Some(vacant) = self.routine_members.iter().position(|(key, _)| key.departed()) {
+                    if let Some(old) = Self::routine_member_weak_key(&self.routine_members[vacant].0) {
+                        self.routine_member_positions.remove(&old);
+                    }
                     self.routine_members[vacant] = entry;
                     vacant
                 } else {
                     self.routine_members.push(entry);
                     self.routine_members.len() - 1
                 };
-                if let Some(identity) = Self::routine_member_key(code) {
-                    self.routine_member_positions.borrow_mut().insert(identity, Some(at));
-                }
+                if let Some(identity) = identity { self.routine_member_positions.insert(identity, at); }
                 at
             }
         }
