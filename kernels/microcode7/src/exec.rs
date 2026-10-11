@@ -13809,20 +13809,33 @@ impl<'a> Machine<'a> {
         match program.globe.as_ref()? {
             Value::Shared(cell) | Value::Mutable(cell, _) => {
                 let settled = cell.borrow().settled();
-                if matches!(settled, Value::Dict(_) | Value::Attributes(_))
+                if matches!(settled, Value::Dict(_))
                     || Self::underlying(&settled).is_some_and(|worth| matches!(worth.settled(), Value::Dict(_))) {
                     return Some(cell.clone());
                 }
                 None
             }
-            globals @ Value::Dict(_) | globals @ Value::Attributes(_) => Some(Rc::new(RefCell::new(globals.clone()))),
+            globals @ Value::Dict(_) => Some(Rc::new(RefCell::new(globals.clone()))),
             globals @ Value::Thing(_) if Self::underlying(globals).is_some_and(|worth| matches!(worth.settled(), Value::Dict(_))) => Some(Rc::new(RefCell::new(globals.clone()))),
             _ => None,
         }
     }
 
+    /// The globals a routine was handed. While a dict subclass's globals are
+    /// being read through, a module's own namespace counts as handed too, so
+    /// that a method of that subclass reads names from its own module.
+    fn handed_globals(&self, program: &Routine) -> Option<Rc<RefCell<Value>>> {
+        if let Some(book) = Self::explicit_globals(program) { return Some(book); }
+        if !self.world_book.as_ref().is_some_and(|world| matches!(&*world.borrow(), Value::Thing(_))) { return None; }
+        match program.globe.as_ref()? {
+            Value::Shared(cell) | Value::Mutable(cell, _) if matches!(&*cell.borrow(), Value::Attributes(_)) => Some(cell.clone()),
+            module @ Value::Attributes(_) => Some(Rc::new(RefCell::new(module.clone()))),
+            _ => None,
+        }
+    }
+
     fn enter_function_globals(&mut self, program: &Routine) -> (bool, Option<Option<Rc<RefCell<Value>>>>) {
-        let explicit = Self::explicit_globals(program);
+        let explicit = self.handed_globals(program);
         let supplied = explicit.is_some();
         let ordinary = program.globe.is_none() && !self.supplied_books.is_empty();
         let previous = if supplied || ordinary {
@@ -13839,7 +13852,7 @@ impl<'a> Machine<'a> {
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
-        let mut handed = match Self::explicit_globals(&program) {
+        let mut handed = match self.handed_globals(&program) {
             Some(namespace) => Some(namespace),
             None if self.armed_names.is_some() => match &program.globe {
                 Some(Value::Shared(binding) | Value::Mutable(binding, _)) => Some(binding.clone()),
@@ -28133,9 +28146,8 @@ impl<'a> Machine<'a> {
                 || self.table.strings("ext.system.source.file").contains(ident)
                 || self.table.strings("ext.system.module.doc").contains(ident)
                 || self.world_book.as_ref().is_some_and(|book| match &*book.borrow() {
-                    Value::Dict(_) => looked_up(book, ident).is_some(),
                     Value::Thing(_) => true,
-                    _ => false,
+                    _ => looked_up(book, ident).is_some(),
                 });
             if self.names_in_calls && !source_member { return None; }
             return Some(Held::World);
