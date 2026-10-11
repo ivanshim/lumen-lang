@@ -236,7 +236,17 @@ pub fn release_all_anchors() {
 }
 
 fn anchor_ready() -> bool {
-    ANCHORED.try_with(|all| all.borrow().iter().any(|item| Rc::strong_count(item) == 1)).unwrap_or(false)
+    ANCHORED.try_with(|all| {
+        let all = all.borrow();
+        // Avoid an iterator callback per retained owner at every interpreter step.
+        let mut pending = all.as_slice();
+        while let [a, b, c, d, rest @ ..] = pending {
+            if Rc::strong_count(a) == 1 || Rc::strong_count(b) == 1
+                || Rc::strong_count(c) == 1 || Rc::strong_count(d) == 1 { return true; }
+            pending = rest;
+        }
+        pending.iter().any(|item| Rc::strong_count(item) == 1)
+    }).unwrap_or(false)
 }
 
 /// The method a class bids farewell with, where the language has one.
