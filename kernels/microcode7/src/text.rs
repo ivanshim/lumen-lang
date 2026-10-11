@@ -871,3 +871,17 @@ mod recase_tests {
 
     }
 }
+
+/// The immutable builtin label roster, indexed by its text-method suffix.
+pub fn named_work(name: &str) -> Option<Work> {
+    static WORDS: std::sync::LazyLock<std::collections::HashMap<&'static str, Work, crate::table::FxBuildHasher>> = std::sync::LazyLock::new(|| {
+        let mut words = std::collections::HashMap::default();
+        for (label, operation) in crate::table::BUILTIN_LABELS {
+            if let (Some(name), crate::form::Prim::Textual(work)) = (label.strip_prefix("ext.builtin.text."), operation) {
+                words.entry(name).or_insert(work);
+            }
+        }
+        words
+    });
+    WORDS.get(name).copied()
+}

@@ -11398,12 +11398,11 @@ impl<'a> Machine<'a> {
                 return Ok(if name == "isascii" { Value::Flag(false) } else { result });
             }
             if matches!(name, "find" | "rfind" | "index" | "rindex" | "count" | "replace" | "partition" | "rpartition") {
-                let label = format!("ext.builtin.text.{}", name);
-                if let Some((_, Prim::Textual(work))) = crate::table::BUILTIN_LABELS.iter().find(|(word, _)| *word == label) {
+                if let Some(work) = crate::text::named_work(name) {
                     let mut input = vec![actual.clone()];
                     input.extend(arguments.iter().map(Value::settled));
-                    crate::text::fit_names(self.table, *work, &mut input, keywords)?;
-                    return self.prim(Prim::Textual(*work), name, &input).map_err(Escape::from);
+                    crate::text::fit_names(self.table, work, &mut input, keywords)?;
+                    return self.prim(Prim::Textual(work), name, &input).map_err(Escape::from);
                 }
             }
         }
@@ -11415,18 +11414,17 @@ impl<'a> Machine<'a> {
         let codepoint_method = matches!(&actual, Value::Unpaired(_))
             && ["lower", "upper", "replace", "count", "index", "rindex", "find", "rfind", "split", "rsplit"].contains(&name);
         if matches!(&actual, Value::Text(_)) || codepoint_method {
-            let key = format!("ext.builtin.text.{}", name);
-            if let Some((_, Prim::Textual(work))) = crate::table::BUILTIN_LABELS.iter().find(|(label, _)| *label == key) {
+            if let Some(work) = crate::text::named_work(name) {
                 let mut given = vec![actual]; given.extend(arguments.into_iter().map(|v| v.settled()));
-                if *work == crate::text::Work::JOIN && given.len() == 2 { given[1] = Value::Vector(crate::tuples::Sequence::plain(self.gathered_members(&given[1])?)); }
-                crate::text::fit_names(self.table, *work, &mut given, keywords)?;
-                if *work == crate::text::Work::FORMATMAP {
+                if work == crate::text::Work::JOIN && given.len() == 2 { given[1] = Value::Vector(crate::tuples::Sequence::plain(self.gathered_members(&given[1])?)); }
+                crate::text::fit_names(self.table, work, &mut given, keywords)?;
+                if work == crate::text::Work::FORMATMAP {
                     if given.len() != 2 { return Err(crate::text::complaint(self.table, "arguments").into()); }
                     let Value::Text(s) = &given[0] else { return Err(crate::text::complaint(self.table, "receiver").into()); };
                     let s = s.to_string();
                     return self.mapping_format(&s, &given[1], 0);
                 }
-                return self.prim(Prim::Textual(*work), name, &given).map_err(Escape::from);
+                return self.prim(Prim::Textual(work), name, &given).map_err(Escape::from);
             }
         }
         if let Value::Progression(walk) = &actual {
@@ -28025,7 +28023,7 @@ impl<'a> Machine<'a> {
 
     /// A name the program can write, rather than a cell of the builder's.
     fn visible_name(word: &str) -> bool {
-        !word.contains('\0') && !word.starts_with('#')
+        !word.contains('\0') && !word.starts_with("#")
     }
 
     /// The dictionary an outermost slot lives in, if any: that of the
@@ -28043,7 +28041,7 @@ impl<'a> Machine<'a> {
         }
         if self.world_book.is_none() && self.readings.is_empty() { return None; }
         let ident = self.idents.get(at)?;
-        let bare = ident.rsplit('/').next().unwrap_or(ident);
+        let bare = ident.rsplit_once('/').map_or(ident.as_str(), |(_, bare)| bare);
         if !Self::visible_name(bare) { return None; }
         if let Some(which) = self.readings.iter().position(|book| (book.from..book.upto).contains(&at)) { return Some(Held::Reading(which)); }
         if self.world_book.is_some() && Self::visible_name(ident) {
