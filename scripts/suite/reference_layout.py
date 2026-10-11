@@ -27,8 +27,6 @@ def staged_reference(root, program, versions):
     copied = library / suite.name
     shutil.copytree(suite, copied)
     module = python_test_module(source)
-    if module is None:
-        return [str(copied / relative)], str(stage)
     entry = copied / '_lumen_reference_entry.py'
     shutil.copyfile(root / 'scripts/suite/reference_entry.py', entry)
     return [str(entry), str(copied), module, str(copied / relative)], str(stage)
