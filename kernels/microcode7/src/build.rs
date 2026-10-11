@@ -1403,6 +1403,19 @@ impl<'a> Builder<'a> {
         if !self.layers.last().map_or(false, |layer| layer.idents.iter().any(|named| named == name)) {
             if let Some(slot) = self.class_cell_read(name) { return slot; }
         }
+        // Text read inside a routine stands where its caller stands: the
+        // caller's own locals answer before the caller's globals, as the
+        // reference reads a frame's locals before its globals, unless the
+        // text itself declared the name `global`. A name handed over among
+        // the caller's globals is told from that by its imported slot, so a
+        // caller local of the same spelling still wins.
+        if self.table.flag("ext.stmt.function.closes_over") && !self.survey && self.read_in {
+            let given_global = self.layers[0].aliases.iter().any(|(n, to)| n == name && to.starts_with("\0import/"));
+            let said_global = self.layers[0].aliases.iter().any(|(n, to)| n == name && !to.starts_with("\0import/"));
+            if given_global && !said_global {
+                if let Some(slot) = self.lexical_address(name, false) { return slot; }
+            }
+        }
         if let Some(slot) = self.aliased(name) {
             return slot;
         }

@@ -3997,7 +3997,7 @@ impl<'a> Machine<'a> {
             return Err(format!("RuntimeError: closure binding '{}' is unavailable in {routine}", slot.ident));
         };
         if slot.up > 0 && !Rc::ptr_eq(&f, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0')
-            && self.frames_named.last().is_some_and(|routine| routine.globe.is_none()) {
+            && self.frames_named.last().is_some_and(|routine| routine.reads_annotation) {
             if let Some((names, all)) = self.annotation_scope(frame) {
                 let content = v.settled();
                 if all || matches!(content, Value::Unset) {
@@ -4052,11 +4052,14 @@ impl<'a> Machine<'a> {
             self.grumble("warning", &format!("Undefined variable {}", slot.ident));
             return Ok(Value::Nil);
         }
+        // A name the builtin namespace holds answers before the lazy
+        // stand-in a class word is given, so a builtin read from text
+        // handed a frame of its own is the real builtin, not a wrapper.
+        if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
         if self.has_class_order() {
             if slot.ident.as_ref()==self.rules.detail_root {if let Some(c)=&self.ancestor{return Ok(Value::Blueprint(c.clone()));}}
             if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::Wrapped(8,Rc::new(vec![Value::text(&slot.ident)]).into()));}
         }
-        if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
         if let Some(symbol) = self.symbolic_name(&slot.ident)? { return Ok(symbol); }
         Err(format!("Undefined variable: {}", slot.ident))
     }

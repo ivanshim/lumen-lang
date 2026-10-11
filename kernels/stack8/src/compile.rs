@@ -1216,6 +1216,23 @@ impl<'a> Compiler<'a> {
         self.note_seen(name, SEEN_READ);
         let renamed = self.comprehension_names.iter().rev().find(|(n, _)| n == name).map(|(_, own)| own.clone());
         let name = renamed.as_deref().unwrap_or(name);
+        // Text read inside a routine stands where its caller stands: the
+        // caller's own locals answer before the caller's globals, as the
+        // reference reads a frame's locals before its globals, unless the
+        // text itself declared the name `global`. A name the text hands
+        // over as one of the caller's globals is told from that by its
+        // module slot, so a caller local of the same spelling still wins.
+        if self.lang.closes_over && !self.discovering {
+            let unit = self.pieces.last().expect("a unit");
+            let given_global = unit.globals.iter().any(|(n, to)| n == name && to.starts_with("\0module:"));
+            let said_global = unit.globals.iter().any(|(n, to)| n == name && !to.starts_with("\0module:"));
+            if given_global && !said_global {
+                if let Some(at) = Self::unblocked(unit, name) {
+                    let far = self.registry.slot(name);
+                    return Cell { free: false, ident: Rc::from(name), near: vec![at], far, moving };
+                }
+            }
+        }
         if let Some(cell) = self.global_cell(name) {
             return Cell { moving, ..cell };
         }

@@ -3138,7 +3138,7 @@ impl<'a> Engine<'a> {
                 // read about to be overwritten anyway.
                 let value = if slot.moving { std::mem::replace(&mut *shared.borrow_mut(), Value::Gap) } else { shared.borrow().clone() };
                 if slot.free && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0')
-                    && self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_none()) {
+                    && self.running_routine.as_ref().is_some_and(|routine| routine.reads_annotation) {
                     if let Some((names, all)) = self.annotation_scope() {
                         if all || matches!(value, Value::Blank) {
                             let reference = self.unresolved_annotation_name(&names, &slot.ident)?;
@@ -3228,12 +3228,12 @@ impl<'a> Engine<'a> {
             self.complain(Complaint::Warning, &told);
             return Ok(Value::Null);
         }
+        if unbound {
+            if let Some(held) = self.kept_by_module(&slot.ident) { return Ok(held); }
+        }
         if unbound && self.fuller_classes() {
             if slot.ident.as_ref() == self.class_word("root") { return Ok(Value::Class(self.root_class())); }
             if self.lang.builtins.contains_key(slot.ident.as_ref()) { return Ok(Value::Adapter(Rc::new((8,vec![Value::text(&slot.ident)])))); }
-        }
-        if unbound {
-            if let Some(held) = self.kept_by_module(&slot.ident) { return Ok(held); }
         }
         if unbound { if let Some(reference) = self.annotation_name(&slot.ident)? { return Ok(reference); } }
         if empty_cell { return Err(format!("Undefined variable: {}", slot.ident)); }
