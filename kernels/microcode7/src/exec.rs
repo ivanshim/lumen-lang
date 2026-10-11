@@ -608,7 +608,6 @@ pub struct Machine<'a> {
     /// is.
     world_globals_source: Option<Rc<str>>,
     loaded_spaces: HashMap<Rc<str>, String, crate::table::FxBuildHasher>,
-    namespace_books: Vec<(String, Rc<RefCell<Value>>)>,
     /// Names now under construction: a module reading its own name back
     /// out of the loader before its top level has finished running --
     /// `builtins` asks for itself this way -- is handed the instance
@@ -2082,7 +2081,6 @@ impl<'a> Machine<'a> {
             displaced_primitives: std::collections::BTreeSet::new(),
             world_globals_source: None,
             loaded_spaces: HashMap::with_hasher(crate::table::FxBuildHasher::default()),
-            namespace_books: Vec::new(),
             within_spare: false,
             world_book: None,
             main_world: None,
@@ -10766,6 +10764,21 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        // Exact native searches need no descriptor, coroutine or index hooks.
+        if self.names_in_calls && matches!(receiver, Value::Text(_)) && keywords.is_empty()
+            && arguments.len() <= 3 && matches!(arguments.first(), Some(Value::Text(_)))
+            && arguments.iter().skip(1).all(|value| matches!(value, Value::Nil | Value::Flag(_) | Value::Small(_)))
+            && !self.native_slot_names.contains_key(name)
+            && self.rules.words_ext_stmt_class_detail_root_members.get(9).map(String::as_str) != Some(name) {
+            if let Some(work) = crate::text::named_work(name) {
+                use crate::text::Work;
+                if matches!(work, Work::COUNT | Work::FIND | Work::RFIND | Work::INDEX | Work::RINDEX | Work::STARTSWITH | Work::ENDSWITH) {
+                    let mut values = Vec::with_capacity(arguments.len() + 1);
+                    values.push(receiver.clone()); values.extend(arguments);
+                    return crate::text::apply(self.table, work, name, &values, self.wording()).map_err(Escape::from);
+                }
+            }
+        }
         let initializing=self.rules.words_ext_stmt_class_constructor.first().is_some_and(|word|word==name);
         if self.has_class_order() && initializing && matches!(receiver.settled(),Value::Octets{changeable:true,..}) {
             let callable=self.kind_entry("bytearray",name);
@@ -12002,9 +12015,16 @@ impl<'a> Machine<'a> {
             0 => {
                 let count = Self::recipe_member(thing, "remaining")?;
                 if !matches!(count, Value::Nil) {
-                    let left = count.as_big()?;
-                    if left == BigInt::from(0) { return Ok(None); }
-                    Self::recipe_replace(thing, "remaining", Value::from_big(left - BigInt::from(1)));
+                    let remaining = match &count {
+                        Value::Small(0) => return Ok(None),
+                        Value::Small(left) if *left > i64::MIN => Value::Small(left - 1),
+                        _ => {
+                            let left = count.as_big()?;
+                            if left == BigInt::from(0) { return Ok(None); }
+                            Value::from_big(left - BigInt::from(1))
+                        }
+                    };
+                    Self::recipe_replace(thing, "remaining", remaining);
                 }
                 return Self::recipe_member(thing, "value").map(Some);
             }
@@ -20089,6 +20109,10 @@ impl<'a> Machine<'a> {
                 // key taken out of it, walked under watch forwards or
                 // backwards, or handed on after a compound write.
                 self.prim_values(op, name, v)?
+            } else if matches!(op, Prim::Chance | Prim::Reckon)
+                && v.iter().all(|value| matches!(value, Value::Nil | Value::Flag(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Text(_))) {
+                // Native math and RNG scalars contain no cells or user hooks.
+                self.prim_values(op, name, v)?
             } else {
                 let unwrapped: Vec<Value> = v.iter().map(|value| Self::window_inside(value).unwrap_or_else(|| collection_read(value))).collect();
                 self.prim_values(op, name, &unwrapped)?
@@ -27655,7 +27679,6 @@ impl Machine<'_> {
             shared: crate::data::BlueprintEntries::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
         self.made += 1;
         let value = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(kind), holds: RefCell::new(members), turn: self.made }));
-        self.namespace_books.retain(|(name, _)| name != path);
         // The namespace the module's routines were built beside is the
         // very holdings of the module itself, so an attribute written,
         // a key added through those globals and a name the dynamic code
@@ -27964,7 +27987,6 @@ struct Namebook {
 /// Which dictionary a slot's value lives in, when it lives in one.
 #[derive(Clone, Copy)]
 enum Held {
-    Namespace(usize),
     World,
     Reading(usize),
 }
@@ -28024,7 +28046,7 @@ impl<'a> Machine<'a> {
 
     /// A name the program can write, rather than a cell of the builder's.
     fn visible_name(word: &str) -> bool {
-        !word.contains('\0') && !word.starts_with("#")
+        !word.as_bytes().contains(&0) && word.as_bytes().first() != Some(&b'#')
     }
 
     /// The dictionary an outermost slot lives in, if any: that of the
@@ -28034,14 +28056,9 @@ impl<'a> Machine<'a> {
             self.frames_named.last().is_some_and(|running| running.globe.is_some() && Rc::as_ptr(running) as usize == *body)
         });
         if scoped && self.world_book.is_some() { return Some(Held::World); }
-        if let Some(word) = self.idents.get(at).and_then(|w| w.strip_prefix("\0import/")) {
-            let (owner, _) = word.rsplit_once('/')?;
-            for (index, (path, _)) in self.namespace_books.iter().enumerate() {
-                if owner == path { return Some(Held::Namespace(index)); }
-            }
-        }
         if self.world_book.is_none() && self.readings.is_empty() { return None; }
         let ident = self.idents.get(at)?;
+        if self.readings.is_empty() && ident.as_bytes().first() == Some(&0) { return None; }
         let bare = ident.rsplit_once('/').map_or(ident.as_str(), |(_, bare)| bare);
         if !Self::visible_name(bare) { return None; }
         if let Some(which) = self.readings.iter().position(|book| (book.from..book.upto).contains(&at)) { return Some(Held::Reading(which)); }
@@ -28083,26 +28100,6 @@ impl<'a> Machine<'a> {
     /// means the cell itself is to be read after all.
     fn booked_read(&mut self, at: usize, name: &str) -> Option<Result<Value, String>> {
         match self.book_holding(at)? {
-            Held::Namespace(index) => {
-                if !Self::visible_name(name) { return None; }
-                let found = looked_up_slot(&self.namespace_books[index].1, name, Some(at));
-                if let Some(found) = found {
-                    if let Value::Shared(place) = &found {
-                        let world = self.outermost.cells.borrow();
-                        if matches!(world.get(at), Some(Value::Shared(slot)) if Rc::ptr_eq(slot, place)) { return Some(Ok(place.borrow().clone())); }
-                    }
-                    return Some(Ok(found));
-                }
-                let cell = self.outermost.cells.borrow().get(at)?.settled();
-                if self.passed_over(name, &cell) { None } else {
-                    // A name the namespace's own book does not hold is
-                    // looked for among the builtins, as the world book
-                    // looks, before it is called missing.
-                    if let Some(spare) = self.spare_name(name) { return Some(Ok(spare)); }
-                    if let Some(result) = self.symbolic_lookup(name) { return Some(result); }
-                    Some(Err(format!("Undefined variable: {name}")))
-                }
-            }
             Held::World => {
                 let book = self.world_book.as_ref()?;
                 if let Some(worth) = looked_up_slot(book, name, Some(at)) {
@@ -28188,7 +28185,6 @@ impl<'a> Machine<'a> {
             worth.filter(|value| !matches!(value.settled(), Value::Unset))
         } else { worth };
         match self.book_holding(at) {
-            Some(Held::Namespace(index)) => if Self::visible_name(name) { set_down_slot(&self.namespace_books[index].1, name, worth, Some(at)) },
             Some(Held::World) => if let Some(book) = &self.world_book { set_down_slot(book, name, worth, Some(at)) },
             Some(Held::Reading(which)) => {
                 let book = &self.readings[which];

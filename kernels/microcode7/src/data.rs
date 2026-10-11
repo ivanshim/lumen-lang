@@ -13,13 +13,27 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 
 use crate::form::{Prim, Routine};
 
+/// Capture membership is indexed by the frame's existing slot numbers.
+#[derive(Default)]
+pub struct CaptureSlots(Vec<u64>);
+
+impl CaptureSlots {
+    pub fn contains(&self, slot: &usize) -> bool {
+        self.0.get(slot / 64).is_some_and(|word| word & (1u64 << (slot % 64)) != 0)
+    }
+    pub fn insert(&mut self, slot: usize) {
+        let word = slot / 64;
+        if word >= self.0.len() { self.0.resize(word + 1, 0); }
+        self.0[word] |= 1u64 << (slot % 64);
+    }
+}
+
 /// A run-time frame: slots, and the frame the program was made in.
 pub struct Env {
     pub cells: RefCell<Vec<Value>>,
-    pub capture_slots: RefCell<HashSet<usize>>,
-    pub outer: Option<Rc<Env>>,
     /// Slots used by closures after this call returns.
-
+    pub capture_slots: RefCell<CaptureSlots>,
+    pub outer: Option<Rc<Env>>,
     pub weak_callback_frame: Cell<bool>,
 }
 
@@ -29,7 +43,7 @@ impl Drop for Env {
 
 impl Env {
     pub fn make(size: usize, parent: Option<Rc<Env>>) -> Rc<Env> {
-        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(HashSet::new()), outer: parent, weak_callback_frame: Cell::new(false) })
+        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(CaptureSlots::default()), outer: parent, weak_callback_frame: Cell::new(false) })
     }
 }
 
