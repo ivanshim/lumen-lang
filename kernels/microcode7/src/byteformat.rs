@@ -121,12 +121,22 @@ pub fn perform(given: &[Value]) -> Result<Value,String> {
     let Value::Text(spelling)=&given[1] else {return Err("TypeError: Struct() argument 1 must be a str or bytes object".to_owned());};
     if matches!(given[0].settled(), Value::Small(4)) { SAVED.with(|saved| saved.borrow_mut().clear()); return Ok(Value::Nil); }
     let (size, reverse, pieces)=arrangement(spelling)?;
-    let task=given[0].settled();
+    let mut task=given[0].settled();
     if matches!(task, Value::Small(0)) {
         let descriptions=pieces.iter().map(|Piece(c,_,n,_)| Value::tuple(vec![Value::text(&char::from(*c).to_string()),Value::Small(*n as i64)])).collect();
         return Ok(Value::tuple(vec![Value::Small(size as i64),Value::tuple(descriptions)]));
     }
     let payload=given.get(2).ok_or_else(|| invalid("missing struct data"))?.settled();
+    // Exact integer/bytes fields can be packed without Python normalization.
+    if matches!(task, Value::Small(10)) {
+        let simple = match &payload {
+            Value::Tuple(items) => items.iter().all(|item| matches!(item.settled(), Value::Flag(_) | Value::Huge(_) | Value::Small(_) | Value::Octets { changeable: false, .. })),
+            _ => false,
+        };
+        let converts = pieces.iter().any(|Piece(code, ..)| matches!(code, b'e' | b'f' | b'd' | b'F' | b'D'));
+        if !simple || converts { return Ok(Value::Nil); }
+        task = Value::Small(1);
+    }
     if matches!(task,Value::Small(6)) {
         return match payload {
             Value::Octets {cell,..}=>Ok(Value::Flag(crate::exec::OctetLease::held(&cell))),

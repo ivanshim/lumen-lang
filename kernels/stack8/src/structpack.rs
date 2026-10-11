@@ -93,12 +93,21 @@ fn unpack_float(data: &[u8]) -> f64 {
     }
 }
 pub fn apply(args: &[Value]) -> Result<Value,String> {
-    let Value::Small(action)=args[0] else { return Err(complaint("invalid struct operation")); };
+    let Value::Small(mut action)=args[0] else { return Err(complaint("invalid struct operation")); };
     let Value::Text(text)=&args[1] else { return Err("TypeError: Struct() argument 1 must be a str or bytes object".into()); };
     if action==4 { FORMATS.with(|cache| cache.borrow_mut().clear()); return Ok(Value::Null); }
     let format=compile(text)?;
     if action==0 { return Ok(Value::tuple(vec![Value::Small(format.size as i64), Value::tuple(format.fields.iter().map(|f| Value::tuple(vec![Value::text(&(f.code as char).to_string()),Value::Small(f.count as i64)])).collect())])); }
     let payload=args.get(2).ok_or_else(|| complaint("missing struct data"))?.contents();
+    // Decline inputs that need the Python adapter's conversion protocols.
+    if action == 10 {
+        let Value::Tuple(values) = &payload else { return Ok(Value::Null); };
+        if format.fields.iter().any(|field| b"efdFD".contains(&field.code))
+            || values.iter().any(|value| !matches!(value.contents(), Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Bytes(_, false, _))) {
+            return Ok(Value::Null);
+        }
+        action = 1;
+    }
     if action==6 {
         let Value::Bytes(cell,..)=payload else {return Err("TypeError: a bytes-like object is required".into());};
         return Ok(Value::Flag(crate::engine::ByteExport::active(&cell)));
