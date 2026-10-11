@@ -14208,7 +14208,34 @@ impl<'a> Machine<'a> {
     }
 
     // Keep memory-stream transfers proportional to the bytes requested or supplied.
-    fn memory_octets(&self, supplied: &[Value]) -> Result<Value, String> {
+    fn memory_octets(&mut self, supplied: &[Value]) -> Result<Value, String> {
+        if supplied.len() == 3 && matches!((&supplied[0], &supplied[2]), (Value::Thing(_), Value::Small(_))) {
+            let accepted = match (&supplied[2], &supplied[1]) {
+                (Value::Small(0 | 1), Value::Small(_) | Value::Huge(_)) => true,
+                (Value::Small(2), Value::Octets { changeable: false, .. }) => true,
+                (Value::Small(0..=2), _) => false,
+                _ => true,
+            };
+            if !accepted { return Ok(Value::Nil); }
+            let transfer = (|| -> Res {
+                let owner = supplied[0].clone();
+                let mut values = Vec::with_capacity(5);
+                for name in ["_data", "_pos"] {
+                    values.push(self.read_class_member(owner.clone(), name, false)?.settled());
+                }
+                values.push(supplied[1].clone());
+                values.push(self.read_class_member(owner.clone(), "_closed", false)?.settled());
+                values.push(supplied[2].clone());
+                let Value::Tuple(result) = self.memory_octets(&values)? else { unreachable!("memory operation yields a pair") };
+                self.alter_class_member(owner, "_pos", Some(result[1].clone()), false)?;
+                Ok(result[0].clone())
+            })();
+            return match transfer {
+                Ok(value) => Ok(value),
+                Err(Escape::Error(words)) => Err(words),
+                Err(away) => { self.got_away = Some(away); Err(String::new()) },
+            };
+        }
         if supplied.len() != 5 { return Err("TypeError: invalid memory stream arguments".to_owned()); }
         let (buffer, cursor, closed, action) = match (&supplied[0], &supplied[1], &supplied[3], &supplied[4]) {
             (Value::Octets { cell, changeable: true, .. }, Value::Small(at), Value::Flag(shut), Value::Small(action)) =>

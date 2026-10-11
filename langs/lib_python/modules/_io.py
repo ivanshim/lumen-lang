@@ -272,8 +272,8 @@ class BytesIO(_BufferedIOBase):
     writable = readable
     seekable = readable
     def read(self, size=-1):
-        if type(size) is int:
-            result, self._pos = _memory(self._data, self._pos, size, self._closed, 0)
+        result = _memory(self, size, 0)
+        if result is not None:
             return result
         size = _size(size)
         if self._closed:
@@ -295,8 +295,8 @@ class BytesIO(_BufferedIOBase):
             return len(data)
     readinto1 = readinto
     def readline(self, size=-1):
-        if type(size) is int:
-            result, self._pos = _memory(self._data, self._pos, size, self._closed, 1)
+        result = _memory(self, size, 1)
+        if result is not None:
             return result
         size = _size(size)
         if self._closed:
@@ -313,8 +313,8 @@ class BytesIO(_BufferedIOBase):
         return data
     def write(self, b):
         # Immutable exact bytes need no temporary export or snapshot.
-        if type(b) is bytes:
-            n, self._pos = _memory(self._data, self._pos, b, self._closed, 2)
+        n = _memory(self, b, 2)
+        if n is not None:
             return n
         with _get_buffer(b) as view:
             if not view.c_contiguous:

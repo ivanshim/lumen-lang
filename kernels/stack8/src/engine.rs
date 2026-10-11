@@ -19282,7 +19282,28 @@ impl<'a> Engine<'a> {
     }
 
     // Read or write bounded memory-stream storage without intermediate Python slices.
-    fn byte_memory(&self, args: &[Value]) -> Res<Value> {
+    fn byte_memory(&mut self, args: &[Value]) -> Res<Value> {
+        if let [stream @ Value::Object(_), input, mode @ Value::Small(operation)] = args {
+            let exact = match operation {
+                0 | 1 => matches!(input, Value::Small(_) | Value::Huge(_)),
+                2 => matches!(input, Value::Bytes(_, false, _)),
+                _ => true,
+            };
+            if !exact { return Ok(Value::Null); }
+            let answer = (|| -> Flow<Value> {
+                let storage = self.class_get(stream.clone(), "_data", false)?.contents();
+                let position = self.class_get(stream.clone(), "_pos", false)?.contents();
+                let closed = self.class_get(stream.clone(), "_closed", false)?.contents();
+                let result = self.byte_memory(&[storage, position, input.clone(), closed, mode.clone()])?;
+                let Value::Tuple(parts) = result else { unreachable!("memory transfer returns data and position") };
+                self.class_write(stream.clone(), "_pos", Some(parts[1].clone()), false)?;
+                Ok(parts[0].clone())
+            })();
+            return answer.map_err(|fault| match fault {
+                Fault::Note(words) => words,
+                other => { self.carried = Some(other); self.special_fault() },
+            });
+        }
         let [Value::Bytes(storage, true, _), Value::Small(position), input, Value::Flag(closed), Value::Small(mode)] = args else {
             return Err("TypeError: invalid memory stream arguments".into());
         };
