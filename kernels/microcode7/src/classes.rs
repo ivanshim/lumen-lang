@@ -3976,7 +3976,6 @@ impl<'a> Machine<'a> {
             runs=self.code_run_by(source);
             let mut taken=(*source_code).clone();
             taken.annotator=code.annotator.clone();
-            taken.display_names=code.display_names.clone();
             taken.ident=code.ident.clone();
             taken.qualification=code.qualification.clone();
             taken.doc=code.doc.clone();
@@ -6223,7 +6222,7 @@ impl<'a> Machine<'a> {
             if key==self.detail("receiver"){return Ok(Value::Thing(t.clone()));}
             if key==self.detail("function"){return Ok(Value::Routine(code.clone()));}
             return self.read_class_member(Value::Routine(code.clone()),key,true);
-        }else if let Value::Routine(_)|Value::Bound(..)=&value {
+        }else if let Value::Routine(original)|Value::Bound(original, _)=&value {
             let (code,room)=self.routine_standing(&value);
             if let Some(held)=self.routine_holding(&value,key){return Ok(held);}
             // The row of type parameters the declaration wrote, made on
@@ -6291,8 +6290,8 @@ impl<'a> Machine<'a> {
                 let reacher=Value::Bound(code.clone(),room.clone());
                 return Ok(Value::tuple(order.into_iter().map(|at|Self::wrap(35,vec![reacher.clone(),Value::Small(at as i64)])).collect()));
             }
-            if key==self.detail("name"){return Ok(code.display_name(false));}
-            if key==self.detail("qualified"){return Ok(code.display_name(true));}
+            if key==self.detail("name"){return Ok(original.display_name(false));}
+            if key==self.detail("qualified"){return Ok(original.display_name(true));}
             if key==self.detail("doc") {
                 let Some(doc) = &code.doc else { return Ok(Value::Nil); };
                 return Ok(self.routine_kept(&value,key,Value::text(doc)));
