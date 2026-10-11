@@ -725,13 +725,14 @@ impl Knot {
     /// A knot with no place of its own stands for the places it holds:
     /// a bound routine for its frame (the routine itself holds nothing),
     /// a bound method for its thing, a keyed pair for its two values.
-    fn parts(self) -> Vec<Knot> {
-        match self {
-            Knot::Held(Value::Bound(body, env)) => vec![Knot::Held(Value::Routine(body)), Knot::Frame(env)],
-            Knot::Held(Value::Method(body, thing, _)) => vec![Knot::Held(Value::Routine(body)), Knot::Held(Value::Thing(thing))],
-            Knot::Held(Value::Keyed(k, v)) => vec![Knot::Held((*k).clone()), Knot::Held((*v).clone())],
-            other => vec![other],
-        }
+    fn parts(self) -> impl Iterator<Item = Knot> {
+        let (first, second) = match self {
+            Knot::Held(Value::Bound(body, env)) => (Knot::Held(Value::Routine(body)), Some(Knot::Frame(env))),
+            Knot::Held(Value::Method(body, thing, _)) => (Knot::Held(Value::Routine(body)), Some(Knot::Held(Value::Thing(thing)))),
+            Knot::Held(Value::Keyed(k, v)) => (Knot::Held((*k).clone()), Some(Knot::Held((*v).clone()))),
+            other => (other, None),
+        };
+        std::iter::once(first).chain(second)
     }
 }
 
@@ -796,7 +797,7 @@ impl Web {
         for knot in &extra {
             let parts = match knot {
                 Knot::Held(value) => Knot::Held(value.clone()).parts(),
-                Knot::Frame(room) => vec![Knot::Frame(room.clone())],
+                Knot::Frame(room) => Knot::Frame(room.clone()).parts(),
             };
             for part in parts {
                 if let Some(place) = part.place() { *bookkeeping.entry(place).or_insert(0) += 1; }
@@ -857,11 +858,11 @@ impl Web {
         // A bound function's environment can be the live module frame.
         // Its own routine is the part that determines whether the
         // function-attribute record is still owned by the program.
-        let parts = match value {
-            Value::Bound(body, _) => vec![Knot::Held(Value::Routine(body.clone()))],
+        let mut parts = match value {
+            Value::Bound(body, _) => Knot::Held(Value::Routine(body.clone())).parts(),
             other => Knot::Held(other.clone()).parts(),
         };
-        parts.iter().all(|part| {
+        parts.all(|part| {
             part.place().and_then(|place| self.strands.get(&place)).is_some_and(|strand| !strand.reached)
         })
     }
