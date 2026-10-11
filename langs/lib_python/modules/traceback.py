@@ -61,6 +61,9 @@ def format_exception_only(exc, value=None):
         message = '<exception str() failed>'
     if kind is None:
         raise 'TypeError: an exception value is required'
+    stype = type(exc)
+    if kind == stype.__name__ and stype.__module__ not in ('builtins', '__main__'):
+        kind = stype.__module__ + '.' + stype.__qualname__
     prefix = kind + ': '
     if message[:len(prefix)] == prefix:
         message = message[len(prefix):]

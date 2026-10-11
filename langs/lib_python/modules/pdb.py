@@ -207,6 +207,23 @@ class Pdb(cmd.Cmd):
         finally:
             self.set_continue()
 
+    def runcall(self, func, /, *args, **kwds):
+        self.reset()
+        self.running = True
+        sys.settrace(self.trace_dispatch)
+        result = None
+        try:
+            result = func(*args, **kwds)
+        except BdbQuit:
+            pass
+        finally:
+            self.set_continue()
+        return result
+
+
+def runcall(*args, **kwds):
+    return Pdb().runcall(*args, **kwds)
+
 
 def run(statement, globals=None, locals=None):
     Pdb().run(statement, globals, locals)

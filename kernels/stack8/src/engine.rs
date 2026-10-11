@@ -21050,9 +21050,17 @@ impl<'a> Engine<'a> {
             }
             Builtin::LoaderSource => {
                 arity(1)?;
-                let raw = std::fs::read(self.root_source.as_ref())
-                    .map_err(|_| "ImportError: source not available through get_data()".to_string())?;
+                let named = self.root_source.to_string();
                 let module = self.route_module("_tokenize")?;
+                let raw = match std::fs::read(&named) {
+                    Ok(raw) => raw,
+                    Err(_) if named.contains(".zip/") => {
+                        let reader = self.member_of(module, "_archived_source")?
+                            .ok_or_else(|| "ImportError: archived source reader is unavailable".to_string())?;
+                        return self.call_held(reader, vec![Value::text(&named)]);
+                    }
+                    Err(_) => return Err("ImportError: source not available through get_data()".to_string()),
+                };
                 let decoder = self.member_of(module, "_decode_source")?
                     .ok_or_else(|| "ImportError: source decoder is unavailable".to_string())?;
                 let bytes = self.byte_make(raw, false);
