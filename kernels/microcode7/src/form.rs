@@ -833,6 +833,7 @@ pub enum Traps {
 
 #[derive(Debug, Clone)]
 pub struct Routine {
+    pub display_names: std::cell::RefCell<Option<(Rc<str>, Rc<str>)>>,
     /// The compiled definition shared by independently created functions.
     pub definition: Option<Rc<Routine>>,
     pub annotation_is_text: bool,
@@ -1133,6 +1134,14 @@ impl Form {
 }
 
 impl Routine {
+    pub fn display_name(&self, qualified: bool) -> Value {
+        let mut names = self.display_names.borrow_mut();
+        if names.as_ref().map_or(true, |(short, full)| short.as_ref() != self.ident || full.as_ref() != self.qualification) {
+            *names = Some((Rc::from(self.ident.as_str()), Rc::from(self.qualification.as_str())));
+        }
+        let (short, full) = names.as_ref().unwrap();
+        Value::Text(if qualified { full.clone() } else { short.clone() })
+    }
     pub fn with_literals(&self, values: &[Value]) -> Result<Self, String> {
         if values.len() != self.literals.len() {
             return Err("NotImplementedError: changing the constant table length is unavailable".into());

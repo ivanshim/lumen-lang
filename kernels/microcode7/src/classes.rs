@@ -3976,6 +3976,7 @@ impl<'a> Machine<'a> {
             runs=self.code_run_by(source);
             let mut taken=(*source_code).clone();
             taken.annotator=code.annotator.clone();
+            taken.display_names=code.display_names.clone();
             taken.ident=code.ident.clone();
             taken.qualification=code.qualification.clone();
             taken.doc=code.doc.clone();
@@ -6290,8 +6291,8 @@ impl<'a> Machine<'a> {
                 let reacher=Value::Bound(code.clone(),room.clone());
                 return Ok(Value::tuple(order.into_iter().map(|at|Self::wrap(35,vec![reacher.clone(),Value::Small(at as i64)])).collect()));
             }
-            if key==self.detail("name"){return Ok(self.routine_kept(&value,key,Value::text(&code.ident)));}
-            if key==self.detail("qualified"){let qualified=code.qualification.clone();return Ok(self.routine_kept(&value,key,Value::text(&qualified)));}
+            if key==self.detail("name"){return Ok(code.display_name(false));}
+            if key==self.detail("qualified"){return Ok(code.display_name(true));}
             if key==self.detail("doc") {
                 let Some(doc) = &code.doc else { return Ok(Value::Nil); };
                 return Ok(self.routine_kept(&value,key,Value::text(doc)));
