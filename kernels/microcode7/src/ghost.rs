@@ -74,7 +74,18 @@ impl Ghost {
     }
 
     pub fn departed(&self) -> bool {
-        self.revive().is_none()
+        match self {
+            Ghost::StaticKind(_) | Ghost::Lasting(_) => false,
+            Ghost::Thing(w) => w.strong_count() == 0,
+            Ghost::Cell(w) => w.strong_count() == 0,
+            Ghost::Blueprint(w) => w.strong_count() == 0,
+            Ghost::Walk(w) => w.strong_count() == 0,
+            Ghost::Set(w) => w.strong_count() == 0,
+            Ghost::Bound(p, e) => p.strong_count() == 0 || e.strong_count() == 0,
+            Ghost::Routine(w) => w.strong_count() == 0,
+            Ghost::Method(p, t, identity) => p.strong_count() == 0 || t.strong_count() == 0 || identity.strong_count() == 0,
+            Ghost::WrappedMethod(parts) => parts.strong_count() == 0,
+        }
     }
 }
 
