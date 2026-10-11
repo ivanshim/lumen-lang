@@ -5098,6 +5098,10 @@ impl<'a> Machine<'a> {
                         }
                         state.owed.push(Owed::Find(*body));
                     }
+                    // Expressions without a suspension use the ordinary evaluator.
+                    plain @ (Form::Write(..) | Form::Dyad { .. } | Form::Assert { .. }) if !suspension_within(&plain) => {
+                        state.found.push(self.value_of(&plain, &frame)?);
+                    }
                     Form::Write(place, body) => { state.owed.push(Owed::Store(place)); state.owed.push(Owed::Find(*body)); }
                     Form::Apply(Callee::Prim(Prim::Seq, _), parts) => {
                         if parts.is_empty() { state.found.push(Value::Nil); }
@@ -5141,6 +5145,9 @@ impl<'a> Machine<'a> {
                         let right = parts.pop().expect("right operand");
                         state.owed.push(Owed::Truth(op, right));
                         state.owed.push(Owed::Find(parts.remove(0)));
+                    }
+                    plain @ Form::Apply(..) if !suspension_within(&plain) => {
+                        state.found.push(self.value_of(&plain, &frame)?);
                     }
                     Form::Apply(Callee::Code(target), args) => {
                         state.owed.push(Owed::Call(args.len()));
