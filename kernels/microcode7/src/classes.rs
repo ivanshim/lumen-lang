@@ -2441,7 +2441,10 @@ impl<'a> Machine<'a> {
                                 Ok(Value::Small(mark))=>{
                                     let mut request=vec![Value::text(&operation),Value::Small(mark)];
                                     request.extend(values.into_iter().skip(1));
-                                    return self.apply_class_member(Value::text("__random"),request);
+                                    // The descriptor already validated this positional native call.
+                                    let result = self.prim(Prim::Chance, "__random", &request);
+                                    if let Some(raised) = self.got_away.take() { return Err(raised); }
+                                    return Ok(result?);
                                 }
                                 Err(error) if !self.missing_member_escape(&error)=>return Err(error),
                                 _=>{},

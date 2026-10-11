@@ -2651,7 +2651,7 @@ impl<'a> Engine<'a> {
     fn class_for(&self, told: &str) -> Option<String> {
         let told = told.trim_start_matches('\0');
         if !self.lang.exceptions.is_empty() {
-            if let Some(name) = self.lang.exceptions.iter().find(|n| told == n.as_str() || told.starts_with(&format!("{}:", n))) { return Some(name.clone()); }
+            if let Some(name) = self.lang.exceptions.iter().find(|n| told == n.as_str() || told.strip_prefix(n.as_str()).is_some_and(|tail| tail.starts_with(":"))) { return Some(name.clone()); }
             let kind = if self.lang.catch_invalid.as_deref() == Some(told) { &self.lang.fault_kind }
                 else if told.starts_with("Undefined variable") { &self.lang.fault_name }
                 else if told.starts_with("Undefined array key") { &self.lang.fault_key }
@@ -2708,7 +2708,7 @@ impl<'a> Engine<'a> {
     fn exception_words(&self, told: &str, class: &str) -> String {
         let told = told.trim_start_matches('\0');
         if self.lang.catch_invalid.as_deref() == Some(told) { return told.to_string(); }
-        if let Some(rest) = told.strip_prefix(&format!("{class}: ")) {
+        if let Some(rest) = told.strip_prefix(class).and_then(|tail| tail.strip_prefix(": ")) {
             // Native key faults carry a displayed key; the exception's
             // argument holds the key itself so its string form quotes it once.
             if self.lang.fault_key.as_deref() == Some(class) {

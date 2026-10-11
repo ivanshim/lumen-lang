@@ -3415,7 +3415,7 @@ impl<'a> Machine<'a> {
         let told = told.trim_start_matches('\0');
         if self.rules.has_any_ext_builtin_exceptions {
             for kind in self.rules.words_ext_builtin_exceptions {
-                if told == kind.as_str() || told.starts_with(&format!("{kind}:")) { return Some(kind.clone()); }
+                if told == kind.as_str() || told.strip_prefix(kind.as_str()).is_some_and(|tail| tail.starts_with(":")) { return Some(kind.clone()); }
             }
             let label = if self.table.strings("ext.stmt.catch.invalid").first().map(String::as_str) == Some(told) { Some("ext.system.fault.class.kind") }
                 else if told.starts_with("Undefined variable") { Some("ext.system.fault.class.name") }
@@ -3477,8 +3477,7 @@ impl<'a> Machine<'a> {
     fn fault_words(&self, raw: &str, kind: &str) -> String {
         let raw = raw.trim_start_matches('\0');
         if self.table.strings("ext.stmt.catch.invalid").first().map(String::as_str) == Some(raw) { return raw.into(); }
-        let prefix = format!("{kind}: ");
-        if let Some(words) = raw.strip_prefix(&prefix) {
+        if let Some(words) = raw.strip_prefix(kind).and_then(|tail| tail.strip_prefix(": ")) {
             // The native fault has already displayed a string key. Store
             // its value as the argument and let KeyError render it itself.
             let key_fault = self.table.strings("ext.system.fault.class.key").first().map(String::as_str) == Some(kind);
@@ -23585,8 +23584,11 @@ impl<'a> Machine<'a> {
                 thread_local! {
                     static DRAWN_ON: RefCell<Vec<([u32; KEPT], usize)>> = RefCell::new(Vec::new());
                 }
-                let Some(working) = v.first().map(|x| x.render(w)) else {
-                    return Err(format!("{}() wants the name of a working first of all", name));
+                let rendered;
+                let working = match v.first() {
+                    Some(Value::Text(word)) => word.as_ref(),
+                    Some(other) => { rendered = other.render(w); &rendered },
+                    None => return Err(format!("{}() wants the name of a working first of all", name)),
                 };
                 // The stream a mark answers to, or the complaint that it
                 // answers to none.
@@ -23597,7 +23599,7 @@ impl<'a> Machine<'a> {
                     })
                 };
                 let whole = |at: usize| -> Result<BigInt, String> { v[at].as_big() };
-                match working.as_str() {
+                match working {
                     "method" if v.len() == 3 => Value::Wrapped(133, Rc::new(vec![v[1].clone(), v[2].clone()]).into()),
                     "pid" if v.len() == 1 => Value::Small(std::process::id() as i64),
                     "begin" => {
@@ -23643,7 +23645,10 @@ impl<'a> Machine<'a> {
                     }
                     "next" => {
                         if v.len() != 2 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }
-                        let which = whole(1)?.to_usize().ok_or_else(|| self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string())?;
+                        let which = match &v[1] {
+                            Value::Small(mark) if *mark >= 0 => *mark as usize,
+                            _ => whole(1)?.to_usize().ok_or_else(|| self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string())?,
+                        };
                         marked(which)?;
                         let (high, low) = DRAWN_ON.with(|streams| {
                             let (mt, spot) = &mut streams.borrow_mut()[which];
