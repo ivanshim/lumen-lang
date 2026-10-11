@@ -585,6 +585,7 @@ pub struct Machine<'a> {
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
     pub library_files: HashMap<String, String>,
+    library_locations: RefCell<Option<(HashMap<std::path::PathBuf, String>, std::collections::HashSet<std::path::PathBuf>)>>,
     pub library_aliases: HashMap<String, String>,
     library_origins: std::collections::HashSet<String>,
     imported: HashMap<String, Value>,
@@ -2065,6 +2066,7 @@ impl<'a> Machine<'a> {
             library_sources: HashMap::new(),
             library_directory: None,
             library_files: HashMap::new(),
+            library_locations: RefCell::new(None),
             library_aliases: HashMap::new(),
             library_origins: std::collections::HashSet::new(),
             importing: std::collections::HashSet::new(),
@@ -13766,10 +13768,11 @@ impl<'a> Machine<'a> {
         if mine { self.extent = None; }
         let caller_trace = if mine { self.active_trace.take() } else { None };
         if mine { self.active_trace = if program.ident == "<gathering>" { caller_trace.clone() } else { self.activation(&program, &frame, caller_trace.clone()) }; }
-        let outer_gathering = self.gathering_locals.clone();
-        let earlier_gathering = std::mem::replace(&mut self.gathering_locals, if program.ident == "<gathering>" {
-            caller_trace.as_ref().map(|parent| (Rc::as_ptr(parent) as usize, program.idents.clone(), frame.clone()))
-        } else { outer_gathering });
+        // Ordinary calls retain comprehension locals without copying every name.
+        let earlier_gathering = if program.ident == "<gathering>" {
+            Some(std::mem::replace(&mut self.gathering_locals,
+                caller_trace.as_ref().map(|parent| (Rc::as_ptr(parent) as usize, program.idents.clone(), frame.clone()))))
+        } else { None };
         if mine && !self.rules.trace_words.is_empty() { self.row = program.declared_on; }
         let trace_started = if mine && !matches!(self.tracing_function, Value::Nil) { self.emit_trace("call", Value::Nil) } else { Ok(()) };
         let outcome: Res = if let Err(error) = trace_started { Err(error) } else { loop {
@@ -13916,7 +13919,7 @@ impl<'a> Machine<'a> {
         }
         self.update_watched_locals();
         if mine { self.active_trace = caller_trace; self.extent = parent_extent; }
-        self.gathering_locals = earlier_gathering;
+        if let Some(previous) = earlier_gathering { self.gathering_locals = previous; }
         self.update_watched_locals();
         if self.rules.has_any_ext_builtin_exceptions_traceback { self.row = was_on_row; }
         self.standing -= counted;
@@ -21515,6 +21518,10 @@ impl<'a> Machine<'a> {
                 self.make_instance(kind, v.to_vec()).map_err(|fault| self.suspension_fault(fault))?
             }
             Prim::LoadModule => {
+                if v.len() == 2 && matches!(&v[1], Value::Text(mode) if mode.as_ref() == "invalidate") {
+                    self.library_locations.borrow_mut().take();
+                    return Ok(Value::Nil);
+                }
                 match (v.len(), v.get(1)) {
                     (2, Some(Value::Flag(false))) => Value::Flag(self.table.strings("ext.system.warnings").first().is_some_and(|word| word == &v[0].bare()) || self.library_sources.contains_key(&v[0].bare()) || self.sys_path_source(&v[0].bare()).is_some()),
                     (2, Some(Value::Flag(true))) => self.sys_path_source(&v[0].bare()).map(|entry| entry.0).or_else(|| self.library_module_file(&v[0].bare())).map_or(Value::Nil, |file| Value::text(&file)),
@@ -27762,21 +27769,27 @@ impl Machine<'_> {
             Value::Tuple(items) if self.table.strings("ext.system.module.path").first().map(String::as_str).is_some() => items,
             _ => return None,
         };
-        let mut sources = std::collections::HashMap::new();
-        let mut virtual_dirs = std::collections::HashSet::new();
-        if self.table.strings("ext.system.module.path").first().map(String::as_str).is_some() {
-            for name in self.library_files.keys() {
-                if let Some(file) = self.library_module_file(name) {
-                    let location = std::path::PathBuf::from(file);
-                    let mut parent = location.parent();
-                    while let Some(directory) = parent {
-                        virtual_dirs.insert(directory.to_path_buf());
-                        parent = directory.parent();
+        let mut cached = self.library_locations.borrow_mut();
+        // Only fixed host roots admit a reusable manifest index.
+        if self.library_directory.as_ref().is_some_and(|root| !root.is_absolute()) { cached.take(); }
+        let (sources, virtual_dirs) = cached.get_or_insert_with(|| {
+            let mut sources = HashMap::new();
+            let mut virtual_dirs = std::collections::HashSet::new();
+            if self.table.strings("ext.system.module.path").first().is_some() {
+                for name in self.library_files.keys() {
+                    if let Some(file) = self.library_module_file(name) {
+                        let location = std::path::PathBuf::from(file);
+                        let mut parent = location.parent();
+                        while let Some(directory) = parent {
+                            virtual_dirs.insert(directory.to_path_buf());
+                            parent = directory.parent();
+                        }
+                        sources.insert(location, name.clone());
                     }
-                    sources.insert(location, name);
                 }
             }
-        }
+            (sources, virtual_dirs)
+        });
         let mut portions: Vec<String> = Vec::new();
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
@@ -27787,8 +27800,8 @@ impl Machine<'_> {
             let choices = if self.table.strings("ext.system.module.path").first().map(String::as_str).is_some() { vec![package, ordinary] } else { vec![ordinary] };
             for location in choices {
                 if self.table.strings("ext.system.module.path").first().map(String::as_str).is_some() {
-                    if let Some(resolved) = library_location(&location, Some(&virtual_dirs)) {
-                        if let Some(text) = sources.get(&resolved).and_then(|name| self.library_sources.get(*name)) {
+                    if let Some(resolved) = library_location(&location, Some(virtual_dirs)) {
+                        if let Some(text) = sources.get(&resolved).and_then(|name| self.library_sources.get(name)) {
                             return Some((resolved.to_string_lossy().into_owned(), text.as_bytes().to_vec()));
                         }
                     }

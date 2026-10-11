@@ -216,6 +216,7 @@ pub struct Engine<'a> {
     pub module_sources: HashMap<String, String>,
     pub library_root: Option<String>,
     pub module_files: HashMap<String, String>,
+    module_locations: RefCell<Option<(HashMap<std::path::PathBuf, String>, std::collections::HashSet<std::path::PathBuf>)>>,
     pub module_aliases: HashMap<String, String>,
     embedded_names: std::collections::HashSet<String>,
     modules: HashMap<String, Value>,
@@ -1739,6 +1740,7 @@ impl<'a> Engine<'a> {
             module_sources: HashMap::new(),
             library_root: None,
             module_files: HashMap::new(),
+            module_locations: RefCell::new(None),
             module_aliases: HashMap::new(),
             embedded_names: std::collections::HashSet::new(),
             modules: HashMap::new(),
@@ -22367,6 +22369,10 @@ impl<'a> Engine<'a> {
             // What the run has bound under a name, by name: the
             // classes, and the routines.
             Builtin::ModuleLoad => {
+                if args.len() == 2 && matches!(&args[1], Value::Text(mode) if mode.as_ref() == "invalidate") {
+                    self.module_locations.borrow_mut().take();
+                    return Ok(Value::Null);
+                }
                 if args.len() == 2 {
                     let path = args[0].display(&sp);
                     if matches!(args[1], Value::Flag(false)) { return Ok(Value::Flag(self.lang.warning_backend.first().is_some_and(|word| word == &path) || self.module_sources.contains_key(&path) || self.sys_path_source(&path).is_some())); }
@@ -27171,17 +27177,23 @@ impl Engine<'_> {
             Value::Tuple(items) if self.lang.module_path.is_some() => items,
             _ => return None,
         };
-        let mut locations = std::collections::HashMap::new();
-        let mut directories = std::collections::HashSet::new();
-        if self.lang.module_path.is_some() {
-            for name in self.module_files.keys() {
-                if let Some(file) = self.library_module_file(name) {
-                    let location = std::path::PathBuf::from(file);
-                    for directory in location.ancestors().skip(1) { directories.insert(directory.to_path_buf()); }
-                    locations.insert(location, name);
+        let mut cached = self.module_locations.borrow_mut();
+        // Relative host roots follow chdir; absolute manifest locations survive imports.
+        if self.library_root.as_ref().is_some_and(|root| !std::path::Path::new(root).is_absolute()) { cached.take(); }
+        let (locations, directories) = cached.get_or_insert_with(|| {
+            let mut locations = HashMap::new();
+            let mut directories = std::collections::HashSet::new();
+            if self.lang.module_path.is_some() {
+                for name in self.module_files.keys() {
+                    if let Some(file) = self.library_module_file(name) {
+                        let location = std::path::PathBuf::from(file);
+                        for directory in location.ancestors().skip(1) { directories.insert(directory.to_path_buf()); }
+                        locations.insert(location, name.clone());
+                    }
                 }
             }
-        }
+            (locations, directories)
+        });
         let mut namespace_roots = Vec::new();
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
@@ -27195,8 +27207,8 @@ impl Engine<'_> {
                 // Embedded text has a location, just like disk text. It is
                 // eligible only at a directory in the actual search list.
                 if self.lang.module_path.is_some() {
-                    if let Some(location) = module_location(std::path::Path::new(&file), Some(&directories)) {
-                        if let Some(source) = locations.get(&location).and_then(|name| self.module_sources.get(*name)) {
+                    if let Some(location) = module_location(std::path::Path::new(&file), Some(directories)) {
+                        if let Some(source) = locations.get(&location).and_then(|name| self.module_sources.get(name)) {
                             return Some((location.to_string_lossy().into_owned(), source.as_bytes().to_vec()));
                         }
                     }
