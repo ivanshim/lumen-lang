@@ -637,3 +637,10 @@ in the table above; runtime changes remain in kernels and explicit adapters.
 | `langs/lib_python/modules/test/test_doctest/{__init__,test_doctest,sample_doctest,sample_doctest_no_doctests,sample_doctest_no_docstrings,sample_doctest_skip}.py` | [`Lib/test/test_doctest/`](https://github.com/python/cpython/tree/v3.14.8/Lib/test/test_doctest): the package initializer, the re-exported test module and the four sample modules the support test imports, copied byte for byte (SHA-256 `8962a375442bddd8d49865f3bf601c2c7a741fe947d8ec667358bb640cd0d19b`, `a57b3252989f62bd8a2c5ced1be14deae866a38688be4a0205cc1c1f9bc5eb44`, `313eb7e945187e42ecbacd28b55e00b7a859b9a2fb5cbcffb01ce58bf51eedb5`, `b220bb27e2a4395dc131ccd7bf9fbad0f3de0bde4138f724042b339fcb05ec51`, `c86fb360619e4114fd71ac6000909d6da367e11bdb9fd77ee83769f17079066d`, `b17bf2df3bfcc20f7af2abd32a5f3cf4a9af71095da29f12e7982de66a093f41`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/runtime_adapters/native_test_support.py` (`reap_children`) | `Lib/test/support/__init__.py`: the finished-child reaper, adapted; the upstream warning and environment-altered bookkeeping is omitted | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/test/support/script_helper.py` (`kill_python`) | `Lib/test/support/script_helper.py`: the process cleanup helper, unchanged | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+
+The runtime implementation of `unittest.result` defines `TestResult`; `unittest`
+re-exports that class without changing its defining module. The restored
+`runtime_adapters/code_test_support.py` queries compiled `co_positions()` for
+debug ranges, reporting their absence when the runtime has no location
+iterator. `test.support` retains the accepted opt-in resource policy,
+including `ResourceDenied` for resources the runner has not enabled.
