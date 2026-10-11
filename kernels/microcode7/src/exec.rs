@@ -597,7 +597,7 @@ pub struct Machine<'a> {
     globals_by_cell: HashMap<usize, String>,
     native_slots: HashMap<String, usize>,
     wildcard_names: HashMap<Rc<str>, std::collections::BTreeMap<String, usize>>,
-    wildcard_source: RefCell<Option<(Rc<str>, bool)>>,
+    wildcard_source: RefCell<Option<(Rc<str>, (bool, bool))>>,
     namespace_places: RefCell<Option<HashMap<usize, String>>>,
     revised_namespaces: std::collections::HashSet<Rc<str>>,
     displaced_primitives: std::collections::BTreeSet<String>,
@@ -6434,14 +6434,19 @@ impl<'a> Machine<'a> {
         outer
     }
 
-    fn has_wildcard_imports(&self) -> bool {
-        if self.wildcard_names.is_empty() && self.revised_namespaces.is_empty() && self.displaced_primitives.is_empty() { return false; }
+    fn namespace_overrides(&self) -> (bool, bool) {
+        if self.wildcard_names.is_empty() && self.revised_namespaces.is_empty() { return (false, false); }
         if let Some((source, answer)) = self.wildcard_source.borrow().as_ref() {
             if Rc::ptr_eq(source, &self.written_in) { return *answer; }
         }
-        let answer = self.wildcard_names.contains_key(&self.written_in) || self.revised_namespaces.contains(&self.written_in) || !self.displaced_primitives.is_empty();
+        let answer = (self.wildcard_names.contains_key(&self.written_in), self.revised_namespaces.contains(&self.written_in));
         *self.wildcard_source.borrow_mut() = Some((self.written_in.clone(), answer));
         answer
+    }
+
+    fn has_wildcard_imports(&self) -> bool {
+        let (wildcard, revised) = self.namespace_overrides();
+        wildcard || revised || !self.displaced_primitives.is_empty()
     }
 
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
@@ -27360,7 +27365,8 @@ impl Machine<'_> {
                 if let Some(held) = found { if !matches!(held, Value::Unset) { return Some(held); } }
             }
         }
-        if self.revised_namespaces.contains(&self.written_in) {
+        let (wildcard, revised) = self.namespace_overrides();
+        if revised {
             let namespace = self.loaded_spaces.get(&self.written_in).and_then(|id| self.imported.get(id));
             if let Some(Value::Thing(module)) = namespace {
                 let holds = module.holds.borrow();
@@ -27373,6 +27379,7 @@ impl Machine<'_> {
         // Library helpers keep their own native operations even when
         // the calling module has imported a replacement for that word.
         if self.calls.last().is_some_and(|call| call.of_library && !self.stands_for_the_run(&call.named)) { return None; }
+        if !wildcard { return None; }
         let names = self.wildcard_names.get(&self.written_in)?;
         let slot = names.get(word)?;
         let cells = self.outermost.cells.borrow();
