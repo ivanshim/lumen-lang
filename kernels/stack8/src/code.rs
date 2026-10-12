@@ -31,6 +31,7 @@ pub struct Attempt {
 #[derive(Debug, Clone)]
 pub struct Taking {
     pub line: u32,
+    pub reraise_position: Option<usize>,
     pub kinds: Vec<(usize, usize)>,
     pub held: Option<Cell>,
     pub body: (usize, usize),
@@ -46,6 +47,7 @@ impl Attempt {
         };
         span(&mut self.body, &mut at);
         for clause in &mut self.clauses {
+            if let Some(position) = &mut clause.reraise_position { *position = at(*position); }
             for kind in &mut clause.kinds { span(kind, &mut at); }
             span(&mut clause.body, &mut at);
         }
@@ -178,6 +180,7 @@ pub enum Action {
     Delegate,
     MakeTuple,
     Adorn(u8),
+    ContextExit,
     ContextEnter,
     AsyncContextEnter,
     SettleObjects,
@@ -518,6 +521,7 @@ pub enum Builtin {
     MemberGet,
     ProgramNamespace,
     ProductStep,
+    ReferenceCount,
     FrameModule,
     ClassSeal,
     Bytes(u8),
@@ -637,6 +641,7 @@ pub enum Builtin {
     /// Find and break the rounds of values nothing reaches any more
     /// (ext.builtin.gc.collect).
     Collect,
+    TrackedObjects,
     /// Whether a path names a file, a directory, or nothing.
     FileKind,
     // The source of the file the run was started with.
@@ -777,8 +782,10 @@ pub enum Builtin {
     BinAscii,
     StaticNamespace,
     TraceNative,
+    NativeFrame,
     HeapNative,
     ContextNative,
+    WarningBackend(u8),
     ReduceNative,
     RebuildNative,
     CharAtIndex,
@@ -927,6 +934,7 @@ impl Builtin {
 #[derive(Clone, Debug)]
 pub struct Routine {
     pub postponed_annotation: bool,
+    pub annotation_source: Option<String>,
     pub checks_annotation_format: bool,
     /// Whether the routine is one whose own name reads, while annotations are
     /// being read in the forward-reference format, may stand for a reference.
@@ -1052,7 +1060,7 @@ pub struct Plan {
 
 impl Drop for Routine {
     fn drop(&mut self) {
-        crate::faint::plain_departing();
+        crate::faint::plain_departing(self as *const Self as usize);
     }
 }
 

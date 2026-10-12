@@ -92,6 +92,8 @@ def requires_resource(resource):
 # A note for a runner that would put tests in threads at once. Nothing
 # here does, so the note is kept and the test runs.
 def thread_unsafe(reason=''):
+    if callable(reason):
+        return reason
     return _identity
 
 def bigmemtest(size, memuse, dry_run=True):
@@ -1730,3 +1732,22 @@ def _force_run(path, func, *args):
             print('re-run %s%r' % (func.__name__, args))
         os.chmod(path, stat.S_IRWXU)
         return func(*args)
+
+# Provide the general regression-support exception base.
+class Error(Exception):
+    pass
+
+def has_no_debug_ranges():
+    try:
+        import _testcapi
+    except ImportError:
+        raise unittest.SkipTest("_testinternalcapi required")
+    return not _testcapi.config_get('code_debug_ranges')
+
+def requires_debug_ranges(reason='requires co_positions / debug_ranges'):
+    try:
+        skip = has_no_debug_ranges()
+    except unittest.SkipTest as e:
+        skip = True
+        reason = e.args[0] if e.args else reason
+    return unittest.skipIf(skip, reason)

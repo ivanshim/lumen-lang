@@ -119,11 +119,34 @@ category = _default.category
 bidirectional = _default.bidirectional
 combining = _default.combining
 mirrored = _default.mirrored
-normalize = _default.normalize
-is_normalized = _default.is_normalized
 
 name = _default.name
 lookup = _default.lookup
 
 # Native decomposition retains the complete CPython descriptor contract.
 decomposition = __unicode_decomposition
+
+# The native normalizer reads the whole database the kernels carry; the
+# code names the form: 0 NFC, 1 NFD, 2 NFKC, 3 NFKD.
+_FORM_CODES = {'NFC': 0, 'NFD': 1, 'NFKC': 2, 'NFKD': 3}
+
+def _argument_kind(value):
+    return 'None' if value is None else type(value).__name__
+
+def normalize(form, text):
+    if not isinstance(form, str):
+        raise TypeError('normalize() argument 1 must be str, not ' + _argument_kind(form))
+    if form not in _FORM_CODES:
+        raise ValueError('invalid normalization form')
+    if not isinstance(text, str):
+        raise TypeError('normalize() argument 2 must be str, not ' + _argument_kind(text))
+    return __sre_native(11, text, _FORM_CODES[form])
+
+def is_normalized(form, text):
+    if not isinstance(form, str):
+        raise TypeError('is_normalized() argument 1 must be str, not ' + _argument_kind(form))
+    if form not in _FORM_CODES:
+        raise ValueError('invalid normalization form')
+    if not isinstance(text, str):
+        raise TypeError('is_normalized() argument 2 must be str, not ' + _argument_kind(text))
+    return __sre_native(11, text, _FORM_CODES[form]) == text

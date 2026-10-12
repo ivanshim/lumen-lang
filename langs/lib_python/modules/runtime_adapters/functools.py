@@ -55,3 +55,4 @@ def _partial_repr(self, _base=partial):
     return __partial_repr__(self, _base)
 
 partial.__repr__ = recursive_repr()(_partial_repr)
+partial.__call__ = __partial_call

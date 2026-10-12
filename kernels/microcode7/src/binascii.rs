@@ -235,7 +235,7 @@ impl Machine<'_> {
                     });
                     let Some(Value::Blueprint(definition)) = definition else { continue; };
                     let blueprint = instance.blueprint();
-                    let recognized = std::rc::Rc::ptr_eq(&blueprint, &definition) || blueprint.ancestry.borrow().iter().any(|base| std::rc::Rc::ptr_eq(base, &definition));
+                    let recognized = std::rc::Rc::ptr_eq(&blueprint, &definition) || blueprint.ancestry().iter().any(|base| std::rc::Rc::ptr_eq(base, &definition));
                     if !recognized { continue; }
                     if member == "memoryview" {
                         let contiguous = match self.read_class_member(value.clone(), "c_contiguous", false) {
@@ -260,7 +260,8 @@ impl Machine<'_> {
 
     pub(super) fn ascii_binary_work(&self, arguments: &[Value]) -> Result<Value, String> {
         let task = arguments[0].settled().bare();
-        let Value::Octets { cell, .. } = arguments[1].settled() else { return Err(String::from("TypeError: expected binary data")); };
+        let source=match Self::underlying(&arguments[1]) {Some(inner)=>inner,None=>arguments[1].clone()};
+        let Value::Octets { cell, .. } = source.settled() else { return Err(String::from("TypeError: expected binary data")); };
         let content = cell.borrow();
         let option = |n| arguments.get(n).is_some_and(Value::is_true);
         let integer = |n| match arguments.get(n).map(Value::settled) { Some(Value::Small(value)) => value, _ => 0 };
