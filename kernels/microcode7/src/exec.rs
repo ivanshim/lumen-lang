@@ -13306,6 +13306,10 @@ impl<'a> Machine<'a> {
     }
 
     fn fit_arguments(&mut self, program: &Rc<Routine>, manners: &[char], values: Vec<Value>) -> Res<Vec<Value>> {
+        if values.len() == manners.len() && manners.iter().zip(&values)
+            .all(|(how, value)| matches!(how, 'b' | 'p') && !matches!(value, Value::Couple(_) | Value::Unset)) {
+            return Ok(values);
+        }
         // Plain positional arguments already occupy their final slots. Missing
         // optional positions retain the frame's live defaults, including named-
         // only defaults. Named, spread, variadic and erroneous calls still sort.
@@ -13418,8 +13422,11 @@ impl<'a> Machine<'a> {
             let values = self.value_list(args, caller)?;
             let fitted = self.fit_arguments(program, manners, values)?;
             let frame = match program.frameless { true => env, false => self.frame_for(program, &env) };
-            for (slot, worth) in program.formal_slots.iter().zip(fitted) {
-                if !matches!(worth, Value::Unset) { frame.cells.borrow_mut()[*slot] = worth; }
+            {
+                let mut cells = frame.cells.borrow_mut();
+                for (slot, worth) in program.formal_slots.iter().zip(fitted) {
+                    if !matches!(worth, Value::Unset) { cells[*slot] = worth; }
+                }
             }
             return Ok(frame);
         }
