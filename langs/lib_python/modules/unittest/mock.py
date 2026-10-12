@@ -267,8 +267,8 @@ class MagicMock(Mock):
         walker.return_value = iter([])
         self._magic['__iter__'] = walker
         setattr(self, '__iter__', walker)
-        # A spec that has the name makes the walk's step one more stand-in.
-        if self._mock_methods is not None and '__next__' in self._mock_methods:
+        # Setting a magic child installs it on this instance's private class.
+        if self._mock_methods is None or '__next__' in self._mock_methods:
             stepper = Mock(name='__next__')
             self._magic['__next__'] = stepper
             setattr(self, '__next__', stepper)
@@ -313,9 +313,6 @@ class MagicMock(Mock):
 
     def __iter__(self):
         return self._magic['__iter__']()
-
-    def __next__(self):
-        return self._magic['__next__']()
 
     def __enter__(self):
         return MagicMock(name='__enter__')
