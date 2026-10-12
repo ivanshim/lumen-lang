@@ -85,7 +85,78 @@ impl std::hash::Hasher for FxHasher {
 
 pub(crate) type FxBuildHasher = std::hash::BuildHasherDefault<FxHasher>;
 
+#[derive(Default)]
+pub(crate) struct ScannerWords {
+    pub(crate) flag_ext_lexical_prologue_folded: bool,
+    pub(crate) single_lexical_prologue: Option<String>,
+    pub(crate) strings_ext_lexical_epilogue: Vec<String>,
+    pub(crate) strings_ext_lexical_string_long: Vec<String>,
+    pub(crate) strings_lexical_comment_line: Vec<String>,
+    pub(crate) strings_lexical_comment_block_open: Vec<String>,
+    pub(crate) strings_lexical_comment_block_close: Vec<String>,
+    pub(crate) single_ext_lexical_heredoc: Option<String>,
+    pub(crate) strings_ext_lexical_line_continuation: Vec<String>,
+    pub(crate) has_any_ext_lexical_escape_warning: bool,
+    pub(crate) flag_ext_lexical_template: bool,
+    pub(crate) single_ext_lexical_epilogue: Option<String>,
+    pub(crate) single_stmt_terminator: Option<String>,
+    pub(crate) single_ext_lexical_prologue_echo: Option<String>,
+    pub(crate) single_ext_lexical_prologue_brief: Option<String>,
+    pub(crate) single_ext_builtin_source_syntax: Option<String>,
+    pub(crate) strings_ext_lexical_string_prefix_incompatible: Vec<String>,
+    pub(crate) single_ext_lexical_string_amiss: Option<String>,
+    pub(crate) single_ext_lexical_escape_unavailable: Option<String>,
+    pub(crate) single_ext_lexical_string_bytes_ascii: Option<String>,
+    pub(crate) single_ext_lexical_string_unterminated: Option<String>,
+    pub(crate) flag_ext_lexical_escape_octal: bool,
+    pub(crate) strings_ext_lexical_escape_warning: Vec<String>,
+    pub(crate) single_ext_lexical_escape_named_unknown: Option<String>,
+    pub(crate) single_ext_lexical_escape_named_amiss: Option<String>,
+    pub(crate) single_ext_lexical_escape_codepoint_amiss: Option<String>,
+    pub(crate) single_ext_lexical_escape_codepoint_beyond: Option<String>,
+    pub(crate) count_ext_lexical_escape_byte_digits: Option<usize>,
+    pub(crate) flag_ext_lexical_escape_continued: bool,
+    pub(crate) count_ext_lexical_escape_codepoint_digits: Option<usize>,
+    pub(crate) flag_ext_system_text_bytes: bool,
+    pub(crate) strings_ext_lexical_string_format_errors: Vec<String>,
+    pub(crate) single_ext_lexical_line_continuation_amiss: Option<String>,
+    pub(crate) single_syntax_group_open: Option<String>,
+    pub(crate) single_syntax_group_close: Option<String>,
+    pub(crate) count_block_indent_size: Option<usize>,
+    pub(crate) flag_lexical_keywords_case_insensitive: bool,
+    pub(crate) flag_identifier_case_insensitive: bool,
+    pub(crate) flag_ext_lexical_string_adjacent: bool,
+    pub(crate) has_any_ext_lexical_string_format_errors: bool,
+    pub(crate) flag_ext_lexical_number_point_open: bool,
+    pub(crate) flag_ext_lexical_number_point_bare: bool,
+    pub(crate) flag_ext_lexical_number_point_edge: bool,
+    pub(crate) flag_ext_lexical_number_point_open_plain: bool,
+    pub(crate) flag_ext_lexical_number_separator_strict: bool,
+    pub(crate) flag_ext_lexical_number_separator_after_prefix: bool,
+    pub(crate) single_ext_lexical_number_amiss: Option<String>,
+    pub(crate) strings_ext_builtin_print_redirect: Vec<String>,
+    pub(crate) flag_ext_lexical_identifier_normalized: bool,
+    pub(crate) flag_ext_syntax_call_bind_names: bool,
+    pub(crate) single_op_index_close: Option<String>,
+    pub(crate) single_op_index_open: Option<String>,
+    pub(crate) strings_lexical_raw_quotes: Vec<String>,
+    pub(crate) strings_lexical_string_quotes: Vec<String>,
+    pub(crate) single_ext_op_member: Option<String>,
+    pub(crate) single_ext_system_reading_unexpected: Option<String>,
+    pub(crate) single_ext_lexical_interpolating_index_amiss: Option<String>,
+    pub(crate) single_ext_system_reading_unexpected_character: Option<String>,
+    pub(crate) single_op_concat: Option<String>,
+    pub(crate) single_ext_lexical_number_amiss_leading_zero: Option<String>,
+}
+
 pub struct Table {
+    pub syntax_exceptions: bool,
+    pub(crate) library_surveys: Option<crate::build::SurveyRows>,
+    pub(crate) library_token_sources: Option<crate::build::SourceRows>,
+    pub(crate) scanner: ScannerWords,
+    statement_endings: Vec<String>,
+    pub listed_spellings: HashSet<String, FxBuildHasher>,
+    pub ascii_quotation: [u8; 128],
     pub ident: String,
     pub blocks: Blocks,
     /// Reverse Polish: words over one stack, no expressions.
@@ -530,10 +601,11 @@ impl Table {
         if !strange.is_empty() {
             return Err(format!("unknown label(s): {}", strange.join(", ")));
         }
-        let mut table = Table {
+        let mut table = Table { library_surveys: None, library_token_sources: None, scanner: ScannerWords::default(), statement_endings: Vec::new(), listed_spellings: HashSet::default(), ascii_quotation: [0; 128],
             ident: String::new(),
             blocks: Blocks::Indented,
             rpn: false,
+            syntax_exceptions: matches!(cells.get("ext.builtin.exceptions.syntax").and_then(|at| held.get(*at)), Some(Entry::Strings(words)) if !words.is_empty()),
             cells,
             names,
             held,
@@ -598,7 +670,82 @@ impl Table {
             if head.len() < name.len() { continued.entry(head).or_default().push(name.clone()); }
         }
         table.builtin_continuations = continued;
+        for letter in table.quoted_letters.iter().copied().chain(table.quoted_prefixes.iter().map(|pair| pair.0)) {
+            if let Some(slot) = table.ascii_quotation.get_mut(letter as usize) { *slot = 1; }
+        }
+        for label in ["ext.builtin.exceptions", "ext.builtin.print.file.error", "ext.builtin.print.file.output", "ext.literal.ellipsis", "ext.literal.unimplemented", "ext.op.hush", "ext.op.lambda", "ext.op.name_by_value", "ext.op.plus", "ext.stmt.class.detail.kind", "ext.stmt.class.new", "ext.stmt.class.parent", "ext.stmt.class.self", "ext.stmt.class.special.declined", "ext.stmt.class.special.stop", "ext.stmt.unpack", "ext.system.globals", "literal.false", "literal.null", "literal.true", "op.mul", "stmt.function"] {
+            let spellings = table.strings(label).to_vec();
+            table.listed_spellings.extend(spellings);
+        }
+        table.refresh_scanner();
         Ok(table)
+    }
+
+    fn refresh_scanner(&mut self) {
+        self.statement_endings = self.strings("stmt.terminator").iter()
+            .chain(self.strings("ext.stmt.separator")).cloned().collect();
+        self.scanner = ScannerWords {
+            flag_ext_lexical_prologue_folded: self.flag("ext.lexical.prologue.folded"),
+            single_lexical_prologue: self.single("lexical.prologue").map(str::to_owned),
+            strings_ext_lexical_epilogue: self.strings("ext.lexical.epilogue").to_vec(),
+            strings_ext_lexical_string_long: self.strings("ext.lexical.string.long").to_vec(),
+            strings_lexical_comment_line: self.strings("lexical.comment_line").to_vec(),
+            strings_lexical_comment_block_open: self.strings("lexical.comment_block.open").to_vec(),
+            strings_lexical_comment_block_close: self.strings("lexical.comment_block.close").to_vec(),
+            single_ext_lexical_heredoc: self.single("ext.lexical.heredoc").map(str::to_owned),
+            strings_ext_lexical_line_continuation: self.strings("ext.lexical.line_continuation").to_vec(),
+            has_any_ext_lexical_escape_warning: self.has_any("ext.lexical.escape.warning"),
+            flag_ext_lexical_template: self.flag("ext.lexical.template"),
+            single_ext_lexical_epilogue: self.single("ext.lexical.epilogue").map(str::to_owned),
+            single_stmt_terminator: self.single("stmt.terminator").map(str::to_owned),
+            single_ext_lexical_prologue_echo: self.single("ext.lexical.prologue.echo").map(str::to_owned),
+            single_ext_lexical_prologue_brief: self.single("ext.lexical.prologue.brief").map(str::to_owned),
+            single_ext_builtin_source_syntax: self.single("ext.builtin.source.syntax").map(str::to_owned),
+            strings_ext_lexical_string_prefix_incompatible: self.strings("ext.lexical.string.prefix.incompatible").to_vec(),
+            single_ext_lexical_string_amiss: self.single("ext.lexical.string.amiss").map(str::to_owned),
+            single_ext_lexical_escape_unavailable: self.single("ext.lexical.escape.unavailable").map(str::to_owned),
+            single_ext_lexical_string_bytes_ascii: self.single("ext.lexical.string.bytes.ascii").map(str::to_owned),
+            single_ext_lexical_string_unterminated: self.single("ext.lexical.string.unterminated").map(str::to_owned),
+            flag_ext_lexical_escape_octal: self.flag("ext.lexical.escape.octal"),
+            strings_ext_lexical_escape_warning: self.strings("ext.lexical.escape.warning").to_vec(),
+            single_ext_lexical_escape_named_unknown: self.single("ext.lexical.escape.named.unknown").map(str::to_owned),
+            single_ext_lexical_escape_named_amiss: self.single("ext.lexical.escape.named.amiss").map(str::to_owned),
+            single_ext_lexical_escape_codepoint_amiss: self.single("ext.lexical.escape.codepoint.amiss").map(str::to_owned),
+            single_ext_lexical_escape_codepoint_beyond: self.single("ext.lexical.escape.codepoint.beyond").map(str::to_owned),
+            count_ext_lexical_escape_byte_digits: self.count("ext.lexical.escape.byte.digits"),
+            flag_ext_lexical_escape_continued: self.flag("ext.lexical.escape.continued"),
+            count_ext_lexical_escape_codepoint_digits: self.count("ext.lexical.escape.codepoint.digits"),
+            flag_ext_system_text_bytes: self.flag("ext.system.text.bytes"),
+            strings_ext_lexical_string_format_errors: self.strings("ext.lexical.string.format.errors").to_vec(),
+            single_ext_lexical_line_continuation_amiss: self.single("ext.lexical.line_continuation.amiss").map(str::to_owned),
+            single_syntax_group_open: self.single("syntax.group.open").map(str::to_owned),
+            single_syntax_group_close: self.single("syntax.group.close").map(str::to_owned),
+            count_block_indent_size: self.count("block.indent_size"),
+            flag_lexical_keywords_case_insensitive: self.flag("lexical.keywords_case_insensitive"),
+            flag_identifier_case_insensitive: self.flag("identifier.case_insensitive"),
+            flag_ext_lexical_string_adjacent: self.flag("ext.lexical.string.adjacent"),
+            has_any_ext_lexical_string_format_errors: self.has_any("ext.lexical.string.format.errors"),
+            flag_ext_lexical_number_point_open: self.flag("ext.lexical.number.point.open"),
+            flag_ext_lexical_number_point_bare: self.flag("ext.lexical.number.point.bare"),
+            flag_ext_lexical_number_point_edge: self.flag("ext.lexical.number.point_edge"),
+            flag_ext_lexical_number_point_open_plain: self.flag("ext.lexical.number.point_open"),
+            flag_ext_lexical_number_separator_strict: self.flag("ext.lexical.number.separator.strict"),
+            flag_ext_lexical_number_separator_after_prefix: self.flag("ext.lexical.number.separator.after_prefix"),
+            single_ext_lexical_number_amiss: self.single("ext.lexical.number.amiss").map(str::to_owned),
+            strings_ext_builtin_print_redirect: self.strings("ext.builtin.print.redirect").to_vec(),
+            flag_ext_lexical_identifier_normalized: self.flag("ext.lexical.identifier.normalized"),
+            flag_ext_syntax_call_bind_names: self.flag("ext.syntax.call.bind_names"),
+            single_op_index_close: self.single("op.index.close").map(str::to_owned),
+            single_op_index_open: self.single("op.index.open").map(str::to_owned),
+            strings_lexical_raw_quotes: self.strings("lexical.raw_quotes").to_vec(),
+            strings_lexical_string_quotes: self.strings("lexical.string_quotes").to_vec(),
+            single_ext_op_member: self.single("ext.op.member").map(str::to_owned),
+            single_ext_system_reading_unexpected: self.single("ext.system.reading.unexpected").map(str::to_owned),
+            single_ext_lexical_interpolating_index_amiss: self.single("ext.lexical.interpolating.index.amiss").map(str::to_owned),
+            single_ext_system_reading_unexpected_character: self.single("ext.system.reading.unexpected.character").map(str::to_owned),
+            single_op_concat: self.single("op.concat").map(str::to_owned),
+            single_ext_lexical_number_amiss_leading_zero: self.single("ext.lexical.number.amiss.leading_zero").map(str::to_owned),
+        };
     }
 
     pub fn continued_builtins(&self, prefix: &str) -> &[String] {
@@ -651,7 +798,7 @@ impl Table {
 
     /// A required ending or an optional parting between statements.
     pub fn separates(&self, sign: &str) -> bool {
-        self.spells("stmt.terminator", sign) || self.spells("ext.stmt.separator", sign)
+        self.statement_endings.iter().any(|ending| ending == sign)
     }
 
     pub fn single(&self, key: &str) -> Option<&str> {
@@ -678,7 +825,9 @@ impl Table {
     }
 
     pub fn spells(&self, key: &str, lexeme: &str) -> bool {
-        self.strings(key).iter().any(|w| w == lexeme)
+        let spellings = self.strings(key);
+        if spellings.len() == 1 { return spellings[0] == lexeme; }
+        spellings.iter().any(|w| w == lexeme)
     }
 
     pub fn flag(&self, key: &str) -> bool {
@@ -772,7 +921,8 @@ impl Table {
     }
 
     pub fn begins_name(&self, c: char) -> bool {
-        if self.has_any("ext.builtin.exceptions.syntax") { return c == '_' || crate::unicode::property(c, 4); }
+        match c { 'a'..='z' | 'A'..='Z' | '_' => return true, '\0'..='\u{7f}' => return false, _ => {} }
+        if self.syntax_exceptions { return c == '_' || crate::unicode::property(c, 4); }
         // A language keeping text as bytes spells its names in bytes as
         // well, so any byte above the plain seven-bit ones may stand in
         // one, whatever letter it would otherwise be part of.
@@ -785,7 +935,8 @@ impl Table {
     }
 
     pub fn extends_name(&self, c: char) -> bool {
-        if self.has_any("ext.builtin.exceptions.syntax") { return crate::unicode::property(c, 8); }
+        match c { 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => return true, '\0'..='\u{7f}' => return false, _ => {} }
+        if self.syntax_exceptions { return crate::unicode::property(c, 8); }
         let a_byte = self.flag("ext.system.text.bytes");
         let far = a_byte && self.flag("identifier.unicode") && c >= '\u{80}';
         if a_byte {

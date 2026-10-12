@@ -33,7 +33,7 @@ use crate::lang::{Lang, Brackets, Blocks, Complaint};
 use crate::arith;
 use crate::lex::{Shape, Token};
 use crate::value::{Reach, Value, MAKER_MEMBER};
-use crate::code::{Operand, Builtin, Action, ImportStyle, Routine, Cell, Instr, Plan, Attempt, Taking};
+use crate::code::{Operand, LocalSlots, Builtin, Action, ImportStyle, Routine, Cell, Instr, Plan, Attempt, Taking};
 
 thread_local! {
     static PARENT_CALLABLE: Value = Value::Adapter(Rc::new((9, Vec::new())));
@@ -244,7 +244,7 @@ struct ClassBody {
 }
 
 /// The program being assembled.
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct BindingPlan {
     names: Vec<String>,
     globals: Vec<(String, String)>,
@@ -256,6 +256,117 @@ struct BindingPlan {
     /// unit and its declarations land where the unit's own would.
     class_nonlocals: Vec<String>,
 }
+
+/// Scope summaries contain names rather than runtime slots or values.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PreparedScope {
+    plans: HashMap<usize, BindingPlan>,
+    bound: HashSet<String>,
+    exports: HashSet<String>,
+}
+
+pub type PreparedEntries = &'static [(u64, &'static [u8], &'static str)];
+pub type PreparedSources = &'static [(&'static str, usize)];
+thread_local! {
+    static PREPARED_DEFINITIONS: std::cell::RefCell<HashMap<String, (PreparedEntries, PreparedSources)>> = std::cell::RefCell::new(HashMap::new());
+}
+
+pub fn register_prepared(definition: &str, entries: PreparedEntries, sources: PreparedSources) {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(definition) {
+        PREPARED_DEFINITIONS.with(|all| { all.borrow_mut().insert(value.to_string(), (entries, sources)); });
+    }
+}
+
+pub(crate) fn prepared_entries(definition: &str) -> Option<(PreparedEntries, PreparedSources)> {
+    let value = serde_json::from_str::<serde_json::Value>(definition).ok()?;
+    PREPARED_DEFINITIONS.with(|all| all.borrow().get(&value.to_string()).copied())
+}
+
+fn token_fingerprint(tokens: &[Token]) -> Vec<u8> {
+    fn number(bytes: &mut Vec<u8>, n: usize) { bytes.extend_from_slice(&(n as u64).to_le_bytes()); }
+    fn word(bytes: &mut Vec<u8>, text: &str) { number(bytes, text.len()); bytes.extend_from_slice(text.as_bytes()); }
+    let mut bytes = Vec::new();
+    number(&mut bytes, tokens.len());
+    for token in tokens {
+        bytes.push(token.shape as u8);
+        word(&mut bytes, &token.lexeme);
+        match &token.raw { Some(raw) => { bytes.push(1); word(&mut bytes, raw); }, None => bytes.push(0) }
+        for n in [token.width, token.row, token.column, token.end_column, token.end_row, token.byte_column, token.byte_end_column] { number(&mut bytes, n); }
+    }
+    bytes
+}
+
+struct PackedTokens<'a> { bytes: &'a [u8], at: usize }
+impl<'a> PackedTokens<'a> {
+    fn byte(&mut self) -> Option<u8> { let byte = *self.bytes.get(self.at)?; self.at += 1; Some(byte) }
+    fn count(&mut self) -> Option<usize> {
+        let end = self.at.checked_add(8)?;
+        let value = u64::from_le_bytes(self.bytes.get(self.at..end)?.try_into().ok()?);
+        self.at = end;
+        usize::try_from(value).ok()
+    }
+    fn text(&mut self) -> Option<String> {
+        let length = self.count()?;
+        let end = self.at.checked_add(length)?;
+        let text = std::str::from_utf8(self.bytes.get(self.at..end)?).ok()?.to_owned();
+        self.at = end;
+        Some(text)
+    }
+}
+
+fn unpack_tokens(proof: &[u8]) -> Option<Vec<Token>> {
+    use crate::lex::Shape;
+    const SHAPES: &[Shape] = &[Shape::Instr, Shape::Quoted, Shape::Numeral, Shape::Quote, Shape::Bytes, Shape::StringBegin, Shape::StringEnd, Shape::StringField, Shape::StringExpression, Shape::StringFault, Shape::Codepoints, Shape::EscapeWarning, Shape::Sign, Shape::LineEnd, Shape::Lead, Shape::Open, Shape::Close, Shape::Finish];
+    let mut input = PackedTokens { bytes: proof, at: 0 };
+    let count = input.count()?;
+    let mut tokens = Vec::with_capacity(count);
+    for _ in 0..count {
+        let shape = *SHAPES.get(usize::from(input.byte()?))?;
+        let lexeme = input.text()?;
+        let raw = match input.byte()? { 0 => None, 1 => Some(input.text()?), _ => return None };
+        tokens.push(Token { shape, lexeme, raw, width: input.count()?, row: input.count()?, column: input.count()?, end_column: input.count()?, end_row: input.count()?, byte_column: input.count()?, byte_end_column: input.count()? });
+    }
+    (input.at == proof.len()).then_some(tokens)
+}
+
+pub(crate) fn prepared_tokens(source: &str, lang: &Lang) -> Option<Vec<Token>> {
+    if lang.prologue_brief_setting.is_some() { return None; }
+    let (_, index) = lang.prepared_source_tokens?.iter().find(|(text, _)| *text == source)?;
+    let (_, proof, _) = lang.prepared_scopes?.get(*index)?;
+    unpack_tokens(proof)
+}
+
+fn token_stamp(bytes: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hash);
+    hash.finish()
+}
+
+fn prepared_scope(tokens: &[Token], lang: &Lang) -> Option<PreparedScope> {
+    let entries = lang.prepared_scopes?;
+    let fingerprint = token_fingerprint(tokens);
+    let stamp = token_stamp(&fingerprint);
+    for &(key, proof, text) in entries {
+        if key == stamp && proof == fingerprint { return serde_json::from_str(text).ok(); }
+    }
+    None
+}
+
+/// Produce the same lexical scope survey used by ordinary module imports.
+pub fn prepare_library(definition: &str, source: &str) -> Option<(u64, Vec<u8>, String)> {
+    let lang = Lang::parse(definition).ok()?;
+    let tokens = crate::lex::lex_position(source, &lang).ok()?;
+    let tokens = crate::layout::layout_position(tokens, &lang, 0).ok()?;
+    let mut registry = Registry::default();
+    let mut plans = HashMap::new();
+    compile_pass(&tokens, &lang, &mut registry, 0, None, None, None, true, &mut plans, true, false, false).ok()?;
+    let proof = token_fingerprint(&tokens);
+    if unpack_tokens(&proof).as_deref() != Some(tokens.as_slice()) { return None; }
+    let stamp = token_stamp(&proof);
+    serde_json::to_string(&PreparedScope { plans, bound: registry.program_bound, exports: registry.builtin_exports }).ok().map(|text| (stamp, proof, text))
+}
+
 
 struct Piece {
     python_fallthrough: bool,
@@ -300,7 +411,7 @@ struct Piece {
 }
 
 pub struct Compiler<'a> {
-    source_tokens: Rc<str>,
+    source_tokens: Rc<[Token]>,
     plans: HashMap<usize, BindingPlan>,
     discovering: bool,
     annotation_target: Option<usize>,
@@ -536,6 +647,12 @@ pub fn compile_within(
     let wants_value = std::mem::take(&mut table.value_only);
     let interactive = std::mem::take(&mut table.interactive);
     if lang.closes_over {
+        let reusable = before == 0 && inside.is_none() && within.is_none() && !wants_value && !interactive && future_bits == 0 && table.optimize == 0;
+        if let Some(stored) = reusable.then(|| prepared_scope(tokens, lang)).flatten() {
+            plans = stored.plans;
+            table.builtin_exports.extend(stored.exports);
+            table.program_bound.extend(stored.bound);
+        } else {
         let mut survey = Registry::default();
         survey.index.reserve(symbol_capacity);
         survey.idents.reserve(symbol_capacity);
@@ -552,6 +669,7 @@ pub fn compile_within(
         }
         table.builtin_exports.extend(survey.builtin_exports);
         table.program_bound.extend(survey.program_bound);
+        }
     }
     table.future_bits = future_bits;
     compile_pass(tokens, lang, table, before, written_in, inside, within, read_in, &mut plans, false, wants_value, interactive)
@@ -769,7 +887,7 @@ fn compile_pass(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let future_bits = table.future_bits;
-    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { source_tokens: if discovering { Rc::from([]) } else { Rc::from(tokens) }, reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -828,7 +946,7 @@ fn compile_pass(
                 for name in names {
                     if let Some(native) = lang.builtins.get(&name).copied() {
                         a.constant(Value::Native(native, Rc::from(name.as_str())));
-                        let slot = Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: a.registry.slot(&name), moving: false };
+                        let slot = Cell { free: false, ident: Rc::from(name.as_str()), near: LocalSlots::default(), far: a.registry.slot(&name), moving: false };
                         a.put(Instr::Write(slot));
                     }
                 }
@@ -931,7 +1049,7 @@ fn compile_pass(
     let said = std::mem::take(&mut a.registry.said_while_reading);
     if !said.is_empty() {
         let mut head: Vec<Instr> = Vec::new();
-        let spare = Cell { free: false, ident: Rc::from(SPARE_CELLS[0]), near: Vec::new(), far: a.registry.slot(SPARE_CELLS[0]), moving: false };
+        let spare = Cell { free: false, ident: Rc::from(SPARE_CELLS[0]), near: LocalSlots::default(), far: a.registry.slot(SPARE_CELLS[0]), moving: false };
         for (kind, words, row) in said {
             head.push(Instr::Line(row));
             head.push(Instr::Act(Action::Remark(kind, Rc::from(words.as_str())), 0));
@@ -1198,19 +1316,19 @@ impl<'a> Compiler<'a> {
     fn global_cell(&mut self, name: &str) -> Option<Cell> {
         if let Some((depth, names)) = self.class_globals.last() {
             if *depth == self.pieces.len() && names.iter().any(|n| n == name) {
-                return Some(Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(name), moving: false });
+                return Some(Cell { free: false, ident: Rc::from(name), near: LocalSlots::default(), far: self.registry.slot(name), moving: false });
             }
         }
         let unit = self.pieces.last().expect("a unit");
         let target = unit.globals.iter().rev().find(|(n, _)| n == name)?.1.clone();
-        Some(Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(&target), moving: false })
+        Some(Cell { free: false, ident: Rc::from(name), near: LocalSlots::default(), far: self.registry.slot(&target), moving: false })
     }
 
     fn enclosing_cell(&mut self, depth: usize, name: &str) -> Option<Cell> {
         if depth == 0 || self.pieces[depth].globals.iter().any(|(n, _)| n == name) { return None; }
         let far = self.registry.slot(name);
         if let Some(at) = Self::unblocked(&self.pieces[depth], name) {
-            return Some(Cell { free: self.pieces[depth].enclosed.iter().any(|(s, _)| *s == at), ident: Rc::from(name), near: vec![at], far, moving: false });
+            return Some(Cell { free: self.pieces[depth].enclosed.iter().any(|(s, _)| *s == at), ident: Rc::from(name), near: LocalSlots::Single(at), far, moving: false });
         }
         let source = self.enclosing_cell(depth - 1, name)?;
         let unit = &mut self.pieces[depth];
@@ -1218,7 +1336,7 @@ impl<'a> Compiler<'a> {
         unit.idents.push(name.to_string());
         unit.declared.push(false);
         unit.enclosed.push((at, source));
-        Some(Cell { free: true, ident: Rc::from(name), near: vec![at], far, moving: false })
+        Some(Cell { free: true, ident: Rc::from(name), near: LocalSlots::Single(at), far, moving: false })
     }
 
     fn cell_to_read(&mut self, name: &str, moving: bool) -> Cell {
@@ -1249,7 +1367,7 @@ impl<'a> Compiler<'a> {
             locals.extend(block.iter().rev().filter(|&&s| unit.idents[s] == name).copied());
         }
         locals.extend(Self::unblocked(unit, name));
-        Cell { free: false, ident: Rc::from(name), near: locals, far: global, moving }
+        Cell { free: false, ident: Rc::from(name), near: { let mut slots = LocalSlots::default(); slots.extend(locals); slots }, far: global, moving }
     }
 
     /// Where a name is written: the innermost slot of that name in the
@@ -1311,7 +1429,7 @@ impl<'a> Compiler<'a> {
                 self.registry.program_bound.insert(name.to_string());
             }
             self.registry.globals.insert(name.to_string());
-            return Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: global, moving: false };
+            return Cell { free: false, ident: Rc::from(name), near: LocalSlots::default(), far: global, moving: false };
         }
         let found = match unit.scopes.last() {
             Some(block) => block.iter().rev().find(|&&s| unit.idents[s] == name).copied(),
@@ -1326,7 +1444,7 @@ impl<'a> Compiler<'a> {
             }
             s
         });
-        Cell { free: false, ident: Rc::from(name), near: vec![slot], far: global, moving: false }
+        Cell { free: false, ident: Rc::from(name), near: LocalSlots::Single(slot), far: global, moving: false }
     }
 
     fn refuse_uncarried(&mut self, name: &str) -> bool {
@@ -1382,7 +1500,7 @@ impl<'a> Compiler<'a> {
                 self.constant(Value::text(name));
                 let fallback = self.routine("#annotation fallback", Vec::new(), 0, true, |c| {
                     let far = c.registry.slot(name);
-                    c.put(Instr::Read(Cell { ident: Rc::from(name), near: Vec::new(), far, free: false, moving: false }));
+                    c.put(Instr::Read(Cell { ident: Rc::from(name), near: LocalSlots::default(), far, free: false, moving: false }));
                     c.write(RESULT_CELL);
                     c.piece().result_touched = true;
                     Ok(())
@@ -1476,7 +1594,7 @@ impl<'a> Compiler<'a> {
             if let Some(native) = self.lang.builtins.get(name).copied() {
                 let class_local = self.gathering().bindings.contains(name) && !self.declared_outside_class(name);
                 let slot = if class_local {
-                    Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(name), moving: false }
+                    Cell { free: false, ident: Rc::from(name), near: LocalSlots::default(), far: self.registry.slot(name), moving: false }
                 } else { self.cell_to_read(name, false) };
                 if slot.near.is_empty() && !self.registry.program_bound.contains(name) {
                     if matches!(native, Builtin::Bytes(0 | 1)) {
@@ -4157,7 +4275,7 @@ impl<'a> Compiler<'a> {
             self.registry.builtin_exports.remove(name);
             self.registry.program_bound.insert(name.to_string());
         }
-        let slot = Cell { free: false, ident: Rc::from(name), near: Vec::new(), far: self.registry.slot(name), moving: false };
+        let slot = Cell { free: false, ident: Rc::from(name), near: LocalSlots::default(), far: self.registry.slot(name), moving: false };
         self.put(Instr::Write(slot));
     }
 
@@ -4220,7 +4338,7 @@ impl<'a> Compiler<'a> {
         };
         for (decorator, extent) in held.into_iter().rev() {
             let bound = if lang.routines_outermost && !a_class {
-                Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false }
+                Cell { free: false, ident: Rc::from(name.as_str()), near: LocalSlots::default(), far: self.registry.slot(&name), moving: false }
             } else {
                 self.cell_to_write(&name)
             };
@@ -4489,7 +4607,7 @@ impl<'a> Compiler<'a> {
             // not anything was ever written to it, so the global is made
             // to hold nothing where it held nothing at all: reading it
             // is then reading a name written to.
-            let cell = Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: self.registry.slot(&name), moving: false };
+            let cell = Cell { free: false, ident: Rc::from(name.as_str()), near: LocalSlots::default(), far: self.registry.slot(&name), moving: false };
             if !self.lang.bind_names { self.put(Instr::Ready(cell)); }
             if self.pieces.len() == 1 { self.registry.declared_outer.push(name.clone()); }
             // A class body opens no unit of its own, so the unit
@@ -5627,7 +5745,7 @@ impl<'a> Compiler<'a> {
         for s in bound {
             let name = self.piece().idents[s].clone();
             let global = self.registry.slot(&name);
-            let slot = Cell { free: false, ident: Rc::from(name.as_str()), near: vec![s], far: global, moving: false };
+            let slot = Cell { free: false, ident: Rc::from(name.as_str()), near: LocalSlots::Single(s), far: global, moving: false };
             self.constant(Value::Blank);
             self.put(Instr::Write(slot));
         }
@@ -6987,7 +7105,7 @@ impl<'a> Compiler<'a> {
                 let Some(book) = self.gathering().book.clone() else {
                     let made = self.gensym("delete");
                     let blank = self.registry.slot(&made);
-                    self.put(Instr::Read(Cell { free: false, ident: Rc::from(name.as_str()), near: Vec::new(), far: blank, moving: false }));
+                    self.put(Instr::Read(Cell { free: false, ident: Rc::from(name.as_str()), near: LocalSlots::default(), far: blank, moving: false }));
                     continue;
                 };
                 self.read(&book);
@@ -7393,7 +7511,7 @@ impl<'a> Compiler<'a> {
         let mut shared: Vec<(String, String)> = carried_words;
         if !lang.class_special.is_empty() {
             if let Some(word) = lang.class_details.get("module").and_then(|v| v.first()) {
-                let module_name = self.global_cell("__name__").unwrap_or_else(|| Cell { free: false, ident: Rc::from("__name__"), near: Vec::new(), far: self.registry.slot("__name__"), moving: false });
+                let module_name = self.global_cell("__name__").unwrap_or_else(|| Cell { free: false, ident: Rc::from("__name__"), near: LocalSlots::default(), far: self.registry.slot("__name__"), moving: false });
                 self.put(Instr::Read(module_name));
                 let module = self.gensym("class_module");
                 self.write(&module);
@@ -14295,4 +14413,15 @@ fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String], pytho
         }
     }
     (constants, names)
+}
+
+#[cfg(test)]
+mod prepared_proof_tests {
+    // Preserve every token position in the cached lexical proof.
+    #[test]
+    fn prepared_token_roundtrip() {
+        let language = crate::lang::Lang::parse(include_str!("../../../langs/python.json")).unwrap();
+        let tokens = crate::lex::lex_position("name = 'é'\n", &language).unwrap();
+        assert_eq!(super::unpack_tokens(&super::token_fingerprint(&tokens)).unwrap(), tokens);
+    }
 }

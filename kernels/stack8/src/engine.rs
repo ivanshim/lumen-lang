@@ -219,7 +219,7 @@ pub struct Engine<'a> {
     pub module_sources: HashMap<String, String>,
     pub library_root: Option<String>,
     pub module_files: HashMap<String, String>,
-    module_locations: RefCell<Option<(HashMap<std::path::PathBuf, String>, std::collections::HashSet<std::path::PathBuf>)>>,
+    module_locations: RefCell<Option<SourceLocations>>,
     pub module_aliases: HashMap<String, String>,
     embedded_names: std::collections::HashSet<String>,
     modules: HashMap<String, Value>,
@@ -584,11 +584,35 @@ fn made_absolute(path: &str) -> String {
     std::fs::canonicalize(path).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| path.to_string())
 }
 
+type DirectoryVersion = Result<(u64, u64, i64, i64, i64, i64, u32), std::io::ErrorKind>;
+
+fn directory_version(path: &std::path::Path) -> DirectoryVersion {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).map(|m| (m.dev(), m.ino(), m.mtime(), m.mtime_nsec(), m.ctime(), m.ctime_nsec(), m.mode())).map_err(|error| error.kind())
+}
+
+struct SourceLocations {
+    root: std::path::PathBuf,
+    locations: HashMap<std::path::PathBuf, String>,
+    directories: std::collections::HashSet<std::path::PathBuf>,
+    watches: Vec<(std::path::PathBuf, DirectoryVersion)>,
+    links: Vec<(std::path::PathBuf, Option<std::path::PathBuf>)>,
+}
+
+impl SourceLocations {
+    fn current(&self, root: &std::path::Path) -> bool {
+        self.root == root && self.watches.iter().all(|(path, version)| directory_version(path) == *version)
+            && self.links.iter().all(|(path, target)| module_location(path, None) == *target)
+    }
+}
+
 /// Resolve a declared virtual location without requiring its source file on disk.
 /// Search paths may traverse only real directories or declared virtual ones.
 /// Existing symlinks are expanded before `..`; files and unknown missing
 /// directories cannot be traversed, even when a later `..` would erase them.
 fn module_location(path: &std::path::Path, directories: Option<&std::collections::HashSet<std::path::PathBuf>>) -> Option<std::path::PathBuf> {
+    // Existing paths need no virtual-component traversal.
+    if let Ok(real) = std::fs::canonicalize(path) { return Some(real); }
     use std::path::{Component, Path, PathBuf};
     let absolute = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().ok()?.join(path) };
     let mut pending: std::collections::VecDeque<_> = absolute.components().map(|part| part.as_os_str().to_os_string()).collect();
@@ -4582,7 +4606,7 @@ impl<'a> Engine<'a> {
         // counted.
         if !program.body_of_all {
             if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
-                if self.calls.len() >= limit { return Err(format!("\0{}", words).into()); }
+                if self.calls.len() + self.reaching >= limit { return Err(format!("\0{}", words).into()); }
             }
         }
         let n = if let Some(rules) = &program.parameter_rules {
@@ -5648,7 +5672,10 @@ impl<'a> Engine<'a> {
         }
 
         if let Value::Generator(inner) = walk {
-            let item = self.resume_generator(inner, sent)?;
+            self.reaching_further()?;
+            let resumed = self.resume_generator(inner, sent);
+            self.answered();
+            let item = resumed?;
             if item.is_none() && !matches!(self.trace_hook, Value::Null) {
                 let raised = match self.stop_of(inner) { Fault::Thrown(value) => Some(value), Fault::Note(words) => self.as_fault(&words), _ => None };
                 if let Some(value @ Value::Object(_)) = raised {
@@ -17059,15 +17086,15 @@ impl<'a> Engine<'a> {
                 Ok(if matches!(target, Value::Tuple(_)) { Value::tuple(selected) } else { Value::array(selected) })
             }
             Value::Text(text) if self.lang.text_indexable => {
-                let ascii = if self.lang.python_numbers { Value::text_ascii(text) } else { text.is_ascii() };
-                let length = if ascii { text.len() } else { text.chars().count() };
+                let length = crate::strings::character_length(text);
+                let ascii = length == text.len();
                 let (first, last, step) = self.slice_edges(parts, length)?;
                 if step == 1 {
                     if first >= last { return Ok(Value::text("")); }
                     if first == 0 && last == length as i128 { return Ok(target.clone()); }
                     if ascii { return Ok(Value::text(&text[first as usize..last as usize])); }
-                    let from = text.char_indices().nth(first as usize).map_or(text.len(), |(byte, _)| byte);
-                    let until = text.char_indices().nth(last as usize).map_or(text.len(), |(byte, _)| byte);
+                    let from = crate::strings::character_byte(text, first as usize).unwrap_or(text.len());
+                    let until = crate::strings::character_byte(text, last as usize).unwrap_or(text.len());
                     return Ok(Value::text(&text[from..until]));
                 }
                 let letters: Vec<char> = text.chars().collect();
@@ -17151,8 +17178,8 @@ impl<'a> Engine<'a> {
                     return Err(self.sequence_subscript_fault(target, at));
                 }
                 let index = match at { Value::Small(n) => *n, Value::Flag(b) => i64::from(*b), Value::Huge(n) => n.to_i64().ok_or_else(||crate::strings::fault(self.lang,"index"))?, _ => return Err(crate::strings::fault(self.lang,"integer")) };
-                let offset = if index < 0 { index.saturating_add(s.chars().count() as i64) } else { index };
-                return s.chars().nth(offset as usize).map(|c|Value::text(&c.to_string())).ok_or_else(||crate::strings::fault(self.lang,"index"));
+                let offset = if index < 0 { index.saturating_add(crate::strings::character_length(s) as i64) } else { index };
+                return crate::strings::character_at(s, offset as usize).map(|c|Value::text(&c.to_string())).ok_or_else(||crate::strings::fault(self.lang,"index"));
             }
         }
         if let Value::Words(words, tuple) = target {
@@ -20934,6 +20961,14 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if self.lang.bind_names {
+            if let Builtin::Text(work @ (crate::strings::TextOp::Count | crate::strings::TextOp::Find | crate::strings::TextOp::Rfind | crate::strings::TextOp::Index | crate::strings::TextOp::Rindex | crate::strings::TextOp::Startswith | crate::strings::TextOp::Endswith)) = builtin {
+                if (2..=4).contains(&args.len()) && matches!(args[0], Value::Text(_)) && matches!(args[1], Value::Text(_))
+                    && args[2..].iter().all(|bound| matches!(bound, Value::Small(_) | Value::Flag(_) | Value::Null)) {
+                    return crate::strings::run(work, name, args, self.lang, &self.wording());
+                }
+            }
+        }
         if builtin == Builtin::UnicodeDecomposition { return crate::sre::decompose(args); }
         // The labelled Unicode range permits an exact integer path without
         // building a big integer. Subclasses and unusual arguments fall through.
@@ -21590,7 +21625,12 @@ impl<'a> Engine<'a> {
                     let Value::Bytes(bytes, _, _) = args[0].contents() else { return Err(self.lang.stream_amiss[0].clone()); };
                     let bytes = bytes.borrow();
                     let mut output: Box<dyn std::io::Write> = if self.truth(&args[1]) { Box::new(std::io::stderr()) } else { self.written_out.set(true); Box::new(std::io::stdout()) };
-                    output.write_all(&bytes).and_then(|_| output.flush()).map_err(|_| self.lang.stream_failed[0].clone())?;
+                    if let Err(fault) = output.write_all(&bytes).and_then(|_| output.flush()) {
+                        let number = fault.raw_os_error().unwrap_or(5);
+                        let description = fault.to_string();
+                        let description = description.split(" (os error").next().unwrap_or(&description);
+                        return Ok(Value::tuple(vec![Value::Small(number as i64), Value::text(description)]));
+                    }
                     return Ok(Value::Small(bytes.len() as i64));
                 }
                 let (Some(Value::Text(text)), Some(to_error), None) = (args.first(), args.get(1), args.get(2)) else {
@@ -22237,11 +22277,14 @@ impl<'a> Engine<'a> {
                 let Value::Text(members) = args[2].contents() else { return Err("TypeError: expected string members".into()); };
                 let text = args[0].contents();
                 let characters: Box<dyn Iterator<Item=u32>> = match &text {
-                    Value::Text(word) => Box::new(word.chars().map(u32::from)),
-                    Value::Codepoints(row) => Box::new(row.iter().copied()),
+                    Value::Text(word) => {
+                        let byte = crate::strings::character_byte(word, begin).unwrap_or(word.len());
+                        Box::new(word[byte..].chars().map(u32::from))
+                    }
+                    Value::Codepoints(row) => Box::new(row.iter().copied().skip(begin)),
                     _ => return Err("TypeError: expected text to scan".into()),
                 };
-                let consumed = characters.skip(begin).take(bound).take_while(|point| *point < 128 && members.as_bytes().contains(&(*point as u8))).count();
+                let consumed = characters.take(bound).take_while(|point| *point < 128 && members.as_bytes().contains(&(*point as u8))).count();
                 Value::Small((begin + consumed) as i64)
             }
             Builtin::JsonString => {
@@ -22275,7 +22318,7 @@ impl<'a> Engine<'a> {
                 let source = args[0].contents();
                 let Value::Text(text) = &source else { return Ok(Value::Null); };
                 let Some(start) = args[1].as_big().ok().and_then(|index| index.to_usize()) else { return Ok(Value::Null); };
-                let Some((byte, _)) = text.char_indices().nth(start) else { return Ok(Value::Null); };
+                let Some(byte) = crate::strings::character_byte(text, start) else { return Ok(Value::Null); };
                 let mut escaped = false;
                 for (offset, (at, character)) in text[byte..].char_indices().enumerate() {
                     if escaped { escaped = false; continue; }
@@ -27307,6 +27350,47 @@ impl Engine<'_> {
 
     /// Search sys.path for a root module, or the parent package path for
     /// a child. Initializer directories and file names are made absolute.
+    fn build_source_locations(&self, root: &std::path::Path) -> SourceLocations {
+        let mut locations = HashMap::new();
+        let mut directories = std::collections::HashSet::new();
+        let mut links = Vec::new();
+            // Resolve shared directories once during this search. Nothing is
+            // cached across imports, so filesystem changes remain visible.
+            let mut parents = std::collections::HashMap::new();
+            for (name, relative) in &self.module_files {
+                let written = root.join(relative);
+                let Some(parent) = written.parent() else { continue };
+                let resolved_parent = parents.entry(parent.to_path_buf()).or_insert_with(|| module_location(parent, None));
+                let Some(parent) = resolved_parent.as_ref() else { continue };
+                let Some(leaf) = written.file_name() else { continue };
+                let file = parent.join(leaf);
+                let location = match std::fs::symlink_metadata(&file) {
+                    Ok(info) if info.file_type().is_symlink() => {
+                        let target = module_location(&file, None);
+                        links.push((file, target.clone()));
+                        target
+                    },
+                    Ok(_) => Some(file),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(file),
+                    Err(_) => None,
+                };
+                if let Some(location) = location { locations.insert(location, name.clone()); }
+            }
+            for parent in parents.values().flatten() {
+                for directory in parent.ancestors() { directories.insert(directory.to_path_buf()); }
+            }
+            // A file link may lead out of its manifest directory.
+            for location in locations.keys() {
+                if location.parent().is_some_and(|parent| !directories.contains(parent)) {
+                    for directory in location.ancestors().skip(1) { directories.insert(directory.to_path_buf()); }
+                }
+            }
+            let mut observed = directories.clone();
+            for written in parents.keys() { for ancestor in written.ancestors() { observed.insert(ancestor.to_path_buf()); } }
+            let watches = observed.into_iter().map(|path| { let version = directory_version(&path); (path, version) }).collect();
+            SourceLocations { root: root.to_owned(), locations, directories, watches, links }
+    }
+
     fn sys_path_source(&self, path: &str) -> Option<(String, Vec<u8>)> {
         let (owner, word, leaf) = match path.rsplit_once('.') {
             Some((parent, child)) => (parent, self.lang.module_path.as_deref()?, child),
@@ -27323,23 +27407,16 @@ impl Engine<'_> {
             Value::Tuple(items) if self.lang.module_path.is_some() => items,
             _ => return None,
         };
-        let mut cached = self.module_locations.borrow_mut();
-        // Relative host roots follow chdir; absolute manifest locations survive imports.
-        if self.library_root.as_ref().is_some_and(|root| !std::path::Path::new(root).is_absolute()) { cached.take(); }
-        let (locations, directories) = cached.get_or_insert_with(|| {
-            let mut locations = HashMap::new();
-            let mut directories = std::collections::HashSet::new();
-            if self.lang.module_path.is_some() {
-                for name in self.module_files.keys() {
-                    if let Some(file) = self.library_module_file(name) {
-                        let location = std::path::PathBuf::from(file);
-                        for directory in location.ancestors().skip(1) { directories.insert(directory.to_path_buf()); }
-                        locations.insert(location, name.clone());
-                    }
-                }
-            }
-            (locations, directories)
-        });
+        const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules");
+        let root = std::path::Path::new(self.library_root.as_deref().unwrap_or(ROOT));
+        let mut snapshot = self.module_locations.borrow_mut();
+        if self.lang.module_path.is_some() && !snapshot.as_ref().is_some_and(|index| index.current(root)) {
+            *snapshot = Some(self.build_source_locations(root));
+        }
+        let no_locations = HashMap::new();
+        let no_directories = std::collections::HashSet::new();
+        let locations = snapshot.as_ref().map_or(&no_locations, |index| &index.locations);
+        let directories = snapshot.as_ref().map_or(&no_directories, |index| &index.directories);
         let mut namespace_roots = Vec::new();
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
@@ -28652,7 +28729,10 @@ impl Engine<'_> {
     fn dyn_lookup(&mut self, held: &Value, name: &str) -> Flow<Option<Value>> {
         match held {
             Value::Collection(cell, _) | Value::Bond(cell) => { let value = cell.borrow().clone(); self.dyn_lookup(&value, name) },
-            Value::Map(pairs) => Ok(pairs.iter().find(|(key, _)| key_spells(key, name)).map(|(_, v)| v.clone())),
+            Value::Map(pairs) => {
+                let index = pairs.named_row(name).unwrap_or_else(|()| pairs.iter().position(|(key, _)| key_spells(key, name)));
+                Ok(index.map(|index| pairs[index].1.clone()))
+            },
             Value::View(w) if w.1 == "mapping" => self.dyn_lookup(&w.0.proxy_dictionary(), name),
             // Anything else is read the very way any subscript reads
             // it, so a value with no way to answer a key at all is
@@ -28854,6 +28934,9 @@ impl Engine<'_> {
             }
         }
 
+        if mode == 0 {
+            if let Some(tokens) = crate::compile::prepared_tokens(source, self.lang) { return Ok(tokens); }
+        }
         crate::lex::lex_position(source, self.lang)
             .and_then(|tokens| crate::layout::layout_position(tokens, self.lang, 0))
     }

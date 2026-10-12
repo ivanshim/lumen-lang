@@ -73,7 +73,7 @@ struct ClassParts {
     book_tracked: HashSet<String>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct ScopeWords {
     bound: Vec<String>,
     outermost: Vec<(String, String)>,
@@ -84,6 +84,133 @@ struct ScopeWords {
     /// of its own in the reference, unlike here, where it takes no
     /// layer and its declarations land where the layer's own would.
     class_borrowed: Vec<String>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LibrarySurvey {
+    scopes: HashMap<usize, ScopeWords>,
+    globals: Vec<String>,
+    natives: HashSet<String>,
+}
+
+pub type SurveyRows = &'static [(u64, &'static [u8], &'static str)];
+pub type SourceRows = &'static [(&'static str, usize)];
+thread_local! {
+    static LIBRARY_SURVEYS: std::cell::RefCell<std::collections::BTreeMap<String, (SurveyRows, SourceRows)>> = std::cell::RefCell::new(std::collections::BTreeMap::new());
+}
+
+pub fn register_prepared(definition: &str, rows: SurveyRows, sources: SourceRows) {
+    let Ok(object) = serde_json::from_str::<serde_json::Value>(definition) else { return; };
+    LIBRARY_SURVEYS.with(|library| { library.borrow_mut().insert(object.to_string(), (rows, sources)); });
+}
+
+pub(crate) fn library_rows(definition: &str) -> Option<(SurveyRows, SourceRows)> {
+    match serde_json::from_str::<serde_json::Value>(definition) {
+        Ok(object) => LIBRARY_SURVEYS.with(|library| library.borrow().get(&object.to_string()).cloned()),
+        Err(_) => None,
+    }
+}
+
+fn input_proof(input: &[Token]) -> Vec<u8> {
+    let mut output = Vec::with_capacity(input.len() * 56);
+    output.extend_from_slice(&(input.len() as u64).to_le_bytes());
+    for item in input {
+        output.push(item.shape as u8);
+        output.extend_from_slice(&(item.lexeme.len() as u64).to_le_bytes());
+        output.extend_from_slice(item.lexeme.as_bytes());
+        output.push(u8::from(item.raw.is_some()));
+        if let Some(written) = &item.raw {
+            output.extend_from_slice(&(written.len() as u64).to_le_bytes());
+            output.extend_from_slice(written.as_bytes());
+        }
+        output.extend_from_slice(&(item.span as u64).to_le_bytes());
+        output.extend_from_slice(&u64::from(item.row).to_le_bytes());
+        output.extend_from_slice(&(item.column as u64).to_le_bytes());
+        output.extend_from_slice(&(item.end_column as u64).to_le_bytes());
+        output.extend_from_slice(&u64::from(item.end_row).to_le_bytes());
+        output.extend_from_slice(&(item.utf8_column as u64).to_le_bytes());
+        output.extend_from_slice(&(item.utf8_end as u64).to_le_bytes());
+    }
+    output
+}
+
+fn take_number(remaining: &mut &[u8]) -> Option<u64> {
+    let header = remaining.get(..8)?;
+    let value = u64::from_le_bytes(header.try_into().ok()?);
+    *remaining = &remaining[8..];
+    Some(value)
+}
+
+fn take_word(remaining: &mut &[u8]) -> Option<String> {
+    let width = usize::try_from(take_number(remaining)?).ok()?;
+    let word = String::from_utf8(remaining.get(..width)?.to_vec()).ok()?;
+    *remaining = &remaining[width..];
+    Some(word)
+}
+
+fn take_byte(remaining: &mut &[u8]) -> Option<u8> {
+    let (first, rest) = remaining.split_first()?;
+    *remaining = rest;
+    Some(*first)
+}
+
+fn read_token_proof(mut remaining: &[u8]) -> Option<Vec<Token>> {
+    use crate::scan::Shape::*;
+    let kinds = [Bare, Quoted, Numeral, Quote, ByteQuote, Woven, WovenEnd, Field, FieldText, Unheld, CharacterRow, EscapeNotice, Sign, LineEnd, Lead, Open, Close, Finish];
+    let length = usize::try_from(take_number(&mut remaining)?).ok()?;
+    let mut output = Vec::with_capacity(length);
+    while output.len() < length {
+        let kind = kinds.get(usize::from(take_byte(&mut remaining)?)).copied()?;
+        let said = take_word(&mut remaining)?;
+        let written = if take_byte(&mut remaining)? == 0 { None } else { Some(take_word(&mut remaining)?) };
+        let span = usize::try_from(take_number(&mut remaining)?).ok()?;
+        let row = u32::try_from(take_number(&mut remaining)?).ok()?;
+        let column = usize::try_from(take_number(&mut remaining)?).ok()?;
+        let end_column = usize::try_from(take_number(&mut remaining)?).ok()?;
+        let end_row = u32::try_from(take_number(&mut remaining)?).ok()?;
+        let utf8_column = usize::try_from(take_number(&mut remaining)?).ok()?;
+        let utf8_end = usize::try_from(take_number(&mut remaining)?).ok()?;
+        output.push(Token { shape: kind, lexeme: said, raw: written, span, row, column, end_column, end_row, utf8_column, utf8_end });
+    }
+    if remaining.is_empty() { Some(output) } else { None }
+}
+
+pub(crate) fn library_tokens(source: &str, table: &Table) -> Option<Vec<Token>> {
+    if table.single("ext.lexical.prologue.brief.setting").is_some() { return None; }
+    for &(text, row) in table.library_token_sources? {
+        if text != source { continue; }
+        let (_, proof, _) = table.library_surveys?.get(row)?;
+        return read_token_proof(proof);
+    }
+    None
+}
+
+fn input_key(proof: &[u8]) -> u64 {
+    use std::hash::Hash;
+    let mut digest = std::collections::hash_map::DefaultHasher::new();
+    proof.hash(&mut digest);
+    std::hash::Hasher::finish(&digest)
+}
+
+fn library_survey(input: &[Token], table: &Table) -> Option<LibrarySurvey> {
+    let rows = table.library_surveys?;
+    let proof = input_proof(input);
+    let sought = input_key(&proof);
+    let (_, _, encoded) = rows.iter().find(|(key, fingerprint, _)| *key == sought && *fingerprint == proof)?;
+    serde_json::from_str(encoded).ok()
+}
+
+pub fn prepare_library(definition: &str, source: &str) -> Option<(u64, Vec<u8>, String)> {
+    let syntax = Table::parse(definition).ok()?;
+    let raw = crate::scan::scan_position(source, &syntax).ok()?;
+    let input = crate::indent::indent_position(raw, &syntax, 0).ok()?;
+    let mut scopes = HashMap::new();
+    let surveyed = build_survey(&input, &syntax, &[], HashMap::new(), false, 0, None, None, None, None, None, None, None, false, &mut scopes, true, false, &[], &HashSet::new(), false, false, 0, &[], 0).ok()?;
+    let proof = input_proof(&input);
+    if read_token_proof(&proof).as_ref() != Some(&input) { return None; }
+    let key = input_key(&proof);
+    let stored = LibrarySurvey { scopes, globals: surveyed.bound_globally, natives: surveyed.native_exports };
+    Some((key, proof, serde_json::to_string(&stored).ok()?))
 }
 
 /// How a name stood in its scope before a `global` or `nonlocal`
@@ -137,7 +264,7 @@ pub struct Builder<'a> {
     indexes_globals: bool,
     global_positions: HashMap<String, (usize, usize), FxBuildHasher>,
     globals_indexed: usize,
-    lexical_origin: Rc<str>,
+    lexical_origin: Rc<Vec<Token>>,
     surveyed: HashMap<usize, ScopeWords>,
     survey: bool,
     kind_mark: Option<usize>,
@@ -495,8 +622,14 @@ type Within<'w> = (&'w [String], Knows<'w>);
 fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, beside: Option<Value>, named: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool, settle: i64, aliasing: &[(String, String)], future_bits: i64) -> Res<Built> {
     let mut words = HashMap::new();
     let (program_names, exports) = if table.flag("ext.stmt.function.closes_over") {
+        let reusable = !strict && before == 0 && assumed.is_empty() && within.is_none() && standing_in.is_none() && !read_in && !value_only && aliasing.is_empty() && seeded.iter().all(String::is_empty) && settle == 0 && future_bits == 0;
+        if let Some(stored) = reusable.then(|| library_survey(tokens, table)).flatten() {
+            words = stored.scopes;
+            (stored.globals, stored.natives)
+        } else {
         let pass = build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), beside.clone(), None, named.clone(), mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[], &HashSet::new(), false, false, settle, aliasing, future_bits)?;
         (pass.bound_globally, pass.native_exports)
+        }
     } else { (Vec::new(), HashSet::new()) };
     build_survey(tokens, table, seeded, assumed, strict, before, written_in, beside, None, named, mark, within, standing_in, read_in, &mut words, false, value_only, &program_names, &exports, false, false, settle, aliasing, future_bits)
 }
@@ -705,7 +838,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { indexes_globals, global_positions, globals_indexed, lexical_origin: Rc::from(format!("{tokens:?}")), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, member_temps: Vec::new(), gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { indexes_globals, global_positions, globals_indexed, lexical_origin: Rc::new(if survey { Vec::new() } else { tokens.to_vec() }), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, member_temps: Vec::new(), gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -13556,4 +13689,15 @@ fn settle_doc_indentation(source: &str) -> String {
         result.push_str(&row[removed..]);
     }
     result
+}
+
+#[cfg(test)]
+mod prepared_proof_tests {
+    // Preserve every token position in the cached lexical proof.
+    #[test]
+    fn prepared_token_roundtrip() {
+        let language = crate::table::Table::parse(include_str!("../../../langs/python.json")).unwrap();
+        let tokens = crate::scan::scan_position("name = 'é'\n", &language).unwrap();
+        assert_eq!(super::read_token_proof(&super::input_proof(&tokens)).unwrap(), tokens);
+    }
 }

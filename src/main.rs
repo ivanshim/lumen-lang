@@ -30,6 +30,7 @@ use std::process;
 
 mod web;
 mod python_versions;
+mod prepared_libraries { include!(concat!(env!("OUT_DIR"), "/prepared_libraries.rs")); }
 
 mod embedded_modules {
     include!("../langs/lib_python/modules/manifest.rs");
@@ -921,6 +922,7 @@ fn run_all() {
     // widest mark, and the only one for a kernel that sets none.
     lumen_room::mark();
 
+    prepared_libraries::install(&inv.kernel);
     let result = match (inv.kernel.as_str(), &inv.language) {
         ("stream35", Language::Named(name)) => lumen_stream35::run(name, &source, &inv.program_args),
         ("stream35", Language::File { text, .. }) => lumen_stream35::run_definition(text, &source, &inv.program_args),

@@ -58,6 +58,7 @@ pub fn run(language: &str, source: &str, program_args: &[String], request: &[(St
             let mut lang = Lang::parse(text).map_err(|e| format!("Error: definition of '{language}': {e}"))?;
             settle_brief(&mut lang, request);
             settle_markup(&mut lang, request);
+            if let Some((entries, sources)) = compile::prepared_entries(text) { lang.prepared_scopes = Some(entries); lang.prepared_source_tokens = Some(sources); }
             return go(&lang, source, program_args, request);
         }
     }
@@ -69,6 +70,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     let mut lang = Lang::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
     settle_brief(&mut lang, request);
     settle_markup(&mut lang, request);
+    if let Some((entries, sources)) = compile::prepared_entries(definition) { lang.prepared_scopes = Some(entries); lang.prepared_source_tokens = Some(sources); }
     go(&lang, source, program_args, request)
 }
 
