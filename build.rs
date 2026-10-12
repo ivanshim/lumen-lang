@@ -55,7 +55,7 @@ fn prepared_libraries(versions: &serde_json::Map<String, Value>) {
                 // Reference modules are inputs, not reusable startup libraries.
                 if name.starts_with("test.") && !name.starts_with("test.support") { continue; }
                 // shortcut: cap cached source size for Lambda uploads; widen when the artifact budget grows.
-                if source.len() > 262_144 { continue; }
+                if source.len() > 16_384 && !["argparse", "_pydatetime", "json.encoder", "_io", "sys", "codecs", "_collections_abc", "_runtime_import", "dataclasses", "test.support", "test.support.script_helper", "runtime_adapters.native_test_support"].contains(&name) { continue; }
                 let prepared = std::panic::catch_unwind(|| match kernel {
                     "stack8" => lumen_stack8::compile::prepare_library(&definition, source),
                     _ => lumen_microcode7::build::prepare_library(&definition, source),

@@ -45,6 +45,7 @@ impl Engine<'_> {
     }
     fn warning_public(&mut self) -> Res<Value> {
         self.module_cache_value("warnings").filter(|v| !matches!(v, Value::Null))
+            .or_else(|| if self.finalizing { self.modules.get("warnings").cloned() } else { None })
             .or_else(|| self.warning_bound.clone()).or_else(|| self.warning_module.clone()).ok_or_else(|| "RuntimeError: warning backend is not initialized".into())
     }
     fn warning_attribute(&mut self, name: &str, fallback: &str) -> Res<Value> {
@@ -135,7 +136,10 @@ impl Engine<'_> {
             let file = match &fields[6].1 { Value::Routine(routine) => routine.written_in.as_ref().map(|file| Value::text(file)).unwrap_or_else(|| Value::text(&self.root_source)), _ => Value::text(&self.root_source) };
             (globals, file, fields[0].1.clone())
         } else {
-            let sys = self.import_module("sys").map_err(|error| { self.carried = Some(error); self.special_fault() })?;
+            let sys = match self.modules.get("sys").cloned() {
+                Some(sys) => sys,
+                None => self.import_module("sys").map_err(|error| { self.carried = Some(error); self.special_fault() })?,
+            };
             (self.warning_member(sys, "__dict__")?, Value::text("<sys>"), Value::Small(0))
         };
         let module = self.warning_method(globals.clone(), "get", vec![Value::text("__name__"), Value::text("<string>")])?;
@@ -317,7 +321,8 @@ impl Engine<'_> {
                     if self.lang.warning_backend.first().is_some_and(|word| word == path) || self.module_sources.contains_key(path) || self.sys_path_source(path).is_some() { return Ok(None); }
                     continue;
                 }
-                let spec = self.warning_method(finder, "find_spec", vec![Value::text(path), search_path.clone(), Value::Null])?;
+                let Some(find_spec) = self.member_of(finder, "find_spec")? else { continue; };
+                let spec = self.call_held(find_spec, vec![Value::text(path), search_path.clone(), Value::Null])?;
                 if matches!(spec.contents(), Value::Null) { continue; }
                 let bootstrap = self.import_module("importlib._bootstrap").map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
                 // The pinned loader owns namespace creation, replacement and failure cleanup.

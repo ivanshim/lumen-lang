@@ -2228,6 +2228,14 @@ impl<'a> Compiler<'a> {
                 let raw: String = source.chars().skip(from).take(to - from).collect();
                 let mut edits = self.overflow_edits(source, from, start, end);
                 edits.extend(self.format_field_edits(source, from, start, end));
+                for token in &self.tokens[start..end] {
+                    if token.shape == Shape::Quote {
+                        let begin = Self::char_offset(source, token.row, token.column).saturating_sub(from);
+                        let finish = Self::char_offset(source, token.end_row, token.end_column).saturating_sub(from);
+                        let text = token.lexeme.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n");
+                        edits.push((begin, finish, format!("'{text}'")));
+                    }
+                }
                 return Self::trim_redundant_parens(&Self::apply_edits(&raw, edits));
             }
         }
@@ -8275,6 +8283,9 @@ impl<'a> Compiler<'a> {
                 return Err("SyntaxError: named expression cannot be used within an annotation".into());
             }
             if !lang.syntax_members.is_empty() && token.shape == Shape::Instr && Lang::spells(&lang.await_words, &token.spelling()) {
+                if !closing.is_empty() && self.tokens[self.pos..].iter().take_while(|t| !matches!(t.shape, Shape::LineEnd | Shape::Finish)).any(|t| Lang::spells(&lang.comprehension_for, &t.spelling())) {
+                    return Err("SyntaxError: asynchronous comprehension outside of an asynchronous function".into());
+                }
                 return Err("SyntaxError: await expression cannot be used within an annotation".into());
             }
             if self.forbids_await && self.on_keyword(&lang.await_words) { return Err("SyntaxError: 'await' outside function".into()); }

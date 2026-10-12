@@ -2286,6 +2286,14 @@ impl<'a> Builder<'a> {
                 let raw: String = source.chars().skip(from).take(to - from).collect::<String>().trim_end().to_string();
                 let mut edits = self.overflow_edits(source, from, first, last);
                 edits.extend(self.format_edits(source, from, raw.chars().count(), first, last));
+                for token in &self.tokens[first..last] {
+                    if token.shape == Shape::Quote {
+                        let begin = Self::place_in(source, token.row, token.column).saturating_sub(from);
+                        let finish = Self::place_in(source, token.end_row, token.end_column).saturating_sub(from);
+                        let text = token.lexeme.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n");
+                        edits.push((begin, finish, format!("'{text}'")));
+                    }
+                }
                 return Self::trim_parens(&Self::splice(&raw, edits));
             }
         }
@@ -8178,6 +8186,9 @@ impl<'a> Builder<'a> {
                 return Err("SyntaxError: yield expression cannot be used within an annotation".into());
             }
             if table.has_any("ext.builtin.exceptions.syntax") && shape == Shape::Bare && self.key("ext.op.await") {
+                if !nesting.is_empty() && self.tokens[self.pos..].iter().take_while(|t| !matches!(t.shape, Shape::LineEnd | Shape::Finish)).any(|t| table.spells("ext.op.comprehension.for", &t.spelling())) {
+                    return Err("SyntaxError: asynchronous comprehension outside of an asynchronous function".into());
+                }
                 return Err("SyntaxError: await expression cannot be used within an annotation".into());
             }
             if table.has_any("ext.builtin.exceptions.syntax") && shape == Shape::Sign && table.spells("ext.op.assign.expression", &self.look().spelling()) {

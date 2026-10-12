@@ -57,7 +57,7 @@ impl Machine<'_> {
     fn warning_owner(&self) -> Result<Value, String> {
         match self.cached_import("warnings") {
             Some(value) if !matches!(value, Value::Nil) => Ok(value),
-            _ => self.warning_target.clone().or_else(|| self.warning_fallback.clone()).ok_or_else(|| String::from("RuntimeError: warnings are not initialized")),
+            _ => (if self.shutting_down { self.imported.get("warnings").cloned() } else { None }).or_else(|| self.warning_target.clone()).or_else(|| self.warning_fallback.clone()).ok_or_else(|| String::from("RuntimeError: warnings are not initialized")),
         }
     }
     fn warning_setting(&mut self, public_name: &str, native_name: &str) -> Result<Value, String> {
@@ -156,7 +156,7 @@ impl Machine<'_> {
                 let filename = match &holds[5].1 { Value::Bound(body, _) => body.written_in.as_ref().map(|s| Value::text(s)).unwrap_or_else(|| Value::text(&self.entry_file)), _ => Value::text(&self.entry_file) };
                 (globals, filename, holds[0].1.clone())
             }
-            None => { let sys = self.load_namespace("sys")?; (self.warning_get(sys, "__dict__")?, Value::text("<sys>"), Value::Small(0)) }
+            None => { let sys = match self.imported.get("sys").cloned() { Some(sys) => sys, None => self.load_namespace("sys")? }; (self.warning_get(sys, "__dict__")?, Value::text("<sys>"), Value::Small(0)) }
         };
         let module = self.warning_send(world.clone(), "get", vec![Value::text("__name__"), Value::text("<string>")])?;
         let empty = Value::Dict(Rc::new(Vec::new().into())).keep(true);
@@ -349,7 +349,9 @@ impl Machine<'_> {
                     if exists { return Ok(None); }
                     continue;
                 }
-                let specification = self.warning_send(searcher, "find_spec", vec![Value::text(qualified), location.clone(), Value::Nil])?;
+                let find_spec = self.core_primitive(Prim::GetMember, "getattr", vec![searcher, Value::text("find_spec"), Value::Nil], Vec::new())?;
+                if matches!(find_spec.settled(), Value::Nil) { continue; }
+                let specification = self.warning_apply(find_spec, vec![Value::text(qualified), location.clone(), Value::Nil])?;
                 if matches!(specification.settled(), Value::Nil) { continue; }
                 let bootstrap_module = self.load_namespace("importlib._bootstrap")?;
                 // Let the upstream load transaction choose the final public cache entry.

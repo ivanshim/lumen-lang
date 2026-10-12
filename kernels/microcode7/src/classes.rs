@@ -86,11 +86,10 @@ impl<'a> Machine<'a> {
         }
         if word == "Union" {
             protocols.push(("__repr__".to_owned(), Self::wrap(127, Vec::new())));
-            protocols.extend(["__eq__", "__ne__"].into_iter().map(|operation|
-                (operation.to_owned(), Self::wrap(127, vec![Value::text(operation)]))));
-            // The reference builds a union by subscription; the folded
-            // members are the very shape the class questions read.
-            protocols.push(("__class_getitem__".to_owned(), Self::wrap(140, Vec::new())));
+            if self.table.flag("ext.stmt.type_parameters") {
+                let subscription = Self::wrap(77, vec![Value::text("#union")]);
+                protocols.push(("__class_getitem__".to_owned(), Self::wrap(5, vec![subscription])));
+            }
         }
         if word == "GenericAlias" {
             protocols.push(("__iter__".to_owned(), Self::wrap(125, vec![Value::Small(5)])));
