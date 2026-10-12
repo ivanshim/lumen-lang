@@ -172,7 +172,7 @@ class TestCase:
         self._type_equality_funcs[typeobj] = function
 
     def assertEqual(self, a, b, msg=None):
-        if type(a) is type(b):
+        if self._type_equality_funcs and type(a) is type(b):
             assertion = self._type_equality_funcs.get(type(a))
             if assertion is not None:
                 if isinstance(assertion, str):
