@@ -1204,9 +1204,9 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     let indexes_globals = table.flag("ext.syntax.call.bind_names");
     let exceptions = table.strings("ext.builtin.exceptions");
     let mut global_positions: HashMap<String, (usize, usize), FxBuildHasher> = HashMap::with_capacity_and_hasher(
-        if indexes_globals { seeded.len() + exceptions.len() } else { 0 }, FxBuildHasher::default());
+        if indexes_globals { seeded.iter().filter(|word| !word.is_empty()).count() + exceptions.len() } else { 0 }, FxBuildHasher::default());
     if indexes_globals {
-        for (at, name) in seeded.iter().enumerate() {
+        for (at, name) in seeded.iter().enumerate().filter(|(_, word)| !word.is_empty()) {
             global_positions.entry(name.clone()).and_modify(|pair| pair.1 = at).or_insert((at, at));
         }
     }
