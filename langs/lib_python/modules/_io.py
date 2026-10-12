@@ -1030,8 +1030,9 @@ class FileIO(_RawIOBase):
             self._fd = fd
             self._closed = False
             global _finalizer_warnings, _finalizer_collector, _finalizer_os
-            import warnings, gc
-            _finalizer_warnings, _finalizer_collector, _finalizer_os = warnings, gc, os
+            if _finalizer_warnings is None:
+                import warnings, gc
+                _finalizer_warnings, _finalizer_collector, _finalizer_os = warnings, gc, os
             if base[0] == 'a':
                 try:
                     self.seek(0, 2)

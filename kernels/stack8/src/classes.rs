@@ -1816,7 +1816,7 @@ impl<'a> Engine<'a> {
         }
     }
     fn own_class_value(c: &Class, name: &str) -> Option<Value> {
-        if let Some(v) = c.shared.read(name, c.python_names.borrow().is_some()) {
+        if let Some(v) = c.shared.read(name, true) {
             return if matches!(v.contents(), Value::Blank | Value::Gap) { None } else { Some(v) };
         }
         c.methods.iter().find(|(n,_)| n == name).map(|(_,p)| Value::Routine(p.clone()))

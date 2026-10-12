@@ -3178,6 +3178,11 @@ impl<'a> Machine<'a> {
         use crate::ghost::{Knot, Web};
         if self.reaping { return 0; }
         self.reaping = true;
+        // Dead weak keys must release their attributes before ordering finalizers.
+        let members_before = self.routine_members.len();
+        self.routine_members.retain(|(function, _)| function.revive().is_some());
+        if self.routine_members.len() != members_before { self.reindex_routine_members(); }
+        self.attend_to_gone();
         let mut web = self.round_web(&[]);
         let mut original = web.unreachable();
         // With no lost knot there is nothing to silence or farewell, and

@@ -720,8 +720,9 @@ fn inside_matching_arm(input: &[Token], position: usize, table: &Table) -> bool 
 
 /// Give each class suite its lexical names before collecting scope bindings.
 /// An inner suite replaces the enclosing prefix, including in nested functions.
-fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
-    let mut output = input.to_vec();
+fn class_spellings<'t>(input: &'t [Token], table: &Table) -> std::borrow::Cow<'t, [Token]> {
+    let mut output = std::borrow::Cow::Borrowed(input);
+    if !input.iter().any(|token| token.shape == Shape::Bare && token.lexeme.starts_with("__") && !token.lexeme.ends_with("__") && !token.lexeme.contains('.')) { return output; }
     if !table.has_any("ext.stmt.class.detail.slots") { return output; }
     let mut suites = Vec::new();
     for (index, token) in input.iter().enumerate() {
@@ -783,7 +784,8 @@ fn class_spellings(input: &[Token], table: &Table) -> Vec<Token> {
                     && crate::table::BUILTIN_LABELS.iter().any(|(label, _)| table.spells(label, word));
                 let keyword = in_pattern && input.get(offset + 1).map_or(false, |next| next.shape == Shape::Sign && table.spells("stmt.assign", &next.lexeme));
                 if !named && !keyword {
-                    output[offset].lexeme = member_spelling(owner, word);
+                    let changed = member_spelling(owner, word);
+                    if output[offset].lexeme != changed { output.to_mut()[offset].lexeme = changed; }
                 }
             }
         }
@@ -797,7 +799,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     if reserved_assignment { return Err(String::from("SyntaxError: invalid syntax")); }
     let original_words = tokens;
     let names_in_classes = class_spellings(tokens, table);
-    let tokens = names_in_classes.as_slice();
+    let tokens = names_in_classes.as_ref();
     let mut beginnings = seeded.to_vec();
     let indexes_globals = table.flag("ext.syntax.call.bind_names");
     let exceptions = table.strings("ext.builtin.exceptions");
@@ -1346,11 +1348,13 @@ impl<'a> Builder<'a> {
         &self.tokens[(self.pos + n).min(self.tokens.len() - 1)]
     }
 
+    fn move_past(&mut self) {
+        if self.pos + 1 < self.tokens.len() { self.pos += 1; }
+    }
+
     fn advance(&mut self) -> Token {
         let t = self.look().clone();
-        if self.pos + 1 < self.tokens.len() {
-            self.pos += 1;
-        }
+        self.move_past();
         t
     }
 
@@ -1392,13 +1396,13 @@ impl<'a> Builder<'a> {
 
     fn skip_line_ends(&mut self) {
         while !self.exhausted() && self.on_stmt_end() {
-            self.advance();
+            self.move_past();
         }
     }
 
     fn need_sign(&mut self, s: &str, why: &str) -> Res<()> {
         if self.sign(s) {
-            self.advance();
+            self.move_past();
             Ok(())
         } else {
             Err(format!("Expected '{}' {}, got '{}'", s, why, self.look().lexeme))
@@ -1421,7 +1425,7 @@ impl<'a> Builder<'a> {
 
     fn need_lexeme(&mut self, s: &str) -> Res<()> {
         if self.lexeme_of(s) {
-            self.advance();
+            self.move_past();
             Ok(())
         } else {
             Err(format!("Expected '{}' to close a block, got '{}'", s, self.look().lexeme))
@@ -1430,7 +1434,7 @@ impl<'a> Builder<'a> {
 
     fn need_closer(&mut self) -> Res<()> {
         if self.on_any("block.close") {
-            self.advance();
+            self.move_past();
             Ok(())
         } else {
             Err(format!("Expected '{}' to close a block, got '{}'", self.table.single("block.close").unwrap_or("end"), self.look().lexeme))
@@ -2291,7 +2295,8 @@ impl<'a> Builder<'a> {
                         let begin = Self::place_in(source, token.row, token.column).saturating_sub(from);
                         let finish = Self::place_in(source, token.end_row, token.end_column).saturating_sub(from);
                         let text = token.lexeme.replace('\\', "\\\\").replace('\'', "\\'").replace('\n', "\\n");
-                        edits.push((begin, finish, format!("'{text}'")));
+                        let prefix = if source.chars().nth(from + begin).is_some_and(|c| c == 'u' || c == 'U') { "u" } else { "" };
+                        edits.push((begin, finish, format!("{prefix}'{text}'")));
                     }
                 }
                 return Self::trim_parens(&Self::splice(&raw, edits));
@@ -2748,7 +2753,7 @@ impl<'a> Builder<'a> {
 
     fn skip_lead_word(&mut self) {
         if self.on_any("block.intro") {
-            self.advance();
+            self.move_past();
         }
     }
 
@@ -2772,7 +2777,7 @@ impl<'a> Builder<'a> {
             && self.look().shape == Shape::Sign
             && self.table.separates(&self.look().lexeme)
         {
-            self.advance();
+            self.move_past();
             return Ok(constant(Value::Nil));
         }
         let head_mark = self.on_any("block.intro");
@@ -2782,7 +2787,7 @@ impl<'a> Builder<'a> {
         if same_line {
             let mut body = vec![self.stmt()?];
             while self.look().shape == Shape::Sign && self.table.separates(&self.look().lexeme) {
-                self.advance();
+                self.move_past();
                 if matches!(self.look().shape, Shape::Finish | Shape::Close | Shape::LineEnd) { break; }
                 body.push(self.stmt()?);
             }
@@ -2794,7 +2799,7 @@ impl<'a> Builder<'a> {
                 if self.look().shape != Shape::Open {
                     return Err(format!("Expected an indented block, got '{}'", self.look().lexeme));
                 }
-                self.advance();
+                self.move_past();
                 let mut items = Vec::new();
                 self.skip_line_ends();
                 while self.look().shape != Shape::Close && !self.exhausted() {
@@ -2804,7 +2809,7 @@ impl<'a> Builder<'a> {
                 if self.look().shape != Shape::Close {
                     return Err("Expected the end of an indented block".to_string());
                 }
-                self.advance();
+                self.move_past();
                 Ok(sequence(items))
             }
             Blocks::Bracketed => {
@@ -2817,13 +2822,13 @@ impl<'a> Builder<'a> {
                     // here, one opening another of its arms is left
                     // standing for whoever opened the block.
                     if self.table.single("ext.stmt.block.instead").map_or(false, |m| self.sign(m)) {
-                        self.advance();
+                        self.move_past();
                         let mut stops = self.table.strings("ext.stmt.block.instead.close").to_vec();
                         stops.extend(self.table.strings("stmt.elif").iter().cloned());
                         stops.extend(self.table.strings("stmt.else").iter().cloned());
                         let body = self.stmts_until(&stops)?;
                         if self.table.strings("ext.stmt.block.instead.close").iter().any(|w| self.lexeme_of(w)) {
-                            self.advance();
+                            self.move_past();
                         }
                         return Ok(body);
                     }
@@ -2832,7 +2837,7 @@ impl<'a> Builder<'a> {
                     }
                     return Err(format!("Expected '{}' to open a block, got '{}'", opens[0], self.look().lexeme));
                 };
-                self.advance();
+                self.move_past();
                 let close = self.table.strings("block.close")[k].clone();
                 let body = self.stmts_until(std::slice::from_ref(&close))?;
                 self.need_lexeme(&close)?;
@@ -3367,13 +3372,13 @@ impl<'a> Builder<'a> {
 
     /// The body's names are read within a layer that cannot escape it.
     fn class_scope(&mut self) -> Res<Form> {
-        self.advance();
+        self.move_past();
         let name = self.need_word("as the class name")?;
         if self.table.has_any("ext.builtin.exceptions.syntax") && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         if self.table.flag("ext.stmt.function.closes_over") { self.address_to_write(&name); }
         if self.on_any("ext.stmt.class.bases.open") {
-            self.advance();
+            self.move_past();
             let _bases = self.arguments_of(&name, "ext.stmt.class.bases.close", "syntax.call.separator")?;
         }
         let _members = self.routine(&name, Holds::Every, Traps::Naught, Vec::new(), 0, |b| b.body())?;
@@ -3391,7 +3396,7 @@ impl<'a> Builder<'a> {
         }
         let mut whole = if spreads { first } else { prim_call(Prim::MakeArray, vec![first]) };
         loop {
-            self.advance();
+            self.move_past();
             let ended = self.on_stmt_end() || self.exhausted() || self.look().shape == Shape::Close
                 || self.on_any("block.intro") || self.on_any("syntax.group.close")
                 || self.on_any("syntax.array.close") || self.on_any("syntax.map.close");
@@ -3413,7 +3418,7 @@ impl<'a> Builder<'a> {
         if !self.on_any("ext.op.tuple") { return Ok(first); }
         let mut value = prim_call(Prim::MakeArray, vec![first]);
         loop {
-            self.advance();
+            self.move_past();
             if self.on_stmt_end() || self.on_assign() || self.on_any("syntax.group.close")
                 || self.on_any("block.intro") || matches!(self.look().shape, Shape::Finish | Shape::Close) { break; }
             if self.table.has_any("ext.builtin.exceptions.syntax") && self.key("ext.stmt.yield") {
@@ -3540,7 +3545,7 @@ impl<'a> Builder<'a> {
                             if assigned {
                                 let end = &self.tokens[at - 1];
                                 self.range_end = Some((end.column + end.lexeme.chars().count(), end.row));
-                                self.advance();
+                                self.move_past();
                                 let message = if member { "SyntaxError: cannot assign to attribute here. Maybe you meant '==' instead of '='?" }
                                     else { "SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?" };
                                 return Err(message.to_owned());
@@ -3576,7 +3581,7 @@ impl<'a> Builder<'a> {
         let ends = matches!(next.shape, Shape::Finish | Shape::Close | Shape::LineEnd)
             || self.table.spells("stmt.terminator", &next.spelling());
         if ends && self.on_any("ext.literal.ellipsis") {
-            self.advance();
+            self.move_past();
             return Ok(constant(Value::Nil));
         }
         if self.look().shape == Shape::Bare || self.on_any("ext.stmt.decorator") {
@@ -3587,7 +3592,7 @@ impl<'a> Builder<'a> {
             // import behind it is read and answered as any other.
             if self.key("ext.stmt.import.lazy") && self.glance(1).shape == Shape::Bare
                 && (self.table.spells("ext.stmt.import", &self.glance(1).spelling()) || self.table.spells("ext.stmt.import.from", &self.glance(1).spelling())) {
-                self.advance();
+                self.move_past();
                 self.in_lazy_from = true;
                 let read = self.stmt();
                 self.in_lazy_from = false;
@@ -3617,7 +3622,7 @@ impl<'a> Builder<'a> {
             }
             if self.key("ext.stmt.with") { return self.with_block(); }
             if self.key("ext.stmt.del") {
-                self.advance();
+                self.move_past();
                 return self.forget_list(false, true, None);
             }
             if self.key("ext.stmt.nonlocal") {
@@ -3633,7 +3638,7 @@ impl<'a> Builder<'a> {
                     return Err(self.table.single("ext.stmt.nonlocal.module").unwrap_or_default().into());
                 }
                 let in_class = self.class_bindings.last().map_or(false, |(level, _)| *level == self.layers.len());
-                self.advance();
+                self.move_past();
                 loop {
                     let word = self.need_word("after the nonlocal keyword")?;
                     // Said of the class's own kind word, the declaration
@@ -3662,7 +3667,7 @@ impl<'a> Builder<'a> {
                         return Err(format!("{}{}{}", pieces.first().map_or("", String::as_str), word, pieces.get(1).map_or("", String::as_str)));
                     }
                     if !self.on_any("syntax.call.separator") { break; }
-                    self.advance();
+                    self.move_past();
                 }
                 if self.table.flag("ext.stmt.function.closes_over") { return Ok(constant(Value::Nil)); }
                 return Ok(prim_call(Prim::Raise, vec![constant(Value::text(self.table.single("ext.stmt.nonlocal.unrun").unwrap_or_default()))]));
@@ -3674,12 +3679,12 @@ impl<'a> Builder<'a> {
             // asked, so it runs at least once. Said as a loop that stops
             // once the test does not hold, tested after the body.
             if self.key("ext.stmt.do") {
-                self.advance();
+                self.move_past();
                 let body = self.body()?;
                 if !self.key("stmt.while") {
                     return Err(format!("Expected '{}' after the body, got '{}'", self.table.strings("stmt.while").first().map_or("while", |w| w.as_str()), self.look().lexeme));
                 }
-                self.advance();
+                self.move_past();
                 let open = self.table.single("syntax.group.open").ok_or_else(|| "A do loop needs syntax.group".to_string())?;
                 self.need_sign(open, "after while")?;
                 let test = self.expr(0)?;
@@ -3689,7 +3694,7 @@ impl<'a> Builder<'a> {
             }
             if self.key("stmt.while") {
                 let loop_row = self.look().row.saturating_sub(self.before);
-                self.advance();
+                self.move_past();
                 let test_at = self.pos;
                 return self.cycle(
                     move |r| {
@@ -3702,7 +3707,7 @@ impl<'a> Builder<'a> {
                 );
             }
             if self.key("stmt.until") {
-                self.advance();
+                self.move_past();
                 let test_at = self.pos;
                 // The test is written before the body; find where it ends,
                 // then read the body and, inside the loop, the test.
@@ -3727,7 +3732,7 @@ impl<'a> Builder<'a> {
             }
             if self.key("ext.stmt.type_alias") && self.glance(1).lexeme.chars().next().is_some_and(|letter| letter.is_alphabetic() || letter == '_') {
                 let earlier = std::mem::replace(&mut self.forbids_await, true);
-                self.advance();
+                self.move_past();
                 let alias = self.need_word("as the type alias")?;
                 if self.table.has_any("ext.builtin.exceptions.syntax") && alias == "__debug__" {
                     return Err(String::from("SyntaxError: cannot assign to __debug__"));
@@ -3774,7 +3779,7 @@ impl<'a> Builder<'a> {
             if self.key("stmt.return") {
                 self.note_finally_word("return");
                 let return_at = self.pos;
-                self.advance();
+                self.move_past();
                 // A routine giving back a cell answers with the cell of
                 // whatever it names, so a name tied to the answer and
                 // the one within stand for one cell. Where what it names
@@ -3795,20 +3800,20 @@ impl<'a> Builder<'a> {
             }
             if self.key("stmt.break") {
                 self.note_finally_word("break");
-                self.advance();
+                self.move_past();
                 self.star_loop_check()?;
                 let levels = self.loop_levels()?;
                 return Ok(prim_call(Prim::Leave, levels));
             }
             if self.key("stmt.continue") {
                 self.note_finally_word("continue");
-                self.advance();
+                self.move_past();
                 self.star_loop_check()?;
                 let levels = self.loop_levels()?;
                 return Ok(prim_call(Prim::Resume, levels));
             }
             if self.key("stmt.function") {
-                self.advance();
+                self.move_past();
                 let gives_cell = self.skip_reference();
                 let name = self.need_word("after the function keyword")?;
                 self.giving_cells.push(gives_cell);
@@ -3817,7 +3822,7 @@ impl<'a> Builder<'a> {
                 return built;
             }
             if self.key("stmt.pass") {
-                self.advance();
+                self.move_past();
                 return Ok(constant(Value::Nil));
             }
             if self.key("ext.stmt.class.trait") {
@@ -3834,7 +3839,7 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.class.modifier") && self.glance(1).shape == Shape::Bare {
                 let next = self.glance(1).spelling().to_string();
                 if self.table.spells("ext.stmt.class", &next) || self.table.spells("ext.stmt.class.interface", &next) {
-                    self.advance();
+                    self.move_past();
                     return self.class_decl();
                 }
             }
@@ -3843,7 +3848,7 @@ impl<'a> Builder<'a> {
             }
             if self.key("ext.stmt.throw") {
                 let raised_origin = self.pos;
-                self.advance();
+                self.move_past();
                 if self.table.has_any("ext.builtin.exceptions.syntax") && self.key("ext.stmt.throw.from") {
                     return Err("SyntaxError: invalid syntax".to_owned());
                 }
@@ -3854,7 +3859,7 @@ impl<'a> Builder<'a> {
                 }
                 let mut values = vec![self.expr(0)?];
                 if self.key("ext.stmt.throw.from") {
-                    self.advance();
+                    self.move_past();
                     if self.table.has_any("ext.builtin.exceptions.syntax") && (self.on_stmt_end() || matches!(self.look().shape, Shape::Close | Shape::Finish)) {
                         return Err("SyntaxError: did you forget an expression after 'from'?".to_owned());
                     }
@@ -3865,7 +3870,7 @@ impl<'a> Builder<'a> {
                 return Ok(self.located(self.span_since(raised_origin), raised));
             }
             if self.key("ext.stmt.assert") {
-                self.advance();
+                self.move_past();
                 if self.table.has_any("ext.builtin.exceptions.syntax") {
                     if !self.divided_at(self.pos, self.tokens.len(), "ext.op.assign.expression").is_empty() {
                         return Err(String::from("SyntaxError: cannot use named expression without parentheses here"));
@@ -3886,7 +3891,7 @@ impl<'a> Builder<'a> {
                 let condition = Box::new(self.expr(0)?);
                 let assertion_extent = self.span_since(assertion_origin);
                 let message = if self.on_any("syntax.call.separator") {
-                    self.advance();
+                    self.move_past();
                     self.expr(0)?
                 // No message given is told apart from empty text.
                 } else { constant(Value::Unset) };
@@ -3917,7 +3922,7 @@ impl<'a> Builder<'a> {
                 return self.static_names();
             }
             if self.key("ext.stmt.const") {
-                self.advance();
+                self.move_past();
                 let name = self.need_word("after the constant keyword")?;
                 self.need_assign("after the constant name")?;
                 let value = self.expr(0)?;
@@ -3952,7 +3957,7 @@ impl<'a> Builder<'a> {
             if !dotted || !self.on_any("op.pipe") {
                 return Ok(path.join(self.table.single("op.pipe").unwrap_or(".")));
             }
-            self.advance();
+            self.move_past();
         }
     }
 
@@ -3975,19 +3980,19 @@ impl<'a> Builder<'a> {
     fn import_bindings(&mut self) -> Res<Form> {
         let statement_at = self.pos;
         let taking_names = self.key("ext.stmt.import.from");
-        self.advance();
+        self.move_past();
         let mut path = String::new();
         if taking_names {
             let start = self.pos;
             while self.on_any("op.pipe") || self.on_any("ext.op.index.slice.ellipsis") {
                 path.push_str(&self.look().lexeme);
-                self.advance();
+                self.move_past();
             }
             if self.pos == start || !self.key("ext.stmt.import") {
                 path.push_str(&self.module_path(true)?);
             }
             if self.key("ext.stmt.import") {
-                self.advance();
+                self.move_past();
             } else {
                 return Err(format!("Expected '{}' following the module path, got '{}'", self.table.single("ext.stmt.import").unwrap_or_default(), self.look().lexeme));
             }
@@ -4009,7 +4014,7 @@ impl<'a> Builder<'a> {
         }
         let enclosed = taking_names && self.on_any("syntax.group.open");
         if enclosed {
-            self.advance();
+            self.move_past();
         }
         let mut writes = Vec::new();
         if taking_names && !enclosed && self.on_any("op.mul") {
@@ -4021,7 +4026,7 @@ impl<'a> Builder<'a> {
             if self.table.has_any("ext.builtin.exceptions.syntax") && (self.in_class_body() || self.layers.iter().skip(1).any(|scope| scope.holds == Holds::Every)) {
                 return Err(String::from("SyntaxError: import * only allowed at module level"));
             }
-            self.advance();
+            self.move_past();
             if self.table.flag("ext.stmt.import.value") {
                 writes.push(prim_call(Prim::SpreadModule, vec![prim_call(Prim::BringModule, vec![constant(Value::text(&path)), constant(Value::tuple(vec![Value::text("*")]))])]));
             }
@@ -4035,7 +4040,7 @@ impl<'a> Builder<'a> {
                     false if original.contains('.') => original.split('.').next().unwrap().to_owned(),
                     false => self.tokens[named_at].lexeme.clone(),
                     true => {
-                        self.advance();
+                        self.move_past();
                         if self.table.has_any("ext.builtin.exceptions.syntax") {
                             let kind = match self.look().lexeme.as_str() { "(" => Some("tuple"), "[" => Some("list"), _ => None };
                             if let Some(name) = kind { return Err(format!("SyntaxError: cannot use {name} as import target")); }
@@ -4074,7 +4079,7 @@ impl<'a> Builder<'a> {
                 if !self.on_any("syntax.call.separator") {
                     break;
                 }
-                self.advance();
+                self.move_past();
                 if taking_names && !enclosed && self.table.has_any("ext.builtin.exceptions.syntax")
                     && matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) {
                     return Err(String::from("SyntaxError: trailing comma not allowed without surrounding parentheses"));
@@ -4171,9 +4176,9 @@ impl<'a> Builder<'a> {
             decorators.push((cell, range));
             match self.look().shape {
                 Shape::LineEnd => {
-                    self.advance();
+                    self.move_past();
                     while self.look().shape == Shape::LineEnd {
-                        self.advance();
+                        self.move_past();
                     }
                 }
                 _ => return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string()),
@@ -4194,7 +4199,7 @@ impl<'a> Builder<'a> {
             if !self.key("stmt.function") {
                 return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
             }
-            self.advance();
+            self.move_past();
             let shared = self.skip_reference();
             named = self.need_word("after the function keyword")?;
             self.giving_cells.push(shared);
@@ -4217,7 +4222,7 @@ impl<'a> Builder<'a> {
     fn with_block(&mut self) -> Res<Form> {
         let table = self.table;
         let asynchronous = std::mem::take(&mut self.asynchronous);
-        self.advance();
+        self.move_past();
         if table.has_any("ext.builtin.exceptions.syntax") {
             let mut opened = Vec::new();
             for part in self.tokens.iter().skip(self.pos) {
@@ -4276,7 +4281,7 @@ impl<'a> Builder<'a> {
                 contexts.push((steps.len(), watched, bounds));
             }
             if self.key("ext.stmt.with.as") {
-                self.advance();
+                self.move_past();
                 let place = self.gensym("with");
                 let name = place.ident.to_string();
                 steps.push(Form::Write(place.clone(), Box::new(value)));
@@ -4302,7 +4307,7 @@ impl<'a> Builder<'a> {
                 self.pos = boundary;
             } else { steps.push(value); }
             if !self.on_any("syntax.call.separator") { break; }
-            self.advance();
+            self.move_past();
             if !enclosed && table.has_any("ext.builtin.exceptions.syntax") && self.on_any("block.intro") {
                 return Err("SyntaxError: the last 'with' item has a trailing comma".to_owned());
             }
@@ -4401,7 +4406,7 @@ impl<'a> Builder<'a> {
             return Err(format!("SyntaxError: cannot assign to {literal}"));
         }
         if self.on_any("op.mul") {
-            self.advance();
+            self.move_past();
             let mut steps = vec![prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.stmt.binding.unrun").unwrap_or_default()))])];
             steps.extend(self.with_target(source)?);
             return Ok(steps);
@@ -4411,7 +4416,7 @@ impl<'a> Builder<'a> {
         if let Some(end) = end {
             let (width, separated, spread) = self.targets_ahead(true);
             let grouped = width == 1 && !separated && self.on_any("syntax.group.open");
-            self.advance();
+            self.move_past();
             if grouped {
                 let forms = self.with_target(source)?;
                 self.need_sign(end, "after the binding target")?;
@@ -4429,7 +4434,7 @@ impl<'a> Builder<'a> {
                 if self.table.has_any("ext.builtin.exceptions.syntax") { forms.push(Form::Forget(self.address_to_write(&part_name))); }
                 position += 1;
                 if !self.on_any("syntax.call.separator") { break; }
-                self.advance();
+                self.move_past();
                 if self.sign(end) { break; }
             }
             self.need_sign(end, "after the binding targets")?;
@@ -4481,7 +4486,7 @@ impl<'a> Builder<'a> {
     fn deletion_place(&mut self) -> Res<Form> {
         let reached = if self.bracketed_holder() {
             let close = self.table.single("syntax.group.close").unwrap_or_default().to_string();
-            self.advance();
+            self.move_past();
             let inner = self.expr(0)?;
             self.need_sign(&close, "after the bracketed target")?;
             inner
@@ -4492,12 +4497,12 @@ impl<'a> Builder<'a> {
         let mut place = self.called_on_value(reached, None)?;
         loop {
             if self.on_any("op.pipe") {
-                self.advance();
+                self.move_past();
                 let field = self.need_word("after the member mark")?;
                 place = prim_call(Prim::Of, vec![place, constant(Value::text(&field))]);
                 place = self.called_on_value(place, None)?;
             } else if self.on_any("op.index.open") {
-                self.advance();
+                self.move_past();
                 if self.table.flag("ext.stmt.type_parameters") {
                     let closing = self.table.single("op.index.close").unwrap().to_owned();
                     let comma = self.table.single("syntax.call.separator").map(str::to_owned);
@@ -4520,7 +4525,7 @@ impl<'a> Builder<'a> {
                                 let (part, spread) = self.bracket_item(&end, separator.as_deref())?;
                                 row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
                                 if separator.as_ref().map_or(false, |word| self.sign(word)) {
-                                    self.advance();
+                                    self.move_past();
                                     if self.sign(&end) { break; }
                                 } else { break; }
                             }
@@ -4531,7 +4536,7 @@ impl<'a> Builder<'a> {
                             if separator.as_ref().map_or(false, |word| self.sign(word)) {
                                 let mut row = prim_call(Prim::MakeArray, vec![first]);
                                 loop {
-                                    self.advance();
+                                    self.move_past();
                                     if self.sign(&end) { break; }
                                     let (part, spread) = self.bracket_item(&end, separator.as_deref())?;
                                     row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
@@ -4549,7 +4554,7 @@ impl<'a> Builder<'a> {
                         let mut several = false;
                         while separator.as_ref().map_or(false, |word| self.sign(word)) {
                             several = true;
-                            self.advance();
+                            self.move_past();
                             if self.sign(&end) { break; }
                             keys.push(self.bracket_part(&end, separator.as_deref())?);
                         }
@@ -4572,7 +4577,7 @@ impl<'a> Builder<'a> {
                 while !self.on_any("op.index.close") && !self.exhausted() {
                     if self.on_any("block.intro") || self.on_any("syntax.call.separator") {
                         special = true;
-                        self.advance();
+                        self.move_past();
                     } else {
                         if self.on_any("op.pipe") && self.glance(1).lexeme == self.look().lexeme && self.glance(2).lexeme == self.look().lexeme {
                             self.advance(); self.advance(); self.advance();
@@ -4593,7 +4598,7 @@ impl<'a> Builder<'a> {
     }
 
     fn global_names(&mut self) -> Res<Form> {
-        self.advance();
+        self.move_past();
         let said_at = self.pos - 1;
         let sep = self.table.single("syntax.call.separator").map(str::to_string);
         let mut ready = Vec::new();
@@ -4678,7 +4683,7 @@ impl<'a> Builder<'a> {
     /// (ext.stmt.static.read_in), and what it wrote stays as anything
     /// else written to that name stays.
     fn static_names(&mut self) -> Res<Form> {
-        self.advance();
+        self.move_past();
         let alone = self.layers.len() < 2;
         let handed_over = self.read_in && self.layers.len() == self.outer_layers && self.table.flag("ext.stmt.static.read_in");
         let sep = self.table.single("syntax.call.separator").map(str::to_string);
@@ -4695,7 +4700,7 @@ impl<'a> Builder<'a> {
                 }
                 self.spoken_for.push(name.clone());
                 let value = if self.on_assign() {
-                    self.advance();
+                    self.move_past();
                     self.expr(0)?
                 } else {
                     constant(Value::Nil)
@@ -4703,7 +4708,7 @@ impl<'a> Builder<'a> {
                 here.push(Form::Write(self.address_to_write(&name), Box::new(value)));
                 match &sep {
                     Some(s) if self.sign(s) => {
-                        self.advance();
+                        self.move_past();
                         continue;
                     }
                     _ => return Ok(sequence(here)),
@@ -4720,7 +4725,7 @@ impl<'a> Builder<'a> {
             let hidden = format!("#static{}", self.gensyms);
             let inner = if alone { None } else { Some(self.layers.pop().expect("the function's layer")) };
             let value = if self.on_assign() {
-                self.advance();
+                self.move_past();
                 self.expr(0)
             } else {
                 Ok(constant(Value::Nil))
@@ -4772,11 +4777,11 @@ impl<'a> Builder<'a> {
         if self.table.blocks != Blocks::Indented || !self.on_any("block.intro") {
             return self.body();
         }
-        self.advance();
+        self.move_past();
         if self.look().shape == Shape::LineEnd { return self.body(); }
         let mut words = vec![self.stmt()?];
         while self.on_any("stmt.terminator") {
-            self.advance();
+            self.move_past();
             if matches!(self.look().shape, Shape::LineEnd | Shape::Finish) { break; }
             words.push(self.stmt()?);
         }
@@ -4795,7 +4800,7 @@ impl<'a> Builder<'a> {
 
     fn attempt_stmt(&mut self) -> Res<Form> {
         let table = self.table;
-        self.advance();
+        self.move_past();
         let bare_clauses = table.single("ext.stmt.catch.as").is_some();
         let temps_from = self.member_temps.len();
         let body = self.guarded_attempt_body(bare_clauses)?;
@@ -4817,7 +4822,7 @@ impl<'a> Builder<'a> {
                 if let Some(begin) = all_at { self.pos = begin; self.range_end = all_end; return Err("SyntaxError: default 'except:' must be last".to_string()); }
             }
             let origin = self.pos;
-            self.advance();
+            self.move_past();
             let mut classes = Vec::new();
             let mut choices = None;
             let grouped = bare_clauses && self.on_any("ext.stmt.catch.group");
@@ -4846,7 +4851,7 @@ impl<'a> Builder<'a> {
                         };
                         selectors.push(selector);
                         if !self.on_any("ext.stmt.catch.separator") { break; }
-                        self.advance();
+                        self.move_past();
                         if bracketed && self.on_any("ext.stmt.catch.tuple.close") { break; }
                     }
                 }
@@ -4858,7 +4863,7 @@ impl<'a> Builder<'a> {
                     return Err(String::from("SyntaxError: multiple exception types must be parenthesized when using 'as'"));
                 }
                 held = if self.key("ext.stmt.catch.as") {
-                    self.advance();
+                    self.move_past();
                     if grouped && table.has_any("ext.builtin.exceptions.syntax") {
                         let target = if self.on_any("syntax.group.open") { Some("tuple") }
                             else if matches!(self.look().shape, Shape::Numeral | Shape::Quote) { Some("literal") }
@@ -4889,7 +4894,7 @@ impl<'a> Builder<'a> {
                 self.need_sign(&open, "after catch")?;
                 classes.push(self.need_word("as the class caught")?);
                 while table.single("ext.stmt.catch.separator").map_or(false, |s| self.sign(s)) {
-                    self.advance();
+                    self.move_past();
                     classes.push(self.need_word("as another class caught")?);
                 }
                 held = if self.look().shape == Shape::Bare {
@@ -4944,14 +4949,14 @@ impl<'a> Builder<'a> {
             }
         }
         let otherwise = if table.flag("ext.stmt.try.else") && self.key("stmt.else") {
-            self.advance();
+            self.move_past();
             let limb = self.guarded_attempt_body(true)?;
             self.skip_line_ends();
             Some(Box::new(limb))
         } else { None };
         let last = match self.key("ext.stmt.finally") {
             true => {
-                self.advance();
+                self.move_past();
                 self.finally_nesting += 1;
                 let body = self.guarded_attempt_body(bare_clauses)?;
                 self.finally_nesting -= 1;
@@ -4976,7 +4981,7 @@ impl<'a> Builder<'a> {
     /// as its own, so the members stand in the class and not in the bag.
     fn bag_decl(&mut self) -> Res<Form> {
         let table = self.table;
-        self.advance();
+        self.move_past();
         let name = self.need_word("as the name of the members to take in")?;
         self.skip_lead_word();
         self.skip_line_ends();
@@ -4985,7 +4990,7 @@ impl<'a> Builder<'a> {
             .iter()
             .position(|o| self.lexeme_of(o))
             .ok_or_else(|| format!("Expected '{}' to open the members, got '{}'", opens[0], self.look().lexeme))?;
-        self.advance();
+        self.move_past();
         self.bags.insert(name, self.pos);
         // The body is stepped over, mark for mark, since it is read
         // where it is taken in and nowhere else.
@@ -5000,7 +5005,7 @@ impl<'a> Builder<'a> {
             } else if self.lexeme_of(&close) {
                 deep -= 1;
             }
-            self.advance();
+            self.move_past();
         }
         Ok(constant(Value::Nil))
     }
@@ -5010,7 +5015,7 @@ impl<'a> Builder<'a> {
     /// them may be given another name in it as well.
     fn take_in_members(&mut self, held: &mut Members) -> Res<()> {
         let table = self.table;
-        self.advance();
+        self.move_past();
         let apart = table.single("syntax.call.separator").map(str::to_string);
         let mut taken = Vec::new();
         loop {
@@ -5035,14 +5040,14 @@ impl<'a> Builder<'a> {
         // another name in this class.
         let opens = table.strings("block.open");
         let Some(k) = opens.iter().position(|o| self.lexeme_of(o)) else { return Ok(()) };
-        self.advance();
+        self.move_past();
         let close = table.strings("block.close")[k].clone();
         self.skip_line_ends();
         while !self.lexeme_of(&close) && !self.exhausted() {
             let first = self.need_word("as the member to name again")?;
             let member = match table.single("ext.op.scope").map_or(false, |m| self.sign(m)) {
                 true => {
-                    self.advance();
+                    self.move_past();
                     self.need_word("as the member to name again")?
                 }
                 false => first,
@@ -5050,7 +5055,7 @@ impl<'a> Builder<'a> {
             if !self.key("ext.stmt.class.uses.alias") {
                 return Err(format!("Expected '{}' after the member to name again", table.single("ext.stmt.class.uses.alias").unwrap_or("as")));
             }
-            self.advance();
+            self.move_past();
             let called = self.need_word("as the other name")?;
             let found = held.methods.iter().find(|(n, _)| *n == member).map(|(_, p)| p.clone());
             let Some(program) = found else {
@@ -5197,21 +5202,21 @@ impl<'a> Builder<'a> {
                 let gone_past = self.class_item(&mut items)?;
                 if gone_past { break; }
                 if !(self.look().shape == Shape::Sign && self.table.separates(&self.look().lexeme)) { break; }
-                self.advance();
+                self.move_past();
                 if matches!(self.look().shape, Shape::Finish | Shape::Close | Shape::LineEnd) { break; }
             }
             return Ok(sequence(items));
         }
         self.skip_line_ends();
         if self.look().shape != Shape::Open { return Err("Expected an indented class body".to_string()); }
-        self.advance();
+        self.move_past();
         self.skip_line_ends();
         while self.look().shape != Shape::Close && !self.exhausted() {
             self.class_item(&mut items)?;
             self.skip_line_ends();
         }
         if self.look().shape != Shape::Close { return Err("Expected the end of a class body".to_string()); }
-        self.advance();
+        self.move_past();
         Ok(sequence(items))
     }
 
@@ -5223,7 +5228,7 @@ impl<'a> Builder<'a> {
     /// member of the class in the language this follows.
     fn class_choice(&mut self) -> Res<Form> {
         let table = self.table;
-        self.advance();
+        self.move_past();
         let test = self.expr(0)?;
         self.parts().arms += 1;
         let taken = self.class_limb();
@@ -5282,7 +5287,7 @@ impl<'a> Builder<'a> {
         let adorned_from = self.pos;
         let mut wrappers=Vec::new();
         while table.has_any("ext.stmt.class.detail.root") && self.on_any("ext.stmt.decorator") {
-            self.advance();
+            self.move_past();
             if !self.adornment_head_ok() { return Err(table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string()); }
             let expression=self.expr_at(0,false)?;let address=self.gensym("member_wrapper");
             setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
@@ -5291,7 +5296,7 @@ impl<'a> Builder<'a> {
         if self.key("ext.stmt.async") && table.spells("stmt.function", &self.glance(1).spelling()) { self.advance(); self.coroutine_next = true; }
         if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {self.parts().cannot=true;}
         if self.key("stmt.function") {
-            self.advance();
+            self.move_past();
             let method_name = self.need_word("as the method name")?;
             let title = self.original_words[self.pos - 1].lexeme.clone();
             if self.on_any("ext.stmt.type_params.open") {
@@ -5368,7 +5373,7 @@ impl<'a> Builder<'a> {
             }
             if let Some(mirror) = self.mirror_member(&method_name, &slot) { setup.push(mirror); }
         } else if self.key("stmt.pass") || self.look().shape == Shape::Quote {
-            self.advance();
+            self.move_past();
         } else if table.blocks == Blocks::Indented && self.key("stmt.if") {
             let chosen = self.class_choice()?;
             setup.push(chosen);
@@ -5420,7 +5425,7 @@ impl<'a> Builder<'a> {
                 let captured = Form::Glance(location.clone());
                 self.parts().annotated_names.push((constant(Value::text(&key)), captured));
                 if self.on_assign() {
-                    self.advance();
+                    self.move_past();
                     let value = self.comma_value()?;
                     Some((member, value))
                 } else { None }
@@ -5574,7 +5579,7 @@ impl<'a> Builder<'a> {
             self.parts().cannot = true;
             return Ok(read);
         }
-        self.advance();
+        self.move_past();
         let mut steps = Vec::new();
         for span in spans {
             let word = self.tokens[span.start].lexeme.clone();
@@ -5743,7 +5748,7 @@ impl<'a> Builder<'a> {
         let adorned_from = self.pos;
         let mut waiting = Vec::new();
         while self.on_any("ext.stmt.decorator") {
-            self.advance();
+            self.move_past();
             let mut manner = 'd';
             // With the descriptor protocol in the table, every decorator
             // is an expression applied to the member, the three wrapping
@@ -5789,7 +5794,7 @@ impl<'a> Builder<'a> {
             if !self.key("stmt.function") {
                 return Err(self.table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string());
             }
-            self.advance();
+            self.move_past();
             word = self.need_word("as the method name")?;
             let (routine, spares) = self.method(&word)?;
             let resume = self.pos;
@@ -5829,13 +5834,13 @@ impl<'a> Builder<'a> {
         let opening_row = adorned.map(|at| self.tokens[at].row).unwrap_or(self.tokens[self.pos].row).saturating_sub(self.before);
         let builder = self.gensym("class_builder");
         let mut setup = vec![Form::Write(builder.clone(), Box::new(prim_call(Prim::ClassWork(14), Vec::new())))];
-        self.advance();
+        self.move_past();
         let title = self.original_words[self.pos].lexeme.clone();
         let named = self.need_word("as the class name")?;
         if named == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         let mut args = if self.table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
-            self.advance();
+            self.move_past();
             if self.ahead_in_item("ext.op.comprehension.for").is_some() { return Err("SyntaxError: invalid syntax".into()); }
             self.args("syntax.call.close", "syntax.call.separator")?
         } else { Vec::new() };
@@ -5879,7 +5884,7 @@ impl<'a> Builder<'a> {
         if !on_one_line {
             self.skip_line_ends();
             if self.look().shape != Shape::Open { return Err("Expected an indented class body".to_string()); }
-            self.advance();
+            self.move_past();
             self.skip_line_ends();
         }
         let body_source = self.pos;
@@ -5933,13 +5938,13 @@ impl<'a> Builder<'a> {
             if self.class_item(&mut setup)? { continue; }
             if on_one_line {
                 while self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme) {
-                    self.advance();
+                    self.move_past();
                 }
             } else { self.skip_line_ends(); }
         }
         if !on_one_line {
             if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
-            self.advance();
+            self.move_past();
         }
         if self.survey {
             let bound = self.parts().lexical_members.clone();
@@ -6000,7 +6005,7 @@ impl<'a> Builder<'a> {
             return Ok((self.write(&name, value), false));
         }
         if self.table.has_any("ext.stmt.class.builder") { return self.python_class(nested, adorned); }
-        self.advance();
+        self.move_past();
         let class_title = self.original_words[self.pos].lexeme.clone();
         let named = self.need_word("as the class name")?;
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
@@ -6014,7 +6019,7 @@ impl<'a> Builder<'a> {
         // frame, and the class gathers them when the statement runs.
         let mut cannot = false;
         if table.single("ext.stmt.class.bases.open").map_or(false, |o| self.sign(o)) {
-            self.advance();
+            self.move_past();
             let end = table.single("ext.stmt.class.bases.close").ok_or("The bases need a closing mark")?;
             let mut levels = Vec::new();
             let mut spreading = false;
@@ -6053,8 +6058,8 @@ impl<'a> Builder<'a> {
                     if table.has_any("ext.builtin.exceptions.syntax") && word == "__debug__" {
                         return Err(String::from("SyntaxError: cannot assign to __debug__"));
                     }
-                    self.advance();
-                    self.advance();
+                    self.move_past();
+                    self.move_past();
                     if table.spells("ext.stmt.class.metaclass", &word) { builder = true; }
                     else if table.has_any("ext.stmt.class.detail.subclass") { handed = Some(word); }
                     else { cannot = true; }
@@ -6100,7 +6105,7 @@ impl<'a> Builder<'a> {
         if !on_one_line {
             self.skip_line_ends();
             if self.look().shape != Shape::Open { return Err("Expected an indented class body".to_string()); }
-            self.advance();
+            self.move_past();
             self.skip_line_ends();
         }
         let body_source = self.pos;
@@ -6195,13 +6200,13 @@ impl<'a> Builder<'a> {
             if self.class_item(&mut setup)? { continue; }
             if on_one_line {
                 while self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().spelling()) {
-                    self.advance();
+                    self.move_past();
                 }
             } else { self.skip_line_ends(); }
         }
         if !on_one_line {
             if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
-            self.advance();
+            self.move_past();
         }
         if self.survey {
             let bound = self.parts().lexical_members.clone();
@@ -6290,7 +6295,7 @@ impl<'a> Builder<'a> {
 
     fn class_type_parameters(&mut self) -> Res<()> {
         let earlier = std::mem::replace(&mut self.forbids_await, true);
-        self.advance();
+        self.move_past();
         let table = self.table;
         let mut declared = Vec::new();
         loop {
@@ -6326,22 +6331,22 @@ impl<'a> Builder<'a> {
         let mut under = None;
         let mut answers: Vec<String> = Vec::new();
         if self.key("ext.stmt.class.extends") {
-            self.advance();
+            self.move_past();
             let first = self.need_word("as the class it is built on")?;
             match bare {
                 true => answers.push(first),
                 false => under = Some(first),
             }
             while between.as_ref().map_or(false, |s| self.sign(s)) {
-                self.advance();
+                self.move_past();
                 answers.push(self.need_word("as another class named there")?);
             }
         }
         if self.key("ext.stmt.class.implements") {
-            self.advance();
+            self.move_past();
             answers.push(self.need_word("as the class it answers to")?);
             while between.as_ref().map_or(false, |s| self.sign(s)) {
-                self.advance();
+                self.move_past();
                 answers.push(self.need_word("as another class named there")?);
             }
         }
@@ -6351,7 +6356,7 @@ impl<'a> Builder<'a> {
         self.skip_line_ends();
         let opens = table.strings("block.open");
         let k = opens.iter().position(|o| self.lexeme_of(o)).ok_or_else(|| format!("Expected '{}' to open the class, got '{}'", opens[0], self.look().lexeme))?;
-        self.advance();
+        self.move_past();
         let close = table.strings("block.close")[k].clone();
         let (fields, shared, constants) = (Vec::new(), Vec::new(), Vec::new());
         let reaches: Vec<Reach> = Vec::new();
@@ -6425,17 +6430,17 @@ impl<'a> Builder<'a> {
                 } else if !self.key("ext.stmt.class.modifier") {
                     break;
                 }
-                self.advance();
+                self.move_past();
             }
             if self.key("ext.stmt.class.uses") {
                 self.take_in_members(held)?;
             } else if self.key("ext.stmt.const") {
-                self.advance();
+                self.move_past();
                 let member = self.need_word("as the constant name")?;
                 self.need_assign("after the constant name")?;
                 held.constants.push((member, self.expr(0)?));
             } else if self.key("stmt.function") {
-                self.advance();
+                self.move_past();
                 let gives_cell = self.skip_reference();
                 let member = self.need_word("as the method name")?;
                 self.giving_cells.push(gives_cell);
@@ -6455,7 +6460,7 @@ impl<'a> Builder<'a> {
             } else {
                 // A property, perhaps with a type word before its name.
                 if self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Bare {
-                    self.advance();
+                    self.move_past();
                 }
                 // One declaration may name several properties, written
                 // apart the way a call's arguments are.
@@ -6468,7 +6473,7 @@ impl<'a> Builder<'a> {
                     };
                     let value = match self.on_assign() {
                         true => {
-                            self.advance();
+                            self.move_past();
                             self.expr(0)?
                         }
                         false => constant(Value::Nil),
@@ -6514,7 +6519,7 @@ impl<'a> Builder<'a> {
         if self.look().shape == Shape::Sign
             && (table.spells("stmt.function.returns", &self.look().spelling()) || table.spells("ext.stmt.function.returns", &self.look().spelling()))
         {
-            self.advance();
+            self.move_past();
             match table.has_any("ext.stmt.annotation") {
                 true => { self.annotation_sites.push(("return".to_owned(), self.pos)); self.put_by_annotation(&["block.intro"])?; },
                 false => {
@@ -6587,7 +6592,7 @@ impl<'a> Builder<'a> {
     /// head of each pass.
     fn foreach_stmt(&mut self) -> Res<Form> {
         let table = self.table;
-        self.advance();
+        self.move_past();
         let open = table.single("syntax.group.open").ok_or_else(|| "A foreach needs syntax.group".to_string())?;
         let close = table.single("syntax.group.close").unwrap().to_string();
         self.need_sign(open, "after foreach")?;
@@ -6621,14 +6626,14 @@ impl<'a> Builder<'a> {
         if !self.key("stmt.foreach.as") {
             return Err(format!("Expected '{}' in foreach, got '{}'", table.single("stmt.foreach.as").unwrap(), self.look().lexeme));
         }
-        self.advance();
+        self.move_past();
         let mut shares = table.single("ext.op.reference").map_or(false, |m| self.sign(m));
         // Whether the mark stood before the whole of the head and not
         // before the value alone, which tells a key marked as taking a
         // cell from a value so marked.
         let marked_first = shares;
         if shares {
-            self.advance();
+            self.move_past();
         }
         // A walk may hand its items to a place and not only to a name:
         // `foreach ($a as $b[0])`. Where the name is followed by more,
@@ -6645,9 +6650,9 @@ impl<'a> Builder<'a> {
                 self.stopped_fatally = true;
                 return Err(said.to_string());
             }
-            self.advance();
+            self.move_past();
             if table.single("ext.op.reference").map_or(false, |m| self.sign(m)) {
-                self.advance();
+                self.move_past();
                 shares = true;
             }
             let began = self.pos;
@@ -6730,7 +6735,7 @@ impl<'a> Builder<'a> {
                     break;
                 }
             }
-            self.advance();
+            self.move_past();
         }
         Ok(())
     }
@@ -6915,7 +6920,7 @@ impl<'a> Builder<'a> {
     /// runs after each pass, `continue` included. An empty test is true.
     fn three_part_for(&mut self) -> Res<Form> {
         let table = self.table;
-        self.advance();
+        self.move_past();
         let open = table.single("syntax.group.open").ok_or_else(|| "A for loop needs syntax.group".to_string())?;
         let close = table.single("syntax.group.close").unwrap();
         let end = table.single("stmt.terminator").ok_or_else(|| "A for loop needs stmt.terminator".to_string())?.to_string();
@@ -6958,7 +6963,7 @@ impl<'a> Builder<'a> {
     }
 
     fn match_stmt(&mut self) -> Res<Form> {
-        self.advance();
+        self.move_past();
         let (value, tuple) = self.subject_of_match()?;
         let held = self.gensym("matched");
         let save = Form::Write(held.clone(), Box::new(value));
@@ -6968,10 +6973,10 @@ impl<'a> Builder<'a> {
             }
             return Err(self.bad_case());
         }
-        self.advance();
+        self.move_past();
         self.skip_line_ends();
         if self.look().shape != Shape::Open { return Err(self.bad_case()); }
-        self.advance();
+        self.move_past();
         let mut arms = Vec::new();
         let mut unreachable = false;
         loop {
@@ -6987,7 +6992,7 @@ impl<'a> Builder<'a> {
             // later case, which the reference refuses to read.
             if unreachable { return Err(self.bad_case()); }
             let case_row = (self.look().row as u32).saturating_sub(self.before);
-            self.advance();
+            self.move_past();
             self.pattern_kinds.clear();
             let starts_wide = self.on_any("op.mul");
             let first = if starts_wide { self.advance(); self.pattern_name()? } else { self.pattern_choice()? };
@@ -6996,12 +7001,12 @@ impl<'a> Builder<'a> {
             let mut separated = false;
             while self.on_any("syntax.call.separator") {
                 separated = true;
-                self.advance();
+                self.move_past();
                 if self.on_any("block.intro") || self.key("ext.stmt.match.guard") { break; }
                 if self.on_any("op.mul") {
                     if spread.is_some() { return Err(self.bad_case()); }
                     spread = Some(members.len());
-                    self.advance();
+                    self.move_past();
                     members.push(self.pattern_name()?);
                 } else { members.push(self.pattern_choice()?); }
             }
@@ -7017,7 +7022,7 @@ impl<'a> Builder<'a> {
             let mut fits = Form::Fits { value: Box::new(Form::Read(held.clone())), test: Rc::new(pattern), slots, tuple, kinds };
             let mut has_guard = false;
             if self.key("ext.stmt.match.guard") {
-                self.advance();
+                self.move_past();
                 let guard = self.expr(0)?;
                 fits = self.choose(fits, guard, constant(Value::Flag(false)));
                 has_guard = true;
@@ -7030,7 +7035,7 @@ impl<'a> Builder<'a> {
             let mut statements = vec![self.body()?];
             if same_line {
                 while self.look().shape == Shape::Sign && self.on_stmt_end() {
-                    self.advance();
+                    self.move_past();
                     if matches!(self.look().shape, Shape::Finish | Shape::Close | Shape::LineEnd) { break; }
                     statements.push(self.stmt()?);
                 }
@@ -7074,7 +7079,7 @@ impl<'a> Builder<'a> {
             parts.push(self.expr(0)?);
             while self.on_any("syntax.call.separator") {
                 comma = true;
-                self.advance();
+                self.move_past();
                 if self.on_any("block.intro") || (grouped && self.on_any("syntax.group.close")) { break; }
                 parts.push(self.expr(0)?);
             }
@@ -7122,7 +7127,7 @@ impl<'a> Builder<'a> {
         let mut test = if self.on_any("ext.stmt.match.or") {
             let mut alternatives = vec![first];
             loop {
-                self.advance();
+                self.move_past();
                 alternatives.push(self.pattern_single()?);
                 if !self.on_any("ext.stmt.match.or") { break; }
             }
@@ -7134,7 +7139,7 @@ impl<'a> Builder<'a> {
             CaseTest::AnyOf(alternatives)
         } else { first };
         if self.key("ext.stmt.match.as") {
-            self.advance();
+            self.move_past();
             let opening = self.pos;
             if self.key("ext.stmt.match.wildcard") {
                 self.pos = opening;
@@ -7240,7 +7245,7 @@ impl<'a> Builder<'a> {
             while self.on_any("op.add") || self.on_any("op.sub") {
                 if imaginary { return Err(self.bad_case()); }
                 let below = self.on_any("op.sub");
-                self.advance();
+                self.move_past();
                 let part = self.pattern_imaginary()?;
                 let (real, _) = crate::complex::coordinates(&number).ok_or_else(|| self.bad_case())?;
                 let (_, sole) = crate::complex::coordinates(&part).ok_or_else(|| self.bad_case())?;
@@ -7271,19 +7276,19 @@ impl<'a> Builder<'a> {
         if self.on_any("syntax.array.open") || self.on_any("syntax.group.open") {
             let array = self.on_any("syntax.array.open");
             let end = if array { "syntax.array.close" } else { "syntax.group.close" };
-            self.advance();
+            self.move_past();
             let mut members = Vec::new();
             let mut spread = None;
             let mut comma = false;
             while !self.on_any(end) {
                 let item = if self.on_any("op.mul") {
-                    self.advance();
+                    self.move_past();
                     if spread.replace(members.len()).is_some() { return Err(self.bad_case()); }
                     self.pattern_name()?
                 } else { self.pattern_choice()? };
                 members.push(item);
                 if !self.on_any("syntax.call.separator") { break; }
-                self.advance();
+                self.move_past();
                 comma = true;
             }
             self.need_sign(table.single(end).unwrap_or_default(), "after the pattern")?;
@@ -7294,7 +7299,7 @@ impl<'a> Builder<'a> {
             return Ok(CaseTest::Series { members, spread });
         }
         if self.on_any("syntax.map.open") {
-            self.advance();
+            self.move_past();
             let mut pairs = Vec::new();
             let mut rest: Option<(usize, String)> = None;
             while !self.on_any("syntax.map.close") {
@@ -7304,7 +7309,7 @@ impl<'a> Builder<'a> {
                     return Err(words);
                 }
                 if self.on_any("op.pow") {
-                    self.advance();
+                    self.move_past();
                     let start = self.pos;
                     if table.has_any("ext.builtin.exceptions.syntax") && self.look().spelling() == "_" {
                         return Err(String::from("SyntaxError: invalid syntax"));
@@ -7325,7 +7330,7 @@ impl<'a> Builder<'a> {
                     pairs.push((key, self.pattern_choice()?));
                 }
                 if !self.on_any("syntax.map.separator") { break; }
-                self.advance();
+                self.move_past();
             }
             self.need_sign(table.single("syntax.map.close").unwrap_or_default(), "after the mapping pattern")?;
             return Ok(CaseTest::Table { pairs, rest: rest.map(|(_, name)| name) });
@@ -7337,7 +7342,7 @@ impl<'a> Builder<'a> {
         let binding = self.pattern_name()?;
         let mut path = Vec::new();
         while self.on_any("op.pipe") {
-            self.advance();
+            self.move_past();
             path.push(self.need_word("after the member mark")?);
         }
         let opens_call = self.on_any("syntax.call.open");
@@ -7351,7 +7356,7 @@ impl<'a> Builder<'a> {
         let place = self.pattern_kinds.len();
         self.pattern_kinds.push(worked);
         if !opens_call { return Ok(CaseTest::Worth(place)); }
-        self.advance();
+        self.move_past();
         let mut positional = Vec::new();
         let mut named: Vec<(String, CaseTest)> = Vec::new();
         while !self.on_any("syntax.call.close") {
@@ -7361,7 +7366,7 @@ impl<'a> Builder<'a> {
                 if named.iter().any(|(seen, _)| *seen == word) {
                     return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: attribute name repeated in class pattern: {word}") } else { self.bad_case() });
                 }
-                self.advance();
+                self.move_past();
                 named.push((word, self.pattern_choice()?));
             } else if !named.is_empty() {
                 return Err(if table.has_any("ext.builtin.exceptions.syntax") { String::from("SyntaxError: positional patterns follow keyword patterns") } else { self.bad_case() });
@@ -7369,7 +7374,7 @@ impl<'a> Builder<'a> {
                 positional.push(self.pattern_choice()?);
             }
             if !self.on_any("syntax.call.separator") { break; }
-            self.advance();
+            self.move_past();
         }
         self.need_sign(table.single("syntax.call.close").unwrap_or_default(), "after the class pattern")?;
         Ok(CaseTest::Shape { kind: place, positional, named })
@@ -7382,7 +7387,7 @@ impl<'a> Builder<'a> {
     /// one-pass cycle so that `break` and `continue` leave it.
     fn switch_stmt(&mut self) -> Res<Form> {
         let table = self.table;
-        self.advance();
+        self.move_past();
         let open = table.single("syntax.group.open").ok_or_else(|| "A switch needs syntax.group".to_string())?;
         self.need_sign(open, "after switch")?;
         let subject = self.expr(0)?;
@@ -7400,11 +7405,11 @@ impl<'a> Builder<'a> {
         // such a block close this one.
         let closers = match opens.iter().position(|o| self.lexeme_of(o)) {
             Some(k) => {
-                self.advance();
+                self.move_past();
                 vec![table.strings("block.close")[k].clone()]
             }
             None if table.single("ext.stmt.block.instead").map_or(false, |m| self.sign(m)) => {
-                self.advance();
+                self.move_past();
                 table.strings("ext.stmt.block.instead.close").to_vec()
             }
             None => return Err(format!("Expected '{}' to open the switch, got '{}'", opens[0], self.look().lexeme)),
@@ -7441,14 +7446,14 @@ impl<'a> Builder<'a> {
                     self.noted_when_read.push(told);
                 }
             }
-            self.advance();
+            self.move_past();
             let body = self.limb(Traps::Naught, |r| r.stmts_until(&stops))?;
             sections.push((test, body));
         }
         if !closers.iter().any(|w| self.lexeme_of(w)) {
             return Err(format!("Expected '{}' to close the switch, got '{}'", closers[0], self.look().lexeme));
         }
-        self.advance();
+        self.move_past();
         // start = the first section whose test holds, else the default's
         // index, else one past the end.
         let none = sections.len() as i64;
@@ -7539,7 +7544,7 @@ impl<'a> Builder<'a> {
     /// A builtin at the head of a statement, its arguments running
     /// unbracketed to the end of the statement (ext.syntax.call.bare).
     fn unbracketed_call(&mut self, name: &str) -> Res<Form> {
-        self.advance();
+        self.move_past();
         let sep = self.table.single("syntax.call.separator").map(str::to_string);
         let mut args = Vec::new();
         while !self.on_stmt_end() && !self.exhausted() {
@@ -7554,7 +7559,7 @@ impl<'a> Builder<'a> {
 
     fn if_stmt(&mut self) -> Res<Form> {
         let keyword = self.table.blocks == Blocks::Worded;
-        self.advance();
+        self.move_past();
         let test = self.expr(0)?;
         let then = if keyword {
             self.skip_lead_word();
@@ -7577,7 +7582,7 @@ impl<'a> Builder<'a> {
             self.limb(Traps::Naught, |r| r.if_stmt())?
         } else if else_ {
             self.pos += ahead;
-            self.advance();
+            self.move_past();
             if self.key("stmt.if") {
                 self.limb(Traps::Naught, |r| r.if_stmt())?
             } else if keyword {
@@ -7606,7 +7611,7 @@ impl<'a> Builder<'a> {
     }
 
     fn declare_type_objects(&mut self) -> Res<(Vec<Form>, Vec<String>)> {
-        self.advance();
+        self.move_past();
         let mut setup = Vec::new();
         let mut names = Vec::new();
         loop {
@@ -7620,7 +7625,7 @@ impl<'a> Builder<'a> {
             self.address_to_write(&name);
             let mut constraints = false;
             let bound = if self.on_any("ext.stmt.annotation") {
-                self.advance();
+                self.move_past();
                 if self.sign("(") {
                     let mut opened = Vec::new();
                     for token in &self.tokens[self.pos..] {
@@ -7641,7 +7646,7 @@ impl<'a> Builder<'a> {
                 })?
             } else { constant(Value::Nil) };
             let fallback = if self.on_assign() {
-                self.advance();
+                self.move_past();
                 self.routine("<type default>", Holds::Every, Traps::Naught, Vec::new(), 0, |reader| {
                     let outer = reader.annotation_lookup;
                     reader.annotation_lookup = true;
@@ -7658,7 +7663,7 @@ impl<'a> Builder<'a> {
             let object = Form::Apply(Callee::Code(Box::new(constructor)), vec![constant(Value::text(&name)), constant(Value::text(kind)), bound, fallback, constant(Value::Flag(constraints))]);
             setup.push(self.write(&name, object));
             if !self.on_any("ext.op.tuple") { break; }
-            self.advance();
+            self.move_past();
             if self.on_any("ext.stmt.type_params.close") { break; }
         }
         self.need_sign(self.table.single("ext.stmt.type_params.close").unwrap(), "after type parameters")?;
@@ -7674,7 +7679,7 @@ impl<'a> Builder<'a> {
     fn type_names(&mut self) -> Res<bool> {
         if !self.table.flag("ext.stmt.type_parameters") || !self.on_any("op.index.open") { return Ok(false); }
         let earlier = std::mem::replace(&mut self.forbids_await, true);
-        self.advance();
+        self.move_past();
         let mut written: Vec<String> = Vec::new();
         loop {
             if self.on_any("ext.stmt.function.carries") || self.on_any("ext.stmt.function.carries.pairs") { self.advance(); }
@@ -7682,15 +7687,15 @@ impl<'a> Builder<'a> {
             self.need_word("among type parameters")?;
             written.push(parameter);
             if self.on_any("ext.stmt.annotation") {
-                self.advance();
+                self.move_past();
                 self.put_by_annotation(&["stmt.assign", "ext.op.tuple", "op.index.close"])?;
             }
             if self.on_assign() {
-                self.advance();
+                self.move_past();
                 self.put_by_annotation(&["ext.op.tuple", "op.index.close"])?;
             }
             if !self.on_any("ext.op.tuple") { break; }
-            self.advance();
+            self.move_past();
             if self.on_any("op.index.close") { break; }
         }
         self.need_sign(self.table.single("op.index.close").unwrap(), "after the type names")?;
@@ -7719,7 +7724,7 @@ impl<'a> Builder<'a> {
     fn for_stmt(&mut self) -> Res<Form> {
         let table = self.table;
         let asynchronous = std::mem::take(&mut self.asynchronous);
-        self.advance();
+        self.move_past();
         if table.has_any("ext.builtin.exceptions.syntax") && self.glance(1).spelling() == "im" {
             return Err(String::from("SyntaxError: invalid syntax. Did you mean 'in'?"));
         }
@@ -7745,17 +7750,17 @@ impl<'a> Builder<'a> {
         if !self.key("stmt.for.in") {
             return Err(format!("Expected '{}' after for loop variable, got: {}", table.single("stmt.for.in").unwrap_or("in"), self.look().lexeme));
         }
-        self.advance();
+        self.move_past();
         // Let value-producing ranges validate their arguments before walking.
         let ranged = !table.flag("ext.builtin.range.value") && self.look().shape == Shape::Bare
             && table.prims.get(&self.look().lexeme) == Some(&Prim::Span)
             && table.single("syntax.call.open").map_or(false, |o| self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == o);
         let (start, end) = if ranged && place.is_none() {
-            self.advance();
-            self.advance();
+            self.move_past();
+            self.move_past();
             let start = self.expr(0)?;
             if table.flag("ext.stmt.loop.else") && self.on_any("syntax.call.close") {
-                self.advance();
+                self.move_past();
                 self.claim(&var);
                 self.address_to_write(&var);
                 return self.count_loop(&var, constant(Value::Small(0)), start, |r| r.body());
@@ -7794,7 +7799,7 @@ impl<'a> Builder<'a> {
                 let walk = self.walk(source, None, var, None, place)?;
                 return Ok(self.located(bounds, walk));
             }
-            self.advance();
+            self.move_past();
             let end = self.expr(tier + 1)?;
             (start, end)
         };
@@ -7805,7 +7810,7 @@ impl<'a> Builder<'a> {
 
     fn bind(&mut self) -> Res<Form> {
         if self.table.flag("stmt.let.type_first") {
-            self.advance();
+            self.move_past();
             let name = self.need_word("after the type")?;
             if let Some(open) = self.table.single("syntax.call.open") {
                 if self.sign(open) {
@@ -7820,13 +7825,13 @@ impl<'a> Builder<'a> {
             };
             return Ok(self.write(&name, value));
         }
-        self.advance();
+        self.move_past();
         if self.key("stmt.let.mutable") {
-            self.advance();
+            self.move_past();
         }
         let name = self.need_word("after the binding keyword")?;
         if self.look().shape == Shape::Sign && self.table.spells("stmt.let.annotation", &self.look().spelling()) {
-            self.advance();
+            self.move_past();
             self.need_word("as a type name")?;
         }
         let value = if self.on_stmt_end() || self.exhausted() {
@@ -7847,7 +7852,7 @@ impl<'a> Builder<'a> {
             return Err("This language has no assignment operator".to_string());
         }
         if self.on_assign() {
-            self.advance();
+            self.move_past();
             Ok(())
         } else {
             Err(format!("Expected '{}' {}, got '{}'", self.table.single("stmt.assign").unwrap(), why, self.look().lexeme))
@@ -7892,7 +7897,7 @@ impl<'a> Builder<'a> {
                     }
                     for before in &mut manners { *before = 'p'; }
                     slash = true;
-                    self.advance();
+                    self.move_past();
                     if !self.sign(&close) {
                         if table.has_any("ext.builtin.exceptions.syntax") && self.sign("*") {
                             return Err("SyntaxError: expected comma between / and *".to_owned());
@@ -7904,17 +7909,17 @@ impl<'a> Builder<'a> {
                 if table.spells("ext.stmt.function.carries.pairs", &word) {
                     closed = true;
                     manner = 'k';
-                    self.advance();
+                    self.move_past();
                 } else if table.spells("ext.stmt.function.carries", &word) || table.spells("ext.stmt.function.keyword_only", &word) {
                     if beyond { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: * argument may appear only once".to_owned() } else { wrong() }); }
                     if self.table.has_any("ext.builtin.exceptions.syntax") && (self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == close) {
                         return Err("SyntaxError: named arguments must follow bare *".to_string());
                     }
                     beyond = true;
-                    self.advance();
+                    self.move_past();
                     let separator = table.single("syntax.call.separator").unwrap_or("");
                     if self.sign(separator) {
-                        self.advance();
+                        self.move_past();
                         if self.sign(&close) || table.spells("ext.stmt.function.carries.pairs", &self.look().spelling()) { return Err(wrong()); }
                         continue;
                     }
@@ -7926,7 +7931,7 @@ impl<'a> Builder<'a> {
             self.skip_reference();
             let mut for_the_thing = false;
             while self.look().shape == Shape::Bare && self.key("ext.stmt.class.modifier") {
-                self.advance();
+                self.move_past();
                 for_the_thing = true;
             }
             if typed {
@@ -7962,7 +7967,7 @@ impl<'a> Builder<'a> {
                 params.push(self.need_word("as a parameter name")?);
                 if table.has_any("ext.builtin.exceptions.syntax") && params.last().is_some_and(|word| word == "__debug__") { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
                 if !short && self.on_any("ext.stmt.annotation") {
-                    self.advance();
+                    self.move_past();
                     if table.has_any("ext.builtin.exceptions.syntax") && self.look().shape == Shape::Bare
                         && table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
                         return Err("SyntaxError: invalid syntax".to_owned());
@@ -7976,7 +7981,7 @@ impl<'a> Builder<'a> {
                     self.annotation_sites.push((params.last().unwrap().to_owned(), self.pos));
                     self.put_by_annotation(&["stmt.assign", "syntax.call.close", "syntax.call.separator"])?;
                 } else if self.look().shape == Shape::Sign && table.spells("stmt.let.annotation", &self.look().spelling()) {
-                    self.advance();
+                    self.move_past();
                     self.need_word("as a type name")?;
                 }
             }
@@ -8024,7 +8029,7 @@ impl<'a> Builder<'a> {
             // leave it out.
             if self.on_assign() {
                 let row = (self.look().row as u32).saturating_sub(self.before);
-                self.advance();
+                self.move_past();
                 if table.has_any("ext.builtin.exceptions.syntax") && (self.sign(&close) || self.on_any("syntax.call.separator")) {
                     return Err("SyntaxError: expected default value expression".to_owned());
                 }
@@ -8071,11 +8076,11 @@ impl<'a> Builder<'a> {
             }
             if let Some(sep) = table.single("syntax.call.separator") {
                 if self.sign(sep) {
-                    self.advance();
+                    self.move_past();
                 } else if bind && !self.sign(&close) { return Err(wrong()); }
             }
             if self.look().shape == Shape::Sign && table.separates(&self.look().lexeme) {
-                self.advance();
+                self.move_past();
             }
         }
         self.need_sign(&close, "after parameters")?;
@@ -8164,7 +8169,7 @@ impl<'a> Builder<'a> {
             if nesting.is_empty() && shape == Shape::Bare && table.spells("ext.op.lambda", &self.look().spelling()) {
                 // A lambda is read whole to the mark that opens its body,
                 // so the annotation does not end at the lambda's own colon.
-                self.advance();
+                self.move_past();
                 let mut inner = 0usize;
                 while self.look().shape != Shape::Finish {
                     if inner == 0 && table.single("block.intro").map_or(false, |c| self.sign(c)) { self.advance(); break; }
@@ -8177,7 +8182,7 @@ impl<'a> Builder<'a> {
                             else if table.spells(right, &spelling) { inner = inner.saturating_sub(1); }
                         }
                     }
-                    self.advance();
+                    self.move_past();
                 }
                 count += 1;
                 continue;
@@ -8217,7 +8222,7 @@ impl<'a> Builder<'a> {
                 }
             }
             count += 1;
-            self.advance();
+            self.move_past();
         }
         if count > 0 && nesting.is_empty() {
             Ok(())
@@ -8231,7 +8236,7 @@ impl<'a> Builder<'a> {
         let marks = self.table.strings("ext.op.ternary");
         let marked = marks.first().map_or(false, |q| self.sign(q));
         if marked && self.glance(1).shape == Shape::Bare {
-            self.advance();
+            self.move_past();
             return true;
         }
         false
@@ -8243,7 +8248,7 @@ impl<'a> Builder<'a> {
     /// stands here. Whether it did is given back.
     fn skip_reference(&mut self) -> bool {
         if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) {
-            self.advance();
+            self.move_past();
             return true;
         }
         false
@@ -8364,7 +8369,7 @@ impl<'a> Builder<'a> {
                 && (table.spells("stmt.function.returns", &b.look().spelling()) || table.spells("ext.stmt.function.returns", &b.look().spelling()))
         };
         if returns_here(self) {
-            self.advance();
+            self.move_past();
             match table.has_any("ext.stmt.annotation") {
                 true => { self.annotation_sites.push(("return".to_owned(), self.pos)); self.put_by_annotation(&["block.intro"])?; },
                 false => {
@@ -8482,7 +8487,7 @@ impl<'a> Builder<'a> {
                     positional_mark = true;
                     for way in &mut ways { *way = 'p'; }
                 }
-                self.advance();
+                self.move_past();
                 if table.has_any("ext.builtin.exceptions.syntax") && self.sign("*") {
                     return Err("SyntaxError: expected comma between / and *".to_owned());
                 }
@@ -8492,12 +8497,12 @@ impl<'a> Builder<'a> {
                 let mut way = if named_only { 'n' } else { 'b' };
                 if many || mapping {
                     if many && named_only { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: * argument may appear only once".to_owned() } else { bad() }); }
-                    self.advance();
+                    self.move_past();
                     named_only = true;
                     pairs = mapping;
                     way = if mapping { 'k' } else { 'v' };
                     if many && self.sign(comma) {
-                        self.advance();
+                        self.move_past();
                         if self.sign(colon) { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: named arguments must follow bare *".to_owned() } else { bad() }); }
                         continue;
                     }
@@ -8528,7 +8533,7 @@ impl<'a> Builder<'a> {
                         return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} argument cannot have default value") } else { bad() });
                     }
                     if way == 'b' { default_seen = true; }
-                    self.advance();
+                    self.move_past();
                     if table.has_any("ext.builtin.exceptions.syntax") && (self.sign(colon) || self.sign(comma)) {
                         return Err("SyntaxError: expected default value expression".to_owned());
                     }
@@ -8644,7 +8649,7 @@ impl<'a> Builder<'a> {
         let returns_here = self.look().shape == Shape::Sign
             && (table.spells("stmt.function.returns", &self.look().spelling()) || table.spells("ext.stmt.function.returns", &self.look().spelling()));
         if returns_here {
-            self.advance();
+            self.move_past();
             match table.has_any("ext.stmt.annotation") {
                 true => { self.annotation_sites.push(("return".to_owned(), self.pos)); self.put_by_annotation(&["block.intro"])?; },
                 false => {
@@ -8730,7 +8735,7 @@ impl<'a> Builder<'a> {
         if words.is_empty() || !(self.look().shape == Shape::Bare && words.iter().any(|w| *w == self.look().lexeme)) {
             return Ok(Vec::new());
         }
-        self.advance();
+        self.move_past();
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         let close = table.single("syntax.call.close").ok_or_else(|| "This language has no call syntax".to_string())?;
         let between = table.single("syntax.call.separator").map(str::to_string);
@@ -8745,7 +8750,7 @@ impl<'a> Builder<'a> {
             names.push((named, by_cell));
             if let Some(sep) = &between {
                 if self.sign(sep) {
-                    self.advance();
+                    self.move_past();
                 }
             }
         }
@@ -9076,7 +9081,7 @@ impl<'a> Builder<'a> {
                 }
             }
         }
-        self.advance();
+        self.move_past();
         self.put_by_annotation(&["stmt.assign", "ext.stmt.annotation", "syntax.call.separator"])?;
         let expression_end = self.pos;
         let mut execution = Vec::new();
@@ -9325,7 +9330,7 @@ impl<'a> Builder<'a> {
                 let mut destinations = vec![first.ident.to_string()];
                 self.unmet_last_read(&destinations[0].clone());
                 while follows(self) { self.advance(); destinations.push(self.advance().lexeme); }
-                self.advance();
+                self.move_past();
                 let answer = self.comma_value()?;
                 let saved = self.gensym("chain_value");
                 let mut steps = vec![Form::Write(saved.clone(), Box::new(answer))];
@@ -9337,7 +9342,7 @@ impl<'a> Builder<'a> {
         if self.on_any("ext.op.tuple") {
             let _target = self.comma_tail(expr)?;
             if self.on_assign() && self.table.flag("ext.stmt.yield.suspends") {
-                self.advance();
+                self.move_past();
                 let value = self.comma_value()?;
                 let held = self.gensym("unpacked");
                 let name = held.ident.to_string();
@@ -9370,7 +9375,7 @@ impl<'a> Builder<'a> {
         // Attributes and call results cannot yet retain writes in these scopes.
         if (attribute && !self.table.has_any("ext.op.member") || (temporary_index && !self.table.has_any("ext.stmt.class.special")))
             && self.table.has_any("ext.system.scope.unready") {
-            self.advance();
+            self.move_past();
             let _right = self.comma_value()?;
             return Ok(self.scope_unrun("ext.system.scope.unready"));
         }
@@ -9458,7 +9463,7 @@ impl<'a> Builder<'a> {
                 return Err("Invalid assignment target before '='".to_string());
             }
             targets.push(self.address_to_write(&target_name));
-            self.advance();
+            self.move_past();
         }
         let value = self.comma_value()?;
         let saved = self.gensym("chained");
@@ -9520,13 +9525,13 @@ impl<'a> Builder<'a> {
         let tied_to_a_cell = self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain;
         let mut shared_value: Option<Form> = None;
         if tied_to_a_cell && matches!(expr, Form::Apply(Callee::Prim(Prim::At, _), _)) {
-            self.advance();
+            self.move_past();
             shared_value = Some(self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.written").to_vec(), false, None)?);
         }
         if self.table.single("ext.op.reference").map_or(false, |m| self.sign(m)) && plain {
             if let Form::Read(slot) = &expr {
                 let held = slot.ident.to_string();
-                self.advance();
+                self.move_past();
                 let shared = self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.written").to_vec(), false, None)?;
                 let tied = self.address_to_write(&held);
                 let tie = Form::Tie(tied, Box::new(shared));
@@ -9538,7 +9543,7 @@ impl<'a> Builder<'a> {
             // `$GLOBALS['n'] = &e`: the binding the name spells is tied
             // to the cell, as a name written out would be.
             if let Form::Called(spells) = expr {
-                self.advance();
+                self.move_past();
                 let shared = self.a_shared_cell(&self.table.strings("ext.op.reference.unshared.written").to_vec(), false, None)?;
                 return Ok(Form::TieCalled(spells, Box::new(shared)));
             }
@@ -10113,7 +10118,7 @@ impl<'a> Builder<'a> {
             }
             let layer = self.layers.last_mut().unwrap();
             if layer.gathering_kind.is_some() { layer.expression_targets.push(word.clone()); }
-            self.advance();
+            self.move_past();
             let target = self.address_to_write(&word);
             let outer_value = std::mem::replace(&mut self.named_value, true);
             let outcome = self.expr(0);
@@ -10138,7 +10143,7 @@ impl<'a> Builder<'a> {
                     _ => return Err("Named expression needs a variable".to_string()),
                 },
             };
-            self.advance();
+            self.move_past();
             let rhs = self.expr(0)?;
             let bind = self.write(&target.ident, rhs);
             let back = self.read(&target.ident);
@@ -10184,7 +10189,7 @@ impl<'a> Builder<'a> {
                     let branch_span = self.span_since(origin);
                     left = self.located(branch_span, left);
                 }
-                self.advance();
+                self.move_past();
                 let test = self.expr(1)?;
                 let end = conditional.get(1).ok_or("Conditional expression needs two words")?;
                 if self.look().spelling() != end.as_str() {
@@ -10192,7 +10197,7 @@ impl<'a> Builder<'a> {
                         String::from("SyntaxError: expected 'else' after 'if' expression")
                     } else { format!("Expected '{}' in conditional expression", end) });
                 }
-                self.advance();
+                self.move_past();
                 if table.has_any("ext.builtin.exceptions.syntax") && ["pass", "return", "raise", "del", "yield", "assert", "break", "continue", "import", "from"].contains(&self.look().spelling()) {
                     return Err("SyntaxError: expected expression after 'else', but statement is given".to_owned());
                 }
@@ -10218,7 +10223,7 @@ impl<'a> Builder<'a> {
                 if table.precedence.get(&text).copied().unwrap_or(0) < floor {
                     break;
                 }
-                self.advance();
+                self.move_past();
                 let name = self.need_word("after the pipe")?;
                 if let Some((label, _)) = crate::table::BUILTIN_LABELS.iter().find(|(label, prim)| *prim == Prim::ValueMethod && table.spells(label, &name)) {
                     let operation = label.strip_prefix("ext.builtin.method.").expect("a method label");
@@ -10230,7 +10235,7 @@ impl<'a> Builder<'a> {
                 let mut invoked = false;
                 if let Some(open) = table.single("syntax.call.open") {
                     if self.sign(open) {
-                        self.advance();
+                        self.move_past();
                         invoked = true;
                         args.extend(self.args("syntax.call.close", "syntax.call.separator")?);
                     }
@@ -10262,13 +10267,13 @@ impl<'a> Builder<'a> {
                 // What stands on the left is read quietly: a name or a
                 // place that is not there is the case the whole is
                 // written for, and nothing to be told of.
-                self.advance();
+                self.move_past();
                 let otherwise = self.limb(Traps::Naught, |r| r.expr(0))?;
                 left = prim_call(Prim::Otherwise, vec![Form::Muted(Box::new(left)), otherwise]);
                 continue;
             }
             if self.look().shape == Shape::Bare && table.spells("ext.op.instanceof", &text) {
-                self.advance();
+                self.move_past();
                 let named = self.need_word("as the class to test against")?;
                 // A class is usually written out where one is tested
                 // against. Where a binding is written there instead, it
@@ -10289,7 +10294,7 @@ impl<'a> Builder<'a> {
                 // test ? a : b, at the bottom of an expression.
                 let signs = table.strings("ext.op.ternary");
                 if floor == 0 && signs.first().map_or(false, |q| self.sign(q)) {
-                    self.advance();
+                    self.move_past();
                     let then = self.limb(Traps::Naught, |r| r.expr(0))?;
                     self.need_sign(&signs[1], "between the arms of the conditional")?;
                     let otherwise = self.limb(Traps::Naught, |r| r.expr(0))?;
@@ -10441,13 +10446,13 @@ impl<'a> Builder<'a> {
     /// where the language spells one.
     fn monadic_expr(&mut self) -> Res<Form> {
         if let Some(by) = self.step_by(&self.look().clone()) {
-            self.advance();
+            self.move_past();
             let target = self.monadic_expr()?;
             return self.step_of(target, by, true);
         }
         let piece = self.monadic_piece()?;
         if let Some(by) = self.step_by(&self.look().clone()) {
-            self.advance();
+            self.move_past();
             return self.step_of(piece, by, false);
         }
         Ok(piece)
@@ -10482,7 +10487,7 @@ impl<'a> Builder<'a> {
             } else { self.quotation()? };
             fragments.push(fragment);
         }
-        self.advance();
+        self.move_past();
         if keeps_fields { return Ok(prim_call(Prim::TemplateParts, fragments)); }
         Ok(fragments.into_iter().fold(constant(Value::text("")), |text, fragment| prim_call(Prim::Join, vec![text, fragment])))
     }
@@ -10499,12 +10504,12 @@ impl<'a> Builder<'a> {
                 && self.tokens[self.pos - 2].shape == Shape::Bare
                 && self.tokens[self.pos - 3].shape == Shape::Sign && table.spells("op.mul", &self.tokens[self.pos - 3].spelling());
             if variadic {
-                self.advance();
+                self.move_past();
                 return self.monadic_piece();
             }
         }
         if self.reading_yield && table.spells("op.mul", &t.spelling()) {
-            self.advance();
+            self.move_past();
             let value = self.monadic_expr()?;
             return Ok(if table.flag("ext.stmt.yield.suspends") { self.scope_unrun("ext.stmt.yield.unsupported") } else { value });
         }
@@ -10522,7 +10527,7 @@ impl<'a> Builder<'a> {
             if self.layers[0].permits_async && self.layers.iter().skip(1).all(|layer| layer.gathering_kind.is_some()) { self.top_coroutine = true; }
             let scope = self.layers.last_mut().unwrap();
             if scope.gathering_kind.is_some() { scope.async_walk_seen = true; }
-            self.advance();
+            self.move_past();
             if self.key("ext.op.await") { return Err(String::from("SyntaxError: invalid syntax")); }
             let pending = self.monadic_expr()?;
             return Ok(prim_call(Prim::AwaitResult, vec![pending]));
@@ -10532,7 +10537,7 @@ impl<'a> Builder<'a> {
             let scope_is_async = self.layers.last().map_or(false, |scope| scope.permits_async);
             let forbidden = if self.in_class_body() || !self.layers.iter().skip(1).any(|s| s.holds == Holds::Every) { Some(if table.spells("ext.stmt.yield.from", &self.glance(1).spelling()) { "'yield from' outside function" } else { "'yield' outside function" }.to_owned()) }
                 else { self.layers.last().and_then(|s| s.gathering_kind).map(|kind| format!("'yield' inside {kind}")) };
-            self.advance();
+            self.move_past();
             self.generator_seen = true;
             let previous_yield = std::mem::replace(&mut self.reading_yield, true);
             let from = self.key("ext.stmt.yield.from");
@@ -10560,7 +10565,7 @@ impl<'a> Builder<'a> {
                     } else { part }, star));
                     if from || !self.on_any("syntax.call.separator") { break; }
                     comma = true;
-                    self.advance();
+                    self.move_past();
                     if at_end(self) { break; }
                 }
             }
@@ -10607,13 +10612,13 @@ impl<'a> Builder<'a> {
         }
         if t.shape != Shape::Quote && table.spells("ext.stmt.class.special.declined", &t.spelling())
             && !self.layers.last().unwrap().idents.contains(&t.lexeme) {
-            self.advance();
+            self.move_past();
             return self.subscript(constant(Value::Refusal(Rc::from(t.lexeme.as_str()))), origin);
         }
         if table.spells("ext.stmt.class.special.stop", &t.spelling())
             && !table.spells("ext.builtin.exceptions", &t.spelling())
             && !self.layers.last().unwrap().idents.contains(&t.lexeme) {
-            self.advance();
+            self.move_past();
             let plan = crate::data::Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
                 name: t.lexeme.clone(), under: std::cell::RefCell::new(None), methods: vec![], shared: crate::data::BlueprintEntries::new(vec![]),
                 fields: vec![], constants: vec![], reaches: vec![], answers: vec![], weak_slot: std::cell::Cell::new(None), has_slot_storage: false, sealed: std::cell::Cell::new(false), order_supplied: std::cell::Cell::new(false), supplied_order: std::cell::RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
@@ -10624,25 +10629,25 @@ impl<'a> Builder<'a> {
         // its own spelling them; a parameter or local reads as a name.
         if t.shape != Shape::Quote && table.spells("ext.literal.ellipsis", &t.spelling())
             && !self.layers.last().unwrap().idents.contains(&t.lexeme) {
-            self.advance();
+            self.move_past();
             return self.subscript(constant(Value::Ellipsis), origin);
         }
         // The value with which a method declines an operation, by name.
         if t.shape != Shape::Quote && table.spells("ext.literal.unimplemented", &t.spelling())
             && !self.layers.last().unwrap().idents.contains(&t.lexeme) {
-            self.advance();
+            self.move_past();
             return self.subscript(constant(Value::Refusal(Rc::from(t.lexeme.as_str()))), origin);
         }
         // The lambda word must stand bare: quoted, it is text and no
         // more, as when it is one of print's arguments.
         if t.shape == Shape::Bare && table.spells("ext.op.lambda", &t.spelling()) {
-            self.advance();
+            self.move_past();
             return self.lambda_form();
         }
         // `list($a, $b) = v`: the places named on the left each take
         // the matching place of the value on the right.
         if table.single("ext.op.tuple").is_none() && table.spells("ext.stmt.unpack", &t.spelling()) && matches!(t.shape, Shape::Sign | Shape::Bare) {
-            self.advance();
+            self.move_past();
             let places = self.pos;
             self.step_past_call()?;
             let sign = self.advance();
@@ -10675,9 +10680,9 @@ impl<'a> Builder<'a> {
                     .flatten()
                     .filter(|_| self.glance(2).shape == Shape::Sign && self.glance(2).lexeme == close);
                 if let Some(made) = made {
-                    self.advance();
-                    self.advance();
-                    self.advance();
+                    self.move_past();
+                    self.move_past();
+                    self.move_past();
                     let tier = table.monadic.values().map(|m| m.level).max().unwrap_or(0);
                     let inner = self.expr(tier)?;
                     return Ok(prim_call(made, vec![inner]));
@@ -10686,7 +10691,7 @@ impl<'a> Builder<'a> {
         }
         if matches!(t.shape, Shape::Sign | Shape::Bare) {
             if let Some(op) = table.monadic.get(t.spelling()).copied() {
-                self.advance();
+                self.move_past();
                 let operand = self.expr(op.level)?;
                 return Ok(prim_call(op.prim, vec![operand]));
             }
@@ -10699,7 +10704,7 @@ impl<'a> Builder<'a> {
                 if self.layers.len() > 1 {
                     return Err(format!("'{}' works a name out as the run goes, which only the outermost bindings keep", t.lexeme));
                 }
-                self.advance();
+                self.move_past();
                 let spells = self.spelling()?;
                 return self.subscript(Form::Called(Box::new(spells)), origin);
             }
@@ -10707,13 +10712,13 @@ impl<'a> Builder<'a> {
                 // What the piece under the mark has to say about itself
                 // goes unsaid; the value it comes to is unchanged.
                 let tier = table.precedence.get(t.spelling()).copied().unwrap_or(0);
-                self.advance();
+                self.move_past();
                 let quiet = self.expr(tier)?;
                 return Ok(Form::Silenced(Box::new(quiet)));
             }
             if t.shape == Shape::Sign && table.spells("ext.op.plus", &t.spelling()) {
                 // A plus sign leaves its operand as it is, bound like a negation.
-                self.advance();
+                self.move_past();
                 let tier = table.monadic.values().map(|m| m.level).max().unwrap_or(0);
                 let held = self.expr(tier)?;
                 return Ok(if table.has_any("ext.op.plus.non_number") { prim_call(Prim::NumberAlone, vec![held]) }
@@ -10722,7 +10727,7 @@ impl<'a> Builder<'a> {
         }
         let node = match t.shape {
             Shape::Numeral => {
-                self.advance();
+                self.move_past();
                 constant(numeral(&t.lexeme, table)?)
             }
             Shape::ByteQuote | Shape::Quote | Shape::CharacterRow | Shape::Woven | Shape::Unheld => {
@@ -10738,12 +10743,12 @@ impl<'a> Builder<'a> {
                 text
             }
             Shape::Bare if table.spells("ext.stmt.class.new", &t.spelling()) => {
-                self.advance();
+                self.move_past();
                 let named = self.need_word("as the class to make")?;
                 let stands = self.read_class(&named)?;
                 let mut given = vec![self.class_reference(stands)?];
                 if table.single("syntax.call.open").map_or(false, |o| self.sign(o)) {
-                    self.advance();
+                    self.move_past();
                     // A maker takes its arguments as any other routine
                     // does, so one of its parameters that takes a cell
                     // is handed one.
@@ -10754,7 +10759,7 @@ impl<'a> Builder<'a> {
             }
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.spelling())
                 && self.uses_bound_callable(&t.lexeme) => {
-                self.advance();
+                self.move_past();
                 // A method that names the parent word at all carries
                 // the class's hidden cell, however the word was bound.
                 if table.has_any("ext.stmt.class.detail.root") && !self.in_class_body() && !self.under_way.is_empty() && !self.survey {
@@ -10765,7 +10770,7 @@ impl<'a> Builder<'a> {
                 }
                 let target = self.read(&t.lexeme);
                 if table.single("syntax.call.open").is_some_and(|open| self.sign(open)) {
-                    self.advance();
+                    self.move_past();
                     let arguments = self.arguments_of(&t.lexeme, "syntax.call.close", "syntax.call.separator")?;
                     invoke(target, arguments)
                 } else { target }
@@ -10780,7 +10785,7 @@ impl<'a> Builder<'a> {
                     || self.glance(1).shape == Shape::Sign
                         && (table.spells("stmt.assign", &self.glance(1).spelling()) || table.compound.contains_key(&self.glance(1).lexeme)))
                 && table.single("syntax.call.open").map_or(true, |open| !(self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == open)) => {
-                self.advance();
+                self.move_past();
                 self.read(&t.lexeme)
             }
             // Standing alone the parent word is a name like another:
@@ -10790,7 +10795,7 @@ impl<'a> Builder<'a> {
             // every naming of the word count as a use of it.
             Shape::Bare if table.has_any("ext.stmt.class.detail.root") && table.spells("ext.stmt.class.parent",&t.spelling())
                 && table.single("syntax.call.open").map_or(false,|open|self.glance(1).lexeme!=open) => {
-                self.advance();
+                self.move_past();
                 if !self.in_class_body() && !self.under_way.is_empty() && !self.survey {
                     self.parts().needs_class_cell = true;
                     self.parts().class_cell_protocol = true;
@@ -10800,7 +10805,7 @@ impl<'a> Builder<'a> {
                 self.read(&t.lexeme)
             }
             Shape::Bare if table.flag("ext.stmt.class.this.explicit") && table.spells("ext.stmt.class.parent", &t.spelling()) => {
-                self.advance();
+                self.move_past();
                 let open = table.single("syntax.call.open").ok_or("A parent call needs brackets")?;
                 if !self.sign(open) {
                     let unavailable = self.class_not_ready();
@@ -10852,12 +10857,12 @@ impl<'a> Builder<'a> {
                             body.class_cell_protocol = true;
                             body.needs_class_cell = true;
                         }
-                        self.advance();
+                        self.move_past();
                         let called = self.need_word("as the parent's member")?;
                         let parent = if table.has_any("ext.stmt.class.detail.root") {constant(Value::text(&base))} else {self.read(&base)};
                         let mut given = vec![self.read(&receiver), parent, constant(Value::text(&called))];
                         if self.sign(open) {
-                            self.advance();
+                            self.move_past();
                             given.extend(self.args("syntax.call.close", "syntax.call.separator")?);
                             prim_call(Prim::Bid, given)
                         } else {
@@ -10878,7 +10883,7 @@ impl<'a> Builder<'a> {
             }
             Shape::Bare if !self.in_class_body() && !self.under_way.is_empty()
                 && t.spelling() == "__classdict__" && table.has_any("ext.stmt.class.detail.kind") => {
-                self.advance();
+                self.move_past();
                 let book = self.parts().book.clone().expect("class namespace prepared");
                 self.read(&book.ident.to_string())
             }
@@ -10890,32 +10895,32 @@ impl<'a> Builder<'a> {
                 // the word stand for the hidden cell.
                 && !(1..self.layers.len()).any(|depth| self.layers[depth].idents.iter().any(|named| named == &t.lexeme))
                 && !self.gather_names.iter().any(|pair| pair.0 == t.lexeme) => {
-                self.advance();
+                self.move_past();
                 self.parts().needs_class_cell = true;
                 self.parts().class_cell_protocol = true;
                 let hidden = self.parts().completed_class.ident.to_string();
                 self.read(&hidden)
             }
             Shape::Bare if table.spells("ext.stmt.class.self", &t.spelling()) || table.spells("ext.stmt.class.parent", &t.spelling()) => {
-                self.advance();
+                self.move_past();
                 self.read_class(&t.lexeme)?
             }
             // Resolve a shadowed owner before calling an entry whose full
             // dotted spelling would otherwise select a native primitive.
             Shape::Bare if table.prims.contains_key(&t.lexeme)
                 && t.lexeme.split_once('.').is_some_and(|(kind, _)| self.uses_bound_callable(kind)) => {
-                self.advance();
+                self.move_past();
                 let (kind, entry) = t.lexeme.split_once('.').expect("native entry spelling");
                 let owner = self.read(kind);
                 let method = prim_call(Prim::Of, vec![owner, constant(Value::text(entry))]);
                 if table.single("syntax.call.open").is_some_and(|open| self.sign(open)) {
-                    self.advance();
+                    self.move_past();
                     let arguments = self.arguments_of(entry, "syntax.call.close", "syntax.call.separator")?;
                     invoke(method, arguments)
                 } else { method }
             }
             Shape::Bare => {
-                self.advance();
+                self.move_past();
                 if self.optimize >= 1 && t.spelling() == "__debug__" {
                     constant(Value::Flag(false))
                 } else if table.spells("literal.true", &t.spelling()) {
@@ -10958,7 +10963,7 @@ impl<'a> Builder<'a> {
                     self.giving_cells.pop();
                     return self.subscript(built?, origin);
                 } else if table.single("syntax.call.open").map_or(false, |o| self.sign(o)) {
-                    self.advance();
+                    self.move_past();
                     if table.prims.get(&t.lexeme) == Some(&Prim::Erase) {
                         return self.forget();
                     }
@@ -11012,7 +11017,7 @@ impl<'a> Builder<'a> {
                     // taken as an array: a place in it is the binding
                     // whose name that place spells, which is how a
                     // language reaches a global from within a routine.
-                    self.advance();
+                    self.move_past();
                     let spells = self.expr(0)?;
                     self.need_sign(table.single("op.index.close").unwrap(), "after the name of the binding")?;
                     return self.subscript(Form::Called(Box::new(spells)), origin);
@@ -11035,7 +11040,7 @@ impl<'a> Builder<'a> {
             }
             Shape::Sign => {
                 if table.single("syntax.group.open") == Some(t.lexeme.as_str()) {
-                    self.advance();
+                    self.move_past();
                     let inner = if self.reading_yield && self.ahead_in_item("ext.op.comprehension.for").is_none() {
                         let mut values = Vec::new();
                         let mut tuple = self.on_any("syntax.group.close");
@@ -11043,7 +11048,7 @@ impl<'a> Builder<'a> {
                             values.push(self.expr(0)?);
                             if !self.on_any("syntax.call.separator") { break; }
                             tuple = true;
-                            self.advance();
+                            self.move_past();
                         }
                         let value = if tuple { prim_call(if table.flag("ext.stmt.yield.suspends") { Prim::MakeTuple } else { Prim::MakeArray }, values) } else { values.pop().unwrap() };
                         self.need_sign(table.single("syntax.group.close").unwrap(), "to close a group")?;
@@ -11068,7 +11073,7 @@ impl<'a> Builder<'a> {
                     };
                     self.called_on_value(inner, Some(origin))?
                 } else if table.single("syntax.array.open") == Some(t.lexeme.as_str()) {
-                    self.advance();
+                    self.move_past();
                     if table.has_any("ext.op.comprehension.for") || table.has_any("ext.syntax.array.spread") {
                         self.gathered_literal("array")?
                     } else {
@@ -11076,7 +11081,7 @@ impl<'a> Builder<'a> {
                     prim_call(Prim::MakeArray, items)
                     }
                 } else if table.single("syntax.map.open") == Some(t.lexeme.as_str()) {
-                    self.advance();
+                    self.move_past();
                     if table.has_any("ext.op.comprehension.for") || table.has_any("ext.syntax.map.spread") || table.flag("ext.syntax.set") {
                         self.gathered_literal("map")?
                     } else {
@@ -11143,7 +11148,7 @@ impl<'a> Builder<'a> {
                     else if self.on_any("syntax.array.open") { table.single("syntax.array.close") } else { None };
                 if let Some(closes) = closes {
                     let parentheses = self.on_any("syntax.group.open");
-                    self.advance();
+                    self.move_past();
                     if table.has_any("ext.builtin.exceptions.syntax") && parentheses && self.sign("*") {
                         let comma = self.tokens[self.pos..].iter().take_while(|part| part.lexeme != closes).any(|part| part.lexeme == ",");
                         if !comma { return Err(String::from("SyntaxError: cannot use starred expression here")); }
@@ -11221,7 +11226,7 @@ impl<'a> Builder<'a> {
             } });
             if let Some(s) = &sep {
                 if self.sign(s) {
-                    self.advance();
+                    self.move_past();
                 }
             }
         }
@@ -11264,7 +11269,7 @@ impl<'a> Builder<'a> {
         // spells a name and the member is named by what *that* binding
         // keeps: `$o->${e}` is a step further in.
         if self.table.spells("ext.op.name_by_value", &self.look().spelling()) {
-            self.advance();
+            self.move_past();
             let spells = self.spelling()?;
             return Ok(match member {
                 true => Form::Called(Box::new(spells)),
@@ -11275,7 +11280,7 @@ impl<'a> Builder<'a> {
         let closes = self.table.single("block.close").map(str::to_string);
         if let (Some(open), Some(close)) = (opens, closes) {
             if self.sign(&open) {
-                self.advance();
+                self.move_past();
                 let named = self.expr(0)?;
                 self.need_sign(&close, "after the member's name")?;
                 return Ok(named);
@@ -11294,7 +11299,7 @@ impl<'a> Builder<'a> {
         let closes = table.single("block.close").map(str::to_string);
         if let (Some(open), Some(close)) = (opens, closes) {
             if self.sign(&open) {
-                self.advance();
+                self.move_past();
                 let named = self.expr(0)?;
                 self.need_sign(&close, "after the name to work out")?;
                 return Ok(named);
@@ -11321,7 +11326,7 @@ impl<'a> Builder<'a> {
             } else if self.sign(&close) {
                 deep -= 1;
             }
-            self.advance();
+            self.move_past();
         }
         Ok(())
     }
@@ -11546,7 +11551,7 @@ impl<'a> Builder<'a> {
                 let there = prim_call(Prim::Apart, vec![from, constant(Value::Small(at as i64))]);
                 steps.push(self.write(&held, there));
                 if table.spells("ext.stmt.unpack", &self.look().spelling()) {
-                    self.advance();
+                    self.move_past();
                     steps.extend(self.taken_apart(&held)?);
                 } else {
                     let target = self.expr_at(0, false)?;
@@ -11560,7 +11565,7 @@ impl<'a> Builder<'a> {
             at += 1;
             if let Some(s) = &sep {
                 if self.sign(s) {
-                    self.advance();
+                    self.move_past();
                     continue;
                 }
             }
@@ -11597,11 +11602,11 @@ impl<'a> Builder<'a> {
             asked.push(Form::Muted(Box::new(glancing(one))));
             if let Some(s) = &sep {
                 if self.sign(s) {
-                    self.advance();
+                    self.move_past();
                 }
             }
         }
-        self.advance();
+        self.move_past();
         if asked.is_empty() {
             return Err("Nothing was asked about".to_string());
         }
@@ -11635,14 +11640,14 @@ impl<'a> Builder<'a> {
         let table = self.table;
         if let Some(mark) = table.single("ext.op.member") {
             while self.sign(mark) {
-                self.advance();
+                self.move_past();
                 let named = self.need_word("after the member mark")?;
                 node = prim_call(Prim::Of, vec![node, constant(Value::text(&named))]);
             }
         }
         let (Some(open), Some(close)) = (table.single("op.index.open"), table.single("op.index.close")) else { return Ok(node) };
         while self.sign(open) {
-            self.advance();
+            self.move_past();
             let index = self.expr(0)?;
             self.need_sign(close, "after the place naming the class")?;
             node = prim_call(Prim::At, vec![node, index]);
@@ -11687,7 +11692,7 @@ impl<'a> Builder<'a> {
             if !reaching && !owning {
                 return Ok(node);
             }
-            self.advance();
+            self.move_past();
             // A value may stand where a member's name stands: the member
             // is the one that value spells, worked out as the run goes.
             // Nothing else changes — the name is already an argument of
@@ -11709,14 +11714,14 @@ impl<'a> Builder<'a> {
                         _ => constant(Value::Nil),
                     };
                     let mut given = vec![this, node, spells];
-                    self.advance();
+                    self.move_past();
                     given.extend(self.arguments_of("the method", "syntax.call.close", "syntax.call.separator")?);
                     node = prim_call(Prim::Bid, given);
                     continue;
                 }
                 let mut given = vec![node, spells];
                 if calling {
-                    self.advance();
+                    self.move_past();
                     given.extend(self.arguments_of("the method", "syntax.call.close", "syntax.call.separator")?);
                 }
                 node = match calling {
@@ -11729,7 +11734,7 @@ impl<'a> Builder<'a> {
             let named = self.need_word("after the member mark")?;
             let calling = table.single("syntax.call.open").map_or(false, |o| self.sign(o));
             if calling && table.strings("ext.builtin.method.from_number").iter().any(|word| word.rsplit('.').next() == Some(named.as_str())) {
-                self.advance();
+                self.move_past();
                 let values = self.args("syntax.call.close", "syntax.call.separator")?;
                 node = invoke(prim_call(Prim::Of, vec![node, constant(Value::text(&named))]), values);
                 continue;
@@ -11831,7 +11836,7 @@ impl<'a> Builder<'a> {
             };
             given.push(constant(Value::text(&bare)));
             if calling {
-                self.advance();
+                self.move_past();
                 given.extend(self.arguments_of(&bare, "syntax.call.close", "syntax.call.separator")?);
             }
             node = match (owning, calling) {
@@ -11850,7 +11855,7 @@ impl<'a> Builder<'a> {
             return Ok(node);
         };
         while self.sign(&open) {
-            self.advance();
+            self.move_past();
             let given = self.args("syntax.call.close", "syntax.call.separator")?;
             node = Form::Apply(Callee::Code(Box::new(node)), given);
             if let Some(begin) = source { if self.place_depth == 0 { node = self.located(self.span_since(begin), node); } }
@@ -11887,7 +11892,7 @@ impl<'a> Builder<'a> {
 
     fn bracket_item(&mut self, close: &str, comma: Option<&str>) -> Res<(Form, bool)> {
         if self.on_any("ext.syntax.array.spread") {
-            self.advance();
+            self.move_past();
             self.validate_star_operand()?;
             let part = self.expr(0)?;
             return Ok((part, true));
@@ -11897,14 +11902,14 @@ impl<'a> Builder<'a> {
 
     fn bracket_part(&mut self, close: &str, comma: Option<&str>) -> Res<Form> {
         if !self.table.flag("ext.stmt.type_parameters") && self.on_any("ext.syntax.array.spread") {
-            self.advance();
+            self.move_past();
             self.expr(0)?;
             return Ok(self.scope_unrun("ext.op.index.spread.unsupported"));
         }
         // The elision mark is read as the value the table gives it,
         // where it gives one, and refused where it gives none.
         if !self.table.has_any("ext.literal.ellipsis") && self.table.strings("ext.op.index.slice.ellipsis").iter().any(|word| self.sign(word)) {
-            self.advance();
+            self.move_past();
             return Ok(prim_call(Prim::SliceRefused, Vec::new()));
         }
         let separators = self.table.strings("ext.op.index.slice").to_vec();
@@ -11916,7 +11921,7 @@ impl<'a> Builder<'a> {
             parts.push(if at_mark || (spanning && at_end) { constant(Value::Nil) } else { self.expr(0)? });
             if parts.len() == 3 || !separators.iter().any(|word| self.sign(word)) { break; }
             spanning = true;
-            self.advance();
+            self.move_past();
         }
         // A fourth part is no slice at all, and the table may say how
         // the reading stops over it.
@@ -11943,7 +11948,7 @@ impl<'a> Builder<'a> {
                 if self.glance(1).lexeme == close || self.glance(1).lexeme == ":" {
                     return Err(String::from("SyntaxError: Invalid star expression"));
                 }
-                self.advance();
+                self.move_past();
                 self.validate_star_operand()?;
             }
             let term = if unpack { self.expr(0)? } else { self.bracket_part(close, separator)? };
@@ -11951,7 +11956,7 @@ impl<'a> Builder<'a> {
             entries.push((term, unpack));
             if !self.table.has_any("ext.op.index.slice") || !separator.is_some_and(|word| self.sign(word)) { break; }
             tuple_key = true;
-            self.advance();
+            self.move_past();
             if self.sign(close) { break; }
         }
         let result = if entries.iter().any(|entry| entry.1) {
@@ -11982,7 +11987,7 @@ impl<'a> Builder<'a> {
                 node = prim_call(Prim::AtEnd, vec![node]);
                 continue;
             }
-            self.advance();
+            self.move_past();
             if self.table.has_any("ext.builtin.exceptions.syntax") {
                 let begin = if self.sign(":") && self.glance(1).lexeme == "(" { Some(self.pos + 1) }
                     else if self.sign("(") { Some(self.pos) } else { None };
@@ -12013,7 +12018,7 @@ impl<'a> Builder<'a> {
                         let (part, spread) = self.bracket_item(close, separator)?;
                         row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
                         if separator.map_or(false, |word| self.sign(word)) {
-                            self.advance();
+                            self.move_past();
                             if self.sign(close) { break; }
                         } else { break; }
                     }
@@ -12023,7 +12028,7 @@ impl<'a> Builder<'a> {
                     if separator.map_or(false, |word| self.sign(word)) {
                         let mut row = prim_call(Prim::MakeArray, vec![first]);
                         loop {
-                            self.advance();
+                            self.move_past();
                             if self.sign(close) { break; }
                             let (part, spread) = self.bracket_item(close, separator)?;
                             row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
@@ -12037,7 +12042,7 @@ impl<'a> Builder<'a> {
                 let several = self.table.has_any("ext.op.index.slice") && separator.map_or(false, |word| self.sign(word));
                 if several {
                     while separator.map_or(false, |word| self.sign(word)) {
-                        self.advance();
+                        self.move_past();
                         if self.sign(close) { break; }
                         keys.push(self.bracket_part(close, separator)?);
                     }
@@ -12055,7 +12060,7 @@ impl<'a> Builder<'a> {
             if self.place_depth == 0 { node = self.located(self.span_since(origin), node); }
             // What a look comes to may itself be called.
             if self.table.single("syntax.call.open").map_or(false, |o| self.sign(o)) {
-                self.advance();
+                self.move_past();
                 let args = self.args("syntax.call.close", "syntax.call.separator")?;
                 node = invoke(node, args);
                 if self.place_depth == 0 { node = self.located(self.span_since(origin), node); }
@@ -12192,7 +12197,7 @@ impl<'a> Builder<'a> {
             if self.sign(&closing) { break; }
             self.need_sign(&separator, "between parts of a literal")?;
         }
-        self.advance();
+        self.move_past();
         // A list display with nothing opened out is made whole in one
         // step: a literal of tens of thousands of members would otherwise
         // be a chain of one-member growings as deep as the display is
@@ -12415,14 +12420,14 @@ impl<'a> Builder<'a> {
 
     fn gather_tail(&mut self, expression_at: usize, answer: &str, dictionary: bool) -> Res<Form> {
         if self.on_any("ext.op.comprehension.if") {
-            self.advance();
+            self.move_past();
             let condition = self.expr(1)?;
             let accepted = self.gather_tail(expression_at, answer, dictionary)?;
             return Ok(self.choose(condition, accepted, constant(Value::Nil)));
         }
         if self.on_any("ext.op.comprehension.async") {
             self.layers.last_mut().unwrap().async_walk_seen = true;
-            self.advance();
+            self.move_past();
             if !self.on_any("ext.op.comprehension.for") { return Err("Expected a walk after the asynchronous word".into()); }
             let in_class = self.class_bindings.last().map_or(false, |(depth, _)| *depth >= self.layers.len().saturating_sub(1));
             if !answer.is_empty() && (!self.layers.last().unwrap().permits_async || in_class) {
@@ -12452,7 +12457,7 @@ impl<'a> Builder<'a> {
             return Ok(self.write(answer, enlarged));
         }
         let asynchronous = self.pos > 0 && self.table.spells("ext.op.comprehension.async", &self.tokens[self.pos - 1].spelling());
-        self.advance();
+        self.move_past();
         let target_begin = self.pos;
         let target_stop = self.divided_at(target_begin, self.tokens.len(), "ext.op.comprehension.in")
             .into_iter().next().ok_or(if self.table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected the word before a comprehension source" })?;
@@ -12521,7 +12526,7 @@ impl<'a> Builder<'a> {
             // write through either name is a write the other sees.
             let tied = self.table.single("ext.op.reference").map_or(false, |m| self.sign(m));
             let item = if tied {
-                self.advance();
+                self.move_past();
                 let named = self.need_word("as the name to share a cell with")?;
                 let slot = self.address_to_write(&named);
                 Form::Share(slot)
@@ -12530,7 +12535,7 @@ impl<'a> Builder<'a> {
             };
             items.push(match &mark {
                 Some(m) if self.sign(m) => {
-                    self.advance();
+                    self.move_past();
                     let value = self.expr(0)?;
                     prim_call(Prim::Couple, vec![item, value])
                 }
@@ -12538,11 +12543,11 @@ impl<'a> Builder<'a> {
             });
             if let Some(s) = &sep {
                 if self.sign(s) {
-                    self.advance();
+                    self.move_past();
                 }
             }
         }
-        self.advance();
+        self.move_past();
         Ok(items)
     }
 
@@ -12575,11 +12580,11 @@ impl<'a> Builder<'a> {
             }
             if let Some(s) = &sep {
                 if self.sign(s) {
-                    self.advance();
+                    self.move_past();
                 }
             }
         }
-        self.advance();
+        self.move_past();
         Ok(items)
     }
 
@@ -12739,13 +12744,13 @@ impl<'a> Builder<'a> {
             if named { named_values.push(argument); } else { items.push(argument); }
             if let Some(s) = &sep {
                 if self.sign(s) {
-                    self.advance();
+                    self.move_past();
                 } else if !self.sign(&close) && self.table.has_any("ext.builtin.exceptions.syntax") {
                     return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
                 }
             }
         }
-        self.advance();
+        self.move_past();
         items.extend(named_values);
         Ok(items)
     }
@@ -12841,7 +12846,7 @@ impl<'a> Builder<'a> {
         loop {
             if run == Mode::Single {
                 while self.look().shape == Shape::Sign && self.table.separates(&self.look().lexeme) {
-                    self.advance();
+                    self.move_past();
                 }
             } else {
                 self.skip_line_ends();
@@ -12852,7 +12857,7 @@ impl<'a> Builder<'a> {
             let mark = self.look().shape;
             if matches!(mark, Shape::Open | Shape::Close | Shape::LineEnd) {
                 if run == Mode::Quoted {
-                    self.advance();
+                    self.move_past();
                     continue;
                 }
                 if run == Mode::Body && mark == Shape::Open {
@@ -12947,7 +12952,7 @@ impl<'a> Builder<'a> {
 
     fn need_intro(&mut self) -> Res<()> {
         if self.on_any("block.intro") {
-            self.advance();
+            self.move_past();
             Ok(())
         } else {
             Err(format!("Expected '{}', got '{}'", self.table.single("block.intro").unwrap_or("repeat"), self.look().lexeme))
@@ -12963,18 +12968,18 @@ impl<'a> Builder<'a> {
                 if self.look().shape != Shape::Open {
                     return Err(format!("Expected an indented block, got '{}'", self.look().lexeme));
                 }
-                self.advance();
+                self.move_past();
                 let body = self.rpn_block(&[], Mode::Body)?;
                 if self.look().shape != Shape::Close {
                     return Err("Expected the end of an indented block".to_string());
                 }
-                self.advance();
+                self.move_past();
                 Ok(body)
             }
             Blocks::Bracketed => {
                 let opens = self.table.strings("block.open");
                 let k = opens.iter().position(|o| self.lexeme_of(o)).ok_or_else(|| format!("Expected '{}' to open a block, got '{}'", opens[0], self.look().lexeme))?;
-                self.advance();
+                self.move_past();
                 let close = self.table.strings("block.close")[k].clone();
                 let body = self.rpn_block(std::slice::from_ref(&close), Mode::Body)?;
                 self.need_lexeme(&close)?;

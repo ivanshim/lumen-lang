@@ -2404,6 +2404,9 @@ impl<'a> Engine<'a> {
     fn collect_cycles(&mut self) -> usize {
         if self.collecting_cycles { return 0; }
         self.collecting_cycles = true;
+        // Dead weak keys must release their attributes before ordering finalizers.
+        self.function_members.retain(|(function, _)| function.revive().is_some());
+        self.settle_departed();
         let mut graph = self.cycle_graph(&[]);
         let mut group = graph.unreached();
         // Nothing unreachable means nothing is said or cleared, so the

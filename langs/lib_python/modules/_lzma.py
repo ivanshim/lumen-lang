@@ -75,6 +75,7 @@ class LZMADecompressor:
             raise OverflowError('invalid memory limit')
         self._input = bytearray()
         self._output = b''
+        self._position = 0
         self._complete = False
         self.eof = False
         self.needs_input = True
@@ -100,10 +101,12 @@ class LZMADecompressor:
             self.unused_data = bytes(self._input[consumed:])
             self._input.clear()
             self._complete = True
-        if max_length < 0:
-            output, self._output = self._output, b''
-        else:
-            output, self._output = self._output[:max_length], self._output[max_length:]
-        self.eof = self._complete and not self._output
+        end = len(self._output) if max_length < 0 else min(len(self._output), self._position + max_length)
+        output = self._output[self._position:end]
+        self._position = end
+        self.eof = self._complete and self._position == len(self._output)
+        if self.eof:
+            self._output = b''
+            self._position = 0
         self.needs_input = not self._complete
         return output

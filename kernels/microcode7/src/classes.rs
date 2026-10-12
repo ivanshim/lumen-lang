@@ -1902,7 +1902,7 @@ impl<'a> Machine<'a> {
         Err(self.class_unready())
     }
     pub(super) fn own_entry(b:&Blueprint,key:&str)->Option<Value> {
-        if let Some(held) = b.shared.named(key, b.type_names.borrow().is_some()) {
+        if let Some(held) = b.shared.named(key, true) {
             return (!matches!(held.settled(), Value::Unset)).then_some(held);
         }
         b.methods.iter().find(|(n,_)|n==key).map(|(_,p)|Value::Routine(p.clone()))
