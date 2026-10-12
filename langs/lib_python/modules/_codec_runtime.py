@@ -303,8 +303,22 @@ def _apply_encode_replacement(encoding, text, start, end, reason, replacement, l
 # Cache pure normalizations with the same 256-entry turnover as registry spellings.
 _normalized = {}
 
+_normalization_aliases = {'utf8': 'utf_8', 'utf7': 'utf_7', 'utf16': 'utf_16', 'utf32': 'utf_32',
+           'latin1': 'latin_1', 'iso8859_1': 'latin_1', 'iso_8859_1': 'latin_1',
+           'us_ascii': 'ascii', '646': 'ascii',
+           'utf16le': 'utf_16_le', 'utf16be': 'utf_16_be',
+           'utf_16le': 'utf_16_le', 'utf_16be': 'utf_16_be',
+           'utf32le': 'utf_32_le', 'utf32be': 'utf_32_be',
+           'utf_32le': 'utf_32_le', 'utf_32be': 'utf_32_be',
+           # the charmap family under its hyphenated readings, as
+           # encodings/aliases.py maps them
+           'iso_8859_10': 'iso8859_10', 'iso_8859_13': 'iso8859_13',
+           'iso_8859_14': 'iso8859_14', 'iso_8859_15': 'iso8859_15',
+           'latin9': 'iso8859_15', 'l9': 'iso8859_15'}
+
 def _normalize(encoding):
-    if type(encoding) is str:
+    cacheable = type(encoding) is str and len(encoding) <= 256
+    if cacheable:
         known = _normalized.get(encoding)
         if known is not None:
             return known
@@ -325,36 +339,25 @@ def _normalize(encoding):
         else:
             punct = True
     name = ''.join(chars)
-    aliases = {'utf8': 'utf_8', 'utf7': 'utf_7', 'utf16': 'utf_16', 'utf32': 'utf_32',
-               'latin1': 'latin_1', 'iso8859_1': 'latin_1', 'iso_8859_1': 'latin_1',
-               'us_ascii': 'ascii', '646': 'ascii',
-               'utf16le': 'utf_16_le', 'utf16be': 'utf_16_be',
-               'utf_16le': 'utf_16_le', 'utf_16be': 'utf_16_be',
-               'utf32le': 'utf_32_le', 'utf32be': 'utf_32_be',
-               'utf_32le': 'utf_32_le', 'utf_32be': 'utf_32_be',
-               # the charmap family under its hyphenated readings, as
-               # encodings/aliases.py maps them
-               'iso_8859_10': 'iso8859_10', 'iso_8859_13': 'iso8859_13',
-               'iso_8859_14': 'iso8859_14', 'iso_8859_15': 'iso8859_15',
-               'latin9': 'iso8859_15', 'l9': 'iso8859_15'}
-    if name in aliases:
-        if type(encoding) is str:
+
+    if name in _normalization_aliases:
+        if cacheable:
             if len(_normalized) >= 256:
                 _normalized.clear()
-            _normalized[encoding] = aliases[name]
-        return aliases[name]
+            _normalized[encoding] = _normalization_aliases[name]
+        return _normalization_aliases[name]
     if name in _charmaps or name in (
             'ascii', 'latin_1', 'utf_8', 'utf_8_sig', 'utf_7',
             'utf_16', 'utf_16_le', 'utf_16_be',
             'utf_32', 'utf_32_le', 'utf_32_be',
             'unicode_escape', 'raw_unicode_escape', 'idna'):
-        if type(encoding) is str:
+        if cacheable:
             if len(_normalized) >= 256:
                 _normalized.clear()
             _normalized[encoding] = name
         return name
-    from encodings.aliases import aliases as encoding_aliases
-    canonical = encoding_aliases.get(name, name)
+    from encodings._normalization_aliases import _normalization_aliases as encoding__normalization_aliases
+    canonical = encoding__normalization_aliases.get(name, name)
     if canonical in _charmaps or canonical in (
             'ascii', 'latin_1', 'utf_8', 'utf_8_sig', 'utf_7',
             'utf_16', 'utf_16_le', 'utf_16_be',
