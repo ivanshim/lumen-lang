@@ -30486,6 +30486,7 @@ impl<'a> Machine<'a> {
             }
             return self.perform_booked(source, file, mode, book, None, top_await, literals, settling, sites);
         }
+        let warn_source = file.is_none();
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -30495,12 +30496,14 @@ impl<'a> Machine<'a> {
         let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None, None, settling, sites)?;
         // What the build noted about how the text is written is said
         // once the text stands, each warning through the warnings module.
-        for (message, row, column) in built.warnings.clone() {
-            self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
-        }
-        if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+        if warn_source {
+            for (message, row, column) in built.warnings.clone() {
+                self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
+            }
+        }
+        if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
         self.text_concluded(&built, &file, mode, shown)
     }
 
@@ -30512,6 +30515,7 @@ impl<'a> Machine<'a> {
     /// makes is gone once the text is done.
     fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>, _top_await: bool, literals: Option<Vec<Value>>, settling: i64, sites: &[[u32; 8]]) -> Result<Value, String> {
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
+        let warn_source = file.is_none();
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -30553,12 +30557,14 @@ impl<'a> Machine<'a> {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
-        for (message, row, column) in built.warnings.clone() {
-            self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
-        }
-        if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+        if warn_source {
+            for (message, row, column) in built.warnings.clone() {
+                self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
+            }
+        }
+        if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
         let needed = built.program.idents.len().max(names.len());
         if !Rc::ptr_eq(&mine, &self.outermost) || mine.cells.borrow().len() < needed {
             mine.cells.borrow_mut().resize(needed, Value::Unset);
@@ -30586,6 +30592,7 @@ impl<'a> Machine<'a> {
     /// Text run in dictionaries of its own: its names are given slots
     /// among the outermost cells, and a book kept for them.
     fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, literals: Option<Vec<Value>>, settling: i64, sites: &[[u32; 8]]) -> Result<Value, String> {
+        let warn_source = file.is_none();
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -30614,13 +30621,15 @@ impl<'a> Machine<'a> {
         // under the name the handed globals give the text, each warning
         // through the warnings module.
         let spoken_as = framed_in.as_deref().map(str::to_string);
-        for (message, row, column) in built.warnings.clone() {
-            self.syntax_warning(mode, &message, &file, row, column, &source, spoken_as.as_deref())?;
-        }
-        if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
         let fresh = &built.globals[beginning..];
         self.idents.extend(fresh.iter().map(|word| format!("\0names/{beginning}/{word}")));
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+        if warn_source {
+            for (message, row, column) in built.warnings.clone() {
+                self.syntax_warning(mode, &message, &file, row, column, &source, spoken_as.as_deref())?;
+            }
+        }
+        if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
         let (near, outer) = match near { Some(near) => (near, Some(outer)), None => (outer, None) };
         let declarations: std::collections::BTreeSet<_> = built.outer_aliases.iter().cloned()
             .chain(crate::build::text_wide_globals(&tokens, self.table)).collect();

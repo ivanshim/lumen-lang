@@ -29969,15 +29969,19 @@ impl Engine<'_> {
             }
             return self.run_text_booked(source, file, mode, globals, None, top_await, replacements, optimization, positions);
         }
+        let warn_from_text = file.is_none();
         let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
         self.registry.optimize = optimization;
-        let (program, shown) = self.text_program(source, &tokens, &file, mode, None, top_await, None, positions)?;
+        let (program, shown, warnings) = self.text_program(source, &tokens, &file, mode, None, top_await, positions)?;
         let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
         self.world.resize(self.registry.idents.len(), Value::Blank);
+        if warn_from_text {
+            for (message, row, column) in warnings { self.syntax_warning(mode, &message, &file, row, column, source, None)?; }
+        }
         self.text_finished(&program, &file, shown)
     }
 
@@ -29989,6 +29993,7 @@ impl Engine<'_> {
     /// makes is gone once the text is done.
     fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64, positions: &[[u32; 8]]) -> Res<Value> {
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
+        let warn_from_text = file.is_none();
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -30014,6 +30019,10 @@ impl Engine<'_> {
         };
         let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
         self.world.resize(self.registry.idents.len(), Value::Blank);
+        let warnings = std::mem::take(&mut self.registry.warnings);
+        if warn_from_text {
+            for (message, row, column) in warnings { self.syntax_warning(mode, &message, &file, row, column, source, None)?; }
+        }
         let mut mine = values;
         mine.resize(program.idents.len().max(mine.len()), Value::Blank);
         let (was_written_in, was_on) = (self.source.clone(), self.line);
@@ -30037,6 +30046,7 @@ impl Engine<'_> {
     /// Text run in dictionaries of its own: its names are given slots
     /// of their own in the world, and a book is kept for them.
     fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64, positions: &[[u32; 8]]) -> Res<Value> {
+        let warn_from_text = file.is_none();
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -30068,11 +30078,15 @@ impl Engine<'_> {
         // that every routine the text makes answers with the name the
         // namespace had when they were made, not one written later.
         local.home = Some(module_hint.as_deref().map(Rc::from));
-        let (program, shown) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await, module_hint.as_deref(), positions)?;
+        let (program, shown, warnings) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await, positions)?;
         let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
         let names: Vec<String> = local.idents[offset..].to_vec();
         for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
+        // Warning hooks may import modules, so reserve the compiled slots first.
+        if warn_from_text {
+            for (message, row, column) in warnings { self.syntax_warning(mode, &message, &file, row, column, source, module_hint.as_deref())?; }
+        }
         let (near, outer) = match near { Some(near) => (near, Some(outer)), None => (outer, None) };
         let mut declared = local.declared_outer;
         for name in crate::compile::text_wide_globals(&tokens, self.lang) {
@@ -30092,7 +30106,7 @@ impl Engine<'_> {
     /// one statement shown as it runs, which is an expression written
     /// out where it is one; else statements. Answers whether what the
     /// program leaves is to be written out.
-    fn text_program(&mut self, source: &str, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>, top_await: bool, module_hint: Option<&str>, positions: &[[u32; 8]]) -> Res<(Rc<Routine>, bool)> {
+    fn text_program(&mut self, source: &str, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>, top_await: bool, positions: &[[u32; 8]]) -> Res<(Rc<Routine>, bool, Vec<(String, usize, usize)>)> {
         let mut amiss = (String::new(), 0, 0, (0, 0));
         let mut noted = Vec::new();
         let mut compiled = None;
@@ -30111,13 +30125,7 @@ impl Engine<'_> {
             }
         }
         match compiled {
-            // What the reading noted about how the text is written is
-            // said once the reading stands, each warning through the
-            // warnings module under the name the text runs as.
-            Some((program, shown)) => {
-                for (message, row, column) in noted { self.syntax_warning(mode, &message, file, row, column, source, module_hint)?; }
-                Ok((program, shown))
-            }
+            Some((program, shown)) => Ok((program, shown, noted)),
             None => Err(self.text_syntax(mode, amiss.0, file, amiss.1, amiss.2, Some(amiss.3), source)),
         }
     }
