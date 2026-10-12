@@ -1422,7 +1422,7 @@ impl Value {
     fn program_worth(program: &crate::form::Routine) -> Value {
         let names = |words: &[String]| Value::tuple(words.iter().map(|word| Value::text(word)).collect());
         let kinds = program.taking.as_deref().unwrap_or(&[]).iter().map(|kind| Value::Small(*kind as i64)).collect();
-        let mut attributes = vec![Value::text(&format!("{:?}", program.lexical_origin)), Value::Small(program.body_boundary as i64)];
+        let mut attributes = vec![Value::Text(program.origin_content.get_or_init(|| Rc::from(format!("{:?}", program.lexical_origin))).clone()), Value::Small(program.body_boundary as i64)];
         attributes.extend([
             Value::text(&program.ident), Value::Small(program.declared_on.into()),
             Value::Small(program.flags), Value::Small(program.future_bits),

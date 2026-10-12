@@ -990,6 +990,7 @@ pub struct Routine {
     pub annotation: Option<Rc<Routine>>,
     pub code_constants: Vec<Value>,
     pub source_tokens: Rc<[crate::lex::Token]>,
+    pub source_content: Rc<std::cell::OnceCell<Rc<str>>>,
     pub source_end: usize,
     pub embedded_integers: Option<Vec<bool>>,
     pub code_names: Vec<String>,

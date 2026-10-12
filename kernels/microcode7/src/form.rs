@@ -850,6 +850,7 @@ pub struct Routine {
     pub annotator: Option<Rc<Routine>>,
     pub literals: Vec<Value>,
     pub lexical_origin: Rc<Vec<crate::scan::Token>>,
+    pub origin_content: Rc<std::cell::OnceCell<Rc<str>>>,
     pub body_boundary: usize,
     pub immediate_slots: Option<Vec<bool>>,
     pub referenced: Vec<String>,
