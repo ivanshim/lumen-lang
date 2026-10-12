@@ -113,6 +113,14 @@ series is retained, in a window of two series; only 3.14 is registered today.
 
 The `python-3.14.8/test/` package and its support, import, threading, OS, script, and
 pseudo-terminal helpers are also preserved byte for byte at that commit. `Lib/test/datetimetester.py` is preserved, with its source header, in
+| `tests/python-3.14.8/test_tarfile.py` | `Lib/test/test_tarfile.py`, copied byte for byte; SHA-256 `a58899b398744cbc641ec26addedbf81fb8e8755ed23dac38d2470b32c37379f` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/tarfile.py` | `Lib/tarfile.py`, copied byte for byte; SHA-256 `825de0990d0bedf6ed8db97b4a0fc98f25617a692c3d38c0bbba800beb9952fb` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `tests/python-3.14.8/test/archiver_tests.py` | `Lib/test/archiver_tests.py`, copied byte for byte; SHA-256 `e8fe8d3cd9b455b6b368c0bffcdfe9f1b32518592fc7b79b671861ddfbc5d6d2` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/test/archiver_tests.py` | `Lib/test/archiver_tests.py`, copied byte for byte; SHA-256 `e8fe8d3cd9b455b6b368c0bffcdfe9f1b32518592fc7b79b671861ddfbc5d6d2` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `tests/python-3.14.8/archivetestdata/testtar.tar` | `Lib/test/archivetestdata/testtar.tar`, copied byte for byte; SHA-256 `760200dda3cfdff2cd31d8ab6c806794f3770faa465e7eae00a1cb3a2fbcbe3a` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `tests/python-3.14.8/archivetestdata/testtar.tar.xz` | `Lib/test/archivetestdata/testtar.tar.xz`, copied byte for byte; SHA-256 `89e0326292b96a5700582a37ebf3d8ba60f1d136772b5cd15b2c2ae653fda188` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `tests/python-3.14.8/archivetestdata/recursion.tar` | `Lib/test/archivetestdata/recursion.tar`, copied byte for byte; SHA-256 `d80f55ac66a2570c8a19d2b1dad7c057cf4c944d9c2f8adaf5bf6c8539881e13` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `tests/python-3.14.8/archivetestdata/zipdir.zip` | `Lib/test/archivetestdata/zipdir.zip`, copied byte for byte; SHA-256 `19cb87050b0fb410da3b88df752c2e1bdaeec77ac052b04febef31a68823cfcb` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 `langs/lib_python/modules/test/datetimetester.py`. The embedded runtime support
 modules in `langs/lib_python/modules/test/` provide the interpreter adapters.
 The copyreg test's support (`test/pickletester.py`, `test/picklecommon.py`) and the
