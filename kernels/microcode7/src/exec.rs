@@ -10025,9 +10025,10 @@ impl<'a> Machine<'a> {
                     }
                 }
                 if let Some(at) = self.member_place(&fields, name) {
-                    let keep = self.names_in_calls && self.namespace_holding(&Value::Thing(thing.clone())).is_none();
                     return Some(match &fields[at].1 {
-                        Value::Shared(cell) if keep && matches!(&*cell.borrow(), Value::Dict(_) | Value::Vector(_)) => Value::Shared(cell.clone()),
+                        Value::Shared(cell) if self.names_in_calls
+                            && matches!(&*cell.borrow(), Value::Dict(_) | Value::Vector(_))
+                            && self.namespace_holding(&Value::Thing(thing.clone())).is_none() => Value::Shared(cell.clone()),
                         Value::Shared(cell) => cell.borrow().clone(),
                         held => held.clone(),
                     });
