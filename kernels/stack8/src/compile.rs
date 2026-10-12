@@ -1094,11 +1094,11 @@ impl<'a> Compiler<'a> {
         if self.registry.stopped_end_row == 0 { self.registry.stopped_end_row = if token.shape == Shape::LineEnd { token.row } else { token.end_row.max(token.row) }; }
     }
 
-    fn look(&self) -> &Token {
+    fn look(&self) -> &'a Token {
         &self.tokens[self.pos.min(self.tokens.len() - 1)]
     }
 
-    fn look_ahead(&self, ahead: usize) -> &Token {
+    fn look_ahead(&self, ahead: usize) -> &'a Token {
         &self.tokens[(self.pos + ahead).min(self.tokens.len() - 1)]
     }
 
@@ -3635,7 +3635,7 @@ impl<'a> Compiler<'a> {
             if Lang::spells(&lang.with_words, &w) { return self.with_stmt(); }
             if Lang::spells(&lang.del_words, &w) {
                 self.pass_token();
-                let call = lang.calling.clone().expect("call marks");
+                let call = lang.calling.as_ref().expect("call marks");
                 self.forget_targets(&call, false, true)?;
                 self.discard();
                 return Ok(());
@@ -3858,7 +3858,7 @@ impl<'a> Compiler<'a> {
             }
         }
         let asynchronous = std::mem::take(&mut self.asynchronous);
-        let group = lang.grouping.clone().expect("group marks");
+        let group = lang.grouping.as_ref().expect("group marks");
         let mut bracketed = false;
         if self.at_symbol(&group.open) {
             let mut depth = 0;
@@ -4058,8 +4058,8 @@ impl<'a> Compiler<'a> {
             self.constant(Value::text(&self.lang.binding_unrun));
             self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
         }
-        let group = self.lang.grouping.clone().expect("group marks");
-        let array = self.lang.array_brackets.clone().expect("array marks");
+        let group = self.lang.grouping.as_ref().expect("group marks");
+        let array = self.lang.array_brackets.as_ref().expect("array marks");
         let paired = if self.at_symbol(&group.open) { Some(group) }
             else if self.at_symbol(&array.open) { Some(array) } else { None };
         if let Some(pair) = paired {
@@ -4164,7 +4164,7 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Grab(Rc::from(member.as_str())), 1);
                 self.called_on_value(None)?;
                 on_call = matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _)));
-            } else if let Some(pair) = self.lang.index_brackets.clone().filter(|p| self.at_symbol(&p.open)) {
+            } else if let Some(pair) = self.lang.index_brackets.as_ref().filter(|p| self.at_symbol(&p.open)) {
                 self.pass_token();
                 let at = self.mark();
                 if self.lang.type_parameters {
@@ -4801,7 +4801,7 @@ impl<'a> Compiler<'a> {
     fn foreach(&mut self) -> Res<()> {
         let lang = self.lang;
         self.pass_token();
-        let group = lang.grouping.clone().ok_or_else(|| "A foreach needs syntax.group".to_string())?;
+        let group = lang.grouping.as_ref().ok_or_else(|| "A foreach needs syntax.group".to_string())?;
         self.want_sign(&group.open, "after foreach")?;
         // A walk that hands out its items for writing walks the binding
         // itself, so that writing an item writes the array it came from.
@@ -5109,7 +5109,7 @@ impl<'a> Compiler<'a> {
     fn c_for(&mut self) -> Res<()> {
         let lang = self.lang;
         self.pass_token();
-        let group = lang.grouping.clone().ok_or_else(|| "A for loop needs syntax.group".to_string())?;
+        let group = lang.grouping.as_ref().ok_or_else(|| "A for loop needs syntax.group".to_string())?;
         let sep = lang.calling.as_ref().and_then(|c| c.between.clone());
         let end = |a: &Self| a.look().shape == Shape::Sign && lang.ends_stmt(&a.look().lexeme);
         self.want_sign(&group.open, "after for")?;
@@ -5282,7 +5282,7 @@ impl<'a> Compiler<'a> {
 
     /// A tuple subject needs only the grouping marks already spelled.
     fn match_subject(&mut self) -> Res<bool> {
-        let group = self.lang.grouping.clone();
+        let group = self.lang.grouping.as_ref();
         let mut tuple = false;
         if let Some(g) = &group {
             if self.at_symbol(&g.open) {
@@ -5523,7 +5523,7 @@ impl<'a> Compiler<'a> {
             }
             return Ok(Pattern::Literal(Value::from_codes(points)));
         }
-        for (brackets, grouped) in [(lang.array_brackets.clone(), false), (lang.grouping.clone(), true)] {
+        for (brackets, grouped) in [(lang.array_brackets.as_ref(), false), (lang.grouping.as_ref(), true)] {
             let Some(b) = brackets else { continue; };
             if !self.at_symbol(&b.open) { continue; }
             self.pass_token();
@@ -5606,7 +5606,7 @@ impl<'a> Compiler<'a> {
             for member in &path { self.act(Action::Grab(Rc::from(member.as_str())), 1); }
             let place = self.pattern_values;
             self.pattern_values += 1;
-            let Some(call) = lang.calling.clone().filter(|_| called) else { return Ok(Pattern::Value(place)) };
+            let Some(call) = lang.calling.as_ref().filter(|_| called) else { return Ok(Pattern::Value(place)) };
             self.pass_token();
             let mut positional = Vec::new();
             let mut keyed: Vec<(String, Pattern)> = Vec::new();
@@ -5642,7 +5642,7 @@ impl<'a> Compiler<'a> {
     fn switch(&mut self) -> Res<()> {
         let lang = self.lang;
         self.pass_token();
-        let group = lang.grouping.clone().ok_or_else(|| "A switch needs syntax.group".to_string())?;
+        let group = lang.grouping.as_ref().ok_or_else(|| "A switch needs syntax.group".to_string())?;
         self.want_sign(&group.open, "after switch")?;
         self.expr(0)?;
         self.want_sign(&group.close, "after the switch value")?;
@@ -5919,7 +5919,7 @@ impl<'a> Compiler<'a> {
             return Err(format!("Expected '{}' after the body, got '{}'", lang.while_words.first().map_or("while", |w| w.as_str()), self.look().lexeme));
         }
         self.pass_token();
-        let group = lang.grouping.clone().ok_or_else(|| "A do loop needs syntax.group".to_string())?;
+        let group = lang.grouping.as_ref().ok_or_else(|| "A do loop needs syntax.group".to_string())?;
         self.want_sign(&group.open, "after while")?;
         self.expr(0)?;
         self.want_sign(&group.close, "after the condition")?;
@@ -6026,7 +6026,7 @@ impl<'a> Compiler<'a> {
             && lang.calling.as_ref().map_or(false, |c| self.look_ahead(1).is_lexeme(Shape::Sign, &c.open));
         if range_call && target.is_none() {
             self.pass_token();
-            let call = lang.calling.clone().expect("call brackets");
+            let call = lang.calling.as_ref().expect("call brackets");
             self.pass_token();
             self.expr(0)?;
             if lang.loop_else && self.at_symbol(&call.close) {
@@ -6183,7 +6183,7 @@ impl<'a> Compiler<'a> {
         let mut done = vec![self.leap()];
         let here = self.mark();
         self.piece().instrs[guard] = Instr::Guard(here);
-        let group = lang.grouping.clone().ok_or_else(|| "A catch needs syntax.group".to_string())?;
+        let group = lang.grouping.as_ref().ok_or_else(|| "A catch needs syntax.group".to_string())?;
         let mut clauses = 0;
         // A clause may stand on a line of its own, after the body it follows.
         self.skip_seps();
@@ -7266,7 +7266,7 @@ impl<'a> Compiler<'a> {
         let mut count = if lang.bases_open.as_ref().is_some_and(|open| self.at_symbol(open)) {
             self.pass_token();
             if self.comprehension_ahead().is_some() { return Err("SyntaxError: invalid syntax".into()); }
-            let pair = lang.calling.clone().expect("class arguments");
+            let pair = lang.calling.as_ref().expect("class arguments");
             self.arguments(&pair)?
         } else { 0 };
         if generic {
@@ -7460,7 +7460,7 @@ impl<'a> Compiler<'a> {
                 }
             }
             if expanded || lang.class_details.contains_key("mro.entries") {
-                let pair = lang.calling.clone().expect("class call marks");
+                let pair = lang.calling.as_ref().expect("class call marks");
                 let count = self.arguments(&pair)?;
                 self.act(Action::MakeTuple, count);
                 let slot = self.gensym("class_header");
@@ -7952,7 +7952,7 @@ impl<'a> Compiler<'a> {
         let typed = std::mem::take(&mut self.pending_types);
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
         let lang = self.lang;
-        let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
+        let call = lang.calling.as_ref().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after method name")?;
         let this = lang.this_word.clone().unwrap_or_default();
         let offset = usize::from(!lang.explicit_this);
@@ -8497,7 +8497,7 @@ impl<'a> Compiler<'a> {
         let typed = std::mem::take(&mut self.pending_types);
         let lang = self.lang;
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
-        let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
+        let call = lang.calling.as_ref().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after function name")?;
         let (formals, spares, _) = self.parameters(&name, &call)?;
         let least = formals.len() - spares.len();
@@ -8767,7 +8767,7 @@ impl<'a> Compiler<'a> {
             return Ok(());
         }
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
-        let call = lang.calling.clone().ok_or_else(|| "This language has no call syntax".to_string())?;
+        let call = lang.calling.as_ref().ok_or_else(|| "This language has no call syntax".to_string())?;
         self.want_sign(&call.open, "after the word for a short routine")?;
         let (formals, spares, _) = self.parameters(ANONYMOUS, &call)?;
         let least = formals.len() - spares.len();
@@ -10802,7 +10802,7 @@ impl<'a> Compiler<'a> {
         if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace))
             && !self.lang.scope_unready.is_empty()
             && !matches!(&self.piece().instrs[left..], [Instr::Read(cell)] if !cell.moving) {
-            let call = self.lang.calling.clone().ok_or("A member call needs brackets")?;
+            let call = self.lang.calling.as_ref().ok_or("A member call needs brackets")?;
             self.want_sign(&call.open, "after the method name")?;
             self.arguments(&call)?;
             self.piece().instrs.truncate(left);
@@ -10816,7 +10816,7 @@ impl<'a> Compiler<'a> {
                 _ => return Err(format!("First argument to {}() must be an array variable name", name)),
             };
             self.piece().instrs.truncate(left);
-            let Some(call) = self.lang.calling.clone() else {
+            let Some(call) = self.lang.calling.as_ref() else {
                 return Err("This language has no call syntax".to_string());
             };
             self.want_sign(&call.open, "after the method name")?;
@@ -10825,7 +10825,7 @@ impl<'a> Compiler<'a> {
         }
         let mut argc = 1;
         let mut called = false;
-        if let Some(call) = self.lang.calling.clone() {
+        if let Some(call) = self.lang.calling.as_ref() {
             if self.at_symbol(&call.open) {
                 self.pass_token();
                 called = true;
@@ -11141,7 +11141,7 @@ impl<'a> Compiler<'a> {
         // language names a kind by counts, so a plain grouping of a
         // name is still a grouping.
         if lang.casts_kinds {
-            if let Some(group) = lang.grouping.clone() {
+            if let Some(group) = lang.grouping.as_ref() {
                 let kind = self
                     .at_symbol(&group.open)
                     .then(|| lang.kind_of_word(&self.look_ahead(1).lexeme))
@@ -11222,7 +11222,7 @@ impl<'a> Compiler<'a> {
                 // A maker takes its arguments as any other routine does,
                 // so a parameter of it that takes a cell is handed one.
                 let maker = lang.constructor.clone().unwrap_or_default();
-                let argc = match lang.calling.clone() {
+                let argc = match lang.calling.as_ref() {
                     Some(call) if self.at_symbol(&call.open) => {
                         self.pass_token();
                         self.arguments_of(&maker, &call)?
@@ -11244,7 +11244,7 @@ impl<'a> Compiler<'a> {
                         self.enclosing_cell(self.pieces.len() - 1, &cell);
                     }
                 }
-                if let Some(call) = lang.calling.clone().filter(|call| self.at_symbol(&call.open)) {
+                if let Some(call) = lang.calling.as_ref().filter(|call| self.at_symbol(&call.open)) {
                     self.pass_token();
                     let count = self.arguments_of(&tok.lexeme, &call)?;
                     self.read(&tok.lexeme);
@@ -11285,7 +11285,7 @@ impl<'a> Compiler<'a> {
             }
             Shape::Instr if lang.explicit_this && Lang::spells(&lang.parent_words, &tok.spelling()) => {
                 self.pass_token();
-                let call = lang.calling.clone().ok_or("A parent call needs call brackets")?;
+                let call = lang.calling.as_ref().ok_or("A parent call needs call brackets")?;
                 if !self.at_symbol(&call.open) {
                     self.class_cannot_run();
                     return self.indexing(from, origin);
@@ -11423,7 +11423,7 @@ impl<'a> Compiler<'a> {
                 let (owner, member) = tok.lexeme.split_once('.').expect("dotted method");
                 self.read(owner);
                 self.act(Action::Grab(Rc::from(member)), 1);
-                if let Some(call) = lang.calling.clone().filter(|call| self.at_symbol(&call.open)) {
+                if let Some(call) = lang.calling.as_ref().filter(|call| self.at_symbol(&call.open)) {
                     let method = self.gensym("shadowed_member");
                     self.write(&method);
                     self.pass_token();
@@ -11475,7 +11475,7 @@ impl<'a> Compiler<'a> {
                     self.giving_cells.pop();
                     built?;
                 } else {
-                    match lang.calling.clone() {
+                    match lang.calling.as_ref() {
                         Some(call) if self.at_symbol(&call.open) => {
                             self.pass_token();
                             // A name the program has bound is called as
@@ -11577,7 +11577,7 @@ impl<'a> Compiler<'a> {
                         _ if Lang::spells(&lang.globals_words, &tok.spelling())
                             && lang.index_brackets.as_ref().map_or(false, |b| self.at_symbol(&b.open)) =>
                         {
-                            let index = lang.index_brackets.clone().expect("the index brackets");
+                            let index = lang.index_brackets.as_ref().expect("the index brackets");
                             self.pass_token();
                             self.expr(0)?;
                             self.want_sign(&index.close, "after the name of the binding")?;
@@ -11612,7 +11612,7 @@ impl<'a> Compiler<'a> {
                 }
             }
             Shape::Sign => {
-                if let Some(group) = lang.grouping.clone() {
+                if let Some(group) = lang.grouping.as_ref() {
                     if tok.lexeme == group.open {
                         self.pass_token();
                         if self.yield_operand && self.comprehension_ahead().is_none() {
@@ -11647,7 +11647,7 @@ impl<'a> Compiler<'a> {
                         return self.indexing(from, origin);
                     }
                 }
-                if let Some(array) = lang.array_brackets.clone() {
+                if let Some(array) = lang.array_brackets.as_ref() {
                     if tok.lexeme == array.open {
                         self.pass_token();
                         if !lang.comprehension_for.is_empty() || !lang.array_spread.is_empty() {
@@ -11659,7 +11659,7 @@ impl<'a> Compiler<'a> {
                         return self.indexing(from, origin);
                     }
                 }
-                if let Some(map) = lang.map_brackets.clone() {
+                if let Some(map) = lang.map_brackets.as_ref() {
                     if tok.lexeme == map.open {
                         self.pass_token();
                         if !lang.comprehension_for.is_empty() || !lang.map_spread.is_empty() || lang.set_literals {
@@ -11718,7 +11718,7 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Grab(Rc::from(member.as_str())), 1);
             }
         }
-        if let Some(index) = lang.index_brackets.clone() {
+        if let Some(index) = lang.index_brackets.as_ref() {
             while self.at_symbol(&index.open) {
                 self.pass_token();
                 self.expr(0)?;
@@ -11788,9 +11788,9 @@ impl<'a> Compiler<'a> {
                 if let Some(kind) = kind { return Err(format!("SyntaxError: cannot delete {kind}")); }
             }
             if targets && !self.grouped_holder() {
-                let pair = self.lang.grouping.clone().filter(|p| self.at_symbol(&p.open))
-                    .or_else(|| self.lang.array_brackets.clone().filter(|p| self.at_symbol(&p.open)));
-                if let Some(mut pair) = pair {
+                let pair = self.lang.grouping.as_ref().filter(|p| self.at_symbol(&p.open))
+                    .or_else(|| self.lang.array_brackets.as_ref().filter(|p| self.at_symbol(&p.open)));
+                if let Some(mut pair) = pair.cloned() {
                     pair.between = call.between.clone();
                     self.pass_token();
                     if !self.lang.syntax_members.is_empty() && pair.open == "(" && self.at_symbol("*")
@@ -11990,7 +11990,7 @@ impl<'a> Compiler<'a> {
     /// follows may be read first: the places a taking-apart names are
     /// read only after the value they take from is worked out.
     fn skip_past_call(&mut self) -> Res<()> {
-        let call = self.lang.calling.clone().ok_or("A taking-apart needs the call brackets")?;
+        let call = self.lang.calling.as_ref().ok_or("A taking-apart needs the call brackets")?;
         self.want_sign(&call.open, "after the word that takes a value apart")?;
         let mut deep = 1usize;
         while deep > 0 {
@@ -12264,7 +12264,7 @@ impl<'a> Compiler<'a> {
     /// The whole comes to the value, as any other write does.
     fn unpack(&mut self, holding: &str) -> Res<()> {
         let lang = self.lang;
-        let call = lang.calling.clone().ok_or("A taking-apart needs the call brackets")?;
+        let call = lang.calling.as_ref().ok_or("A taking-apart needs the call brackets")?;
         self.want_sign(&call.open, "after the word that takes a value apart")?;
         let mut at = 0usize;
         while !self.at_symbol(&call.close) {
@@ -12373,7 +12373,7 @@ impl<'a> Compiler<'a> {
     /// aside while the arguments are worked out, since a call wants what
     /// it calls above them.
     fn called_on_value(&mut self, origin: Option<usize>) -> Res<()> {
-        let Some(call) = self.lang.calling.clone() else { return Ok(()) };
+        let Some(call) = self.lang.calling.as_ref() else { return Ok(()) };
         while self.at_symbol(&call.open) {
             let callee = self.gensym("callee");
             self.write(&callee);
@@ -12538,7 +12538,7 @@ impl<'a> Compiler<'a> {
             if lang.members_by_value && self.member_named_by_value(member) {
                 let names_at = self.mark();
                 self.member_value_name(member)?;
-                let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
+                let call = lang.calling.as_ref().filter(|c| self.at_symbol(&c.open));
                 if !member {
                     let Some(call) = call else {
                         // A class's own value, named by what the value
@@ -12591,7 +12591,7 @@ impl<'a> Compiler<'a> {
             }
             let member_at = self.pos;
             let named = self.want_name("after the member mark")?;
-            let call = lang.calling.clone().filter(|c| self.at_symbol(&c.open));
+            let call = lang.calling.as_ref().filter(|c| self.at_symbol(&c.open));
             if member && lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(named.as_str())) {
                 self.constant(Value::text(&named));
                 self.act(Action::Builtin(Builtin::ClassTool(3), Rc::from("getattr")), 2);
@@ -12738,7 +12738,7 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
-        let Some(index) = self.lang.index_brackets.clone() else { return Ok(()) };
+        let Some(index) = self.lang.index_brackets.as_ref() else { return Ok(()) };
         let mut stepped = false;
         let mut keyed: Vec<usize> = Vec::new();
         while self.at_symbol(&index.open) {
@@ -12825,7 +12825,7 @@ impl<'a> Compiler<'a> {
         // What a chain of looks comes to may itself be called: the value
         // is held aside while the arguments are worked out, since a call
         // wants what it calls above them.
-        if let Some(call) = self.lang.calling.clone() {
+        if let Some(call) = self.lang.calling.as_ref() {
             if stepped && self.at_symbol(&call.open) {
                 let callee = self.gensym("callee");
                 self.write(&callee);

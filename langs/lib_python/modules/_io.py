@@ -1093,7 +1093,7 @@ class FileIO(_RawIOBase):
         return self._fd
     def close(self):
         if not self.closed:
-            if sys.is_finalizing() and _finalizer_os is not None:
+            if _finalizer_os is not None:
                 os = _finalizer_os
             else:
                 import os
@@ -1153,7 +1153,7 @@ class FileIO(_RawIOBase):
     def write(self, buffer):
         self._checkClosed()
         self._checkWritable()
-        if sys.is_finalizing() and _finalizer_os is not None:
+        if _finalizer_os is not None:
             os = _finalizer_os
         else:
             import os
@@ -1163,7 +1163,7 @@ class FileIO(_RawIOBase):
             return None
     def seek(self, offset, whence=0):
         self._checkClosed()
-        if sys.is_finalizing() and _finalizer_os is not None:
+        if _finalizer_os is not None:
             os = _finalizer_os
         else:
             import os
@@ -1174,7 +1174,7 @@ class FileIO(_RawIOBase):
         if size is None:
             size = self.tell()
         size = _ssize(size)
-        if sys.is_finalizing() and _finalizer_os is not None:
+        if _finalizer_os is not None:
             os = _finalizer_os
         else:
             import os
