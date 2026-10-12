@@ -3,6 +3,7 @@
 // https://www.unicode.org/license.txt .
 
 pub fn property(c: char, mask: u16) -> bool {
+    if c.is_ascii() { return ASCII_PROPERTIES[c as usize] & mask != 0; }
     let number = u64::from(c as u32);
     let found = RANGES.partition_point(|entry| (*entry >> 16 & 0x1fffff) < number);
     RANGES.get(found).map_or(false, |entry| {
@@ -3619,13 +3620,17 @@ pub fn name_value(word: &str) -> Option<String> {
     index.get(&word.to_ascii_uppercase()).cloned()
 }
 
-/// The NFKC spelling of an identifier: Python folds a name written with
-/// compatibility characters onto its plain form. Every point is expanded
-/// through the database's decomposition column, the marks are sorted by
-/// combining class, and canonical composition puts the pieces back;
-/// Hangul syllables go by arithmetic instead of a listed decomposition.
-pub fn collated(text: &str) -> String {
+/// One of the four normalization forms, named by a code: 0 NFC,
+/// 1 NFD, 2 NFKC, 3 NFKD. Every point is expanded through the
+/// database's decomposition column (compatibility mappings included
+/// only for the K forms), the marks are sorted by combining class,
+/// and the C forms put the pieces back by canonical composition;
+/// Hangul syllables go by arithmetic instead of a listed
+/// decomposition. NFKC is the form Python gives every identifier.
+pub fn collated(text: &str, form: u8) -> String {
     if text.is_ascii() { return text.to_owned(); }
+    let wholesale = form >= 2;
+    let recompose = form % 2 == 0;
     use std::collections::BTreeMap;
     use std::sync::OnceLock;
     struct Glyphs {
@@ -3660,7 +3665,7 @@ pub fn collated(text: &str) -> String {
         }
         Glyphs { spread, rank, merge }
     });
-    fn expand(point: u32, glyphs: &Glyphs, bag: &mut Vec<u32>) {
+    fn expand(point: u32, glyphs: &Glyphs, wholesale: bool, bag: &mut Vec<u32>) {
         let syllable = point.wrapping_sub(0xAC00);
         if syllable < 19 * 21 * 28 {
             let chunk = 21 * 28;
@@ -3671,12 +3676,15 @@ pub fn collated(text: &str) -> String {
             return;
         }
         match glyphs.spread.get(&point) {
-            Some((_, pieces)) => { for piece in pieces { expand(*piece, glyphs, bag); } }
+            Some((compat, pieces)) => {
+                if *compat && !wholesale { bag.push(point); }
+                else { for piece in pieces { expand(*piece, glyphs, wholesale, bag); } }
+            }
             None => bag.push(point),
         }
     }
     let mut bag: Vec<u32> = Vec::new();
-    for ch in text.chars() { expand(ch as u32, glyphs, &mut bag); }
+    for ch in text.chars() { expand(ch as u32, glyphs, wholesale, &mut bag); }
     let mut placed = 1;
     while placed < bag.len() {
         let level = *glyphs.rank.get(&bag[placed]).unwrap_or(&0);
@@ -3690,6 +3698,9 @@ pub fn collated(text: &str) -> String {
             }
         }
         placed += 1;
+    }
+    if !recompose {
+        return bag.iter().map(|point| char::from_u32(*point).unwrap_or('\u{FFFD}')).collect();
     }
     let span = 19 * 21 * 28;
     let mut joined: Vec<u32> = Vec::new();
@@ -3739,4 +3750,29 @@ pub fn decomposition(point: u32) -> String {
         table
     });
     written.get(&point).cloned().unwrap_or_default()
+}
+
+// Derived from RANGES; ASCII classification needs no range search.
+const ASCII_PROPERTIES: [u16; 128] = [
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 1, 1, 1, 1, 1, 1, 33, 1, 1, 1, 1, 1, 1, 33, 1,
+    1547, 1547, 1547, 1547, 1547, 1547, 1547, 1547, 1547, 1547, 33, 1, 1, 1, 1, 1,
+    1, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141,
+    2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 2141, 1, 1, 1, 33, 9,
+    33, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205,
+    2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 2205, 1, 1, 1, 1, 0,
+];
+
+#[cfg(test)]
+mod ascii_properties_tests {
+    #[test]
+    fn packed_ascii_properties_agree() {
+        for scalar in 0..128u64 {
+            let expected = super::RANGES.iter().find(|row| **row >> 37 <= scalar && scalar <= (**row >> 16 & 0x1fffff)).map_or(0, |row| *row as u16);
+            for bit in 0..16 {
+                assert_eq!(super::property(char::from_u32(scalar as u32).unwrap(), 1 << bit), expected & (1 << bit) != 0);
+            }
+        }
+    }
 }

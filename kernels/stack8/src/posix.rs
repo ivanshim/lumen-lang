@@ -72,6 +72,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
             else { let length = buffer.iter().position(|byte| *byte == 0).unwrap_or(buffer.len()); buffer.truncate(length); Ok(bytes(buffer)) }
         },
         "socket_hostbyaddr" => Ok(host_by_address(&a[0])?),
+        "locale_encoding" => Ok(bytes(CStr::from_ptr(libc::nl_langinfo(libc::CODESET)).to_bytes().to_vec())),
         "getpid" => Ok(Value::Small(libc::getpid() as i64)),
         "getuid" => Ok(Value::Small(libc::getuid() as i64)),
         "geteuid" => Ok(Value::Small(libc::geteuid() as i64)),
@@ -313,6 +314,16 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
                 status(libc::fcntl(fd, libc::F_SETFD, next) as i64)
             }
         },
+        "get_blocking" | "set_blocking" => {
+            let fd = number(0)? as i32;
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            if flags < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            else if op.as_ref() == "get_blocking" { Ok(Value::Flag(flags & libc::O_NONBLOCK == 0)) }
+            else {
+                let next = if a[1].is_true() { flags & !libc::O_NONBLOCK } else { flags | libc::O_NONBLOCK };
+                status(libc::fcntl(fd, libc::F_SETFL, next) as i64)
+            }
+        },
         "pipe" => {
             let mut descriptors = [-1; 2];
             status(libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) as i64)
@@ -334,6 +345,25 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
             status(libc::bind(number(0)? as i32, (&address as *const libc::sockaddr_un).cast(), (std::mem::size_of::<libc::sa_family_t>() + name.len() + 1) as libc::socklen_t) as i64)
         },
         "mkfifo" => { let p = pathname(0)?; status(libc::mkfifoat(number(2)? as i32, p.as_ptr(), number(1)? as libc::mode_t) as i64) },
+        "socketpair" => {
+            let mut fds = [0; 2];
+            if libc::socketpair(number(0)? as _, number(1)? as i32 | libc::SOCK_CLOEXEC, number(2)? as _, fds.as_mut_ptr()) < 0 {
+                Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO))
+            } else { Ok(Value::tuple(fds.into_iter().map(|fd| Value::Small(fd.into())).collect())) }
+        },
+        "socket_shutdown" => status(libc::shutdown(number(0)? as _, number(1)? as _) as i64),
+        "poll" => {
+            let Value::Tuple(requests) = a[0].contents() else { return Err("TypeError: poll requests must be tuple".into()) };
+            let mut fds = Vec::new();
+            for request in requests.iter() {
+                let Value::Tuple(pair) = request.contents() else { return Err("TypeError: poll entry must be tuple".into()) };
+                fds.push(libc::pollfd { fd: integer(&pair[0])? as _, events: integer(&pair[1])? as _, revents: 0 });
+            }
+            let ready = libc::poll(fds.as_mut_ptr(), fds.len() as _, number(1)? as _);
+            if ready < 0 { status(-1) } else {
+                Ok(Value::tuple(fds.iter().filter(|fd| fd.revents != 0).map(|fd| Value::tuple(vec![Value::Small(fd.fd.into()), Value::Small(fd.revents.into())])).collect()))
+            }
+        },
         _ => return Err("NotImplementedError: unknown POSIX operation".into()),
     }};
     Ok(match output { Ok(value) => Value::tuple(vec![Value::Small(0), value]), Err(e) => Value::tuple(vec![Value::Small(e as i64), Value::Null]) })

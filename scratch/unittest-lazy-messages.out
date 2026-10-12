@@ -1,0 +1,1 @@
+passing assertions avoid message formatting; failing assertions retain diagnostics

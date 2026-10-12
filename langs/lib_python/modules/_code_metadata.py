@@ -76,7 +76,7 @@ def construct(*args):
     if values[4] < 0:
         raise SystemError('Objects/codeobject.c:465: bad argument to internal function')
     values.extend([()] * (18 - len(values)))
-    code = __trace_native__(4, values[6])
+    code = __trace_native__(12, values[6])
     return code.replace(**dict(zip(order, values)))
 
 # Provide the unbound replacement protocol used by copy.replace.

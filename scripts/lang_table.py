@@ -22,7 +22,7 @@ BUILT_IN = ["lumen", "rplumen", "python", "rust"]
 
 def code(s: str) -> str:
     """A code span for a table cell; a pipe must be escaped there."""
-    return "`" + s.replace("|", "\\|") + "`"
+    return "`" + s.replace("|", "\\|").replace("\n", "\\n").replace("\r", "\\r") + "`"
 
 
 def plain(s: str) -> str:

@@ -161,6 +161,27 @@ pub(crate) fn expression(value: &Value, words: Names) -> String {
 fn blank(letter: char) -> bool { matches!(letter,'\u{1c}'..='\u{1f}') || letter.is_whitespace() }
 
 pub(crate) fn case_changed(word: &str, work: Work) -> String {
+    if word.is_ascii() {
+        match work {
+            Work::UPPER => return word.to_ascii_uppercase(),
+            Work::LOWER | Work::CASEFOLD => return word.to_ascii_lowercase(),
+            Work::CAPITALIZE | Work::TITLE | Work::SWAPCASE => {
+                let mut result = String::with_capacity(word.len());
+                let mut cased_before = false;
+                for (position, character) in word.char_indices() {
+                    let to_upper = match work {
+                        Work::CAPITALIZE => position == 0,
+                        Work::TITLE => !cased_before,
+                        _ => character.is_ascii_lowercase(),
+                    };
+                    result.push(if to_upper { character.to_ascii_uppercase() } else { character.to_ascii_lowercase() });
+                    cased_before = character.is_ascii_alphabetic();
+                }
+                return result;
+            }
+            _ => {},
+        }
+    }
     let characters: Vec<_>=word.chars().collect();
     characters.iter().enumerate().map(|(i,&letter)| {
         let lower=match work {
@@ -265,6 +286,25 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     } else { input };
 
     use Work::*;
+    // A descriptor search keeps the original Python character sequence.
+    let code_work = match work { FIND => "find", RFIND => "rfind", INDEX => "index", RINDEX => "rindex", COUNT => "count", REPLACE => "replace", LOWER => "lower", UPPER => "upper", _ => "" };
+    if code_work != "" && matches!(input.first(), Some(Value::Text(_) | Value::Unpaired(_)))
+        && input.iter().take(3).any(|v| matches!(v, Value::Unpaired(_))) {
+        let failure = |reason: &str| complaint(table, reason);
+        let absent = |_: &Value, _: &str| complaint(table, "receiver");
+        let request = crate::members::Request { target: &input[0], operation: code_work, given: input[1..].to_vec(), named: &[], names, complaint: &failure, unanswered: &absent };
+        return request.work_units(&input[0].character_numbers().unwrap());
+    }
+    // Splitting through a str descriptor also accepts lone surrogate separators.
+    let unit_split = matches!(work, SPLIT | RSPLIT)
+        && matches!(input.first(), Some(Value::Text(_) | Value::Unpaired(_)))
+        && input.iter().take(2).any(|v| matches!(v, Value::Unpaired(_)));
+    if unit_split {
+        let says = |reason: &str| complaint(table, reason);
+        let missing = |_: &Value, _: &str| complaint(table, "receiver");
+        return crate::members::Request { target: &input[0], operation: if work == SPLIT { "split" } else { "rsplit" },
+            given: input[1..].to_vec(), named: &[], names, complaint: &says, unanswered: &missing }.answer();
+    }
     if work==MAKETRANS {
         return make_table(input,table);
     }
@@ -290,7 +330,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
         }
 
 
-        if matches!(work, LOWER | UPPER | CASEFOLD) {
+        if matches!(work, LOWER | UPPER | CASEFOLD | SWAPCASE) {
             if input.len() > 1 { return Err(format!("TypeError: str.{}() takes no arguments ({} given)", _name.rsplit('.').next().unwrap_or(_name), input.len()-1)); }
             let mut result: Vec<u32> = Vec::new();
             let mut offset = 0;
@@ -416,6 +456,24 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
                 match numbers.get(offset){Some(number)=>{result.push(*number);offset+=1},None=>break}
             }
             return Ok(Value::characters(result));
+        }
+        if matches!(work, PARTITION | RPARTITION) {
+            if input.len() != 2 { return Err(complaint(table, "arguments")); }
+            let separator = unpack(&input[1]).map_err(|_| format!("TypeError: {}() argument must be str, not {}", if work == PARTITION { "partition" } else { "rpartition" }, input[1].kind_word()))?;
+            if separator.is_empty() { return Err(String::from("ValueError: empty separator")); }
+            let last = numbers.len().checked_sub(separator.len());
+            let seek = |at: usize| numbers[at..at + separator.len()] == separator[..];
+            let found = match last {
+                None => None,
+                Some(last) if work == PARTITION => (0..=last).find(|&at| seek(at)),
+                Some(last) => (0..=last).rev().find(|&at| seek(at)),
+            };
+            let (front, middle, back) = match found {
+                Some(at) => (numbers[..at].to_vec(), separator.clone(), numbers[at + separator.len()..].to_vec()),
+                None if work == RPARTITION => (Vec::new(), Vec::new(), numbers.to_vec()),
+                None => (numbers.to_vec(), Vec::new(), Vec::new()),
+            };
+            return Ok(Value::tuple(vec![Value::characters(front), Value::characters(middle), Value::characters(back)]));
         }
         if matches!(work,SPLIT|RSPLIT) && input.len()<4 {
             let delimiter=match input.get(1){Some(item) if !matches!(item,Value::Nil)=>Some(unpack(item)?),_=>None};
@@ -796,4 +854,34 @@ pub(crate) fn extent_of_string(subject: &Rc<str>) -> usize {
         lengths.insert(identity, (Rc::downgrade(subject), measured));
         measured
     })
+}
+
+#[cfg(test)]
+mod recase_tests {
+    use super::{case_changed, Work};
+    #[test]
+    fn ascii_and_unicode_case_changes() {
+        assert_eq!(case_changed("Az09\x1f", Work::UPPER), "AZ09\x1f");
+        assert_eq!(case_changed("Az09\x1f", Work::CASEFOLD), "az09\x1f");
+        assert_eq!(case_changed("Straße ΣΟΣ", Work::LOWER), "straße σος");
+        assert_eq!(case_changed("Straße ΣΟΣ", Work::UPPER), "STRASSE ΣΟΣ");
+        assert_eq!(case_changed("hELLO don't 42world!", Work::CAPITALIZE), "Hello don't 42world!");
+        assert_eq!(case_changed("hELLO don't 42world!", Work::TITLE), "Hello Don'T 42World!");
+        assert_eq!(case_changed("hELLO don't 42world!", Work::SWAPCASE), "Hello DON'T 42WORLD!");
+
+    }
+}
+
+/// The immutable builtin label roster, indexed by its text-method suffix.
+pub fn named_work(name: &str) -> Option<Work> {
+    static WORDS: std::sync::LazyLock<std::collections::HashMap<&'static str, Work, crate::table::FxBuildHasher>> = std::sync::LazyLock::new(|| {
+        let mut words = std::collections::HashMap::default();
+        for (label, operation) in crate::table::BUILTIN_LABELS {
+            if let (Some(name), crate::form::Prim::Textual(work)) = (label.strip_prefix("ext.builtin.text."), operation) {
+                words.entry(name).or_insert(work);
+            }
+        }
+        words
+    });
+    WORDS.get(name).copied()
 }

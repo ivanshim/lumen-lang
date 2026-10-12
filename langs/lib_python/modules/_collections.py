@@ -562,6 +562,7 @@ class defaultdict(dict):
     # a member of its own.
     __slots__ = ('_defaultdict__factory',)
 
+    __module__ = 'collections'
     def __new__(cls, default_factory=None, *args, **kwargs):
         return super().__new__(cls)
 
@@ -672,7 +673,12 @@ class _OrderedDictIterator:
         self._mapping = mapping
         self._kind = kind
         self._back = back
-        self._keys = list(mapping)
+        self._keys = []
+        root = object.__getattribute__(mapping, '_OrderedDict__root')
+        current = root.next
+        while current is not root:
+            self._keys.append(current.key)
+            current = current.next
         if back:
             self._keys.reverse()
         self._at = 0
@@ -699,10 +705,16 @@ class _OrderedDictIterator:
         return len(self._keys) - self._at
 
     def __reduce__(self):
-        clone = type(self)(self._mapping, self._kind, self._back)
-        clone._at = self._at
-        clone._version = self._version
-        return (iter, (list(clone),))
+        if self._mapping._version != self._version:
+            raise RuntimeError('OrderedDict mutated during iteration')
+        remaining = []
+        for key in self._keys[self._at:]:
+            if self._kind == 'k':
+                remaining.append(key)
+            else:
+                value = dict.__getitem__(self._mapping, key)
+                remaining.append(value if self._kind == 'v' else (key, value))
+        return (iter, (remaining,))
 
     def __setstate__(self, state):
         self._at, self._version = state
@@ -737,6 +749,7 @@ def _native_ordered_dict(base):
     marker = object()
 
     class OrderedDict(base):
+        __module__ = 'collections'
         __slots__ = ('_version',)
 
         def __new__(cls, /, *args, **kwds):
@@ -821,24 +834,10 @@ def _native_ordered_dict(base):
             return ordered
 
         def __iter__(self):
-            version = self._version
-            root = object.__getattribute__(self, '_OrderedDict__root')
-            current = root.next
-            while current is not root:
-                yield current.key
-                if self._version != version:
-                    raise RuntimeError('OrderedDict mutated during iteration')
-                current = current.next
+            return _OrderedDictIterator(self, 'k')
 
         def __reversed__(self):
-            version = self._version
-            root = object.__getattribute__(self, '_OrderedDict__root')
-            current = root.prev
-            while current is not root:
-                yield current.key
-                if self._version != version:
-                    raise RuntimeError('OrderedDict mutated during iteration')
-                current = current.prev
+            return _OrderedDictIterator(self, 'k', True)
 
     OrderedDict.__module__ = 'collections'
     OrderedDict.__qualname__ = 'OrderedDict'

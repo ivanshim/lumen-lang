@@ -215,7 +215,13 @@ pub fn answered(value: &Value, operation: &str) -> bool {
 pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)], words: &Wording, fault: &dyn Fn(&str) -> String, absent: &dyn Fn(&Value, &str) -> String, allow_cycles: bool) -> Answer {
     let mut supplied = args.to_vec();
     if !names.is_empty() && !matches!(op, "format" | "update" | "encode") {
-        let slots: &[&str] = match op { "split" | "rsplit" => &["sep", "maxsplit"], _ => &[] };
+        let slots: &[&str] = match op {
+            "split" | "rsplit" => &["sep", "maxsplit"],
+            // Replace keeps old and new positional-only and takes one
+            // name, count, in the third place.
+            "replace" => &["", "", "count"],
+            _ => &[],
+        };
         for (name, v) in names {
             let Some(at) = slots.iter().position(|s| s == name) else { return Err(fault("arguments")); };
             if at < args.len() { return Err(fault("arguments")); }
@@ -249,6 +255,11 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
         // A held surrogate answers the six category questions from a
         // stand-in text built for exactly this reading. Trimming and
         // affix comparisons instead work on the original code units.
+        Value::Codepoints(row) if matches!(op, "find" | "rfind" | "index" | "rindex" | "count" | "replace" | "lower" | "upper") => codepoint_operation(row, op, a, fault),
+        Value::Codepoints(row) if matches!(op, "split" | "rsplit") => split_codepoints(row, op == "rsplit", a, fault),
+        Value::Text(s) if matches!(op, "split" | "rsplit") && a.first().is_some_and(|v| matches!(v.contents(), Value::Codepoints(_))) => {
+            split_codepoints(&s.chars().map(u32::from).collect::<Vec<_>>(), op == "rsplit", a, fault)
+        }
         Value::Codepoints(row) if matches!(op, "strip" | "lstrip" | "rstrip") => {
             arity(0, 1)?;
             let characters = match a.first().map(Value::contents) {
@@ -326,7 +337,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
         // empty piece stands at the near edge of the window.
         Value::Codepoints(row) if matches!(op, "find" | "rfind" | "index" | "rindex") => {
             arity(1, 3)?;
-            let sought = a[0].contents().text_codes().ok_or_else(|| fault("string"))?;
+            let sought = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
             let edge = |given: Option<&Value>, otherwise: i64| -> Result<i64, String> {
                 match given.map(Value::contents) { None | Some(Value::Null) => Ok(otherwise), Some(v) => integer(&v, fault) }
             };
@@ -350,13 +361,62 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             if place.is_none() && matches!(op, "index" | "rindex") { return Err(fault("substring")); }
             return Ok(Value::Small(place.map_or(-1, |at| at as i64)));
         }
+        // A count walks the selected window the same way, never letting
+        // one match keep the next from being found after it.
+        Value::Codepoints(row) if op == "count" => {
+            arity(1, 3)?;
+            let sought = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            let edge = |given: Option<&Value>, otherwise: i64| -> Result<i64, String> {
+                match given.map(Value::contents) { None | Some(Value::Null) => Ok(otherwise), Some(v) => integer(&v, fault) }
+            };
+            let last = row.len() as i64;
+            let mut low = edge(a.get(1), 0)?;
+            let mut high = edge(a.get(2), last)?;
+            if low < 0 { low = (last + low).max(0); }
+            if high < 0 { high = (last + high).max(0); }
+            let past = low > last;
+            let low = low.clamp(0, last) as usize;
+            let high = high.clamp(0, last) as usize;
+            if past || low > high { return Ok(Value::Small(0)); }
+            if sought.is_empty() { return Ok(Value::Small((high - low) as i64 + 1)); }
+            let window = &row[low..high];
+            let mut total = 0i64;
+            let mut at = 0usize;
+            while at + sought.len() <= window.len() {
+                if window[at..at + sought.len()] == sought[..] { total += 1; at += sought.len(); } else { at += 1; }
+            }
+            return Ok(Value::Small(total));
+        }
+        // A cut at the first or the last separator hands the three parts
+        // back, each keeping the code units it was made of.
+        Value::Codepoints(row) if op == "partition" || op == "rpartition" => {
+            arity(1, 1)?;
+            let separator = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            if separator.is_empty() { return Err(fault("separator")); }
+            let backwards = op == "rpartition";
+            let mut found = None;
+            let mut at = 0usize;
+            while at + separator.len() <= row.len() {
+                if row[at..at + separator.len()] == separator[..] {
+                    found = Some(at);
+                    if !backwards { break; }
+                }
+                at += 1;
+            }
+            let (front, middle, back) = match found {
+                Some(at) => (row[..at].to_vec(), separator.clone(), row[at + separator.len()..].to_vec()),
+                None if backwards => (Vec::new(), Vec::new(), row.to_vec()),
+                None => (row.to_vec(), Vec::new(), Vec::new()),
+            };
+            return Ok(Value::tuple(vec![Value::from_codes(front), Value::from_codes(middle), Value::from_codes(back)]));
+        }
         // Every run the pattern matches is swapped for the replacement,
         // no more often than the count allows; an empty pattern stands
         // before every unit and once past the last one.
         Value::Codepoints(row) if op == "replace" => {
             arity(2, 3)?;
-            let sought = a[0].contents().text_codes().ok_or_else(|| fault("string"))?;
-            let instead = a[1].contents().text_codes().ok_or_else(|| fault("string"))?;
+            let sought = a[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+            let instead = a[1].contents().text_codes().ok_or_else(|| fault("arguments"))?;
             let limit = a.get(2).map_or(Ok(-1), |v| whole_count(v, fault))?;
             let allowed = if limit < 0 { usize::MAX } else { limit as usize };
             let mut answer = Vec::with_capacity(row.len() + instead.len());
@@ -715,4 +775,91 @@ fn hex_real(spelling: &str) -> Option<f64> {
         }
     };
     Some(if negative { -magnitude } else { magnitude })
+}
+
+// Splitting keeps each Python code point, including lone surrogate halves.
+fn split_codepoints(source: &[u32], backwards: bool, args: &[Value], fault: &dyn Fn(&str) -> String) -> Answer {
+    if args.len() > 2 { return Err(fault("arguments")); }
+    let count = args.get(1).map(|v| integer(v, fault)).transpose()?.unwrap_or(-1);
+    let ceiling = if count < 0 { usize::MAX } else { count as usize };
+    let separator = match args.first().map(Value::contents) {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(value.text_codes().ok_or_else(|| fault("arguments"))?),
+    };
+    if separator.as_ref().is_some_and(Vec::is_empty) { return Err(fault("separator")); }
+    let white = |n: u32| (28..=31).contains(&n) || char::from_u32(n).is_some_and(char::is_whitespace);
+    let mut remainder = source;
+    let mut pieces = Vec::new();
+    loop {
+        if separator.is_none() {
+            if backwards { while remainder.last().is_some_and(|&n| white(n)) { remainder = &remainder[..remainder.len() - 1]; } }
+            else { while remainder.first().is_some_and(|&n| white(n)) { remainder = &remainder[1..]; } }
+            if remainder.is_empty() { break; }
+        }
+        if pieces.len() == ceiling { pieces.push(Value::from_codes(remainder.to_vec())); break; }
+        let width = separator.as_ref().map_or(1, Vec::len);
+        let cut = match &separator {
+            Some(chars) if backwards => remainder.windows(width).rposition(|part| part == chars),
+            Some(chars) => remainder.windows(width).position(|part| part == chars),
+            None if backwards => remainder.iter().rposition(|&n| white(n)),
+            None => remainder.iter().position(|&n| white(n)),
+        };
+        let Some(at) = cut else { pieces.push(Value::from_codes(remainder.to_vec())); break; };
+        if backwards { pieces.push(Value::from_codes(remainder[at + width..].to_vec())); remainder = &remainder[..at]; }
+        else { pieces.push(Value::from_codes(remainder[..at].to_vec())); remainder = &remainder[at + width..]; }
+    }
+    if backwards { pieces.reverse(); }
+    Ok(Value::array(pieces).held(true))
+}
+
+// Search and replacement use character offsets, never UTF-8 byte offsets.
+pub(crate) fn codepoint_operation(row: &[u32], op: &str, args: &[Value], fault: &dyn Fn(&str) -> String) -> Answer {
+    if matches!(op, "lower" | "upper") {
+        if !args.is_empty() { return Err(fault("arguments")); }
+        let mut result = Vec::new();
+        for segment in row.split_inclusive(|&n| char::from_u32(n).is_none()) {
+            let (valid, surrogate) = if segment.last().is_some_and(|&n| char::from_u32(n).is_none()) { (&segment[..segment.len()-1], segment.last()) } else { (segment, None) };
+            let text: String = valid.iter().filter_map(|&n| char::from_u32(n)).collect();
+            let kind = if op == "lower" { crate::strings::TextOp::Lower } else { crate::strings::TextOp::Upper };
+            result.extend(crate::strings::recase(&text, kind).chars().map(u32::from));
+            if let Some(&n) = surrogate { result.push(n); }
+        }
+        return Ok(Value::from_codes(result));
+    }
+    let least = if op == "replace" { 2 } else { 1 };
+    if args.len() < least || args.len() > 3 { return Err(fault("arguments")); }
+    let needle = args[0].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+    if op == "replace" {
+        let replacement = args[1].contents().text_codes().ok_or_else(|| fault("arguments"))?;
+        let count = args.get(2).map(|v| integer(v, fault)).transpose()?.unwrap_or(-1);
+        let limit = if count < 0 { usize::MAX } else { count as usize };
+        let mut answer = Vec::new();
+        let mut cursor = 0;
+        let mut changed = 0;
+        while cursor <= row.len() {
+            if changed < limit && row[cursor..].starts_with(&needle) {
+                answer.extend_from_slice(&replacement); changed += 1;
+                if !needle.is_empty() { cursor += needle.len(); continue; }
+            }
+            if cursor == row.len() { break; }
+            answer.push(row[cursor]); cursor += 1;
+        }
+        return Ok(Value::from_codes(answer));
+    }
+    let start = args.get(1).filter(|v| !matches!(v.contents(), Value::Null)).map(|v| integer(v, fault)).transpose()?.unwrap_or(0);
+    let stop = args.get(2).filter(|v| !matches!(v.contents(), Value::Null)).map(|v| integer(v, fault)).transpose()?.unwrap_or(row.len() as i64);
+    let lo = bound(start, row.len()); let hi = bound(stop, row.len());
+    let valid = start <= row.len() as i64 && lo <= hi;
+    let span = if valid { &row[lo..hi] } else { &[] };
+    let found = if !valid { None } else if needle.is_empty() { Some(if op == "rfind" || op == "rindex" { span.len() } else { 0 }) }
+        else if op == "rfind" || op == "rindex" { span.windows(needle.len()).rposition(|part| part == needle) }
+        else { span.windows(needle.len()).position(|part| part == needle) };
+    if op == "count" {
+        let mut total = 0; let mut rest = span;
+        if valid && needle.is_empty() { total = span.len() + 1; }
+        else if valid { while let Some(at) = rest.windows(needle.len()).position(|part| part == needle) { total += 1; rest = &rest[at+needle.len()..]; } }
+        return Ok(Value::Small(total as i64));
+    }
+    if found.is_none() && matches!(op, "index" | "rindex") { return Err(fault("missing")); }
+    Ok(Value::Small(found.map_or(-1, |at| (lo + at) as i64)))
 }

@@ -50,6 +50,52 @@ def get_recursion_depth():
     return depth
 
 
+# Contracts of CPython v3.14.8 Modules/_testinternalcapi.c and fileutils.c.
+def _locale_arguments(current_locale, errors):
+    import operator
+    current_locale = operator.index(current_locale)
+    if current_locale < -2147483648:
+        raise OverflowError('signed integer is less than minimum')
+    if current_locale > 2147483647:
+        raise OverflowError('signed integer is greater than maximum')
+    if not isinstance(errors, str):
+        raise TypeError('argument 3 must be str, not ' + type(errors).__name__)
+    if '\0' in errors:
+        raise ValueError('embedded null character')
+    import sys
+    encoding = __posix('locale_encoding')[1].decode('ascii') if current_locale else sys.getfilesystemencoding()
+    allowed = ('strict', 'surrogateescape', 'surrogatepass') if not current_locale and encoding.lower().replace('_', '-') == 'utf-8' else ('strict', 'surrogateescape')
+    if errors not in allowed:
+        raise ValueError('unsupported error handler')
+    return encoding, current_locale
+
+
+def EncodeLocaleEx(text, current_locale=0, errors='strict', /):
+    if not isinstance(text, str):
+        raise TypeError('argument 1 must be str, not ' + type(text).__name__)
+    if '\0' in text:
+        raise ValueError('embedded null character')
+    encoding, current_locale = _locale_arguments(current_locale, errors)
+    try:
+        return text.encode(encoding, errors)
+    except UnicodeEncodeError as exc:
+        raise RuntimeError('encode error: pos=%d, reason=%s' % (exc.start, 'encoding error')) from None
+
+
+def DecodeLocaleEx(data, current_locale=0, errors='strict', /):
+    if not isinstance(data, (bytes, bytearray, memoryview)):
+        raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'")
+    if not isinstance(data, bytes):
+        raise TypeError('argument 1 must be read-only bytes-like object, not ' + type(data).__name__)
+    if b'\0' in data:
+        raise ValueError('embedded null byte')
+    encoding, current_locale = _locale_arguments(current_locale, errors)
+    try:
+        return data.decode(encoding, errors)
+    except UnicodeDecodeError as exc:
+        raise RuntimeError('decode error: pos=%d, reason=%s' % (exc.start, 'decoding error' if current_locale else exc.reason)) from None
+
+
 def __getattr__(name):
     raise AttributeError("module '_testinternalcapi' has no attribute '" + name + "'")
 
@@ -68,7 +114,7 @@ def code_returns_only_none(code, /):
     import types
     if not isinstance(code, types.CodeType):
         raise TypeError('argument must be a code object')
-    return not bool(code.co_flags & (0x20 | 0x80 | 0x100 | 0x200)) and __trace_native__(3, code)[2]
+    return not bool(code.co_flags & (0x20 | 0x80 | 0x100 | 0x200)) and __trace_native__(11, code)[2]
 
 
 def get_co_localskinds(value, /):
@@ -116,7 +162,7 @@ def get_code_var_counts(code, globalnames=_UNSPECIFIED_CODE_NAMESPACE,
         _code_namespace(namespace, position)
     code, function = _code_subject(code)
     kinds = get_co_localskinds(code)
-    references, attributes, _ = __trace_native__(3, code)
+    references, attributes, _ = __trace_native__(11, code)
     for names, label in ((globalnames, 'globalnames'), (attrnames, 'attrnames')):
         if names is not _UNSPECIFIED_CODE_NAMESPACE and not isinstance(names, set):
             raise TypeError('expected a set for "' + label + '", got ' + repr(names))

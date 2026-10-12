@@ -36,6 +36,8 @@ pub struct Token {
     pub raw: Option<String>,
     pub span: usize,
     pub row: u32,
+    pub utf8_column: usize,
+    pub utf8_end: usize,
     pub column: usize,
     pub end_column: usize,
     pub end_row: u32,
@@ -511,9 +513,9 @@ fn scan_notices(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)
         if text.is_empty() {
             return;
         }
-        out.push(Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Bare, lexeme: telling.clone(), raw: None, span: 0, row });
-        out.push(Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Quote, lexeme: text.to_string(), raw: None, span: 0, row });
-        out.push(Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Sign, lexeme: ending.clone(), raw: None, span: 0, row });
+        out.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Bare, lexeme: telling.clone(), raw: None, span: 0, row });
+        out.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Quote, lexeme: text.to_string(), raw: None, span: 0, row });
+        out.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Sign, lexeme: ending.clone(), raw: None, span: 0, row });
     };
     let mut rest = source;
     // The rows of the page are counted through the weave, so that what
@@ -554,11 +556,11 @@ fn scan_notices(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)
         inside.pop();
         let ended = inside.last().map_or(row, |t| t.row);
         if writes {
-            out.push(Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Bare, lexeme: telling.clone(), raw: None, span: 0, row });
+            out.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Bare, lexeme: telling.clone(), raw: None, span: 0, row });
         }
         out.append(&mut inside);
         // Each run of code stands as a statement, however it ended.
-        out.push(Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Sign, lexeme: ending.clone(), raw: None, span: 0, row: ended });
+        out.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Sign, lexeme: ending.clone(), raw: None, span: 0, row: ended });
         row += code.matches('\n').count() as u32;
         // One line end straight after the closing marker belongs to it.
         let shorter = tail.strip_prefix('\n').unwrap_or_else(|| tail.strip_prefix("\r\n").unwrap_or(tail));
@@ -568,7 +570,7 @@ fn scan_notices(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)
         rest = shorter;
     }
     says(rest, row, &mut out);
-    out.push(Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Finish, lexeme: "EOF".into(), raw: None, span: 0, row });
+    out.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Finish, lexeme: "EOF".into(), raw: None, span: 0, row });
     Ok(out)
 }
 
@@ -676,7 +678,7 @@ impl Quotation<'_> {
         self.table.single("ext.lexical.string.amiss").unwrap_or("Invalid string literal").to_owned()
     }
     fn token(&mut self, kind: Shape, text: String) {
-        self.made.push(Token { end_row: 0, end_column: 0, column: 1, row: self.row, shape: kind, lexeme: text, raw: None, span: 0 });
+        self.made.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, row: self.row, shape: kind, lexeme: text, raw: None, span: 0 });
     }
     fn flush(&mut self, text: &mut String, missing: &mut bool) {
         let kind = if *missing { Shape::Unheld } else if self.substitutes.is_empty() { Shape::Quote } else { Shape::CharacterRow };
@@ -1168,8 +1170,8 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
     let line_beginnings: Vec<usize> = std::iter::once(0).chain(src.iter().enumerate().filter_map(|(i, c)| (*c == '\n').then_some(i + 1))).collect();
     let at_column = |index| index - line_beginnings[line_beginnings.partition_point(|start| *start <= index) - 1] + 1;
     let column = std::cell::Cell::new(1usize);
-    let tok = |kind: Shape, text: String, row: u32| Token { end_row: 0, end_column: 0, column: column.get(), shape: kind, lexeme: text, raw: None, span: 0, row: row };
-    let tok_spelled = |kind: Shape, text: String, raw: Option<String>, row: u32| Token { end_row: 0, end_column: 0, column: column.get(), shape: kind, lexeme: text, raw, span: 0, row: row };
+    let tok = |kind: Shape, text: String, row: u32| Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: column.get(), shape: kind, lexeme: text, raw: None, span: 0, row: row };
+    let tok_spelled = |kind: Shape, text: String, raw: Option<String>, row: u32| Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: column.get(), shape: kind, lexeme: text, raw, span: 0, row: row };
     let (mut pos, mut row, mut at_bol) = (0usize, first, true);
     while pos < src.len() {
         // The row the reading has reached is kept where the caller can
@@ -1196,7 +1198,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
                 at_bol = true;
                 continue;
             }
-            tokens.push(Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Lead, lexeme: src[pos..k].iter().collect(), raw: None, span: width, row: row });
+            tokens.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Lead, lexeme: src[pos..k].iter().collect(), raw: None, span: width, row: row });
             pos = k;
         }
         column.set(at_column(pos));
@@ -1533,7 +1535,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             // so the token keeps both when they differ.
             let mut raw = None;
             if table.flag("ext.lexical.identifier.normalized") {
-                let folded = crate::unicode::collated(&s);
+                let folded = crate::unicode::collated(&s, 2);
                 if folded != s { raw = Some(std::mem::replace(&mut s, folded)); }
             }
             let low = s.to_lowercase();
@@ -1583,6 +1585,24 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
     }
     column.set(at_column(src.len()));
     tokens.push(tok(Shape::Finish, "EOF".into(), row));
+    if table.has_any("ext.builtin.exceptions.traceback") {
+        let mut byte_rows = Vec::new();
+        for line in source.split('\n') {
+            let mut total = 0;
+            let mut points = vec![1];
+            for character in line.chars() { total += character.len_utf8(); points.push(total + 1); }
+            byte_rows.push(points);
+        }
+        for item in tokens.iter_mut() {
+            let beginning = item.row.saturating_sub(first) as usize;
+            item.utf8_column = byte_rows.get(beginning).and_then(|points| points.get(item.column.saturating_sub(1)))
+                .copied().unwrap_or(item.column);
+            if item.end_column != 0 {
+                item.utf8_end = byte_rows.get(item.end_row.saturating_sub(first) as usize)
+                    .and_then(|points| points.get(item.end_column - 1)).copied().unwrap_or(item.end_column);
+            }
+        }
+    }
     Ok(tokens)
 }
 
@@ -1730,8 +1750,8 @@ fn told_of_character(table: &Table, c: char, row: u32) -> String {
 /// from the empty string, so the result is text whatever is woven in.
 fn weave(s: &str, plain: &[usize], table: &Table, row: u32, tokens: &mut Vec<Token>) -> Result<(), String> {
     let cut = pieces(s, plain, table)?;
-    let sign = |text: &str| Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Sign, lexeme: text.to_string(), raw: None, span: 0, row };
-    let quote = |text: String| Token { end_row: 0, end_column: 0, column: 1, shape: Shape::Quote, lexeme: text, raw: None, span: 0, row };
+    let sign = |text: &str| Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Sign, lexeme: text.to_string(), raw: None, span: 0, row };
+    let quote = |text: String| Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Quote, lexeme: text, raw: None, span: 0, row };
     if !cut.iter().any(|p| matches!(p, Piece::Code(_))) {
         tokens.push(quote(s.to_string()));
         return Ok(());
@@ -1881,7 +1901,7 @@ fn failed_digit(spelling: &str, complaint: &str) -> usize {
 pub(crate) fn save_tokens(words: &[Token]) -> String {
     serde_json::json!(words.iter().map(|word| (
         word.shape as u8, &word.lexeme, &word.raw, word.span, word.row,
-        word.column, word.end_column, word.end_row
+        word.column, word.end_column, word.end_row, word.utf8_column, word.utf8_end
     )).collect::<Vec<_>>()).to_string()
 }
 
@@ -1892,7 +1912,7 @@ pub(crate) fn restore_tokens(serialized: &str) -> Result<Vec<Token>, String> {
     let mut words = Vec::new();
     for item in json.as_array().ok_or_else(malformed)? {
         let parts = item.as_array().ok_or_else(malformed)?;
-        if parts.len() != 8 { return Err(malformed()); }
+        if !matches!(parts.len(), 8 | 10) { return Err(malformed()); }
         let integer = |slot: usize| -> Result<usize, String> {
             parts[slot].as_u64().and_then(|value| value.try_into().ok()).ok_or_else(malformed)
         };
@@ -1904,7 +1924,8 @@ pub(crate) fn restore_tokens(serialized: &str) -> Result<Vec<Token>, String> {
         };
         words.push(Token { shape: *tags.get(tag).ok_or_else(malformed)?, lexeme: spelling, raw: original,
             span: integer(3)?, row: integer(4)?.try_into().map_err(|_| malformed())?,
-            column: integer(5)?, end_column: integer(6)?, end_row: integer(7)?.try_into().map_err(|_| malformed())? });
+            column: integer(5)?, end_column: integer(6)?, end_row: integer(7)?.try_into().map_err(|_| malformed())?,
+            utf8_column: integer(if parts.len() == 10 { 8 } else { 5 })?, utf8_end: integer(if parts.len() == 10 { 9 } else { 6 })? });
     }
     if words.last().map_or(true, |last| last.shape != Shape::Finish) { return Err(malformed()); }
     Ok(words)

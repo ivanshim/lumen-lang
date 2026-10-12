@@ -11,8 +11,9 @@ from io import StringIO
 
 MISSING_C_DOCSTRINGS = True
 verbose = False
-is_wasi = False
-is_emscripten = False
+is_wasi = sys.platform == "wasi"
+is_emscripten = sys.platform == "emscripten"
+is_wasm32 = is_emscripten or is_wasi
 Py_DEBUG = False
 Py_GIL_DISABLED = False
 MS_WINDOWS = False
@@ -91,6 +92,8 @@ def requires_resource(resource):
 # A note for a runner that would put tests in threads at once. Nothing
 # here does, so the note is kept and the test runs.
 def thread_unsafe(reason=''):
+    if callable(reason):
+        return reason
     return _identity
 
 def bigmemtest(size, memuse, dry_run=True):
@@ -1711,3 +1714,39 @@ def skip_if_buggy_ucrt_strfptime(test):
         else:
             _buggy_ucrt = False
     return unittest.skip("buggy MSVC UCRT strptime/strftime")(test) if _buggy_ucrt else test
+
+
+
+# Render dictionary entries in the order used by CPython test.support.
+def sortdict(dict):
+    items = sorted(dict.items())
+    reprpairs = ["%r: %r" % pair for pair in items]
+    return "{%s}" % ", ".join(reprpairs)
+
+# CPython v3.14.8 Lib/test/support/__init__.py; PSF License.
+import stat
+def _force_run(path, func, *args):
+    try:
+        return func(*args)
+    except FileNotFoundError as err:
+        # chmod() won't fix a missing file.
+        if verbose >= 2:
+            print('%s: %s' % (err.__class__.__name__, err))
+        raise
+    except OSError as err:
+        if verbose >= 2:
+            print('%s: %s' % (err.__class__.__name__, err))
+            print('re-run %s%r' % (func.__name__, args))
+        os.chmod(path, stat.S_IRWXU)
+        return func(*args)
+
+# Provide the general regression-support exception base.
+class Error(Exception):
+    pass
+
+def has_no_debug_ranges():
+    try:
+        import _testcapi
+    except ImportError:
+        raise unittest.SkipTest("_testinternalcapi required")
+    return not _testcapi.config_get('code_debug_ranges')

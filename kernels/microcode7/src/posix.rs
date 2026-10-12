@@ -132,6 +132,10 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                     _ => Err(errno()),
                 }
             },
+        "locale_encoding" => {
+            let name = libc::nl_langinfo(libc::CODESET);
+            Ok(octets(CStr::from_ptr(name).to_bytes()))
+        },
             "getpid" | "getuid" | "geteuid" | "getgid" | "getegid" => {
                 let ident = match operation.as_ref() { "getpid" => libc::getpid() as i64, "getuid" => libc::getuid() as i64, "geteuid" => libc::geteuid() as i64, "getgid" => libc::getgid() as i64, _ => libc::getegid() as i64 };
                 Ok(Value::Small(ident))
@@ -294,6 +298,16 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                 checked(libc::fcntl(fd, libc::F_SETFD, next) as i64)
             }
         },
+        "get_blocking" | "set_blocking" => {
+            let fd = int(0)? as i32;
+            let flags = libc::fcntl(fd, libc::F_GETFL);
+            if flags < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            else if operation.as_ref() == "get_blocking" { Ok(Value::Flag(flags & libc::O_NONBLOCK == 0)) }
+            else {
+                let next = if params[1].is_true() { flags & !libc::O_NONBLOCK } else { flags | libc::O_NONBLOCK };
+                checked(libc::fcntl(fd, libc::F_SETFL, next) as i64)
+            }
+        },
         "pipe" => {
             let mut descriptors = [-1; 2];
             checked(libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) as i64)
@@ -311,6 +325,26 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                     let words = [&names.sysname, &names.nodename, &names.release, &names.version, &names.machine];
                     Ok(Value::tuple(words.iter().map(|name| Value::text(&CStr::from_ptr(name.as_ptr()).to_string_lossy())).collect()))
                 }
+            }
+            "poll" => {
+                let rows = match params[0].settled() { Value::Tuple(rows) => rows, _ => return Err(String::from("TypeError: poll requests must be tuple")) };
+                let mut descriptors: Vec<libc::pollfd> = Vec::with_capacity(rows.len());
+                for row in rows.iter() {
+                    let Value::Tuple(parts) = row.settled() else { return Err(String::from("TypeError: poll entry must be tuple")) };
+                    descriptors.push(libc::pollfd { fd: parts[0].as_big()?.to_i32().ok_or("OverflowError: file descriptor out of range")?,
+                        events: parts[1].as_big()?.to_i16().ok_or("OverflowError: poll event out of range")?, revents: 0 });
+                }
+                match libc::poll(descriptors.as_mut_ptr(), descriptors.len() as libc::nfds_t, int(1)? as i32) {
+                    -1 => Err(errno()),
+                    _ => Ok(Value::tuple(descriptors.into_iter().filter_map(|descriptor| (descriptor.revents != 0).then(||
+                        Value::tuple(vec![Value::Small(i64::from(descriptor.fd)), Value::Small(i64::from(descriptor.revents))]))).collect())),
+                }
+            }
+            "socket_shutdown" => checked(libc::shutdown(int(0)? as i32, int(1)? as i32) as i64),
+            "socketpair" => {
+                let mut pair = [0 as libc::c_int; 2];
+                let result = libc::socketpair(int(0)? as i32, int(1)? as i32 | libc::SOCK_CLOEXEC, int(2)? as i32, pair.as_mut_ptr());
+                if result == -1 { Err(errno()) } else { Ok(Value::tuple(vec![Value::Small(pair[0] as i64), Value::Small(pair[1] as i64)])) }
             }
             "socket" => checked(libc::socket(int(0)? as _, (int(1)? as i32) | libc::SOCK_CLOEXEC, int(2)? as _) as i64),
             "bind_unix" => {

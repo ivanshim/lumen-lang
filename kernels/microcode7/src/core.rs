@@ -164,13 +164,17 @@ impl Value {
             // what it was read from, is one of the builtin's own; a
             // method of a thing the program laid out is not.
             Self::Member(_, operation) if operation == "classmethod_get" => "method-wrapper",
-            Self::Member(receiver, operation) if Self::loose_member_descriptor(&receiver.kind_word(), operation).map(|entry| entry.1) == Some("wrapper_descriptor") => "method-wrapper",
+            Self::Member(_, operation) if matches!(operation.as_str(), "__next__" | "__buffer__" | "__release_buffer__") => "method-wrapper",
+            Self::Member(receiver, operation) if matches!(Self::loose_member_descriptor(&receiver.settled().kind_word(), operation), Some((_, "wrapper_descriptor"))) => "method-wrapper",
             Self::Intrinsic(..) | Self::Member(..) | Self::TextCall { .. } => "builtin_function_or_method",
             Self::Wrapped(184, _) => "builtin_function_or_method",
             Self::Wrapped(185, parts) => if matches!(parts.last(), Some(Self::Thing(_))) { "method-wrapper" } else { "wrapper_descriptor" },
             Self::Wrapped(186, _) => "method-wrapper",
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Wrapped(60, slot))
                 if matches!(slot.as_slice(), [Self::Text(kind), Self::Text(name)] if Self::loose_member_descriptor(kind, name).is_some_and(|(_, ty)| ty == "wrapper_descriptor"))) => "method-wrapper",
+            // A module namespace uses the native dictionary descriptor kind.
+            Self::Wrapped(32, layout) if matches!(layout.get(2), Some(Self::Small(-1))) => "member_descriptor",
+            Self::Wrapped(180,_)=>"getset_descriptor",
             Self::Wrapped(130, _) => "function",
             Self::Wrapped(132, _) => "method",
             Self::Method(..) => "method", Self::Bound(..) | Self::Routine(_) => "function",
@@ -188,14 +192,21 @@ impl Value {
                     _ => "builtin_function_or_method",
                 }
             },
-            Self::Wrapped(235, _) => "wrapper_descriptor",
+            Self::Wrapped(235 | 245 | 246, _) => "wrapper_descriptor",
             Self::Wrapped(14, _) => "builtin_function_or_method",
             Self::Wrapped(4, _) => "staticmethod",
             Self::Wrapped(5, _) => "classmethod",
             Self::Wrapped(35, _) => "cell",
             Self::Wrapped(7, _) => "code",
+            Self::Wrapped(205, _) => "getset_descriptor",
+            Self::Wrapped(206, _) => "method-wrapper",
+            Self::Wrapped(207, _) => "wrapper_descriptor",
             Self::Wrapped(143, _) => "function",
+            Self::Wrapped(64, _) => "coroutine_wrapper",
             Self::Wrapped(62, parts) => if matches!(parts.get(1), Some(Value::Small(0 | 1))) { "async_generator_asend" } else { "async_generator_athrow" },
+            // The entry __slots__ lays down for a name reads as a
+            // member descriptor, the same word type() gives that accessor.
+            Self::Wrapped(32, parts) if matches!(parts.as_slice(), [Value::Text(name), Value::Blueprint(_)] if name.as_ref() != "__weakref__") => "member_descriptor",
             Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => "method",
             Self::Wrapped(3, parts) if parts.first().is_some_and(|entry| matches!(entry, Self::Intrinsic(..))) => {
                 if let Some(Self::Blueprint(_)) = parts.get(1) { "method" } else { "builtin_function_or_method" }
@@ -206,7 +217,7 @@ impl Value {
             // word, rather than off a value of it, is a descriptor: a
             // method's own kind, or a data member's, by the same
             // reckoning the repr gives it.
-            Self::Wrapped(32, fields) if matches!(fields.get(2), Some(Self::Small(-2))) => "getset_descriptor",
+            Self::Wrapped(124, _) => "wrapper_descriptor",
             Self::Wrapped(60, held) if held.len() > 2 => "classmethod_descriptor",
             Self::Wrapped(32, slots) => match slots.first().map(Value::bare).as_deref() {
                 Some("__dict__" | "__weakref__") => "getset_descriptor",
@@ -292,6 +303,7 @@ impl Value {
             (Self::Set(a), Self::Set(b)) => Rc::ptr_eq(a, b),
             (Self::Text(a), Self::Text(b)) => Rc::ptr_eq(a, b),
             (Self::Thing(a), Self::Thing(b)) => Rc::ptr_eq(a, b),
+            (Self::Octets { cell: here, .. }, Self::Octets { cell: there, .. }) => Rc::ptr_eq(here, there),
             (Self::Small(a), Self::Small(b)) => a == b,
             (Self::Flag(a), Self::Flag(b)) => a == b,
             (Self::Nil, Self::Nil) => true,
@@ -335,11 +347,23 @@ impl Value {
             Self::Text(chars) if chars.is_empty() => 0,
             Self::Text(chars) => py_digest_codes(chars.chars().map(|c| c as u32)),
             Self::Octets { cell, changeable: false, .. } => return Some(py_digest_octets(&cell.borrow())),
+            Self::Member(owner, operation) => {
+                let identity = match owner.as_ref() {
+                    Self::Shared(place) | Self::Mutable(place, _) => std::rc::Rc::as_ptr(place) as usize / 16,
+                    Self::Vector(row) => std::rc::Rc::as_ptr(row) as usize / 16,
+                    Self::Dict(pairs) => std::rc::Rc::as_ptr(pairs) as usize / 16,
+                    Self::Set(group) => std::rc::Rc::as_ptr(group) as usize / 16,
+                    Self::Thing(thing) => std::rc::Rc::as_ptr(thing) as usize / 16,
+                    Self::Octets { cell, .. } => std::rc::Rc::as_ptr(cell) as usize / 16,
+                    value => value.hash_number()? as usize,
+                };
+                identity as i64 ^ Self::text(operation).hash_number()?
+            }
             Self::Intrinsic(_, spelling) => return Self::text(spelling).hash_number(),
             Self::OctetKind { changeable, .. } => return Self::text(match changeable { true => "bytearray", false => "bytes" }).hash_number(),
             Self::Blueprint(class) => (std::rc::Rc::as_ptr(class) as usize / 16) as i64,
             Self::Routine(program) => (std::rc::Rc::as_ptr(program) as usize / 16) as i64,
-            Self::Wrapped(tag, contents) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60) => {
+            Self::Wrapped(tag, contents) if matches!(tag, 1 | 2 | 14 | 19 | 30 | 40..=42 | 60 | 152..=158) => {
                 let mut total = i64::from(*tag);
                 for entry in contents.iter() { total = total.wrapping_mul(1_000_003) ^ entry.hash_number()?; }
                 total
@@ -350,13 +374,20 @@ impl Value {
             Self::Method(program, receiver, _) => ((std::rc::Rc::as_ptr(program) as usize / 16) ^ (std::rc::Rc::as_ptr(receiver) as usize / 16)) as i64,
             // A routine bound to a value hashes by the routine and by
             // where the value lies, never by asking the value itself.
-            Self::Wrapped(3, parts) if matches!(parts.first(), Some(Self::Routine(_) | Self::Bound(..))) => {
-                let lies = match parts.get(1) { Some(Self::Thing(thing)) => std::rc::Rc::as_ptr(thing) as usize / 16, Some(other) => other.hash_number()? as usize, None => 0 };
-                parts[0].hash_number()? ^ lies as i64
+            Self::Wrapped(3, contents) if matches!(contents.first(), Some(Self::Wrapped(60, _) | Self::Intrinsic(..))) => Self::bound_owner_hash(contents.get(1)?)? ^ contents[0].hash_number()?,
+            Self::Wrapped(3, parts) if parts.len() == 2 => {
+                let receiver = match &parts[1] {
+                    Self::Thing(thing) => std::rc::Rc::as_ptr(thing) as usize / 16,
+                    Self::Mutable(cell, _) | Self::Shared(cell) => std::rc::Rc::as_ptr(cell) as usize / 16,
+                    Self::Vector(values) => std::rc::Rc::as_ptr(values) as usize / 16,
+                    Self::Dict(values) => std::rc::Rc::as_ptr(values) as usize / 16,
+                    Self::Set(values) => std::rc::Rc::as_ptr(values) as usize / 16,
+                    Self::Octets { cell, .. } => std::rc::Rc::as_ptr(cell) as usize / 16,
+                    value => value.hash_number()? as usize,
+                };
+                parts[0].hash_number()? ^ receiver as i64
             }
             Self::Wrapped(9, kept) => (std::rc::Rc::as_ptr(kept) as usize / 16) as i64,
-            Self::Member(subject, word) => Self::bound_owner_hash(subject)? ^ Self::text(word).hash_number()?,
-            Self::Wrapped(3, contents) if matches!(contents.first(), Some(Self::Wrapped(60, _) | Self::Intrinsic(..))) => Self::bound_owner_hash(contents.get(1)?)? ^ contents[0].hash_number()?,
             Self::Nil => 0x9e3779b9,
             Self::Ellipsis => 0x9e3779ba,
             Self::Wrapped(8, names) => return names.first().and_then(|word| word.hash_number()),

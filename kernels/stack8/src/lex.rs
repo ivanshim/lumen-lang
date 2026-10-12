@@ -40,6 +40,8 @@ pub struct Token {
     pub raw: Option<String>,
     pub width: usize,
     pub row: usize,
+    pub byte_column: usize,
+    pub byte_end_column: usize,
     pub column: usize,
     pub end_column: usize,
     pub end_row: usize,
@@ -301,13 +303,13 @@ impl<'a> Cursor<'a> {
     }
 
     fn push(&mut self, shape: Shape, lexeme: String, width: usize, row: usize, column: usize) {
-        self.out.push(Token { end_row: self.row, end_column: self.column, shape, lexeme, raw: None, width, row, column });
+        self.out.push(Token { byte_column: 0, byte_end_column: 0, end_row: self.row, end_column: self.column, shape, lexeme, raw: None, width, row, column });
     }
 
     /// The same, keeping the spelling the text wrote where folding
     /// changed it, for the language's own words to be matched against.
     fn push_spelled(&mut self, shape: Shape, lexeme: String, raw: Option<String>, width: usize, row: usize, column: usize) {
-        self.out.push(Token { end_row: self.row, end_column: self.column, shape, lexeme, raw, width, row, column });
+        self.out.push(Token { byte_column: 0, byte_end_column: 0, end_row: self.row, end_column: self.column, shape, lexeme, raw, width, row, column });
     }
 
     /// The indentation of a line; a blank line is skipped whole. Returns
@@ -1326,7 +1328,7 @@ impl<'a> Cursor<'a> {
         // token keeps both when they differ.
         let mut raw = None;
         if lang.identifier_normalized {
-            let folded = crate::unicode::normalized(&s);
+            let folded = crate::unicode::normalized(&s, 2);
             if folded != s { raw = Some(std::mem::replace(&mut s, folded)); }
         }
         let lowered = s.to_lowercase();
@@ -1498,6 +1500,19 @@ const BRACKET_LEVELS: usize = 200;
 pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, usize)> {
     let mut tokens = lex_notices(source, lang)?;
     tokens.retain(|t| t.shape != Shape::EscapeWarning);
+    if !lang.trace_fields.is_empty() {
+        let columns: Vec<Vec<usize>> = source.split('\n').map(|line| {
+            let mut offsets = vec![0];
+            for c in line.chars() { offsets.push(offsets.last().unwrap() + c.len_utf8()); }
+            offsets
+        }).collect();
+        for token in &mut tokens {
+            let offset = |row: usize, column: usize| columns.get(row.saturating_sub(1))
+                .and_then(|line| line.get(column.saturating_sub(1))).map_or(column, |byte| byte + 1);
+            token.byte_column = offset(token.row, token.column);
+            token.byte_end_column = if token.end_column == 0 { 0 } else { offset(token.end_row, token.end_column) };
+        }
+    }
     Ok(tokens)
 }
 
@@ -1577,7 +1592,7 @@ fn lex_notices(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, 
     }
     let row = source.chars().filter(|c| *c == '\n').count() + 1;
     let column = source.rsplit('\n').next().unwrap_or("").chars().count() + 1;
-    out.push(Token { end_row: 0, end_column: 0, shape: Shape::Finish, lexeme: "EOF".to_string(), raw: None, width: 0, row, column });
+    out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Finish, lexeme: "EOF".to_string(), raw: None, width: 0, row, column });
     Ok(out)
 }
 
@@ -1683,9 +1698,9 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
         if text.is_empty() {
             return;
         }
-        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), raw: None, width: 0, row: 1, column: 1 });
-        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Quote, lexeme: text.to_string(), raw: None, width: 0, row: 1, column: 1 });
-        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), raw: None, width: 0, row: 1, column: 1 });
+        out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), raw: None, width: 0, row: 1, column: 1 });
+        out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Quote, lexeme: text.to_string(), raw: None, width: 0, row: 1, column: 1 });
+        out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), raw: None, width: 0, row: 1, column: 1 });
     };
     let mut rest = source;
     let mut row = 1;
@@ -1728,10 +1743,10 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
         }
         // A run of code stands as its own statement, however it ended.
         if writes {
-            out.push(Token { end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), raw: None, width: 0, row, column: 1 });
+            out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), raw: None, width: 0, row, column: 1 });
         }
         out.append(&mut cur.out);
-        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), raw: None, width: 0, row: cur.row, column: 1 });
+        out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), raw: None, width: 0, row: cur.row, column: 1 });
         row = cur.row;
         // One line end straight after the closing marker is PHP's to eat.
         // Eaten or not, the line it ended is a line of the page and is
@@ -1853,7 +1868,7 @@ fn number_error_column(word: &str, message: &str) -> usize {
 // Native code images retain the exact scanner input for reconstruction.
 pub(crate) fn token_image(tokens: &[Token]) -> String {
     let records: Vec<_> = tokens.iter().map(|t| serde_json::json!([
-        t.shape as u8, t.lexeme, t.raw, t.width, t.row, t.column, t.end_column, t.end_row
+        t.shape as u8, t.lexeme, t.raw, t.width, t.row, t.column, t.end_column, t.end_row, t.byte_column, t.byte_end_column
     ])).collect();
     serde_json::Value::Array(records).to_string()
 }
@@ -1863,12 +1878,12 @@ pub(crate) fn image_tokens(image: &str) -> Result<Vec<Token>, String> {
     let records: serde_json::Value = serde_json::from_str(image).map_err(|_| bad())?;
     let kinds = [Shape::Instr, Shape::Quoted, Shape::Numeral, Shape::Quote, Shape::Bytes, Shape::StringBegin, Shape::StringEnd, Shape::StringField, Shape::StringExpression, Shape::StringFault, Shape::Codepoints, Shape::EscapeWarning, Shape::Sign, Shape::LineEnd, Shape::Lead, Shape::Open, Shape::Close, Shape::Finish];
     let decoded: Vec<Token> = records.as_array().ok_or_else(bad)?.iter().map(|record| {
-        let a = record.as_array().filter(|a| a.len() == 8).ok_or_else(bad)?;
+        let a = record.as_array().filter(|a| matches!(a.len(), 8 | 10)).ok_or_else(bad)?;
         let number = |at: usize| a[at].as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(bad);
         let shape = *kinds.get(number(0)?).ok_or_else(bad)?;
         let raw = if a[2].is_null() { None } else { Some(a[2].as_str().ok_or_else(bad)?.to_string()) };
         Ok(Token { shape, lexeme: a[1].as_str().ok_or_else(bad)?.to_string(), raw,
-            width: number(3)?, row: number(4)?, column: number(5)?, end_column: number(6)?, end_row: number(7)? })
+            width: number(3)?, row: number(4)?, column: number(5)?, end_column: number(6)?, end_row: number(7)?, byte_column: number(if a.len() == 10 { 8 } else { 5 })?, byte_end_column: number(if a.len() == 10 { 9 } else { 6 })? })
     }).collect::<Result<_, String>>()?;
     if decoded.last().is_none_or(|token| token.shape != Shape::Finish) { return Err(bad()); }
     Ok(decoded)

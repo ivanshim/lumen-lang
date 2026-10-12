@@ -76,3 +76,23 @@ class _DigestComparison:
         return _native_compare(2, a, b)
 
 _compare_digest = _DigestComparison()
+
+
+class _Addition:
+    """Provide the non-binding callable supplied by the operator accelerator."""
+    __name__ = 'add'
+    __qualname__ = 'add'
+    __module__ = '_operator'
+
+    # Add operands through their ordinary Python arithmetic dispatch.
+    def __call__(self, a, b, /):
+        return a + b
+
+    def __reduce__(self):
+        return self.__name__
+
+    def __reduce_ex__(self, protocol):
+        return self.__reduce__()
+
+
+add = _Addition()

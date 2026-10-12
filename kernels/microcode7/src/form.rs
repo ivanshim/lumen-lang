@@ -56,6 +56,8 @@ pub enum Prim {
     Pointed,
     Adorn(char),
     StartContext,
+    /// Capture the synchronous leaving callback before entering the body.
+    BindLeaving,
     /// An asynchronous manager's leaving method, bound (true), or what
     /// its entering method answers (false).
     AsyncContext(bool),
@@ -79,6 +81,7 @@ pub enum Prim {
     ReadMember,
     ProgramNames,
     /// The name of the module the routine a frame runs was written in.
+    ReferenceCount,
     FrameModule,
     /// Mark a class unchangeable: no member writes, no standing as a base.
     ClassSeal,
@@ -235,6 +238,7 @@ pub enum Prim {
     /// Find and cut the rounds of things nothing reaches any more
     /// (ext.builtin.gc.collect).
     Collect,
+    HeapObjects,
     /// What a path names: a file, a directory, or neither.
     PathSort,
     // The text of the file the run began from.
@@ -396,8 +400,10 @@ pub enum Prim {
     BinaryAscii,
     NamespaceRead,
     TraceBridge,
+    NativeFrame,
     HeapNative,
     ContextStore,
+    WarningOperation(u8),
     ReduceNative,
     ProductStep,
     RebuildNative,
@@ -756,6 +762,7 @@ pub enum Form {
 #[derive(Debug, Clone)]
 pub struct Clause {
     pub source_line: u32,
+    pub reraise_position: Option<Box<Form>>,
     pub classes: Vec<String>,
     pub choices: Option<Vec<Form>>,
     pub grouped: bool,
@@ -826,9 +833,11 @@ pub enum Traps {
 
 #[derive(Debug, Clone)]
 pub struct Routine {
+    pub display_names: std::cell::RefCell<Option<(Rc<str>, Rc<str>)>>,
     /// The compiled definition shared by independently created functions.
     pub definition: Option<Rc<Routine>>,
     pub annotation_is_text: bool,
+    pub annotation_spelling: Option<String>,
     pub annotation_protocol: bool,
     /// Whether the routine's own name reads, while annotations are being read
     /// in the forward-reference format, may stand for a reference.
@@ -961,6 +970,7 @@ impl Form {
                 for clause in clauses {
                     if let Some(choices) = &mut clause.choices { for choice in choices { choice.number_instructions(next); } }
                     clause.body.number_instructions(next);
+                    if let Some(cleanup) = &mut clause.reraise_position { cleanup.number_instructions(next); }
                 }
                 for child in [otherwise, last].into_iter().flatten() { child.number_instructions(next); }
             }
@@ -1138,6 +1148,14 @@ impl Form {
 }
 
 impl Routine {
+    pub fn display_name(&self, qualified: bool) -> Value {
+        let mut names = self.display_names.borrow_mut();
+        if names.as_ref().map_or(true, |(short, full)| short.as_ref() != self.ident || full.as_ref() != self.qualification) {
+            *names = Some((Rc::from(self.ident.as_str()), Rc::from(self.qualification.as_str())));
+        }
+        let (short, full) = names.as_ref().unwrap();
+        Value::Text(if qualified { full.clone() } else { short.clone() })
+    }
     pub fn with_literals(&self, values: &[Value]) -> Result<Self, String> {
         let mut literals = Vec::new();
         for value in values {

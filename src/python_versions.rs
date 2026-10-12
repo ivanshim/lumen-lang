@@ -34,7 +34,10 @@ pub fn select(flag: Option<&str>, file: &str) -> Result<&'static PythonVersion, 
                     None => None,
                 }
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            // No sidecar next to the file, nor a path that does not
+            // lead into a directory (a directory carried inside a ZIP
+            // names no file of its own on disk), simply means none.
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory) => None,
             Err(e) => return Err(format!("Error: {sidecar}: {e}")),
         }
     };

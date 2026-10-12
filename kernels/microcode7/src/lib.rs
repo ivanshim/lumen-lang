@@ -24,7 +24,6 @@ pub mod form;
 pub mod data;
 pub mod ghost;
 mod core;
-mod multibyte;
 mod posix;
 mod complex;
 mod byteformat;
@@ -356,6 +355,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         settled.ok_or_else(|| "The programs of this file take and leave values in a way that does not settle".to_string())?
     };
     let mut machine = exec::Machine::new(table, reduced.globals.clone());
+    machine.main_bindings.extend(reduced.bound_globally.iter().cloned());
     for (origin, field, text, _) in request {
         if origin == "SELF" && field == "library_root" {
             machine.library_directory = Some(std::path::PathBuf::from(text));
@@ -388,7 +388,19 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     // The same arguments as a list. The file the run was started with
     // stands first in it, as the system that started the run counts it.
     if table.single("ext.system.args.list").is_some() || table.single("ext.system.args.count").is_some() {
-        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "file").map(|(.., v, _)| v.clone());
+        // sys.argv[0] is the path the run was started with: the given
+        // path for a directory, but the resolved file for a script or
+        // -m, whose co_filename and __spec__.origin already name it, so
+        // a module filter keyed on __main__ still finds the module. Only
+        // Python treats a directory as its __main__.py and reads the
+        // given path back for argv[0]; any other language keeps the
+        // resolved file it has always kept.
+        let as_directory = table.flag("ext.op.arithmetic.python_numbers")
+            && std::env::var("LUMEN_RUN_MODULE").map_or(false, |name| name == "__main__");
+        let wanted = if as_directory { "given" } else { "file" };
+        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == wanted)
+            .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == "file"))
+            .map(|(.., v, _)| v.clone());
         let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
         all.extend(program_args.iter().map(|a| Value::text(a)));
         if let Some(n) = table.single("ext.system.args.count") {
@@ -645,6 +657,7 @@ fn protocol_complaint_named(table: &Table, words: &str) -> bool {
     }
 }
 mod sre;
+mod multibyte;
 
 
 mod normal;
