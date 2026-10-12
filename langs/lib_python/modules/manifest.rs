@@ -468,6 +468,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("test.test_warnings.data.package_helper", include_str!("test/test_warnings/data/package_helper.py"), "test/test_warnings/data/package_helper.py"),
     ("test.test_warnings.data.stacklevel", include_str!("test/test_warnings/data/stacklevel.py"), "test/test_warnings/data/stacklevel.py"),
     ("test.test_weakref", include_str!("test/test_weakref.py"), "test/test_weakref.py"),
+    ("test.testcodec", include_str!("test/testcodec.py"), "test/testcodec.py"),
     ("test.tokenizedata", include_str!("test/tokenizedata/__init__.py"), "test/tokenizedata/__init__.py"),
     ("test.typinganndata", include_str!("test/typinganndata/__init__.py"), "test/typinganndata/__init__.py"),
     ("test.typinganndata._typed_dict_helper", include_str!("test/typinganndata/_typed_dict_helper.py"), "test/typinganndata/_typed_dict_helper.py"),
