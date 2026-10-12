@@ -2447,10 +2447,12 @@ class _Parser:
         return copy_location(pattern, node)
 
     # Parse statement grammar independently from the tree consumers.
-    def parse_stmt(self, start=None):
+    def parse_stmt(self, start=None, elif_clause=False):
         token = self.peek()
         first = token if start is None else start
         word = token.text
+        if token.kind == 'name' and (word in ('else', 'except', 'finally') or word == 'elif' and not elif_clause):
+            _syntax('invalid syntax')
         if word == 'async' and self.fv >= 5:
             self.pop()
             node = self.parse_stmt(first)
@@ -2529,7 +2531,7 @@ class _Parser:
             while self.peek().kind == 'newline':
                 self.pop()
             if self.indent_col(self.peek()) == self.indent_col(first) and self.at_name('elif') and word != 'while':
-                other = [self.parse_stmt()]
+                other = [self.parse_stmt(elif_clause=True)]
             elif self.indent_col(self.peek()) == self.indent_col(first) and self.at_name('else'):
                 header = self.pop()
                 other = self.parse_suite(header)

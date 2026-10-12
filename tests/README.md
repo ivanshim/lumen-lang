@@ -237,7 +237,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `annotationlib.py` | runtime adapter / implementation | `0e5cbe8e425fa84ece6d79ce7570fae01d0aa4b7a4caff8d972ed48684701cd7` | `1cce29393714b91e3f71571ffbedacc7f73f11ad26be10701debeb86ec059a32` |
 | `argparse.py` | unchanged release copy | `b9f0fa53be3d7c9c10a71a8eecc538a27c32fbe7abe337818d0d36e138bfc5c5` | `b9f0fa53be3d7c9c10a71a8eecc538a27c32fbe7abe337818d0d36e138bfc5c5` |
 | `array.py` | runtime module; no Lib counterpart | `ff86234099fa527fd6fbc1a2b91af824d55da715285a8780c3ff95a333f545ba` | `—` |
-| `ast.py` | runtime adapter / implementation | `fbb5cd4ae8d20db8a5c1023408863c03bb604e2bcf986d639c9fe7cc4998b7a8` | `5ea9a796353544bea0d706153516f04ef3d92be305d15a73238403837d77e34c` |
+| `ast.py` | runtime adapter / implementation | `a4587294c08ff2ec419f4892eccccafc68156f57e86431dad703726e7da8f39d` | `5ea9a796353544bea0d706153516f04ef3d92be305d15a73238403837d77e34c` |
 | `bisect.py` | unchanged release copy | `f1cf7b85fc36b5da249813fc5ab97d9464f8cc1bc817f7146206fa2713e35999` | `f1cf7b85fc36b5da249813fc5ab97d9464f8cc1bc817f7146206fa2713e35999` |
 | `builtins.py` | runtime module; no Lib counterpart | `c6b7e1eb4b4ad674e1e42fb716e69c97bb0c6ee4c8db6862e7615c9309d8a591` | `—` |
 | `cmd.py` | unchanged release copy | `2412ce55bbaa0be0bb33e11e3a13735160194e674a7d88a262da708ee00e4d7f` | `2412ce55bbaa0be0bb33e11e3a13735160194e674a7d88a262da708ee00e4d7f` |
