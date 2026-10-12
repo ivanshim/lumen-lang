@@ -1430,11 +1430,12 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         None => top.idents.clone(),
     };
     let mut body = body;
-    if r.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
+    // The preliminary scope walk never runs its generated forms.
+    if !survey && r.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
     let mut root_literals = Vec::new();
     let mut root_names = Vec::new();
     let mut suspended = false;
-    inspect_form(&body, &[], &mut root_literals, &mut root_names, &mut suspended);
+    if !survey { inspect_form(&body, &[], &mut root_literals, &mut root_names, &mut suspended); }
     let program = Routine { globals_rebound: false, code_description: Default::default(), compilation_entry: (0, r.before, r.future_bits | r.image_settings), encoded_body: None, encoded_handlers: None,  display_names: Default::default(), definition: None, immediate_slots: None, body_boundary: r.pos, origin_content: r.origin_content.clone(), lexical_origin: r.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_spelling: None, annotation_protocol: false, reads_annotation: false, annotator: None, literals: root_literals, referenced: root_names, locals: Vec::new(), cells: Vec::new(), flags: r.future_bits | if r.top_coroutine { 128 } else { 0 }, future_bits: r.future_bits, lineless: false, locations: None, stack_bound: None, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), warnings: r.warnings, future_bits: r.future_bits, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
 }
@@ -2728,8 +2729,9 @@ impl<'a> Builder<'a> {
         if let Some(text) = &doc { literals.push(Value::text(text)); } else if !self.grammar.has_any_ext_stmt_class_builder { literals.push(Value::Nil); }
         let mut referenced = Vec::new();
         let mut suspension = false;
-        if holds != Holds::Nothing && self.grammar.strings_ext_builtin_exceptions_traceback.len() > 26 { body.number_instructions(&mut 0); }
-        inspect_form(&body, &locals, &mut literals, &mut referenced, &mut suspension);
+        if !self.survey && holds != Holds::Nothing && self.grammar.strings_ext_builtin_exceptions_traceback.len() > 26 { body.number_instructions(&mut 0); }
+        // Async return validation still needs the suspension scan on both passes.
+        if !self.survey || asynchronous_body { inspect_form(&body, &locals, &mut literals, &mut referenced, &mut suspension); }
         let mut cells: Vec<String> = literals.iter().filter_map(|item| match item { Value::Routine(child) => Some(child), _ => None })
             .flat_map(|child| child.reaching.iter().map(|address| if address.ident.starts_with("#completed_class") { "__class__".to_string() } else { address.ident.to_string() }))
             .filter(|name| locals.contains(name)).collect();
