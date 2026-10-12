@@ -6313,7 +6313,11 @@ impl<'a> Engine<'a> {
             return Some(code);
         }
         if index == 13 {
-            return Some(object.fields.borrow()[4].1.clone());
+            let routine = match &object.fields.borrow()[6].1 {
+                Value::Routine(body) => body.clone(),
+                _ => return None,
+            };
+            return Some(Value::Bond(self.routine_outer(&routine)));
         }
         if index == 4 && matches!(&object.fields.borrow()[6].1, Value::Routine(body) if body.lineless) {
             return Some(Value::Null);
@@ -24346,7 +24350,7 @@ impl<'a> Engine<'a> {
             Builtin::Restore => unreachable!(),
             // These two are read only where a language binds names,
             // which reaches them through `core_call` instead.
-            Builtin::WarningBackend(_) | Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
+            Builtin::WarningBackend(_) | Builtin::LzmaEncode | Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -25041,7 +25045,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::LzmaEncode | Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -26236,6 +26240,16 @@ impl Engine<'_> {
                     self.native_reduce(&args[0])
                 }
             }
+            Builtin::LzmaEncode => {
+                arity(3, 3)?;
+                let Value::Bytes(content, ..) = args[0].contents() else { return Err("TypeError: codec input must be bytes".into()); };
+                let preset = u32::try_from(self.byte_whole(&args[1])?).map_err(|_| "OverflowError: invalid preset".to_owned())?;
+                let check = i32::try_from(self.byte_whole(&args[2])?).map_err(|_| "OverflowError: invalid integrity check".to_owned())?;
+                let (status, output) = match lumen_lzma::encode(&content.borrow(), preset, check) {
+                    Ok(output) => (0, output), Err(code) => (code, Vec::new()),
+                };
+                Value::tuple(vec![Value::Small(status.into()), self.byte_make(output, false)])
+            }
             Builtin::LzmaDecode => {
                 arity(3, 3)?;
                 let Value::Bytes(content, ..) = args[0].contents() else { return Err("TypeError: codec input must be bytes".into()); };
@@ -27298,9 +27312,11 @@ impl Engine<'_> {
                 .and_then(|system| self.member_of(system, "_make_spec").ok().flatten());
             if let (Some(factory), Some(file)) = (maker, own_file.as_deref()) {
                 let spec = self.call_held(factory, vec![Value::text(path), Value::text(file)])?;
+                let loader = self.member_of(spec.clone(), "loader")?.unwrap_or(Value::Null);
                 if let Value::Object(namespace) = &module {
                     let mut attrs = namespace.fields.borrow_mut();
                     if let Some((_, value)) = attrs.iter_mut().find(|(key, _)| key == "__spec__") { *value = spec; }
+                    if let Some((_, value)) = attrs.iter_mut().find(|(key, _)| key == "__loader__") { *value = loader; }
                 }
             }
         }

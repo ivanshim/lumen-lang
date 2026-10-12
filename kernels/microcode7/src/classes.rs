@@ -3219,9 +3219,10 @@ impl<'a> Machine<'a> {
         let title = match slots[0].as_ref().map(Value::settled) { Some(Value::Text(title)) => title, _ => return Err(String::from("TypeError: name must be a str").into()) };
         let Some(value) = slots[1].take() else { return Err(String::from("TypeError: TypeAliasType requires a name and a value").into()); };
         let parameters = match slots[2].take() { None => Value::tuple(Vec::new()), Some(given) => self.checked_type_alias_params(given)? };
-        let origin = self.namespace_named();
+        let globals = self.standing_world();
+        let origin = crate::exec::looked_up(&globals, "__name__").map(|value| value.settled()).unwrap_or(Value::Nil);
         let attributes = vec![(String::from("__name__"), Value::Text(title.clone())),
-            (String::from("__module__"), origin.map_or(Value::Nil, |word| Value::text(&word))),
+            (String::from("__module__"), origin),
             (String::from("\0type-display"), Value::Text(title)), (String::from("__value__"), value),
             (String::from("__type_params__"), parameters)];
         self.made += 1;
@@ -6031,9 +6032,7 @@ impl<'a> Machine<'a> {
             }
             // Read the root constructor before considering the builder's attributes.
             if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) == Some(key) && !self.builds_classes(b) {
-                let mut entries = self.loose_members.borrow_mut();
-                let init = entries.entry(String::from("root initialization")).or_insert_with(|| Self::wrap(2, Vec::new()));
-                return Ok(init.clone());
+                return Ok(self.common_initialiser());
             }
             // A class reads what the metaclass that built it holds as
             // well, each entry bound to the class itself, as a thing's

@@ -24,6 +24,10 @@ extern "C" {
     fn lzma_alone_decoder(stream: *mut Stream, limit: u64) -> i32;
     fn lzma_code(stream: *mut Stream, action: i32) -> i32;
     fn lzma_end(stream: *mut Stream);
+    fn lzma_stream_buffer_bound(size: usize) -> usize;
+    fn lzma_easy_buffer_encode(preset: u32, check: i32, allocator: *const c_void,
+        input: *const u8, input_size: usize, output: *mut u8, output_pos: *mut usize,
+        output_size: usize) -> i32;
 }
 
 impl Drop for Stream {
@@ -59,5 +63,32 @@ pub fn decode(input: &[u8], format: i64, limit: u64) -> Result<(Vec<u8>, usize),
             1 => return Ok((output, input.len() - state.avail_in)),
             fault => return Err(fault),
         }
+    }
+}
+
+// Encode an XZ stream with the platform codec's validated preset and check.
+pub fn encode(input: &[u8], preset: u32, check: i32) -> Result<Vec<u8>, i32> {
+    let capacity = unsafe { lzma_stream_buffer_bound(input.len()) };
+    let mut output = Vec::new();
+    output.try_reserve_exact(capacity).map_err(|_| 5)?;
+    output.resize(capacity, 0);
+    let mut used = 0;
+    let status = unsafe { lzma_easy_buffer_encode(preset, check, std::ptr::null(),
+        input.as_ptr(), input.len(), output.as_mut_ptr(), &mut used, capacity) };
+    if status != 0 { return Err(status); }
+    output.truncate(used);
+    Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    // Round-trip real compressed data through the platform ABI.
+    #[test]
+    fn xz_roundtrip() {
+        let raw = b"lumen compressed archive";
+        let encoded = super::encode(raw, 6, 4).unwrap();
+        let (decoded, used) = super::decode(&encoded, 1, u64::MAX).unwrap();
+        assert_eq!(decoded, raw);
+        assert_eq!(used, encoded.len());
     }
 }

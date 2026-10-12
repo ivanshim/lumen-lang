@@ -1201,13 +1201,17 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 }
                 let path = module.replace('.', "/");
                 let mut found = None;
-                for (at, candidate) in [format!("{path}.py"), format!("{path}.pyc"), format!("{path}/__main__.py"), format!("{path}/__main__.pyc")].into_iter().enumerate() {
-                    let source = if candidate.ends_with(".pyc") {
-                        fs::metadata(&candidate).ok().map(|_| compiled_source(&candidate))
-                    } else {
-                        fs::read_to_string(&candidate).ok()
-                    };
-                    if let Some(source) = source { found = Some((candidate, source, at >= 2)); break; }
+                let mut directories = vec![std::path::PathBuf::from(".")];
+                if let Some(search) = env::var_os("PYTHONPATH") { directories.extend(env::split_paths(&search)); }
+                for directory in directories {
+                    for (at, relative) in [format!("{path}.py"), format!("{path}.pyc"), format!("{path}/__main__.py"), format!("{path}/__main__.pyc")].into_iter().enumerate() {
+                        let candidate = directory.join(relative).to_string_lossy().into_owned();
+                        let source = if candidate.ends_with(".pyc") {
+                            fs::metadata(&candidate).ok().map(|_| compiled_source(&candidate))
+                        } else { fs::read_to_string(&candidate).ok() };
+                        if let Some(source) = source { found = Some((candidate, source, at >= 2)); break; }
+                    }
+                    if found.is_some() { break; }
                 }
                 if found.is_none() {
                     // A name the library keeps is found where the library

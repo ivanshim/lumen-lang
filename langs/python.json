@@ -5617,5 +5617,6 @@
   ],
   "ext.builtin.allocation.trace": [
     "__allocation_trace"
-  ]
+  ],
+  "ext.builtin.lzma_encode": ["__lzma_encode__"]
 }

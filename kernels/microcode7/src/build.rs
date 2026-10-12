@@ -622,7 +622,7 @@ type Within<'w> = (&'w [String], Knows<'w>);
 fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, beside: Option<Value>, named: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool, settle: i64, aliasing: &[(String, String)], future_bits: i64) -> Res<Built> {
     let mut words = HashMap::new();
     let (program_names, exports) = if table.flag("ext.stmt.function.closes_over") {
-        let reusable = !strict && before == 0 && assumed.is_empty() && within.is_none() && standing_in.is_none() && !read_in && !value_only && aliasing.is_empty() && seeded.iter().all(String::is_empty) && settle == 0 && future_bits == 0;
+        let reusable = !strict && before == 0 && assumed.is_empty() && within.is_none() && standing_in.is_none() && !read_in && !value_only && aliasing.is_empty() && seeded.iter().all(|name| name.is_empty() || name.starts_with("\0prior/")) && settle == 0 && future_bits == 0;
         if let Some(stored) = reusable.then(|| library_survey(tokens, table)).flatten() {
             words = stored.scopes;
             (stored.globals, stored.natives)

@@ -684,7 +684,7 @@ impl<'a> Engine<'a> {
         for (key, v) in self.call_items(args)? {
             match key { Some(k) => named.push(Value::Tie(Rc::new((Value::text(&k), v)))), None => plain.push(v) }
         }
-        let Some(first) = plain.first().map(Value::contents) else { return Err("TypeError: type.__new__(): not enough arguments".into()) };
+        let Some(first) = plain.first().map(|value| value.contents()) else { return Err("TypeError: type.__new__(): not enough arguments".into()) };
         let given = match first {
             Value::Native(Builtin::SortOf, _) => self.metaclass_root(),
             Value::Class(m) => m,
@@ -2076,7 +2076,7 @@ impl<'a> Engine<'a> {
                 82 => {
                     // A group's own maker: the class to make, then its
                     // heading and exceptions, as the reference's __new__.
-                    let Some(receiver) = args.first().map(Value::contents) else {
+                    let Some(receiver) = args.first().map(|value| value.contents()) else {
                         return Err("TypeError: BaseExceptionGroup.__new__(): not enough arguments".into());
                     };
                     let Value::Class(class) = &receiver else {
@@ -2099,7 +2099,7 @@ impl<'a> Engine<'a> {
                 126 => {
                     if let Some(Value::Small(place)) = w.1.first() {
                         let name = self.lang.class_special[*place as usize].clone();
-                        let Some(subject) = args.first().map(Value::contents) else {
+                        let Some(subject) = args.first().map(|value| value.contents()) else {
                             return Err(format!("TypeError: descriptor '{name}' of 'typing.Union' object needs an argument").into());
                         };
                         if !matches!(&subject, Value::Object(o) if Self::own_kind(&o.class_now()).as_deref() == Some("Union")) {
@@ -2155,7 +2155,7 @@ impl<'a> Engine<'a> {
                 63 => {
                     let bits = w.1[0].plain() == "bits";
                     let valid = args.len() == if bits { 2 } else { 1 }
-                        && matches!(args.first().map(Value::contents), Some(Value::Object(_)))
+                        && matches!(args.first().map(|value| value.contents()), Some(Value::Object(_)))
                         && (!bits || matches!(args[1].contents(), Value::Small(n) if n >= 0));
                     if valid {
                         match self.class_get(args[0].clone(), "_stream", false) {
@@ -2993,7 +2993,7 @@ impl<'a> Engine<'a> {
         if class.name == "TypeAliasType" { return self.type_alias_instance(class, positional, keywords); }
         if class.name == "TypeVar" && positional.len() == 2 { return Err("TypeError: A single constraint is not allowed".into()); }
         if matches!(class.name.as_str(), "ParamSpec" | "TypeVarTuple") && positional.len() > 1 { return Err(format!("TypeError: {}() takes exactly 1 positional argument ({} given)", class.name.to_lowercase(), positional.len()).into()); }
-        let Some(Value::Text(name)) = positional.first().map(Value::contents) else {
+        let Some(Value::Text(name)) = positional.first().map(|value| value.contents()) else {
             return Err("TypeError: name must be a str".into());
         };
         let module = self.parameter_module();
@@ -3091,13 +3091,14 @@ impl<'a> Engine<'a> {
                 _ => return Err(format!("TypeError: TypeAliasType() got an unexpected keyword argument '{key}'").into()) };
             if slots[at].replace(given).is_some() { return Err(format!("TypeError: TypeAliasType() got multiple values for argument '{key}'").into()); }
         }
-        let Some(Value::Text(title)) = slots[0].as_ref().map(Value::contents) else { return Err("TypeError: name must be a str".into()); };
+        let Some(Value::Text(title)) = slots[0].as_ref().map(|value| value.contents()) else { return Err("TypeError: name must be a str".into()); };
         let Some(value) = slots[1].take() else { return Err("TypeError: TypeAliasType requires a name and a value".into()); };
         let parameters = match slots[2].take() {
             None => Value::tuple(Vec::new()),
             Some(given) => self.type_alias_parameters(given)?,
         };
-        let home = self.module_named().map_or(Value::Null, |word| Value::text(&word));
+        let globals = self.running_outer();
+        let home = self.book_get(&globals, "__name__")?.map(|value| value.contents()).unwrap_or(Value::Null);
         self.made += 1;
         Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made,
             fields: RefCell::new(vec![("__name__".into(), Value::Text(title.clone())), ("__module__".into(), home),
@@ -3166,22 +3167,22 @@ impl<'a> Engine<'a> {
                 if at >= parts.len() { return Err(format!("TypeError: function() takes at most 6 arguments ({} given)", next).into()); }
                 if parts[at].replace(value).is_some() { return Err("TypeError: invalid function arguments".into()); }
             }
-            if let Some(code @ Value::Object(_)) = parts[0].as_ref().map(Value::contents) {
+            if let Some(code @ Value::Object(_)) = parts[0].as_ref().map(|value| value.contents()) {
                 if let Value::Object(object) = &code {
                     if self.code_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &object.class_now())) {
                         let globals = parts[1].clone().ok_or_else(|| "TypeError: function() missing required argument 'globals'".to_string())?;
                         if !matches!(globals.contents(), Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
-                        let name = match parts[2].as_ref().map(Value::contents) {
+                        let name = match parts[2].as_ref().map(|value| value.contents()) {
                             None | Some(Value::Null) => Value::text("<module>"),
                             Some(name @ Value::Text(_)) => name,
                             _ => return Err("TypeError: arg 3 (name) must be None or string".into()),
                         };
-                        let defaults = match parts[3].as_ref().map(Value::contents) {
+                        let defaults = match parts[3].as_ref().map(|value| value.contents()) {
                             None | Some(Value::Null) => Value::Null,
                             Some(value @ Value::Tuple(_)) => value,
                             _ => return Err("TypeError: arg 4 (defaults) must be None or tuple".into()),
                         };
-                        let closure = match parts[4].as_ref().map(Value::contents) {
+                        let closure = match parts[4].as_ref().map(|value| value.contents()) {
                             None | Some(Value::Null) => Value::Null,
                             Some(value @ Value::Tuple(_)) => {
                                 if let Value::Tuple(cells) = &value {
@@ -3197,26 +3198,26 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
-            let Some(Value::Adapter(code)) = parts[0].as_ref().map(Value::contents) else { return Err("TypeError: function() argument 'code' must be code".into()); };
+            let Some(Value::Adapter(code)) = parts[0].as_ref().map(|value| value.contents()) else { return Err("TypeError: function() argument 'code' must be code".into()); };
             let (7, Some(Value::Routine(origin))) = (code.0, code.1.first()) else { return Err("TypeError: function() argument 'code' must be code".into()); };
             let Some(globals) = parts[1].clone() else { return Err("TypeError: function() missing required argument 'globals'".into()); };
             if !matches!(globals.contents(), Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
             let mut made = (**origin).clone();
             made.globe = Some(globals.clone());
             made.born = Some(self.ambient_builtins());
-            if let Some(Value::Text(name)) = parts[2].as_ref().map(Value::contents) { made.ident = name.to_string(); made.qualified = name.to_string(); }
-            let defaults = match parts[3].as_ref().map(Value::contents) {
+            if let Some(Value::Text(name)) = parts[2].as_ref().map(|value| value.contents()) { made.ident = name.to_string(); made.qualified = name.to_string(); }
+            let defaults = match parts[3].as_ref().map(|value| value.contents()) {
                 None | Some(Value::Null) => Vec::new(),
                 Some(Value::Tuple(row)) => row.to_vec(),
                 _ => return Err("TypeError: arg 4 (defaults) must be None or tuple".into()),
             };
-            let keywords = match parts[5].as_ref().map(Value::contents) {
+            let keywords = match parts[5].as_ref().map(|value| value.contents()) {
                 None | Some(Value::Null) => Vec::new(),
                 Some(Value::Map(entries)) => entries.iter().map(|(key, value)| (key.plain(), value.clone())).collect(),
                 _ => return Err("TypeError: arg 6 (kwdefaults) must be None or dict".into()),
             };
             made = Self::with_spare_arguments(&made, Some(defaults), Some(keywords));
-            let closure = match parts[4].as_ref().map(Value::contents) {
+            let closure = match parts[4].as_ref().map(|value| value.contents()) {
                 Some(Value::Tuple(cells)) => cells.to_vec(),
                 None | Some(Value::Null) => Vec::new(),
                 _ => return Err("TypeError: arg 5 (closure) must be tuple".into()),
@@ -3824,7 +3825,7 @@ impl<'a> Engine<'a> {
         if !named.is_empty() { return Err("TypeError: wrapper __get__() takes no keyword arguments".into()); }
         if args.is_empty() { return Err("TypeError: __get__ expected at least 1 argument, got 0".into()); }
         if args.len() > 2 { return Err(format!("TypeError: __get__ expected at most 2 arguments, got {}", args.len()).into()); }
-        let owner = match args.get(1).map(Value::contents) {
+        let owner = match args.get(1).map(|value| value.contents()) {
             Some(value) if !matches!(value, Value::Null) => value,
             _ if matches!(args[0].contents(), Value::Null) => return Err("TypeError: __get__(None, None) is invalid".into()),
             _ => self.class_type(vec![args[0].clone()])?,
@@ -3911,7 +3912,7 @@ impl<'a> Engine<'a> {
             }
             // Native super init is a descriptor for super instances only.
             if w.0 == 236 {
-                if let Some(receiver) = subject.as_ref().map(Value::contents) {
+                if let Some(receiver) = subject.as_ref().map(|value| value.contents()) {
                     if !matches!(&receiver, Value::Object(object) if Self::super_descended(&object.class_now())) {
                         let actual = self.super_tp_name(&receiver);
                         return Err(format!("TypeError: descriptor '__init__' for 'super' objects doesn't apply to a '{actual}' object").into());
@@ -5183,8 +5184,7 @@ impl<'a> Engine<'a> {
                 }
                 // An inherited root initializer takes precedence over metaclass attributes.
                 if self.lang.constructor.as_deref() == Some(name) && !self.is_metaclass_root(c) {
-                    let mut cache = self.loose_members.borrow_mut();
-                    return Ok(cache.entry("root:initialization".into()).or_insert_with(|| Self::adapter(2, Vec::new())).clone());
+                    return Ok(self.root_initialiser());
                 }
                 // A class also reads what the metaclass that made it
                 // holds, each member bound to the class itself, the way
@@ -5928,7 +5928,7 @@ impl<'a> Engine<'a> {
     /// another kind of program: the flags the two carry differ, which
     /// CPython now says is going away.
     fn code_kind_differs(f: &Rc<Routine>, value: Option<&Value>) -> bool {
-        let Some(Value::Adapter(code)) = value.map(Value::contents) else { return false };
+        let Some(Value::Adapter(code)) = value.map(|value| value.contents()) else { return false };
         let (7, Some(Value::Routine(source))) = (code.0, code.1.first()) else { return false };
         Self::routine_now(source).code_flags != Self::routine_now(f).code_flags
     }
@@ -5940,7 +5940,7 @@ impl<'a> Engine<'a> {
         let now = Self::routine_now(f);
         let refused = |part: &str| -> Fault { self.class_word(part).to_string().into() };
         if name == self.class_word("code") {
-            let Some(Value::Adapter(code)) = value.as_ref().map(Value::contents) else { return Err(refused("code.amiss")) };
+            let Some(Value::Adapter(code)) = value.as_ref().map(|value| value.contents()) else { return Err(refused("code.amiss")) };
             let (7, Some(Value::Routine(source))) = (code.0, code.1.first()) else { return Err(refused("code.amiss")) };
             let source = Self::routine_now(source);
             if source.enclosing.len() != now.enclosing.len() {
@@ -5959,14 +5959,14 @@ impl<'a> Engine<'a> {
             return Ok(Self::with_spare_arguments(&made, Some(by_place), Some(by_name)));
         }
         if name == self.class_word("keywords") {
-            let pairs = match value.as_ref().map(Value::contents) {
+            let pairs = match value.as_ref().map(|value| value.contents()) {
                 None | Some(Value::Null) => Vec::new(),
                 Some(Value::Map(pairs)) => pairs.iter().map(|(k,v)| (k.plain(), v.clone())).collect(),
                 Some(_) => return Err(refused("keywords.amiss")),
             };
             return Ok(Self::with_spare_arguments(&now, None, Some(pairs)));
         }
-        let values = match value.as_ref().map(Value::contents) {
+        let values = match value.as_ref().map(|value| value.contents()) {
             None | Some(Value::Null) => Vec::new(),
             Some(Value::Tuple(items)) => items.to_vec(),
             Some(_) => return Err(refused("defaults.amiss")),
@@ -6305,7 +6305,7 @@ impl<'a> Engine<'a> {
                 return Err(format!("{}{name}{}{}{}", parts[0], parts[1], subject.core_kind(), parts[2]).into());
             }
             if name == self.class_word("name") || name == self.class_word("qualified") {
-                let Some(Value::Text(text)) = value.as_ref().map(Value::contents) else {
+                let Some(Value::Text(text)) = value.as_ref().map(|value| value.contents()) else {
                     let words = self.lang.class_details.get("text.amiss").cloned().unwrap_or_default();
                     return Err(format!("{}{name}{}", words[0], words[1]).into());
                 };
@@ -6589,7 +6589,7 @@ impl<'a> Engine<'a> {
                 }
                 if name == self.class_word("bases") && c.python_names.borrow().is_some() {return self.change_bases(c,value);}
                 if name == self.class_word("qualified") {
-                    match value.as_ref().map(Value::contents) {
+                    match value.as_ref().map(|value| value.contents()) {
                         Some(Value::Text(_)) => {},
                         Some(other) => return Err(format!("TypeError: can only assign string to {}.__qualname__, not '{}'", c.name, other.core_kind()).into()),
                         None => return Err(self.class_refusal()),
@@ -6662,7 +6662,7 @@ impl<'a> Engine<'a> {
                 }
                 if self.lang.class_annotations.first().map_or(false, |s| s == name) {
                     let at = self.function_storage(&subject);
-                    let given = match value.as_ref().map(Value::contents) {
+                    let given = match value.as_ref().map(|value| value.contents()) {
                         None | Some(Value::Null) => self.keep_collection(Value::Map(Rc::new(Vec::new().into()))),
                         Some(Value::Map(_)) => value.unwrap(),
                         _ => return Err(format!("TypeError: {name} must be set to a dict object").into()),
@@ -6675,7 +6675,7 @@ impl<'a> Engine<'a> {
                 if name==self.class_word("type_params") {
                     // The row of type parameters takes a row and nothing
                     // else, and cannot be taken away at all.
-                    if !matches!(value.as_ref().map(Value::contents), Some(Value::Tuple(_))) {
+                    if !matches!(value.as_ref().map(|value| value.contents()), Some(Value::Tuple(_))) {
                         return Err(self.class_word("defaults.amiss").to_string().into());
                     }
                     let at=self.function_storage(&subject);
@@ -6687,7 +6687,7 @@ impl<'a> Engine<'a> {
                 // of itself anything at all; the three stand apart from
                 // the namespace, and taking the account away leaves none.
                 if name==self.class_word("name") || name==self.class_word("qualified") {
-                    let Some(Value::Text(_))=value.as_ref().map(Value::contents) else {
+                    let Some(Value::Text(_))=value.as_ref().map(|value| value.contents()) else {
                         let pieces=self.lang.class_details.get("text.amiss").cloned().unwrap_or_default();
                         return Err(if pieces.len()==2 {format!("{}{name}{}",pieces[0],pieces[1]).into()} else {self.class_refusal()});
                     };
@@ -8229,7 +8229,7 @@ impl<'a> Engine<'a> {
             other if self.stands_for_kind(&other)=>self.type_base(&other)?,
             other=>return Err(format!("TypeError: super() argument 1 must be type, not {}",other.core_kind()).into()),
         };
-        let receiver=args.get(1).map(Value::contents).unwrap_or(Value::Null);
+        let receiver=args.get(1).map(|value| value.contents()).unwrap_or(Value::Null);
         if !matches!(receiver,Value::Null){self.super_receiver_class(&owner,&receiver)?;}
         Ok(Self::adapter(9,vec![Value::Class(owner),receiver]))
     }

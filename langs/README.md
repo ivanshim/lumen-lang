@@ -4750,6 +4750,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.loader.source` | - | - | `__loader_source` | - | - | - | - | - | - | - |
 | `ext.builtin.locals` | - | - | `locals` | - | - | - | - | - | - | - |
 | `ext.builtin.lzma_decode` | - | - | `__lzma_decode__` | - | - | - | - | - | - | - |
+| `ext.builtin.lzma_encode` | - | - | `__lzma_encode__` | - | - | - | - | - | - | - |
 | `ext.builtin.map` | - | - | `map` | - | - | - | - | - | - | - |
 | `ext.builtin.map.arguments.amiss` | - | - | `TypeError: dict expects at most one positional argument` | - | - | - | - | - | - | - |
 | `ext.builtin.map.long` | - | - | `ValueError: map() argument ` ` is longer than argument 1` ` is longer than arguments 1-` | - | - | - | - | - | - | - |
