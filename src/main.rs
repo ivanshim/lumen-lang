@@ -20,6 +20,8 @@
 // stop. Whatever the settings name for the run to load beside itself is
 // reached for before any of this, and what came of the reaching is said.
 
+include!("python_encodings.rs");
+
 use std::collections::HashSet;
 use std::env;
 use std::ffi::{OsStr, OsString};
@@ -229,6 +231,10 @@ const CP437_UPPER: &str = "\u{c7}\u{fc}\u{e9}\u{e2}\u{e4}\u{e0}\u{e5}\u{e7}\u{ea
 const CP1251_UPPER: &str = "\u{402}\u{403}\u{201a}\u{453}\u{201e}\u{2026}\u{2020}\u{2021}\u{20ac}\u{2030}\u{409}\u{2039}\u{40a}\u{40c}\u{40b}\u{40f}\u{452}\u{2018}\u{2019}\u{201c}\u{201d}\u{2022}\u{2013}\u{2014}\u{fffd}\u{2122}\u{459}\u{203a}\u{45a}\u{45c}\u{45b}\u{45f}\u{a0}\u{40e}\u{45e}\u{408}\u{a4}\u{490}\u{a6}\u{a7}\u{401}\u{a9}\u{404}\u{ab}\u{ac}\u{ad}\u{ae}\u{407}\u{b0}\u{b1}\u{406}\u{456}\u{491}\u{b5}\u{b6}\u{b7}\u{451}\u{2116}\u{454}\u{bb}\u{458}\u{405}\u{455}\u{457}\u{410}\u{411}\u{412}\u{413}\u{414}\u{415}\u{416}\u{417}\u{418}\u{419}\u{41a}\u{41b}\u{41c}\u{41d}\u{41e}\u{41f}\u{420}\u{421}\u{422}\u{423}\u{424}\u{425}\u{426}\u{427}\u{428}\u{429}\u{42a}\u{42b}\u{42c}\u{42d}\u{42e}\u{42f}\u{430}\u{431}\u{432}\u{433}\u{434}\u{435}\u{436}\u{437}\u{438}\u{439}\u{43a}\u{43b}\u{43c}\u{43d}\u{43e}\u{43f}\u{440}\u{441}\u{442}\u{443}\u{444}\u{445}\u{446}\u{447}\u{448}\u{449}\u{44a}\u{44b}\u{44c}\u{44d}\u{44e}\u{44f}";
 const ISO88597_UPPER: &str = "\u{80}\u{81}\u{82}\u{83}\u{84}\u{a}\u{86}\u{87}\u{88}\u{89}\u{8a}\u{8b}\u{8c}\u{8d}\u{8e}\u{8f}\u{90}\u{91}\u{92}\u{93}\u{94}\u{95}\u{96}\u{97}\u{98}\u{99}\u{9a}\u{9b}\u{9c}\u{9d}\u{9e}\u{9f}\u{a0}\u{2018}\u{2019}\u{a3}\u{20ac}\u{20af}\u{a6}\u{a7}\u{a8}\u{a9}\u{37a}\u{ab}\u{ac}\u{ad}\u{fffd}\u{2015}\u{b0}\u{b1}\u{b2}\u{b3}\u{384}\u{385}\u{386}\u{b7}\u{388}\u{389}\u{38a}\u{bb}\u{38c}\u{bd}\u{38e}\u{38f}\u{390}\u{391}\u{392}\u{393}\u{394}\u{395}\u{396}\u{397}\u{398}\u{399}\u{39a}\u{39b}\u{39c}\u{39d}\u{39e}\u{39f}\u{3a0}\u{3a1}\u{fffd}\u{3a3}\u{3a4}\u{3a5}\u{3a6}\u{3a7}\u{3a8}\u{3a9}\u{3aa}\u{3ab}\u{3ac}\u{3ad}\u{3ae}\u{3af}\u{3b0}\u{3b1}\u{3b2}\u{3b3}\u{3b4}\u{3b5}\u{3b6}\u{3b7}\u{3b8}\u{3b9}\u{3ba}\u{3bb}\u{3bc}\u{3bd}\u{3be}\u{3bf}\u{3c0}\u{3c1}\u{3c2}\u{3c3}\u{3c4}\u{3c5}\u{3c6}\u{3c7}\u{3c8}\u{3c9}\u{3ca}\u{3cb}\u{3cc}\u{3cd}\u{3ce}\u{fffd}";
 
+const KOI8R_UPPER: &str = "\u{2500}\u{2502}\u{250c}\u{2510}\u{2514}\u{2518}\u{251c}\u{2524}\u{252c}\u{2534}\u{253c}\u{2580}\u{2584}\u{2588}\u{258c}\u{2590}\u{2591}\u{2592}\u{2593}\u{2320}\u{25a0}\u{2219}\u{221a}\u{2248}\u{2264}\u{2265}\u{a0}\u{2321}\u{b0}\u{b2}\u{b7}\u{f7}\u{2550}\u{2551}\u{2552}\u{451}\u{2553}\u{2554}\u{2555}\u{2556}\u{2557}\u{2558}\u{2559}\u{255a}\u{255b}\u{255c}\u{255d}\u{255e}\u{255f}\u{2560}\u{2561}\u{401}\u{2562}\u{2563}\u{2564}\u{2565}\u{2566}\u{2567}\u{2568}\u{2569}\u{256a}\u{256b}\u{256c}\u{a9}\u{44e}\u{430}\u{431}\u{446}\u{434}\u{435}\u{444}\u{433}\u{445}\u{438}\u{439}\u{43a}\u{43b}\u{43c}\u{43d}\u{43e}\u{43f}\u{44f}\u{440}\u{441}\u{442}\u{443}\u{436}\u{432}\u{44c}\u{44b}\u{437}\u{448}\u{44d}\u{449}\u{447}\u{44a}\u{42e}\u{410}\u{411}\u{426}\u{414}\u{415}\u{424}\u{413}\u{425}\u{418}\u{419}\u{41a}\u{41b}\u{41c}\u{41d}\u{41e}\u{41f}\u{42f}\u{420}\u{421}\u{422}\u{423}\u{416}\u{412}\u{42c}\u{42b}\u{417}\u{428}\u{42d}\u{429}\u{427}\u{42a}";
+const CP1252_UPPER: &str = "\u{20ac}\u{81}\u{201a}\u{192}\u{201e}\u{2026}\u{2020}\u{2021}\u{2c6}\u{2030}\u{160}\u{2039}\u{152}\u{8d}\u{17d}\u{8f}\u{90}\u{2018}\u{2019}\u{201c}\u{201d}\u{2022}\u{2013}\u{2014}\u{2dc}\u{2122}\u{161}\u{203a}\u{153}\u{9d}\u{17e}\u{178}\u{a0}\u{a1}\u{a2}\u{a3}\u{a4}\u{a5}\u{a6}\u{a7}\u{a8}\u{a9}\u{aa}\u{ab}\u{ac}\u{ad}\u{ae}\u{af}\u{b0}\u{b1}\u{b2}\u{b3}\u{b4}\u{b5}\u{b6}\u{b7}\u{b8}\u{b9}\u{ba}\u{bb}\u{bc}\u{bd}\u{be}\u{bf}\u{c0}\u{c1}\u{c2}\u{c3}\u{c4}\u{c5}\u{c6}\u{c7}\u{c8}\u{c9}\u{ca}\u{cb}\u{cc}\u{cd}\u{ce}\u{cf}\u{d0}\u{d1}\u{d2}\u{d3}\u{d4}\u{d5}\u{d6}\u{d7}\u{d8}\u{d9}\u{da}\u{db}\u{dc}\u{dd}\u{de}\u{df}\u{e0}\u{e1}\u{e2}\u{e3}\u{e4}\u{e5}\u{e6}\u{e7}\u{e8}\u{e9}\u{ea}\u{eb}\u{ec}\u{ed}\u{ee}\u{ef}\u{f0}\u{f1}\u{f2}\u{f3}\u{f4}\u{f5}\u{f6}\u{f7}\u{f8}\u{f9}\u{fa}\u{fb}\u{fc}\u{fd}\u{fe}\u{ff}";
+const ISO885915_UPPER: &str = "\u{80}\u{81}\u{82}\u{83}\u{84}\u{85}\u{86}\u{87}\u{88}\u{89}\u{8a}\u{8b}\u{8c}\u{8d}\u{8e}\u{8f}\u{90}\u{91}\u{92}\u{93}\u{94}\u{95}\u{96}\u{97}\u{98}\u{99}\u{9a}\u{9b}\u{9c}\u{9d}\u{9e}\u{9f}\u{a0}\u{a1}\u{a2}\u{a3}\u{20ac}\u{a5}\u{160}\u{a7}\u{161}\u{a9}\u{aa}\u{ab}\u{ac}\u{ad}\u{ae}\u{af}\u{b0}\u{b1}\u{b2}\u{b3}\u{17d}\u{b5}\u{b6}\u{b7}\u{17e}\u{b9}\u{ba}\u{bb}\u{152}\u{153}\u{178}\u{bf}\u{c0}\u{c1}\u{c2}\u{c3}\u{c4}\u{c5}\u{c6}\u{c7}\u{c8}\u{c9}\u{ca}\u{cb}\u{cc}\u{cd}\u{ce}\u{cf}\u{d0}\u{d1}\u{d2}\u{d3}\u{d4}\u{d5}\u{d6}\u{d7}\u{d8}\u{d9}\u{da}\u{db}\u{dc}\u{dd}\u{de}\u{df}\u{e0}\u{e1}\u{e2}\u{e3}\u{e4}\u{e5}\u{e6}\u{e7}\u{e8}\u{e9}\u{ea}\u{eb}\u{ec}\u{ed}\u{ee}\u{ef}\u{f0}\u{f1}\u{f2}\u{f3}\u{f4}\u{f5}\u{f6}\u{f7}\u{f8}\u{f9}\u{fa}\u{fb}\u{fc}\u{fd}\u{fe}\u{ff}";
+
 /// A single-byte page read against its upper half: a byte below 128
 /// stands for itself, any other for the character the table gives it.
 fn decode_with_upper(bytes: &[u8], upper: &str) -> String {
@@ -286,101 +292,38 @@ fn normal_encoding_name(written: &str) -> &str {
     }
 }
 
-/// A string's contents as the reference's reader bounds them: from
-/// past the opening quote to the closing one. A backslash skips a
-/// byte, a raw mark changes nothing in the reading, and a string a
-/// line's end or the file's end cuts off has no contents the codec
-/// sees -- the reader faults on it on its own. The answers are the
-/// contents' bounds, whether they are decoded (a bytes literal's are
-/// not), and where the reading resumes; a reading that resumes where
-/// the contents ended means no closing quote was found.
-fn string_contents(bytes: &[u8], at: usize, prefix: &[u8]) -> (usize, usize, bool, usize) {
-    let n = bytes.len();
-    let quote = bytes[at];
-    let triple = bytes.get(at + 1) == Some(&quote) && bytes.get(at + 2) == Some(&quote);
-    let content_start = at + if triple { 3 } else { 1 };
-    let decodes = !prefix.iter().any(|b| matches!(b, b'b' | b'B'));
-    let mut i = content_start;
-    while i < n {
-        let c = bytes[i];
-        if c == b'\\' {
-            i += 2;
-            continue;
-        }
-        if !triple && (c == b'\n' || c == b'\r') {
-            return (content_start, i, false, i);
-        }
-        if c == quote {
-            if triple && !(bytes.get(i + 1) == Some(&quote) && bytes.get(i + 2) == Some(&quote)) {
-                i += 1;
-                continue;
-            }
-            return (content_start, i, decodes, i + if triple { 3 } else { 1 });
-        }
-        i += 1;
-    }
-    (content_start, n, false, n)
+
+/// The first place a file the reader decodes whole is not UTF-8: a
+/// signed file and a file naming a coding word have every byte, a
+/// comment's and a literal's among them, read by the codec, so the byte
+/// that first breaks UTF-8 is where the reader stops.
+fn utf8_fault_piece(bytes: &[u8]) -> Option<(usize, usize)> {
+    std::str::from_utf8(bytes).err().map(|bad| (bad.valid_up_to(), bytes.len()))
 }
 
-/// The first piece of a Python file the reference would decode as
-/// UTF-8 and could not: a string's contents between its quotes, or a
-/// run of letters, digits and bytes above 127 standing as a name. A
-/// byte in a comment, in a bytes literal, or in a string cut off is
-/// never decoded by the reference, so it is never faulted here; and
-/// past a string cut off the reader faults on its own, so nothing
-/// later is looked at. Answers the piece's bounds, or None when every
-/// piece decodes.
-fn utf8_fault_piece(bytes: &[u8]) -> Option<(usize, usize)> {
-    let n = bytes.len();
-    let mut i = 0;
-    while i < n {
-        let byte = bytes[i];
-        if byte == b'#' {
-            while i < n && bytes[i] != b'\n' { i += 1; }
-        } else if byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 128 {
-            let start = i;
-            while i < n && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] >= 128) { i += 1; }
-            let run = &bytes[start..i];
-            if i < n && (bytes[i] == b'\'' || bytes[i] == b'"')
-                && run.iter().all(|b| matches!(b, b'r' | b'R' | b'b' | b'B' | b'f' | b'F'))
-            {
-                let (from, unto, decodes, resume) = string_contents(bytes, i, run);
-                if decodes && std::str::from_utf8(&bytes[from..unto]).is_err() {
-                    return Some((from, unto));
-                }
-                if resume == unto {
-                    return None;
-                }
-                i = resume;
-            } else if std::str::from_utf8(run).is_err() {
-                return Some((start, i));
-            }
-        } else if byte == b'\'' || byte == b'"' {
-            let (from, unto, decodes, resume) = string_contents(bytes, i, &[]);
-            if decodes && std::str::from_utf8(&bytes[from..unto]).is_err() {
-                return Some((from, unto));
-            }
-            if resume == unto {
-                return None;
-            }
-            i = resume;
-        } else {
-            i += 1;
+/// The reference's report for a file it will not read: the file and the
+/// line it stopped on, the line itself where one is shown, a mark under
+/// the place the reference marks, and the complaint. The run ends here,
+/// before a program begins.
+fn source_fault(given: &str, row: usize, line: Option<&str>, caret: Option<usize>, message: &str) -> ! {
+    eprintln!("  File \"{}\", line {}", given, row);
+    if let Some(text) = line {
+        eprintln!("    {}", text);
+        if let Some(column) = caret {
+            eprintln!("    {}^", " ".repeat(column));
         }
     }
-    None
+    eprintln!("SyntaxError: {}", message);
+    process::exit(1)
 }
 
 /// A Python file read as UTF-8, as PEP 263 has it. With neither a
 /// coding word nor a signature, every line is looked at raw, and a
 /// byte that is not UTF-8 is named on its own, with the file and the
-/// line it stands on. With either, the pieces the reader decodes --
-/// string contents and names -- are looked at, and the codec's own
-/// complaint is told with the file, the line and a mark under the
-/// place, as the reference tells it; a file whose undecodable bytes
-/// stand only where nothing decodes them is read as far as it goes,
-/// for the reader to fault on.
-fn utf8_file_source(written: &[u8], bytes: &[u8], signed: bool, declared: bool, given: &str) -> String {
+/// line it stands on. With either, the whole file is decoded, and
+/// the codec's complaint is told with the file, the line and a mark
+/// under the place, as the reference tells it.
+fn utf8_file_source(written: &[u8], bytes: &[u8], signed: bool, declared: bool, strict_utf8: bool, given: &str) -> String {
     if let Ok(text) = std::str::from_utf8(bytes) {
         return text.to_owned();
     }
@@ -388,8 +331,11 @@ fn utf8_file_source(written: &[u8], bytes: &[u8], signed: bool, declared: bool, 
         let error = std::str::from_utf8(bytes).unwrap_err();
         let upto = error.valid_up_to();
         let row = bytes[..upto].iter().filter(|byte| **byte == b'\n').count() + 1;
-        eprintln!("SyntaxError: Non-UTF-8 code starting with '\\x{:02x}' in file {} on line {}, but no encoding declared; see https://peps.python.org/pep-0263/ for details", bytes[upto], given, row);
-        process::exit(1);
+        let line_start = bytes[..upto].iter().rposition(|byte| *byte == b'\n').map_or(0, |p| p + 1);
+        let lossy = String::from_utf8_lossy(&bytes[line_start..]);
+        let line = lossy.split('\n').next().unwrap_or("");
+        let column = String::from_utf8_lossy(&bytes[line_start..upto]).chars().count();
+        source_fault(given, row, Some(line), Some(column), &format!("Non-UTF-8 code starting with '\\x{:02x}' in file {} on line {}, but no encoding declared; see https://peps.python.org/pep-0263/ for details", bytes[upto], given, row));
     }
     let Some((from, unto)) = utf8_fault_piece(bytes) else {
         return String::from_utf8_lossy(bytes).into_owned();
@@ -413,6 +359,12 @@ fn utf8_file_source(written: &[u8], bytes: &[u8], signed: bool, declared: bool, 
     };
     let line_start = bytes[..at].iter().rposition(|byte| *byte == b'\n').map_or(0, |p| p + 1);
     let col = String::from_utf8_lossy(&bytes[line_start..at]).chars().count() + 1 + past;
+    // A name the reference folds to plain UTF-8 is read by the reader's
+    // own validator, which names the line and the place; any other
+    // spelling is read by the codec, whose complaint stands alone.
+    if !strict_utf8 {
+        source_fault(given, 0, None, None, &format!("{}: {}", complaint, why));
+    }
     let whole = String::from_utf8_lossy(written);
     let line = whole.split('\n').nth(row - 1).unwrap_or("");
     let shown = line.trim_start();
@@ -450,6 +402,9 @@ fn legacy_source(bytes: &[u8], encoding: &str, given: &str) -> String {
     }
     text
 }
+/// The reference's byte-to-byte codecs, known but not text encodings: a
+/// coding word naming one is refused as the reference refuses it.
+const NON_TEXT_CODECS: [&str; 7] = ["base64codec", "bz2codec", "hexcodec", "quopricodec", "rot13", "uucodec", "zlibcodec"];
 
 /// Read a Python file according to PEP 263: a UTF-8 signature is
 /// discarded before it reaches the lexer, and a coding word in a
@@ -459,11 +414,20 @@ fn legacy_source(bytes: &[u8], encoding: &str, given: &str) -> String {
 /// conflicting with the signature, or one the interpreter does not
 /// know, is told the way the reference tells it, and the run ends
 /// before it begins.
+/// Where a byte stands in its line, one past the line's start, as the
+/// reference counts it when it decodes a file line by line.
+fn fault_position(bytes: &[u8], at: usize) -> usize {
+    let start = bytes[..at].iter().rposition(|byte| *byte == b'\n').map_or(0, |place| place + 1);
+    at - start + 1
+}
+
 fn python_file_source(written: Vec<u8>, given: &str) -> String {
     let signed = written.starts_with(&[0xef, 0xbb, 0xbf]);
     let bytes = written.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&written);
     let mut cookie: Option<String> = None;
-    for line in bytes.split(|byte| *byte == b'\n').take(2) {
+    let mut cookie_row = 1usize;
+    for (at, line) in bytes.split(|byte| *byte == b'\n').take(2).enumerate() {
+        cookie_row = at + 1;
         match coding_line(line) {
             CodingLine::Comment(Some(name)) => {
                 cookie = Some(name);
@@ -475,29 +439,52 @@ fn python_file_source(written: Vec<u8>, given: &str) -> String {
     }
     let named = cookie.clone().unwrap_or_else(|| "utf-8".to_string());
     let normal = normal_encoding_name(&named);
+    let shown = String::from_utf8_lossy(bytes);
+    let row_line = |row: usize| shown.split('\n').nth(row - 1).unwrap_or("").to_string();
     if signed && normal != "utf-8" {
-        eprintln!("SyntaxError: encoding problem: {} with BOM", normal);
-        process::exit(1);
+        let line = row_line(cookie_row);
+        source_fault(given, cookie_row, Some(&line), None, &format!("encoding problem: {} with BOM", normal));
     }
-    match named.to_ascii_lowercase().replace(['-', '_'], "").as_str() {
-        "utf8" | "utf8sig" => utf8_file_source(&written, bytes, signed, cookie.is_some(), given),
+    let stripped = normal.to_ascii_lowercase().replace(['-', '_'], "");
+    match stripped.as_str() {
+        "utf8" | "utf8sig" => utf8_file_source(&written, bytes, signed, cookie.is_some(), normal == "utf-8", given),
         "ascii" | "usascii" => {
-            if bytes.iter().any(|byte| *byte > 127) {
-                eprintln!("SyntaxError: encoding problem: {}", normal);
-                process::exit(1);
+            if let Some(at) = bytes.iter().position(|byte| *byte > 127) {
+                let row = bytes[..at].iter().filter(|byte| **byte == b'\n').count() + 1;
+                let line = row_line(row);
+                let message = format!("(unicode error) 'ascii' codec can't decode byte 0x{:02x} in position {}: ordinal not in range(128)", bytes[at], at);
+                source_fault(given, row, Some(&line), None, &message);
             }
             bytes.iter().copied().map(char::from).collect()
         }
         "latin1" | "latin" | "iso88591" | "isolatin1" => bytes.iter().copied().map(char::from).collect(),
         "gbk" | "cp936" | "ms936" | "936" => legacy_source(bytes, "gbk", given),
         "gb2312" | "gb231280" | "euccn" | "chinese" | "csiso58gb231280" => legacy_source(bytes, "gb2312", given),
+        "latin9" | "iso885915" => decode_with_upper(bytes, ISO885915_UPPER),
         "cp437" | "437" | "ibm437" => decode_with_upper(bytes, CP437_UPPER),
         "cp1251" => decode_with_upper(bytes, CP1251_UPPER),
         "iso88597" => decode_with_upper(bytes, ISO88597_UPPER),
-        _ => {
-            eprintln!("SyntaxError: encoding problem: {}", normal);
-            process::exit(1);
+        "koi8r" => decode_with_upper(bytes, KOI8R_UPPER),
+        "cp1252" | "1252" | "windows1252" => {
+            if let Some(at) = bytes.iter().position(|byte| matches!(*byte, 0x81 | 0x8D | 0x8F | 0x90 | 0x9D)) {
+                source_fault(given, 0, None, None, &format!("'charmap' codec can't decode byte 0x{:02x} in position {}: character maps to <undefined>", bytes[at], fault_position(bytes, at)));
+            }
+            decode_with_upper(bytes, CP1252_UPPER)
         }
+        "cp949" => match decode_cp949(bytes) {
+            Ok(text) => text,
+            Err(fault) => source_fault(given, 0, None, None, &format!("'cp949' codec can't decode byte 0x{:02x} in position {}: {}", fault.byte, fault_position(bytes, fault.at), fault.reason)),
+        },
+        "cp932" => match decode_cp932(bytes) {
+            Ok(text) => text,
+            Err(fault) => source_fault(given, 0, None, None, &format!("'cp932' codec can't decode byte 0x{:02x} in position {}: {}", fault.byte, fault_position(bytes, fault.at), fault.reason)),
+        },
+        "shiftjis" | "sjis" => match decode_shift_jis(bytes) {
+            Ok(text) => text,
+            Err(fault) => source_fault(given, 0, None, None, &format!("'shift_jis' codec can't decode byte 0x{:02x} in position {}: {}", fault.byte, fault_position(bytes, fault.at), fault.reason)),
+        },
+        _ if NON_TEXT_CODECS.contains(&stripped.as_str()) => source_fault(given, 0, None, None, &format!("'{}' is not a text encoding", named)),
+        _ => source_fault(given, 0, None, None, &format!("unknown encoding: {}", named)),
     }
 }
 

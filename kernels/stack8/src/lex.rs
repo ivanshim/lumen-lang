@@ -1283,14 +1283,24 @@ impl<'a> Cursor<'a> {
                 s.push(self.step());
             }
             if number_spelling(&s, lang).is_err() && !lang.syntax_members.is_empty() {
-                for keyword in ["else", "for", "not", "and", "or", "in", "if", "is"] {
+                // Try the shorter suffix first: a base digit can precede it.
+                for keyword in ["else", "not", "and", "or", "in", "if", "is", "for"] {
                     if let Some(prefix) = s.strip_suffix(keyword) {
                         if !prefix.is_empty() && number_spelling(prefix, lang).is_ok()
                             && !(prefix == "0" && keyword == "or")
-                            && !(prefix.starts_with("0x") && matches!(keyword, "and" | "else")) {
+                            && !((prefix.starts_with("0x") || prefix.starts_with("0X")) && matches!(keyword, "and" | "else")) {
                             let kept = prefix.len();
                             self.at -= keyword.len();
                             self.column -= keyword.len();
+                            // The reference warns about a number a
+                            // keyword was written against, naming
+                            // the base it had already read.
+                            let base = if prefix.starts_with("0b") || prefix.starts_with("0B") { "binary" }
+                                else if prefix.starts_with("0o") || prefix.starts_with("0O") { "octal" }
+                                else if prefix.starts_with("0x") || prefix.starts_with("0X") { "hexadecimal" }
+                                else if prefix.chars().next_back().map_or(false, |c| lang.imaginary_letters.contains(&c)) { "imaginary" }
+                                else { "decimal" };
+                            self.push(Shape::EscapeWarning, format!("invalid {base} literal"), 0, line, col);
                             s.truncate(kept);
                             break;
                         }
@@ -1546,7 +1556,7 @@ pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, us
 }
 
 pub fn escape_warnings(source: &str, lang: &Lang) -> Vec<(String, usize)> {
-    if lang.escape_warning.is_empty() || !source.contains('\\') { return Vec::new(); }
+    if lang.escape_warning.is_empty() { return Vec::new(); }
     // A reading that stops short on a fault later in the text still
     // says what it noticed about a string already read, so warnings are
     // gathered straight from the reader rather than only when it ends.

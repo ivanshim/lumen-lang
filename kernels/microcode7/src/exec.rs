@@ -1,3 +1,5 @@
+include!("../../../src/python_encodings.rs");
+
 thread_local! {
     static PY_ATTRIBUTE_NAMES: std::cell::RefCell<std::collections::HashMap<String, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
     static PY_ATTRIBUTE_TEXT: std::cell::RefCell<std::collections::HashMap<Vec<u32>, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
@@ -29448,6 +29450,14 @@ impl<'a> Machine<'a> {
                 if mode == 0 && (end.is_some() || needs_closer || bad_indent || words.starts_with("unexpected EOF") || words.starts_with("unexpected character after line continuation")) && !text.ends_with('\n') { text.push('\n'); }
                 if words.starts_with("unterminated ") || (needs_closer && source.lines().count() > line as usize) { text.truncate(text.trim_end_matches(['\n', '\r']).len()); }
                 if words == "cannot assign to function call" && source.lines().count() > line as usize { text.truncate(text.trim_end_matches(['\n', '\r']).len()); }
+                // A coding problem and a reader's own UTF-8 complaint name
+                // their line without the line's ending.
+                if words.ends_with(" with BOM") || words.starts_with("Non-UTF-8 code") || words.starts_with("(unicode error) 'utf-8'") || words.starts_with("'utf-8' codec") {
+                    text.truncate(text.trim_end_matches(['\n', '\r']).len());
+                }
+                // A signature clashing with a coding word is marked at
+                // the head of the file, not at the word that clashed.
+                if words.starts_with("encoding problem:") && words.ends_with(" with BOM") { offset = 0; end_offset = 0; }
                 if mode > 0 && words == "invalid syntax" && !source.ends_with('\n') && column > text.chars().count() { offset = 0; end_offset = 0; }
                 let omit = words.starts_with("'yield' ") || words.starts_with("comprehension inner loop ") || words.starts_with("future feature ") || words == "not a chance" || words.starts_with("from __future__ imports") || words == "import * only allowed at module level" || words == "nonlocal declaration not allowed at module level" || words == "default 'except:' must be last" || words.starts_with("name ") || words.starts_with("annotated name ") || words.starts_with("duplicate argument ") || ["'return' outside function", "'break' outside loop", "'continue' not properly in loop"].contains(&words.as_str());
                 if omit {
@@ -29591,7 +29601,9 @@ impl<'a> Machine<'a> {
         let has_bom = raw.starts_with(b"\xef\xbb\xbf");
         let raw = if has_bom { &raw[3..] } else { raw };
         let mut found: Option<String> = None;
-        'head: for line in raw.split(|c| *c == 10).take(2) {
+        let mut cookie_line = 1u32;
+        'head: for (at, line) in raw.split(|c| *c == 10).take(2).enumerate() {
+            cookie_line = at as u32 + 1;
             let ascii = String::from_utf8_lossy(line);
             let head = ascii.trim_start_matches([' ', '\t', '\x0c']);
             if !head.starts_with('#') {
@@ -29612,7 +29624,6 @@ impl<'a> Machine<'a> {
             }
         }
         let written = found.unwrap_or_else(|| "utf-8".into());
-        let cookie: String = written.chars().filter(|c| !"-_".contains(*c)).flat_map(char::to_lowercase).collect();
         // The name the reference knows the UTF-8 and Latin-1 spellings
         // by; any other keeps the name it was written with.
         let folded: String = written.chars().take(12).map(|c| if c == '_' { '-' } else { c.to_ascii_lowercase() }).collect();
@@ -29624,9 +29635,10 @@ impl<'a> Machine<'a> {
         } else {
             &written
         };
+        let cookie: String = known_as.chars().filter(|c| !"-_".contains(*c)).flat_map(char::to_lowercase).collect();
         if has_bom && known_as != "utf-8" {
             let why = format!("SyntaxError: encoding problem: {known_as} with BOM");
-            return Err(self.text_unreadable_at(0, why, file, 0, 0, None, ""));
+            return Err(self.text_unreadable_at(0, why, file, cookie_line, 0, None, &String::from_utf8_lossy(raw)));
         }
         if cookie == "ascii" || cookie == "usascii" {
             match raw.iter().position(|b| *b >= 128) {
@@ -29647,10 +29659,18 @@ impl<'a> Machine<'a> {
             }).collect::<String>();
             return Ok(Rc::from(shifted));
         }
+        if ["cp1252", "1252", "windows1252"].contains(&cookie.as_str()) {
+            if let Some(at) = raw.iter().position(|b| matches!(*b, 0x81 | 0x8D | 0x8F | 0x90 | 0x9D)) {
+                let why = format!("SyntaxError: 'charmap' codec can't decode byte 0x{:02x} in position {at}: character maps to <undefined>", raw[at]);
+                return Err(self.text_unreadable_at(0, why, file, 0, 0, None, ""));
+            }
+        }
         let alphabet = match cookie.as_str() {
             "cp1251" => Some("ЂЃ‚ѓ„…†‡€‰Љ‹ЊЌЋЏђ‘’“”•–—�™љ›њќћџ ЎўЈ¤Ґ¦§Ё©Є«¬­®Ї°±Ііґµ¶·ё№є»јЅѕїАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя"),
             "iso88597" => Some(" ‘’£€₯¦§¨©ͺ«¬­�―°±²³΄΅Ά·ΈΉΊ»Ό½ΎΏΐΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡ�ΣΤΥΦΧΨΩΪΫάέήίΰαβγδεζηθικλμνξοπρςστυφχψωϊϋόύώ�"),
             "cp437" | "437" | "ibm437" => Some("\u{c7}\u{fc}\u{e9}\u{e2}\u{e4}\u{e0}\u{e5}\u{e7}\u{ea}\u{eb}\u{e8}\u{ef}\u{ee}\u{ec}\u{c4}\u{c5}\u{c9}\u{e6}\u{c6}\u{f4}\u{f6}\u{f2}\u{fb}\u{f9}\u{ff}\u{d6}\u{dc}\u{a2}\u{a3}\u{a5}\u{20a7}\u{192}\u{e1}\u{ed}\u{f3}\u{fa}\u{f1}\u{d1}\u{aa}\u{ba}\u{bf}\u{2310}\u{ac}\u{bd}\u{bc}\u{a1}\u{ab}\u{bb}\u{2591}\u{2592}\u{2593}\u{2502}\u{2524}\u{2561}\u{2562}\u{2556}\u{2555}\u{2563}\u{2551}\u{2557}\u{255d}\u{255c}\u{255b}\u{2510}\u{2514}\u{2534}\u{252c}\u{251c}\u{2500}\u{253c}\u{255e}\u{255f}\u{255a}\u{2554}\u{2569}\u{2566}\u{2560}\u{2550}\u{256c}\u{2567}\u{2568}\u{2564}\u{2565}\u{2559}\u{2558}\u{2552}\u{2553}\u{256b}\u{256a}\u{2518}\u{250c}\u{2588}\u{2584}\u{258c}\u{2590}\u{2580}\u{3b1}\u{df}\u{393}\u{3c0}\u{3a3}\u{3c3}\u{b5}\u{3c4}\u{3a6}\u{398}\u{3a9}\u{3b4}\u{221e}\u{3c6}\u{3b5}\u{2229}\u{2261}\u{b1}\u{2265}\u{2264}\u{2320}\u{2321}\u{f7}\u{2248}\u{b0}\u{2219}\u{b7}\u{221a}\u{207f}\u{b2}\u{25a0}\u{a0}"),
+            "koi8r" => Some("\u{2500}\u{2502}\u{250c}\u{2510}\u{2514}\u{2518}\u{251c}\u{2524}\u{252c}\u{2534}\u{253c}\u{2580}\u{2584}\u{2588}\u{258c}\u{2590}\u{2591}\u{2592}\u{2593}\u{2320}\u{25a0}\u{2219}\u{221a}\u{2248}\u{2264}\u{2265}\u{a0}\u{2321}\u{b0}\u{b2}\u{b7}\u{f7}\u{2550}\u{2551}\u{2552}\u{451}\u{2553}\u{2554}\u{2555}\u{2556}\u{2557}\u{2558}\u{2559}\u{255a}\u{255b}\u{255c}\u{255d}\u{255e}\u{255f}\u{2560}\u{2561}\u{401}\u{2562}\u{2563}\u{2564}\u{2565}\u{2566}\u{2567}\u{2568}\u{2569}\u{256a}\u{256b}\u{256c}\u{a9}\u{44e}\u{430}\u{431}\u{446}\u{434}\u{435}\u{444}\u{433}\u{445}\u{438}\u{439}\u{43a}\u{43b}\u{43c}\u{43d}\u{43e}\u{43f}\u{44f}\u{440}\u{441}\u{442}\u{443}\u{436}\u{432}\u{44c}\u{44b}\u{437}\u{448}\u{44d}\u{449}\u{447}\u{44a}\u{42e}\u{410}\u{411}\u{426}\u{414}\u{415}\u{424}\u{413}\u{425}\u{418}\u{419}\u{41a}\u{41b}\u{41c}\u{41d}\u{41e}\u{41f}\u{42f}\u{420}\u{421}\u{422}\u{423}\u{416}\u{412}\u{42c}\u{42b}\u{417}\u{428}\u{42d}\u{429}\u{427}\u{42a}"),
+            "cp1252" | "1252" | "windows1252" => Some("\u{20ac}\u{81}\u{201a}\u{192}\u{201e}\u{2026}\u{2020}\u{2021}\u{2c6}\u{2030}\u{160}\u{2039}\u{152}\u{8d}\u{17d}\u{8f}\u{90}\u{2018}\u{2019}\u{201c}\u{201d}\u{2022}\u{2013}\u{2014}\u{2dc}\u{2122}\u{161}\u{203a}\u{153}\u{9d}\u{17e}\u{178}\u{a0}\u{a1}\u{a2}\u{a3}\u{a4}\u{a5}\u{a6}\u{a7}\u{a8}\u{a9}\u{aa}\u{ab}\u{ac}\u{ad}\u{ae}\u{af}\u{b0}\u{b1}\u{b2}\u{b3}\u{b4}\u{b5}\u{b6}\u{b7}\u{b8}\u{b9}\u{ba}\u{bb}\u{bc}\u{bd}\u{be}\u{bf}\u{c0}\u{c1}\u{c2}\u{c3}\u{c4}\u{c5}\u{c6}\u{c7}\u{c8}\u{c9}\u{ca}\u{cb}\u{cc}\u{cd}\u{ce}\u{cf}\u{d0}\u{d1}\u{d2}\u{d3}\u{d4}\u{d5}\u{d6}\u{d7}\u{d8}\u{d9}\u{da}\u{db}\u{dc}\u{dd}\u{de}\u{df}\u{e0}\u{e1}\u{e2}\u{e3}\u{e4}\u{e5}\u{e6}\u{e7}\u{e8}\u{e9}\u{ea}\u{eb}\u{ec}\u{ed}\u{ee}\u{ef}\u{f0}\u{f1}\u{f2}\u{f3}\u{f4}\u{f5}\u{f6}\u{f7}\u{f8}\u{f9}\u{fa}\u{fb}\u{fc}\u{fd}\u{fe}\u{ff}"),
             _ => None,
         };
         if let Some(alphabet) = alphabet {
@@ -29658,6 +29678,23 @@ impl<'a> Machine<'a> {
             let mut text = String::new();
             for &byte in raw { text.push(if byte >= 128 { symbols[(byte - 128) as usize] } else { byte as char }); }
             return Ok(Rc::from(text));
+        }
+        // The CJK pages the reference reads, each a lead byte and a
+        // trail the codec's own table holds.
+        let page: Option<(fn(&[u8]) -> Result<String, CodecFault>, &str)> = match cookie.as_str() {
+            "cp949" => Some((decode_cp949, "cp949")),
+            "cp932" => Some((decode_cp932, "cp932")),
+            "shiftjis" | "sjis" => Some((decode_shift_jis, "shift_jis")),
+            _ => None,
+        };
+        if let Some((reader, name)) = page {
+            return match reader(raw) {
+                Ok(text) => Ok(Rc::from(text)),
+                Err(fault) => {
+                    let why = format!("SyntaxError: '{}' codec can't decode byte 0x{:02x} in position {}: {}", name, fault.byte, fault.at, fault.reason);
+                    Err(self.text_unreadable_at(0, why, file, 0, 0, None, ""))
+                }
+            };
         }
         if cookie != "utf8" && cookie != "utf8sig" {
             return Err(self.text_unreadable_at(0, format!("SyntaxError: unknown encoding: {written}"), file, 0, 0, None, ""));
@@ -29671,8 +29708,16 @@ impl<'a> Machine<'a> {
                 let offset = prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1;
                 let position = prefix.rsplit(['"', '\'', '\n']).next().unwrap_or("").len();
                 let byte = raw[bad.valid_up_to()];
-                let reason = match bad.error_len() { None => "unexpected end of data", Some(_) if byte >= 194 => "invalid continuation byte", _ => "invalid start byte" };
-                let words = format!("SyntaxError: (unicode error) 'utf-8' codec can't decode byte 0x{byte:02x} in position {position}: {reason}");
+                let words = if known_as == "utf-8" {
+                    // A name the reference folds to plain UTF-8, or no
+                    // name at all, is read by its own validator, which
+                    // names the byte and the line; the codec's complaint
+                    // is kept for the spellings it reads as written.
+                    format!("SyntaxError: Non-UTF-8 code starting with '\\x{byte:02x}' on line {line}, but no encoding declared; see https://peps.python.org/pep-0263/ for details")
+                } else {
+                    let reason = match bad.error_len() { None => "unexpected end of data", Some(_) if byte >= 194 => "invalid continuation byte", _ => "invalid start byte" };
+                    format!("SyntaxError: (unicode error) 'utf-8' codec can't decode byte 0x{byte:02x} in position {position}: {reason}")
+                };
                 Err(self.text_unreadable_at(0, words, file, line, offset, Some((line, offset)), &String::from_utf8_lossy(raw)))
             }
         }

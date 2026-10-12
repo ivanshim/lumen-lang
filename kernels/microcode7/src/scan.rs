@@ -461,8 +461,105 @@ pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)>
     Ok(read)
 }
 
+/// The base a number was read in when a keyword stands written straight
+/// against it, as the reference warns, else None.
+fn invalid_literal_base(run: &str, table: &Table) -> Option<&'static str> {
+    if check_numeral(run, table).is_ok() { return None; }
+    for word in ["else", "not", "and", "or", "in", "if", "is", "for"] {
+        if let Some(prefix) = run.strip_suffix(word) {
+            if !prefix.is_empty() && check_numeral(prefix, table).is_ok()
+                && !(prefix == "0" && word == "or")
+                && !((prefix.starts_with("0x") || prefix.starts_with("0X")) && matches!(word, "and" | "else")) {
+                return Some(if prefix.starts_with("0b") || prefix.starts_with("0B") { "binary" }
+                    else if prefix.starts_with("0o") || prefix.starts_with("0O") { "octal" }
+                    else if prefix.starts_with("0x") || prefix.starts_with("0X") { "hexadecimal" }
+                    else if prefix.ends_with(table.letters("ext.lexical.number.imaginary").as_slice()) { "imaginary" }
+                    else { "decimal" });
+            }
+        }
+    }
+    None
+}
+
+/// Read the numeric candidate once for tokenization and warning collection.
+fn numeral_end(src: &[char], pos: usize, table: &Table) -> usize {
+    let point = table.letter("lexical.number.decimal_point");
+    let strict = table.flag("ext.lexical.number.separator.strict");
+    let base = table.letter("lexical.number.base_marker");
+    let expo = table.letter("lexical.number.exponent_marker");
+    let powers = table.letters("ext.lexical.number.exponent");
+    // Each way of writing a number in a base of its own, as the digit
+    // and letter that open it and the base its digits are read in.
+    let mut in_base: Vec<(char, char, u32)> = Vec::new();
+    for (key, radix) in [
+        ("lexical.number.hex_prefix", 16u32),
+        ("ext.lexical.number.binary_prefix", 2),
+        ("ext.lexical.number.octal_prefix", 8),
+    ] {
+        for p in table.strings(key) {
+            let mut it = p.chars();
+            if let (Some(d), Some(l)) = (it.next(), it.next()) {
+                in_base.push((d, l, radix));
+            }
+        }
+    }
+    // Marks written between digits to break them up count for nothing.
+    let apart = table.letters("ext.lexical.number.separator");
+    let mut k = pos;
+    while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
+        k += 1;
+    }
+    let at = |k: usize| src.get(k).copied();
+    let opened = in_base
+        .iter()
+        .find(|(d, l, radix)| {
+            let first = k + 1 + usize::from(table.scanner.flag_ext_lexical_number_separator_after_prefix
+                && at(k + 1).map_or(false, |x| apart.contains(&x)));
+            k - pos == 1 && src[pos] == *d && at(k) == Some(*l) && (strict || at(first).map_or(false, |x| x.is_digit(*radix)))
+        })
+        .copied();
+    if let Some((_, _, radix)) = opened {
+        k += 1;
+        while k < src.len() && (src[k].is_digit(radix) || apart.contains(&src[k]) || (strict && table.extends_name(src[k]))) {
+            k += 1;
+        }
+    } else if base.is_some() && at(k) == base {
+        k += 1;
+        while let Some(d) = at(k) {
+            let more = at(k + 1).map_or(false, |x| x.is_ascii_alphanumeric());
+            if d.is_ascii_alphanumeric() || ((Some(d) == point || Some(d) == expo) && more) {
+                k += 1;
+            } else {
+                break;
+            }
+        }
+    } else {
+        if point.is_some() && at(k) == point && (table.flag("ext.lexical.number.point.open") || table.flag("ext.lexical.number.point.bare") || table.flag("ext.lexical.number.point_edge") || table.flag("ext.lexical.number.point_open") || at(k + 1).map_or(false, |x| x.is_ascii_digit())) {
+            k += 1;
+            while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
+                k += 1;
+            }
+        }
+        // 1e9, 2.5E-3: a power of ten after the letter.
+        let sign_len = usize::from(matches!(at(k + 1), Some('+') | Some('-')));
+        if at(k).map_or(false, |c| powers.contains(&c)) && (strict || at(k + 1 + sign_len).map_or(false, |x| x.is_ascii_digit())) {
+            k += 1 + sign_len;
+            while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
+                k += 1;
+            }
+        }
+    }
+    if at(k).map_or(false, |x| table.letters("ext.lexical.number.imaginary").contains(&x)) {
+        k += 1;
+    }
+    if strict {
+        while at(k).map_or(false, |x| table.extends_name(x)) { k += 1; }
+    }
+    k
+}
+
 pub fn escape_notices(source: &str, table: &Table) -> Vec<(String, u32)> {
-    if !source.contains('\\') || !table.scanner.has_any_ext_lexical_escape_warning { return vec![]; }
+    if !table.scanner.has_any_ext_lexical_escape_warning { return vec![]; }
     // A reading that stops short on a fault later in the text still
     // says what it noticed about a string already read, so the notices
     // are gathered by walking the strings in turn, keeping only those
@@ -490,7 +587,28 @@ pub fn escape_notices(source: &str, table: &Table) -> Vec<(String, u32)> {
             row = quote.row;
             continue;
         }
-        pos += 1;
+        // Names and symbols must be consumed whole before the next number.
+        let opens_a_number = src[pos].is_ascii_digit()
+            || ((table.flag("ext.lexical.number.point.open") || table.flag("ext.lexical.number.point.bare") || table.flag("ext.lexical.number.point_edge") || table.flag("ext.lexical.number.point_open"))
+                && Some(src[pos]) == table.letter("lexical.number.decimal_point")
+                && src.get(pos + 1).map_or(false, char::is_ascii_digit));
+        if opens_a_number {
+            let end = numeral_end(&src, pos, table);
+            let run: String = src[pos..end].iter().collect();
+            if let Some(base) = invalid_literal_base(&run, table) {
+                notices.push((format!("invalid {base} literal"), row));
+            }
+            pos = end;
+            continue;
+        }
+        if table.begins_name(src[pos]) {
+            pos += 1;
+            while pos < src.len() && table.extends_name(src[pos]) { pos += 1; }
+            continue;
+        }
+        let ahead: String = src[pos..src.len().min(pos + 8)].iter().collect();
+        pos += table.signs.iter().find(|sign| ahead.starts_with(sign.as_str()))
+            .map_or(1, |sign| sign.chars().count());
     }
     notices
 }
@@ -1021,6 +1139,11 @@ impl Quotation<'_> {
             self.row = self.source[..where_digit].iter().filter(|&&ch| ch == '\n').count() as u32 + 1;
             return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
         }
+        // Notices in a field belong to its source row, just like its tokens.
+        for (notice, relative_row) in escape_notices(&code, self.table) {
+            self.token(Shape::EscapeNotice, notice);
+            self.made.last_mut().unwrap().row = field_row + relative_row.saturating_sub(1);
+        }
         let debugging = self.here() == Some('=');
         if debugging {
             self.forward(1);
@@ -1154,26 +1277,6 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
     // Whether what is kept is bytes rather than the letters they spell.
     let in_bytes = table.scanner.flag_ext_system_text_bytes;
     let point = table.letter("lexical.number.decimal_point");
-    let base = table.letter("lexical.number.base_marker");
-    let expo = table.letter("lexical.number.exponent_marker");
-    let powers = table.letters("ext.lexical.number.exponent");
-    // Each way of writing a number in a base of its own, as the digit
-    // and letter that open it and the base its digits are read in.
-    let mut in_base: Vec<(char, char, u32)> = Vec::new();
-    for (key, radix) in [
-        ("lexical.number.hex_prefix", 16u32),
-        ("ext.lexical.number.binary_prefix", 2),
-        ("ext.lexical.number.octal_prefix", 8),
-    ] {
-        for p in table.strings(key) {
-            let mut it = p.chars();
-            if let (Some(d), Some(l)) = (it.next(), it.next()) {
-                in_base.push((d, l, radix));
-            }
-        }
-    }
-    // Marks written between digits to break them up count for nothing.
-    let apart = table.letters("ext.lexical.number.separator");
     let prefix = table.letter("identifier.variable_prefix");
     let folding = table.scanner.single_ext_lexical_heredoc.as_deref();
     // The escapes a folded string reads: those of a quoted one, less the
@@ -1378,63 +1481,14 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             && Some(c) == point && src.get(pos + 1).map_or(false, char::is_ascii_digit))
         {
             let strict = table.scanner.flag_ext_lexical_number_separator_strict;
-            let mut k = pos;
-            while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
-                k += 1;
-            }
-            let at = |k: usize| src.get(k).copied();
-            let opened = in_base
-                .iter()
-                .find(|(d, l, radix)| {
-                    let first = k + 1 + usize::from(table.scanner.flag_ext_lexical_number_separator_after_prefix
-                        && at(k + 1).map_or(false, |x| apart.contains(&x)));
-                    k - pos == 1 && src[pos] == *d && at(k) == Some(*l) && (strict || at(first).map_or(false, |x| x.is_digit(*radix)))
-                })
-                .copied();
-            if let Some((_, _, radix)) = opened {
-                k += 1;
-                while k < src.len() && (src[k].is_digit(radix) || apart.contains(&src[k]) || (strict && table.extends_name(src[k]))) {
-                    k += 1;
-                }
-            } else if base.is_some() && at(k) == base {
-                k += 1;
-                while let Some(d) = at(k) {
-                    let more = at(k + 1).map_or(false, |x| x.is_ascii_alphanumeric());
-                    if d.is_ascii_alphanumeric() || ((Some(d) == point || Some(d) == expo) && more) {
-                        k += 1;
-                    } else {
-                        break;
-                    }
-                }
-            } else {
-                if point.is_some() && at(k) == point && (table.scanner.flag_ext_lexical_number_point_open || table.scanner.flag_ext_lexical_number_point_bare || table.scanner.flag_ext_lexical_number_point_edge || table.scanner.flag_ext_lexical_number_point_open_plain || at(k + 1).map_or(false, |x| x.is_ascii_digit())) {
-                    k += 1;
-                    while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
-                        k += 1;
-                    }
-                }
-                // 1e9, 2.5E-3: a power of ten after the letter.
-                let sign_len = usize::from(matches!(at(k + 1), Some('+') | Some('-')));
-                if at(k).map_or(false, |c| powers.contains(&c)) && (strict || at(k + 1 + sign_len).map_or(false, |x| x.is_ascii_digit())) {
-                    k += 1 + sign_len;
-                    while k < src.len() && (src[k].is_ascii_digit() || apart.contains(&src[k])) {
-                        k += 1;
-                    }
-                }
-            }
-            if at(k).map_or(false, |x| table.letters("ext.lexical.number.imaginary").contains(&x)) {
-                k += 1;
-            }
-            if strict {
-                while at(k).map_or(false, |x| table.extends_name(x)) { k += 1; }
-            }
+            let mut k = numeral_end(&src, pos, table);
             let mut spelling: String = src[pos..k].iter().collect();
             if strict && check_numeral(&spelling, table).is_err() && table.syntax_exceptions {
-                for word in ["else", "for", "not", "and", "or", "in", "if", "is"] {
+                for word in ["else", "not", "and", "or", "in", "if", "is", "for"] {
                     if let Some(beginning) = spelling.strip_suffix(word) {
                         if !beginning.is_empty() && check_numeral(beginning, table).is_ok()
                             && !(beginning == "0" && word == "or")
-                            && !(beginning.starts_with("0x") && matches!(word, "and" | "else")) {
+                            && !((beginning.starts_with("0x") || beginning.starts_with("0X")) && matches!(word, "and" | "else")) {
                             let kept = beginning.len();
                             k -= word.len();
                             spelling.truncate(kept);
@@ -1917,4 +1971,39 @@ fn failed_digit(spelling: &str, complaint: &str) -> usize {
         index += 1;
     }
     index.saturating_sub(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Keep notices aligned with the numbers the scanner actually consumes.
+    #[test]
+    fn numeric_notices_follow_token_boundaries() {
+        let table = Table::parse(include_str!("../../../langs/python.json")).unwrap();
+        for (source, number, kind) in [
+            ("1e-0or 2", "1e-0", "decimal"),
+            ("1e+0or 2", "1e+0", "decimal"),
+            ("1or...", "1", "decimal"),
+            ("...5and 2", "5", "decimal"),
+            (".5and 2", ".5", "decimal"),
+            (".5if True else 0", ".5", "decimal"),
+            ("0b1and 2", "0b1", "binary"),
+            ("0x1for x in []", "0x1f", "hexadecimal"),
+            ("1jif 1 else 2", "1j", "imaginary"),
+        ] {
+            assert_eq!(escape_notices(source, &table), vec![(format!("invalid {kind} literal"), 1)], "{source}");
+            let tokens = scan_at(source, &table).unwrap();
+            let first_number = tokens.iter().find(|token| token.shape == Shape::Numeral).unwrap();
+            assert_eq!(first_number.lexeme, number, "{source}");
+        }
+        for (source, row) in [("f'{1e-0or 2}'", 1), ("f'{1or...}'", 1), ("f'''
+{1e-0or 2}
+'''", 2)] {
+            assert_eq!(escape_notices(source, &table), vec![("invalid decimal literal".to_owned(), row)], "{source}");
+        }
+        for source in ["'1e-0or 2'", "# 1or...", "name1or", "é1or = 2", "α1or = 2", "1e-0 or 2"] {
+            assert!(escape_notices(source, &table).is_empty(), "{source}");
+        }
+    }
 }

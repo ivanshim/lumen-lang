@@ -51,7 +51,9 @@ fn prepared_libraries(versions: &serde_json::Map<String, Value>) {
             let mut records = String::new();
             let mut source_rows = String::new();
             let mut count = 0;
-            for (_, source, _) in library_sources::MODULES {
+            for (name, source, _) in library_sources::MODULES {
+                // Reference modules are inputs, not reusable startup libraries.
+                if name.starts_with("test.") && !name.starts_with("test.support") { continue; }
                 let prepared = std::panic::catch_unwind(|| match kernel {
                     "stack8" => lumen_stack8::compile::prepare_library(&definition, source),
                     _ => lumen_microcode7::build::prepare_library(&definition, source),

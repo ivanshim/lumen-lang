@@ -213,6 +213,8 @@ def set_int_max_str_digits(maxdigits):
 # takes its own skip road instead of finding an attribute missing.
 class _StandardStream:
     closed = False
+    encoding = 'utf-8'
+    errors = 'backslashreplace'
 
     def _ensure_open(self):
         if self.closed:

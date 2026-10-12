@@ -412,6 +412,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("test.archiver_tests", include_str!("test/archiver_tests.py"), "test/archiver_tests.py"),
     ("test.audiotests", include_str!("test/audiotests.py"), "test/audiotests.py"),
     ("test.datetimetester", include_str!("test/datetimetester.py"), "test/datetimetester.py"),
+    ("test.encoded_modules", include_str!("test/encoded_modules/__init__.py"), "test/encoded_modules/__init__.py"),
     ("test.list_tests", include_str!("test/list_tests.py"), "test/list_tests.py"),
     ("test.mapping_tests", include_str!("test/mapping_tests.py"), "test/mapping_tests.py"),
     ("test.picklecommon", include_str!("test/picklecommon.py"), "test/picklecommon.py"),

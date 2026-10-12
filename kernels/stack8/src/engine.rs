@@ -1,3 +1,5 @@
+include!("../../../src/python_encodings.rs");
+
 thread_local! {
     static PY_ATTRIBUTE_NAMES: std::cell::RefCell<std::collections::HashMap<String, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
     static PY_ATTRIBUTE_TEXT: std::cell::RefCell<std::collections::HashMap<Vec<u32>, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
@@ -28894,6 +28896,14 @@ impl Engine<'_> {
             if mode == 0 && (end.is_some() || unclosed || indentation || message.starts_with("unexpected EOF") || message.starts_with("unexpected character after line continuation")) && !text.ends_with('\n') { text.push('\n'); }
             if message.starts_with("unterminated ") || (unclosed && source.lines().count() > row) { text = text.trim_end_matches(['\r', '\n']).to_owned(); }
             if message == "cannot assign to function call" && source.lines().count() > row { text = text.trim_end_matches(['\r', '\n']).to_owned(); }
+            // A coding problem and a reader's own UTF-8 complaint name
+            // their line without the line's ending.
+            if message.ends_with(" with BOM") || message.starts_with("Non-UTF-8 code") || message.starts_with("(unicode error) 'utf-8'") || message.starts_with("'utf-8' codec") {
+                text = text.trim_end_matches(['\r', '\n']).to_owned();
+            }
+            // A signature clashing with a coding word is marked at the
+            // head of the file, not at the word that clashed.
+            if message.starts_with("encoding problem:") && message.ends_with(" with BOM") { col = 0; finish = 0; }
             if mode != 0 && message == "invalid syntax" && !source.ends_with('\n') && column > text.chars().count() { col = 0; finish = 0; }
             let compiler_only = message.starts_with("'yield' ") || message.starts_with("comprehension inner loop ") || message.starts_with("future feature ") || message == "not a chance" || message.starts_with("from __future__ imports") || message == "import * only allowed at module level" || message == "nonlocal declaration not allowed at module level" || message == "default 'except:' must be last" || message.starts_with("name ") || message.starts_with("annotated name ") || message.starts_with("duplicate argument ") || message == "'return' outside function" || message == "'break' outside loop" || message == "'continue' not properly in loop";
             // Symbol-table diagnostics retain UTF-8 spans; tokenizer
@@ -29076,7 +29086,9 @@ impl Engine<'_> {
         let bom = bytes.starts_with(&[239, 187, 191]);
         let bytes = bytes.strip_prefix(&[239, 187, 191]).unwrap_or(bytes);
         let mut spelling: Option<String> = None;
-        'head: for line in bytes.split(|b| *b == b'\n').take(2) {
+        let mut cookie_row = 1usize;
+        'head: for (at, line) in bytes.split(|b| *b == b'\n').take(2).enumerate() {
+            cookie_row = at + 1;
             let line = String::from_utf8_lossy(line);
             let trimmed = line.trim_start_matches([' ', '\t', '\x0c']);
             if !trimmed.starts_with('#') {
@@ -29097,10 +29109,11 @@ impl Engine<'_> {
             }
         }
         let spelling = spelling.unwrap_or_else(|| "utf-8".to_string());
-        let encoding = spelling.to_ascii_lowercase().replace(['-', '_'], "");
         let declared = Self::coding_word_normalized(&spelling);
+        let encoding = declared.to_ascii_lowercase().replace(['-', '_'], "");
         if bom && declared != "utf-8" {
-            return Err(self.text_syntax(0, format!("SyntaxError: encoding problem: {declared} with BOM"), filename, 0, 0, None, ""));
+            let shown = String::from_utf8_lossy(bytes);
+            return Err(self.text_syntax(0, format!("SyntaxError: encoding problem: {declared} with BOM"), filename, cookie_row, 0, None, &shown));
         }
         let decoded = match encoding.as_str() {
             "ascii" | "usascii" => {
@@ -29117,9 +29130,18 @@ impl Engine<'_> {
                     let row = prefix.bytes().filter(|b| *b == b'\n').count() + 1;
                     let col = prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1;
                     let source = String::from_utf8_lossy(bytes);
-                    let why = if error.error_len().is_none() { "unexpected end of data" } else if bytes[error.valid_up_to()] >= 194 { "invalid continuation byte" } else { "invalid start byte" };
-                    let position = prefix.rsplit(['\n', '\'', '"']).next().unwrap_or("").len();
-                    let message = format!("SyntaxError: (unicode error) 'utf-8' codec can't decode byte 0x{:02x} in position {position}: {why}", bytes[error.valid_up_to()]);
+                    let at = error.valid_up_to();
+                    let message = if declared == "utf-8" {
+                        // A name the reference folds to plain UTF-8, or no
+                        // name at all, is read by its own validator, which
+                        // names the byte and the line on its own; the
+                        // codec's complaint belongs to the other spellings.
+                        format!("SyntaxError: Non-UTF-8 code starting with '\\x{:02x}' on line {row}, but no encoding declared; see https://peps.python.org/pep-0263/ for details", bytes[at])
+                    } else {
+                        let why = if error.error_len().is_none() { "unexpected end of data" } else if bytes[at] >= 194 { "invalid continuation byte" } else { "invalid start byte" };
+                        let position = prefix.rsplit(['\n', '\'', '"']).next().unwrap_or("").len();
+                        format!("SyntaxError: (unicode error) 'utf-8' codec can't decode byte 0x{:02x} in position {position}: {why}", bytes[at])
+                    };
                     return Err(self.text_syntax(0, message, filename, row, col, Some((row, col)), &source));
                 }
             },
@@ -29143,6 +29165,36 @@ impl Engine<'_> {
                 let page: Vec<char> = "\u{c7}\u{fc}\u{e9}\u{e2}\u{e4}\u{e0}\u{e5}\u{e7}\u{ea}\u{eb}\u{e8}\u{ef}\u{ee}\u{ec}\u{c4}\u{c5}\u{c9}\u{e6}\u{c6}\u{f4}\u{f6}\u{f2}\u{fb}\u{f9}\u{ff}\u{d6}\u{dc}\u{a2}\u{a3}\u{a5}\u{20a7}\u{192}\u{e1}\u{ed}\u{f3}\u{fa}\u{f1}\u{d1}\u{aa}\u{ba}\u{bf}\u{2310}\u{ac}\u{bd}\u{bc}\u{a1}\u{ab}\u{bb}\u{2591}\u{2592}\u{2593}\u{2502}\u{2524}\u{2561}\u{2562}\u{2556}\u{2555}\u{2563}\u{2551}\u{2557}\u{255d}\u{255c}\u{255b}\u{2510}\u{2514}\u{2534}\u{252c}\u{251c}\u{2500}\u{253c}\u{255e}\u{255f}\u{255a}\u{2554}\u{2569}\u{2566}\u{2560}\u{2550}\u{256c}\u{2567}\u{2568}\u{2564}\u{2565}\u{2559}\u{2558}\u{2552}\u{2553}\u{256b}\u{256a}\u{2518}\u{250c}\u{2588}\u{2584}\u{258c}\u{2590}\u{2580}\u{3b1}\u{df}\u{393}\u{3c0}\u{3a3}\u{3c3}\u{b5}\u{3c4}\u{3a6}\u{398}\u{3a9}\u{3b4}\u{221e}\u{3c6}\u{3b5}\u{2229}\u{2261}\u{b1}\u{2265}\u{2264}\u{2320}\u{2321}\u{f7}\u{2248}\u{b0}\u{2219}\u{b7}\u{221a}\u{207f}\u{b2}\u{25a0}\u{a0}".chars().collect();
                 bytes.iter().map(|b| if *b < 128 { char::from(*b) } else { page[*b as usize - 128] }).collect()
             }
+            // KOI8-R: the Cyrillic page the reference's codec keeps.
+            "koi8r" => {
+                let page: Vec<char> = "\u{2500}\u{2502}\u{250c}\u{2510}\u{2514}\u{2518}\u{251c}\u{2524}\u{252c}\u{2534}\u{253c}\u{2580}\u{2584}\u{2588}\u{258c}\u{2590}\u{2591}\u{2592}\u{2593}\u{2320}\u{25a0}\u{2219}\u{221a}\u{2248}\u{2264}\u{2265}\u{a0}\u{2321}\u{b0}\u{b2}\u{b7}\u{f7}\u{2550}\u{2551}\u{2552}\u{451}\u{2553}\u{2554}\u{2555}\u{2556}\u{2557}\u{2558}\u{2559}\u{255a}\u{255b}\u{255c}\u{255d}\u{255e}\u{255f}\u{2560}\u{2561}\u{401}\u{2562}\u{2563}\u{2564}\u{2565}\u{2566}\u{2567}\u{2568}\u{2569}\u{256a}\u{256b}\u{256c}\u{a9}\u{44e}\u{430}\u{431}\u{446}\u{434}\u{435}\u{444}\u{433}\u{445}\u{438}\u{439}\u{43a}\u{43b}\u{43c}\u{43d}\u{43e}\u{43f}\u{44f}\u{440}\u{441}\u{442}\u{443}\u{436}\u{432}\u{44c}\u{44b}\u{437}\u{448}\u{44d}\u{449}\u{447}\u{44a}\u{42e}\u{410}\u{411}\u{426}\u{414}\u{415}\u{424}\u{413}\u{425}\u{418}\u{419}\u{41a}\u{41b}\u{41c}\u{41d}\u{41e}\u{41f}\u{42f}\u{420}\u{421}\u{422}\u{423}\u{416}\u{412}\u{42c}\u{42b}\u{417}\u{428}\u{42d}\u{429}\u{427}\u{42a}".chars().collect();
+                bytes.iter().map(|b| if *b < 128 { char::from(*b) } else { page[*b as usize - 128] }).collect()
+            }
+            // Windows-1252: Latin-1 with letters opened in the C1 range.
+            "cp1252" | "1252" | "windows1252" => {
+                if let Some(at) = bytes.iter().position(|b| matches!(*b, 0x81 | 0x8D | 0x8F | 0x90 | 0x9D)) {
+                    let words = format!("SyntaxError: 'charmap' codec can't decode byte 0x{:02x} in position {at}: character maps to <undefined>", bytes[at]);
+                    return Err(self.text_syntax(0, words, filename, 0, 0, None, ""));
+                }
+                let page: Vec<char> = "\u{20ac}\u{81}\u{201a}\u{192}\u{201e}\u{2026}\u{2020}\u{2021}\u{2c6}\u{2030}\u{160}\u{2039}\u{152}\u{8d}\u{17d}\u{8f}\u{90}\u{2018}\u{2019}\u{201c}\u{201d}\u{2022}\u{2013}\u{2014}\u{2dc}\u{2122}\u{161}\u{203a}\u{153}\u{9d}\u{17e}\u{178}\u{a0}\u{a1}\u{a2}\u{a3}\u{a4}\u{a5}\u{a6}\u{a7}\u{a8}\u{a9}\u{aa}\u{ab}\u{ac}\u{ad}\u{ae}\u{af}\u{b0}\u{b1}\u{b2}\u{b3}\u{b4}\u{b5}\u{b6}\u{b7}\u{b8}\u{b9}\u{ba}\u{bb}\u{bc}\u{bd}\u{be}\u{bf}\u{c0}\u{c1}\u{c2}\u{c3}\u{c4}\u{c5}\u{c6}\u{c7}\u{c8}\u{c9}\u{ca}\u{cb}\u{cc}\u{cd}\u{ce}\u{cf}\u{d0}\u{d1}\u{d2}\u{d3}\u{d4}\u{d5}\u{d6}\u{d7}\u{d8}\u{d9}\u{da}\u{db}\u{dc}\u{dd}\u{de}\u{df}\u{e0}\u{e1}\u{e2}\u{e3}\u{e4}\u{e5}\u{e6}\u{e7}\u{e8}\u{e9}\u{ea}\u{eb}\u{ec}\u{ed}\u{ee}\u{ef}\u{f0}\u{f1}\u{f2}\u{f3}\u{f4}\u{f5}\u{f6}\u{f7}\u{f8}\u{f9}\u{fa}\u{fb}\u{fc}\u{fd}\u{fe}\u{ff}".chars().collect();
+                bytes.iter().map(|b| if *b < 128 { char::from(*b) } else { page[*b as usize - 128] }).collect()
+            }
+            // The CJK pages the reference reads: a byte below 128
+            // stands for itself, an upper byte opens a two-byte
+            // sequence, and a byte the page will not finish is the
+            // codec's own complaint, named with the page's codec.
+            "cp949" => match decode_cp949(bytes) {
+                Ok(text) => text,
+                Err(fault) => return Err(self.text_syntax(0, format!("SyntaxError: 'cp949' codec can't decode byte 0x{:02x} in position {}: {}", fault.byte, fault.at, fault.reason), filename, 0, 0, None, "")),
+            },
+            "cp932" => match decode_cp932(bytes) {
+                Ok(text) => text,
+                Err(fault) => return Err(self.text_syntax(0, format!("SyntaxError: 'cp932' codec can't decode byte 0x{:02x} in position {}: {}", fault.byte, fault.at, fault.reason), filename, 0, 0, None, "")),
+            },
+            "shiftjis" | "sjis" => match decode_shift_jis(bytes) {
+                Ok(text) => text,
+                Err(fault) => return Err(self.text_syntax(0, format!("SyntaxError: 'shift_jis' codec can't decode byte 0x{:02x} in position {}: {}", fault.byte, fault.at, fault.reason), filename, 0, 0, None, "")),
+            },
             _ => return Err(self.text_syntax(0, format!("SyntaxError: unknown encoding: {spelling}"), filename, 0, 0, None, "")),
         };
         Ok(Rc::from(decoded))
