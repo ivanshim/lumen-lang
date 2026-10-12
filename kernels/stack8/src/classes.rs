@@ -2321,15 +2321,7 @@ impl<'a> Engine<'a> {
                         if found[0].is_true() { return Ok(found[1].clone()); }
                     }
                     let previous = std::mem::replace(&mut self.armed_names, reading);
-                    // The fallback is part of the annotation's name lookup, not a user call.
-                    let parent = match (&mut self.annotation_scope, &args[2]) {
-                        (Some((body, _, _)), Value::Routine(fallback))
-                            if self.running_routine.as_ref().is_some_and(|current| Rc::ptr_eq(current, body)) =>
-                                Some(std::mem::replace(body, fallback.clone())),
-                        _ => None,
-                    };
                     let answer = self.class_apply(args[2].clone(), Vec::new());
-                    if let (Some(parent), Some((body, _, _))) = (parent, &mut self.annotation_scope) { *body = parent; }
                     self.armed_names = previous;
                     answer
                 }
@@ -2472,7 +2464,7 @@ impl<'a> Engine<'a> {
                 44 => {
                     if args.len() != 1 { return Err("TypeError: __annotate__() requires one argument".into()); }
                     let forward = matches!(args[0].contents(), Value::Small(3));
-                    self.data.extend([args[0].clone(), Value::Small(3)]);
+                    self.data.extend([args[0].clone(), Value::Small(2)]);
                     self.perform(&Action::Gt, 2)?;
                     if self.drop_top()?.is_true() { return Err("NotImplementedError: ".into()); }
                     // Read class evaluators in the isolated lookup scope.
@@ -6058,18 +6050,6 @@ impl<'a> Engine<'a> {
 
     fn annotation_value(&mut self, routine: Value, forward: bool, owner: Option<Rc<Class>>) -> Flow<Value> {
         let source = match &routine { Value::Routine(body) | Value::Method(_, body, _) => body.annotation_source.clone(), _ => None };
-        let owner = owner.or_else(|| {
-            let body = match &routine { Value::Routine(body) | Value::Method(_, body, _) => body, _ => return None };
-            body.enclosed.iter().find_map(|(at, value)| {
-                if !body.idents[*at].starts_with("#class_cell") { return None; }
-                let value = match value { Value::Binding(cell) => cell.borrow().contents(), other => other.contents() };
-                match value {
-                    Value::Class(class) => Some(class),
-                    Value::Faint(reference) => match reference.revive() { Some(Value::Class(class)) => Some(class), _ => None },
-                    _ => None,
-                }
-            })
-        });
         let saved_scope = self.annotation_scope.take();
         if forward && source.is_some() {
             let body = match &routine { Value::Routine(body) | Value::Method(_, body, _) => Some(body.clone()), _ => None };
