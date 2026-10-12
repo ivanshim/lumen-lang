@@ -16045,7 +16045,6 @@ impl<'a> Machine<'a> {
             if matches!(&current, Value::Dict(now) if now.serial != store.serial) { continue; }
             break (store, located.0, located.1);
         };
-        let slots = store.slots_synced();
         let span = store.span;
         let mut budget = store.entry_budget;
         if let Some(index) = found {
@@ -16053,7 +16052,7 @@ impl<'a> Machine<'a> {
             if name == "pop" {
                 let mut remaining = store.to_vec();
                 remaining.remove(index);
-                let mut slots = slots.clone();
+                let mut slots = store.slots_synced();
                 slots.remove(index);
                 self.replace_dict(receiver, remaining, slots, span, budget)?;
             }
@@ -16076,6 +16075,7 @@ impl<'a> Machine<'a> {
                 cell.replace(Value::Dict(entries));
                 return Ok(answer);
             }
+            let slots = store.slots_synced();
             let mut grown = store.to_vec();
             grown.push((keyed, answer.clone()));
             let (slots, span) = self.grown_slots(&grown, &slots, span, &mut budget);
