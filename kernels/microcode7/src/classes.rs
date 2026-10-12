@@ -2303,7 +2303,19 @@ impl<'a> Machine<'a> {
                             _ => {}
                         }
                         let before = std::mem::replace(&mut self.armed_names, scope);
+                        let mut resume = None;
+                        if let Some((active, _, _)) = self.symbolic_annotation.as_mut() {
+                            if self.frames_named.last().is_some_and(|caller| Rc::ptr_eq(caller, active)) {
+                                if let Value::Bound(lookup, _) | Value::Routine(lookup) = &values[2] {
+                                    resume = Some(active.clone());
+                                    *active = lookup.clone();
+                                }
+                            }
+                        }
                         let result = self.apply_class_member(values[2].clone(), Vec::new());
+                        if let Some(caller) = resume {
+                            if let Some(context) = self.symbolic_annotation.as_mut() { context.0 = caller; }
+                        }
                         self.armed_names = before;
                         result
                     }
@@ -3807,7 +3819,7 @@ impl<'a> Machine<'a> {
         match &entry {
             Value::Wrapped(73, parts) if parts.is_empty() && receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
             Value::Wrapped(134, ref parts) if parts[0].bare() == "normal_pdf" && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
-            Value::Wrapped(2, items) if !items.is_empty() && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
+            Value::Wrapped(2, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(120, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(48 | 133 | 136 | 60 | 120 | 123 | 124 | 125 | 127 | 155 | 156 | 157 | 158, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
@@ -4603,6 +4615,22 @@ impl<'a> Machine<'a> {
 
     fn annotation_entry(&mut self, worth: Value, symbolic: bool, declaring: Option<Rc<Blueprint>>) -> Res {
         let spelling = match &worth { Value::Routine(code) | Value::Bound(code, _) => code.annotation_spelling.clone(), _ => None };
+        let mut declaring = declaring;
+        if declaring.is_none() {
+            if let Value::Bound(code, _) = &worth {
+                for (index, address) in code.reaching.iter().enumerate() {
+                    if !address.ident.starts_with("#completed_class") { continue; }
+                    let Some(held) = self.cell_contents(&[worth.clone(), Value::Small(index as i64)]) else { continue; };
+                    let held = held.settled();
+                    declaring = match held {
+                        Value::Blueprint(class) => Some(class),
+                        Value::Dim(weak) => weak.revive().and_then(|live| if let Value::Blueprint(class) = live { Some(class) } else { None }),
+                        _ => None,
+                    };
+                    if declaring.is_some() { break; }
+                }
+            }
+        }
         let outer_symbolic = self.symbolic_annotation.take();
         if symbolic && spelling.is_some() {
             match &worth {
