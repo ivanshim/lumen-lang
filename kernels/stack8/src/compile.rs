@@ -344,23 +344,24 @@ fn token_stamp(bytes: &[u8]) -> u64 {
 }
 
 // Decode a build-owned proof with a bounded native codec result.
-fn unpack_library_proof(packed: &'static [u8]) -> Option<Rc<Vec<u8>>> {
-    // Token acquisition and scope verification read the same immutable proof consecutively.
+fn unpack_library_proof(compressed: &'static [u8]) -> Option<Rc<Vec<u8>>> {
     thread_local! {
-        static LAST: std::cell::RefCell<Option<(&'static [u8], Rc<Vec<u8>>)>> = const { std::cell::RefCell::new(None) };
+        static PREVIOUS_PROOF: std::cell::RefCell<Option<(&'static [u8], Rc<Vec<u8>>)>> = const { std::cell::RefCell::new(None) };
     }
-    if let Some(found) = LAST.with(|last| last.borrow().as_ref()
-        .filter(|(bytes, _)| std::ptr::eq(*bytes, packed)).map(|(_, decoded)| decoded.clone())) {
-        return Some(found);
-    }
-    let reader = lumen_zlib::call(2, 0, &[], [15, 0, 0, 0, 0]);
-    if reader.status != 0 { return None; }
-    let decoded = lumen_zlib::call(4, reader.number, packed, [4, 64 * 1024 * 1024, 0, 0, 0]);
-    lumen_zlib::call(6, reader.number, &[], [0; 5]);
-    if decoded.status != 0 || !decoded.ended || decoded.consumed as usize != packed.len() { return None; }
-    let output = Rc::new(decoded.output);
-    LAST.with(|last| *last.borrow_mut() = Some((packed, output.clone())));
-    Some(output)
+    let cached = PREVIOUS_PROOF.with(|saved| {
+        let entry = saved.borrow();
+        let (source, bytes) = entry.as_ref()?;
+        std::ptr::eq(*source, compressed).then(|| bytes.clone())
+    });
+    if cached.is_some() { return cached; }
+    let stream = lumen_zlib::call(2, 0, &[], [15, 0, 0, 0, 0]);
+    if stream.status != 0 { return None; }
+    let expanded = lumen_zlib::call(4, stream.number, compressed, [4, 64 * 1024 * 1024, 0, 0, 0]);
+    lumen_zlib::call(6, stream.number, &[], [0; 5]);
+    if expanded.status != 0 || !expanded.ended || expanded.consumed as usize != compressed.len() { return None; }
+    let bytes = Rc::new(expanded.output);
+    PREVIOUS_PROOF.with(|saved| saved.replace(Some((compressed, bytes.clone()))));
+    Some(bytes)
 }
 
 fn prepared_scope(tokens: &[Token], lang: &Lang) -> Option<PreparedScope> {
