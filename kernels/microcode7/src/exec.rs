@@ -9648,6 +9648,9 @@ impl<'a> Machine<'a> {
         None
     }
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
+        if !name.is_empty() && name == self.rules.detail_doc {
+            if let Some(text) = self.primitive_doc(value) { return Some(Value::text(text)); }
+        }
         match self.coroutine_attribute(&value.settled(), name) {
             Ok(Some(answer)) => return Some(answer),
             Err(away) => { self.got_away = Some(away); return None; }
