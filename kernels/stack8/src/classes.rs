@@ -3242,6 +3242,7 @@ impl<'a> Engine<'a> {
             self.made += 1;
             Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None), class:c.clone(),fields:RefCell::new(vec![]),mark:self.made}))
         };
+        self.remember_allocation(&object);
         if makes_classes { self.initialise_made_class(&object, &c, args.clone())?; }
         if let Value::Object(o) = &object {
             // One whose class has last words to say is remembered, so that
@@ -4368,7 +4369,7 @@ impl<'a> Engine<'a> {
                 }
                 if name == self.class_word("name") { return Ok(Value::text(word.rsplit('.').next().unwrap_or(word))); }
                 if name == self.class_word("qualified") { return Ok(Value::text(word)); }
-                if name == self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
+                if name == self.class_word("module") { return Ok(self.callable_home(op, word)); }
                 if self.lang.class_special.get(79).is_some_and(|label| label == name) {
                     return Ok(Self::adapter(132, vec![Value::text(word)]));
                 }
@@ -5065,7 +5066,7 @@ impl<'a> Engine<'a> {
                         else if name==self.class_word("remove") {Some(12)} else {None};
                     if let Some(i)=index {
                         if i == 2 && !self.lang.warning_backend.is_empty() && self.lang.constructor.as_deref() == Some(name) {
-                            return Ok(self.loose_members.borrow_mut().entry("root:initializer".into()).or_insert_with(|| Self::adapter(2, Vec::new())).clone());
+                            return Ok(self.root_initialiser());
                         }
                         let state = if (10..=12).contains(&i) && !self.lang.class_builder.is_empty() { vec![Value::text(self.class_word("root"))] }
                             else if name == self.class_word("subclass") { vec![Value::text(name)] } else { Vec::new() };
@@ -8093,7 +8094,8 @@ impl<'a> Engine<'a> {
         let Some(start) = order.iter().position(|class| Self::super_same_class(class, owner)) else { return Ok(None) };
         let root_class = self.root_class();
         for class in &order[start + 1..] {
-            if name == self.class_word("allocate") && Self::own_class_value(class, name).is_none() {
+            if name == self.class_word("allocate") {
+                if let Some(declared) = Self::own_class_value(class, name) { return Ok(Some(declared)); }
                 if let Some(word) = Self::own_kind(class) {
                     if word != self.class_word("root") {
                         let maker = Self::own_class_value(class, name).unwrap_or_else(|| Self::adapter(14, vec![Value::text(&word)]));

@@ -3443,6 +3443,7 @@ impl<'a> Machine<'a> {
             },
             (None,None)=>{self.made+=1;Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None), of:class.clone(),holds:RefCell::new(Vec::new()),turn:self.made}))},
         };
+        self.trace_allocation(&created);
         if metaclass {self.finish_class_construction(&created,&class,given.clone())?;}
         if let Value::Thing(thing)=&created {
             // A thing whose class bids farewell is noted, so that a round
@@ -5353,7 +5354,7 @@ impl<'a> Machine<'a> {
                 }
                 if key == self.detail("qualified") { return Ok(Value::text(spelling)); }
                 if key == self.detail("name") { return Ok(Value::text(spelling.rsplit('.').next().unwrap_or(spelling))); }
-                if key == self.detail("module") { return Ok(Value::text(self.builtin_module())); }
+                if key == self.detail("module") { return Ok(self.intrinsic_home(working, spelling)); }
                 if self.rules.specials.get(79).is_some_and(|entry| entry == key) {
                     return Ok(Self::wrap(135, vec![Value::text(spelling)]));
                 }
@@ -5903,9 +5904,7 @@ impl<'a> Machine<'a> {
                 let tag=if key==self.detail("allocate")&&(self.builds_classes(b)||b.ancestry.borrow().iter().any(|p|self.builds_classes(p))){70}else if key==self.detail("allocate"){1}else if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str)==Some(key)&&(self.builds_classes(b)||b.ancestry.borrow().iter().any(|p|self.builds_classes(p))){73}else if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str)==Some(key)||key==self.detail("subclass"){2}
                     else if key==self.detail("get"){10}else if key==self.detail("set"){11}else if key==self.detail("remove"){12}else{255};
                 if tag == 2 && self.table.has_any("ext.system.warnings") && self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) == Some(key) {
-                    let mut descriptors = self.loose_members.borrow_mut();
-                    let initializer = descriptors.entry(String::from("root:initializer")).or_insert_with(|| Self::wrap(2, Vec::new()));
-                    return Ok(initializer.clone());
+                    return Ok(self.common_initialiser());
                 }
                 if tag!=255 {
                     let state = match tag {
@@ -8775,7 +8774,8 @@ impl<'a> Machine<'a> {
         let lookup_order = Self::resolution_order(&actual);
         for base in &lookup_order {
             if passed {
-                if key == self.detail("allocate") && Self::own_entry(base, key).is_none() {
+                if key == self.detail("allocate") {
+                    if let Some(declared) = Self::own_entry(base, key) { return Ok(Some(declared)); }
                     if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
                         return Ok(Some(match Self::own_entry(base, key) {
                             Some(allocator) => allocator,

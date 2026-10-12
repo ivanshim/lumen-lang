@@ -203,6 +203,7 @@ source exists. Full working measurements are in ignored `probe/`.
 
 | File beneath `langs/lib_python/modules/` | Audit status | Local body SHA-256 after audit | Release SHA-256 |
 |---|---|---|---|
+| `_io.py` | runtime adapter / implementation (native I/O counterpart) | `251fd4dab1a1bd614debf0df46909de7114f58c2f2ec0a1880aa67a04ecce9c0` | - |
 | `_bisect.py` | runtime adapter / implementation | `7be8c113ef9145f3a20417a42cba270c5fa79b4bcf2a777ab705ba4022150826` | `f1cf7b85fc36b5da249813fc5ab97d9464f8cc1bc817f7146206fa2713e35999` |
 | `_codec_idna.py` | runtime module; no Lib counterpart | `37a68a2b42648df2875c27ad62c43ebe29ec4c563425b2615daafb1dce2bf02f` | `—` |
 | `_codec_names.py` | runtime module; no Lib counterpart | `e7e67d6d0c9469a30e9a7e4e66a1031a36822c948a029fb68a435aaedaf40773` | `—` |
@@ -315,7 +316,8 @@ source exists. Full working measurements are in ignored `probe/`.
 | `textwrap.py` | unchanged release copy | `7f05d89c983f5aa8cefcff707a9cc561ed60c51fc8a68e2e3ab61cc6dfa84544` | `7f05d89c983f5aa8cefcff707a9cc561ed60c51fc8a68e2e3ab61cc6dfa84544` |
 | `threading.py` | runtime adapter / implementation | `de45da3f7172546ba2d7f9d02279b743e9bfa448cb1ed1aa18c78a98cf29ba58` | `5323909624ec2165e70b6d31333e4191b63d383d2dc5a7d7d516a3475ea2b7e3` |
 | `time.py` | runtime module; no Lib counterpart | `476a3db6257675a4489dbe0590815c5e21db4cc275531d1f09037cfb777d4e73` | `—` |
-| `traceback.py` | runtime adapter / implementation | `b8969448d944948de2433d92a9c2ee1fad93aafb871e7c04364741ea5559a704` | `a8fbeea470aa4e29691560de889de136570bead76d9c8a2b6a891849c047a3b3` |
+| `traceback.py` | runtime adapter / implementation | `313bfb87d47d992ec5713511359ecf0955e4634186fe27db1ebcbff0ca696691` | `a8fbeea470aa4e29691560de889de136570bead76d9c8a2b6a891849c047a3b3` |
+| `tracemalloc.py` | runtime allocation adapter; unchanged release Frame/Traceback definitions | `b74cc0ef622a0a36a7a9cde97ed639a1d8562b6571e97e3aad317d9d597cce79` | `c2cc84a05b824df79840c98729a0e94ef8909b11c528a1b2c5a00aa436b97b25` |
 | `types.py` | runtime adapter / implementation | `36f90be33b6a1bf0e45b038426343a37c90a60bdcf016b4239c130af1d0459e3` | `8c54d3d5ffc1d1204237e6c69b25c27c7b05b483128f185eeed9ba7ef2229ac2` |
 | `typing.py` | runtime adapter / implementation | `8cab6db1cd142fccfb5ad262197adeb9f5862795c2f3afa5ac1625e7fa569f2b` | `de569368c2c4958b7aaddbe755056860a89b1d313f69d437177864f37cb2503b` |
 | `unicodedata.py` | runtime module; no Lib counterpart | `776531547872ac6a0dc7de238c65b785c8be4fe9a1cf0ae66b2ca662a282c273` | `—` |
@@ -593,11 +595,16 @@ and `unittest.result` sources are registered from separate source files so the
 existing unittest implementation and its directory remain untouched.
 
 The unchanged warnings suite now collects 197 methods on each full kernel,
-with 176 passing, 10 skipped by the existing suite and 11 nonpassing methods
-(11 failures and no errors), compared with zero collected methods before the
-native backend. Remaining cases expose subprocess option/module startup and
-resource finalization. The 13 original semantic probes and ten additional
-native/runtime probes match CPython on both kernels. Signature annotation reads
-honor the requested format and reuse resolved annotation dictionaries; native
+with subprocess startup options, command-source identity, resource finalization
+and allocation tracing exercised through their normal runtime paths. Deferred
+annotations retain their defining namespace and ForwardRef owner metadata.
+Finder loaders returning None use default module creation before exec_module.
+The 13 original semantic probes and eleven additional native/runtime probes
+match CPython on both kernels. Seven further probes cover default loaders,
+forward-reference ownership, tracing controls, command-source tracebacks and
+source-loader ImportError subclasses, extended startup options and code
+metadata boundaries. Compiler-only unbound markers stay out of co_consts, and
+source-position wrappers preserve assignment-target diagnostics.
+Signature annotation reads honor the requested format and reuse resolved annotation dictionaries; native
 base allocation respects declared allocators, and compatible slotted class
 assignment preserves stored values. No copied test or library body is edited.

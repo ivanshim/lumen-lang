@@ -403,6 +403,7 @@ pub enum Prim {
     NativeFrame,
     HeapNative,
     ContextStore,
+    AllocationTrace,
     WarningOperation(u8),
     ReduceNative,
     ProductStep,

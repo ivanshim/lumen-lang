@@ -5612,5 +5612,8 @@
   ],
   "ext.builtin.gc.get_objects": [
     "__gc_objects"
+  ],
+  "ext.builtin.allocation.trace": [
+    "__allocation_trace"
   ]
 }

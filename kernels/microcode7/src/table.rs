@@ -128,7 +128,7 @@ pub struct Table {
 }
 
 // Label shapes: L list of words, B boolean, N count or null, W word, O word or null, T tiers.
-const TAGS: &str = "\
+const TAGS: &str = "ext.builtin.allocation.trace:L \
 format_version:N language:W extensions:L lexical.comment_line:L lexical.comment_block.open:L \
 lexical.comment_block.close:L lexical.string_quotes:L lexical.raw_quotes:L lexical.string_escapes:L lexical.prologue:L \
 lexical.name_quote:L lexical.number.decimal_point:L lexical.number.base_marker:L lexical.number.exponent_marker:L lexical.number.hex_prefix:L \
@@ -191,7 +191,7 @@ const MUST_BE_EMPTY: [&str; 8] = [
 ];
 
 /// Builtin labels and the operation each names.
-pub const BUILTIN_LABELS: [(&str, Prim); 335] = [
+pub const BUILTIN_LABELS: [(&str, Prim); 336] = [
             ("ext.builtin.input", Prim::Inquire),
             ("ext.builtin.complex", Prim::ComplexMade),
             ("ext.builtin.method.conjugate", Prim::ValueMethod),
@@ -257,6 +257,7 @@ pub const BUILTIN_LABELS: [(&str, Prim); 335] = [
             ("ext.builtin.delattr", Prim::DropMember),
             ("ext.builtin.vars", Prim::MembersOf),
             ("ext.builtin.globals", Prim::WorldBook),
+            ("ext.builtin.allocation.trace", Prim::AllocationTrace),
             ("ext.builtin.locals", Prim::HereBook),
             ("ext.builtin.exec", Prim::Perform),
             ("ext.builtin.compile", Prim::Prepare),

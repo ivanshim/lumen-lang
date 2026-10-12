@@ -560,6 +560,9 @@ struct ExecutionRules<'a> {
 pub struct Machine<'a> {
     native_slot_names: HashMap<String, usize, crate::table::FxBuildHasher>,
     context_storage: crate::context::Bindings,
+    allocation_limit: usize,
+    last_allocation_limit: usize,
+    allocations: HashMap<usize, (Weak<Thing>, Vec<(String, i64)>)>,
     warning_epoch: i64,
     warning_lock_count: usize,
     warning_fallback: Option<Value>,
@@ -2091,6 +2094,8 @@ impl<'a> Machine<'a> {
             reading_now: None,
             natives_book: None,
             context_storage: crate::context::Bindings::new(),
+            last_allocation_limit: std::env::var("LUMEN_TRACE_FRAMES").ok().and_then(|s| s.parse().ok()).unwrap_or(1),
+            allocation_limit: if table.has_any("ext.builtin.allocation.trace") { std::env::var("LUMEN_TRACE_FRAMES").ok().and_then(|s| s.parse().ok()).unwrap_or(0) } else { 0 }, allocations: HashMap::new(),
             warning_epoch: 0, warning_lock_count: 0, warning_fallback: None, warning_target: None, finding_import: std::collections::HashSet::new(), has_nonstring_class_keys: false,
             builtins_stand_in: None,
             body_namespace: None,
@@ -2881,6 +2886,10 @@ impl<'a> Machine<'a> {
             }
         }
         self.tracing_function = Value::Nil;
+        if self.table.has_any("ext.system.warnings") {
+            // A completed program cannot remain the caller of finalization.
+            self.active_trace.take(); self.extent.take();
+        }
         self.attend_to_gone();
         if let Some(named) = self.table.strings("ext.stmt.class.destructor").first().map(String::as_str).map(str::to_string).as_deref() {
             // The words a thing says as it goes: the destructor the
@@ -12391,7 +12400,7 @@ impl<'a> Machine<'a> {
         }
         // Compile alone takes its arguments by name; the readers of text
         // and the handing out of names take theirs in order only.
-        if self.reads_manners() && matches!(op, Prim::Prepare | Prim::Perform | Prim::Weigh | Prim::Summon | Prim::WorldBook | Prim::HereBook) {
+        if self.reads_manners() && matches!(op, Prim::Prepare | Prim::Perform | Prim::Weigh | Prim::Summon | Prim::AllocationTrace | Prim::WorldBook | Prim::HereBook) {
             let formals = table.strings("ext.builtin.compile.parameters");
             for (key, worth) in keywords {
                 let place = if op == Prim::Prepare { formals.iter().position(|word| word == &key) }
@@ -20154,7 +20163,7 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Flag(if op == Prim::Unlike { !same } else { same }));
             }
         }
-        if self.reads_manners() && matches!(op, Prim::Perform | Prim::Weigh | Prim::Prepare | Prim::Summon | Prim::WorldBook | Prim::HereBook) {
+        if self.reads_manners() && matches!(op, Prim::Perform | Prim::Weigh | Prim::Prepare | Prim::Summon | Prim::AllocationTrace | Prim::WorldBook | Prim::HereBook) {
             return self.text_operation(op, name, v);
         }
         // Native integer addresses cannot invoke a key's Python methods.
@@ -22199,7 +22208,7 @@ impl<'a> Machine<'a> {
             // before the arguments are opened, where the table spells
             // the manners text may be read in; spelled without them,
             // the words are refused here.
-            Prim::WorldBook | Prim::HereBook | Prim::Perform | Prim::Prepare | Prim::Summon => return Err(self.source_refused()),
+            Prim::AllocationTrace | Prim::WorldBook | Prim::HereBook | Prim::Perform | Prim::Prepare | Prim::Summon => return Err(self.source_refused()),
             Prim::Weigh | Prim::Bring | Prim::BringOnce => {
                 // A source read in stands as a call of its own, so that
                 // a fault raised in the reading, or by what it reads,
@@ -29245,6 +29254,7 @@ impl<'a> Machine<'a> {
     /// of a namespace by name.
     fn text_operation(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
         match op {
+            Prim::AllocationTrace => self.allocation_operation(v),
             Prim::WorldBook | Prim::HereBook => {
                 if !v.is_empty() { return Err(self.core_complaint("core.arity", name)); }
                 if op == Prim::WorldBook && self.reading_now.is_none() {
