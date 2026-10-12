@@ -9696,9 +9696,6 @@ impl<'a> Machine<'a> {
         None
     }
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
-        if !name.is_empty() && name == self.rules.detail_doc {
-            if let Some(text) = self.primitive_doc(value) { return Some(Value::text(text)); }
-        }
         match self.coroutine_attribute(&value.settled(), name) {
             Ok(Some(answer)) => return Some(answer),
             Err(away) => { self.got_away = Some(away); return None; }
@@ -27612,7 +27609,10 @@ impl Machine<'_> {
         if self.world_shadow_applies() {
             if let Some(book) = &self.world_book {
                 let found = match book.try_borrow().ok().as_deref() {
-                    Some(Value::Dict(rows)) => rows.iter().find(|(key, _)| match key { Value::Text(text) => text.as_ref() == word, _ => Self::space_dictionary_name(key).as_deref() == Some(word) }).map(|(_, held)| held.settled()),
+                    Some(Value::Dict(rows)) => {
+                        let at = rows.namespace_position(word).unwrap_or_else(|()| rows.iter().position(|(key, _)| match key { Value::Text(text) => text.as_ref() == word, _ => Self::space_dictionary_name(key).as_deref() == Some(word) }));
+                        at.map(|at| rows[at].1.settled())
+                    },
                     _ => None,
                 };
                 if let Some(held) = found { if !matches!(held, Value::Unset) { return Some(held); } }
@@ -27620,12 +27620,21 @@ impl Machine<'_> {
         }
         let (wildcard, revised) = self.namespace_overrides();
         if revised {
-            let namespace = self.loaded_spaces.get(&self.written_in).and_then(|id| self.imported.get(id));
-            if let Some(Value::Thing(module)) = namespace {
-                let holds = module.holds.borrow();
-                if let Some((_, binding)) = holds.iter().find(|entry| entry.0 == word) {
-                    let live = binding.settled();
+            let owner = self.loaded_spaces.get(&self.written_in);
+            let book = owner.and_then(|id| self.space_books.get(id));
+            if let Some(book) = book.filter(|book| matches!(book.try_borrow().ok().as_deref(), Some(Value::Dict(_)))) {
+                // Namespace writes already mirror these shared cells and invalidate its structural index.
+                if let Some(live) = looked_up(book, word).map(|value| value.settled()) {
                     if !matches!(live, Value::Unset) { return Some(live); }
+                }
+            } else {
+                let namespace = owner.and_then(|id| self.imported.get(id));
+                if let Some(Value::Thing(module)) = namespace {
+                    let holds = module.holds.borrow();
+                    if let Some((_, binding)) = holds.iter().find(|entry| entry.0 == word) {
+                        let live = binding.settled();
+                        if !matches!(live, Value::Unset) { return Some(live); }
+                    }
                 }
             }
         }
