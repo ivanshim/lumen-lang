@@ -27605,6 +27605,18 @@ impl Machine<'_> {
         self.world_globals_source.as_deref() == Some(self.written_in.as_ref())
     }
 
+    fn indexed_module_member(&self, module: &Rc<Thing>, name: &str) -> Option<Value> {
+        let holds = module.holds.borrow();
+        let mut saved = self.revised_members.borrow_mut();
+        let index = saved.entry(Rc::as_ptr(module) as usize).or_insert_with(|| (usize::MAX, HashMap::default()));
+        if index.0 != holds.len() {
+            index.1.clear();
+            for (at, entry) in holds.iter().enumerate() { index.1.entry(entry.0.clone()).or_insert(at); }
+            index.0 = holds.len();
+        }
+        index.1.get(name).map(|at| holds[*at].1.clone())
+    }
+
     fn spread_value(&self, word: &str) -> Option<Value> {
         // A name written into the world dictionary after globals() handed
         // it out stands over a builtin of that spelling for the code of
@@ -27633,15 +27645,8 @@ impl Machine<'_> {
             } else {
                 let namespace = owner.and_then(|id| self.imported.get(id));
                 if let Some(Value::Thing(module)) = namespace {
-                    let holds = module.holds.borrow();
-                    let mut indices = self.revised_members.borrow_mut();
-                    let index = indices.entry(Rc::as_ptr(module) as usize).or_insert_with(|| (usize::MAX, HashMap::default()));
-                    if index.0 != holds.len() {
-                        index.1 = holds.iter().enumerate().map(|(at, (name, _))| (name.clone(), at)).collect();
-                        index.0 = holds.len();
-                    }
-                    if let Some(at) = index.1.get(word) {
-                        let live = holds[*at].1.settled();
+                    if let Some(binding) = self.indexed_module_member(module, word) {
+                        let live = binding.settled();
                         if !matches!(live, Value::Unset) { return Some(live); }
                     }
                 }
@@ -29267,6 +29272,15 @@ impl<'a> Machine<'a> {
                 Ok(located.map(|position| entries[position].1.clone()))
             },
             Value::Attributes(space) => {
+                if space.blueprint().parents().is_empty()
+                    && self.indexed_module_member(space, "\0loaded-module").is_some()
+                    && self.indexed_module_member(space, "\0keys").is_none()
+                    && self.indexed_module_member(space, "\0dictionary").is_none() {
+                    if !Self::visible_name(name) { return Ok(None); }
+                    return Ok(self.indexed_module_member(space, name)
+                        .filter(|value| !matches!(value.settled(), Value::Unset))
+                        .map(|value| match value { Value::Shared(binding) => binding.borrow().clone(), other => other }));
+                }
                 let members = space.holds.borrow();
                 if members.iter().any(|entry| entry.0 == "\0loaded-module")
                     && members.iter().all(|entry| entry.0 != "\0keys" && entry.0 != "\0dictionary") {

@@ -656,6 +656,7 @@ def pipe():
 
 # Keep native module functions callable without Python function binding.
 class _BuiltinFunction(staticmethod):
+    __hash__ = object.__hash__
     # Native forwarding avoids another Python call frame; class access keeps identity.
     def __get__(self, instance, owner=None):
         return self
