@@ -331,6 +331,8 @@ pub struct Compiler<'a> {
     registry: &'a mut Registry,
     pieces: Vec<Piece>,
     counter: usize,
+    /// Call temporaries must not renumber the identities of nested code.
+    call_temporaries: usize,
     yield_operand: bool,
     forbids_await: bool,
     awkward_place: bool,
@@ -760,7 +762,7 @@ fn compile_pass(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let future_bits = table.future_bits;
-    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { source_tokens: Rc::from(format!("{tokens:?}")), reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, call_temporaries: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1380,8 +1382,8 @@ impl<'a> Compiler<'a> {
     }
 
     fn read(&mut self, name: &str) {
-        if name == "__debug__" && self.registry.optimize >= 1 && !self.writing_place {
-            self.constant(Value::Flag(false));
+        if self.lang.shadow_builtins && name == "__debug__" && !self.writing_place {
+            self.constant(Value::Flag(self.registry.optimize < 1));
             return;
         }
         if let Some((owner, members)) = &self.annotation_namespace {
@@ -10098,8 +10100,9 @@ impl<'a> Compiler<'a> {
                     // property, a class's own value, a place in an array
                     // or what a call gave back is put in a holding place
                     // as it stands, and a write cannot reach it there.
+                    // Python's global mapping hooks run before the right operand.
                     let named = match self.piece().instrs[from..] {
-                        [Instr::Read(ref cell)] if !cell.moving => Some(cell.clone()),
+                        [Instr::Read(ref cell)] if !cell.moving && !lang.shadow_builtins => Some(cell.clone()),
                         _ => None,
                     };
                     if named.is_some() {
@@ -10894,7 +10897,17 @@ impl<'a> Compiler<'a> {
                             // spelled the same, where the language says so.
                             let bound = self.builtin_shadowed(&tok.lexeme);
                             let native = if bound { None } else { lang.builtins.get(&tok.lexeme).copied() };
-                            if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
+                            if lang.shadow_builtins && native.is_none() {
+                                self.call_temporaries += 1;
+                                let name = format!("#callee{}", self.call_temporaries);
+                                let saved = self.cell_to_write(&name);
+                                self.read_callee(&tok.lexeme);
+                                self.put(Instr::SaveCallable(saved.clone()));
+                                let argc = self.arguments_of(&tok.lexeme, &call)?;
+                                self.read(&name);
+                                self.put(Instr::Forget(saved));
+                                self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), argc + 1);
+                            } else if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
                                 // push(arr, v), put(arr, i, v): the array is named.
                                 let target = match self.look().shape {
                                     Shape::Instr => self.take().lexeme,
@@ -10962,11 +10975,25 @@ impl<'a> Compiler<'a> {
                                     }
                                 }
                             } else {
+                                let saved = if lang.shadow_builtins && self.pieces.last().is_some_and(|unit| !unit.outermost)
+                                    && !self.in_class_body() && !matches!(native, Some(Builtin::Text(_))) {
+                                    self.call_temporaries += 1;
+                                    let name = format!("#builtin{}", self.call_temporaries);
+                                    let cell = self.cell_to_write(&name);
+                                    self.put(Instr::PrepareBuiltin(cell.clone(), Rc::from(tok.lexeme.as_str())));
+                                    Some(cell)
+                                } else { None };
                                 let argc = self.arguments_of(&tok.lexeme, &call)?;
                                 if matches!(native, Some(Builtin::Bytes(_))) && self.arg_names.contains_key(&tok.lexeme) {
                                     self.read_callee(&tok.lexeme);
                                     self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), argc + 1);
                                 } else { self.call(&tok.lexeme, argc)?; }
+                                if let Some(cell) = saved {
+                                    if let Some(Instr::Act(action @ Action::Builtin(..), count)) = self.piece().instrs.last().cloned() {
+                                        self.piece().instrs.pop();
+                                        self.put(Instr::PreparedAct(action, count, cell));
+                                    } else { self.put(Instr::Forget(cell)); }
+                                }
                             }
                         }
                         // A word standing for all the outermost bindings
@@ -11218,9 +11245,12 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
             } else { match named.as_slice() {
                 [Instr::Read(slot)] => {
-                    if targets { self.put(Instr::Read(slot.clone())); self.discard(); }
                     let held = self.cell_to_write(&slot.ident.to_string());
-                    self.put(Instr::Forget(held));
+                    if targets && !self.lang.class_builder.is_empty() { self.put(Instr::DeleteName(held)); }
+                    else {
+                        if targets { self.put(Instr::Read(slot.clone())); self.discard(); }
+                        self.put(Instr::Forget(held));
+                    }
                 }
                 [.., Instr::Act(Action::At, 2)] if targets && !self.lang.class_builder.is_empty() && self.in_class_body() => {
                     // A computed object supplied by the class book is already
@@ -13485,7 +13515,7 @@ fn word_alone(w: &Instr) -> bool {
     };
     match w {
         Instr::Const(_) | Instr::Read(_) | Instr::Glance(_) | Instr::Write(_) | Instr::Skip(_)
-        | Instr::Missing(_) | Instr::Unwritten(_) | Instr::Line(_) | Instr::Location(..) | Instr::Forget(_)
+        | Instr::Missing(_) | Instr::Unwritten(_) | Instr::Line(_) | Instr::Location(..) | Instr::Forget(_) | Instr::SaveCallable(_)
         | Instr::Emptied(_) | Instr::Shed | Instr::Nothing | Instr::Ready(_) | Instr::Bump { .. } => true,
         Instr::Act(op, _) => quiet(op),
         Instr::Dyad { op, .. } | Instr::SkipCmp { op, .. } => quiet(op),

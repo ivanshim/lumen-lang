@@ -9776,7 +9776,7 @@ impl<'a> Builder<'a> {
                     // after it, both operands then being addresses the
                     // operation reads for itself.
                     let late = match &left {
-                        Form::Read(slot) if !as_it_stands(&right) => Some(slot.ident.clone()),
+                        Form::Read(slot) if !table.flag("ext.syntax.names.shadow_builtins") && !as_it_stands(&right) => Some(slot.ident.clone()),
                         _ => None,
                     };
                     match late {
@@ -10347,8 +10347,8 @@ impl<'a> Builder<'a> {
             }
             Shape::Bare => {
                 self.advance();
-                if self.optimize >= 1 && t.spelling() == "__debug__" {
-                    constant(Value::Flag(false))
+                if t.spelling() == "__debug__" && table.flag("ext.syntax.names.shadow_builtins") {
+                    constant(Value::Flag(self.optimize <= 0))
                 } else if table.spells("literal.true", &t.spelling()) {
                     constant(Value::Flag(true))
                 } else if table.spells("literal.false", &t.spelling()) {
@@ -10600,8 +10600,10 @@ impl<'a> Builder<'a> {
                     if targets && table.flag("ext.stmt.function.closes_over") {
                         let own = self.address_to_write(&slot.ident);
                         self.unmet_last_read(&slot.ident);
-                        sequence(vec![Form::Read(own.clone()), Form::Forget(own)])
-                    } else if targets { sequence(vec![self.read(&slot.ident), Form::Forget(slot)]) }
+                        if table.has_any("ext.stmt.class.builder") { Form::RemoveName(own) }
+                        else { sequence(vec![Form::Read(own.clone()), Form::Forget(own)]) }
+                    } else if targets && self.table.has_any("ext.stmt.class.builder") { Form::RemoveName(slot) }
+                    else if targets { sequence(vec![self.read(&slot.ident), Form::Forget(slot)]) }
                     else { Form::Forget(slot) }
                 },
                 Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {

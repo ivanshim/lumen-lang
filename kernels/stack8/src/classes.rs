@@ -2185,7 +2185,10 @@ impl<'a> Engine<'a> {
                 }
                 180 => {
                     if !args.is_empty() { return Err("TypeError: function takes no arguments".into()); }
-                    self.text_run(true, "eval", vec![w.1[0].clone(), w.1[1].clone()]).map_err(Fault::from)
+                    let previous = self.compiled_builtins.replace(w.1[6].clone());
+                    let result = self.text_run(true, "eval", vec![w.1[0].clone(), w.1[1].clone()]);
+                    self.compiled_builtins = previous;
+                    result.map_err(|words| self.carried.take().unwrap_or_else(|| Fault::Note(words)))
                 }
                 143 => {
                     if !args.is_empty() { return Err("TypeError: this code object takes no arguments".into()); }
@@ -2721,7 +2724,7 @@ impl<'a> Engine<'a> {
                 if let Value::Object(object) = &code {
                     if self.code_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &object.class_now())) {
                         let globals = parts[1].clone().ok_or_else(|| "TypeError: function() missing required argument 'globals'".to_string())?;
-                        if !matches!(globals.contents(), Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
+                        if !matches!(Self::worth_of(&globals.contents()).unwrap_or_else(|| globals.contents()).contents(), Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
                         let name = match parts[2].as_ref().map(Value::contents) {
                             None | Some(Value::Null) => Value::text("<module>"),
                             Some(name @ Value::Text(_)) => name,
@@ -2744,14 +2747,18 @@ impl<'a> Engine<'a> {
                         };
                         let keyword_defaults = parts[5].clone().unwrap_or(Value::Null);
                         if !matches!(keyword_defaults.contents(), Value::Null | Value::Map(_)) { return Err("TypeError: arg 6 (kwdefaults) must be None or dict".into()); }
-                        return Ok(Self::adapter(180, vec![code, globals, name, defaults, closure, keyword_defaults]));
+                        let word = self.lang.module_builtins.first().cloned().unwrap_or_default();
+                        let captured = self.book_builtins(&Rc::new(RefCell::new(globals.clone())), &word)?
+                            .unwrap_or_else(|| self.ambient_builtins());
+                        let builtins = self.as_builtins_dictionary(captured)?;
+                        return Ok(Self::adapter(180, vec![code, globals, name, defaults, closure, keyword_defaults, builtins]));
                     }
                 }
             }
             let Some(Value::Adapter(code)) = parts[0].as_ref().map(Value::contents) else { return Err("TypeError: function() argument 'code' must be code".into()); };
             let (7, Some(Value::Routine(origin))) = (code.0, code.1.first()) else { return Err("TypeError: function() argument 'code' must be code".into()); };
             let Some(globals) = parts[1].clone() else { return Err("TypeError: function() missing required argument 'globals'".into()); };
-            if !matches!(globals.contents(), Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
+            if !matches!(Self::worth_of(&globals.contents()).unwrap_or_else(|| globals.contents()).contents(), Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
             let mut made = (**origin).clone();
             made.globe = Some(globals.clone());
             made.born = Some(self.ambient_builtins());
@@ -2784,7 +2791,7 @@ impl<'a> Engine<'a> {
             if let Some(named) = self.captured_title(&globals) { made.home = Some(named); }
             made.globe = Some(globals.clone());
             let builtins_word = self.lang.module_builtins.first().cloned().unwrap_or_default();
-            made.born = Some(match self.dyn_lookup(&globals.contents(), &builtins_word)? {
+            made.born = Some(match self.book_builtins(&Rc::new(RefCell::new(globals.clone())), &builtins_word)? {
                 Some(held) => held,
                 None => self.ambient_builtins(),
             });
@@ -3877,6 +3884,7 @@ impl<'a> Engine<'a> {
                 match name {
                     "__code__" => return Ok(function.1[0].clone()),
                     "__globals__" => return Ok(function.1[1].clone()),
+                    "__builtins__" => return Ok(function.1[6].clone()),
                     "__name__" => return Ok(function.1[2].clone()),
                     "__qualname__" => return Ok(Value::text("<module>")),
                     "__defaults__" => return Ok(function.1[3].clone()),
@@ -5167,16 +5175,14 @@ impl<'a> Engine<'a> {
     /// Where a routine keeps the namespace the program handed it in
     /// place of the one it was made with.
     const HANDED_BOOK: &'static str = "\0 namespace";
-    /// The builtins a routine answers with: what its own dictionary
-    /// keeps under that name where it holds one, else the builtins in
-    /// force where it was built, else the module's own dictionary. A
-    /// module handed there stands for the dictionary it keeps.
+    /// Return the builtins captured when the routine was created, even
+    /// after its globals replace the builtin namespace.
     fn routine_builtins(&mut self, program: &Rc<Routine>) -> Flow<Value> {
         let word = match self.lang.module_builtins.first() { Some(word) => word.clone(), None => return Ok(self.native_dict()) };
-        if let Some(globe) = &program.globe {
-            if let Some(held) = self.dyn_lookup(globe, &word)? { return self.as_builtins_dictionary(held); }
-        }
         if let Some(born) = &program.born { return self.as_builtins_dictionary(born.clone()); }
+        if let Some(globe) = &program.globe {
+            if let Some(held) = self.book_builtins(&Rc::new(RefCell::new(globe.clone())), &word)? { return self.as_builtins_dictionary(held); }
+        }
         Ok(self.native_dict())
     }
     /// A module handed over where a dictionary of builtins is wanted

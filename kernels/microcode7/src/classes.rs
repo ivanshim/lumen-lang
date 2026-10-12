@@ -2279,7 +2279,10 @@ impl<'a> Machine<'a> {
                     }
                     122 => {
                         if !values.is_empty() { return Err(String::from("TypeError: function takes no arguments").into()); }
-                        self.prim(Prim::Weigh, "eval", &[kept[0].clone(), kept[1].clone()]).map_err(Escape::from)
+                        let saved = self.module_function_builtins.replace(kept[6].clone());
+                        let result = self.text_performed(true, "eval", &kept[..2]);
+                        self.module_function_builtins = saved;
+                        result.map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)))
                     }
                     143 => {
                         if !values.is_empty() { return Err(String::from("TypeError: this code object takes no arguments").into()); }
@@ -2857,7 +2860,11 @@ impl<'a> Machine<'a> {
                     }
                     let keyword_defaults = options[5].as_ref().map(Value::settled).unwrap_or(Value::Nil);
                     match keyword_defaults { Value::Nil | Value::Dict(_) => {}, _ => return Err("TypeError: arg 6 (kwdefaults) must be None or dict".to_owned().into()) }
-                    return Ok(Self::wrap(122, vec![value, namespace, title, defaults, closure, keyword_defaults]));
+                    let builtin_word = self.table.strings("ext.system.module.builtins").first().cloned().unwrap_or_default();
+                    let stored = self.builtin_entry(&Rc::new(RefCell::new(namespace.clone())), &builtin_word)?;
+                    let captured = match stored { Some(value) => value, None => self.builtins_here() };
+                    let natives = self.builtin_dictionary(captured)?;
+                    return Ok(Self::wrap(122, vec![value, namespace, title, defaults, closure, keyword_defaults, natives]));
                 }
             }
             let Some(Value::Wrapped(7, body)) = options[0].as_ref().map(Value::settled) else { return Err(String::from("TypeError: function() argument 'code' must be code").into()); };
@@ -2919,7 +2926,7 @@ impl<'a> Machine<'a> {
             };
             fresh.globe = Some(globals.clone());
             let word = self.table.strings("ext.system.module.builtins").first().cloned().unwrap_or_default();
-            fresh.born = Some(match self.mapping_read(&globals, &word)? {
+            fresh.born = Some(match self.builtin_entry(&Rc::new(RefCell::new(globals.clone())), &word)? {
                 Some(value) => value,
                 None => self.builtins_here(),
             });
@@ -3372,17 +3379,15 @@ impl<'a> Machine<'a> {
         if let Some(entry)=self.written_over.get(&Self::written_key(value,&self.outermost)) {return entry.4.clone();}
         match value {Value::Bound(code,_)|Value::Routine(code)|Value::Method(code, _, _)=>code.clone(),_=>unreachable!("only a routine runs code")}
     }
-    /// The builtins a routine reaches its unbound names through: what
-    /// the dictionary it was handed keeps under that name, else the
-    /// builtins in force where it was made, else the kernel's own
-    /// dictionary.
+    /// Expose the creation-time builtins, retaining that namespace when
+    /// the program changes its globals' __builtins__ entry.
     fn routine_builtins(&mut self,code:&Routine)->Res {
+        if let Some(born) = &code.born { return self.builtin_dictionary(born.clone()); }
         if let Some(word)=self.table.strings("ext.system.module.builtins").first().map(String::as_str).map(str::to_owned) {
             if let Some(globe)=&code.globe {
-                if let Some(held)=self.mapping_read(globe,&word)?{return Ok(held);}
+                if let Some(held) = self.builtin_entry(&Rc::new(RefCell::new(globe.clone())), &word)? { return self.builtin_dictionary(held); }
             }
         }
-        if let Some(born)=&code.born{return Ok(born.clone());}
         Ok(Value::Mutable(self.natives_kept(),true))
     }
     /// What a routine holds of its own under a name: its name, full name
@@ -4304,6 +4309,7 @@ impl<'a> Machine<'a> {
             let selected = match key {
                 "__code__" => Some(fields[0].clone()),
                 "__globals__" => Some(fields[1].clone()),
+                "__builtins__" => Some(fields[6].clone()),
                 "__name__" => Some(fields[2].clone()),
                 "__qualname__" => Some(Value::text("<module>")),
                 "__defaults__" => Some(fields[3].clone()),

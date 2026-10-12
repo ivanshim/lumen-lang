@@ -574,7 +574,7 @@ pub(crate) fn form_holds(form: &Form, out: &mut Vec<Knot>) {
         }
         Form::Read(_) | Form::Take(_) | Form::Release(_) | Form::Glance(_)
         | Form::Bump { .. } | Form::Again | Form::Missing(_) | Form::Share(_)
-        | Form::Forget(_) | Form::Ready(_) | Form::Remark(..) => {}
+        | Form::Forget(_) | Form::RemoveName(_) | Form::Ready(_) | Form::Remark(..) => {}
     }
 }
 

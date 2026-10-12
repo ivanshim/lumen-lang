@@ -163,6 +163,8 @@ pub struct Engine<'a> {
     /// was given, the dictionary its names live in and, where two were
     /// handed over, the outer one its declared globals go to.
     text_books: Vec<TextBook>,
+    /// Builtins handed from a module-code function to its next text frame.
+    pub(super) compiled_builtins: Option<Value>,
     /// Which of those the run stands inside at present, if any.
     reading_in: Option<usize>,
     /// The stand-in maker an annotation routine about to run is to read by,
@@ -1701,6 +1703,7 @@ impl<'a> Engine<'a> {
             outer_book: None,
             function_books: Vec::new(),
             text_books: Vec::new(),
+            compiled_builtins: None,
             reading_in: None,
             armed_names: None,
             annotation_scopes: Vec::new(),
@@ -2248,13 +2251,7 @@ impl<'a> Engine<'a> {
             return Ok(Value::Null);
         }
         let book = if self.lang.trace_fields.is_empty() { None } else {
-            walk.try_borrow().ok().and_then(|state| state.program.as_ref().and_then(|body| {
-                match body.globe.as_ref() {
-                    Some(Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _)) if matches!(cell.borrow().contents(), Value::Map(_)) => Some(cell.clone()),
-                    Some(globals @ Value::Map(_)) => Some(Rc::new(RefCell::new(globals.clone()))),
-                    _ => None,
-                }
-            }))
+            walk.try_borrow().ok().and_then(|state| state.program.as_ref().and_then(|body| Self::function_book(body)))
         };
         let saved = self.outer_book.clone();
         let supplied = book.is_some();
@@ -3351,6 +3348,11 @@ impl<'a> Engine<'a> {
     /// Clear the binding itself so retained frames and closures observe
     /// deletion too, rather than keeping the old value through its cell.
     fn forget_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Flow<()> {
+        if slot.near.is_empty() && Self::public_name(&slot.ident)
+            && self.running_routine.as_ref().is_some_and(|routine| routine.code_flags & 1 != 0 && Self::function_book(routine).is_some()) {
+            if let Some(book) = &self.outer_book { compiled_book_write(book, &slot.ident, None, Some(slot.far)); }
+            return Ok(());
+        }
         if slot.near.is_empty() && !slot.ident.starts_with('#') && self.annotation_scope().is_some()
             && self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_some()) {
             if let Some(book) = &self.outer_book {
@@ -3378,6 +3380,35 @@ impl<'a> Engine<'a> {
             self.world[slot.far] = Value::Blank;
         }
         Ok(())
+    }
+
+    /// Delete a user name without reading through a mapping's lookup hooks.
+    fn delete_name(&mut self, slot: &Cell, frame: &mut [Value]) -> Flow<()> {
+        if slot.near.is_empty() {
+            if let Some(kept) = self.book_of(slot.far) {
+                let book = match kept {
+                    Kept::Module(at) => self.module_books[at].1.clone(),
+                    Kept::Outer => self.outer_book.clone().ok_or_else(|| format!("Undefined variable: {}", slot.ident))?,
+                    Kept::Text(at) => {
+                        let text = &self.text_books[at];
+                        if !text.declared.iter().any(|word| word == slot.ident.as_ref()) {
+                            let locals = text.near.clone();
+                            self.book_put(&locals, &slot.ident, None)
+                                .map_err(|_| Fault::Note(format!("Undefined variable: {}", slot.ident)))?;
+                            self.world[slot.far] = Value::Blank;
+                            return Ok(());
+                        }
+                        text.outer.as_ref().unwrap_or(&text.near).clone()
+                    }
+                };
+                if self.book_builtins(&book, &slot.ident)?.is_none() {
+                    return Err(format!("Undefined variable: {}", slot.ident).into());
+                }
+                return self.forget_cell(slot, frame);
+            }
+        }
+        self.load_cell(slot, frame).map_err(Fault::Note)?;
+        self.forget_cell(slot, frame)
     }
 
     /// Whether a binding stands for a shared cell, which cannot be read
@@ -3483,6 +3514,12 @@ impl<'a> Engine<'a> {
                 book_write(&book, &slot.ident, Some(held));
                 return Ok(());
             }
+        }
+        if slot.near.is_empty() && Self::public_name(&slot.ident)
+            && self.running_routine.as_ref().is_some_and(|routine| routine.code_flags & 1 != 0 && Self::function_book(routine).is_some()) {
+            let value = self.keep_collection(v);
+            if let Some(book) = &self.outer_book { compiled_book_write(book, &slot.ident, Some(value), Some(slot.far)); }
+            return Ok(());
         }
         if self.lang.bind_names {
             let value = self.keep_collection(v);
@@ -4449,8 +4486,30 @@ impl<'a> Engine<'a> {
         Ok(Value::tuple(vec![Value::tuple(answer), cursor]))
     }
 
+    /// Keep supplied globals as their original dictionary or subclass object.
+    fn function_book(program: &Routine) -> Option<Rc<RefCell<Value>>> {
+        let globals = program.globe.as_ref()?;
+        let value = globals.contents();
+        if !matches!(Self::worth_of(&value).unwrap_or(value).contents(), Value::Map(_)) { return None; }
+        Some(match globals {
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell.clone(),
+            _ => Rc::new(RefCell::new(globals.clone())),
+        })
+    }
+
+    /// Read supplied function globals before the captured builtin mapping.
+    fn function_name(&mut self, name: &str) -> Flow<Value> {
+        let routine = self.running_routine.clone().ok_or_else(|| format!("Undefined variable: {name}"))?;
+        let book = Self::function_book(&routine).ok_or_else(|| format!("Undefined variable: {name}"))?;
+        if let Some(value) = self.book_get(&book, name)? { return Ok(value); }
+        let captured = routine.born.clone().unwrap_or_else(|| self.native_dict());
+        let builtins = self.as_builtins_dictionary(captured)?;
+        if let Some(value) = self.dyn_lookup(&builtins, name)? { return Ok(value); }
+        Err(format!("Undefined variable: {name}").into())
+    }
+
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
-        let mut annotation_namespace = program.globe.as_ref().and_then(|book| match book { Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => Some(cell.clone()), Value::Map(_) => Some(Rc::new(RefCell::new(book.clone()))), _ => None }).or_else(|| {
+        let mut annotation_namespace = Self::function_book(program).or_else(|| {
             self.armed_names.as_ref()?;
             match program.globe.as_ref() {
                 Some(Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _)) => Some(cell.clone()),
@@ -4472,11 +4531,7 @@ impl<'a> Engine<'a> {
         }
         let reading = self.reading_in;
         if program.globe.is_none() { self.reading_in = None; }
-        let namespace = program.globe.as_ref().and_then(|globals| match globals {
-            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) if matches!(cell.borrow().contents(), Value::Map(_)) => Some(cell.clone()),
-            Value::Map(_) => Some(Rc::new(RefCell::new(globals.clone()))),
-            _ => None,
-        });
+        let namespace = Self::function_book(program);
         let supplied = namespace.is_some();
         let restoring = program.globe.is_none() && !self.function_books.is_empty();
         let earlier = if supplied || restoring {
@@ -5668,10 +5723,7 @@ impl<'a> Engine<'a> {
     // Initial async throw/close lets a delegate handle GeneratorExit through
     // throw, so cleanup may await; synchronous close ends the delegate first.
     fn step_generator_mode(&mut self, held: &Rc<RefCell<Generator>>, sent: Value, hurled: Option<Value>, given: &[Value], close_on_exit: bool) -> Flow<Option<Value>> {
-        let book = held.try_borrow().ok().and_then(|state| state.program.as_ref().and_then(|body| match body.globe.as_ref() {
-            Some(Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _)) if matches!(cell.borrow().contents(), Value::Map(_)) => Some(cell.clone()),
-                    Some(globals @ Value::Map(_)) => Some(Rc::new(RefCell::new(globals.clone()))), _ => None,
-        }));
+        let book = held.try_borrow().ok().and_then(|state| state.program.as_ref().and_then(|body| Self::function_book(body)));
         let supplied = book.is_some();
         let ordinary = !self.function_books.is_empty() && held.try_borrow().ok()
             .is_some_and(|state| state.program.as_ref().is_some_and(|body| body.globe.is_none()));
@@ -6804,6 +6856,14 @@ impl<'a> Engine<'a> {
                     }
                     self.data.push(Value::Routine(Rc::new(closed)));
                 }
+                Instr::Const(Value::ByteKind(changeable, _)) if program.code_flags & 1 != 0 && Self::function_book(program).is_some() => {
+                    let name = self.byte_kind_word(*changeable).to_string();
+                    let value = match self.function_name(&name)?.contents() {
+                        Value::Native(Builtin::Bytes(tag @ 0..=1), shown) => Value::ByteKind(tag == 1, shown),
+                        other => other,
+                    };
+                    self.data.push(value);
+                }
                 Instr::Const(Value::ByteKind(changeable, shown)) if self.wildcard_in_scope() && (program.body_of_all || program.declared_on != 0) => {
                     let word = self.byte_kind_word(*changeable);
                     let held = self.wildcard_value(word);
@@ -6900,7 +6960,16 @@ impl<'a> Engine<'a> {
                     }
                     return Ok(Passage::Suspended);
                 }
-                Instr::Act(op, argc) => {
+                Instr::Act(op, argc) | Instr::PreparedAct(op, argc, _) => {
+                    let supplied = if let Instr::PreparedAct(_, _, saved) = &instrs[pc] {
+                        let value = self.load_cell(saved, frame)?.contents();
+                        self.forget_cell(saved, frame)?;
+                        match (op, &value) {
+                            (_, Value::Gap) => None,
+                            (Action::Builtin(native, _), Value::Native(found, _)) if native == found => None,
+                            _ => Some(value),
+                        }
+                    } else { None };
                     if matches!(op, Action::WalkMore) && program.ident == "<genexpr>" && !self.lang.class_special.is_empty() {
                         let position = self.data.len().saturating_sub(2);
                         let iterator = self.data.get(position).map(Value::contents).ok_or_else(|| self.special_fault())?;
@@ -6953,6 +7022,10 @@ impl<'a> Engine<'a> {
                     // names, as the reference has it, and only the
                     // outermost body has none but the globals.
                     let done = match op {
+                        Action::Builtin(_, name) if supplied.is_some() => {
+                            self.data.push(supplied.unwrap());
+                            self.perform(&Action::Invoke(name.clone()), argc + 1)
+                        }
                         Action::Builtin(native, name) if self.wildcard_in_scope()
                             && (program.body_of_all || program.declared_on != 0) && self.wildcard_callable(name, *native).is_some() => {
                             self.data.push(self.wildcard_callable(name, *native).unwrap());
@@ -7154,6 +7227,15 @@ impl<'a> Engine<'a> {
                 }
                 Instr::Nothing => {}
                 Instr::Forget(slot) => self.forget_cell(slot, frame)?,
+                Instr::DeleteName(slot) => self.delete_name(slot, frame)?,
+                Instr::SaveCallable(slot) => {
+                    let callable = self.drop_top()?.contents();
+                    self.store_cell(slot, frame, callable)?;
+                }
+                Instr::PrepareBuiltin(slot, word) => {
+                    let value = if Self::function_book(program).is_some() { self.function_name(word)? } else { Value::Gap };
+                    self.store_cell(slot, frame, value.contents())?;
+                }
                 Instr::Ready(slot) => {
                     self.world.resize(self.registry.idents.len(), Value::Blank);
                     if matches!(self.world[slot.far], Value::Blank) {
@@ -27273,6 +27355,7 @@ impl Engine<'_> {
 /// dictionaries: the near one first, and the outer one for whatever the
 /// near one has not and for the names the text declared global.
 struct TextBook {
+    builtins: Value,
     near: Rc<RefCell<Value>>,
     outer: Option<Rc<RefCell<Value>>>,
     from: usize,
@@ -27325,6 +27408,14 @@ fn book_write(book: &Rc<RefCell<Value>>, name: &str, value: Option<Value>) {
 
 /// Resolve a compiled global store against the dictionary's current key order.
 fn compiled_book_write(book: &Rc<RefCell<Value>>, name: &str, value: Option<Value>, binding: Option<usize>) {
+    let backing = match &*book.borrow() {
+        Value::Object(object) => Engine::worth_of(&Value::Object(object.clone())),
+        _ => None,
+    };
+    if let Some(Value::Bond(storage) | Value::Collection(storage, _)) = backing {
+        compiled_book_write(&storage, name, value, binding);
+        return;
+    }
     if let Value::Map(pairs) = &mut *book.borrow_mut() {
         let pairs = Rc::make_mut(pairs);
         let lookup = match binding { None => pairs.named_row(name), Some(far) => pairs.compiled_row(name, far) };
@@ -27355,6 +27446,10 @@ impl Engine<'_> {
             }
         }
         let ident = self.registry.idents.get(far)?;
+        if Self::public_name(ident.rsplit(':').next().unwrap_or(ident))
+            && self.running_routine.as_ref().is_some_and(|routine| routine.code_flags & 1 != 0 && Self::function_book(routine).is_some()) {
+            return Some(Kept::Outer);
+        }
         if let Some(rest) = ident.strip_prefix("\0module:") {
             let path = rest.splitn(3, ':').nth(1)?;
             if let Some(at) = self.module_books.iter().position(|(name, _)| name == path) { return Some(Kept::Module(at)); }
@@ -27419,6 +27514,11 @@ impl Engine<'_> {
                 Some(Err(format!("Undefined variable: {name}")))
             }
             Kept::Outer => {
+                if self.running_routine.as_ref().is_some_and(|routine| routine.code_flags & 1 != 0 && Self::function_book(routine).is_some()) {
+                    return Some(self.function_name(name).map_err(|fault| {
+                        match fault { Fault::Note(words) => words, other => { self.carried = Some(other); self.special_fault() } }
+                    }));
+                }
                 let book = self.outer_book.clone()?;
                 // The name of the builtins dictionary is read as the
                 // module-shaped stand-in the reference keeps it as,
@@ -27442,7 +27542,10 @@ impl Engine<'_> {
                 Some(Err(format!("Undefined variable: {}", name)))
             }
             Kept::Text(at) => {
-                let (mut near, outer) = (self.text_books[at].near.clone(), self.text_books[at].outer.clone());
+                let (mut near, mut outer) = (self.text_books[at].near.clone(), self.text_books[at].outer.clone());
+                if self.text_books[at].declared.iter().any(|word| word == name) {
+                    near = outer.take().unwrap_or(near);
+                }
                 // A function made by exec reads globals, not the separate
                 // execution locals. That local mapping may already be gone.
                 if self.running_routine.as_ref().is_some_and(|body| body.code_flags & 1 != 0) {
@@ -27454,7 +27557,9 @@ impl Engine<'_> {
                     Err(fled) => { self.carried = Some(fled); return Some(Err(self.special_fault())); }
                 }
                 if let Some(outer) = &outer {
-                    match self.book_get(outer, name) {
+                    let globals = outer.borrow().clone();
+                    let storage = Self::worth_of(&globals).unwrap_or(globals);
+                    match self.dyn_lookup(&storage.contents(), name) {
                         Ok(Some(held)) => return Some(Ok(held)),
                         Ok(None) => {}
                         Err(fled) => { self.carried = Some(fled); return Some(Err(self.special_fault())); }
@@ -27464,7 +27569,6 @@ impl Engine<'_> {
                 // dictionary of builtins the outer one names, so that a
                 // program handing over a dictionary of its own chooses
                 // what the text may reach.
-                let roots = outer.unwrap_or(near);
                 // Only a dictionary of builtins the program made itself
                 // shuts the text in: the one the kernel put there stands
                 // for the ordinary names, and those reach the module of
@@ -27473,13 +27577,7 @@ impl Engine<'_> {
                 // hand over any reading of its own, a read-only view
                 // among them, and the builtins are read through it the
                 // very way any other name is.
-                let builtins_value = match self.lang.module_builtins.first() {
-                    Some(word) => match self.book_builtins(&roots, word) {
-                        Ok(v) => v,
-                        Err(fled) => { self.carried = Some(fled); return Some(Err(self.special_fault())); }
-                    },
-                    None => None,
-                };
+                let builtins_value = Some(self.text_books[at].builtins.clone());
                 let found = match builtins_value {
                     Some(Value::Bond(natives)) => {
                         let ours = self.natives.as_ref().map_or(false, |own| Rc::ptr_eq(&natives, own));
@@ -27489,7 +27587,7 @@ impl Engine<'_> {
                             None => None,
                         }
                     }
-                    Some(other) if !matches!(other, Value::Null) => {
+                    Some(other) => {
                         let found = self.as_builtins_dictionary(other)
                             .and_then(|dictionary| self.dyn_lookup(&dictionary, name));
                         match found {
@@ -27530,6 +27628,10 @@ impl Engine<'_> {
                 let declared_global = book.declared.iter().any(|word| word == name);
                 let deleting_local = value.is_none() && !declared_global;
                 let target = target.clone();
+                if declared_global {
+                    compiled_book_write(&target, name, value, binding);
+                    return;
+                }
                 if let Err(fled) = self.book_put(&target, name, value) {
                     // DELETE_NAME reports a missing binding when its
                     // locals mapping refuses deletion; explicit global
@@ -27810,14 +27912,8 @@ impl Engine<'_> {
     /// dictionary being read keeps them under, where the run stands in
     /// text handed a dictionary of its own, else the module's own.
     fn ambient_builtins(&mut self) -> Value {
-        let word = match self.lang.module_builtins.first() { Some(word) => word.clone(), None => return self.native_dict() };
-        if self.reading_in.is_none() { return self.native_dict(); }
-        let book = self.book_here(true);
-        if let Ok(Some(held)) = self.book_builtins(&book, &word) {
-            if !self.our_native_dict(&held) {
-                if let Ok(dictionary) = self.as_builtins_dictionary(held) { return dictionary; }
-            }
-        }
+        if let Some(born) = self.running_routine.as_ref().and_then(|routine| routine.born.clone()) { return born; }
+        if let Some(at) = self.reading_in { return self.text_books[at].builtins.clone(); }
         self.native_dict()
     }
 
@@ -27995,7 +28091,7 @@ impl Engine<'_> {
         if let Some(held) = &program.globe {
             let cell = match held {
                 Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell.clone(),
-                Value::Map(_) | Value::Fields(_) => Rc::new(RefCell::new(held.clone())),
+                Value::Map(_) | Value::Fields(_) | Value::Object(_) => Rc::new(RefCell::new(held.clone())),
                 _ => return self.book_here(true),
             };
             return cell;
@@ -28323,7 +28419,8 @@ impl Engine<'_> {
         if kind == Builtin::ClassLocalsPlace {
             return Ok(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into()))))));
         }
-        if (kind == Builtin::OuterNames || program.body_of_all) && self.reading_in.is_none() {
+        if (kind == Builtin::OuterNames || program.body_of_all) && self.reading_in.is_none()
+            && Self::function_book(program).is_none() {
             let home = self.routine_home(program);
             if home != self.class_word("main") {
                 if let Some(module) = self.modules.get(&home).cloned() {
@@ -28465,6 +28562,10 @@ impl Engine<'_> {
     /// may be written into is.
     fn dyn_write(&mut self, held: &Value, name: &str, given: Option<Value>) -> Flow<()> {
         let key = Value::text(name);
+        if given.is_none() && self.special_method(held, 13).is_some() {
+            let result = self.special_call(held, 13, vec![key]);
+            return result.map(|_| ()).map_err(|words| self.carried.take().unwrap_or_else(|| Fault::Note(words)));
+        }
         let result = match given {
             Some(value) => self.special_builtin(Builtin::Replace, &[key, value, held.clone()]),
             None => self.special_builtin(Builtin::Erase, &[held.clone(), key]),
@@ -28482,7 +28583,7 @@ impl Engine<'_> {
     /// Fetching the builtin namespace is an interpreter operation:
     /// dict subclasses supply their stored entry without invoking a
     /// user read hook. Ordinary name reads still use book_get.
-    fn book_builtins(&mut self, book: &Rc<RefCell<Value>>, name: &str) -> Flow<Option<Value>> {
+    pub(super) fn book_builtins(&mut self, book: &Rc<RefCell<Value>>, name: &str) -> Flow<Option<Value>> {
         let value = book.borrow().clone();
         if let Some(storage) = Self::worth_of(&value) {
             if matches!(storage.contents(), Value::Map(_)) {
@@ -29557,7 +29658,7 @@ impl Engine<'_> {
         // too, unless it names a dictionary of its own for them; a
         // dictionary of its own is asked for them the very way any
         // other name is asked for, since it need not be a plain map.
-        if let Some(word) = self.lang.module_builtins.first() {
+        if let Some(word) = self.lang.module_builtins.first().filter(|_| self.compiled_builtins.is_none()) {
             let existing = match self.book_builtins(&outer, word) {
                 Ok(v) => v,
                 Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
@@ -29676,6 +29777,7 @@ impl Engine<'_> {
     /// Text run in dictionaries of its own: its names are given slots
     /// of their own in the world, and a book is kept for them.
     fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64) -> Res<Value> {
+        let supplied_builtins = self.compiled_builtins.take();
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -29692,12 +29794,15 @@ impl Engine<'_> {
         // that it may answer for both later.
         if let Some(word) = self.lang.module_builtins.first().cloned() {
             let globe = Value::Bond(outer.clone());
-            let born = match self.book_builtins(&outer, &word) {
-                Ok(Some(held)) if !self.our_native_dict(&held) => match self.as_builtins_dictionary(held) {
-                    Ok(dictionary) => dictionary,
-                    Err(_) => self.native_dict(),
+            let born = match supplied_builtins {
+                Some(builtins) => builtins,
+                None => match self.book_builtins(&outer, &word) {
+                    Ok(Some(held)) if !self.our_native_dict(&held) => match self.as_builtins_dictionary(held) {
+                        Ok(dictionary) => dictionary,
+                        Err(_) => self.native_dict(),
+                    },
+                    _ => self.native_dict(),
                 },
-                _ => self.native_dict(),
             };
             local.globe = Some(globe);
             local.born = Some(born);
@@ -29717,7 +29822,8 @@ impl Engine<'_> {
         for name in crate::compile::text_wide_globals(&tokens, self.lang) {
             if !declared.contains(&name) { declared.push(name); }
         }
-        self.text_books.push(TextBook { near, outer, from: offset, upto: offset + names.len(), declared });
+        let builtins = local.born.clone().unwrap_or_else(|| self.native_dict());
+        self.text_books.push(TextBook { builtins, near, outer, from: offset, upto: offset + names.len(), declared });
         let was_reading = self.reading_in.replace(self.text_books.len() - 1);
         let answer = self.text_finished(&program, &file, shown);
         self.reading_in = was_reading;
