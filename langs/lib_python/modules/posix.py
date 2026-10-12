@@ -655,20 +655,11 @@ def pipe():
 
 
 # Keep native module functions callable without Python function binding.
-class _BuiltinFunction:
-    # Preserve the wrapped entry point's public metadata.
-    def __init__(self, function):
-        self._function = function
-        self.__name__ = function.__name__
-        self.__qualname__ = function.__name__
-        self.__doc__ = function.__doc__
-        self.__module__ = __name__
+class _BuiltinFunction(staticmethod):
+    # Native forwarding avoids another Python call frame; class access keeps identity.
+    def __get__(self, instance, owner=None):
+        return self
 
-    # Forward arguments without supplying an instance receiver.
-    def __call__(self, *args, **kwargs):
-        return self._function(*args, **kwargs)
-
-    # Render the native entry point's name.
     def __repr__(self):
         return '<built-in function ' + self.__name__ + '>'
 
