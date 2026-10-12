@@ -8,7 +8,7 @@ class BasicTest(unittest.TestCase):
         self.assertNotAlmostEqual(1.0, 1.1, places=3)
         self.assertRegex('abc', 'bc')
         self.assertNotRegex('abc', 'de')
-        self.assertHasAttr(self, '_method')
+        self.assertHasAttr(self, '_testMethodName')
 
 stream = StringIO()
 result = unittest.TextTestRunner(stream=stream, verbosity=2).run(unittest.TestLoader().loadTestsFromTestCase(BasicTest))
