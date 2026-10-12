@@ -55,13 +55,18 @@ fn prepared_libraries(versions: &serde_json::Map<String, Value>) {
                 // Reference modules are inputs, not reusable startup libraries.
                 if name.starts_with("test.") && !name.starts_with("test.support") { continue; }
                 // shortcut: cap cached source size for Lambda uploads; widen when the artifact budget grows.
-                if source.len() > 16_384 && !["_pydatetime", "argparse", "json.encoder"].contains(name) { continue; }
+                if source.len() > 262_144 { continue; }
                 let prepared = std::panic::catch_unwind(|| match kernel {
                     "stack8" => lumen_stack8::compile::prepare_library(&definition, source),
                     _ => lumen_microcode7::build::prepare_library(&definition, source),
                 }).ok().flatten();
                 if let Some((key, proof, encoded)) = prepared {
-                    let octets = proof.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
+                    let codec = lumen_zlib::call(1, 0, &[], [9, 8, 15, 8, 0]);
+                    assert_eq!(codec.status, 0);
+                    let packed = lumen_zlib::call(3, codec.number, &proof, [4, 0, 0, 0, 0]);
+                    lumen_zlib::call(6, codec.number, &[], [0; 5]);
+                    assert!(packed.status == 0 && packed.ended);
+                    let octets = packed.output.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
                     records.push_str(&format!("({key}, b\"{octets}\", {encoded:?}),\n"));
                     source_rows.push_str(&format!("({source:?}, {count}),\n"));
                     count += 1;

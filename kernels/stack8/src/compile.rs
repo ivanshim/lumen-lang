@@ -333,7 +333,7 @@ pub(crate) fn prepared_tokens(source: &str, lang: &Lang) -> Option<Vec<Token>> {
     if lang.prologue_brief_setting.is_some() { return None; }
     let (_, index) = lang.prepared_source_tokens?.iter().find(|(text, _)| *text == source)?;
     let (_, proof, _) = lang.prepared_scopes?.get(*index)?;
-    unpack_tokens(proof)
+    unpack_tokens(&unpack_library_proof(proof)?)
 }
 
 fn token_stamp(bytes: &[u8]) -> u64 {
@@ -343,12 +343,21 @@ fn token_stamp(bytes: &[u8]) -> u64 {
     hash.finish()
 }
 
+// Decode a build-owned proof with a bounded native codec result.
+fn unpack_library_proof(packed: &[u8]) -> Option<Vec<u8>> {
+    let reader = lumen_zlib::call(2, 0, &[], [15, 0, 0, 0, 0]);
+    if reader.status != 0 { return None; }
+    let decoded = lumen_zlib::call(4, reader.number, packed, [4, 64 * 1024 * 1024, 0, 0, 0]);
+    lumen_zlib::call(6, reader.number, &[], [0; 5]);
+    (decoded.status == 0 && decoded.ended && decoded.consumed as usize == packed.len()).then_some(decoded.output)
+}
+
 fn prepared_scope(tokens: &[Token], lang: &Lang) -> Option<PreparedScope> {
     let entries = lang.prepared_scopes?;
     let fingerprint = token_fingerprint(tokens);
     let stamp = token_stamp(&fingerprint);
     for &(key, proof, text) in entries {
-        if key == stamp && proof == fingerprint { return serde_json::from_str(text).ok(); }
+        if key == stamp && unpack_library_proof(proof).as_deref() == Some(fingerprint.as_slice()) { return serde_json::from_str(text).ok(); }
     }
     None
 }
@@ -14399,5 +14408,12 @@ mod prepared_proof_tests {
         let language = crate::lang::Lang::parse(include_str!("../../../langs/python.json")).unwrap();
         let tokens = crate::lex::lex_position("name = 'é'\n", &language).unwrap();
         assert_eq!(super::unpack_tokens(&super::token_fingerprint(&tokens)).unwrap(), tokens);
+        let proof = super::token_fingerprint(&tokens);
+        let writer = lumen_zlib::call(1, 0, &[], [6, 8, 15, 8, 0]);
+        let packed = lumen_zlib::call(3, writer.number, &proof, [4, 0, 0, 0, 0]);
+        lumen_zlib::call(6, writer.number, &[], [0; 5]);
+        assert_eq!(super::unpack_library_proof(&packed.output).unwrap(), proof);
+        assert!(super::unpack_library_proof(b"invalid").is_none());
+
     }
 }
