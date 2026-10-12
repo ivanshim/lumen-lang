@@ -6205,8 +6205,37 @@ impl<'a> Engine<'a> {
                 Instr::Location(a, b, c, d) => position = [a, c, b, d].into_iter().map(|part| Value::Small(*part as i64)).collect(),
                 _ => {}
             }
-            let description = format!("{instruction:?}");
-            let opcode = description.split(['(', ' ', '{']).next().unwrap_or("");
+            // Operands can retain module graphs; inspection needs only the instruction tag.
+            let opcode = match instruction {
+                Instr::Const(..) => "Const",
+                Instr::Read(..) => "Read",
+                Instr::Write(..) => "Write",
+                Instr::Act(..) => "Act",
+                Instr::Skip(..) => "Skip",
+                Instr::Missing(..) => "Missing",
+                Instr::Unwritten(..) => "Unwritten",
+                Instr::Line(..) => "Line",
+                Instr::Location(..) => "Location",
+                Instr::Hush(..) => "Hush",
+                Instr::Glance(..) => "Glance",
+                Instr::Bond(..) => "Bond",
+                Instr::Fasten(..) => "Fasten",
+                Instr::BondItem(..) => "BondItem",
+                Instr::BondPlace(..) => "BondPlace",
+                Instr::Forget(..) => "Forget",
+                Instr::Emptied(..) => "Emptied",
+                Instr::Shed => "Shed",
+                Instr::Nothing => "Nothing",
+                Instr::Mute(..) => "Mute",
+                Instr::Ready(..) => "Ready",
+                Instr::Guard(..) => "Guard",
+                Instr::Attempt(..) => "Attempt",
+                Instr::Depart { .. } => "Depart",
+                Instr::Unguard => "Unguard",
+                Instr::Dyad { .. } => "Dyad",
+                Instr::Bump { .. } => "Bump",
+                Instr::SkipCmp { .. } => "SkipCmp",
+            };
             let jump = matches!(instruction, Instr::Skip(_) | Instr::SkipCmp { .. } | Instr::Depart { .. });
             let destination = match instruction { Instr::Skip(at) | Instr::SkipCmp { to: at, .. } | Instr::Depart { to: at, .. } => Value::Small(*at as i64), _ => Value::Null };
             entries.push(Value::tuple(vec![Value::Small(offset as i64), Value::text(opcode), destination, Value::Flag(jump),
