@@ -8748,6 +8748,22 @@ impl<'a> Engine<'a> {
     }
 
     fn special_call(&mut self, value: &Value, place: usize, args: Vec<Value>) -> Res<Option<Value>> {
+        if matches!(value, Value::Object(object) if matches!(Self::own_kind(&object.class_now()).as_deref(), Some("TypeAliasType" | "TypeVarTuple"))) {
+            match self.type_alias_protocol(value, place, &args) {
+                Ok(Some(answer)) => return Ok(Some(answer)),
+                Ok(None) => {}
+                Err(Fault::Note(words)) => return Err(words),
+                Err(fault) => { self.carried = Some(fault); return Err(self.special_fault()); }
+            }
+        }
+        if matches!(value, Value::Object(object) if Self::own_kind(&object.class_now()).as_deref() == Some("Union")) {
+            match self.union_protocol(value, place, &args) {
+                Ok(Some(answer)) => return Ok(Some(answer)),
+                Ok(None) => {}
+                Err(Fault::Note(words)) => return Err(words),
+                Err(fault) => { self.carried = Some(fault); return Err(self.special_fault()); }
+            }
+        }
         if place == 15 && self.lang.type_parameters {
             let slot = self.special_value(value, place);
             let native = match value { Value::Object(object) => Self::own_kind(&object.class_now()), _ => None };
@@ -8826,6 +8842,74 @@ impl<'a> Engine<'a> {
                 Err(self.special_fault())
             }
         }
+    }
+
+    /// The two places a hinting alias answers of its own: reading it at
+    /// a row of arguments lends out a generic alias over it, and walking
+    /// it gives the one packed argument the reference gives. Nothing
+    /// else here belongs to the alias kind.
+    fn type_alias_protocol(&mut self, alias: &Value, place: usize, args: &[Value]) -> Flow<Option<Value>> {
+        let Some(word) = self.lang.class_special.get(place).map(String::as_str) else { return Ok(None); };
+        match word {
+            "__getitem__" => {
+                if args.len() != 1 { return Ok(None); }
+                let Value::Object(object) = alias else { return Ok(None); };
+                if Self::own_kind(&object.class_now()).as_deref() != Some("TypeAliasType") { return Ok(None); }
+                let parameters = object.fields.borrow().iter().find(|(key, _)| key == "__type_params__").map(|(_, value)| value.clone()).unwrap_or_else(|| Value::tuple(Vec::new()));
+                if matches!(&parameters, Value::Tuple(items) if items.is_empty()) {
+                    return Err("TypeError: Only generic type aliases are subscriptable".into());
+                }
+                let class = self.kind_class("GenericAlias");
+                return self.class_make(class, vec![alias.clone(), args[0].clone()]).map(Some);
+            }
+            "__iter__" => {
+                let typing = self.import_module("typing")?;
+                let unpack = self.class_get(typing, "Unpack", false)?;
+                let item = self.special_dyad(&Action::At, &unpack.contents(), alias)?;
+                return Ok(Some(Self::core_cursor(CursorSource::Items(Rc::new(vec![item]).into(), 0))));
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// A union's reading at the equality places: two unions are one
+    /// where their member rows are equal member for member.
+    pub(super) fn union_protocol(&mut self, union: &Value, place: usize, args: &[Value]) -> Flow<Option<Value>> {
+        let Some(word) = self.lang.class_special.get(place).map(String::as_str) else { return Ok(None); };
+        if !matches!(word, "__eq__" | "__ne__") || args.len() != 1 { return Ok(None); }
+        let Value::Object(object) = union else { return Ok(None); };
+        let left = object.fields.borrow().iter().find(|(key, _)| key == "__args__").map(|(_, value)| value.clone());
+        let right = match args[0].contents() {
+            Value::Object(other) if Self::own_kind(&other.class_now()).as_deref() == Some("Union") =>
+                other.fields.borrow().iter().find(|(key, _)| key == "__args__").map(|(_, value)| value.clone()),
+            _ => None,
+        };
+        let same = match (left, right) {
+            (Some(left), Some(right)) => self.unions_alike(&left, &right)?,
+            _ => return Ok(Some(Value::Declined(Rc::from("NotImplemented")))),
+        };
+        Ok(Some(Value::Flag(same != (word == "__ne__"))))
+    }
+
+    /// Two unions are one where they hold the same members, however
+    /// each row was ordered, as the reference compares them.
+    fn unions_alike(&mut self, left: &Value, right: &Value) -> Res<bool> {
+        let (left, right) = (left.contents(), right.contents());
+        let (Value::Tuple(one), Value::Tuple(two)) = (&left, &right) else { return Ok(false); };
+        if one.len() != two.len() { return Ok(false); }
+        let mut remaining: Vec<Value> = two.iter().cloned().collect();
+        for member in one.iter() {
+            let mut matched = None;
+            for (at, other) in remaining.iter().enumerate() {
+                let equal = self.special_dyad(&Action::Eq, member, other)?;
+                if self.special_truth(&equal)? { matched = Some(at); break; }
+            }
+            match matched {
+                Some(at) => { remaining.remove(at); }
+                None => return Ok(false),
+            }
+        }
+        Ok(true)
     }
 
     fn holds_object(value: &Value) -> bool {
@@ -12657,7 +12741,9 @@ impl<'a> Engine<'a> {
                     // tuple or list subclass's own — is taken apart
                     // into what the worth keeps, the way the walk one
                     // asked of it with iter() goes.
-                    Value::Object(_) if self.special_value(&source, 15).is_some() || self.indexed_walk(&source).is_some()
+                    Value::Object(_) if self.special_value(&source, 15).is_some()
+                        || matches!(&source, Value::Object(o) if matches!(Self::own_kind(&o.class_now()).as_deref(), Some("TypeAliasType" | "TypeVarTuple")))
+                        || self.indexed_walk(&source).is_some()
                         || Self::worth_of(&source).map_or(false, |worth| matches!(worth.contents(),
                             Value::Array(_) | Value::Tuple(_) | Value::Text(_) | Value::Map(_) | Value::Set(_) | Value::Counted(_) | Value::Words(..) | Value::Bytes(..))) => {
                         let walk = self.core_iterator(&source)?;
@@ -17629,7 +17715,9 @@ impl<'a> Engine<'a> {
         // A thing of the program's own that says how it is walked, by a
         // walk method or by reading its places, has the members that
         // walk hands over, the same ones a loop over it would see.
-        if matches!(value, Value::Object(_)) && (self.special_value(value, 15).is_some() || self.indexed_walk(value).is_some()) {
+        if matches!(value, Value::Object(_)) && (self.special_value(value, 15).is_some()
+            || matches!(value, Value::Object(o) if matches!(Self::own_kind(&o.class_now()).as_deref(), Some("TypeAliasType" | "TypeVarTuple")))
+            || self.indexed_walk(value).is_some()) {
             return self.special_items(value);
         }
         if let Value::Class(class) = value {

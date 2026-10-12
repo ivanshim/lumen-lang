@@ -7490,6 +7490,9 @@ impl<'a> Builder<'a> {
             let kind = if self.on_any("ext.stmt.function.carries.pairs") { self.advance(); "ParamSpec" }
                 else if self.on_any("ext.stmt.function.carries") { self.advance(); "TypeVarTuple" } else { "TypeVar" };
             let name = self.need_word("among type parameters")?;
+            if names.iter().any(|kept| kept == &name) {
+                return Err(format!("SyntaxError: duplicate type parameter '{name}'"));
+            }
             names.push(name.clone());
             self.address_to_write(&name);
             let mut constraints = false;

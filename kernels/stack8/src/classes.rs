@@ -87,6 +87,11 @@ impl<'a> Engine<'a> {
                 hooks.push(("__class_getitem__".into(), Self::adapter(5, vec![Self::adapter(77, vec![Value::text("#union")])])));
             }
             hooks.push(("__repr__".into(), Self::adapter(126, Vec::new())));
+            for place in [2usize, 3] {
+                if let Some(name) = self.lang.class_special.get(place) {
+                    hooks.push((name.clone(), Self::adapter(126, vec![Value::Small(place as i64)])));
+                }
+            }
             // The reference builds a union by subscription, which the
             // special form's own item method does; the folded members
             // are the very shape the class questions read a union by.
@@ -2089,6 +2094,18 @@ impl<'a> Engine<'a> {
                 }
                 126 if self.lang.type_parameters => self.class_apply(Self::adapter(158, vec![Value::text("union_repr")]), args),
                 126 => {
+                    if let Some(Value::Small(place)) = w.1.first() {
+                        let name = self.lang.class_special[*place as usize].clone();
+                        let Some(subject) = args.first().map(Value::contents) else {
+                            return Err(format!("TypeError: descriptor '{name}' of 'typing.Union' object needs an argument").into());
+                        };
+                        if !matches!(&subject, Value::Object(o) if Self::own_kind(&o.class_now()).as_deref() == Some("Union")) {
+                            return Err(format!("TypeError: descriptor '{name}' requires a 'typing.Union' object but received a '{}'", Self::type_argument_kind(&subject)).into());
+                        }
+                        if args.len() != 2 { return Err(format!("TypeError: expected 1 argument, got {}", args.len() - 1).into()); }
+                        return self.union_protocol(&subject, *place as usize, &args[1..])?
+                            .ok_or_else(|| self.class_refusal());
+                    }
                     let Some(Value::Object(union)) = args.first() else { return Err(self.class_refusal()); };
                     let mut parts = Vec::new();
                     if let Some((_, Value::Tuple(members))) = union.fields.borrow().iter().find(|(key, _)| key == "__args__") {
@@ -2931,6 +2948,9 @@ impl<'a> Engine<'a> {
                     class.shared.borrow_mut().push((word.into(), Self::adapter(5, vec![Self::adapter(operation, Vec::new())])));
                 }
             }
+            // An alias kind is fixed: its own words cannot be written
+            // over and no class may stand on it.
+            if name == "TypeAliasType" { class.sealed.set(true); }
             fields.push((name.into(), Value::Class(class)));
         }
         let sentinel_class = self.kind_class("NoDefaultType");
@@ -2967,6 +2987,7 @@ impl<'a> Engine<'a> {
                 positional.push(supplied_name);
             }
         }
+        if class.name == "TypeAliasType" { return self.type_alias_instance(class, positional, keywords); }
         if class.name == "TypeVar" && positional.len() == 2 { return Err("TypeError: A single constraint is not allowed".into()); }
         if matches!(class.name.as_str(), "ParamSpec" | "TypeVarTuple") && positional.len() > 1 { return Err(format!("TypeError: {}() takes exactly 1 positional argument ({} given)", class.name.to_lowercase(), positional.len()).into()); }
         let Some(Value::Text(name)) = positional.first().map(Value::contents) else {
@@ -3019,12 +3040,90 @@ impl<'a> Engine<'a> {
         let Value::Routine(routine) = evaluator.contents() else { return Err(self.class_refusal()); };
         let class = self.kind_class("TypeAliasType");
         let mut alias = self.typing_instance(class, vec![Value::text(&routine.ident), Value::Null])?;
+        let home = match &routine.globe {
+            Some(globe) => Self::globals_named(globe).map_or(Value::Null, |word| Value::text(&word)),
+            None => self.module_named().map_or(Value::Null, |word| Value::text(&word)),
+        };
         if let Value::Object(instance) = &mut alias {
             let mut fields = instance.fields.borrow_mut();
+            if let Some((_, module)) = fields.iter_mut().find(|(key, _)| key == "__module__") { *module = home; }
             fields.retain(|(key, _)| key != "__value__");
             fields.push(("\0lazy:__value__".into(), evaluator));
         }
         Ok(alias)
+    }
+    /// The name a globals mapping gives itself, read where the type
+    /// statement that made an alias wrote its name down.
+    fn globals_named(globe: &Value) -> Option<String> {
+        let mut current = globe.clone();
+        loop {
+            match current {
+                Value::Map(entries) => {
+                    let named = entries.iter().find(|(key, _)| {
+                        match key.contents() {
+                            Value::Text(word) => word.as_ref() == "__name__",
+                            Value::Hashed(pair) => matches!(pair.0.contents(), Value::Text(word) if word.as_ref() == "__name__"),
+                            _ => false,
+                        }
+                    });
+                    return named.map(|(_, value)| value.plain());
+                }
+                Value::Bond(cell) | Value::Binding(cell) => current = cell.borrow().clone(),
+                Value::Collection(cell, _) => current = cell.borrow().clone(),
+                Value::Fields(view) => return view.fields.borrow().iter().find(|(key, _)| key == "__name__").map(|(_, value)| value.plain()),
+                _ => return None,
+            }
+        }
+    }
+    /// A hinting alias made by hand: its name and value may be written
+    /// in place or named, and its parameters, when given, are the row of
+    /// hinting parameters it keeps, checked for the order the reference
+    /// insists on.
+    fn type_alias_instance(&mut self, class: Rc<Class>, positional: Vec<Value>, keywords: Vec<(String, Value)>) -> Flow<Value> {
+        if positional.len() > 2 { return Err("TypeError: typealias() takes exactly 2 positional arguments (3 given)".into()); }
+        let mut slots: [Option<Value>; 3] = [None, None, None];
+        for (at, given) in positional.into_iter().enumerate() { slots[at] = Some(given); }
+        for (key, given) in keywords {
+            let at = match key.as_str() { "name" => 0, "value" => 1, "type_params" => 2,
+                _ => return Err(format!("TypeError: TypeAliasType() got an unexpected keyword argument '{key}'").into()) };
+            if slots[at].replace(given).is_some() { return Err(format!("TypeError: TypeAliasType() got multiple values for argument '{key}'").into()); }
+        }
+        let Some(Value::Text(title)) = slots[0].as_ref().map(Value::contents) else { return Err("TypeError: name must be a str".into()); };
+        let Some(value) = slots[1].take() else { return Err("TypeError: TypeAliasType requires a name and a value".into()); };
+        let parameters = match slots[2].take() {
+            None => Value::tuple(Vec::new()),
+            Some(given) => self.type_alias_parameters(given)?,
+        };
+        let home = self.module_named().map_or(Value::Null, |word| Value::text(&word));
+        self.made += 1;
+        Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made,
+            fields: RefCell::new(vec![("__name__".into(), Value::Text(title.clone())), ("__module__".into(), home),
+                ("\0typing_repr".into(), Value::Text(title)), ("__value__".into(), value), ("__type_params__".into(), parameters)]) })))
+    }
+    /// The row a hinting alias keeps: each entry must be a hinting
+    /// parameter, and a parameter without a default may not follow one
+    /// that has a default, as the reference refuses that order.
+    fn type_alias_parameters(&mut self, given: Value) -> Flow<Value> {
+        let Value::Tuple(items) = given.contents() else { return Err("TypeError: type_params must be a tuple".into()); };
+        let sentinel = self.no_type_default();
+        let mut seen_default = false;
+        let mut kept = Vec::new();
+        for item in items.iter() {
+            let inside = match item.contents() { Value::Object(object) if matches!(Self::own_kind(&object.class_now()).as_deref(), Some("TypeVar" | "ParamSpec" | "TypeVarTuple")) => Some(object), _ => None };
+            let Some(object) = inside else {
+                let shown = self.special_text(item, true)?;
+                return Err(format!("TypeError: Expected a type param, got {shown}").into());
+            };
+            let fields = object.fields.borrow();
+            let has_default = fields.iter().any(|(key, _)| key == "\0lazy:__default__")
+                || fields.iter().find(|(key, _)| key == "__default__").is_some_and(|(_, value)| !value.same_place(&sentinel));
+            let shown = fields.iter().find(|(key, _)| key == "\0typing_repr").map(|(_, value)| value.plain()).unwrap_or_default();
+            drop(fields);
+            if has_default { seen_default = true; }
+            else if seen_default { return Err(format!("TypeError: non-default type parameter '{shown}' follows default type parameter").into()); }
+            kept.push(item.clone());
+        }
+        Ok(Value::tuple(kept))
     }
     pub(super) fn class_make(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
         self.validate_class_spreads(&c, &args)?;
@@ -3207,7 +3306,11 @@ impl<'a> Engine<'a> {
             self.class_from_parts(given)?
         } else if let Some(f) = allocation {
             let f=self.bind_class_value(f,None,c.clone())?;
-            let mut given = vec![Value::Class(c.clone())]; given.extend(args.clone());
+            let opened: Vec<Value> = self.call_items(args.clone())?.into_iter().map(|(key, value)| match key {
+                Some(word) => Value::Tie(Rc::new((Value::text(&word), value))),
+                None => value,
+            }).collect();
+            let mut given = vec![Value::Class(c.clone())]; given.extend(opened);
             self.class_apply(f,given)?
         } else if let Some(word) = &kind {
             if matches!(word.as_str(), "str_iterator" | "str_ascii_iterator") {
@@ -3368,14 +3471,34 @@ impl<'a> Engine<'a> {
         let Some(subject) = args.first().cloned() else { return Err(self.class_refusal()); };
         let other = args.get(1).cloned();
         Ok(match place {
-            // Alike only with itself; unlike wherever it is not alike.
-            0 => match other { Some(v) if Self::member_matches(&subject,&v) => Value::Flag(true), _ => declined() },
+            // The root equality slot compares identity without calling overrides.
+            0 => match other {
+                Some(v) => match self.special_dyad(&Action::Same, &subject, &v).map_err(Fault::Note)? {
+                    Value::Flag(true) => Value::Flag(true),
+                    _ => declined(),
+                },
+                None => declined(),
+            },
             1 => {
                 let Some(v) = other else { return Err(self.class_refusal()); };
                 match self.special_call(&subject,2,vec![v.clone()]).map_err(Fault::Note)? {
                     Some(told @ Value::Declined(_)) => told,
                     Some(told) => Value::Flag(!self.special_truth(&told).map_err(Fault::Note)?),
-                    None => if Self::member_matches(&subject,&v) {Value::Flag(false)} else {declined()},
+                    None => {
+                        let equality = self.lang.class_special.get(2).cloned().unwrap_or_default();
+                        if self.native_special(&subject, &equality) {
+                            let answer = self.value_method(&subject, &equality, vec![v], Vec::new()).map_err(Fault::Note)?;
+                            match answer {
+                                Value::Declined(_) => answer,
+                                _ => Value::Flag(!self.special_truth(&answer).map_err(Fault::Note)?),
+                            }
+                        } else {
+                            match self.special_dyad(&Action::Same, &subject, &v).map_err(Fault::Note)? {
+                                Value::Flag(true) => Value::Flag(false),
+                                _ => declined(),
+                            }
+                        }
+                    },
                 }
             }
             2..=5 | 14 => declined(),
@@ -4861,6 +4984,9 @@ impl<'a> Engine<'a> {
                 if !self.class_word("module").is_empty() && name == self.class_word("module") {
                     if let Some(stored) = Self::own_class_value(c, name) { return Ok(stored); }
                     let is_root = self.class_root.as_ref().is_some_and(|root| Rc::ptr_eq(root, c));
+                    if let Some(kind) = Self::own_kind(c).filter(|word| matches!(word.as_str(), "SimpleNamespace" | "GenericAlias" | "Union")) {
+                        return Ok(Value::text(match kind.as_str() { "Union" => "typing", _ => "types" }));
+                    }
                     if is_root || self.is_metaclass_root(c) || Self::own_kind(c).is_some() {
                         return Ok(Value::text(self.home_module_word()));
                     }
@@ -5144,7 +5270,20 @@ impl<'a> Engine<'a> {
                         fields: RefCell::new(vec![("__origin__".into(), subject.clone()), ("\0typing_repr".into(), Value::text(&format!("{title}.{name}")))]) })));
                 }
                 if name == "__parameters__" && o.class_now().name == "TypeAliasType" {
-                    return Ok(o.fields.borrow().iter().find(|(key, _)| key == "__type_params__").map(|(_, value)| value.clone()).unwrap_or_else(|| Value::tuple(Vec::new())));
+                    let params = o.fields.borrow().iter().find(|(key, _)| key == "__type_params__").map(|(_, value)| value.clone()).unwrap_or_else(|| Value::tuple(Vec::new()));
+                    if let Value::Tuple(items) = &params {
+                        if items.iter().any(|item| matches!(item.contents(), Value::Object(p) if Self::own_kind(&p.class_now()).as_deref() == Some("TypeVarTuple"))) {
+                            let typing = self.import_module("typing")?;
+                            let unpack = self.class_get(typing, "Unpack", false)?;
+                            let mut wrapped = Vec::new();
+                            for item in items.iter() {
+                                let variadic = matches!(item.contents(), Value::Object(p) if Self::own_kind(&p.class_now()).as_deref() == Some("TypeVarTuple"));
+                                wrapped.push(if variadic { self.special_dyad(&Action::At, &unpack.contents(), item)? } else { item.clone() });
+                            }
+                            return Ok(Value::tuple(wrapped));
+                        }
+                    }
+                    return Ok(params);
                 }
                 if o.class_now().name == "TypeVar" && name == "__typing_prepare_subst__" {
                     return Ok(Self::adapter(3, vec![Self::adapter(158, vec![Value::text("typevar_prepare")]), subject.clone()]));
@@ -6875,13 +7014,13 @@ impl<'a> Engine<'a> {
     pub(super) fn union_member(&self,value:&Value)->bool {
         matches!(value,Value::Null)
             ||self.stands_for_kind(value)
-            ||matches!(value, Value::Object(o) if Self::kind_beneath(&o.class_now()).is_some_and(|kind| matches!(kind.as_str(), "Union" | "GenericAlias" | "TypeVar" | "TypeAliasType")))
+            ||matches!(value, Value::Object(o) if Self::kind_beneath(&o.class_now()).is_some_and(|kind| matches!(kind.as_str(), "Union" | "GenericAlias" | "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType")))
     }
     /// At least one operand must provide the union operator. None alone
     /// supplies no such operator.
     pub(super) fn union_anchor(&self,value:&Value)->bool {
         self.stands_for_kind(value)
-            ||matches!(value, Value::Object(o) if Self::kind_beneath(&o.class_now()).is_some_and(|kind| matches!(kind.as_str(), "Union" | "GenericAlias" | "TypeVar" | "TypeAliasType")))
+            ||matches!(value, Value::Object(o) if Self::kind_beneath(&o.class_now()).is_some_and(|kind| matches!(kind.as_str(), "Union" | "GenericAlias" | "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType")))
     }
     /// The kind builtin read as a value: what the kind of a kind is.
     pub(super) fn kind_maker_word(&self)->Value {
@@ -7966,14 +8105,13 @@ impl<'a> Engine<'a> {
             1 => {
                 let mut parts = Vec::new();
                 for arg in self.comprehension_items(&args)? {
-                    parts.push(if matches!(arg, Value::Null) { "None".into() }
-                        else if matches!(arg.contents(), Value::Class(_)) {
-                            let module = self.class_get(arg.clone(), "__module__", false)?.plain();
-                            let name = self.class_get(arg.clone(), "__qualname__", false)?.plain();
-                            if module == "builtins" { name } else { format!("{module}.{name}") }
-                        }
-                        else if let Some(word) = arg.kind_it_names() { word }
-                        else { self.builtin(Builtin::Repr, "repr", &mut vec![arg])?.plain() });
+                    if matches!(arg.contents(), Value::Array(_)) {
+                        let mut items = Vec::new();
+                        for item in self.comprehension_items(&arg)? { items.push(self.type_shown(&item)?); }
+                        parts.push(format!("[{}]", items.join(", ")));
+                    } else {
+                        parts.push(self.type_shown(&arg)?);
+                    }
                 }
                 let star = self.class_get(receiver.clone(), "__unpacked__", true)?;
                 let shown_origin = if matches!(origin.contents(), Value::Class(_)) {
@@ -8021,6 +8159,19 @@ impl<'a> Engine<'a> {
 }
 
 impl<'a> Engine<'a> {
+    /// Type names are unquoted; other arguments use their ordinary repr.
+    fn type_shown(&mut self, value: &Value) -> Res<String> {
+        let raw = value.contents();
+        if matches!(raw, Value::Null) { return Ok("None".to_string()); }
+        if matches!(raw, Value::Class(_)) {
+            let module = self.class_get(raw.clone(), "__module__", false).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?.plain();
+            let name = self.class_get(raw, "__qualname__", false).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?.plain();
+            return Ok(if module == "builtins" { name } else { format!("{module}.{name}") });
+        }
+        if let Some(word) = raw.kind_it_names() { return Ok(word); }
+        Ok(self.builtin(Builtin::Repr, "repr", &mut vec![raw])?.plain())
+    }
+
     pub(super) fn join_types(&mut self, left: &Value, right: &Value) -> Flow<Value> {
         let mut members = Vec::new();
         for given in [left, right] {
