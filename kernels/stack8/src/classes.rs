@@ -139,6 +139,9 @@ impl<'a> Engine<'a> {
         if word == "super" {
             hooks.push((self.lang.constructor.clone().unwrap_or_default(), Self::adapter(236, Vec::new())));
         }
+        if let Some(doc) = Self::builtin_kind_doc(word) {
+            hooks.push((self.class_word("doc").to_owned(), Value::text(doc)));
+        }
         if word == "getset_descriptor" && self.lang.class_details.get("native.getsets").is_some_and(|entries| !entries.is_empty()) {
             for (mode, part) in ["descriptor.get", "descriptor.set", "descriptor.delete"].iter().enumerate() {
                 hooks.push((self.class_word(part).to_string(), Self::adapter(207, vec![Value::Small(mode as i64)])));
@@ -3537,7 +3540,11 @@ impl<'a> Engine<'a> {
                     if let Some(method)=self.special_value(&subject,79) {
                         let inherited_root=matches!(&method,Value::Adapter(record) if record.0==30 && record.1.first().is_some_and(|key|self.lang.class_details.get("root.members").and_then(|words|words.get(11)).is_some_and(|word|word==&key.plain())))
                             || matches!(&method,Value::Adapter(record) if record.0==29 && record.1.first().is_some_and(|base|base.plain()=="object"));
-                        if !inherited_root {if let Some(answer)=self.special_call(&subject,79,Vec::new()).map_err(Fault::Note)?{return Ok(answer);}}
+                        if !inherited_root {
+                            let name = self.lang.class_special[79].clone();
+                            let method = self.class_get(subject.clone(), &name, false)?;
+                            return self.class_apply(method, Vec::new());
+                        }
                     }
                 }
                 return self.reduce_object(subject,protocol);
@@ -4425,6 +4432,11 @@ impl<'a> Engine<'a> {
                 return Ok(Self::adapter(132, vec![Value::tuple(vec![getter, Value::tuple(vec![owner, Value::text("__new__")])])]));
             }
             if name == "__reduce_ex__" { return Ok(Value::ValueMethod(Rc::new((subject, "callable_reduce_ex".into())))); }
+        }
+        // Built-in instances inherit the documentation of their actual type.
+        if name == self.class_word("doc") && matches!(subject.contents(), Value::Flag(_) | Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Complex(_) | Value::Text(_) | Value::Codepoints(_) | Value::Array(_) | Value::Map(_) | Value::Tuple(_) | Value::Bytes(..) | Value::Set(_)) {
+            let owner = self.named_kind(&subject.contents());
+            return self.class_get(owner, name, plain);
         }
         if name == self.class_word("allocate") && matches!(subject.contents(), Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Complex(_) | Value::Text(_) | Value::Codepoints(_) | Value::Array(_) | Value::Map(_) | Value::Tuple(_) | Value::Bytes(..) | Value::Set(_)) {
             let owner = self.named_kind(&subject.contents());

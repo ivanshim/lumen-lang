@@ -139,6 +139,7 @@ impl<'a> Machine<'a> {
         } else if ["Union", "TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "Generic", "ParamSpecArgs", "ParamSpecKwargs"].contains(&word) {
             protocols.push((self.detail("module").into(), Value::text("typing")));
         }
+        protocols.extend(Self::builtin_kind_doc(word).map(|text| (self.detail("doc").to_string(), Value::text(text))));
         let title = match word { "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "NoDefaultType" | "ParamSpecArgs" | "ParamSpecKwargs" => format!("typing.{word}"), "SimpleNamespace" | "GenericAlias" => format!("types.{word}"), "Union" => String::from("typing.Union"), _ => word.to_owned() };
         if self.table.has_any("ext.stmt.class.detail.native.getsets") && word == "getset_descriptor" {
             let names = ["descriptor.get", "descriptor.set", "descriptor.delete"];
@@ -4325,7 +4326,11 @@ impl<'a> Machine<'a> {
                     if let Some(candidate)=self.appointment(&first,79) {
                         let root=matches!(&candidate,Value::Wrapped(36,parts) if parts.first().is_some_and(|word|self.rules.words_ext_stmt_class_detail_root_members.get(11)==Some(&word.bare())))
                             || matches!(&candidate,Value::Wrapped(60,parts) if parts.first().is_some_and(|word|word.bare()=="object"));
-                        if !root {if let Some(answer)=self.ask_special(&first,79,&[])?{return Ok(answer);}}
+                        if !root {
+                            let key = self.rules.specials[79].to_owned();
+                            let reduction = self.read_class_member(first.clone(), &key, false)?;
+                            return self.apply_class_member(reduction, vec![]);
+                        }
                     }
                 }
                 return self.object_reduction(first,protocol);
@@ -5359,6 +5364,14 @@ impl<'a> Machine<'a> {
                 "__reduce__" => { let get = Value::Intrinsic(Prim::GetMember, Rc::from("getattr")); return Ok(Self::wrap(135, vec![Value::tuple(vec![get, Value::tuple(vec![kind, Value::text("__new__")])])])); }
                 "__reduce_ex__" => return Ok(Value::Member(Rc::new(value), String::from("callable_reduce_ex"))),
                 _ => (),
+            }
+        }
+        // Read native-instance documentation through its type's existing record.
+        if key == self.detail("doc") {
+            let native = matches!(value.settled(), Value::Text(_) | Value::Unpaired(_) | Value::Flag(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Complex(_) | Value::Vector(_) | Value::Dict(_) | Value::Tuple(_) | Value::Octets { .. } | Value::Set(_));
+            if native {
+                let kind = self.kind_named_after(&value.settled());
+                return self.read_class_member(kind, key, direct);
             }
         }
         if key == self.detail("allocate") && matches!(value.settled(), Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Complex(_) | Value::Text(_) | Value::Unpaired(_) | Value::Vector(_) | Value::Dict(_) | Value::Tuple(_) | Value::Octets { .. } | Value::Set(_)) {
