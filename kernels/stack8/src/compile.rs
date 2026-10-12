@@ -128,6 +128,9 @@ pub struct Registry {
     /// name the one it is speaking of.
     pub arg_names: HashMap<String, Vec<String>>,
     pub gives_back: std::collections::HashSet<String>,
+    /// The text under way, where the caller handed it over: the words
+    /// an annotation was written with are read back out of it.
+    pub source: Option<Rc<str>>,
 }
 
 impl Registry {
@@ -2097,7 +2100,23 @@ impl<'a> Compiler<'a> {
         Ok(Rc::new(Routine { embedded_integers: None, source_end: self.pos, source_tokens: self.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation, code_constants, code_names, local_names, code_flags, future_bits: self.future_bits, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
     }
 
+    /// The words an annotation was written with, read back out of the text
+    /// under way and dressed as the reference dresses one: a number the
+    /// host cannot hold is written as its overflow, a debug format field is
+    /// written out in full, and parentheses holding nothing but one
+    /// expression are dropped. Where the text is not at hand the words are
+    /// joined from the tokens instead.
     fn annotation_text(&self, start: usize, end: usize) -> String {
+        if let (Some(source), Some(first), Some(last)) = (self.registry.source.as_ref(), self.tokens.get(start), self.tokens.get(end.wrapping_sub(1))) {
+            let from = Self::char_offset(source, first.row, first.column);
+            let to = Self::char_offset(source, last.end_row, last.end_column);
+            if to >= from {
+                let raw: String = source.chars().skip(from).take(to - from).collect();
+                let mut edits = self.overflow_edits(source, from, start, end);
+                edits.extend(self.format_field_edits(source, from, start, end));
+                return Self::trim_redundant_parens(&Self::apply_edits(&raw, edits));
+            }
+        }
         let mut output = String::new();
         let mut previous = String::new();
         let mut after_unpack = false;
@@ -2115,6 +2134,269 @@ impl<'a> Compiler<'a> {
             previous = word;
         }
         output
+    }
+
+    /// Where a row and column stand in the text, counted in characters.
+    fn char_offset(source: &str, row: usize, column: usize) -> usize {
+        let mut at = 0usize;
+        for (line, piece) in source.split_inclusive('\n').enumerate() {
+            if line + 1 == row { return at + column.saturating_sub(1); }
+            at += piece.chars().count();
+        }
+        at
+    }
+
+    /// The spans of numbers written larger than the host can hold, with the
+    /// words the reference writes in their place. A binary operator written
+    /// tightly against one keeps its place but takes the spaces.
+    fn overflow_edits(&self, source: &str, from: usize, start: usize, end: usize) -> Vec<(usize, usize, String)> {
+        let mut edits = Vec::new();
+        for at in start..end {
+            let token = &self.tokens[at];
+            if token.shape != Shape::Numeral { continue; }
+            let Some(word) = Self::overflow_word(&token.lexeme) else { continue };
+            let begin = Self::char_offset(source, token.row, token.column).saturating_sub(from);
+            let finish = Self::char_offset(source, token.end_row, token.end_column).saturating_sub(from);
+            if finish <= begin { continue; }
+            if at >= start + 2 {
+                let sign = &self.tokens[at - 1];
+                let binary = Self::ends_operand(&self.tokens[at - 2]);
+                if sign.shape == Shape::Sign && binary && Self::writing_sign(&sign.lexeme) && sign.row == token.row && sign.end_column == token.column {
+                    let head = Self::char_offset(source, sign.row, sign.column).saturating_sub(from);
+                    if head < begin {
+                        let lead = source.chars().nth(from + head.saturating_sub(1)).map_or(true, char::is_whitespace);
+                        edits.push((head, finish, format!("{}{} {}", if lead { "" } else { " " }, sign.lexeme, word)));
+                        continue;
+                    }
+                }
+            }
+            edits.push((begin, finish, word));
+        }
+        edits
+    }
+
+    /// The words the reference writes for a number too large for the host.
+    fn overflow_word(text: &str) -> Option<String> {
+        let imaginary = text.ends_with('j') || text.ends_with('J');
+        let body = if imaginary { &text[..text.len() - 1] } else { text };
+        let clean: String = body.chars().filter(|c| *c != '_').collect();
+        let value: f64 = clean.parse().ok()?;
+        if !value.is_infinite() { return None; }
+        Some(if imaginary { "1e309j".to_string() } else { "1e309".to_string() })
+    }
+
+    /// Whether a token leaves a value standing, so the sign after it writes.
+    fn ends_operand(token: &Token) -> bool {
+        if matches!(token.shape, Shape::Numeral | Shape::Quote | Shape::Bytes | Shape::StringEnd | Shape::Codepoints) { return true; }
+        if matches!(token.lexeme.as_str(), ")" | "]" | "}") { return true; }
+        token.shape == Shape::Instr && !matches!(token.lexeme.as_str(), "and" | "or" | "not" | "in" | "is" | "if" | "else" | "for" | "lambda" | "await" | "yield" | "from" | "as" | "import")
+    }
+
+    fn writing_sign(text: &str) -> bool {
+        matches!(text, "+" | "-" | "*" | "/" | "//" | "%" | "**" | "@" | "&" | "|" | "^" | "<<" | ">>")
+    }
+
+    /// The spans of format strings whose debug fields the reference writes
+    /// out in full, so that `f'{x=!r}'` is stored as `f'x={x!r}'`.
+    fn format_field_edits(&self, source: &str, from: usize, start: usize, end: usize) -> Vec<(usize, usize, String)> {
+        let mut edits = Vec::new();
+        let mut depth = 0usize;
+        let mut opening: Option<usize> = None;
+        for at in start..end {
+            let token = &self.tokens[at];
+            if token.shape == Shape::StringBegin {
+                if depth == 0 { opening = Some(at); }
+                depth += 1;
+            } else if token.shape == Shape::StringEnd {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    if let Some(first) = opening {
+                        let begin = Self::char_offset(source, self.tokens[first].row, self.tokens[first].column).saturating_sub(from);
+                        let finish = Self::char_offset(source, token.end_row, token.end_column).saturating_sub(from);
+                        if finish > begin && self.tokens[first].lexeme.is_empty() {
+                            let raw: String = source.chars().skip(from + begin).take(finish - begin).collect();
+                            let dressed = Self::dress_format_string(&raw);
+                            if dressed != raw { edits.push((begin, finish, dressed)); }
+                        }
+                    }
+                }
+            }
+        }
+        edits
+    }
+
+    /// A format string with each debug field written out in full.
+    fn dress_format_string(text: &str) -> String {
+        let chars: Vec<char> = text.chars().collect();
+        let mut prefix = 0usize;
+        while prefix < chars.len() && chars[prefix].is_ascii_alphabetic() { prefix += 1; }
+        if prefix >= chars.len() || !matches!(chars[prefix], '\'' | '"') { return text.to_string(); }
+        let quote = chars[prefix];
+        let mut width = 1usize;
+        if prefix + 2 < chars.len() && chars[prefix + 1] == quote && chars[prefix + 2] == quote { width = 3; }
+        let open_end = prefix + width;
+        let close_start = chars.len().saturating_sub(width);
+        let mut body = String::new();
+        let mut at = open_end;
+        while at < close_start {
+            let c = chars[at];
+            if c == '{' {
+                if at + 1 < close_start && chars[at + 1] == '{' { body.push_str("{{"); at += 2; continue; }
+                let mut level = 1usize;
+                let mut scan = at + 1;
+                let mut quoted: Option<char> = None;
+                while scan < close_start {
+                    let d = chars[scan];
+                    if let Some(q) = quoted {
+                        if d == '\\' { scan += 2; continue; }
+                        if d == q { quoted = None; }
+                    } else if d == '\'' || d == '"' { quoted = Some(d); }
+                    else if d == '{' { level += 1; }
+                    else if d == '}' { level -= 1; if level == 0 { break; } }
+                    scan += 1;
+                }
+                let field: String = chars[at + 1..scan].iter().collect();
+                match Self::debug_field(&field) {
+                    Some((expression, rest)) => {
+                        body.push_str(&expression);
+                        body.push_str("={");
+                        body.push_str(&expression);
+                        body.push_str(&rest);
+                        body.push('}');
+                    }
+                    None => { body.push('{'); body.push_str(&field); body.push('}'); }
+                }
+                at = scan + 1;
+                continue;
+            }
+            body.push(c);
+            at += 1;
+        }
+        let opening: String = chars[..open_end].iter().collect();
+        let closing: String = chars[close_start..].iter().collect();
+        format!("{opening}{body}{closing}")
+    }
+
+    /// A debug field split into its expression and what follows the `=`,
+    /// where the `=` stands alone at the field's own level.
+    fn debug_field(field: &str) -> Option<(String, String)> {
+        let chars: Vec<char> = field.chars().collect();
+        let mut depth = 0i32;
+        let mut quoted: Option<char> = None;
+        let mut at = 0usize;
+        while at < chars.len() {
+            let c = chars[at];
+            if let Some(q) = quoted {
+                if c == '\\' { at += 2; continue; }
+                if c == q { quoted = None; }
+                at += 1; continue;
+            }
+            match c {
+                '\'' | '"' => quoted = Some(c),
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                '=' if depth == 0 => {
+                    let before = if at == 0 { None } else { chars.get(at - 1).copied() };
+                    let after = chars.get(at + 1).copied();
+                    let joined = matches!(before, Some(':') | Some('!') | Some('<') | Some('>') | Some('='));
+                    if !joined && after != Some('=') {
+                        return Some((chars[..at].iter().collect(), chars[at + 1..].iter().collect()));
+                    }
+                }
+                _ => {}
+            }
+            at += 1;
+        }
+        None
+    }
+
+    fn apply_edits(raw: &str, mut edits: Vec<(usize, usize, String)>) -> String {
+        if edits.is_empty() { return raw.to_string(); }
+        edits.sort_by_key(|(at, ..)| *at);
+        let chars: Vec<char> = raw.chars().collect();
+        let mut output = String::new();
+        let mut cursor = 0usize;
+        for (begin, finish, word) in edits {
+            if begin < cursor || finish > chars.len() { continue; }
+            output.extend(chars[cursor..begin].iter());
+            output.push_str(&word);
+            cursor = finish;
+        }
+        output.extend(chars[cursor..].iter());
+        output
+    }
+
+    /// Parentheses holding nothing but one expression are dropped, and a
+    /// bare tuple is put back in a pair.
+    fn trim_redundant_parens(text: &str) -> String {
+        let mut current = text.to_string();
+        let mut stripped = false;
+        loop {
+            let chars: Vec<char> = current.chars().collect();
+            if chars.len() < 2 || chars[0] != '(' || chars[chars.len() - 1] != ')' { break; }
+            let mut depth = 0i32;
+            let mut wraps = true;
+            for (at, c) in chars.iter().enumerate() {
+                if *c == '(' { depth += 1; }
+                else if *c == ')' {
+                    depth -= 1;
+                    if depth == 0 { if at != chars.len() - 1 { wraps = false; } break; }
+                }
+            }
+            if !wraps { break; }
+            let inner: String = chars[1..chars.len() - 1].iter().collect();
+            if inner.trim().is_empty() { break; }
+            current = inner;
+            stripped = true;
+        }
+        if stripped && (Self::has_top_comma(&current) || Self::has_top_for(&current)) { format!("({current})") } else { current }
+    }
+
+    /// Whether a top-level `for` stands in the words, which a generator
+    /// expression keeps its parentheses for.
+    fn has_top_for(text: &str) -> bool {
+        let mut depth = 0i32;
+        let mut quoted: Option<char> = None;
+        let chars: Vec<char> = text.chars().collect();
+        let mut at = 0usize;
+        while at < chars.len() {
+            let c = chars[at];
+            if let Some(q) = quoted {
+                if c == q { quoted = None; }
+                at += 1; continue;
+            }
+            match c {
+                '\'' | '"' => quoted = Some(c),
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                'f' if depth == 0
+                    && chars.get(at..at + 3) == Some(&['f', 'o', 'r'][..])
+                    && !chars.get(at + 3).map_or(false, |c| c.is_alphanumeric() || *c == '_')
+                    && !at.checked_sub(1).and_then(|i| chars.get(i)).map_or(false, |c| c.is_alphanumeric() || *c == '_') => return true,
+                _ => {}
+            }
+            at += 1;
+        }
+        false
+    }
+
+    fn has_top_comma(text: &str) -> bool {
+        let mut depth = 0i32;
+        let mut quoted: Option<char> = None;
+        for c in text.chars() {
+            if let Some(q) = quoted {
+                if c == q { quoted = None; }
+                continue;
+            }
+            match c {
+                '\'' | '"' => quoted = Some(c),
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth -= 1,
+                ',' if depth == 0 => return true,
+                _ => {}
+            }
+        }
+        false
     }
     fn annotation_routine(&mut self) -> Res<Option<Rc<Routine>>> {
         let entries = std::mem::take(&mut self.pending_annotations);
@@ -2160,7 +2442,11 @@ impl<'a> Compiler<'a> {
                 if unpacked && (c.on_keyword(&c.lang.lambda_words) || c.lang.monadic.get(c.look().spelling()).is_some_and(|op| matches!(op.action, Action::Not))) {
                     return Err("SyntaxError: invalid syntax".into());
                 }
-                c.expr_at(floor, false)?;
+                let survey = c.discovering;
+                if c.future_annotations { c.discovering = true; }
+                let outcome = c.expr_at(floor, false);
+                c.discovering = survey;
+                outcome?;
                 if unpacked {
                     let boundary = c.lang.calling.as_ref().is_some_and(|call| c.at_symbol(&call.close)
                         || call.between.as_ref().is_some_and(|word| c.at_symbol(word)));
@@ -3973,6 +4259,14 @@ impl<'a> Compiler<'a> {
         Ok(first)
     }
 
+    /// Whether the reading stands at the top of the text it reads:
+    /// a program's own top, or the top of text handed over while a run
+    /// goes, which the reference reads as a module of its own where a
+    /// future import's place is judged.
+    fn at_text_top(&mut self) -> bool {
+        self.piece().outermost || (self.read_in && self.pieces.len() == 1)
+    }
+
     fn future_prefix(&self, end: usize) -> bool {
         let mut at = 0;
         let mut docstring = true;
@@ -4011,7 +4305,7 @@ impl<'a> Compiler<'a> {
             self.take();
         }
         let future = !lang.syntax_members.is_empty() && from && module == "__future__";
-        if future && (!self.piece().outermost || self.in_class_body() || !self.future_prefix(import_at)) {
+        if future && (!self.at_text_top() || self.in_class_body() || !self.future_prefix(import_at)) {
             let last = self.tokens[import_at..].iter().take_while(|t| !matches!(t.shape, Shape::LineEnd | Shape::Finish | Shape::Close) && t.lexeme != ";").last().unwrap();
             self.registry.stopped_end = last.column + last.lexeme.chars().count();
             self.registry.stopped_end_row = last.row;
@@ -4027,6 +4321,12 @@ impl<'a> Compiler<'a> {
         }
         let star = from && self.look().shape == Shape::Sign && lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul));
         if star && group.is_none() {
+            if future {
+                let mark = self.tokens[self.pos].clone();
+                self.registry.stopped_end = mark.column + mark.lexeme.chars().count();
+                self.registry.stopped_end_row = mark.row;
+                return Err("SyntaxError: future feature * is not defined".into());
+            }
             if !lang.syntax_members.is_empty() && (!self.piece().outermost || self.in_class_body()) { return Err("SyntaxError: import * only allowed at module level".into()); }
             self.take();
             if lang.import_values {
@@ -7851,17 +8151,27 @@ impl<'a> Compiler<'a> {
         let mut closing: Vec<String> = Vec::new();
         let began = self.pos;
         while !self.exhausted() {
-            let outside_function = self.piece().outermost || self.in_class_body();
             let token = self.look();
             if closing.is_empty() && (self.on_sep() || self.on_any(ends)
                 || matches!(token.shape, Shape::Open | Shape::Close)) {
                 break;
             }
-            if self.forbids_await && self.on_keyword(&lang.await_words) { return Err("SyntaxError: 'await' outside function".into()); }
-            if !lang.syntax_members.is_empty() && outside_function && token.shape == Shape::Instr && Lang::spells(&lang.yield_words, &token.spelling()) {
-                let operation = if self.look_ahead(1).shape == Shape::Instr && Lang::spells(&lang.yield_from_words, &self.look_ahead(1).spelling()) { "yield from" } else { "yield" };
-                return Err(format!("SyntaxError: '{operation}' outside function"));
+            if closing.is_empty() && token.shape == Shape::Instr && Lang::spells(&lang.lambda_words, &token.spelling()) {
+                self.take();
+                let mark = lang.block_intros.first().map(String::as_str);
+                self.lambda_head(&pairs, mark)?;
+                continue;
             }
+            if !lang.syntax_members.is_empty() && token.shape == Shape::Instr && Lang::spells(&lang.yield_words, &token.spelling()) {
+                return Err("SyntaxError: yield expression cannot be used within an annotation".into());
+            }
+            if !lang.syntax_members.is_empty() && token.shape == Shape::Sign && Lang::spells(&lang.expression_assign, &token.spelling()) {
+                return Err("SyntaxError: named expression cannot be used within an annotation".into());
+            }
+            if !lang.syntax_members.is_empty() && token.shape == Shape::Instr && Lang::spells(&lang.await_words, &token.spelling()) {
+                return Err("SyntaxError: await expression cannot be used within an annotation".into());
+            }
+            if self.forbids_await && self.on_keyword(&lang.await_words) { return Err("SyntaxError: 'await' outside function".into()); }
             if token.shape == Shape::Sign {
                 if let Some(pair) = pairs.iter().find(|pair| pair.open == token.lexeme) {
                     closing.push(pair.close.clone());
@@ -7878,6 +8188,23 @@ impl<'a> Compiler<'a> {
             return Err(lang.annotation_amiss.clone().unwrap_or_else(|| "Expected an expression".into()));
         }
         Ok(())
+    }
+
+    /// Steps over a lambda's parameters to the mark that opens its body,
+    /// so an annotation that is one is read whole.
+    fn lambda_head(&mut self, pairs: &[&Brackets], mark: Option<&str>) -> Res<()> {
+        let mut depth = 0usize;
+        while !self.exhausted() {
+            let token = self.look();
+            if depth == 0 && mark.map_or(false, |m| token.lexeme == m) { self.take(); return Ok(()); }
+            if token.shape == Shape::LineEnd { break; }
+            if token.shape == Shape::Sign {
+                if pairs.iter().any(|pair| pair.open == token.lexeme) { depth += 1; }
+                else if pairs.iter().any(|pair| pair.close == token.lexeme) { depth = depth.saturating_sub(1); }
+            }
+            self.take();
+        }
+        Err(self.lang.annotation_amiss.clone().unwrap_or_else(|| "Expected an expression".into()))
     }
 
     /// Step over the sign saying a type takes nothing as well: `?int`.
@@ -8823,7 +9150,9 @@ impl<'a> Compiler<'a> {
     /// A colon in a header or within a value is no such mark.
     fn statement_annotation(&self) -> Option<usize> {
         let lang = self.lang;
-        if lang.annotation_marks.is_empty() || Lang::spells(&lang.lambda_words, self.look().spelling()) { return None; }
+        if lang.annotation_marks.is_empty() { return None; }
+        // The colon a lambda opens its body with is no annotation mark.
+        if self.tokens.get(self.pos).map_or(false, |word| word.shape == Shape::Instr && Lang::spells(&lang.lambda_words, &word.spelling())) { return None; }
         let pairs: Vec<&Brackets> = [&lang.grouping, &lang.calling, &lang.array_brackets,
             &lang.map_brackets, &lang.index_brackets].into_iter().flatten().collect();
         let mut depth = 0usize;
@@ -10454,6 +10783,18 @@ impl<'a> Compiler<'a> {
 
     fn prefix_piece(&mut self) -> Res<()> {
         let lang = self.lang;
+        // A starred name stands as an annotation only of the variadic
+        // parameter, the one written `*name`.
+        if self.reading_annotation && !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest) {
+            let variadic = self.pos >= 3
+                && self.tokens[self.pos - 1].shape == Shape::Sign && Lang::spells(&lang.annotation_marks, &self.tokens[self.pos - 1].spelling())
+                && self.tokens[self.pos - 2].shape == Shape::Instr
+                && self.tokens[self.pos - 3].shape == Shape::Sign && Lang::spells(&lang.unpack_rest, &self.tokens[self.pos - 3].spelling());
+            if variadic {
+                self.take();
+                return self.prefix_piece();
+            }
+        }
         let from = self.mark();
         let origin = self.pos;
         let tok = self.look().clone();

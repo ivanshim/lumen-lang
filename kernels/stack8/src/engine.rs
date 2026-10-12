@@ -1798,6 +1798,7 @@ impl<'a> Engine<'a> {
             None => given.display(&sp),
         };
         let tokens = self.tokens_of_text(&source)?;
+        self.registry.source = Some(Rc::from(source.clone()));
         let names = program.idents.clone();
         // Text read inside a method is read as standing in that method's
         // class: what the class keeps to itself is reached from there,
@@ -1885,6 +1886,7 @@ impl<'a> Engine<'a> {
             None => self.tokens_of_text(source)?,
             Some(_) => crate::layout::layout(crate::lex::lex(source, self.lang)?, self.lang, 0).map_err(|(said, _)| said)?,
         };
+        self.registry.source = Some(Rc::from(source));
         let program = match crate::compile::compile_from(&tokens, self.lang, &mut self.registry, 0, came_from.as_deref().map(Rc::from)) {
             Ok(program) => program,
             Err(said) if came_from.is_none() => {
@@ -26995,6 +26997,7 @@ impl Engine<'_> {
         });
         local.globe = Some(Value::Fields(object.clone()));
         local.born = Some(self.native_dict());
+        local.source = Some(Rc::from(source.as_str()));
         let program = match crate::compile::compile_from(&tokens, self.lang, &mut local, 0, Some(Rc::from(filename))) {
             Ok(program) => program,
             Err(said) => {
@@ -29308,7 +29311,7 @@ impl Engine<'_> {
             Some(Value::Small(bits)) => bits,
             _ => return Err("TypeError: compile() argument 'flags' must be int".into()),
         };
-        if flags < 0 || flags & 255 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
+        if flags < 0 || flags & 0xEF != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
         if args.get(5).map_or(false, |value| !matches!(value.contents(), Value::Null | Value::Small(-1..=2))) {
             return Err("ValueError: compile(): invalid optimize value".into());
         }
@@ -29377,6 +29380,7 @@ impl Engine<'_> {
         trial.allow_top_level_await = allow_top_await;
         trial.future_bits = future_bits;
         trial.optimize = optimization;
+        trial.source = Some(source.clone());
         let checked = match crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
             Ok(checked) => checked,
             Err(said) => {
@@ -29738,6 +29742,7 @@ impl Engine<'_> {
         self.registry.allow_top_level_await = top_await;
         self.registry.future_bits = self.text_future_bits.get();
         self.registry.optimize = optimization;
+        self.registry.source = Some(Rc::from(source));
         let program = match crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, Some(file.clone()), Some(names), within, true) {
             Ok(program) => program,
             Err(said) => { let row = self.registry.stopped_at; let col = self.registry.stopped_column; let end = (self.registry.stopped_end_row, self.registry.stopped_end); return Err(self.text_syntax(mode, said, &file, row, col, Some(end), source)); }
@@ -29830,6 +29835,7 @@ impl Engine<'_> {
             let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
             registry.allow_top_level_await = top_await;
             registry.future_bits = self.text_future_bits.get();
+            registry.source = Some(Rc::from(source));
             if compiled.is_none() {
                 registry.value_only = mode == 1;
                 registry.interactive = mode == 2;

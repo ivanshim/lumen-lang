@@ -6402,6 +6402,23 @@ impl<'a> Machine<'a> {
                                 captured.dedup();
                                 Value::tuple(captured.into_iter().map(Value::text).collect())
                             }
+                            12 => {
+                                // The cells this routine provides are the
+                                // free names its nested routines reach for.
+                                let mut cells: Vec<&str> = Vec::new();
+                                for literal in &p.literals {
+                                    if let Value::Routine(child) = literal {
+                                        // A name one frame up is bound here; further
+                                        // up was only forwarded through here.
+                                        for address in &child.reaching {
+                                            if address.up == 1 { cells.push(Self::capture_title(&address.ident)); }
+                                        }
+                                    }
+                                }
+                                cells.sort_unstable();
+                                cells.dedup();
+                                Value::tuple(cells.into_iter().map(Value::text).collect())
+                            }
                             _ => return Err(self.absent_attribute(&value, key)),
                         };
                         return Ok(result);
