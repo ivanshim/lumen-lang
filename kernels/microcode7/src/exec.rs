@@ -27810,7 +27810,8 @@ impl Machine<'_> {
             if let Some((owner, _)) = split { self.load_namespace(owner)?; }
         }
         let beginning = self.idents.len();
-        let hidden: Vec<String> = (0..beginning).map(|n| format!("\0prior/{n}")).collect();
+        // Earlier module slots contribute only their offset, never readable names.
+        let hidden = vec![String::new(); beginning];
         let namespace_portions = own_file.as_deref().filter(|location| location.starts_with('\0'))
             .map(|location| location[1..].split('\0').collect::<Vec<_>>());
         let empty_origin = format!("<namespace {path}>");

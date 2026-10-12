@@ -847,7 +847,7 @@ pub(crate) fn character_length(text: &Rc<str>) -> usize {
         if let Some((_, length)) = entries.get(&address) { return *length; }
         // Weak str owners retain the allocation itself; discard dead buffers promptly.
         entries.retain(|_, (owner, _)| owner.strong_count() != 0);
-        if entries.len() >= 1024 { entries.clear(); }
+        if entries.len() >= 16 { entries.clear(); }
         let count = text.chars().count();
         entries.insert(address, (Rc::downgrade(text), count));
         count

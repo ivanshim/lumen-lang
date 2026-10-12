@@ -261,9 +261,11 @@ impl Layer {
         if self.idents.len() <= 15 { return self.idents.iter().rposition(|candidate| candidate == word); }
         let mut cache = self.name_cache.borrow_mut();
         let beginning = cache.0;
-        for slot in beginning..self.idents.len() { cache.1.insert(self.idents[slot].clone(), slot); }
+        for slot in beginning..self.idents.len() {
+            if !self.idents[slot].is_empty() { cache.1.insert(self.idents[slot].clone(), slot); }
+        }
         cache.0 = self.idents.len();
-        cache.1.get(word).copied()
+        if word.is_empty() { self.idents.iter().rposition(|candidate| candidate == word) } else { cache.1.get(word).copied() }
     }
 
 }

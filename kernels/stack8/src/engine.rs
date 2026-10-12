@@ -233,6 +233,7 @@ pub struct Engine<'a> {
     globals_by_cell: HashMap<usize, String>,
     native_slots: HashMap<String, usize>,
     module_by_address: RefCell<HashMap<usize, String>>,
+    changed_module_positions: RefCell<HashMap<usize, (usize, HashMap<String, usize, crate::value::FxBuildHasher>)>>,
     module_addresses_ready: std::cell::Cell<bool>,
     native_stack_start: usize,
     // Only names actually supplied by an import need a runtime check;
@@ -1779,6 +1780,7 @@ impl<'a> Engine<'a> {
             globals_by_cell: HashMap::new(),
             native_slots: lang.class_special.iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
             module_by_address: RefCell::new(HashMap::new()),
+            changed_module_positions: RefCell::new(HashMap::new()),
             module_addresses_ready: std::cell::Cell::new(false),
             wildcard_file: None,
             wildcard_active: false,
@@ -11769,6 +11771,7 @@ impl<'a> Engine<'a> {
     /// text go in among the thing's own fields, keys of any other kind
     /// are kept beside them under `\0keys`.
     pub(super) fn fields_restore(&mut self, o: &Rc<Instance>, entries: Vec<(Value, Value)>) {
+        self.changed_module_positions.borrow_mut().clear();
         let owner = self.module_holding(&Value::Object(o.clone()));
         let module = owner.is_some();
         if let Some(owner) = owner {
@@ -27007,8 +27010,16 @@ impl Engine<'_> {
         if self.changed_builtin_scopes.contains(&self.source) {
             if let Some((_, owner)) = self.module_slots.get(&self.source) {
                 if let Some(Value::Object(namespace)) = self.modules.get(owner) {
-                    if let Some((_, held)) = namespace.fields.borrow().iter().find(|(key, _)| key == name) {
-                        let value = held.contents();
+                    let fields = namespace.fields.borrow();
+                    let mut positions = self.changed_module_positions.borrow_mut();
+                    let cached = positions.entry(Rc::as_ptr(namespace) as usize).or_insert_with(|| (usize::MAX, HashMap::default()));
+                    if cached.0 != fields.len() {
+                        cached.1.clear();
+                        for (position, (key, _)) in fields.iter().enumerate() { cached.1.insert(key.clone(), position); }
+                        cached.0 = fields.len();
+                    }
+                    if let Some(position) = cached.1.get(name) {
+                        let value = fields[*position].1.contents();
                         if !matches!(value, Value::Blank) { return Some(value); }
                     }
                 }
@@ -27295,7 +27306,7 @@ impl Engine<'_> {
         *object.fields.borrow_mut() = fields;
         let module = Value::Object(object);
         self.module_books.retain(|(name, _)| name != path);
-        self.modules.insert(path.to_string(), module.clone()); self.module_addresses_ready.set(false);
+        self.modules.insert(path.to_string(), module.clone()); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear();
         let embedded = self.lang.module_path.is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
         self.embedded_names.remove(path);
         if embedded { self.embedded_names.insert(path.to_string()); }
@@ -27308,7 +27319,7 @@ impl Engine<'_> {
         self.data.truncate(saved_depth);
         if let Err(fault) = result {
             self.importing.remove(path); self.embedded_names.remove(path);
-            self.modules.remove(path); self.module_addresses_ready.set(false); self.refresh_module_cache(path); return Err(fault);
+            self.modules.remove(path); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear(); self.refresh_module_cache(path); return Err(fault);
         }
         if self.lang.module_path.is_some() {
             let maker = self.modules.get("sys").cloned()
@@ -27326,7 +27337,7 @@ impl Engine<'_> {
         // Module code may replace its own entry in the Python import cache.
         // CPython returns that replacement after the module body completes.
         let module = self.module_cache_value(path).unwrap_or(module);
-        self.modules.insert(path.to_string(), module.clone()); self.module_addresses_ready.set(false);
+        self.modules.insert(path.to_string(), module.clone()); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear();
         if let Some((above, name)) = parent {
             if let Some(Value::Object(parent)) = self.modules.get(above) {
                 let mut fields = parent.fields.borrow_mut();
@@ -27347,7 +27358,7 @@ impl Engine<'_> {
                     python_names: RefCell::new(None), shared: crate::value::ClassMembers::new(vec![]), weak_storage: std::cell::Cell::new(None), declares_slots:false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
                 let main = Value::Object(Rc::new(Instance { class, replacement_class: RefCell::new(None),
                     fields: RefCell::new(vec![("\0namespace".into(), Value::Bond(book))]), mark: self.made }));
-                self.modules.insert(name, main); self.module_addresses_ready.set(false);
+                self.modules.insert(name, main); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear();
             }
         }
         // Register real source modules while their embedded parent initializes.
@@ -27362,7 +27373,7 @@ impl Engine<'_> {
                     Ok(loaded) => loaded,
                     Err(fault) => {
                         self.importing.remove(path); self.embedded_names.remove(path);
-                        self.modules.remove(path); self.module_addresses_ready.set(false); self.refresh_module_cache(path); return Err(fault);
+                        self.modules.remove(path); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear(); self.refresh_module_cache(path); return Err(fault);
                     },
                 };
                 // A cached alias must also be bound on this newly initialized parent.
@@ -28312,7 +28323,7 @@ impl Engine<'_> {
             class: Rc::new(Class { direct: std::cell::RefCell::new(Vec::new()), lineage: RefCell::new(Vec::new()), outline: None, name: main.clone(), base: std::cell::RefCell::new(None), answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: crate::value::ClassMembers::new(Vec::new()), declares_slots: false, weak_storage: std::cell::Cell::new(None), python_names: std::cell::RefCell::new(None), sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)}),
             fields: RefCell::new(vec![("\0namespace".to_string(), Value::Bond(book))]), mark: self.made,
         });
-        self.modules.insert(main.clone(), Value::Object(object)); self.module_addresses_ready.set(false);
+        self.modules.insert(main.clone(), Value::Object(object)); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear();
         self.refresh_module_cache(&main);
     }
 
@@ -28447,6 +28458,7 @@ impl Engine<'_> {
     /// module too: its binding holds nothing from then on, and the
     /// member is gone.
     fn globals_mirror_remove(&mut self, cell: &Rc<RefCell<Value>>, name: &str) {
+        self.changed_module_positions.borrow_mut().clear();
         self.globals_callable_changed(cell);
         let Some(path) = self.globals_module_of(cell) else { return };
         let Some(Value::Object(module)) = self.modules.get(&path) else { return };
@@ -28461,6 +28473,7 @@ impl Engine<'_> {
     /// name the module never had is bound under a cell both share, the
     /// way a name written through the dictionary is.
     fn module_member_mirror(&mut self, module: &Rc<Instance>, name: &str, value: &Option<Value>) {
+        self.changed_module_positions.borrow_mut().clear();
         if value.is_none() {
             let mut fields = module.fields.borrow_mut();
             if let Some((_, Value::Map(order))) = fields.iter_mut().find(|(key, _)| key == "\0keys") {
@@ -28633,6 +28646,7 @@ impl Engine<'_> {
     /// dictionary's place made for it, so the module's own names and
     /// its attribute reads answer it alike.
     fn globals_mirror_new(&mut self, cell: &Rc<RefCell<Value>>, name: &str, shared: &Rc<RefCell<Value>>) {
+        self.changed_module_positions.borrow_mut().clear();
         let Some(path) = self.globals_module_of(cell) else { return };
         let Some(Value::Object(module)) = self.modules.get(&path) else { return };
         if module.fields.borrow().iter().any(|(n, _)| n == name) { return; }
