@@ -9698,10 +9698,12 @@ impl<'a> Machine<'a> {
         None
     }
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
-        match self.coroutine_attribute(&value.settled(), name) {
-            Ok(Some(answer)) => return Some(answer),
-            Err(away) => { self.got_away = Some(away); return None; }
-            _ => {},
+        if matches!(value.settled(), Value::Generator(_)) {
+            match self.coroutine_attribute(&value.settled(), name) {
+                Ok(Some(answer)) => return Some(answer),
+                Err(away) => { self.got_away = Some(away); return None; }
+                _ => {},
+            }
         }
         if name==self.detail("allocate") && matches!(value.settled(),Value::Small(_)|Value::Huge(_)|Value::Frac(_)|Value::Complex(_)|Value::Text(_)|Value::Unpaired(_)|Value::Vector(_)|Value::Tuple(_)|Value::Dict(_)|Value::Octets{..}|Value::Set(_)) { return self.read_class_member(value.clone(),name,true).ok(); }
         if matches!(value, Value::Unpaired(_)) && crate::table::BUILTIN_LABELS.iter().any(|(label,operation)| *label==format!("ext.builtin.text.{name}") && matches!(operation,Prim::Textual(_))) {
@@ -11382,6 +11384,7 @@ impl<'a> Machine<'a> {
         }
         // A hinting alias, a variadic parameter or a union answers the
         // few places of its own before the kinds beneath it are asked.
+        if matches!(name, "__getitem__" | "__iter__" | "__eq__" | "__ne__") {
         if let Value::Thing(item) = receiver.settled() {
             if let Some(kind) = Self::native_word(&item.blueprint()) {
                 if matches!(kind.as_str(), "TypeAliasType" | "TypeVarTuple") {
@@ -11390,6 +11393,7 @@ impl<'a> Machine<'a> {
                     if let Some(answer) = self.union_protocol(receiver, name, &arguments)? { return Ok(answer); }
                 }
             }
+        }
         }
         // A special member asked for by name on a value of a native
         // kind. Each hands its work to the primitive that already does
@@ -16412,6 +16416,7 @@ impl<'a> Machine<'a> {
     }
 
     fn dispatch_appointment(&mut self, index: usize, subject: &Value, tail: &[Value], selected: Option<Value>) -> Result<Option<Value>, String> {
+        if self.rules.specials.get(index).is_some_and(|word| matches!(word.as_str(), "__getitem__" | "__iter__" | "__eq__" | "__ne__")) {
         if let Value::Thing(item) = subject.settled() {
             if let Some(word) = self.rules.specials.get(index).map(String::as_str) {
                 if let Some(kind) = Self::native_word(&item.blueprint()) {
@@ -16428,6 +16433,7 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
+        }
         }
         if matches!(subject, Value::Blueprint(_)) { return self.ask_special(subject, index, tail); }
         if index == 3 && selected.is_none() {
