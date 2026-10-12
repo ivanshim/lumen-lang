@@ -265,7 +265,7 @@ struct PreparedScope {
     exports: HashSet<String>,
 }
 
-pub type PreparedEntries = &'static [(u64, &'static [u8], &'static str)];
+pub type PreparedEntries = &'static [(u64, &'static [u8], &'static [u8])];
 pub type PreparedSources = &'static [(&'static str, usize)];
 thread_local! {
     static PREPARED_DEFINITIONS: std::cell::RefCell<HashMap<String, (PreparedEntries, PreparedSources)>> = std::cell::RefCell::new(HashMap::new());
@@ -357,7 +357,7 @@ fn prepared_scope(tokens: &[Token], lang: &Lang) -> Option<PreparedScope> {
     let fingerprint = token_fingerprint(tokens);
     let stamp = token_stamp(&fingerprint);
     for &(key, proof, text) in entries {
-        if key == stamp && unpack_library_proof(proof).as_deref() == Some(fingerprint.as_slice()) { return serde_json::from_str(text).ok(); }
+        if key == stamp && unpack_library_proof(proof).as_deref() == Some(fingerprint.as_slice()) { return serde_json::from_slice(&unpack_library_proof(text)?).ok(); }
     }
     None
 }

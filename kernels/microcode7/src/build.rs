@@ -93,7 +93,7 @@ struct LibrarySurvey {
     natives: HashSet<String>,
 }
 
-pub type SurveyRows = &'static [(u64, &'static [u8], &'static str)];
+pub type SurveyRows = &'static [(u64, &'static [u8], &'static [u8])];
 pub type SourceRows = &'static [(&'static str, usize)];
 thread_local! {
     static LIBRARY_SURVEYS: std::cell::RefCell<std::collections::BTreeMap<String, (SurveyRows, SourceRows)>> = std::cell::RefCell::new(std::collections::BTreeMap::new());
@@ -206,7 +206,7 @@ fn library_survey(input: &[Token], table: &Table) -> Option<LibrarySurvey> {
     let proof = input_proof(input);
     let sought = input_key(&proof);
     let (_, _, encoded) = rows.iter().find(|(key, fingerprint, _)| *key == sought && unpack_library_proof(fingerprint).as_deref() == Some(proof.as_slice()))?;
-    serde_json::from_str(encoded).ok()
+    serde_json::from_slice(&unpack_library_proof(encoded)?).ok()
 }
 
 pub fn prepare_library(definition: &str, source: &str) -> Option<(u64, Vec<u8>, String)> {

@@ -67,7 +67,13 @@ fn prepared_libraries(versions: &serde_json::Map<String, Value>) {
                     lumen_zlib::call(6, codec.number, &[], [0; 5]);
                     assert!(packed.status == 0 && packed.ended);
                     let octets = packed.output.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
-                    records.push_str(&format!("({key}, b\"{octets}\", {encoded:?}),\n"));
+                    let metadata_writer = lumen_zlib::call(1, 0, &[], [9, 8, 15, 8, 0]);
+                    assert_eq!(metadata_writer.status, 0);
+                    let metadata = lumen_zlib::call(3, metadata_writer.number, encoded.as_bytes(), [4, 0, 0, 0, 0]);
+                    lumen_zlib::call(6, metadata_writer.number, &[], [0; 5]);
+                    assert!(metadata.status == 0 && metadata.ended);
+                    let metadata_bytes = metadata.output.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
+                    records.push_str(&format!("({key}, b\"{octets}\", b\"{metadata_bytes}\"),\n"));
                     source_rows.push_str(&format!("({source:?}, {count}),\n"));
                     count += 1;
                 }
