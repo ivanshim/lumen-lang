@@ -11272,6 +11272,53 @@ impl<'a> Machine<'a> {
                 }
             }
         }
+        // The same for a list cut or opened at some place, or grown by a
+        // list or tuple: the member goes in or out of the cell's own
+        // storage, not out of a copy of all of it written back after.
+        // What is not plain (a place that is not a number, out of range,
+        // an empty list, a way home to the cell) is left for the working
+        // below, which words the refusal.
+        if matches!(name, "pop" | "insert" | "extend") && keywords.is_empty() {
+            let storage = match receiver {
+                Value::Mutable(cell, _) if !self.names_in_calls => Some(cell.clone()),
+                _ if self.names_in_calls => Self::native_cell(receiver),
+                _ => None,
+            };
+            let storage = storage.filter(|cell| matches!(&*cell.borrow(), Value::Vector(_)));
+            if let Some(cell) = storage {
+                match (name, &arguments[..]) {
+                    ("pop", []) | ("pop", [Value::Small(_)]) => {
+                        let offset = match arguments.first() { Some(Value::Small(n)) => *n, _ => -1 };
+                        if let Value::Vector(members) = &mut *cell.borrow_mut() {
+                            let at = if offset < 0 { offset.saturating_add(members.len() as i64) } else { offset };
+                            if (0..members.len() as i64).contains(&at) { return Ok(Rc::make_mut(members).remove(at as usize)); }
+                        }
+                    }
+                    ("insert", [Value::Small(offset), item]) if !crate::members::circular(item, &cell, 1) => {
+                        if let Value::Vector(members) = &mut *cell.borrow_mut() {
+                            let length = members.len() as i64;
+                            let at = if *offset < 0 { offset.saturating_add(length).max(0) } else { (*offset).min(length) };
+                            Rc::make_mut(members).insert(at as usize, item.clone());
+                            return Ok(Value::Nil);
+                        }
+                    }
+                    ("extend", [source]) => {
+                        let same = matches!(source, Value::Mutable(place, _) if Rc::ptr_eq(place, &cell));
+                        let incoming = match source.settled() {
+                            Value::Vector(items) | Value::Tuple(items) if !same => Some(items.to_vec()),
+                            _ => None,
+                        };
+                        if let Some(incoming) = incoming {
+                            if !incoming.iter().any(|part| crate::members::circular(part, &cell, 1)) {
+                                if let Value::Vector(members) = &mut *cell.borrow_mut() { Rc::make_mut(members).extend(incoming); }
+                                return Ok(Value::Nil);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         // A list grown by whatever can be walked: the walk is drawn out
         // first, the list's own working knowing only the kinds it names.
         let mut arguments = arguments;

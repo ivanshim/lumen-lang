@@ -18778,6 +18778,48 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        // A row cut at a place, opened at a place, or lengthened by a row
+        // or tuple, worked on in its own cell: copied out and written
+        // back, it costs the whole row for one member. Anything out of
+        // the ordinary (a place that is not a plain number, one out of
+        // range, an empty row, a way back to the cell) goes on to the
+        // free working below, which words the refusal.
+        if matches!(operation, "pop" | "insert" | "extend") && named.is_empty() {
+            let cell = if self.lang.bind_names { Self::holding_cell(receiver) }
+                else { match receiver { Value::Collection(cell, _) => Some(cell.clone()), _ => None } };
+            if let Some(cell) = cell.filter(|cell| matches!(&*cell.borrow(), Value::Array(_))) {
+                match (operation, args.as_slice()) {
+                    ("pop", [] | [Value::Small(_)]) => {
+                        let place = if let Some(Value::Small(n)) = args.first() { *n } else { -1 };
+                        if let Value::Array(row) = &mut *cell.borrow_mut() {
+                            let at = if place < 0 { place.saturating_add(row.len() as i64) } else { place };
+                            if at >= 0 && (at as usize) < row.len() { return Ok(Rc::make_mut(row).remove(at as usize)); }
+                        }
+                    }
+                    ("insert", [Value::Small(place), item]) => {
+                        if !crate::methods::reaches(item, &cell, 1) {
+                            if let Value::Array(row) = &mut *cell.borrow_mut() {
+                                let size = row.len() as i64;
+                                let at = if *place < 0 { place.saturating_add(size).max(0) } else { (*place).min(size) };
+                                Rc::make_mut(row).insert(at as usize, item.clone());
+                                return Ok(Value::Null);
+                            }
+                        }
+                    }
+                    ("extend", [given]) => {
+                        let fresh: Option<Vec<Value>> = match given.contents() {
+                            Value::Array(items) | Value::Tuple(items) if !matches!(given, Value::Collection(held, _) if Rc::ptr_eq(held, &cell)) => Some(items.as_ref().clone()),
+                            _ => None,
+                        };
+                        if let Some(fresh) = fresh.filter(|fresh| !fresh.iter().any(|item| crate::methods::reaches(item, &cell, 1))) {
+                            if let Value::Array(row) = &mut *cell.borrow_mut() { Rc::make_mut(row).extend(fresh); }
+                            return Ok(Value::Null);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         // A row lengthened by anything that walks takes what the walk
         // yields, read out first as a `for` loop would read it: the
         // free working knows only the kinds it lists by name.

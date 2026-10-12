@@ -1,0 +1,84 @@
+repr -> "deque(['a', 'b', 'c'], maxlen=5)"
+maxlen -> 5
+set maxlen !! AttributeError attribute 'maxlen' of 'collections.deque' objects is not writable
+append() !! TypeError deque.append() takes exactly one argument (0 given)
+append(1,2) !! TypeError deque.append() takes exactly one argument (2 given)
+append kw !! TypeError deque.append() takes no keyword arguments
+pop(1) !! TypeError deque.pop() takes no arguments (1 given)
+rotate(1,2) !! TypeError rotate expected at most 1 argument, got 2
+rotate(1.5) !! TypeError 'float' object cannot be interpreted as an integer
+index() !! TypeError index expected at least 1 argument, got 0
+index(1,2,3,4) !! TypeError index expected at most 3 arguments, got 4
+index x !! ValueError deque.index(x): x not in deque
+remove x !! ValueError deque.remove(x): x not in deque
+insert full !! IndexError deque already at its maximum size
+insert -> (None, None, None, ['a', 'x', 'b', 'y', 'c', 'z'])
+pop empty !! IndexError pop from an empty deque
+popleft empty !! IndexError pop from an empty deque
+getitem !! TypeError sequence index must be integer, not 'str'
+getitem big !! IndexError deque index out of range
+getitem huge !! IndexError cannot fit 'int' into an index-sized integer
+getitem - -> 'a'
+setitem !! IndexError deque index out of range
+delitem !! IndexError deque index out of range
+unbound !! TypeError unbound method deque.append() needs an argument
+unbound2 !! TypeError descriptor 'append' for 'collections.deque' objects doesn't apply to a 'list' object
+unbound3 !! TypeError descriptor '__len__' requires a 'collections.deque' object but received a 'int'
+len() !! TypeError descriptor '__len__' of 'collections.deque' object needs an argument
+maxlen neg !! ValueError maxlen must be non-negative
+maxlen str !! TypeError an integer is required
+3 args !! TypeError deque() takes at most 2 arguments (3 given)
+kw bad !! TypeError deque() got an unexpected keyword argument 'foo'
+kw dup !! TypeError argument for deque() given by name ('iterable') and position (1)
+add !! TypeError can only concatenate deque (not "str") to deque
+add2 -> deque(['a', 'b'])
+mul -> deque(['b', 'a', 'b'], maxlen=3)
+mul2 -> deque(['b', 'a', 'b'], maxlen=3)
+imul0 -> deque([])
+lt !! TypeError '<' not supported between instances of 'collections.deque' and 'str'
+lt2 -> True
+eq -> True
+ne -> True
+hash !! TypeError unhashable type: 'collections.deque'
+bool -> (False, True)
+rev -> ['c', 'b', 'a']
+rev repr -> '_deque_reverse_iterator'
+iter type -> '_deque_iterator'
+recursive -> "deque(['a', 'b', [...]])"
+subrepr -> "Sub(['a', 'b'], maxlen=3)"
+copy -> (deque(['a', 'b', 'c'], maxlen=5), deque(['a', 'b', 'c'], maxlen=5))
+copy sub -> 'Sub'
+pickle 0 -> deque(['a', 'b', 'c'], maxlen=7)
+pickle sub 0 -> Sub(['a', 'b', 'c'])
+pickle 1 -> deque(['a', 'b', 'c'], maxlen=7)
+pickle sub 1 -> Sub(['a', 'b', 'c'])
+pickle 2 -> deque(['a', 'b', 'c'], maxlen=7)
+pickle sub 2 -> Sub(['a', 'b', 'c'])
+pickle 3 -> deque(['a', 'b', 'c'], maxlen=7)
+pickle sub 3 -> Sub(['a', 'b', 'c'])
+pickle 4 -> deque(['a', 'b', 'c'], maxlen=7)
+pickle sub 4 -> Sub(['a', 'b', 'c'])
+pickle 5 -> deque(['a', 'b', 'c'], maxlen=7)
+pickle sub 5 -> Sub(['a', 'b', 'c'])
+reduce -> (<class 'collections.deque'>, ((), 5), None)
+reduce2 -> (<class 'collections.deque'>, (), None)
+class_getitem -> collections.deque[int]
+weakref -> False
+mutate iter !! RuntimeError deque mutated during iteration
+mutate iter2 !! RuntimeError deque mutated during iteration
+remove mutate !! ValueError deque.remove(x): x not in deque
+remove mutate2 !! IndexError deque mutated during iteration
+contains mutate !! RuntimeError deque mutated during iteration
+index mutate !! RuntimeError deque mutated during iteration
+count mutate !! RuntimeError deque mutated during iteration
+rotate !! OverflowError Python int too large to convert to C ssize_t
+index range -> (5, 3)
+extend self -> (None, None, ['b', 'a', 'b', 'a', 'a', 'b', 'a', 'b'])
+maxlen0 -> (None, None, None, [])
+maxlen ext -> (None, ['f', 'e', 'd'])
+iter init -> ['a', 'b', 'c']
+type -> ('collections', 'deque', 'deque', 'collections')
+mro -> (<class 'collections.deque'>, <class 'object'>)
+reversed init -> ['b', 'a']
+iter reduce -> 'a'
+iterlen -> 3
