@@ -195,6 +195,7 @@ struct Invocation {
     module_source: Option<String>,
     module_name: Option<String>,
     python_development: bool,
+    program_name: Option<String>,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -848,6 +849,11 @@ fn run_all() {
     // complaint about reading the program names it the way its reader
     // named it, which is how the reference names it too.
     request.push(("SELF".to_string(), "given".to_string(), if inv.file == "<string>" { "-c".to_owned() } else { inv.file.clone() }, false));
+    // The command that named the program, where it is not the source
+    // file itself; a program reads it as its own first argument.
+    if let Some(name) = &inv.program_name {
+        request.push(("SELF".to_string(), "argv0".to_string(), name.clone(), false));
+    }
     // The program running this one, as the system knows it, which a
     // language may name for a program that wants to find itself again.
     // A full Python kernel names the binary itself, so a program that
@@ -1110,6 +1116,10 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut extended_options = Vec::new();
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
+    // The name a Python program sees as its own first argument. It is
+    // the source name for an ordinary run; `-c` names the code as the
+    // source and stands in argv[0] itself.
+    let mut program_name = None;
 
     // An argument as text, for the switches that take one. Bytes
     // spelling no letter stand for the letter of doubt, since a name
@@ -1245,6 +1255,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 if rest.len() < 2 { usage(program); }
                 module_source = Some(said(&rest[1]));
                 file = Some("<string>".to_owned());
+                program_name = Some("-c".to_owned());
                 language = Some(Language::Named("python".to_owned()));
                 rest = &rest[2..];
                 break;
@@ -1451,7 +1462,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         let encoded = extended_options.iter().map(|option| format!("{}:{option}", option.chars().count())).collect::<String>();
         env::set_var("LUMEN_XOPTIONS", encoded);
     } else { env::remove_var("LUMEN_XOPTIONS"); }
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, python_development, warning_options, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_development, warning_options, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.

@@ -294,6 +294,22 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
             status(libc::utimensat(number(5)? as i32, p.as_ptr(), if number(6)? != 0 { times.as_ptr() } else { std::ptr::null() }, if number(7)? != 0 { 0 } else {libc::AT_SYMLINK_NOFOLLOW}) as i64)
         },
         "strerror" => Ok(Value::text(&CStr::from_ptr(libc::strerror(number(0)? as i32)).to_string_lossy())),
+        "confstr" => {
+            let setting = number(0)? as i32;
+            let span = libc::confstr(setting, std::ptr::null_mut(), 0);
+            if span == 0 {
+                // An unknown selector leaves errno set; an empty value
+                // would have reported the room for its terminating NUL.
+                let raised = std::io::Error::last_os_error().raw_os_error().filter(|code| *code != 0);
+                Err(raised.unwrap_or(libc::EINVAL))
+            }
+            else {
+                let mut storage = vec![0u8; span];
+                libc::confstr(setting, storage.as_mut_ptr().cast(), span);
+                storage.truncate(span - 1);
+                Ok(Value::text(&String::from_utf8_lossy(&storage)))
+            }
+        },
         "putenv" => { let key = pathname(0)?; let val = pathname(1)?; status(libc::setenv(key.as_ptr(), val.as_ptr(), 1) as i64) },
         "unsetenv" => { let key = pathname(0)?; status(libc::unsetenv(key.as_ptr()) as i64) },
         "uname" => {

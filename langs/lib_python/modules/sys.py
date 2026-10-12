@@ -61,7 +61,11 @@ maxsize = 9223372036854775807
 pycache_prefix = None
 dont_write_bytecode = True
 version_info = (3, 14, 8, 'final', 0)
-version = '3.14.8 (Lumen)'
+version = '3.14.8 (Lumen) [Rust]'
+# The source-control identity the reference build records beside the
+# version. This interpreter is not checked out from CPython's tree, so
+# there is no branch or revision; the build tag names it plainly instead.
+_git = ('Lumen', '', '')
 hexversion = 0x030e08f0
 platform = 'linux'
 # Which Python this is. A test that reaches for the internals of the

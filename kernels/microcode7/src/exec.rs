@@ -22819,9 +22819,14 @@ impl<'a> Machine<'a> {
                         match self.alongside.get_mut(&mark) {
                             Some(Alongside { in_pipe: Some(pipe), .. }) => match pipe.write_all(&data).and_then(|_| pipe.flush()) {
                                 Ok(()) => Value::Small(data.len() as i64),
-                                Err(_) => Value::Flag(false),
+                                Err(problem) => {
+                                    let description = problem.to_string();
+                                    let errno = i64::from(problem.raw_os_error().unwrap_or(5));
+                                    let message = description.split(" (os error").next().unwrap_or(&description);
+                                    Value::tuple(vec![Value::Small(errno), Value::text(message)])
+                                }
                             },
-                            _ => Value::Flag(false),
+                            _ => Value::tuple(vec![Value::Small(9), Value::text("Bad file descriptor")]),
                         }
                     }
                     2 => {

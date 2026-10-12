@@ -70,7 +70,7 @@ impl PythonVersion {
         // including when a later version supplies its own source overlay.
         let [major, minor, micro] = self.numbers;
         match name {
-            "sys" => format!("{source}\nversion_info = ({major}, {minor}, {micro}, 'final', 0)\nversion = '{} (Lumen)'\nhexversion = {}\n", self.release, (major << 24) | (minor << 16) | (micro << 8) | 0xf0),
+            "sys" => format!("{source}\nversion_info = ({major}, {minor}, {micro}, 'final', 0)\nversion = '{} (Lumen) [Rust]'\nhexversion = {}\n", self.release, (major << 24) | (minor << 16) | (micro << 8) | 0xf0),
             // The test package's own search path names the reference suite
             // beside the library; it follows the selected release too.
             "test" => source.replace("/tests/python/test", &format!("/{}/test", self.tests)),
@@ -79,7 +79,6 @@ impl PythonVersion {
                 source.replace("'tests', 'python'", &components)
             }
             "doctest" => source.replace("/tests/python/test_", &format!("/{}/test_", self.tests)),
-            "platform" => format!("{source}\ndef python_version():\n    return '{}'\n", self.release),
             _ => source.to_string(),
         }
     }

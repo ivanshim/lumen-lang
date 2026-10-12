@@ -78,6 +78,27 @@ def strerror(code, /):
     return _call('strerror', _cint(code))
 
 
+# The configuration strings the host library answers for. The list
+# follows the names glibc gives them; an integer is passed through.
+_confstr_names = {
+    'CS_PATH': 0,
+    'CS_V6_WIDTH_RESTRICTED_ENVS': 1,
+    'CS_GNU_LIBC_VERSION': 2,
+    'CS_GNU_LIBPTHREAD_VERSION': 3,
+    'CS_V5_WIDTH_RESTRICTED_ENVS': 4,
+    'CS_V7_WIDTH_RESTRICTED_ENVS': 5,
+}
+
+
+def confstr(name, /):
+    if isinstance(name, str):
+        try:
+            name = _confstr_names[name]
+        except KeyError:
+            raise ValueError('unrecognized configuration name') from None
+    return _call('confstr', _cint(name))
+
+
 (O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_CREAT, O_EXCL, O_TRUNC,
  O_NONBLOCK, O_CLOEXEC, O_DIRECTORY, O_NOFOLLOW, SEEK_SET, SEEK_CUR,
  SEEK_END, F_OK, R_OK, W_OK, X_OK) = _call('constants')

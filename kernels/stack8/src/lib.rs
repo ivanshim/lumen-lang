@@ -352,7 +352,8 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         let as_directory = lang.python_numbers
             && std::env::var("LUMEN_RUN_MODULE").map_or(false, |name| name == "__main__");
         let wanted = if as_directory { "given" } else { "file" };
-        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == wanted)
+        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "argv0")
+            .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == wanted))
             .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == "file"))
             .map(|(.., v, _)| v.clone());
         let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
