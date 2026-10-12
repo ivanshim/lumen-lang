@@ -344,12 +344,23 @@ fn token_stamp(bytes: &[u8]) -> u64 {
 }
 
 // Decode a build-owned proof with a bounded native codec result.
-fn unpack_library_proof(packed: &[u8]) -> Option<Vec<u8>> {
+fn unpack_library_proof(packed: &'static [u8]) -> Option<Rc<Vec<u8>>> {
+    // Token acquisition and scope verification read the same immutable proof consecutively.
+    thread_local! {
+        static LAST: std::cell::RefCell<Option<(&'static [u8], Rc<Vec<u8>>)>> = const { std::cell::RefCell::new(None) };
+    }
+    if let Some(found) = LAST.with(|last| last.borrow().as_ref()
+        .filter(|(bytes, _)| std::ptr::eq(*bytes, packed)).map(|(_, decoded)| decoded.clone())) {
+        return Some(found);
+    }
     let reader = lumen_zlib::call(2, 0, &[], [15, 0, 0, 0, 0]);
     if reader.status != 0 { return None; }
     let decoded = lumen_zlib::call(4, reader.number, packed, [4, 64 * 1024 * 1024, 0, 0, 0]);
     lumen_zlib::call(6, reader.number, &[], [0; 5]);
-    (decoded.status == 0 && decoded.ended && decoded.consumed as usize == packed.len()).then_some(decoded.output)
+    if decoded.status != 0 || !decoded.ended || decoded.consumed as usize != packed.len() { return None; }
+    let output = Rc::new(decoded.output);
+    LAST.with(|last| *last.borrow_mut() = Some((packed, output.clone())));
+    Some(output)
 }
 
 fn prepared_scope(tokens: &[Token], lang: &Lang) -> Option<PreparedScope> {
@@ -357,7 +368,7 @@ fn prepared_scope(tokens: &[Token], lang: &Lang) -> Option<PreparedScope> {
     let fingerprint = token_fingerprint(tokens);
     let stamp = token_stamp(&fingerprint);
     for &(key, proof, text) in entries {
-        if key == stamp && unpack_library_proof(proof).as_deref() == Some(fingerprint.as_slice()) { return serde_json::from_slice(&unpack_library_proof(text)?).ok(); }
+        if key == stamp && unpack_library_proof(proof).as_deref().map(Vec::as_slice) == Some(fingerprint.as_slice()) { return serde_json::from_slice(&unpack_library_proof(text)?).ok(); }
     }
     None
 }
@@ -14460,8 +14471,12 @@ mod prepared_proof_tests {
         let writer = lumen_zlib::call(1, 0, &[], [6, 8, 15, 8, 0]);
         let packed = lumen_zlib::call(3, writer.number, &proof, [4, 0, 0, 0, 0]);
         lumen_zlib::call(6, writer.number, &[], [0; 5]);
-        assert_eq!(super::unpack_library_proof(&packed.output).unwrap(), proof);
+        let packed: &'static [u8] = Box::leak(packed.output.into_boxed_slice());
+        let decoded = super::unpack_library_proof(packed).unwrap();
+        assert_eq!(*decoded, proof);
+        assert!(std::rc::Rc::ptr_eq(&decoded, &super::unpack_library_proof(packed).unwrap()));
         assert!(super::unpack_library_proof(b"invalid").is_none());
+        assert!(std::rc::Rc::ptr_eq(&decoded, &super::unpack_library_proof(packed).unwrap()));
 
     }
 }
