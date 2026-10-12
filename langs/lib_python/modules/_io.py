@@ -955,10 +955,11 @@ class IncrementalNewlineDecoder:
 _PLAIN_MODES = frozenset(['r', 'rb', 'w', 'wb', 'a', 'ab', 'x', 'xb', 'r+', 'rb+', 'r+b', 'w+', 'wb+', 'w+b', 'a+', 'ab+', 'a+b', 'x+', 'xb+', 'x+b'])
 
 class FileIO(_RawIOBase):
-    def _dealloc_warn(self, source):
-        if getattr(self, '_fd', -1) >= 0 and self._closefd and not self.closed:
-            import warnings
-            warnings.warn('unclosed file ' + repr(self), ResourceWarning, stacklevel=2, source=source)
+    # What a stream whose __init__ never finished stands as, the way the C
+    # stream stands with no descriptor: closed, and owing nothing.
+    _fd = -1
+    _closed = True
+    _closefd = True
     def __init__(self, file, mode='r', closefd=True, opener=None):
         import os
         if getattr(self, '_fd', -1) >= 0:
@@ -1054,6 +1055,8 @@ class FileIO(_RawIOBase):
                 sys._report_unraisable(error, error.__traceback__, self, 'file')
             except Exception:
                 pass
+    def __getstate__(self):
+        raise TypeError("cannot pickle 'FileIO' instances")
     def __repr__(self):
         title = type(self).__module__ + '.' + type(self).__qualname__
         if getattr(self, '_fd', -1) < 0:

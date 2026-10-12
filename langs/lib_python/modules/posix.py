@@ -101,7 +101,7 @@ def confstr(name, /):
 
 (O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_CREAT, O_EXCL, O_TRUNC,
  O_NONBLOCK, O_CLOEXEC, O_DIRECTORY, O_NOFOLLOW, SEEK_SET, SEEK_CUR,
- SEEK_END, F_OK, R_OK, W_OK, X_OK) = _call('constants')
+ SEEK_END, F_OK, R_OK, W_OK, X_OK, O_TMPFILE) = _call('constants')
 
 # These feature names describe implemented host entry points, not test expectations.
 _have_functions = ['HAVE_FACCESSAT', 'HAVE_FCHMODAT', 'HAVE_FSTATAT', 'HAVE_LSTAT',
@@ -652,3 +652,28 @@ def set_blocking(fd, blocking, /):
 
 def pipe():
     return _call('pipe')
+
+
+# Keep native module functions callable without Python function binding.
+class _BuiltinFunction:
+    # Preserve the wrapped entry point's public metadata.
+    def __init__(self, function):
+        self._function = function
+        self.__name__ = function.__name__
+        self.__qualname__ = function.__name__
+        self.__doc__ = function.__doc__
+        self.__module__ = __name__
+
+    # Forward arguments without supplying an instance receiver.
+    def __call__(self, *args, **kwargs):
+        return self._function(*args, **kwargs)
+
+    # Render the native entry point's name.
+    def __repr__(self):
+        return '<built-in function ' + self.__name__ + '>'
+
+
+for _name, _entry in list(globals().items()):
+    if not _name.startswith('_') and callable(_entry) and not isinstance(_entry, type):
+        globals()[_name] = _BuiltinFunction(_entry)
+del _name, _entry

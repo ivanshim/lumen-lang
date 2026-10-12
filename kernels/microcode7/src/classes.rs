@@ -8022,7 +8022,6 @@ impl<'a> Machine<'a> {
             self.armed_names = saved;
             return outcome;
         }
-        if op == 22 && values.len() == 1 { return Ok(values.remove(0)); }
 
         if op <= 8 && self.names_in_calls && self.has_class_order() {
             let (mut arguments,names)=self.open_arguments(values)?;

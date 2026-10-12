@@ -7504,7 +7504,6 @@ impl<'a> Engine<'a> {
             self.armed_names = prior;
             return answer;
         }
-        if which == 22 && args.len() == 1 { return Ok(args.remove(0)); }
 
         if (3..=6).contains(&which) && args.len() >= 2 {
             if let Some(Value::Text(word)) = Self::worth_of(&args[1]) { args[1] = Value::Text(word); }
