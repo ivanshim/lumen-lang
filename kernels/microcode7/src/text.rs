@@ -866,7 +866,7 @@ pub(crate) fn extent_of_string(subject: &Rc<str>) -> usize {
         let mut lengths = known.borrow_mut();
         // Remove expired weak owners before they retain many obsolete large buffers.
         lengths.retain(|_, (owner, _)| owner.upgrade().is_some());
-        while lengths.len() >= 16 {
+        while lengths.len() >= 1024 {
             let Some(first) = lengths.keys().next().copied() else { break };
             lengths.remove(&first);
         }
