@@ -17125,6 +17125,16 @@ impl<'a> Machine<'a> {
             if !std::env::var("LUMEN_PYTHON_DEV_MODE").is_ok_and(|mode| mode == "1") { return Ok(Value::text("")); }
         }
         let alphabet = self.octet_encoding(values.get(1));
+        if matches!(alphabet, Ok(Self::ESCAPED)) && values.len() == 2 {
+            match (&values[0], writing) {
+                (Value::Text(word), true) => return Ok(self.octets(self.octets_from_text(word, Self::ESCAPED)?, false)),
+                (_, false) => match self.octets_unescaped(input) {
+                    Ok(decoded) => return Ok(decoded),
+                    Err(_) => {}
+                },
+                _ => {}
+            }
+        }
         if !matches!(alphabet, Ok(0..=2)) {
             let function = if validate_policy { if writing { "_text_encode" } else { "_text_decode" } } else if writing { "_encode" } else { "_decode" };
             return self.codec_function(function, values.to_vec());
