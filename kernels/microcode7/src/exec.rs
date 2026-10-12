@@ -604,6 +604,7 @@ pub struct Machine<'a> {
     wildcard_names: HashMap<Rc<str>, HashMap<String, usize, crate::table::FxBuildHasher>, crate::table::FxBuildHasher>,
     wildcard_source: RefCell<Option<(Rc<str>, (bool, bool))>>,
     namespace_places: RefCell<Option<HashMap<usize, String>>>,
+    revised_members: RefCell<HashMap<usize, (usize, HashMap<String, usize, crate::table::FxBuildHasher>)>>,
     revised_namespaces: std::collections::HashSet<Rc<str>>,
     displaced_primitives: std::collections::BTreeSet<String>,
     /// The file the run began from, set once the program's own world
@@ -2118,6 +2119,7 @@ impl<'a> Machine<'a> {
             wildcard_names: HashMap::with_hasher(crate::table::FxBuildHasher::default()),
             wildcard_source: RefCell::new(None),
             namespace_places: RefCell::new(None),
+            revised_members: RefCell::new(HashMap::new()),
             revised_namespaces: std::collections::HashSet::new(),
             displaced_primitives: std::collections::BTreeSet::new(),
             world_globals_source: None,
@@ -16940,6 +16942,7 @@ impl<'a> Machine<'a> {
     /// text go in among the thing's own holds, keys of any other kind
     /// are kept beside them under `\0keys`.
     pub(super) fn attribute_restore(&mut self, t: &Rc<Thing>, entries: Vec<(Value, Value)>) {
+        self.revised_members.borrow_mut().clear();
         if let Some(owner) = self.namespace_holding(&Value::Thing(t.clone())) {
             if self.rules.names_shadow_builtins {
                 if self.rules.words_ext_system_names_module.first().is_some_and(|word| word == &owner) {
@@ -27631,8 +27634,14 @@ impl Machine<'_> {
                 let namespace = owner.and_then(|id| self.imported.get(id));
                 if let Some(Value::Thing(module)) = namespace {
                     let holds = module.holds.borrow();
-                    if let Some((_, binding)) = holds.iter().find(|entry| entry.0 == word) {
-                        let live = binding.settled();
+                    let mut indices = self.revised_members.borrow_mut();
+                    let index = indices.entry(Rc::as_ptr(module) as usize).or_insert_with(|| (usize::MAX, HashMap::default()));
+                    if index.0 != holds.len() {
+                        index.1 = holds.iter().enumerate().map(|(at, (name, _))| (name.clone(), at)).collect();
+                        index.0 = holds.len();
+                    }
+                    if let Some(at) = index.1.get(word) {
+                        let live = holds[*at].1.settled();
                         if !matches!(live, Value::Unset) { return Some(live); }
                     }
                 }
@@ -27922,7 +27931,7 @@ impl Machine<'_> {
         *namespace.borrow_mut() = Value::Attributes(match &value { Value::Thing(t) => t.clone(), _ => unreachable!() });
         self.imported.insert(path.into(), value.clone());
         self.source_namespace_metadata(path, &value)?;
-        self.namespace_places.borrow_mut().take();
+        self.namespace_places.borrow_mut().take(); self.revised_members.borrow_mut().clear();
         let from_library = self.table.single("ext.system.module.path").is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
         self.library_origins.remove(path);
         if from_library { self.library_origins.insert(path.to_owned()); }
@@ -27946,7 +27955,7 @@ impl Machine<'_> {
         (self.written_in, self.row) = caller_location;
         if let Err(stopped) = stopped {
             self.importing.remove(path); self.library_origins.remove(path);
-            self.imported.remove(path); self.namespace_places.borrow_mut().take();
+            self.imported.remove(path); self.namespace_places.borrow_mut().take(); self.revised_members.borrow_mut().clear();
             self.refresh_import_table(path);
             return Err(match stopped { Escape::Error(said) => said, other => { self.got_away = Some(other); "module did not finish".into() } });
         }
@@ -27970,7 +27979,7 @@ impl Machine<'_> {
             Some(replacement) => replacement,
             None => value,
         };
-        self.imported.insert(path.to_owned(), value.clone()); self.namespace_places.borrow_mut().take();
+        self.imported.insert(path.to_owned(), value.clone()); self.namespace_places.borrow_mut().take(); self.revised_members.borrow_mut().clear();
         if let Some((owner, name)) = split {
             if let Some(Value::Thing(parent)) = self.imported.get(owner) {
                 let mut holdings = parent.holds.borrow_mut();
@@ -27991,7 +28000,7 @@ impl Machine<'_> {
                 self.made += 1;
                 let instance = Thing { of: Rc::new(blueprint), reclassified: RefCell::new(None), turn: self.made,
                     holds: RefCell::new(vec![(String::from("\0dictionary"), dictionary)]) };
-                self.imported.insert(main_name, Value::Thing(Rc::new(instance))); self.namespace_places.borrow_mut().take();
+                self.imported.insert(main_name, Value::Thing(Rc::new(instance))); self.namespace_places.borrow_mut().take(); self.revised_members.borrow_mut().clear();
             }
         }
         // These are source-backed module aliases, initialized with their
@@ -28010,7 +28019,7 @@ impl Machine<'_> {
                     Ok(namespace) => namespace,
                     Err(message) => {
                         self.importing.remove(path); self.library_origins.remove(path);
-                        self.imported.remove(path); self.namespace_places.borrow_mut().take(); self.refresh_import_table(path); return Err(message);
+                        self.imported.remove(path); self.namespace_places.borrow_mut().take(); self.revised_members.borrow_mut().clear(); self.refresh_import_table(path); return Err(message);
                     },
                 };
                 // Loading may return a retained child of the previous parent.
@@ -28823,7 +28832,7 @@ impl<'a> Machine<'a> {
             shared: crate::data::BlueprintEntries::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), has_slot_storage: false, weak_slot: std::cell::Cell::new(None), type_names: std::cell::RefCell::new(None), sealed: std::cell::Cell::new(false), order_supplied: std::cell::Cell::new(false), supplied_order: RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
         self.made += 1;
         let value = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None), of: Rc::new(kind), holds: RefCell::new(vec![("\0dictionary".to_string(), Value::Shared(book))]), turn: self.made }));
-        self.imported.insert(main.clone(), value); self.namespace_places.borrow_mut().take();
+        self.imported.insert(main.clone(), value); self.namespace_places.borrow_mut().take(); self.revised_members.borrow_mut().clear();
         self.refresh_import_table(&main);
     }
 
@@ -28933,6 +28942,7 @@ impl<'a> Machine<'a> {
     /// space as well: the binding holds nothing from then on, and the
     /// member is gone.
     fn space_mirror_remove(&mut self, cell: &Rc<RefCell<Value>>, name: &str) {
+        self.revised_members.borrow_mut().clear();
         self.space_callable_changed(cell);
         let Some(path) = self.book_space_of(cell) else { return };
         let Some(Value::Thing(module)) = self.imported.get(&path) else { return };
@@ -28947,6 +28957,7 @@ impl<'a> Machine<'a> {
     /// dictionary's place made for it, so the space's own names and
     /// reads of the member answer it alike.
     fn space_mirror_new(&mut self, cell: &Rc<RefCell<Value>>, name: &str, shared: &Rc<RefCell<Value>>) {
+        self.revised_members.borrow_mut().clear();
         let Some(path) = self.book_space_of(cell) else { return };
         let Some(Value::Thing(module)) = self.imported.get(&path).cloned() else { return };
         if module.holds.borrow().iter().any(|(key, _)| key == name) { return; }
@@ -28984,6 +28995,7 @@ impl<'a> Machine<'a> {
     /// name the space never had is bound under a cell both share, the
     /// way a name written through the dictionary is.
     fn space_member_mirror(&mut self, module: &Rc<Thing>, name: &str, replacement: &Option<Value>) {
+        self.revised_members.borrow_mut().clear();
         if replacement.is_none() {
             let mut members = module.holds.borrow_mut();
             if let Some((_, Value::Dict(keys))) = members.iter_mut().find(|entry| entry.0 == "\0keys") {
