@@ -22960,6 +22960,32 @@ impl<'a> Engine<'a> {
                             let class=Value::Class(self.calendar_kind());
                             return self.calendar_sequence(class,vec![Value::tuple(fields)]).map_err(|fault|{self.carried=Some(fault);self.special_fault()});
                         }
+                        if matches!(task.as_ref(),"process_time"|"thread_time") && args.len()<=2 {
+                            #[cfg(target_os = "linux")]
+                            {
+                                // Linux names the process-wide CPU clock two and the
+                                // per-thread one three; each advances only while the
+                                // processor is busy for this run.
+                                let which=if task.as_ref()=="process_time" {2} else {3};
+                                #[repr(C)]
+                                struct Span { seconds:i64,nanos:i64 }
+                                extern "C" { fn clock_gettime(clock:i32,at:*mut Span)->i32; fn clock_getres(clock:i32,at:*mut Span)->i32; }
+                                let only_resolution=match args.get(1) { None=>false, Some(Value::Flag(flag))=>*flag, _=>return Err(self.lang.module_helper_amiss.clone()) };
+                                let mut span=Span{seconds:0,nanos:0};
+                                let status=unsafe{ if only_resolution { clock_getres(which,&mut span) } else { clock_gettime(which,&mut span) } };
+                                if status!=0 { return Err("OSError: processor time is unavailable".into()) }
+                                if only_resolution {
+                                    return Ok(crate::value::real_of(span.seconds as f64+span.nanos as f64/1e9,self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES)));
+                                }
+                                let counted=BigInt::from(span.seconds)*1_000_000_000u64+BigInt::from(span.nanos);
+                                if args.len()==2 { return Ok(Value::of_big(counted)); }
+                                let mut told=crate::value::real_of(span.seconds as f64+span.nanos as f64/1e9,self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                                if let Value::Real(real)=&mut told {Rc::make_mut(real).floating=true;}
+                                return Ok(told);
+                            }
+                            #[cfg(not(target_os = "linux"))]
+                            return Err("OSError: processor time is unavailable".into());
+                        }
                     }
                 }
                 #[cfg(target_os = "linux")]

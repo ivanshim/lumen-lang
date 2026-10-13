@@ -23449,6 +23449,36 @@ impl<'a> Machine<'a> {
                             let kind=Value::Blueprint(self.clock_record_type());
                             return self.clock_record(kind,vec![Value::tuple(contents)]).map_err(|escape|self.carried_native_fault(escape));
                         }
+                        if matches!(operation.as_ref(),"thread_time"|"process_time") && v.len()<=2 {
+                            #[cfg(target_os = "linux")]
+                            {
+                                // The host numbers the whole run's CPU clock two and
+                                // the calling thread's three; neither moves while the
+                                // run waits.
+                                let which=if operation.as_ref()=="thread_time" {3} else {2};
+                                #[repr(C)]
+                                struct Beat { whole:i64,part:i64 }
+                                extern "C" { fn clock_gettime(which:i32,beat:*mut Beat)->i32; fn clock_getres(which:i32,beat:*mut Beat)->i32; }
+                                let just_resolution=match v.get(1) { None=>false, Some(Value::Flag(flag))=>*flag, _=>return Err(self.table.single("ext.builtin.module.helper.amiss").unwrap_or_default().to_string()) };
+                                let mut beat=Beat{whole:0,part:0};
+                                let answered=unsafe{ if just_resolution { clock_getres(which,&mut beat) } else { clock_gettime(which,&mut beat) } };
+                                if answered!=0 { return Err(String::from("OSError: processor time is unavailable")); }
+                                if just_resolution {
+                                    let seconds=beat.whole as f64+(beat.part as f64*0.000000001);
+                                    return Ok(crate::data::worth_of_binary(seconds,self.rules.count_ext_system_real_digits.unwrap_or(15)));
+                                }
+                                if v.len()==2 {
+                                    let integer=BigInt::from(beat.whole)*BigInt::from(1_000_000_000)+BigInt::from(beat.part);
+                                    return Ok(Value::from_big(integer));
+                                }
+                                let seconds=beat.whole as f64+(beat.part as f64*0.000000001);
+                                let mut worth=crate::data::worth_of_binary(seconds,self.rules.count_ext_system_real_digits.unwrap_or(15));
+                                if let Value::Frac(ratio)=&mut worth {Rc::make_mut(ratio).float_style=true;}
+                                return Ok(worth);
+                            }
+                            #[cfg(not(target_os = "linux"))]
+                            return Err(String::from("OSError: processor time is unavailable"));
+                        }
                     }
                 }
                 // With one flag, where the table allows, the answer is a
