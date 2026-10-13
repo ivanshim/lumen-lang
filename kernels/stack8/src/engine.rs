@@ -6836,12 +6836,13 @@ impl<'a> Engine<'a> {
             match &instrs[pc] {
                 Instr::Const(Value::Routine(program)) if self.lang.closes_over && (!self.lang.class_special.is_empty() || !program.enclosing.is_empty() || program.annotation.is_some()) => {
                     let mut closed = (**program).clone();
+                    self.capture_definition_builtins(&mut closed)?;
                     // A routine the compiler named within marks of its
                     // own stands as a piece of the program around it
                     // and keeps no namespace name of its own; the word
                     // the language writes an anonymous routine under is
                     // such a mark and yet is a function all the same.
-                    if let Some(title) = self.creation_title(program) { closed.home = Some(title); }
+                    if let Some(title) = self.creation_title(&closed) { closed.home = Some(title); }
                     for (at, source) in &program.enclosing {
                         let shared = self.share_cell(source, frame)?;
                         closed.enclosed.push((*at, if self.lang.bind_names { Value::Binding(shared) } else { Value::Bond(shared) }));
@@ -6885,7 +6886,8 @@ impl<'a> Engine<'a> {
                     let value = match v {
                         Value::Routine(body) if self.fresh_routines => {
                             let mut made = (**body).clone();
-                            if let Some(title) = self.creation_title(body) { made.home = Some(title); }
+                            self.capture_definition_builtins(&mut made)?;
+                            if let Some(title) = self.creation_title(&made) { made.home = Some(title); }
                             Value::Routine(Rc::new(made))
                         }
                         other => other.clone(),
@@ -27917,6 +27919,43 @@ impl Engine<'_> {
         self.native_dict()
     }
 
+    /// Capture each new function against its live globals, retaining older captures.
+    fn capture_definition_builtins(&mut self, routine: &mut Routine) -> Flow<()> {
+        let Some(word) = self.lang.module_builtins.first().cloned() else { return Ok(()) };
+        if !self.takes_a_title(&routine.ident) && !routine.generator { return Ok(()); }
+        if let Some(globals) = self.running_routine.as_ref()
+            .filter(|parent| parent.code_flags & 1 != 0).and_then(|parent| parent.globe.clone()) {
+            routine.globe = Some(globals);
+        }
+        let book = self.routine_outer(routine);
+        let captured = match self.book_builtins(&book, &word)? {
+            Some(held) => {
+                if routine.globe.is_none() && !self.our_native_dict(&held) {
+                    routine.globe = Some(Value::Bond(book));
+                }
+                if (routine.globe.is_some() || routine.born.is_some()) && self.our_native_dict(&held) {
+                    self.canonical_builtin_dict()?
+                } else { self.as_builtins_dictionary(held)? }
+            }
+            None => self.ambient_builtins(),
+        };
+        routine.born = Some(captured);
+        Ok(())
+    }
+
+    /// Inherit the caller's builtins, using the canonical dictionary for native frames.
+    fn source_builtin_dict(&mut self) -> Flow<Value> {
+        let inherited = self.ambient_builtins();
+        if !self.our_native_dict(&inherited) { return self.as_builtins_dictionary(inherited); }
+        self.canonical_builtin_dict()
+    }
+
+    /// Resolve the native builtin marker to the module's shared dictionary.
+    fn canonical_builtin_dict(&mut self) -> Flow<Value> {
+        let module = self.names_module_value()?;
+        self.as_builtins_dictionary(module)
+    }
+
     /// Look a name up in the builtins in force where the run stands,
     /// through the mapping protocol they answer to, the very way the
     /// reference's _PyEval_GetBuiltin reads its builtins: a key gone
@@ -28087,7 +28126,7 @@ impl Engine<'_> {
     /// it was made in, or the one handed to it in place of that, where
     /// it keeps one of those; else the outermost dictionary the run
     /// stands in, as the reference reads a frame's own globals.
-    fn routine_outer(&mut self, program: &Rc<Routine>) -> Rc<RefCell<Value>> {
+    fn routine_outer(&mut self, program: &Routine) -> Rc<RefCell<Value>> {
         if let Some(held) = &program.globe {
             let cell = match held {
                 Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell.clone(),
@@ -28128,7 +28167,7 @@ impl Engine<'_> {
     /// The dictionary the module a program was read in as keeps its own
     /// names under, where it was read in as one: the module's own
     /// members, never the outermost names it was read in from.
-    fn module_book_of(&mut self, program: &Rc<Routine>) -> Option<Rc<RefCell<Value>>> {
+    fn module_book_of(&mut self, program: &Routine) -> Option<Rc<RefCell<Value>>> {
         let (_, path) = program.written_in.as_ref().and_then(|file| self.module_slots.get(file.as_ref())).cloned()?;
         let Some(Value::Object(module)) = self.modules.get(&path).cloned() else { return None };
         if let Some(book) = self.module_globals.get(&path).cloned() {
@@ -29670,7 +29709,7 @@ impl Engine<'_> {
                 }
             }
             if existing.is_none() {
-                let natives = self.natives_book();
+                let natives = self.source_builtin_dict().map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
                 let owner = outer.borrow().clone();
                 if matches!(&owner, Value::Object(_)) && self.special_value(&owner, 12).is_none() && Self::worth_of(&owner).is_none() {
                     let kind = match &owner { Value::Object(o) => o.class_now().name.clone(), other => other.core_kind() };
@@ -29680,7 +29719,7 @@ impl Engine<'_> {
                     Some(Value::Bond(cell) | Value::Collection(cell, _)) if matches!(&*cell.borrow(), Value::Map(_)) => cell,
                     _ => outer.clone(),
                 };
-                if let Err(failure) = self.book_put(&target, word, Some(Value::Bond(natives))) {
+                if let Err(failure) = self.book_put(&target, word, Some(natives)) {
                     self.carried = Some(failure);
                     return Err(self.special_fault());
                 }
@@ -29703,7 +29742,7 @@ impl Engine<'_> {
             let globals = Rc::new(RefCell::new(Value::Fields(module)));
             if let Some(word) = self.lang.module_builtins.first().cloned() {
                 if self.book_builtins(&globals, &word).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?.is_none() {
-                    let builtins = self.native_dict();
+                    let builtins = self.source_builtin_dict().map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
                     self.book_put(&globals, &word, Some(builtins)).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
                 }
             }
@@ -29715,7 +29754,14 @@ impl Engine<'_> {
             Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
         };
         self.registry.optimize = optimization;
-        let (program, shown) = self.text_program(source, &tokens, &file, mode, None, top_await, None)?;
+        let previous = self.registry.born.clone();
+        if !self.lang.module_builtins.is_empty() {
+            let builtins = self.source_builtin_dict().map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+            self.registry.born = Some(builtins);
+        }
+        let compiled = self.text_program(source, &tokens, &file, mode, None, top_await, None);
+        self.registry.born = previous;
+        let (program, shown) = compiled?;
         let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
         self.world.resize(self.registry.idents.len(), Value::Blank);
         self.text_finished(&program, &file, shown)
@@ -29804,6 +29850,9 @@ impl Engine<'_> {
                     _ => self.native_dict(),
                 },
             };
+            let born = if self.our_native_dict(&born) {
+                self.canonical_builtin_dict().map_err(|fault| { self.carried = Some(fault); self.special_fault() })?
+            } else { born };
             local.globe = Some(globe);
             local.born = Some(born);
         }

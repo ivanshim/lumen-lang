@@ -6868,7 +6868,7 @@ impl<'a> Machine<'a> {
             self.attend_to_gone();
         }
         match node {
-            Form::Const(Value::Routine(p)) => Ok(self.bind_program(p, frame)),
+            Form::Const(Value::Routine(p)) => self.bind_program(p, frame),
             Form::Const(Value::OctetKind { changeable, .. }) if self.frames_named.last()
                 .is_some_and(|body| body.flags & 1 != 0 && Self::explicit_globals(body).is_some()) => {
                 let word = self.octet_kind_word(*changeable).to_owned();
@@ -7974,7 +7974,7 @@ impl<'a> Machine<'a> {
                     let mut entries=shared;
                     if changed { entries.push((base_hooks[1].to_owned(), old_bases)); }
                     for (word, body) in plan.methods.iter() {
-                        if entries.iter().all(|(key, _)| key != word) { entries.push((word.to_owned(), self.bind_program(body, frame))); }
+                        if entries.iter().all(|(key, _)| key != word) { entries.push((word.to_owned(), self.bind_program(body, frame)?)); }
                     }
                     // The body's own live namespace, where it made one,
                     // stands last and settles every member it governs:
@@ -10689,7 +10689,7 @@ impl<'a> Machine<'a> {
     /// whether the routine took anything away or not.
     /// Python closures own the cells they capture, rather than all the
     /// unrelated locals in each defining call.
-    fn bind_program(&mut self, program: &Rc<Routine>, defining: &Rc<Env>) -> Value {
+    fn bind_program(&mut self, program: &Rc<Routine>, defining: &Rc<Env>) -> Res<Value> {
         let environment = self.closure_environment(program, defining);
         let lambda = self.rules.words_ext_stmt_function_anonymous.iter().any(|word| word == &program.ident);
         let function = !program.ident.starts_with('#') && (!program.ident.starts_with('<') || lambda);
@@ -10697,10 +10697,29 @@ impl<'a> Machine<'a> {
         // even when its defining environment is the unchanged module root.
         // Its code remains the compiled definition; its attributes belong
         // to this creation, including the globals' name at this instant.
-        let bound = if function && self.rules.closes_over {
+        let bound = if (function || program.generator && !self.rules.builtin_namespace_words.is_empty()) && self.rules.closes_over {
             let mut instance = (**program).clone();
             instance.definition = Some(program.definition.as_ref().unwrap_or(program).clone());
-            let namespace = program.globe.clone().unwrap_or_else(|| Value::Shared(self.book_about(true)));
+            if !self.rules.builtin_namespace_words.is_empty() {
+                if let Some(globe) = self.frames_named.last().filter(|maker| maker.flags & 1 == 1)
+                    .and_then(|maker| maker.globe.clone()) {
+                    instance.globe = Some(globe);
+                }
+                let globals = instance.globe.clone().unwrap_or_else(|| Value::Shared(self.book_about(true)));
+                let entry = self.rules.builtin_namespace_words[0].clone();
+                let found = self.builtin_entry(&Rc::new(RefCell::new(globals.clone())), &entry)?;
+                let born = match found {
+                    None => self.builtins_here(),
+                    Some(value) => {
+                        if instance.globe.is_none() && !self.is_our_natives(&value) { instance.globe = Some(globals); }
+                        if (instance.globe.is_some() || instance.born.is_some()) && self.is_our_natives(&value) {
+                            self.canonical_natives()?
+                        } else { self.builtin_dictionary(value)? }
+                    }
+                };
+                instance.born = Some(born);
+            }
+            let namespace = instance.globe.clone().unwrap_or_else(|| Value::Shared(self.book_about(true)));
             instance.framed_in = None;
             for key in self.rules.words_ext_system_module_name {
                 match self.mapping_read(&namespace, key) {
@@ -10726,7 +10745,7 @@ impl<'a> Machine<'a> {
         if (!self.rules.specials.is_empty() && !bound.frameless) || crate::ghost::bidding() {
             crate::ghost::note(crate::ghost::Ghost::Bound(Rc::downgrade(&bound), Rc::downgrade(&environment)));
         }
-        Value::Bound(bound, environment)
+        Ok(Value::Bound(bound, environment))
     }
 
     fn frame_for(&self, program: &Rc<Routine>, env: &Rc<Env>) -> Rc<Env> {
@@ -28470,6 +28489,22 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// Preserve custom frame builtins when filling a source namespace's missing entry.
+    fn source_natives(&mut self) -> Result<Value, Escape> {
+        let saved = self.builtins_here();
+        if !self.is_our_natives(&saved) { return self.builtin_dictionary(saved); }
+        self.canonical_natives()
+    }
+
+    /// Turn an ordinary native-frame marker into the builtin module namespace.
+    fn canonical_natives(&mut self) -> Result<Value, Escape> {
+        let Some(path) = self.rules.words_ext_system_names_module.first().cloned() else {
+            return Ok(Value::Mutable(self.natives_kept(), true));
+        };
+        let namespace = self.load_namespace(&path)?;
+        self.builtin_dictionary(namespace)
+    }
+
     pub(super) fn check_class_builtin(&mut self) -> Result<Value, Escape> {
         let names = self.rules.words_ext_stmt_class_builder.to_vec();
         let Some(word) = names.first() else { return Ok(Value::Nil) };
@@ -29269,7 +29304,7 @@ impl<'a> Machine<'a> {
     // The interpreter obtains a dict subclass's builtin namespace
     // from its storage; its __getitem__ remains active for user names.
     pub(super) fn builtin_entry(&mut self, book: &Rc<RefCell<Value>>, word: &str) -> Result<Option<Value>, Escape> {
-        let owner = book.borrow().clone();
+        let owner = book.borrow().settled();
         if let Some(native) = Self::underlying(&owner) {
             let stored = native.settled();
             if matches!(stored, Value::Dict(_)) { return self.mapping_read(&stored, word); }
@@ -30353,7 +30388,7 @@ impl<'a> Machine<'a> {
                 }
             }
             if already.is_none() {
-                let natives = self.natives_kept();
+                let natives = self.source_natives().map_err(|fault| self.carried_native_fault(fault))?;
                 let value = outer.borrow().clone();
                 if matches!(&value, Value::Thing(_)) && self.appointed(&value, 12).is_none() && Self::underlying(&value).is_none() {
                     let kind = match &value { Value::Thing(t) => t.blueprint().name.clone(), other => other.kind_word() };
@@ -30363,7 +30398,7 @@ impl<'a> Machine<'a> {
                     Some(Value::Shared(cell) | Value::Mutable(cell, _)) if matches!(&*cell.borrow(), Value::Dict(_)) => cell,
                     _ => outer.clone(),
                 };
-                if let Err(escape) = self.booked_put(&destination, &word, Some(Value::Shared(natives))) {
+                if let Err(escape) = self.booked_put(&destination, &word, Some(natives)) {
                     self.got_away = Some(escape);
                     return Err(self.bad_answer());
                 }
@@ -30388,7 +30423,7 @@ impl<'a> Machine<'a> {
             if let Some(key) = self.table.single("ext.system.module.builtins").map(str::to_owned) {
                 let present = self.builtin_entry(&book, &key).map_err(|escape| self.carried_native_fault(escape))?;
                 if present.is_none() {
-                    let defaults = Value::Shared(self.natives_kept());
+                    let defaults = self.source_natives().map_err(|fault| self.carried_native_fault(fault))?;
                     self.booked_put(&book, &key, Some(defaults)).map_err(|escape| self.carried_native_fault(escape))?;
                 }
             }
@@ -30400,7 +30435,10 @@ impl<'a> Machine<'a> {
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let seeded = self.idents.clone();
-        let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None, None, settling)?;
+        let natives = if self.rules.builtin_namespace_words.is_empty() { None } else {
+            Some(self.source_natives().map_err(|escape| self.carried_native_fault(escape))?)
+        };
+        let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, natives, None, settling)?;
         // What the build noted about how the text is written is said
         // once the text stands, each warning through the warnings module.
         for (message, row, column) in built.warnings.clone() {
@@ -30518,6 +30556,10 @@ impl<'a> Machine<'a> {
                 Some(word) => match self.builtin_entry(&outer, &word) { Ok(Some(held)) => held, _ => Value::Mutable(self.natives_kept(), true) },
                 None => Value::Mutable(self.natives_kept(), true),
             },
+        };
+        let born = match self.is_our_natives(&born) {
+            true => self.canonical_natives().map_err(|escape| self.carried_native_fault(escape))?,
+            false => born,
         };
         let (mut built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born.clone()), framed_in.clone(), settling)?;
         // What the build noted about how the text is written is said
