@@ -6175,7 +6175,9 @@ impl<'a> Machine<'a> {
                 if index == 23 { return Some(Value::Flag(cell.try_borrow().map_or(true, |state| state.running))); }
                 if index == 24 && cell.try_borrow().is_err() { return Some(Value::Nil); }
                 if index == 28 && cell.try_borrow().is_err() { return Some(Value::Nil); }
-                if index == 29 { return Some(Value::Nil); }
+                if index == 29 {
+                    return Some(self.coroutine_bodies.get(&(Rc::as_ptr(cell) as usize)).map(|record| record.3.clone()).unwrap_or(Value::Nil));
+                }
                 let state = cell.try_borrow().ok()?;
                 if matches!(index, 24 | 28) { return Some(state.inner.clone().unwrap_or(Value::Nil)); }
                 if matches!(index, 21 | 22) { return Some(Value::Flag(state.begun && !state.ended)); }
@@ -16489,7 +16491,7 @@ impl<'a> Machine<'a> {
     }
 
     fn object_words_inner(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
-        if let Some(mapping) = Self::proxy_reading(subject) {
+        if let Some(mapping) = Self::proxy_render_target(subject) {
             let text = self.converted_string(&mapping, quoted)?.bare();
             return Ok(if quoted { format!("mappingproxy({text})") } else { text });
         }
@@ -17939,6 +17941,16 @@ impl<'a> Machine<'a> {
 
     /// What a mapping proxy stands for in an operation: the mapping the program
     /// made, or the pairs under a plain one.
+    fn proxy_render_target(item: &Value) -> Option<Value> {
+        match Self::window_inside(item) {
+            Some(Value::Window(owner, 'm')) => {
+                let wrapped = Self::window_inside(&owner);
+                wrapped.or_else(|| Self::proxy_reading(item))
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn proxy_reading(value: &Value) -> Option<Value> {
         match value {
             Value::Window(owner, 'm') => Some(Self::proxied_mapping(value).unwrap_or_else(|| owner.proxy_pairs())),
@@ -31769,9 +31781,8 @@ impl Machine<'_> {
                 }
                 // A reading of the map itself is quoted as the map is,
                 // under the name CPython gives it.
-                if let Some(owner) = &window_owner {
-                    let rendering = if matches!(owner, Value::Window(_, 'm')) { format!("mappingproxy({})", self.object_words(&owner.proxy_pairs(), true)?) } else { self.object_words(owner, true)? };
-                    return Ok(Value::text(&format!("mappingproxy({rendering})")));
+                if window_owner.is_some() {
+                    return self.converted_string(&input[0], true);
                 }
                 if let Value::Wrapped(3, parts) = &input[0] {
                     if !self.rules.detail_main.is_empty() && parts.len() == 2

@@ -8190,7 +8190,7 @@ impl<'a> Engine<'a> {
                 if index == 25 && held.try_borrow().is_err() { return Ok(Some(Value::text("GEN_RUNNING"))); }
                 if index == 23 { return Ok(Some(Value::Flag(held.try_borrow().is_err()))); }
                 if matches!(index, 24 | 28) && held.try_borrow().is_err() { return Ok(Some(Value::Null)); }
-                if index == 29 { return Ok(Some(Value::Null)); }
+                if index == 29 { return Ok(Some(self.coroutines.get(&(Rc::as_ptr(held) as usize)).map_or(Value::Null, |entry| entry.3.clone()))); }
                 let state = held.try_borrow().map_err(|_| self.lang.class_unready.first().cloned().unwrap_or_default())?;
                 if matches!(index, 14 | 19 | 20) { return Ok(Some(if state.closed { Value::Null } else { state.trace_frame.clone().map_or(Value::Null, Value::Object) })); }
                 if matches!(index, 21 | 22) { return Ok(Some(Value::Flag(state.started && !state.closed))); }
@@ -8938,7 +8938,7 @@ impl<'a> Engine<'a> {
 
     fn special_text_inner(&mut self, value: &Value, representation: bool) -> Res<String> {
         // A mapping proxy is written as the mapping it reads, named when it is quoted.
-        if let Some(reading) = Self::proxy_reading(value) {
+        if let Some(reading) = Self::proxy_render_source(value) {
             let inner = self.special_text(&reading, representation)?;
             return Ok(if representation { format!("mappingproxy({inner})") } else { inner });
         }
@@ -21147,6 +21147,14 @@ impl<'a> Engine<'a> {
 
     /// What a mapping proxy stands for in an operation: the mapping the program
     /// made, or the dictionary under a plain one.
+    fn proxy_render_source(value: &Value) -> Option<Value> {
+        let Value::View(view) = Self::view_in(value)? else { return None };
+        if view.1 != "mapping" { return None; }
+        // Representation preserves another proxy around the underlying mapping.
+        if let Some(nested) = Self::view_in(&view.0) { return Some(nested); }
+        Self::proxy_reading(value)
+    }
+
     pub(super) fn proxy_reading(value: &Value) -> Option<Value> {
         match value {
             Value::View(proxy) if proxy.1 == "mapping" => Some(Self::proxied_mapping(value).unwrap_or_else(|| proxy.0.proxy_dictionary())),
@@ -26143,7 +26151,7 @@ impl Engine<'_> {
                 }
                 if let Some(view) = window {
                     return Ok(Value::text(&if view.1 == "mapping" {
-                        format!("mappingproxy({})", self.special_text(&view.0.proxy_dictionary(), true)?)
+                        self.special_text(&Value::View(view.clone()), true)?
                     } else {
                         format!("dict_{}({})", view.1, args[0].core_repr(self.lang.shortest_reals))
                     }));
