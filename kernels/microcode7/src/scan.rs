@@ -1977,6 +1977,25 @@ fn failed_digit(spelling: &str, complaint: &str) -> usize {
 mod tests {
     use super::*;
 
+    // Keep template markers and statement endings consistent after request settings clear labels.
+    #[test]
+    fn cleared_labels_refresh_scanner_metadata() {
+        let mut table = Table::parse(include_str!("../../../langs/php.json")).unwrap();
+        let source = "<? echo 7; ?>";
+        assert!(scan(source, &table).unwrap().iter().any(|token| token.shape == Shape::Numeral));
+        table.put_by("ext.lexical.prologue.brief");
+        let tokens = scan(source, &table).unwrap();
+        assert!(tokens.iter().any(|token| token.shape == Shape::Quote && token.lexeme == source));
+        for source in ["<?php echo 7; ?>", "<?= 7 ?>"] {
+            assert!(scan(source, &table).unwrap().iter().any(|token| token.shape == Shape::Numeral));
+        }
+        table.put_by("ext.lexical.prologue.echo");
+        assert!(scan("<?= 7 ?>", &table).unwrap().iter().any(|token| token.shape == Shape::Quote && token.lexeme == "<?= 7 ?>"));
+        assert!(table.separates(";"));
+        table.put_by("stmt.terminator");
+        assert!(!table.separates(";"));
+    }
+
     // Keep notices aligned with the numbers the scanner actually consumes.
     #[test]
     fn numeric_notices_follow_token_boundaries() {

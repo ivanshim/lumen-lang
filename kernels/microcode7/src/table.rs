@@ -796,6 +796,8 @@ impl Table {
                 self.cells.insert(key, self.held.len() - 1);
             }
         }
+        // Request settings can clear labels after parse built the scanner snapshot.
+        self.refresh_scanner();
     }
 
     /// A required ending or an optional parting between statements.
