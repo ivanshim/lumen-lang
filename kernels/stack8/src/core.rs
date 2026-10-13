@@ -290,6 +290,10 @@ impl Value {
                 };
                 Some(finish(hashed as i64))
             }
+            // A name's cell is no thing of its own: what is kept in it
+            // hashes as the kept value hashes, there being no cell in
+            // the reference's own accounts.
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell.borrow().core_hash(),
             Value::Complex(z) => {
                 if z.real.is_nan() || z.imag.is_nan() { return Some((std::rc::Rc::as_ptr(z) as usize >> 4) as i64); }
                 let a = crate::complex::real(z.real).core_hash()?;

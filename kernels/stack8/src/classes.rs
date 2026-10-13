@@ -180,6 +180,13 @@ impl<'a> Engine<'a> {
             if let Some(repr) = self.lang.class_special.get(1) {
                 c.shared.borrow_mut().push((repr.clone(), Self::adapter(29, vec![Value::text(word), Value::text(repr)])));
             }
+            // The reference's own documentation for its module type: a
+            // module whose own dictionary names no documentation falls
+            // back to it, as any class member is fallen back to.
+            let documentation = self.class_word("doc");
+            if !documentation.is_empty() {
+                c.shared.borrow_mut().push((documentation.to_string(), Value::text("Create a module object.\n\nThe name must be a string; the optional doc argument can have any type.")));
+            }
         }
         if self.lang.bind_names && word == "function" {
             c.shared.borrow_mut().push((self.class_word("descriptor.get").to_owned(), Self::adapter(15, vec![])));
@@ -5224,7 +5231,12 @@ impl<'a> Engine<'a> {
                         }).or_else(|| o.fields.borrow().iter().find(|(word, _)| word == key).map(|(_, value)| value.contents()))
                     };
                     let own = lookup(name);
-                    if name == annotate { return Ok(own.unwrap_or(Value::Null)); }
+                    if name == annotate {
+                        if let Some(held) = own.filter(|value| !matches!(value, Value::Blank)) { return Ok(held); }
+                        if let Some(book) = &book { Self::book_write(book, name, Some(Value::Null)); }
+                        else { Self::write_members(&mut o.fields.borrow_mut(), name, Some(Value::Null), true).map_err(|_| self.class_refusal())?; }
+                        return Ok(Value::Null);
+                    }
                     if self.lang.class_annotations.first().is_some_and(|key| key == name) {
                         if let Some(value) = own.filter(|value| !matches!(value, Value::Blank)) { return Ok(value); }
                         let source = lookup(&annotate);
@@ -5498,8 +5510,14 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if self.module_holding(&subject).is_some() {
-                    let getter = o.fields.borrow().iter().find(|(key, _)| key == "__getattr__").map(|(_, value)| value.contents());
-                    if let Some(getter) = getter { return self.class_apply(getter, vec![Value::text(name)]).map(|value| value.contents()); }
+                    let getter = o.fields.borrow().iter().find(|(key, _)| key == "__getattr__")
+                        .map(|(_, value)| value.contents()).filter(|held| !matches!(held, Value::Blank));
+                    if let Some(getter) = getter {
+                        if self.lang.core_words.contains_key("core.uncallable") && !self.class_work(2, vec![getter.clone()])?.is_true() {
+                            return Err(self.core_fault("core.uncallable", &getter.core_kind()).into());
+                        }
+                        return self.class_apply(getter, vec![Value::text(name)]).map(|value| value.contents());
+                    }
                 }
                 // A native base's reduction slots must not be replaced by
                 // the root's empty-argument reconstruction of an ordinary object.
@@ -6183,6 +6201,13 @@ impl<'a> Engine<'a> {
     }
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
         self.has_nonstring_class_keys |= name == "\0type-keys";
+        // A class standing behind a name's cell is written on as the
+        // class itself, there being no cell in the reference's own
+        // accounts; anything else keeps the form it was handed in.
+        let subject = match &subject {
+            Value::Bond(_) | Value::Binding(_) | Value::Collection(_, _) if matches!(subject.contents(), Value::Class(_)) => subject.contents(),
+            _ => subject,
+        };
         if matches!(&subject,Value::Object(instance) if Self::own_kind(&instance.class_now()).as_deref()==Some("struct_time")) {
             if ["tm_year","tm_mon","tm_mday","tm_hour","tm_min","tm_sec","tm_wday","tm_yday","tm_isdst","tm_zone","tm_gmtoff"].contains(&name) {return Err("AttributeError: readonly attribute".into())}
             return Err(format!("AttributeError: 'time.struct_time' object has no attribute '{name}'").into());
@@ -6372,6 +6397,12 @@ impl<'a> Engine<'a> {
                             }
                         }
                     } else if self.lang.class_annotations.first().is_some_and(|key| key == name) {
+                        if value.is_none() {
+                            let present = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace").map(|(_, book)| book.contents())
+                                .is_some_and(|book| match book { Value::Map(entries) => entries.iter().any(|(word, _)| word.plain() == name), _ => false })
+                                || o.fields.borrow().iter().any(|(word, held)| word == name && !matches!(held.contents(), Value::Blank));
+                            if !present { return Err(format!("AttributeError: {name}").into()); }
+                        }
                         let book = o.fields.borrow().iter().find(|(key, _)| key == "\0namespace").map(|(_, value)| value.clone());
                         if let Some(book) = book { Self::book_write(&book, &annotate, Some(Value::Null)); }
                         else { Self::write_members(&mut o.fields.borrow_mut(), &annotate, Some(Value::Null), true).map_err(|_| self.class_refusal())?; }
@@ -6521,6 +6552,10 @@ impl<'a> Engine<'a> {
                         return Ok(Value::Null);
                     }
                 }
+                let value = match (module, value) {
+                    (true, Some(held)) => Some(self.keep_collection(held)),
+                    (_, other) => other,
+                };
                 Self::write_members(&mut o.fields.borrow_mut(),name,value,module).map_err(|_|absent)?;
             }
             Value::Class(c) => {
@@ -6776,6 +6811,13 @@ impl<'a> Engine<'a> {
                             return Ok(());
                         }
                     }
+                    // A name the module takes on for itself keeps a
+                    // binding of its own, which later writings write
+                    // through: a name read out of the module's dictionary
+                    // answers with the binding's keeping and does not
+                    // follow a writing that comes after.
+                    members.push((name.into(), Value::Bond(Rc::new(RefCell::new(v)))));
+                    return Ok(());
                 }
                 members.push((name.into(),v));
             },
@@ -7650,7 +7692,7 @@ impl<'a> Engine<'a> {
                 let asked=match &asked {Value::Codepoints(row)=>Value::text(&Value::predicate_text(row)),other=>other.clone()};
                 let Value::Text(name)=&asked else{return Err(self.core_fault("core.attribute.name",&args[1].core_kind()).into());};match self.class_get(one.clone(),name,false){Ok(v)=>Ok(if which==6{Value::Flag(true)}else if self.lang.syntax_members.is_empty(){match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}else{let keep=match &v{Value::Bond(cell)=>matches!(&*cell.borrow(),Value::Array(_)|Value::Set(_)|Value::SetWalk(..)|Value::Map(_)|Value::Bytes(..)),_=>false};if keep{v}else{match v{Value::Bond(cell)=>cell.borrow().clone(),held=>held}}}),Err(fault) if self.attribute_fault(&fault)=>if which==6{self.absent_member = None; Ok(Value::Flag(false))}else if args.len()==3{self.absent_member = None; Ok(args[2].clone())}else{
                 // A module asked by name for a member it has not may answer through its own routine, as it does for a member read in the program.
-                if let Value::Object(o)=&args[0]{if let Some(routine)=self.module_reader(o){self.invoke(&routine,vec![Value::text(name)]).map_err(|failure| self.attribute_from_hook(failure, &one, name))?;return self.drop_top().map_err(Fault::Note);}}
+                if let Value::Object(o)=&args[0]{if let Some(hook)=self.module_getattr_held(o){let answered=self.module_hook_call(hook,name).map_err(|failure| self.attribute_from_hook(failure, &one, name))?;return Ok(answered);}}
                 Err(self.attribute_from_hook(fault, &one, name))},Err(e)=>Err(self.attribute_from_hook(e, &one, name))}},
             3=>Err(self.arity_told(&self.class_tool_word(3),2,args.len())),
             6=>Err(self.arity_told(&self.class_tool_word(6),2,args.len())),
@@ -7694,7 +7736,11 @@ impl<'a> Engine<'a> {
                         };
                         if let Some(word)=self.lang.class_special.get(75) {
                             if let Some((_,method))=entries.iter().find(|(key,_)| key.plain()==*word) {
-                                let answer=self.class_apply(method.clone(),Vec::new())?;
+                                let hook=method.contents();
+                                if self.lang.core_words.contains_key("core.uncallable") && !self.class_work(2,vec![hook.clone()])?.is_true() {
+                                    return Err(self.core_fault("core.uncallable",&hook.core_kind()).into());
+                                }
+                                let answer=self.class_apply(hook,Vec::new())?;
                                 let names=self.special_items(&answer).map_err(Fault::Note)?;
                                 let ordered=self.steady_order(names,&Value::Null,false).map_err(Fault::Note)?;
                                 return Ok(Value::array(ordered));
