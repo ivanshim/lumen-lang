@@ -28,9 +28,24 @@ fn take_end(right: &Cell, left: &Cell, front: bool) -> Res<Value> {
     change(destination, |items| items.pop())?.ok_or_else(|| "IndexError: pop from an empty deque".into())
 }
 
+// Recognize immutable native scalars, excluding all user-defined subclasses.
+fn deque_scalar(value: &Value) -> bool {
+    matches!(value.contents(), Value::Small(_) | Value::Huge(_) | Value::Real(_)
+        | Value::Flag(_) | Value::Text(_) | Value::Codepoints(_) | Value::Complex(_)
+        | Value::Null | Value::Bytes(_, false, _))
+}
+
 impl Engine<'_> {
     // Apply a storage operation after the Python adapter has checked public arguments.
     pub(super) fn deque_native_call(&mut self, storage: &Value, verb: &str, item: Option<Value>) -> Res<Value> {
+        if verb == "plain" {
+            let value = item.ok_or_else(|| "TypeError: missing deque comparison value".to_string())?;
+            let result = match storage.contents() {
+                Value::Array(row) => deque_scalar(&value) && row.iter().all(deque_scalar),
+                _ => return Err("TypeError: deque scan storage must be a list".into()),
+            };
+            return Ok(Value::Flag(result));
+        }
         let outer = Self::holding_cell(storage).ok_or_else(|| "TypeError: deque storage must be a list".to_string())?;
         let (right_value, left_value, revision, limit) = match &*outer.borrow() {
             Value::Array(row) if row.len() == 4 => (row[0].clone(), row[1].clone(), row[2].clone(), row[3].clone()),

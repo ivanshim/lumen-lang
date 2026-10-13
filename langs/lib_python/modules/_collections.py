@@ -178,19 +178,13 @@ class _deque_reverse_iterator:
         return self._data[left - 1]
 
 
-# Items of these exact types compare without running any Python code, so a
-# scan over them cannot change the deque and may be left to the list itself.
-_PLAIN_KINDS = frozenset((int, float, bool, str, bytes, complex, type(None)))
-
-
 # Containers of these exact types are read without running any Python code.
 _BULK_KINDS = (list, tuple, range, str, bytes)
 
 
+# Let native lists scan exact primitive values whose equality cannot call Python.
 def _deque_plain(data, value):
-    kinds = set(map(type, data))
-    kinds.add(type(value))
-    return kinds <= _PLAIN_KINDS
+    return __deque_native__(data, 'plain', value)
 
 
 def _deque_slice_index(value):

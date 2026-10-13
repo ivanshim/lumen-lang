@@ -34,9 +34,25 @@ impl Stack {
         self.edit(Vec::pop)?.ok_or_else(|| String::from("IndexError: pop from an empty deque"))
     }
 }
+// Refuse objects and mutable byte arrays before delegating comparison to a list.
+fn scan_scalar(item: &Value) -> bool {
+    match item.settled() {
+        Value::Nil | Value::Flag(_) | Value::Small(_) | Value::Huge(_) => true,
+        Value::Text(_) | Value::Unpaired(_) | Value::Complex(_) => true,
+        Value::Frac(number) => number.places.is_some(),
+        Value::Octets { changeable: false, .. } => true,
+        _ => false,
+    }
+}
+
 impl Machine<'_> {
     // Handle private storage commands; public validation remains in collections.
     pub(super) fn deque_work(&mut self, source: &Value, command: &str, supplied: Option<Value>) -> ResultOf<Value> {
+        if command == "plain" {
+            let sought = supplied.ok_or_else(|| String::from("TypeError: missing deque comparison value"))?;
+            let Value::Vector(items) = source.settled() else { return Err(String::from("TypeError: deque scan storage must be a list")) };
+            return Ok(Value::Flag(scan_scalar(&sought) && items.iter().all(scan_scalar)));
+        }
         let holder = Self::native_cell(source).ok_or_else(|| String::from("TypeError: deque storage must be a list"))?;
         let state = Stack(holder);
         let parts = state.edit(|row| row.clone())?;
