@@ -74,3 +74,9 @@ It records the provenance path and digest, and refuses to replace an existing
 binding. The inventory is an explicit assertion from the original run's owner;
 its hashes verify the files, not which interpreter produced them. If the
 original release cannot be established, rerun into a new directory instead.
+
+Lambda reference staging collects flat modules through `reference_entry.py`
+under their `test` package namespace, then calls the normal unittest loader.
+This gives `load_tests` callbacks and doctest the module globals established
+by collection, including the real module name. Executable test packages keep
+their `-m` entry point. No reference source is rewritten during staging.
