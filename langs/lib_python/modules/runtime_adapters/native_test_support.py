@@ -1677,6 +1677,22 @@ def requires_zstd(reason='requires zstd'):
     except ImportError:
         zstd = None
     return unittest.skipUnless(zstd, reason)
+def get_attribute(obj, name):
+    """Get an attribute, raising SkipTest if AttributeError is raised."""
+    try:
+        attribute = getattr(obj, name)
+    except AttributeError:
+        raise unittest.SkipTest("object %r has no attribute %r" % (obj, name))
+    else:
+        return attribute
+
+# From CPython v3.14.8; PSF License.
+
+
+# From CPython v3.14.8; PSF License.
+
+
+# From CPython v3.14.8; PSF License.
 
 
 # From CPython v3.14.8; PSF License.

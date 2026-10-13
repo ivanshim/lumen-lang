@@ -706,3 +706,10 @@ def signature(obj, *, follow_wrapped=True, globals=None, locals=None,
                                    globals=globals, locals=locals,
                                    eval_str=eval_str,
                                    annotation_format=annotation_format)
+def isawaitable(object):
+    """Return true if object can be passed to an ``await`` expression."""
+    import collections.abc
+    return (isinstance(object, types.CoroutineType) or
+            isinstance(object, types.GeneratorType) and
+                bool(object.gi_code.co_flags & CO_ITERABLE_COROUTINE) or
+            isinstance(object, collections.abc.Awaitable))

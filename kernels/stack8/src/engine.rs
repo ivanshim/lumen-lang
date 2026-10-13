@@ -7989,6 +7989,12 @@ impl<'a> Engine<'a> {
             Value::ByteKind(mutable, _) => Rc::from(self.byte_kind_word(*mutable)),
             _ => return None,
         };
+        if word.as_ref() != "type" && !self.lang.class_builder.is_empty() {
+            let operation = ["get", "set", "remove"].iter().position(|part| name == self.class_word(part));
+            if let Some(index) = operation {
+                return Some(Self::adapter(10 + index as u8, vec![Value::text(self.class_word("root"))]));
+            }
+        }
         // Carry the buffer slots through the same native descriptor lookup as other methods.
         if Lang::spells(&self.lang.builtin_bases, "bytes") && (matches!(word.as_ref(), "bytes" | "bytearray") && name == "__buffer__"
             || word.as_ref() == "bytearray" && name == "__release_buffer__") {
