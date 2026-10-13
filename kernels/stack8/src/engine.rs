@@ -27082,9 +27082,15 @@ impl Engine<'_> {
         fields.push(("\0module-owner".into(), Value::text(path)));
         // The builtins word stands among the module's own names, as the
         // reference keeps it in every module's dictionary.
-        let natives = self.natives_book();
+        let mut default_builtins = self.native_dict();
+        if !self.lang.module_builtins.is_empty() {
+            let home = self.home_module_word();
+            if path != home && !self.importing.contains(home) {
+                default_builtins = self.canonical_builtin_dict()?;
+            }
+        }
         for word in &self.lang.module_builtins {
-            if !fields.iter().any(|(key, _)| key == word) { fields.push((word.clone(), Value::Bond(natives.clone()))); }
+            if !fields.iter().any(|(key, _)| key == word) { fields.push((word.clone(), default_builtins.clone())); }
         }
         // Every name the text can reach keeps its own cell under this
         // hidden map, so a binding taken away and put back reaches the

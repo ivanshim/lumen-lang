@@ -27812,9 +27812,13 @@ impl Machine<'_> {
         }
         // The builtins word stands among the module's own names, the
         // same way the world's own dictionary keeps it.
-        let natives = self.natives_kept();
+        let natives = if self.rules.builtin_namespace_words.is_empty() || path == self.builtin_module() || self.importing.contains(self.builtin_module()) {
+            Value::Shared(self.natives_kept())
+        } else {
+            self.canonical_natives().map_err(|escape| self.carried_native_fault(escape))?
+        };
         for word in self.table.strings("ext.system.module.builtins") {
-            if !members.iter().any(|(name, _)| name == word) { members.push((word.clone(), Value::Shared(natives.clone()))); }
+            if !members.iter().any(|(name, _)| name == word) { members.push((word.clone(), natives.clone())); }
         }
         if !self.rules.words_ext_system_module_name.is_empty() {
             for word in ["__spec__", "__loader__", "__cached__"] {
