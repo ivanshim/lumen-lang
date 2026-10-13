@@ -741,6 +741,11 @@ for _function, _operation in ((_data_of, 'data'), (_maxlen_of, 'limit'),
                               (_maxlen_put, 'setlimit'), (_state_of, 'state'),
                               (_state_put, 'setstate')):
     __deque_native__(deque.__dict__['_data'], 'bind', _function, _operation)
+# Register iterator slots explicitly so native stepping cannot invoke attribute hooks.
+for _iterator, _operation in ((_deque_iterator, 'next'), (_deque_reverse_iterator, 'reverse_next')):
+    _slots = tuple(_iterator.__dict__[name] for name in ('_data', '_owner', '_state', '_remaining', '_size'))
+    __deque_native__(_slots + (deque.__dict__['_data'],), 'bind', _iterator.__dict__['__next__'], _operation)
+del _iterator, _slots
 del _method, _operation, _function
 
 

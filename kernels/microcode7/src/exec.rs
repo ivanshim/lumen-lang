@@ -32229,7 +32229,12 @@ impl Machine<'_> {
                 if input[1].settled().bare() == "bind" {
                     require(4, 4)?;
                     let descriptor = input[0].settled();
-                    if !matches!(descriptor, Value::Wrapped(32, _)) { return Err(String::from("TypeError: deque binding requires a slot descriptor")); }
+                    let accepted = match &descriptor {
+                        Value::Tuple(group) if group.len() == 6 => group.iter().all(|slot| matches!(slot, Value::Wrapped(32, _))),
+                        Value::Wrapped(32, _) => true,
+                        _ => false,
+                    };
+                    if !accepted { return Err(String::from("TypeError: deque binding requires slot descriptors")); }
                     let function = input[2].settled();
                     let body = match &function {
                         Value::Bound(body, _) => body,

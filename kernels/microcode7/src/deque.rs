@@ -128,6 +128,10 @@ impl Machine<'_> {
         }
         if self.written_over.contains_key(&identity) { return None; }
         if self.recursion_ceiling().is_some_and(|ceiling| self.standing >= ceiling) { return None; }
+        if command == "next" || command == "reverse_next" {
+            if values.len() != 1 || matches!(values[0], Value::Couple(_)) { return None; }
+            return self.deque_iterator_take(values[0].settled(), descriptor, command == "reverse_next");
+        }
         let shape = match command.as_str() {
             "append" | "appendleft" | "setlimit" | "setstate" => values.len() == 2,
             "rotate" => values.len() == 1 || values.len() == 2,
@@ -147,5 +151,57 @@ impl Machine<'_> {
             else { return None }
         } else { values.get(1).cloned() };
         Some(self.deque_work(&stored, &command, argument).map_err(Into::into))
+    }
+}
+
+impl Machine<'_> {
+    // Resolve unchanged slot descriptors without using overridable attribute access.
+    fn deque_walk_field(&self, object: &Value, slot: &Value) -> Option<(String, Value)> {
+        let Value::Wrapped(32, detail) = slot else { return None };
+        let Value::Blueprint(declared) = &detail[1] else { return None };
+        let entries = declared.shared.borrow();
+        for (name, _) in entries.iter() {
+            if name == "__getattr__" || name == "__setattr__" || name == "__getattribute__" { return None; }
+        }
+        let current = entries.iter().find_map(|(name, value)| (name == &detail[0].bare()).then(|| value.settled()))?;
+        if !matches!(current, Value::Wrapped(32, ref held) if Rc::ptr_eq(held, detail)) { return None; }
+        drop(entries);
+        let address = self.slot_key(object, detail).ok()?;
+        if let Value::Thing(instance) = object {
+            let found = instance.holds.borrow().iter().find_map(|(key, value)| (key == &address).then(|| value.clone()))?;
+            Some((address, found))
+        } else { None }
+    }
+
+    // Take one item, retaining the forward and reverse exhaustion order of the adapter.
+    fn deque_iterator_take(&mut self, object: Value, layout: Value, backwards: bool) -> Option<super::Res> {
+        let Value::Tuple(fields) = layout else { return None };
+        let Value::Thing(instance) = &object else { return None };
+        let Value::Wrapped(32, declaration) = &fields[0] else { return None };
+        let Value::Blueprint(expected) = &declaration[1] else { return None };
+        if !Rc::ptr_eq(expected, &instance.blueprint()) { return None; }
+        let captured = fields[..5].iter().map(|slot| self.deque_walk_field(&object, slot)).collect::<Option<Vec<_>>>()?;
+        let mut numbers = [0i64; 3];
+        for (destination, position) in [2, 3, 4].into_iter().enumerate() {
+            if let Value::Small(number) = captured[position].1.settled() { numbers[destination] = number; } else { return None; }
+        }
+        let [version, count, extent] = numbers;
+        if count < 0 || count > extent { return None; }
+        if backwards && count == 0 { return Some(self.raised_if_error(Err(String::from("StopIteration: ").into()))); }
+        let owner = captured[1].1.settled();
+        let (_, state) = self.deque_walk_field(&owner, &fields[5])?;
+        let present = self.deque_work(&state, "state", None).ok()?;
+        let Value::Small(latest) = present else { return None };
+        let remaining = &captured[3].0;
+        if version != latest {
+            instance.holds.borrow_mut().iter_mut().find(|(name, _)| name == remaining)?.1 = Value::Small(0);
+            return Some(self.raised_if_error(Err(String::from("RuntimeError: deque mutated during iteration").into())));
+        }
+        if count == 0 { return Some(self.raised_if_error(Err(String::from("StopIteration: ").into()))); }
+        let Value::Vector(row) = captured[0].1.settled() else { return None };
+        let offset = if backwards { count - 1 } else { extent - count };
+        let result = row.get(offset as usize)?.clone();
+        instance.holds.borrow_mut().iter_mut().find(|(name, _)| name == remaining)?.1 = Value::Small(count - 1);
+        Some(Ok(result))
     }
 }

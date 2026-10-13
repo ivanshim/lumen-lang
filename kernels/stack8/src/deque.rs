@@ -111,6 +111,10 @@ impl Engine<'_> {
         let (_, descriptor, verb) = self.deque_routines.get(&(Rc::as_ptr(routine) as usize))?.clone();
         if !matches!(self.trace_hook, Value::Null) { return None; }
         if routine.revised.borrow().is_some() || self.recursion_ceiling().is_some_and(|n| self.calls.len() + self.reaching >= n) { return None; }
+        if matches!(verb.as_str(), "next" | "reverse_next") {
+            if given.len() != 1 || matches!(given[0], Value::Tie(_)) { return None; }
+            return self.deque_iterator_step(&given[0].contents(), &descriptor, verb == "reverse_next");
+        }
         let wanted = match verb.as_str() { "append" | "appendleft" | "setstate" | "setlimit" => 2, "rotate" => given.len().clamp(1, 2), "data" | "state" | "limit" | "length" | "pop" | "popleft" => 1, _ => return None };
         if given.len() != wanted || given.iter().any(|v| matches!(v, Value::Tie(_))) { return None; }
         let receiver = given[0].contents();
@@ -126,5 +130,52 @@ impl Engine<'_> {
             }
         } else { given.get(1).cloned() };
         Some(self.deque_native_call(&storage, &verb, item).map_err(Into::into))
+    }
+}
+
+impl Engine<'_> {
+    // Read an owned slot while its descriptor and default attribute hooks remain intact.
+    fn deque_iterator_slot(&self, target: &Value, descriptor: &Value) -> Option<(String, Value)> {
+        let Value::Adapter(slot) = descriptor else { return None };
+        let Value::Class(class) = &slot.1[1] else { return None };
+        let members = class.shared.borrow();
+        if members.iter().any(|(name, _)| matches!(name.as_str(), "__getattribute__" | "__getattr__" | "__setattr__")) { return None; }
+        let original = members.iter().find(|(name, _)| name == &slot.1[0].plain())?.1.contents();
+        if !matches!(original, Value::Adapter(ref current) if Rc::ptr_eq(current, slot)) { return None; }
+        drop(members);
+        let key = self.slot_place(target, &slot.1).ok()?;
+        let Value::Object(object) = target else { return None };
+        let value = object.fields.borrow().iter().find(|(name, _)| name == &key)?.1.clone();
+        Some((key, value))
+    }
+
+    // Advance an exact deque iterator with the same remaining-count and mutation rules.
+    fn deque_iterator_step(&mut self, target: &Value, descriptors: &Value, reverse: bool) -> Option<super::Flow<Value>> {
+        let Value::Tuple(slots) = descriptors.contents() else { return None };
+        let Value::Object(iterator) = target else { return None };
+        let Value::Adapter(first) = &slots[0] else { return None };
+        if !matches!(&first.1[1], Value::Class(class) if Rc::ptr_eq(&iterator.class_now(), class)) { return None; }
+        let (_, data) = self.deque_iterator_slot(target, &slots[0])?;
+        let (_, owner) = self.deque_iterator_slot(target, &slots[1])?;
+        let (_, saved) = self.deque_iterator_slot(target, &slots[2])?;
+        let (remaining_key, left) = self.deque_iterator_slot(target, &slots[3])?;
+        let (_, total) = self.deque_iterator_slot(target, &slots[4])?;
+        let (Value::Small(remaining), Value::Small(size), Value::Small(version)) = (left.contents(), total.contents(), saved.contents()) else { return None };
+        if remaining < 0 || size < remaining { return None; }
+        let stop = "StopIteration: ";
+        if reverse && remaining == 0 { return Some(self.raised_of_note(Err(stop.into()))); }
+        let (_, storage) = self.deque_iterator_slot(&owner.contents(), &slots[5])?;
+        let current = self.deque_native_call(&storage, "state", None).ok()?;
+        let Value::Small(now) = current else { return None };
+        if now != version {
+            iterator.fields.borrow_mut().iter_mut().find(|(key, _)| key == &remaining_key)?.1 = Value::Small(0);
+            return Some(self.raised_of_note(Err("RuntimeError: deque mutated during iteration".into())));
+        }
+        if remaining == 0 { return Some(self.raised_of_note(Err(stop.into()))); }
+        let Value::Array(items) = data.contents() else { return None };
+        let index = if reverse { remaining - 1 } else { size - remaining } as usize;
+        let value = items.get(index)?.clone();
+        iterator.fields.borrow_mut().iter_mut().find(|(key, _)| key == &remaining_key)?.1 = Value::Small(remaining - 1);
+        Some(Ok(value))
     }
 }

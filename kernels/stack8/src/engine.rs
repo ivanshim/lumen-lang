@@ -26374,9 +26374,10 @@ impl Engine<'_> {
                 arity(2, 4)?;
                 if args[1].contents().plain() == "bind" {
                     arity(4, 4)?;
-                    let Value::Adapter(slot) = args[0].contents() else { return Err("TypeError: deque binding requires a slot descriptor".into()) };
+                    let descriptor = args[0].contents();
+                    let slots = match &descriptor { Value::Tuple(row) if row.len() == 6 => row.as_slice(), _ => std::slice::from_ref(&descriptor) };
+                    if !slots.iter().all(|v| matches!(v, Value::Adapter(slot) if slot.0 == 16)) { return Err("TypeError: deque binding requires slot descriptors".into()); }
                     let Value::Routine(routine) = args[2].contents() else { return Err("TypeError: deque binding requires a function".into()) };
-                    if slot.0 != 16 { return Err("TypeError: deque binding requires a slot descriptor".into()); }
                     let Value::Text(verb) = args[3].contents() else { return Err("TypeError: deque operation must be a string".into()) };
                     self.deque_routines.insert(Rc::as_ptr(&routine) as usize, (args[2].clone(), args[0].clone(), verb.to_string()));
                     return Ok(args[2].clone());
