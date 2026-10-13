@@ -1,5 +1,7 @@
 /// Python cache header for this kernel; the host uses the same ABI marker.
-pub const PYTHON_CACHE_MAGIC: [u8; 4] = *b"L8C\x05";
+pub const PYTHON_CACHE_MAGIC: [u8; 4] = *b"L8C\x06";
+/// Serialized instruction format, including shared token origins.
+pub const PYTHON_CACHE_ABI: &str = "lumen-stack8-v6";
 
 pub mod strings;
 mod unicode;
@@ -63,6 +65,7 @@ pub fn run(language: &str, source: &str, program_args: &[String], request: &[(St
             let mut lang = Lang::parse(text).map_err(|e| format!("Error: definition of '{language}': {e}"))?;
             settle_brief(&mut lang, request);
             settle_markup(&mut lang, request);
+            if let Some((entries, sources)) = compile::prepared_entries(text) { lang.prepared_scopes = Some(entries); lang.prepared_source_tokens = Some(sources); }
             return go(&lang, source, program_args, request);
         }
     }
@@ -74,6 +77,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     let mut lang = Lang::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
     settle_brief(&mut lang, request);
     settle_markup(&mut lang, request);
+    if let Some((entries, sources)) = compile::prepared_entries(definition) { lang.prepared_scopes = Some(entries); lang.prepared_source_tokens = Some(sources); }
     go(&lang, source, program_args, request)
 }
 
@@ -275,8 +279,9 @@ fn whole_import<'a>(source: &'a str, lang: &Lang, before: u32) -> std::borrow::C
 }
 
 fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
-    // File input has universal newlines before the tokenizer sees it.
-    let universal = (!lang.syntax_members.is_empty() && source.contains("\r\n")).then(|| source.replace("\r\n", "\n"));
+    // File input has universal newlines before the tokenizer sees it:
+    // a CRLF pair and a lone CR both end a line.
+    let universal = (!lang.syntax_members.is_empty() && source.contains('\r')).then(|| source.replace("\r\n", "\n").replace('\r', "\n"));
     let source = universal.as_deref().unwrap_or(source);
     let before = lines_before(request);
     let source = whole_import(source, lang, before);
@@ -317,6 +322,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for name in &lang.module_doc {
         registry.slot(name);
     }
+    registry.source = Some(std::rc::Rc::from(&*source));
     let program = match compile::compile(&tokens, lang, &mut registry, before) {
         Ok(program) => program,
         Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally, &source,

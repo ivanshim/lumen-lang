@@ -85,7 +85,7 @@ struct Context {
     globe: Option<Value>,
     born: Option<Value>,
     home: Option<Option<Rc<str>>>,
-    origins: Vec<Rc<str>>,
+    origins: Vec<Rc<[crate::lex::Token]>>,
     routines: Vec<Json>,
     restored: Vec<Option<Rc<crate::code::Routine>>>,
     active: std::collections::HashSet<usize>,
@@ -98,7 +98,7 @@ struct ContextScope;
 impl Drop for ContextScope { fn drop(&mut self) { CONTEXT.with(|c| { c.borrow_mut().pop(); }); } }
 
 pub fn program(mut packet: Json, registry: &mut crate::compile::Registry) -> Result<Rc<crate::code::Routine>, String> {
-    if packet["abi"] != "lumen-stack8-v5" { return Err("ImportError: incompatible compiled code ABI".into()); }
+    if packet["abi"] != crate::PYTHON_CACHE_ABI { return Err("ImportError: incompatible compiled code ABI".into()); }
     let mut archived: crate::compile::Registry = serde_json::from_value(packet["bindings"].take()).map_err(|e| format!("ValueError: {e}"))?;
     let places: Vec<usize> = archived.idents.iter().map(|name| registry.slot(name)).collect();
     fn relocate(node: &mut Json, places: &[usize]) -> Result<(), String> {
@@ -131,9 +131,9 @@ pub fn program(mut packet: Json, registry: &mut crate::compile::Registry) -> Res
     serde_json::from_value(packet["program"].take()).map_err(|e| format!("ValueError: {e}"))
 }
 
-type OriginTable = (Vec<Rc<str>>, std::collections::HashMap<usize, usize>);
+type OriginTable = (Vec<Rc<[crate::lex::Token]>>, std::collections::HashMap<usize, usize>);
 thread_local! { static WRITING: RefCell<Option<OriginTable>> = const { RefCell::new(None) }; }
-pub fn write_origin<S: Serializer>(origin: &Rc<str>, serializer: S) -> Result<S::Ok, S::Error> {
+pub fn write_origin<S: Serializer>(origin: &Rc<[crate::lex::Token]>, serializer: S) -> Result<S::Ok, S::Error> {
     let index = WRITING.with(|writer| {
         let mut writer = writer.borrow_mut();
         let (words, addresses) = writer.as_mut()?;
@@ -146,14 +146,14 @@ pub fn write_origin<S: Serializer>(origin: &Rc<str>, serializer: S) -> Result<S:
     });
     match index { Some(index) => index.serialize(serializer), None => origin.serialize(serializer) }
 }
-pub fn read_origin<'de, D: Deserializer<'de>>(reader: D) -> Result<Rc<str>, D::Error> {
+pub fn read_origin<'de, D: Deserializer<'de>>(reader: D) -> Result<Rc<[crate::lex::Token]>, D::Error> {
     let word = Json::deserialize(reader)?;
-    if let Some(text) = word.as_str() { return Ok(Rc::from(text)); }
+    if word.is_array() { return serde_json::from_value(word).map_err(serde::de::Error::custom); }
     let index = word.as_u64().ok_or_else(|| serde::de::Error::custom("invalid source origin"))?;
     CONTEXT.with(|c| c.borrow().last().and_then(|s| s.origins.get(index as usize).cloned()))
         .ok_or_else(|| serde::de::Error::custom("source origin outside cache"))
 }
-pub fn encoded(program: &Rc<crate::code::Routine>) -> Result<(Json, Vec<Rc<str>>, Vec<Json>), String> {
+pub fn encoded(program: &Rc<crate::code::Routine>) -> Result<(Json, Vec<Rc<[crate::lex::Token]>>, Vec<Json>), String> {
     let parent = WRITING.with(|w| w.replace(Some((Vec::new(), std::collections::HashMap::new()))));
     let parent_routines = ROUTINE_OUTPUT.with(|pool| pool.replace(Some((Vec::new(), Default::default()))));
     let graph = serde_json::to_value(program).map_err(|e| format!("ValueError: {e}"));

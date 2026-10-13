@@ -155,7 +155,10 @@ def make_spec(name, filename):
 def find_custom(name, parent_path):
     import sys
     for finder in sys.meta_path:
-        spec = finder.find_spec(name, parent_path, None)
+        find_spec = getattr(finder, 'find_spec', None)
+        if find_spec is None:
+            continue
+        spec = find_spec(name, parent_path, None)
         if spec is not None:
             if type(finder) is SourceFinder and type(spec.loader) is SourceLoader:
                 return True, None

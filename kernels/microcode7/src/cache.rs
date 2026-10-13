@@ -73,7 +73,7 @@ impl<'a> Deserialize<'a> for Value {
     }
 }
 
-type Namespace = (Option<Value>, Option<Value>, Option<Rc<str>>, Vec<Rc<str>>);
+type Namespace = (Option<Value>, Option<Value>, Option<Rc<str>>, Vec<Rc<Vec<crate::scan::Token>>>);
 thread_local! { static READ_NAMESPACES: RefCell<Vec<Namespace>> = const { RefCell::new(Vec::new()) }; }
 pub fn outer_dictionary() -> Option<Value> { READ_NAMESPACES.with(|stack| stack.borrow().last().and_then(|names| names.0.clone())) }
 pub fn native_dictionary() -> Option<Value> { READ_NAMESPACES.with(|stack| stack.borrow().last().and_then(|names| names.1.clone())) }
@@ -84,7 +84,7 @@ impl Drop for ReadingScope {
 }
 
 pub fn forms(mut record: Node, seeded: &[String], globals: Option<Value>, natives: Option<Value>, module: Option<Rc<str>>) -> Result<crate::build::Built, String> {
-    if record["format"] != "lumen-microcode7-v5" { return Err("ImportError: compiled forms use a different ABI".to_owned()); }
+    if record["format"] != crate::PYTHON_CACHE_ABI { return Err("ImportError: compiled forms use a different ABI".to_owned()); }
     let mut names = seeded.to_vec();
     let prior: Vec<String> = serde_json::from_value(record["metadata"]["globals"].clone()).map_err(|error| format!("ValueError: {error}"))?;
     let mut offsets = Vec::with_capacity(prior.len());
@@ -124,11 +124,11 @@ pub fn forms(mut record: Node, seeded: &[String], globals: Option<Value>, native
 }
 
 struct Spellings {
-    rows: Vec<Rc<str>>,
+    rows: Vec<Rc<Vec<crate::scan::Token>>>,
     lookup: std::collections::HashMap<usize, usize>,
 }
 thread_local! { static OUTPUT_WORDS: RefCell<Option<Spellings>> = const { RefCell::new(None) }; }
-pub fn save_spelling<S: Serializer>(word: &Rc<str>, out: S) -> Result<S::Ok, S::Error> {
+pub fn save_spelling<S: Serializer>(word: &Rc<Vec<crate::scan::Token>>, out: S) -> Result<S::Ok, S::Error> {
     let reference = OUTPUT_WORDS.with(|cell| {
         let mut state = cell.borrow_mut();
         let table = state.as_mut()?;
@@ -141,9 +141,9 @@ pub fn save_spelling<S: Serializer>(word: &Rc<str>, out: S) -> Result<S::Ok, S::
     });
     if let Some(reference) = reference { reference.serialize(out) } else { word.serialize(out) }
 }
-pub fn recover_spelling<'de, D: Deserializer<'de>>(from: D) -> Result<Rc<str>, D::Error> {
+pub fn recover_spelling<'de, D: Deserializer<'de>>(from: D) -> Result<Rc<Vec<crate::scan::Token>>, D::Error> {
     match Node::deserialize(from)? {
-        Node::String(word) => Ok(Rc::from(word)),
+        Node::Array(tokens) => serde_json::from_value(Node::Array(tokens)).map_err(serde::de::Error::custom),
         Node::Number(number) => {
             let at = number.as_u64().ok_or_else(|| serde::de::Error::custom("bad source symbol"))?;
             READ_NAMESPACES.with(|scope| scope.borrow().last().and_then(|environment| environment.3.get(at as usize).cloned()))
@@ -152,7 +152,7 @@ pub fn recover_spelling<'de, D: Deserializer<'de>>(from: D) -> Result<Rc<str>, D
         _ => Err(serde::de::Error::custom("source metadata has wrong type")),
     }
 }
-pub fn serialize_forms(routine: Rc<crate::form::Routine>) -> Result<(Node, Vec<Rc<str>>, Vec<Node>), String> {
+pub fn serialize_forms(routine: Rc<crate::form::Routine>) -> Result<(Node, Vec<Rc<Vec<crate::scan::Token>>>, Vec<Node>), String> {
     let previous = OUTPUT_WORDS.with(|cell| cell.replace(Some(Spellings { rows: Vec::new(), lookup: std::collections::HashMap::new() })));
     let previous_bodies = BODY_OUTPUT.with(|slot| slot.replace(Some(BodyOutput::default())));
     let result = serde_json::to_value(routine);

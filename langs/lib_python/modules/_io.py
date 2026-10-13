@@ -954,11 +954,20 @@ class IncrementalNewlineDecoder:
 
 _PLAIN_MODES = frozenset(['r', 'rb', 'w', 'wb', 'a', 'ab', 'x', 'xb', 'r+', 'rb+', 'r+b', 'w+', 'wb+', 'w+b', 'a+', 'ab+', 'a+b', 'x+', 'xb+', 'x+b'])
 
+_finalizer_warnings = None
+_finalizer_collector = None
+_finalizer_os = None
+
 class FileIO(_RawIOBase):
     def _dealloc_warn(self, source):
         if getattr(self, '_fd', -1) >= 0 and self._closefd and not self.closed:
             import warnings
             warnings.warn('unclosed file ' + repr(source), ResourceWarning, stacklevel=2, source=source)
+    # What a stream whose __init__ never finished stands as, the way the C
+    # stream stands with no descriptor: closed, and owing nothing.
+    _fd = -1
+    _closed = True
+    _closefd = True
     def __init__(self, file, mode='r', closefd=True, opener=None):
         import os
         if getattr(self, '_fd', -1) >= 0:
@@ -977,7 +986,7 @@ class FileIO(_RawIOBase):
         self._closefd = bool(closefd)
         self._fd = -1
         self._closed = True
-        self.mode = ('ab' if base[0] == 'a' else 'xb' if base[0] == 'x' else 'rb' if base[0] == 'r' else 'wb') + ('+' if '+' in mode else '')
+        self.mode = ('ab+' if base[0] == 'a' else 'xb+' if base[0] == 'x' else 'rb+') if '+' in mode else ('ab' if base[0] == 'a' else 'xb' if base[0] == 'x' else 'rb' if base[0] == 'r' else 'wb')
         if isinstance(file, float):
             raise TypeError('integer argument expected, got float')
         owned = False
@@ -1024,6 +1033,10 @@ class FileIO(_RawIOBase):
             self.name = file
             self._fd = fd
             self._closed = False
+            global _finalizer_warnings, _finalizer_collector, _finalizer_os
+            if _finalizer_warnings is None:
+                import warnings, gc
+                _finalizer_warnings, _finalizer_collector, _finalizer_os = warnings, gc, os
             if base[0] == 'a':
                 try:
                     self.seek(0, 2)
@@ -1041,14 +1054,41 @@ class FileIO(_RawIOBase):
             raise
     def _dealloc_warn(self, source):
         if getattr(self, '_fd', -1) >= 0 and getattr(self, '_closefd', False):
-            import warnings
+            if sys.is_finalizing() and _finalizer_warnings is not None:
+                warnings, gc = _finalizer_warnings, _finalizer_collector
+            else:
+                import warnings
+                import gc
+            prefixes = (__file__,)
+            collector_source = getattr(gc, '__file__', None)
+            if collector_source is not None:
+                prefixes += (collector_source,)
             try:
-                warnings.warn('unclosed file %r' % source, ResourceWarning,
-                              stacklevel=2, source=source)
+                warnings.warn('unclosed file %r' % (source,), ResourceWarning,
+                              stacklevel=2, source=source, skip_file_prefixes=prefixes)
             except Warning as error:
                 sys._report_unraisable(error, error.__traceback__, self, 'file')
             except Exception:
                 pass
+    def __getstate__(self):
+        raise TypeError("cannot pickle 'FileIO' instances")
+    def __repr__(self):
+        title = type(self).__module__ + '.' + type(self).__qualname__
+        if getattr(self, '_fd', -1) < 0:
+            return '<%s [closed]>' % title
+        if getattr(self, '_repr_running', False):
+            raise RuntimeError('reentrant call inside ' + title + '.__repr__')
+        try:
+            name = self.name
+        except AttributeError:
+            return '<%s fd=%d mode=%r closefd=%r>' % (
+                title, self._fd, self.mode, self._closefd)
+        self._repr_running = True
+        try:
+            return '<%s name=%r mode=%r closefd=%r>' % (
+                title, name, self.mode, self._closefd)
+        finally:
+            self._repr_running = False
     @property
     def closefd(self):
         return self._closefd
@@ -1057,7 +1097,10 @@ class FileIO(_RawIOBase):
         return self._fd
     def close(self):
         if not self.closed:
-            import os
+            if _finalizer_os is not None:
+                os = _finalizer_os
+            else:
+                import os
             try:
                 if self._closefd:
                     os.close(self._fd)
@@ -1114,14 +1157,20 @@ class FileIO(_RawIOBase):
     def write(self, buffer):
         self._checkClosed()
         self._checkWritable()
-        import os
+        if _finalizer_os is not None:
+            os = _finalizer_os
+        else:
+            import os
         try:
             return os.write(self._fd, _buffer(buffer))
         except BlockingIOError:
             return None
     def seek(self, offset, whence=0):
         self._checkClosed()
-        import os
+        if _finalizer_os is not None:
+            os = _finalizer_os
+        else:
+            import os
         return os.lseek(self._fd, _ssize(offset), _whence(whence))
     def truncate(self, size=None):
         self._checkClosed()
@@ -1129,7 +1178,10 @@ class FileIO(_RawIOBase):
         if size is None:
             size = self.tell()
         size = _ssize(size)
-        import os
+        if _finalizer_os is not None:
+            os = _finalizer_os
+        else:
+            import os
         os.ftruncate(self._fd, size)
         return size
 
@@ -1321,6 +1373,12 @@ class BufferedReader(_BufferedIOBase):
         if name in ('_implementation', '_raw', '_repr_running', '_detached'):
             raise AttributeError(name)
         return getattr(self._impl, name)
+    def _dealloc_warn(self, source):
+        raw = self.raw
+        if raw is not None:
+            notify = getattr(raw, '_dealloc_warn', None)
+            if notify is not None:
+                notify(source)
     def __repr__(self):
         title = type(self).__module__ + '.' + type(self).__qualname__
         if getattr(self, '_repr_running', False):

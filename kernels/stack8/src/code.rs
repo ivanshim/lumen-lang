@@ -60,6 +60,49 @@ impl Attempt {
     }
 }
 
+/// Local lookup slots usually contain just one index.
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum LocalSlots {
+    Single(usize),
+    Several(Vec<usize>),
+}
+
+impl std::fmt::Debug for LocalSlots {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl Default for LocalSlots {
+    fn default() -> Self { Self::Several(Vec::new()) }
+}
+
+impl std::ops::Deref for LocalSlots {
+    type Target = [usize];
+    fn deref(&self) -> &[usize] {
+        match self { Self::Single(slot) => std::slice::from_ref(slot), Self::Several(slots) => slots }
+    }
+}
+
+impl LocalSlots {
+    pub fn clear(&mut self) { *self = Self::default(); }
+    pub fn extend(&mut self, slots: impl IntoIterator<Item = usize>) {
+        for slot in slots {
+            match self {
+                Self::Several(existing) if existing.is_empty() => *self = Self::Single(slot),
+                Self::Single(first) => *self = Self::Several(vec![*first, slot]),
+                Self::Several(existing) => existing.push(slot),
+            }
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a LocalSlots {
+    type Item = &'a usize;
+    type IntoIter = std::slice::Iter<'a, usize>;
+    fn into_iter(self) -> Self::IntoIter { self.iter() }
+}
+
 /// A binding's address: candidate local slots (innermost first) and the
 /// global slot of the same name. A load reads the first local that holds
 /// a value and falls through to the global; a store writes the first
@@ -69,7 +112,7 @@ impl Attempt {
 pub struct Cell {
     pub free: bool,
     pub ident: Rc<str>,
-    pub near: Vec<usize>,
+    pub near: LocalSlots,
     pub far: usize,
     /// A load that moves the value out and leaves a hole, so the value
     /// is unshared while an operation rewrites it; the next store to the
@@ -785,6 +828,8 @@ pub enum Builtin {
     /// built-in writing for out to bytes and read it back: `None`
     /// where the value keeps none, else the pieces marshal writes and
     /// its opposite number reads back into the very value again.
+    LzmaEncode,
+    LzmaDecode,
     ZlibNative,
     StructNative,
     BinAscii,
@@ -793,6 +838,7 @@ pub enum Builtin {
     NativeFrame,
     HeapNative,
     ContextNative,
+    AllocationTrace,
     WarningBackend(u8),
     ReduceNative,
     RebuildNative,
@@ -956,7 +1002,9 @@ pub struct Routine {
     pub annotation: Option<Rc<Routine>>,
     pub code_constants: Vec<Value>,
     #[serde(serialize_with = "crate::cache::write_origin", deserialize_with = "crate::cache::read_origin")]
-    pub source_tokens: Rc<str>,
+    pub source_tokens: Rc<[crate::lex::Token]>,
+    #[serde(skip)]
+    pub source_content: Rc<std::cell::OnceCell<Rc<str>>>,
     pub source_end: usize,
     pub embedded_integers: Option<Vec<bool>>,
     pub code_names: Vec<String>,

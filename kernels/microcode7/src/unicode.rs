@@ -2,9 +2,23 @@
 // Source: https://www.unicode.org/Public/16.0.0/ucd/ ; its terms stand at
 // https://www.unicode.org/license.txt .
 
+// Expand the packed Unicode ranges for the frequently read plain character set.
+const PLAIN_MASKS: [u16; 128] = {
+    let mut cells = [0u16; 128];
+    let mut point = 0usize;
+    let mut entry = 0;
+    while point < cells.len() {
+        while entry < RANGES.len() && (RANGES[entry] >> 16 & 0x1fffff) < point as u64 { entry += 1; }
+        if entry < RANGES.len() && RANGES[entry] >> 37 <= point as u64 { cells[point] = RANGES[entry] as u16; }
+        point += 1;
+    }
+    cells
+};
+
 pub fn property(c: char, mask: u16) -> bool {
     if c.is_ascii() { return ASCII_PROPERTIES[c as usize] & mask != 0; }
     let number = u64::from(c as u32);
+    if c.is_ascii() { return PLAIN_MASKS[number as usize] & mask != 0; }
     let found = RANGES.partition_point(|entry| (*entry >> 16 & 0x1fffff) < number);
     RANGES.get(found).map_or(false, |entry| {
         (*entry >> 37) <= number && (*entry as u16 & mask) != 0

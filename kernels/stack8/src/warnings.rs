@@ -45,6 +45,7 @@ impl Engine<'_> {
     }
     fn warning_public(&mut self) -> Res<Value> {
         self.module_cache_value("warnings").filter(|v| !matches!(v, Value::Null))
+            .or_else(|| if self.finalizing { self.modules.get("warnings").cloned() } else { None })
             .or_else(|| self.warning_bound.clone()).or_else(|| self.warning_module.clone()).ok_or_else(|| "RuntimeError: warning backend is not initialized".into())
     }
     fn warning_attribute(&mut self, name: &str, fallback: &str) -> Res<Value> {
@@ -59,6 +60,12 @@ impl Engine<'_> {
         self.warning_member(native, fallback)
     }
     fn warning_call(&mut self, operation: u8, items: Vec<(Option<String>, Value)>) -> Res<Value> {
+        let caller_location = self.location;
+        let answer = self.warning_dispatch(operation, items);
+        self.location = caller_location;
+        answer
+    }
+    fn warning_dispatch(&mut self, operation: u8, items: Vec<(Option<String>, Value)>) -> Res<Value> {
         if operation >= 2 {
             let args: Vec<_> = items.into_iter().map(|(name, value)| if name.is_none() { Ok(value) } else { Err("TypeError: native warnings operation takes no keyword arguments".to_string()) }).collect::<Result<_,_>>()?;
             match operation {
@@ -129,7 +136,10 @@ impl Engine<'_> {
             let file = match &fields[6].1 { Value::Routine(routine) => routine.written_in.as_ref().map(|file| Value::text(file)).unwrap_or_else(|| Value::text(&self.root_source)), _ => Value::text(&self.root_source) };
             (globals, file, fields[0].1.clone())
         } else {
-            let sys = self.import_module("sys").map_err(|error| { self.carried = Some(error); self.special_fault() })?;
+            let sys = match self.modules.get("sys").cloned() {
+                Some(sys) => sys,
+                None => self.import_module("sys").map_err(|error| { self.carried = Some(error); self.special_fault() })?,
+            };
             (self.warning_member(sys, "__dict__")?, Value::text("<sys>"), Value::Small(0))
         };
         let module = self.warning_method(globals.clone(), "get", vec![Value::text("__name__"), Value::text("<string>")])?;
@@ -252,7 +262,7 @@ impl Engine<'_> {
         if matches!(name, Value::Null) { return Ok(Value::Null); }
         let source = match self.call_held(get_source, vec![name]) {
             Ok(source) => source,
-            Err(error) if error.starts_with("ImportError:") => { self.carried = None; return Ok(Value::Null); }
+            Err(error) if error.starts_with("ImportError:") || self.carried.as_ref().is_some_and(|fault| self.fault_names(fault, "ImportError")) => { self.carried = None; return Ok(Value::Null); }
             Err(error) => return Err(error),
         };
         if matches!(source.contents(), Value::Null) { return Ok(Value::Null); }
@@ -284,12 +294,13 @@ impl Engine<'_> {
 
 impl Engine<'_> {
     fn finder_import(&mut self, path: &str) -> Flow<Option<Value>> {
-        let parent_path = if let Some((parent, _)) = path.rsplit_once('.') {
-            let owner = self.import_module(parent)?;
-            self.member_of(owner, "__path__")?.unwrap_or(Value::Null)
-        } else { Value::Null };
         let Some(sys) = self.modules.get("sys").cloned() else { return Ok(None); };
         let Some(finders) = self.member_of(sys, "meta_path")? else { return Ok(None); };
+        let search_path = if let Some((parent, _)) = path.rsplit_once('.') {
+            let owner = self.import_module(parent)?;
+            if self.module_cache_value(path).is_some() { return self.import_module(path).map(Some); }
+            self.member_of(owner, "__path__")?.unwrap_or(Value::Null)
+        } else { Value::Null };
         let finders = self.core_members(&finders)?;
         self.finder_active.insert(path.to_string());
         let result: Res<Option<Value>> = (|| {
@@ -312,30 +323,33 @@ impl Engine<'_> {
                     if self.lang.warning_backend.first().is_some_and(|word| word == path) || self.module_sources.contains_key(path) || self.sys_path_source(path).is_some() { return Ok(None); }
                     continue;
                 }
-                let spec = self.warning_method(finder, "find_spec", vec![Value::text(path), parent_path.clone(), Value::Null])?;
+                let Some(find_spec) = self.member_of(finder, "find_spec")? else { continue; };
+                let spec = self.call_held(find_spec, vec![Value::text(path), search_path.clone(), Value::Null])?;
                 if matches!(spec.contents(), Value::Null) { continue; }
                 if self.modules.get("importlib").cloned().is_some_and(|module| self.member_of(module, "_native_spec").ok().flatten().is_some()) {
                     let bridge = self.builtin(Builtin::ModuleLoad, "__load_module", &mut vec![Value::text("_zipimport_path")])?;
                     let loaded = self.warning_method(bridge, "load", vec![spec])?;
                     self.modules.insert(path.to_string(), loaded.clone());
-                    self.module_addresses_ready.set(false);
+                    self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear();
                     return Ok(Some(loaded));
                 }
-                let loader = self.warning_member(spec.clone(), "loader")?;
-                let mut module = if let Some(bootstrap) = self.modules.get("importlib._bootstrap").cloned() {
-                    self.warning_method(bootstrap, "module_from_spec", vec![spec.clone()])?
-                } else { self.warning_method(loader.clone(), "create_module", vec![spec.clone()])? };
-                if matches!(module.contents(), Value::Null) {
-                    let class = self.kind_class("module"); self.made += 1;
-                    module = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class,
-                        fields: RefCell::new(vec![("__name__".into(), Value::text(path)), ("__loader__".into(), loader.clone()), ("\0loaded-module".into(), Value::Flag(true))]), mark: self.made }));
-                }
-                if let Value::Object(object) = &module { object.fields.borrow_mut().push(("__spec__".into(), spec)); }
-                self.modules.insert(path.to_string(), module.clone()); self.module_addresses_ready.set(false); self.refresh_module_cache(path);
-                self.warning_method(loader, "exec_module", vec![module.clone()])?;
+                let bootstrap = self.import_module("importlib._bootstrap").map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                // The pinned loader owns namespace creation, replacement and failure cleanup.
+                let loaded = self.warning_method(bootstrap, "_load_unlocked", vec![spec]);
+                let module = match loaded {
+                    Ok(value) => value.contents(),
+                    Err(fault) => {
+                        self.modules.remove(path);
+                        self.module_addresses_ready.set(false);
+                        return Err(fault);
+                    }
+                };
+                self.modules.insert(path.to_string(), module.clone());
+                self.module_addresses_ready.set(false);
                 if let Some((parent, child)) = path.rsplit_once('.') {
-                    if let Some(owner) = self.modules.get(parent).cloned() {
-                        self.core_call(Builtin::SetAttr, "setattr", vec![owner, Value::text(child), module.clone()], Vec::new())?;
+                    if let Some(owner) = self.module_cache_value(parent).or_else(|| self.modules.get(parent).cloned()) {
+                        let setter = self.builtin_named("setattr")?.unwrap();
+                        self.call_held(setter, vec![owner, Value::text(child), module.clone()])?;
                     }
                 }
                 return Ok(Some(module));
@@ -367,5 +381,45 @@ impl Engine<'_> {
             }
         }
         Ok(())
+    }
+}
+
+impl Engine<'_> {
+    fn remember_allocation(&mut self, value: &Value) {
+        if self.allocation_depth == 0 { return; }
+        let Value::Object(object) = value else { return; };
+        let mut sites = Vec::new();
+        let mut frame = self.trace_frame.clone();
+        while let Some(current) = frame {
+            let row = current.fields.borrow();
+            if let Value::Routine(body) = &row[6].1 {
+                let file = body.written_in.as_deref().unwrap_or(&self.root_source);
+                // These Python counterparts implement native I/O allocation.
+                if !["/modules/_io.py", "/modules/_pyio.py", "/modules/builtins.py"].iter().any(|suffix| file.ends_with(suffix)) {
+                    if let Value::Small(line) = row[0].1.contents() { sites.push((file.to_string(), line)); }
+                }
+            }
+            if sites.len() == self.allocation_depth { break; }
+            frame = match &row[2].1 { Value::Object(parent) => Some(parent.clone()), _ => None };
+        }
+        sites.reverse();
+        if self.made % 64 == 0 { self.allocation_sites.retain(|_, (weak, _)| weak.strong_count() != 0); }
+        self.allocation_sites.insert(Rc::as_ptr(object) as usize, (Rc::downgrade(object), sites));
+    }
+    fn allocation_command(&mut self, args: &[Value]) -> Res<Value> {
+        let Some(Value::Small(operation)) = args.first().map(Value::contents) else { return Err("TypeError: allocation operation must be an integer".into()); };
+        match (operation, args) {
+            (0, [_, value]) => {
+                let Value::Object(object) = value.contents() else { return Ok(Value::Null); };
+                let Some((weak, sites)) = self.allocation_sites.get(&(Rc::as_ptr(&object) as usize)) else { return Ok(Value::Null); };
+                if weak.upgrade().is_none() { return Ok(Value::Null); }
+                Ok(Value::tuple(sites.iter().map(|(file, line)| Value::tuple(vec![Value::text(file), Value::Small(*line)])).collect()))
+            }
+            (1, [_, Value::Small(limit)]) if *limit > 0 && *limit <= 65535 => { if self.allocation_depth == 0 { self.allocation_depth = *limit as usize; self.allocation_retained_depth = self.allocation_depth; } Ok(Value::Null) }
+            (2, [_]) => { self.allocation_depth = 0; self.allocation_sites.clear(); Ok(Value::Null) }
+            (3, [_]) => Ok(Value::Flag(self.allocation_depth > 0)),
+            (4, [_]) => Ok(Value::Small(self.allocation_retained_depth as i64)),
+            _ => Err("ValueError: invalid allocation tracing operation".into()),
+        }
     }
 }

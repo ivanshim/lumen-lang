@@ -14,24 +14,6 @@ def _to_file_args(args):
     return (args[0], args[1:]) if args else (None, [])
 
 
-def _interpreter_options(args):
-    options = []
-    position = 0
-    while position < len(args):
-        argument = args[position]
-        if argument in ('-c', '-m') or not argument.startswith('-'):
-            break
-        if argument in ('-X', '-W', '-Q') and position + 1 < len(args):
-            if argument == '-X' and args[position + 1] == 'dev':
-                options.extend(('-X', 'dev'))
-            position += 2
-        else:
-            if argument == '-Xdev':
-                options.append(argument)
-            position += 1
-    return options
-
-
 def _option_env(args):
     # The -X options that mean something to the library are handed to the
     # second interpreter as the environment variables that do the same.
@@ -137,7 +119,7 @@ class _PythonRunResult:
 
 def _assert_python(expected_success, *args, **env_vars):
     file, rest = _to_file_args(args)
-    cmd_line = [sys.executable] + _interpreter_options(args) + [file] + rest
+    cmd_line = [sys.executable, file] + rest
     env = os.environ.copy()
     env.update(_option_env(args))
     env.update(env_vars)
@@ -181,7 +163,7 @@ def assert_python_failure(*args, **env_vars):
 
 def spawn_python(*args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kw):
     file, rest = _to_file_args(args)
-    cmd_line = [sys.executable] + _interpreter_options(args) + [file] + rest
+    cmd_line = [sys.executable, file] + rest
     env = os.environ.copy()
     env.update(_option_env(args))
     env['PYTHONPATH'] = os.pathsep.join(filter(None, sys.path))
@@ -194,7 +176,7 @@ def spawn_python(*args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **kw):
 
 def run_python_until_end(*args, **env_vars):
     file, rest = _to_file_args(args)
-    cmd_line = [sys.executable] + _interpreter_options(args) + [file] + rest
+    cmd_line = [sys.executable, file] + rest
     env = os.environ.copy()
     env.update(_option_env(args))
     env.update(env_vars)
@@ -230,3 +212,12 @@ def run_test_script(script):
             raise AssertionError(f"{name} failed")
     else:
         assert_python_ok("-u", script, "-v")
+
+# Drain and reap a child after its input has been closed.
+def kill_python(p):
+    p.stdin.close()
+    data = p.stdout.read()
+    p.stdout.close()
+    p.wait()
+    subprocess._cleanup()
+    return data

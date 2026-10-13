@@ -3,6 +3,12 @@ _host_stream_read = __stream_read
 _host_stream_write = __stream_write
 _host_environment = __posix
 
+def _write_standard(*args):
+    result = _host_stream_write(*args)
+    if isinstance(result, tuple):
+        raise OSError(*result)
+    return result
+
 # Host details which the present numeric and object model can honour.
 argv = __program_namespace()['__program_argv']
 # Startup options are consumed by the warnings module when first imported.
@@ -12,6 +18,16 @@ while _startup_options:
     _size, _tail = _startup_options.split(':', 1)
     _size = int(_size)
     warnoptions.append(_tail[:_size])
+    _startup_options = _tail[_size:]
+del _startup_options
+_xoptions = {}
+_startup_options = __posix('environ')[1].get(b'LUMEN_XOPTIONS', b'').decode('utf-8')
+while _startup_options:
+    _size, _tail = _startup_options.split(':', 1)
+    _size = int(_size)
+    _option = _tail[:_size]
+    _name, _equals, _value = _option.partition('=')
+    _xoptions[_name] = _value if _equals else True
     _startup_options = _tail[_size:]
 del _startup_options
 # Where a name that is `import`ed is looked for: a directory put here
@@ -63,7 +79,11 @@ maxsize = 9223372036854775807
 pycache_prefix = None
 dont_write_bytecode = True
 version_info = (3, 14, 8, 'final', 0)
-version = '3.14.8 (Lumen)'
+version = '3.14.8 (Lumen) [Rust]'
+# The source-control identity the reference build records beside the
+# version. This interpreter is not checked out from CPython's tree, so
+# there is no branch or revision; the build tag names it plainly instead.
+_git = ('Lumen', '', '')
 hexversion = 0x030e08f0
 platform = 'linux'
 # Which Python this is. A test that reaches for the internals of the
@@ -205,6 +225,8 @@ def set_int_max_str_digits(maxdigits):
 # takes its own skip road instead of finding an attribute missing.
 class _StandardStream:
     closed = False
+    encoding = 'utf-8'
+    errors = 'backslashreplace'
 
     def _ensure_open(self):
         if self.closed:
@@ -259,7 +281,7 @@ class _BinaryOutput(_StandardStream):
         self._fd = 2 if error else 1
     def write(self, data):
         self._ensure_open()
-        return _host_stream_write(data, self.error, True)
+        return _write_standard(data, self.error, True)
     def flush(self):
         self._ensure_open()
     def isatty(self):
@@ -274,7 +296,7 @@ class _Output(_StandardStream):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
         self._ensure_open()
-        return _host_stream_write(*args, False)
+        return _write_standard(*args, False)
 
     def flush(self):
         self._ensure_open()
@@ -291,7 +313,7 @@ class _Error(_StandardStream):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
         self._ensure_open()
-        return _host_stream_write(*args, True)
+        return _write_standard(*args, True)
 
     def flush(self):
         self._ensure_open()

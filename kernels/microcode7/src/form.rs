@@ -401,6 +401,8 @@ pub enum Prim {
     /// where the value keeps none, else the pieces marshal writes and
     /// its opposite number reads back into the very value again.
     ReadOctetFile,
+    LzmaEncode,
+    LzmaDecode,
     ZlibNative,
     BinaryFormat,
     BinaryAscii,
@@ -409,6 +411,7 @@ pub enum Prim {
     NativeFrame,
     HeapNative,
     ContextStore,
+    AllocationTrace,
     WarningOperation(u8),
     ReduceNative,
     ProductStep,
@@ -863,7 +866,9 @@ pub struct Routine {
     pub annotator: Option<Rc<Routine>>,
     pub literals: Vec<Value>,
     #[serde(serialize_with = "crate::cache::save_spelling", deserialize_with = "crate::cache::recover_spelling")]
-    pub lexical_origin: Rc<str>,
+    pub lexical_origin: Rc<Vec<crate::scan::Token>>,
+    #[serde(skip)]
+    pub origin_content: Rc<std::cell::OnceCell<Rc<str>>>,
     pub body_boundary: usize,
     pub immediate_slots: Option<Vec<bool>>,
     pub referenced: Vec<String>,

@@ -50,6 +50,8 @@ def _text(input):
 
 # Accept the buffer protocol while refusing bytes constructor sizes.
 def _buffer(input):
+    if type(input) is bytes:
+        return input
     try:
         view = memoryview(input)
     except TypeError:

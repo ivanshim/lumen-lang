@@ -1,5 +1,7 @@
 /// Identify serialized Python code when a cache is supplied as the program.
-pub const PYTHON_CACHE_MAGIC: [u8; 4] = *b"L7C\x05";
+pub const PYTHON_CACHE_MAGIC: [u8; 4] = *b"L7C\x06";
+/// Serialized instruction format, including shared token origins.
+pub const PYTHON_CACHE_ABI: &str = "lumen-microcode7-v6";
 
 pub mod text;
 mod unicode;
@@ -71,6 +73,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     let mut table = Table::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
     brief_settled(&mut table, request);
     markup_settled(&mut table, request);
+    if let Some((rows, sources)) = build::library_rows(definition) { table.library_surveys = Some(rows); table.library_token_sources = Some(sources); }
     let prefix = table.banner();
     go(&table, source, program_args, request).map_err(|e| {
         if table.has_any("ext.builtin.exceptions") && e.starts_with('\0') { return e[1..].to_string(); }
@@ -121,7 +124,7 @@ const REQUEST_PARTS: [(&str, &str); 8] = [
 /// it came, for the host to tell in its own way.
 fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, String, bool)], before: u32, fatally: bool, source: &str, column: Option<usize>, end: Option<(u32, usize)>) -> String {
     let mut message = said.to_owned();
-    if before != 0 && table.has_any("ext.builtin.exceptions.syntax") {
+    if before != 0 && table.syntax_exceptions {
         let marker = " (detected at line ";
         if let Some(start) = message.rfind(marker).filter(|_| message.ends_with(')')) {
             if let Ok(number) = message[start + marker.len()..message.len() - 1].parse::<u32>() {
@@ -130,7 +133,7 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
             }
         }
     }
-    if said == "SyntaxError: 'return' outside function" && table.has_any("ext.builtin.exceptions.syntax") {
+    if said == "SyntaxError: 'return' outside function" && table.syntax_exceptions {
         let file = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file")
             .map(|(.., path, _)| path.as_str()).unwrap_or("");
         let line = row.saturating_sub(before);
@@ -143,7 +146,7 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
     // read is written out the way the reference writes it: the file and
     // the number of the row the reading stopped on, the row itself, a
     // mark under the place it reached, and then the complaint.
-    if table.has_any("ext.builtin.exceptions.syntax") {
+    if table.syntax_exceptions {
         let told = message.as_str();
         let (kind, wording) = match told.split_once(": ") {
             Some((word, rest)) if word.ends_with("Error") && word.bytes().all(|b| b.is_ascii_alphabetic()) => (word, rest),
@@ -203,7 +206,7 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
 /// file and the row it was seen on and shows the row itself under it.
 fn escape_notices_ahead_of_run(source: &str, table: &Table, ahead: u32, request: &[(String, String, String, bool)]) {
     let route = table.strings("ext.lexical.escape.warning");
-    if route.len() != 4 || !table.has_any("ext.builtin.exceptions.syntax") {
+    if route.len() != 4 || !table.syntax_exceptions {
         return;
     }
     let where_named = request
@@ -310,15 +313,17 @@ fn import_rejoined(text: &str, table: &Table, added: u32) -> Option<String> {
 
 fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let _tuple_scope = tuples::Scope::enter(table.has_any("ext.builtin.tuple"));
-    // A file reader folds a CRLF pair before passing on its contents.
-    let file_text = if source.contains("\r\n") && table.has_any("ext.builtin.exceptions.syntax") {
-        std::borrow::Cow::Owned(source.replace("\r\n", "\n"))
+    // A file reader ends a line at a CRLF pair or a lone CR before
+    // passing its contents on.
+    let file_text = if source.contains('\r') && table.syntax_exceptions {
+        std::borrow::Cow::Owned(source.replace("\r\n", "\n").replace('\r', "\n"))
     } else { std::borrow::Cow::Borrowed(source) };
     let source = file_text.as_ref();
     let ahead = lines_before(request);
     let joined = import_rejoined(source, table, ahead);
     let source = joined.as_deref().unwrap_or(source);
     escape_notices_ahead_of_run(source, table, ahead, request);
+    table.source.replace(Some(std::rc::Rc::from(source)));
     let read = scan::scan_position(source, table).map_err(|(said, row, col)| cannot_read(table, &said, row, request, ahead, false, source, Some(col), None));
     let shaped = indent::indent_position(read?, table, ahead).map_err(|(said, row, col)| cannot_read(table, &said, row, request, ahead, false, source, Some(col), None));
     let tokens = shaped?;

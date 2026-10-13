@@ -78,9 +78,30 @@ def strerror(code, /):
     return _call('strerror', _cint(code))
 
 
+# The configuration strings the host library answers for. The list
+# follows the names glibc gives them; an integer is passed through.
+_confstr_names = {
+    'CS_PATH': 0,
+    'CS_V6_WIDTH_RESTRICTED_ENVS': 1,
+    'CS_GNU_LIBC_VERSION': 2,
+    'CS_GNU_LIBPTHREAD_VERSION': 3,
+    'CS_V5_WIDTH_RESTRICTED_ENVS': 4,
+    'CS_V7_WIDTH_RESTRICTED_ENVS': 5,
+}
+
+
+def confstr(name, /):
+    if isinstance(name, str):
+        try:
+            name = _confstr_names[name]
+        except KeyError:
+            raise ValueError('unrecognized configuration name') from None
+    return _call('confstr', _cint(name))
+
+
 (O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_CREAT, O_EXCL, O_TRUNC,
  O_NONBLOCK, O_CLOEXEC, O_DIRECTORY, O_NOFOLLOW, SEEK_SET, SEEK_CUR,
- SEEK_END, F_OK, R_OK, W_OK, X_OK) = _call('constants')
+ SEEK_END, F_OK, R_OK, W_OK, X_OK, O_TMPFILE) = _call('constants')
 
 # These feature names describe implemented host entry points, not test expectations.
 _have_functions = ['HAVE_FACCESSAT', 'HAVE_FCHMODAT', 'HAVE_FSTATAT', 'HAVE_LSTAT',
@@ -754,3 +775,18 @@ def statvfs(path):
 # Read filesystem capacity from an open descriptor.
 def fstatvfs(fd):
     return statvfs_result(_call('fstatvfs', _cint(fd)))
+# Keep native module functions callable without Python function binding.
+class _BuiltinFunction(staticmethod):
+    __hash__ = object.__hash__
+    # Native forwarding avoids another Python call frame; class access keeps identity.
+    def __get__(self, instance, owner=None):
+        return self
+
+    def __repr__(self):
+        return '<built-in function ' + self.__name__ + '>'
+
+
+for _name, _entry in list(globals().items()):
+    if not _name.startswith('_') and callable(_entry) and not isinstance(_entry, type):
+        globals()[_name] = _BuiltinFunction(_entry)
+del _name, _entry
