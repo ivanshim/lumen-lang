@@ -186,6 +186,10 @@ class Struct:
 
     def unpack_from(self, buffer, offset=0):
         self._ready()
+        # Exact bytes cannot resize or override slicing during offset conversion.
+        if type(buffer) is bytes:
+            at = self._offset(len(buffer), offset, False)
+            return self.unpack(buffer[at:at + self.size])
         view = _read_view(buffer)
         at = self._offset(view.nbytes, offset, False)
         return self.unpack(view.cast('B')[at:at + self.size])
