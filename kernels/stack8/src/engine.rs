@@ -8951,39 +8951,13 @@ impl<'a> Engine<'a> {
     pub(super) fn union_protocol(&mut self, union: &Value, place: usize, args: &[Value]) -> Flow<Option<Value>> {
         let Some(word) = self.lang.class_special.get(place).map(String::as_str) else { return Ok(None); };
         if !matches!(word, "__eq__" | "__ne__") || args.len() != 1 { return Ok(None); }
-        let Value::Object(object) = union else { return Ok(None); };
-        let left = object.fields.borrow().iter().find(|(key, _)| key == "__args__").map(|(_, value)| value.clone());
-        let right = match args[0].contents() {
-            Value::Object(other) if Self::own_kind(&other.class_now()).as_deref() == Some("Union") =>
-                other.fields.borrow().iter().find(|(key, _)| key == "__args__").map(|(_, value)| value.clone()),
-            _ => None,
-        };
-        let same = match (left, right) {
-            (Some(left), Some(right)) => self.unions_alike(&left, &right)?,
-            _ => return Ok(Some(Value::Declined(Rc::from("NotImplemented")))),
-        };
-        Ok(Some(Value::Flag(same != (word == "__ne__"))))
-    }
-
-    /// Two unions are one where they hold the same members, however
-    /// each row was ordered, as the reference compares them.
-    fn unions_alike(&mut self, left: &Value, right: &Value) -> Res<bool> {
-        let (left, right) = (left.contents(), right.contents());
-        let (Value::Tuple(one), Value::Tuple(two)) = (&left, &right) else { return Ok(false); };
-        if one.len() != two.len() { return Ok(false); }
-        let mut remaining: Vec<Value> = two.iter().cloned().collect();
-        for member in one.iter() {
-            let mut matched = None;
-            for (at, other) in remaining.iter().enumerate() {
-                let equal = self.special_dyad(&Action::Eq, member, other)?;
-                if self.special_truth(&equal)? { matched = Some(at); break; }
-            }
-            match matched {
-                Some(at) => { remaining.remove(at); }
-                None => return Ok(false),
-            }
+        if !matches!(union, Value::Object(_)) { return Ok(None); }
+        let (bridge, helper) = if self.lang.type_parameters { (158, "union_equal") } else { (240, "_union_eq") };
+        let answer = self.class_apply(Self::adapter(bridge, vec![Value::text(helper)]), vec![union.clone(), args[0].clone()])?;
+        if word == "__ne__" {
+            if let Value::Flag(equal) = answer { return Ok(Some(Value::Flag(!equal))); }
         }
-        Ok(true)
+        Ok(Some(answer))
     }
 
     fn holds_object(value: &Value) -> bool {

@@ -10882,38 +10882,19 @@ impl<'a> Machine<'a> {
     /// where their member rows are equal member for member.
     pub(super) fn union_protocol(&mut self, union: &Value, name: &str, arguments: &[Value]) -> Res<Option<Value>> {
         if !matches!(name, "__eq__" | "__ne__") || arguments.len() != 1 { return Ok(None); }
-        let Value::Thing(object) = union.settled() else { return Ok(None); };
-        let left = object.holds.borrow().iter().find(|entry| entry.0 == "__args__").map(|entry| entry.1.clone());
-        let right = match arguments[0].settled() {
-            Value::Thing(other) if Self::native_word(&other.blueprint()).as_deref() == Some("Union") =>
-                other.holds.borrow().iter().find(|entry| entry.0 == "__args__").map(|entry| entry.1.clone()),
-            _ => None,
-        };
-        let same = match (left, right) {
-            (Some(left), Some(right)) => self.unions_alike(&left, &right)?,
-            _ => return Ok(Some(Value::Refusal(Rc::from("NotImplemented")))),
-        };
-        Ok(Some(Value::Flag(same != (name == "__ne__"))))
-    }
-
-    /// Two unions are one where they hold the same members, however
-    /// each row was ordered.
-    fn unions_alike(&mut self, left: &Value, right: &Value) -> Res<bool> {
-        let (Value::Tuple(one), Value::Tuple(two)) = (left.settled(), right.settled()) else { return Ok(false); };
-        if one.len() != two.len() { return Ok(false); }
-        let mut remaining: Vec<Value> = two.iter().cloned().collect();
-        for member in one.iter() {
-            let mut matched = None;
-            for (at, other) in remaining.iter().enumerate() {
-                let equal = self.prim_values(Prim::Eq, "", &[member.clone(), other.clone()])?;
-                if self.object_truth(&equal)? { matched = Some(at); break; }
-            }
-            match matched {
-                Some(at) => { remaining.remove(at); }
-                None => return Ok(false),
-            }
+        let receiver = union.settled();
+        if let Value::Thing(_) = receiver {
+            let dispatch = match self.table.flag("ext.stmt.type_parameters") {
+                true => Value::Wrapped(158, Rc::new(vec![Value::text("union_equal")]).into()),
+                false => Value::Wrapped(240, Rc::new(vec![Value::text("_union_eq")]).into()),
+            };
+            let result = self.apply_class_member(dispatch, vec![receiver, arguments[0].clone()])?;
+            return Ok(Some(match result {
+                Value::Flag(same) => Value::Flag(if name == "__eq__" { same } else { !same }),
+                other => other,
+            }));
         }
-        Ok(true)
+        Ok(None)
     }
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
         let initializing=self.rules.words_ext_stmt_class_constructor.first().is_some_and(|word|word==name);

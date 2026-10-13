@@ -2246,7 +2246,7 @@ impl<'a> Machine<'a> {
                         if !values.is_empty() { return Err(String::from("TypeError: function takes no arguments").into()); }
                         Ok(self.prim(Prim::Weigh, "eval", &kept)?)
                     }
-                    127 if self.table.flag("ext.stmt.type_parameters") => {
+                    127 if self.table.flag("ext.stmt.type_parameters") && kept.is_empty() => {
                         let show = Self::wrap(158, vec![Value::text("union_repr")]);
                         self.apply_class_member(show, values)
                     }

@@ -2141,7 +2141,7 @@ impl<'a> Engine<'a> {
                     if !args.is_empty() { return Err("TypeError: function takes no arguments".into()); }
                     Ok(self.builtin_call(Builtin::Eval, "eval", w.1.iter().cloned().map(|value| (None, value)).collect())?)
                 }
-                126 if self.lang.type_parameters => self.class_apply(Self::adapter(158, vec![Value::text("union_repr")]), args),
+                126 if self.lang.type_parameters && w.1.is_empty() => self.class_apply(Self::adapter(158, vec![Value::text("union_repr")]), args),
                 126 => {
                     if let Some(Value::Small(place)) = w.1.first() {
                         let name = self.lang.class_special[*place as usize].clone();
