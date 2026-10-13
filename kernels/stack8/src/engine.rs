@@ -778,6 +778,8 @@ impl<'a> Engine<'a> {
                     lineage.insert(1, ordinary.clone());
                 }
             }
+            // Native exception ancestry is complete and cannot be reassigned.
+            fields.push(("\0complete-exception-lineage".into(), Value::Flag(true)));
             classes[at] = Some(Rc::new(Class { direct: std::cell::RefCell::new(direct), lineage: RefCell::new(lineage), outline: Some(format!("<class '{name}'>")),
                 name: name.clone(), base: std::cell::RefCell::new(base),
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
@@ -1074,6 +1076,7 @@ impl<'a> Engine<'a> {
             // A class written with several bases is beneath each of
             // them, the whole of its gathered line holding every one.
             if current.lineage.borrow().iter().any(|b| Rc::ptr_eq(b, wanted)) { return true; }
+            if current.python_names.borrow().is_none() && current.fields.iter().any(|(key, _)| key == "\0complete-exception-lineage") { return false; }
             class = current.base();
         }
         false

@@ -1144,6 +1144,8 @@ impl<'a> Machine<'a> {
                     ancestry.insert(1, ordinary.clone());
                 }
             }
+            // A native fault's stored ancestry already includes every forebear.
+            seed.push((String::from("\0fixed-fault-ancestry"), Value::Flag(true)));
             let kind = Blueprint { parents: std::cell::RefCell::new(parents), ancestry: RefCell::new(ancestry), presentation: Some(format!("<class '{word}'>")),
                 name: word.clone(), under: std::cell::RefCell::new(under),
                 fields: seed, reaches: vec![], answers: vec![], methods: vec![],
@@ -1479,9 +1481,11 @@ impl<'a> Machine<'a> {
         let second = kind.fields.iter().find_map(|(key, held)| match held { Value::Blueprint(other) if key == "\0also-under" => Some(other), _ => None });
         // A kind drawn with several parents stands under every one of
         // them, the whole of its gathered line holding each.
-        second.map_or(false, |other| Self::fault_descends(other, ancestor))
-            || kind.ancestry.borrow().iter().any(|parent| Rc::ptr_eq(parent, ancestor))
-            || kind.under().as_ref().map_or(false, |parent| Self::fault_descends(parent, ancestor))
+        if second.is_some_and(|other| Self::fault_descends(other, ancestor))
+            || kind.ancestry.borrow().iter().any(|parent| Rc::ptr_eq(parent, ancestor)) { return true; }
+        let fixed = kind.type_names.borrow().is_none()
+            && kind.fields.iter().any(|entry| entry.0 == "\0fixed-fault-ancestry");
+        !fixed && kind.under().as_ref().is_some_and(|parent| Self::fault_descends(parent, ancestor))
     }
 
     /// A fault made by a call: what was given by position is its row,
