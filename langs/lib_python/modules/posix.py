@@ -217,6 +217,9 @@ def _stat(data):
 
 
 def stat(path, *, dir_fd=None, follow_symlinks=True):
+    # Keep the common native path in one host call, including errno handling.
+    if (type(path) is str or type(path) is bytes) and dir_fd is None and type(follow_symlinks) is bool:
+        return _host('stat_native', stat_result, _path(path), follow_symlinks)
     if _is_fd_path(path):
         if dir_fd is not None:
             raise ValueError("stat: can't specify dir_fd without matching path")

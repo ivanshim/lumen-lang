@@ -22497,6 +22497,39 @@ impl<'a> Machine<'a> {
                 if matches!(&action, Some(Value::Text(word)) if word.as_ref() == "fspath") {
                     n(2)?;
                     self.path_from_protocol(v[1].clone())?
+                } else if matches!(&action, Some(Value::Text(word)) if word.as_ref() == "stat_native") {
+                    n(4)?;
+                    let kind = match v[1].settled() {
+                        Value::Blueprint(blueprint) => blueprint,
+                        _ => return Err(String::from("TypeError: a class is required")),
+                    };
+                    let inputs = vec![Value::text("stat"), v[2].clone(), Value::Small(-100), Value::Small(if v[3].is_true() { 1 } else { 0 })];
+                    let result = crate::posix::perform(&inputs, || Ok(()))?;
+                    let Value::Tuple(answers) = result else { unreachable!() };
+                    let errno = match answers[0] { Value::Small(number) => number, _ => unreachable!() };
+                    if errno != 0 {
+                        let wording = crate::posix::perform(&[Value::text("strerror"), Value::Small(errno)], || Ok(()))?;
+                        let Value::Tuple(words) = wording else { unreachable!() };
+                        let base = self.furnished_kind(20).ok_or_else(|| String::from("OSError: missing exception class"))?;
+                        let fault = self.make_fault(base, vec![Value::Small(errno), words[1].clone(), v[2].clone()], Value::Nil);
+                        self.got_away = Some(Escape::Thrown(fault));
+                        return Err(String::new());
+                    }
+                    let fields = match &answers[1] { Value::Tuple(items) => items, _ => unreachable!() };
+                    let mut fractions = Vec::new();
+                    let mut precise = Vec::new();
+                    for (second, remainder) in fields[7..10].iter().zip(&fields[10..13]) {
+                        if let (Value::Small(whole), Value::Small(part)) = (second, remainder) {
+                            fractions.push(crate::data::worth_of_binary(*whole as f64 + (*part as f64 / 1e9), math::DEFAULT_PLACES));
+                            precise.push(Value::from_big(num_bigint::BigInt::from(*whole) * 1_000_000_000 + *part));
+                        } else { unreachable!(); }
+                    }
+                    fractions.extend(precise);
+                    fractions.extend(fields[13..16].iter().cloned());
+                    let sequence = Value::tuple(fields.iter().take(10).cloned().collect());
+                    self.made += 1;
+                    Value::Thing(Rc::new(Thing { of: kind, reclassified: RefCell::new(None), turn: self.made,
+                        holds: RefCell::new(vec![("\0underlying".to_owned(), sequence), ("\0named-sequence".to_owned(), Value::tuple(fractions))]) }))
                 } else if matches!(&action, Some(Value::Text(word)) if word.as_ref() == "structseq_new") {
                     n(4)?;
                     let blueprint = match v[1].settled() {Value::Blueprint(kind) => kind, _ => return Err(String::from("TypeError: a class is required"))};

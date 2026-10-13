@@ -21834,6 +21834,36 @@ impl<'a> Engine<'a> {
             Builtin::PosixCall => {
                 match args.first().map(Value::contents) {
                     Some(Value::Text(op)) if op.as_ref() == "fspath" => { arity(2)?; self.filesystem_path(args[1].clone())? },
+                    Some(Value::Text(op)) if op.as_ref() == "stat_native" => {
+                        arity(4)?;
+                        let Value::Class(class) = args[1].contents() else { return Err("TypeError: a class is required".into()); };
+                        let request = [Value::text("stat"), args[2].clone(), Value::Small(-100), Value::Small(i64::from(matches!(args[3], Value::Flag(true))))];
+                        let outcome = crate::posix::call(&request, || Ok(()))?;
+                        let Value::Tuple(pair) = outcome else { unreachable!() };
+                        if let Value::Small(errno) = pair[0] {
+                            if errno != 0 {
+                                let Value::Tuple(message) = crate::posix::call(&[Value::text("strerror"), Value::Small(errno)], || Ok(()))? else { unreachable!() };
+                                let kind = self.furnished(20).ok_or_else(|| "OSError: missing exception class".to_string())?;
+                                let error = self.exception_instance(kind, vec![Value::Small(errno), message[1].clone(), args[2].clone()], Value::Null);
+                                self.carried = Some(Fault::Thrown(error));
+                                return Err(String::new());
+                            }
+                        }
+                        let Value::Tuple(data) = &pair[1] else { unreachable!() };
+                        let mut extra = Vec::with_capacity(9);
+                        for at in 7..10 {
+                            let (Value::Small(seconds), Value::Small(nanos)) = (&data[at], &data[at + 3]) else { unreachable!() };
+                            extra.push(crate::value::real_of(*seconds as f64 + *nanos as f64 / 1_000_000_000.0, arith::DEFAULT_PLACES));
+                        }
+                        for at in 7..10 {
+                            let (Value::Small(seconds), Value::Small(nanos)) = (&data[at], &data[at + 3]) else { unreachable!() };
+                            extra.push(Value::of_big(num_bigint::BigInt::from(*seconds) * 1_000_000_000_i64 + *nanos));
+                        }
+                        extra.extend_from_slice(&data[13..16]);
+                        self.made += 1;
+                        Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class,
+                            fields: RefCell::new(vec![("\0worth".into(), Value::tuple(data[..10].to_vec())), ("\0structseq".into(), Value::tuple(extra))]), mark: self.made }))
+                    }
                     Some(Value::Text(op)) if op.as_ref() == "structseq_new" => {
                         arity(4)?;
                         let Value::Class(class) = args[1].contents() else { return Err("TypeError: a class is required".into()); };
