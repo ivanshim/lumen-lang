@@ -1,12 +1,1 @@
-# From CPython v3.14.8; Python Software Foundation license.
-from __future__ import unicode_literals
-import unittest
-
-
-class Tests(unittest.TestCase):
-    def test_unicode_literals(self):
-        self.assertIsInstance("literal", str)
-
-
-if __name__ == "__main__":
-    unittest.main()
+../../../../../tests/python-3.14.8/test_future_stmt/test_future_multiple_imports.py

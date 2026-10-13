@@ -1,11 +1,1 @@
-# From CPython v3.14.8; Python Software Foundation license.
-"""This is a test"""
-
-from __future__ import nested_scopes; import site  # noqa: F401
-
-def f(x):
-    def g(y):
-        return x + y
-    return g
-
-result = f(2)(4)
+../../../../../tests/python-3.14.8/test_future_stmt/nested_scope.py

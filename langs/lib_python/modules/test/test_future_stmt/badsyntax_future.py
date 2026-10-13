@@ -1,4 +1,1 @@
-# From CPython v3.14.8; Python Software Foundation license.
-from __future__ import absolute_import
-"spam, bar, blah"
-from __future__ import print_function
+../../../../../tests/python-3.14.8/test_future_stmt/badsyntax_future.py

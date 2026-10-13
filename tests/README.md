@@ -1028,3 +1028,5 @@ base allocation respects declared allocators, and compatible slotted class
 assignment preserves stored values. No copied test or library body is edited.
 
 | `langs/lib_python/modules/test/test_future_stmt/__main__.py` | Symbolic link to the existing local future-statement package runner; no upstream source body changed | Runtime runner | Suite integration | [PSF](python-3.14.8/LICENSE) |
+
+The embedded `test.test_future_stmt` upstream members are file links to the unchanged `tests/python-3.14.8/test_future_stmt/` canonical copies from main. This retains embedded availability while avoiding duplicate provenance headers that would alter source line numbers. Its `__main__.py` remains the existing local package runner.
