@@ -60,6 +60,7 @@ pub fn run(language: &str, source: &str, program_args: &[String], request: &[(St
             let mut lang = Lang::parse(text).map_err(|e| format!("Error: definition of '{language}': {e}"))?;
             settle_brief(&mut lang, request);
             settle_markup(&mut lang, request);
+            if let Some((entries, sources)) = compile::prepared_entries(text) { lang.prepared_scopes = Some(entries); lang.prepared_source_tokens = Some(sources); }
             return go(&lang, source, program_args, request);
         }
     }
@@ -71,6 +72,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     let mut lang = Lang::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
     settle_brief(&mut lang, request);
     settle_markup(&mut lang, request);
+    if let Some((entries, sources)) = compile::prepared_entries(definition) { lang.prepared_scopes = Some(entries); lang.prepared_source_tokens = Some(sources); }
     go(&lang, source, program_args, request)
 }
 
@@ -272,8 +274,9 @@ fn whole_import<'a>(source: &'a str, lang: &Lang, before: u32) -> std::borrow::C
 }
 
 fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
-    // File input has universal newlines before the tokenizer sees it.
-    let universal = (!lang.syntax_members.is_empty() && source.contains("\r\n")).then(|| source.replace("\r\n", "\n"));
+    // File input has universal newlines before the tokenizer sees it:
+    // a CRLF pair and a lone CR both end a line.
+    let universal = (!lang.syntax_members.is_empty() && source.contains('\r')).then(|| source.replace("\r\n", "\n").replace('\r', "\n"));
     let source = universal.as_deref().unwrap_or(source);
     let before = lines_before(request);
     let source = whole_import(source, lang, before);
@@ -314,6 +317,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for name in &lang.module_doc {
         registry.slot(name);
     }
+    registry.source = Some(std::rc::Rc::from(&*source));
     let program = match compile::compile(&tokens, lang, &mut registry, before) {
         Ok(program) => program,
         Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally, &source,
@@ -354,7 +358,8 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         let as_directory = lang.python_numbers
             && std::env::var("LUMEN_RUN_MODULE").map_or(false, |name| name == "__main__");
         let wanted = if as_directory { "given" } else { "file" };
-        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == wanted)
+        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "argv0")
+            .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == wanted))
             .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == "file"))
             .map(|(.., v, _)| v.clone());
         let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];

@@ -313,6 +313,23 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     }
     if input.iter().any(|operand| match operand { Value::Unpaired(_) => true, Value::Tuple(parts) => parts.to_vec().iter().any(|part| matches!(part, Value::Unpaired(_))), _ => false }) {
         let numbers=match input.first(){Some(Value::Unpaired(row))=>row.clone(),Some(Value::Text(word))=>Rc::from(word.chars().map(u32::from).collect::<Vec<_>>()),_=>return Err(complaint(table,"receiver"))};
+        if matches!(work, LOWER|UPPER|CASEFOLD|SWAPCASE) {
+            if input.len() > 1 { return Err(format!("TypeError: str.{}() takes no arguments ({} given)",_name,input.len()-1)); }
+            let mut converted = Vec::new(); let mut position = 0;
+            while position < numbers.len() {
+                match char::from_u32(numbers[position]) {
+                    None => {converted.push(numbers[position]); position+=1;}
+                    Some(_) => {
+                        let beginning = position;
+                        while position < numbers.len() && char::from_u32(numbers[position]).is_some() {position+=1;}
+                        let part: String = numbers[beginning..position].iter().filter_map(|n| char::from_u32(*n)).collect();
+                        let result = apply(table,work,_name,&[Value::text(&part)],names)?;
+                        if let Value::Text(word) = result {converted.extend(word.chars().map(u32::from));}
+                    }
+                }
+            }
+            return Ok(Value::characters(converted));
+        }
         let unpack=|item:&Value|match item {Value::Unpaired(row)=>Ok(row.to_vec()),Value::Text(word)=>Ok(word.chars().map(u32::from).collect::<Vec<_>>()),other=>Err(format!("TypeError: must be str, not {}",other.kind_word()))};
         if work == SPLITLINES {
             let given = Given { tail: &input[1..], table };
@@ -836,6 +853,8 @@ fn fill_mapping(table:&Table, pattern:&str, mapping:&Value, names:Names, level:u
 
 
 pub(crate) fn extent_of_string(subject: &Rc<str>) -> usize {
+    // Walking a short word costs less than maintaining its weak cache entry.
+    if subject.len() < 65 { return subject.chars().count(); }
     type LengthEntry = (std::rc::Weak<str>, usize);
     thread_local! {
         static EXTENTS: std::cell::RefCell<std::collections::BTreeMap<usize, LengthEntry>> = const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
@@ -854,6 +873,22 @@ pub(crate) fn extent_of_string(subject: &Rc<str>) -> usize {
         lengths.insert(identity, (Rc::downgrade(subject), measured));
         measured
     })
+}
+
+// Translate a scalar offset using the immutable string's cached extent.
+pub(crate) fn string_boundary(word: &Rc<str>, position: usize) -> Option<usize> {
+    let count = extent_of_string(word);
+    match position.cmp(&count) {
+        std::cmp::Ordering::Greater => None,
+        std::cmp::Ordering::Equal => Some(word.len()),
+        std::cmp::Ordering::Less if count == word.len() => Some(position),
+        _ => word.char_indices().nth(position).map(|pair| pair.0),
+    }
+}
+
+pub(crate) fn scalar_at(word: &Rc<str>, position: usize) -> Option<char> {
+    let byte = string_boundary(word, position)?;
+    word[byte..].chars().next()
 }
 
 #[cfg(test)]

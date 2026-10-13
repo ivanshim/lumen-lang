@@ -253,10 +253,14 @@ class _HostFile:
         appending = 'a' in mode
         if not (reading or writing or appending):
             reading = True
-        if writing:
+        # Create append targets at open time without truncating existing data.
+        if writing or appending:
             import posix
             flags = posix.O_WRONLY | posix.O_CREAT
-            flags |= posix.O_EXCL if 'x' in mode else posix.O_TRUNC
+            if appending:
+                flags |= posix.O_APPEND
+            else:
+                flags |= posix.O_EXCL if 'x' in mode else posix.O_TRUNC
             fd = posix.open(name, flags, 0o666)
             posix.close(fd)
         if writing:
@@ -920,6 +924,8 @@ class memoryview:
 
 
 def _buffer_bytes(source):
+    if type(source) is bytes:
+        return source
     with memoryview(source) as view:
         if not view.c_contiguous:
             raise BufferError('memoryview: underlying buffer is not C-contiguous')

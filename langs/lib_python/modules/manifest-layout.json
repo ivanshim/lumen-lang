@@ -33,7 +33,9 @@
     "builtins": "runtime_adapters/builtins.py",
     "unicodedata": "runtime_adapters/unicodedata.py",
     "traceback": "runtime_adapters/traceback.py",
-    "io": "runtime_adapters/io.py"
+    "io": "runtime_adapters/io.py",
+    "importlib.metadata": "runtime_adapters/metadata.py",
+    "importlib.resources._common": "runtime_adapters/resources.py"
   },
   "replacements": {
     "annotationlib": "runtime_adapters/native_annotationlib.py",
@@ -50,7 +52,8 @@
     "signal": "runtime_adapters/native_signal.py",
     "test.support.script_helper": "runtime_adapters/native_test_support_script_helper.py",
     "threading": "runtime_adapters/native_threading.py",
-    "unittest.mock": "runtime_adapters/native_unittest_mock.py"
+    "unittest.mock": "runtime_adapters/native_unittest_mock.py",
+    "tracemalloc": "runtime_adapters/native_tracemalloc.py"
   },
   "names": {
     "runtime_sources/unittest_case.py": "unittest.case",

@@ -156,7 +156,10 @@ class Mock:
                 answer = next(effect)
                 if isinstance(answer, BaseException):
                     raise answer
-                return answer
+                if isinstance(answer, type) and issubclass(answer, BaseException):
+                    raise answer
+                if answer is not DEFAULT:
+                    return answer
         if self.return_value is DEFAULT:
             if self._mock_wraps is not None:
                 return self._mock_wraps(*args, **kwargs)
@@ -208,6 +211,9 @@ class Mock:
         # underscore is the runtime's own business and is not answered
         # for, so what looks inside a mock sees what is really there.
         if name[:1] == '_':
+            raise AttributeError(name)
+        allowed = getattr(self, '_mock_allowed', None)
+        if allowed is not None and name not in allowed:
             raise AttributeError(name)
         if self._mock_methods is not None and name not in self._mock_methods:
             raise AttributeError(name)
@@ -317,6 +323,16 @@ class MagicMock(Mock):
 
     def __exit__(self, kind, value, traceback):
         return self._magic['__exit__'](kind, value, traceback)
+
+
+def _is_module(target):
+    import types
+    return isinstance(target, types.ModuleType)
+
+
+def _builtin_names():
+    import builtins
+    return frozenset(name for name in dir(builtins) if not name.startswith('_'))
 
 
 class _Patch:
@@ -546,14 +562,68 @@ class _OpenHandle(MagicMock):
 def mock_open(mock=None, read_data=''):
     if not isinstance(read_data, (str, bytes)):
         raise TypeError('initial_value must be str or bytes, not ' + type(read_data).__name__)
+    import io
+
+    def stream():
+        return io.BytesIO(read_data) if isinstance(read_data, bytes) else io.StringIO(read_data)
+
+    state = [stream(), None]
+    handle = MagicMock(name='()')
+    handle._mock_allowed = set(dir(io.TextIOWrapper)) | set(dir(io.BytesIO))
+    handle.__enter__ = Mock(return_value=handle)
+    handle.write.return_value = None
+    handle.read.return_value = None
+    handle.readline.return_value = None
+    handle.readlines.return_value = None
+
+    def read(*args, **kwargs):
+        if handle.read.return_value is not None:
+            return handle.read.return_value
+        return state[0].read(*args, **kwargs)
+
+    def readlines(*args, **kwargs):
+        if handle.readlines.return_value is not None:
+            return handle.readlines.return_value
+        return state[0].readlines(*args, **kwargs)
+
+    def lines():
+        if handle.readline.return_value is not None:
+            while True:
+                yield handle.readline.return_value
+        yield from state[0]
+
+    def readline(*args, **kwargs):
+        yield from lines()
+        while True:
+            yield state[0].readline(*args, **kwargs)
+
+    def advance():
+        if handle.readline.return_value is not None:
+            return handle.readline.return_value
+        return next(state[0])
+
+    def leave(*args):
+        handle.close()
+
+    def reset_data(*args, **kwargs):
+        state[0] = stream()
+        if handle.readline.side_effect is state[1]:
+            state[1] = readline()
+            handle.readline.side_effect = state[1]
+        return DEFAULT
+
+    handle.read.side_effect = read
+    handle.readlines.side_effect = readlines
+    state[1] = readline()
+    handle.readline.side_effect = state[1]
+    handle.__iter__ = Mock(side_effect=lines)
+    handle.__next__ = Mock(side_effect=advance)
+    handle.__exit__.side_effect = leave
     if mock is None:
         mock = MagicMock(name='open')
-    handle = _OpenHandle(read_data)
-    mock.return_value = handle
-    def reset_data(*args, **kwargs):
-        handle._position = 0
-        return DEFAULT
+        mock._mock_allowed = set(dir(io.open))
     mock.side_effect = reset_data
+    mock.return_value = handle
     return mock
 
 

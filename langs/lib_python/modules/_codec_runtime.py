@@ -659,7 +659,11 @@ def charmap_decode(data, errors='strict', mapping=None):
     return (result, len(data))
 
 def charmap_build(mapping):
-    return {ord(c): i for i, c in enumerate(mapping) if c != '\ufffe'}
+    if not isinstance(mapping, str):
+        raise TypeError('charmap_build() argument must be str, not ' + type(mapping).__name__)
+    if not mapping:
+        raise TypeError('bad argument type for built-in operation')
+    return {ord(c): i for i, c in enumerate(mapping[:256]) if c != '\ufffe'}
 
 # Read an encoding map through indexing and preserve undefined entries.
 def _mapped(mapping, code):
