@@ -6,7 +6,11 @@ from importlib import _bootstrap, _bootstrap_external
 # Find a non-native spec while bootstrap imports stay on the native road.
 def find(fullname, path):
     for finder in list(sys.meta_path):
-        spec = finder.find_spec(fullname, path)
+        try:
+            find_spec = finder.find_spec
+        except AttributeError:
+            continue
+        spec = find_spec(fullname, path)
         if spec is None:
             continue
         if getattr(finder, "_native_source_finder", False):
