@@ -273,12 +273,17 @@ impl Machine<'_> {
         if !matches!(namespace.settled(), Value::Dict(_) | Value::Attributes(_)) { return Err(format!("TypeError: module_globals must be a dict, not '{}'", namespace.kind_word())); }
         let bootstrap = self.load_namespace("importlib._bootstrap_external")?;
         let loader = self.warning_send(bootstrap, "_bless_my_loader", vec![namespace.clone()])?;
-        if self.attribute(&loader, "get_source").is_none() { return Ok(Value::Nil); }
+        let reader = self.core_primitive(Prim::GetMember, "getattr",
+            vec![loader, Value::text("get_source"), Value::Nil], Vec::new())?;
+        if matches!(reader.settled(), Value::Nil) { return Ok(Value::Nil); }
         let specification = self.warning_send(namespace.clone(), "get", vec![Value::text("__spec__"), Value::Nil])?;
-        let spec_name = self.attribute(&specification, "name").filter(|name| !matches!(name, Value::Nil));
-        let name = if let Some(name) = spec_name { name } else { self.warning_send(namespace.clone(), "get", vec![Value::text("__name__"), Value::Nil])? };
+        let spec_name = self.core_primitive(Prim::GetMember, "getattr",
+            vec![specification, Value::text("name"), Value::Nil], Vec::new())?;
+        let name = if matches!(spec_name.settled(), Value::Nil) {
+            self.warning_send(namespace.clone(), "get", vec![Value::text("__name__"), Value::Nil])?
+        } else { spec_name };
         if matches!(name, Value::Nil) { return Ok(Value::Nil); }
-        let code = match self.warning_send(loader, "get_source", vec![name]) {
+        let code = match self.warning_apply(reader, vec![name]) {
             Ok(code) => code,
             Err(message) if self.got_away.as_ref().map_or(message.starts_with("ImportError:"), |raised| self.escape_names(raised, "ImportError")) => { self.got_away = None; return Ok(Value::Nil); }
             Err(message) => return Err(message),
