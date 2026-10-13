@@ -378,8 +378,9 @@ def strftime(format, fields=None):
             out += _field('', '%' + format[spec:at], flags, digits, 0, ' ')
     return out
 
-def strptime(data_string, format="%a %b %d %H:%M:%S %Y"):
-    # The parsing itself is the reference's pure-Python _strptime; it
-    # imports this module, so it is fetched on the first call.
+# The native struct_time keeps its two named non-sequence fields.
+_STRUCT_TM_ITEMS = struct_time.n_fields
+
+def strptime(string, format='%a %b %d %H:%M:%S %Y'):
     import _strptime
-    return _strptime._strptime_time(data_string, format)
+    return _strptime._strptime_time(string, format)

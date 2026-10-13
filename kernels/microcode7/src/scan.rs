@@ -4,7 +4,7 @@
 
 use crate::table::Table;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Shape {
     Bare,
     Quoted,
@@ -26,7 +26,7 @@ pub enum Shape {
     Finish,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Token {
     pub shape: Shape,
     pub lexeme: String,

@@ -17,6 +17,7 @@ use crate::data::{Reach, Value};
 
 type Res<T> = Result<T, String>;
 
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Holds {
     /// A function: names assigned inside are its own; nothing outside is written.
@@ -282,6 +283,7 @@ impl Layer {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Signature {
     pub arity: usize,
     pub yields: bool,
@@ -1211,7 +1213,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             // is the program's own documentation, kept under the name
             // the language gives it (ext.system.module.doc).
             let mut opening_text = false;
-            if opening && own_line && within.is_none() {
+            if opening && own_line && within.is_none() && r.optimize < 2 {
                 let first = match &stmt { Form::OnLine(_, _, inner) => inner.as_ref(), other => other };
                 if let Form::Const(Value::Text(said)) = first {
                     opening_text = true;
@@ -1281,7 +1283,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     let mut root_names = Vec::new();
     let mut suspended = false;
     inspect_form(&body, &[], &mut root_literals, &mut root_names, &mut suspended);
-    let program = Routine { display_names: Default::default(), definition: None, immediate_slots: None, body_boundary: r.pos, origin_content: r.origin_content.clone(), lexical_origin: r.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_spelling: None, annotation_protocol: false, reads_annotation: false, annotator: None, literals: root_literals, referenced: root_names, locals: Vec::new(), flags: 0, future_bits: r.future_bits, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
+    let program = Routine { display_names: Default::default(), definition: None, immediate_slots: None, body_boundary: r.pos, origin_content: r.origin_content.clone(), lexical_origin: r.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_spelling: None, annotation_protocol: false, reads_annotation: false, annotator: None, literals: root_literals, referenced: root_names, locals: Vec::new(), flags: r.future_bits | if r.top_coroutine { 128 } else { 0 }, future_bits: r.future_bits, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), warnings: r.warnings, future_bits: r.future_bits, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
 }
 
@@ -1741,7 +1743,7 @@ impl<'a> Builder<'a> {
     fn global_address(&mut self, name: &str) -> Address {
         let up = self.layers[1..].iter().filter(|s| s.holds != Holds::Nothing).count();
         let at = self.global_at(name);
-        Address { ident: Rc::from(name), up, at, fallback: None }
+        Address { cache_global: true, ident: Rc::from(name), up, at, fallback: None }
     }
 
     /// The global a name stands for in the function around, if a
@@ -1790,7 +1792,7 @@ impl<'a> Builder<'a> {
             if !set_aside && !(borrowed && index == owner) {
                 if layer.aliases.iter().any(|pair| pair.0 == name) { return None; }
                 if let Some(at) = layer.named_position(name) {
-                    let slot = Address { ident: Rc::from(name), up: distance, at, fallback: None };
+                    let slot = Address { cache_global: false, ident: Rc::from(name), up: distance, at, fallback: None };
                     for (which, stood) in through {
                         let layer = &mut self.layers[which];
                         if layer.reaching.iter().any(|held| held.ident.as_ref() == name) { continue; }
@@ -1863,15 +1865,15 @@ impl<'a> Builder<'a> {
             if wears_mark && self.grammar.flag_ext_stmt_function_own_names {
                 let own = &mut self.layers[i].idents;
                 own.push(name.to_string());
-                return Address { ident: Rc::from(name), up, at: own.len() - 1, fallback: Some(global) };
+                return Address { cache_global: false, ident: Rc::from(name), up, at: own.len() - 1, fallback: Some(global) };
             }
         }
         match found {
-            Some((i, depth, index)) if i != 0 => Address { ident: Rc::from(name), up: depth, at: index, fallback: Some(global) },
-            Some((_, depth, index)) => Address { ident: Rc::from(name), up: depth, at: index, fallback: None },
+            Some((i, depth, index)) if i != 0 => Address { cache_global: false, ident: Rc::from(name), up: depth, at: index, fallback: Some(global) },
+            Some((_, depth, index)) => Address { cache_global: true, ident: Rc::from(name), up: depth, at: index, fallback: None },
             None => {
                 let depth = self.layers[1..].iter().filter(|s| !frameless(s.holds)).count();
-                Address { ident: Rc::from(name), up: depth, at: global, fallback: None }
+                Address { cache_global: true, ident: Rc::from(name), up: depth, at: global, fallback: None }
             }
         }
     }
@@ -1945,7 +1947,7 @@ impl<'a> Builder<'a> {
                     if i == 0 && self.past_library && !self.named_in_program.iter().any(|word| word == name) {
                         self.named_in_program.push(name.to_string());
                     }
-                    return Address { ident: Rc::from(name), up: depth, at: index, fallback: None };
+                    return Address { cache_global: i == 0, ident: Rc::from(name), up: depth, at: index, fallback: None };
                 }
             }
         }
@@ -2246,7 +2248,7 @@ impl<'a> Builder<'a> {
                         Some(at) => at, None => { b.layers[0].idents.push(name.to_owned()); b.layers[0].idents.len() - 1 },
                     };
                     let up = b.layers[1..].iter().filter(|layer| layer.holds != Holds::Nothing).count();
-                    Ok(Form::Read(Address { ident: Rc::from(name), up, at, fallback: None }))
+                    Ok(Form::Read(Address { cache_global: true, ident: Rc::from(name), up, at, fallback: None }))
                 }).expect("fallback name lookup is syntactically complete");
                 let helper = constant(Value::Wrapped(74, Rc::new(Vec::new()).into()));
                 return Form::Apply(Callee::Code(Box::new(helper)), vec![receiver, constant(Value::text(name)), outside]);
@@ -5865,7 +5867,7 @@ impl<'a> Builder<'a> {
                 // class into the scope around it.
                 let Some(book) = self.parts().book.clone() else {
                     let blank = self.gensym("delete");
-                    steps.push(Form::Read(Address { ident: Rc::from(word.as_str()), up: blank.up, at: blank.at, fallback: None }));
+                    steps.push(Form::Read(Address { cache_global: blank.cache_global, ident: Rc::from(word.as_str()), up: blank.up, at: blank.at, fallback: None }));
                     continue;
                 };
                 let target = self.read_to_write(&book.ident.to_string());
@@ -7712,7 +7714,7 @@ impl<'a> Builder<'a> {
             if !self.on_any("ext.stmt.case.mark") {
                 if let Some(instead) = table.single("ext.stmt.case.mark.instead") {
                     let row = (self.look().row as u32).saturating_sub(self.before);
-                    let told = Form::Remark("deprecated", Rc::from(instead), row);
+                    let told = Form::Remark(Rc::from("deprecated"), Rc::from(instead), row);
                     self.noted_when_read.push(told);
                 }
             }
@@ -8341,7 +8343,7 @@ impl<'a> Builder<'a> {
                         whose,
                         params.last().map_or("", String::as_str)
                     );
-                    said.push(Form::Remark("deprecated", Rc::from(told.as_str()), row));
+                    said.push(Form::Remark(Rc::from("deprecated"), Rc::from(told.as_str()), row));
                 }
             }
             if let Some(sep) = table.single("syntax.call.separator") {
@@ -11772,7 +11774,7 @@ impl<'a> Builder<'a> {
                         _ => false,
                     };
                     return Ok(match (calls, unshared.first()) {
-                        (true, Some(said)) => Form::CellOrSaid(Some("notice"), Rc::from(said.as_str()), row, Box::new(found)),
+                        (true, Some(said)) => Form::CellOrSaid(Some(Rc::from("notice")), Rc::from(said.as_str()), row, Box::new(found)),
                         (true, None) => found,
                         (false, _) => {
                             let told = format!("{}(): Argument #{} ({}) could not be passed by reference", called, which + 1, spelt);
@@ -11786,12 +11788,12 @@ impl<'a> Builder<'a> {
                 // was given one to give is settled by the run, the value
                 // itself saying whether it is a cell.
                 match (unshared.first(), as_it_runs, shares) {
-                    (Some(said), true, _) => Form::HeldEither("notice", Rc::from(said.as_str()), row, Box::new(found)),
+                    (Some(said), true, _) => Form::HeldEither(Rc::from("notice"), Rc::from(said.as_str()), row, Box::new(found)),
                     (Some(said), false, false) => {
                         self.gensyms += 1;
                         let held = format!("#shared{}", self.gensyms);
                         let kept = self.write(&held, found);
-                        let told = Form::Remark("notice", Rc::from(said.as_str()), row);
+                        let told = Form::Remark(Rc::from("notice"), Rc::from(said.as_str()), row);
                         sequence(vec![kept, told, self.read(&held)])
                     }
                     _ => found,
@@ -13930,6 +13932,24 @@ fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, name
         _ => {}
     }
     for child in children { inspect_form(child, locals, constants, names, suspension); }
+}
+
+
+pub(crate) fn cached_forms(program: Rc<Routine>, globals: Vec<String>, mut metadata: serde_json::Value) -> Result<Built, String> {
+    macro_rules! take { ($key:literal) => { serde_json::from_value(metadata[$key].take()).map_err(|e| format!("ValueError: {e}"))? }; }
+    Ok(Built {
+        program, globals, warnings: Vec::new(), future_bits: metadata["future_bits"].as_i64().unwrap_or(0),
+        outer_aliases: take!("outer_aliases"), seen: take!("seen"),
+        shared_args: take!("shared_args"), arg_names: take!("arg_names"),
+        gives_back: take!("gives_back"), bound_globally: take!("bound_globally"),
+        native_exports: take!("native_exports"),
+    })
+}
+pub(crate) fn cache_metadata(built: &Built) -> serde_json::Value {
+    serde_json::json!({ "globals": built.globals, "future_bits": built.future_bits, "outer_aliases": built.outer_aliases,
+        "seen": built.seen, "shared_args": built.shared_args, "arg_names": built.arg_names,
+        "gives_back": built.gives_back, "bound_globally": built.bound_globally,
+        "native_exports": built.native_exports })
 }
 
 // Preserve blank lines when settling the indentation of Python documentation.

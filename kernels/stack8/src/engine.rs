@@ -210,6 +210,7 @@ pub struct Engine<'a> {
     builtins_view: Option<Value>,
     class_body_capture: Option<(Rc<Routine>, Option<Value>)>,
     code_class: Option<Rc<Class>>,
+    archived_text: Option<serde_json::Value>,
     /// The future flags in force for text read as the run goes: a code
     /// value's own where one is run, else the running text's, as the
     /// reference reads them from the calling frame.
@@ -1767,6 +1768,7 @@ impl<'a> Engine<'a> {
             builtins_view: None,
             class_body_capture: None,
             code_class: None,
+            archived_text: None,
             native_names: RefCell::new(std::collections::BTreeMap::new()),
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
             module_sources: HashMap::new(),
@@ -8006,6 +8008,13 @@ impl<'a> Engine<'a> {
         }
         if word.as_ref() == "type" && [8, 17].iter().any(|index| self.lang.class_special.get(*index).map_or(false, |slot| slot == name)) {
             return Some(self.held_kind_descriptor(&word, name));
+        }
+        let qualified = format!("{word}.{name}");
+        if let Some(operation) = self.lang.builtins.get(&qualified).filter(|op| {
+            matches!(op, Builtin::Bytes(5 | 49))
+                || self.lang.value_methods.get(&qualified).is_some_and(|working| working == "fromhex")
+        }) {
+            return Some(Value::Native(*operation, Rc::from(qualified)));
         }
         let sample = self.kind_sample(&word)?;
         if matches!(sample, Value::Text(_)) && matches!(self.lang.builtins.get(name), Some(Builtin::Text(crate::strings::TextOp::Maketrans))) {
@@ -15934,7 +15943,7 @@ impl<'a> Engine<'a> {
                     (Value::Complex(x), Value::Complex(y)) => Rc::ptr_eq(x, y),
                     (Value::Frac(x), Value::Frac(y)) => Rc::ptr_eq(x, y),
                     (Value::Text(x), Value::Text(y)) => Rc::ptr_eq(x, y),
-                    (Value::Codepoints(x), Value::Codepoints(y)) => Rc::ptr_eq(x, y),
+                    (Value::Codepoints(left), Value::Codepoints(right)) => Rc::ptr_eq(left, right),
                     (Value::Tuple(x), Value::Tuple(y)) => Rc::ptr_eq(x, y),
                     (Value::Slice(x), Value::Slice(y)) => Rc::ptr_eq(x, y),
                     (Value::Counted(x), Value::Counted(y)) => Rc::ptr_eq(x, y),
@@ -18081,6 +18090,10 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin_call(&mut self, builtin: Builtin, name: &str, items: Vec<(Option<String>, Value)>) -> Res<Value> {
+        if builtin == Builtin::CodeCache {
+            if items.iter().any(|(key, _)| key.is_some()) { return Err("TypeError: compiled cache primitives take positional arguments".into()); }
+            return self.code_cache(name, items.into_iter().map(|(_, value)| value).collect());
+        }
         if !self.lang.compile_modes.is_empty() && matches!(builtin, Builtin::RunText | Builtin::Eval | Builtin::ReadyText | Builtin::Summon | Builtin::OuterNames | Builtin::NearNames) {
             return self.text_builtin(builtin, name, items);
         }
@@ -18926,6 +18939,11 @@ impl<'a> Engine<'a> {
             if let Some(Builtin::Text(work)) = qualified.as_ref().and_then(|word| self.lang.builtins.get(word)).copied().filter(|op| matches!(op, Builtin::Text(crate::strings::TextOp::Splitlines | crate::strings::TextOp::Split | crate::strings::TextOp::Rsplit | crate::strings::TextOp::Partition | crate::strings::TextOp::Rpartition | crate::strings::TextOp::Lower | crate::strings::TextOp::Upper | crate::strings::TextOp::Casefold | crate::strings::TextOp::Swapcase | crate::strings::TextOp::Count | crate::strings::TextOp::Replace | crate::strings::TextOp::Find | crate::strings::TextOp::Rfind | crate::strings::TextOp::Index | crate::strings::TextOp::Rindex))) {
                 let mut supplied = vec![contents.clone()]; supplied.extend(args);
                 crate::strings::keywords(work, &mut supplied, named, self.lang)?;
+                if work == crate::strings::TextOp::Count {
+                    for limit in supplied.iter_mut().skip(2) {
+                        if let Some(integer) = self.special_index(limit)? { *limit = integer; }
+                    }
+                }
                 if work == crate::strings::TextOp::Splitlines && supplied.len() == 2 {
                     supplied[1] = Value::Flag(self.special_truth(&supplied[1])?);
                 }
@@ -20937,10 +20955,12 @@ impl<'a> Engine<'a> {
                 let mut joined = Vec::new();
                 for (at, part) in parts.iter().enumerate() {
                     if at > 0 { joined.extend(cell.borrow().iter().copied()); }
-                    match part {
+                    let settled = part.contents();
+                    let payload = Self::worth_of(&settled).unwrap_or(settled);
+                    match &payload {
                         Value::Bytes(piece, ..) => joined.extend(piece.borrow().iter().copied()),
                         Value::Object(object) if object.class_now().name == "memoryview" => {
-                            let piece = self.bytes_argument(part)?.ok_or_else(|| self.byte_fault("arguments"))?;
+                            let piece = self.bytes_argument(&payload)?.ok_or_else(|| self.byte_fault("arguments"))?;
                             joined.extend(piece);
                         }
                         _ => return Err(self.byte_fault("arguments")),
@@ -21513,6 +21533,12 @@ impl<'a> Engine<'a> {
             }
             Builtin::Text(op) => {
                 let mut normalized: Vec<Value> = args.iter().map(|v| match Self::worth_of(v) { Some(text @ Value::Text(_)) => text, _ => v.contents() }).collect();
+                // Search bounds use the index protocol even for lone-surrogate text.
+                if op == crate::strings::TextOp::Count && normalized.iter().take(2).any(|v| matches!(v, Value::Codepoints(_))) {
+                    for bound in normalized.iter_mut().skip(2) {
+                        if let Some(index) = self.special_index(bound)? { *bound = index; }
+                    }
+                }
                 // Native text descriptors use the same encoder as bound string methods.
                 if op == crate::strings::TextOp::Encode && self.lang.builtin_words.iter().any(|(kind, _)| *kind == Builtin::Bytes(2)) {
                     return self.byte_call(2, &normalized);
@@ -21716,6 +21742,7 @@ impl<'a> Engine<'a> {
             // language spells the manners text may be read in; a
             // language spelling the words without the manners is
             // refused here.
+            Builtin::CodeCache => return self.code_cache(name, args.clone()),
             Builtin::OuterNames | Builtin::NearNames | Builtin::ClassLocalsPlace | Builtin::RunText | Builtin::ReadyText | Builtin::Summon => return Err(self.source_unready()),
             // Source read while the program runs, assembled against
             // the same globals and run where it stands. A file that
@@ -26398,7 +26425,7 @@ impl Engine<'_> {
                     Value::Set(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Map(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Text(a) => a.as_ptr() as usize as u64,
-                    Value::Codepoints(a) => a.as_ptr() as usize as u64,
+                    Value::Codepoints(storage) => Rc::as_ptr(storage) as usize as u64,
                     Value::Object(a) | Value::Fields(a) => Rc::as_ptr(a) as usize as u64,
                     Value::ValueMethod(a) => Rc::as_ptr(a) as usize as u64,
                     Value::TextMethod(_, _, member) => member.as_ptr() as usize as u64,
@@ -28290,18 +28317,30 @@ impl Engine<'_> {
         if main.is_empty() { return; }
         let book = self.outer_book_made();
         if let Ok(name) = std::env::var("LUMEN_RUN_MODULE") {
+            if self.lang.module_path.is_some() {
+                self.module_slots.insert(self.source.clone(), (0, name.clone()));
+            }
             self.made += 1;
             let parent = name.rsplit_once('.').map_or("", |(parent, _)| parent);
             let spec = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None),
                 class: self.root_class(),
                 fields: RefCell::new(vec![("name".into(), Value::text(&name)),
                     ("origin".into(), Value::text(&self.source)), ("parent".into(), Value::text(parent))]), mark: self.made }));
+            for (word, value) in [("__spec__", spec.clone()), ("__package__", Value::text(parent))] {
+                let slot = self.registry.slot(word);
+                self.world.resize(self.registry.idents.len(), Value::Blank);
+                self.world[slot] = value;
+            }
             let mut contents = book.borrow_mut();
             if let Value::Map(entries) = &*contents {
                 let mut entries = entries.to_vec();
                 let key = Value::text("__spec__");
                 if let Some((_, held)) = entries.iter_mut().find(|(word, _)| word.equals(&key)) { *held = spec; }
                 else { entries.push((key, spec)); }
+                let package_key = Value::text("__package__");
+                if let Some((_, held)) = entries.iter_mut().find(|(word, _)| word.equals(&package_key)) {
+                    *held = Value::text(parent);
+                } else { entries.push((package_key, Value::text(parent))); }
                 *contents = Value::Map(Rc::new(entries.into()));
             }
         }
@@ -28978,6 +29017,7 @@ impl Engine<'_> {
     /// `compile`, `eval` or `exec` is told apart the same way a file
     /// is, through `text_syntax`.
     fn text_tokens(&self, source: &str, mode: usize) -> Result<Vec<crate::lex::Token>, (String, usize, usize)> {
+        if source.is_empty() && self.archived_text.is_some() { return Ok(Vec::new()); }
         if mode != 0 && source.is_empty() { return Err(("SyntaxError: invalid syntax".into(), 0, 0)); }
         if mode == 1 {
             let word = source.trim_start_matches([' ', '\t', '\n']).split(|ch: char| !ch.is_alphanumeric() && ch != '_').next().unwrap_or("");
@@ -29022,7 +29062,7 @@ impl Engine<'_> {
             Builtin::OuterNames | Builtin::NearNames => {
                 if !args.is_empty() { return Err(self.core_fault("core.arity", name)); }
                 if builtin == Builtin::OuterNames && self.reading_in.is_none() {
-                    if let Some((_, path)) = self.module_slots.get(&self.source) {
+                    if let Some((_, path)) = self.module_slots.get(&self.source).filter(|(_, path)| path != &self.class_word("main")) {
                         if let Some(Value::Object(space)) = self.modules.get(path) { return Ok(Value::Fields(space.clone())); }
                     }
                 }
@@ -29692,7 +29732,7 @@ impl Engine<'_> {
         trial.future_bits = future_bits;
         trial.optimize = optimization;
         trial.source = Some(source.clone());
-        let checked = match crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
+        let mut checked = match crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref()))) {
             Ok(checked) => checked,
             Err(said) => {
                 if allow_incomplete && mode != 0 && !Self::past_reading_complaint(&said) {
@@ -29745,11 +29785,18 @@ impl Engine<'_> {
         let class = self.code_class();
         let words = &self.lang.compile_parameters;
         let bits = (if trial.top_level_coroutine { 128 } else { 0 }) | trial.future_bits;
+        Rc::make_mut(&mut checked).declared_on = 1;
+        Rc::make_mut(&mut checked).code_flags = bits;
         let constants = Value::tuple(checked.code_constants.iter().map(|v| match v {
             Value::Routine(body) => self.routine_code(body), other => other.clone(),
         }).collect());
         let module_name = self.lang.trace_fields.get(10).map_or("<module>", String::as_str);
-        let fields = vec![("co_consts".to_string(), constants), ("co_name".to_string(), Value::text(module_name)), ("co_qualname".to_string(), Value::text(module_name))];
+        let binding_cache = serde_json::to_string(&trial).map_err(|e| format!("ValueError: {e}"))?;
+        let fields = vec![("co_consts".to_string(), constants), ("co_name".into(), Value::text(module_name)), ("co_qualname".into(), Value::text(module_name)),
+            ("co_filename".into(), Value::Text(file.clone())),
+            ("\0optimization".into(), Value::Small(optimization as i64)),
+            ("\0compiled_program".into(), Value::Routine(checked)),
+            ("\0compiled_bindings".into(), Value::text(&binding_cache))];
         let mut fields = fields;
         let source_fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file.clone())), (words[2].clone(), Value::Small(mode as i64)), ("co_filename".to_string(), Value::Text(file)), ("co_flags".to_string(), Value::Small(bits)), ("co_firstlineno".to_string(), Value::Small(1)), ("co_optimize".to_string(), Value::Small(optimization))];
         fields.splice(0..0, source_fields);
@@ -29851,6 +29898,13 @@ impl Engine<'_> {
     /// to be weighed, else as statements; in the dictionaries handed
     /// over, else where the call stands.
     pub(super) fn text_run(&mut self, weighing: bool, name: &str, args: Vec<Value>) -> Res<Value> {
+        let enclosing_archive = self.archived_text.take();
+        let answer = self.text_run_cached(weighing, name, args);
+        self.archived_text = enclosing_archive;
+        answer
+    }
+
+    fn text_run_cached(&mut self, weighing: bool, name: &str, args: Vec<Value>) -> Res<Value> {
         // The names about the call are only for a reading handed no
         // dictionaries; taken here, no reading that follows finds them.
         let within = self.text_within.take();
@@ -29897,6 +29951,18 @@ impl Engine<'_> {
             }
         }
         let Some(first) = args.first().map(Value::contents) else { return Err(self.core_fault("core.arity", name)) };
+        if let Value::Object(code) = &first {
+            if let Some((_, Value::Text(packet))) = code.fields.borrow().iter().find(|(key, _)| key == "\0code_archive") {
+                self.archived_text = Some(serde_json::from_str(packet).map_err(|e| format!("ValueError: {e}"))?);
+            }
+        }
+        if let Value::Object(code) = &first {
+            if code.fields.borrow().iter().any(|(key, value)| key == "\0optimization" && matches!(value, Value::Small(1..=2))) {
+                let writer = self.lang.code_cache[0].clone();
+                let Value::Bytes(bytes, ..) = self.code_cache(&writer, vec![first.clone()])? else { return Err(self.source_unready()); };
+                self.archived_text = Some(serde_json::from_slice(&bytes.borrow()).map_err(|e| format!("ValueError: {e}"))?);
+            }
+        }
         let replacements = match &first {
             Value::Object(code) if code.fields.borrow().iter().any(|(name, _)| name == "\0replace_constants") =>
                 code.fields.borrow().iter().find(|(name, _)| name == "co_consts").and_then(|(_, value)| match value { Value::Tuple(values) => Some(values.as_ref().clone()), _ => None }),
@@ -30004,7 +30070,7 @@ impl Engine<'_> {
                 None => self.run_text_booked(source, file, mode, near, None, top_await, replacements, optimization),
             };
         }
-        if let Some(Value::Object(module)) = self.module_slots.get(&self.source).and_then(|(_, name)| self.modules.get(name)).cloned() {
+        if let Some(Value::Object(module)) = self.module_slots.get(&self.source).filter(|(_, name)| name != &self.class_word("main")).and_then(|(_, name)| self.modules.get(name)).cloned() {
             let globals = Rc::new(RefCell::new(Value::Fields(module)));
             if let Some(word) = self.lang.module_builtins.first().cloned() {
                 if self.book_builtins(&globals, &word).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?.is_none() {
@@ -30139,6 +30205,10 @@ impl Engine<'_> {
     /// out where it is one; else statements. Answers whether what the
     /// program leaves is to be written out.
     fn text_program(&mut self, source: &str, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>, top_await: bool, module_hint: Option<&str>) -> Res<(Rc<Routine>, bool)> {
+        if let Some(packet) = self.archived_text.take() {
+            let registry = match local { Some(registry) => registry, None => &mut self.registry };
+            return crate::cache::program(packet, registry).map(|program| (program, false));
+        }
         let mut amiss = (String::new(), 0, 0, (0, 0));
         let mut noted = Vec::new();
         let mut compiled = None;
@@ -30297,6 +30367,69 @@ mod heap;
 
 #[path = "binascii.rs"]
 mod binascii;
+
+impl Engine<'_> {
+    fn code_cache(&mut self, word: &str, given: Vec<Value>) -> Res<Value> {
+        let task = self.lang.code_cache.iter().position(|name| name == word).ok_or_else(|| self.source_unready())?;
+        if task == 3 {
+            if given.len() != 2 { return Err("TypeError: _code_filename() expects code and filename".into()); }
+            let Value::Text(filename) = given[1].contents() else { return Err("TypeError: filename must be str".into()); };
+            let words = self.lang.code_cache.clone();
+            let packed = self.code_cache(&words[0], vec![given[0].clone()])?;
+            let Value::Bytes(bytes, ..) = packed else { return Err(self.source_unready()); };
+            let mut packet: serde_json::Value = serde_json::from_slice(&bytes.borrow()).map_err(|e| format!("ValueError: {e}"))?;
+            let old = packet["file"].as_str().ok_or("ValueError: missing filename")?.to_owned();
+            crate::cache::move_filename(&mut packet["program"], &old, &filename);
+            crate::cache::move_filename(&mut packet["routines"], &old, &filename);
+            packet["file"] = serde_json::json!(filename);
+            let bytes = serde_json::to_vec(&packet).map_err(|e| format!("ValueError: {e}"))?;
+            let renewed = self.code_cache(&words[1], vec![Value::Bytes(Rc::new(RefCell::new(bytes)), false, Rc::from("b"))])?;
+            let (Value::Object(original), Value::Object(updated)) = (given[0].contents(), renewed) else { return Err(self.source_unready()); };
+            *original.fields.borrow_mut() = updated.fields.borrow().clone();
+            return Ok(Value::Null);
+        }
+        if task == 2 {
+            if !given.is_empty() { return Err("TypeError: _code_abi() takes no arguments".into()); }
+            return Ok(Value::tuple(vec![Value::text("lumen-stack8-v5"), Value::Small(u32::from_le_bytes(*b"L8C\x04") as i64)]));
+        }
+        if given.len() != 1 { return Err("TypeError: compiled cache primitive expects one argument".into()); }
+        if task == 0 {
+            let Value::Object(code) = given[0].contents() else { return Err("TypeError: expected a code object".into()); };
+            if self.lang.compile_kind.as_deref() != Some(code.class_now().name.as_str()) { return Err("TypeError: expected a code object".into()); }
+            let fields = code.fields.borrow();
+            if let Some((_, Value::Text(saved))) = fields.iter().find(|(key, _)| key == "\0code_archive") {
+                return Ok(Value::Bytes(Rc::new(RefCell::new(saved.as_bytes().to_vec())), false, Rc::from("b")));
+            }
+            let Some((_, Value::Routine(program))) = fields.iter().find(|(key, _)| key == "\0compiled_program") else { return Err("ValueError: no compiled instruction graph".into()); };
+            let Some((_, Value::Text(bindings))) = fields.iter().find(|(key, _)| key == "\0compiled_bindings") else { return Err("ValueError: no compiled bindings".into()); };
+            let bindings: serde_json::Value = serde_json::from_str(bindings).map_err(|e| format!("ValueError: {e}"))?;
+            let (graph, origins, routines) = crate::cache::encoded(program)?;
+            let mode = match fields[2].1 { Value::Small(n) => n, _ => return Err("ValueError: invalid code mode".into()) };
+            let packet = serde_json::json!({"abi": "lumen-stack8-v5", "file": fields[1].1.plain(),
+                "mode": mode, "program": graph, "bindings": bindings, "origins": origins, "routines": routines});
+            let bytes = serde_json::to_vec(&packet).map_err(|e| format!("ValueError: {e}"))?;
+            return Ok(Value::Bytes(Rc::new(RefCell::new(bytes)), false, Rc::from("b")));
+        }
+        let Value::Bytes(bytes, ..) = given[0].contents() else { return Err("TypeError: expected cache bytes".into()); };
+        let packet: serde_json::Value = serde_json::from_slice(&bytes.borrow()).map_err(|e| format!("ValueError: {e}"))?;
+        let file = packet["file"].as_str().ok_or("ValueError: cache filename is missing")?;
+        let mode = packet["mode"].as_u64().filter(|n| *n < 3).ok_or("ValueError: invalid cache mode")?;
+        let mut registry = crate::compile::Registry::default();
+        let program = crate::cache::program(packet.clone(), &mut registry)?;
+        let constants = Value::tuple(program.code_constants.iter().map(|value| match value {
+            Value::Routine(body) => self.routine_code(body), other => other.clone(),
+        }).collect());
+        let words = self.lang.compile_parameters.clone();
+        let fields = vec![(words[0].clone(), Value::text("")), (words[1].clone(), Value::text(file)),
+            (words[2].clone(), Value::Small(mode as i64)), ("co_flags".into(), Value::Small(program.code_flags)),
+            ("co_firstlineno".into(), Value::Small(program.declared_on as i64)), ("co_consts".into(), constants),
+            ("co_filename".into(), Value::text(file)),
+            ("\0code_archive".into(), Value::text(&String::from_utf8(bytes.borrow().clone()).map_err(|e| format!("ValueError: {e}"))?))];
+        self.made += 1;
+        let class = self.code_class();
+        Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made })))
+    }
+}
 
 #[cfg(test)]
 mod map_write_tests {

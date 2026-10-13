@@ -1652,6 +1652,34 @@ def control_characters_c0():
 
 
 
+# From CPython v3.14.8; PSF License.
+def requires_bz2(reason='requires bz2'):
+    try:
+        import bz2
+    except ImportError:
+        bz2 = None
+    return unittest.skipUnless(bz2, reason)
+
+
+# From CPython v3.14.8; PSF License.
+def requires_lzma(reason='requires lzma'):
+    try:
+        import lzma
+    except ImportError:
+        lzma = None
+    return unittest.skipUnless(lzma, reason)
+
+
+# From CPython v3.14.8; PSF License.
+def requires_zstd(reason='requires zstd'):
+    try:
+        from compression import zstd
+    except ImportError:
+        zstd = None
+    return unittest.skipUnless(zstd, reason)
+
+
+# From CPython v3.14.8; PSF License.
 # From CPython v3.14.8 (8e6e75d9102e), Lib/test/support/__init__.py; PSF License.
 def patch(test_instance, object_to_patch, attr_name, new_value):
     """Override 'object_to_patch'.'attr_name' with 'new_value'.

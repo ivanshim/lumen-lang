@@ -39,8 +39,9 @@ thread_local! {
     static PARENT_CALLABLE: Value = Value::Adapter(Rc::new((9, Vec::new())));
 }
 
+
 /// The global names, each with a slot.
-#[derive(Default)]
+#[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Registry {
     index: HashMap<String, usize, crate::value::FxBuildHasher>,
     module_index: HashMap<String, HashMap<String, usize, crate::value::FxBuildHasher>, crate::value::FxBuildHasher>,
@@ -985,7 +986,7 @@ fn compile_pass(
             // Text alone as the first statement of a program is the
             // program's own documentation, kept under the name the
             // language gives it (ext.system.module.doc).
-            if opening && own_line && alone && !lang.module_doc.is_empty() {
+            if opening && own_line && alone && !lang.module_doc.is_empty()  {
                 let said: Vec<&Instr> = a.piece().instrs[from..].iter().filter(|i| !matches!(i, Instr::Emptied(_) | Instr::Line(_) | Instr::Nothing)).collect();
                 let words = match said.as_slice() {
                     [Instr::Const(Value::Text(words)), Instr::Write(cell)] if cell.ident.as_ref() == RESULT_CELL => Some(words.to_string()),
@@ -11447,7 +11448,9 @@ impl<'a> Compiler<'a> {
             }
             Shape::Instr => {
                 self.pass_token();
-                if Lang::spells(&lang.true_words, &tok.spelling()) {
+                if lang.debug_binding.as_deref() == Some(tok.spelling()) && !self.writing_place {
+                    self.constant(Value::Flag(self.registry.optimize <= 0));
+                } else if Lang::spells(&lang.true_words, &tok.spelling()) {
                     self.constant(Value::Flag(true));
                 } else if Lang::spells(&lang.false_words, &tok.spelling()) {
                     self.constant(Value::Flag(false));

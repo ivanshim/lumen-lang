@@ -16,6 +16,7 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use crate::code::Routine;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Sort {
     Integer,
     Rational,
@@ -44,6 +45,7 @@ impl Sort {
 
 /// p/q in lowest terms, q > 1.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Frac {
     pub p: BigInt,
     pub q: BigInt,
@@ -61,6 +63,7 @@ pub struct Frac {
 /// for where numbers are worked and set against one another and nowhere
 /// else.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Real {
     pub floating: bool,
     pub p: BigInt,
@@ -2249,6 +2252,7 @@ pub fn decimal_string(p: &BigInt, q: &BigInt, places: usize) -> String {
 /// How far a member of a class may be reached from: from anywhere, from
 /// the class and those standing on it, or from the class alone.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Reach {
     Open,
     Guarded,

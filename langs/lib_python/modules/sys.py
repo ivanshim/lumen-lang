@@ -53,7 +53,8 @@ def _absolute_search_entry(entry, cwd):
 
 path = [__file__.rsplit('/', 1)[0]]
 _path_host = __host_info()
-_python_path = _path_host[3].get('PYTHONPATH', '')
+_ignore_environment = int(_path_host[3].get('LUMEN_PYTHON_IGNORE_ENV') == '1')
+_python_path = '' if _ignore_environment else _path_host[3].get('PYTHONPATH', '')
 if _python_path:
     _search_paths = []
     for _entry in _python_path.split(':') + path:
@@ -80,7 +81,7 @@ platform = 'linux'
 # of measuring this kernel against machinery it does not have.
 _Implementation = __namespace_type()
 implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
-                                 hexversion=0x000200f0, cache_tag='lumen-314')
+                                 hexversion=0x000200f0, cache_tag=_code_abi()[0])
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
@@ -92,6 +93,8 @@ pycache_prefix = None
 _recursion_limit = 1000
 
 def _environment(name):
+    if _ignore_environment:
+        return None
     import posix
     value = posix.environ.get(name)
     if value is None:
@@ -109,12 +112,12 @@ class _Flags:
     dont_write_bytecode = 1
     no_user_site = 1
     no_site = 1
-    ignore_environment = 0
+    ignore_environment = _ignore_environment
     verbose = 0
     bytes_warning = 0
     quiet = 0
     hash_randomization = 0
-    isolated = 1
+    isolated = 0
     # The options that PYTHONDEVMODE, PYTHONUTF8 and
     # PYTHONWARNDEFAULTENCODING (or -X dev, -X utf8, -X
     # warn_default_encoding, which the helpers that start a second
@@ -359,7 +362,7 @@ def exit(*args, **kwargs):
 # is warned about, once, and treated as '0' for that call.
 def breakpointhook(*args, **kws):
     import os
-    value = os.environ.get('PYTHONBREAKPOINT')
+    value = None if flags.ignore_environment else os.environ.get('PYTHONBREAKPOINT')
     if value is None or value == '':
         import pdb
         return pdb.set_trace(*args, **kws)
@@ -599,6 +602,15 @@ def getfilesystemencodeerrors():
     return "surrogateescape"
 
 
+# Explicit module runs search the working directory before the embedded
+# library. File runs retain the isolated default search path.
+if __program_namespace().get('__spec__') is not None:
+    _cwd_error, _cwd_bytes = __posix('cwd')
+    if _cwd_error:
+        raise OSError(_cwd_error, 'cannot resolve the working directory')
+    path.insert(0, _cwd_bytes.decode('utf-8', 'surrogateescape'))
+    flags.isolated = 0
+    flags.safe_path = False
 
 def gettrace():
     return __trace_native__(0)

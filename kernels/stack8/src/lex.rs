@@ -5,7 +5,7 @@
 
 use crate::lang::Lang;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Shape {
     Instr,
     /// A name between name quotes: data for the word after it.
@@ -30,7 +30,7 @@ pub enum Shape {
     Finish,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Token {
     pub shape: Shape,
     pub lexeme: String,

@@ -4590,6 +4590,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
 | `ext.builtin.clock` | - | - | `__clock` | - | `__clock` | - | - | - | - | - |
 | `ext.builtin.clock.parts` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.builtin.code.cache` | - | - | `_code_pack` `_code_unpack` `_code_abi` `_code_filename` | - | - | - | - | - | - | - |
 | `ext.builtin.compile` | - | - | `compile` | - | - | - | - | - | - | - |
 | `ext.builtin.compile.incomplete` | - | - | `_IncompleteInputError` `incomplete input` | - | - | - | - | - | - | - |
 | `ext.builtin.compile.kind` | - | - | `code` | - | - | - | - | - | - | - |
@@ -6176,6 +6177,39 @@ hierarchy and lookup state. The pure-Python
 `__future__.py` is also carried unchanged from v3.14.8.
 
 
+
+The Python codec search registry also supplies Shift-JIS through `_codec_sjis`.
+Its forward mapping is the committed hexadecimal table in the PHP mbstring
+adapter, embedded once as data rather than copied into a second table. Reverse
+lookups are cached per character; ASCII, half-width katakana, yen, and overline
+follow the codec's single-byte rules. Stateless, incremental, and stream codecs
+share the error-handler registry. The stream base class bodies come unchanged
+from CPython 3.14.8 in `runtime_adapters/codecs.py`.
+
+The `_py_abc` runtime adapter keeps protocol instance and registration searches
+on the underlying ABC path. Runtime protocols can then inspect data attributes
+through typing's unchanged static instance checks, while explicit subclass
+checks retain the restriction on protocols with data members.
+
+Bytes joins read the stored bytes of subclasses, including ZIP extra-field
+records, without invoking an overridden conversion method. Suspended generators
+in microcode7 use Python truth protocols in loops, conditional expressions and
+short-circuit expressions; stack8 already follows the ordinary truth path.
+Actual `-m` runs bind module metadata in both the main namespace and its cells,
+resolve relative imports against the module's parent, and search the working
+directory. File runs retain their isolated import path.
+
+`time.strptime` delegates to the unchanged CPython 3.14.8 `_strptime` source,
+with `struct_time`'s two named fields preserved. The unittest runtime supports
+class cleanup stacks and class context managers, drains cleanups after failed
+setup as well as normal teardown, and records cleanup exceptions as errors.
+
+`ext.builtin.multibyte` names the Python-only CJK mapping primitive used by the multibyte codec state machines. It uses the codec port's released mapping tables; other languages leave it unregistered.
+
+`ext.builtin.code.cache` exposes the Python compiled-code cache writer, reader,
+and ABI identity. Cache payloads preserve stack8 instructions or microcode7
+forms and their binding metadata, with distinct format tags for each kernel.
+They are native Lumen caches and do not claim CPython bytecode compatibility.
 `ext.builtin.abc.instancecheck` supplies the native ABC instance-check boundary: cache lookup uses the standard weak registries, and subclass hooks run without an extra Python frame, as in CPython’s `_abc` accelerator. This lets protocol hooks distinguish checks made by `abc` from direct subclass checks.
 `ext.stmt.class.detail.native.docs` stores native descriptor qualified names and
 their documentation strings in alternating entries, taken from CPython 3.14.8's
@@ -6221,3 +6255,7 @@ storage report that limitation instead of inventing a count.
 
 `ext.builtin.partial.call` supplies native invocation for Python partial objects, merging their stored positional and keyword arguments without adding a Python frame.
 `ext.builtin.lzma_decode` names the Python-only one-stream system liblzma decoder. It returns decoder status, output bytes and consumed input; the Python facade joins concatenated XZ/LZMA streams. Raw filter chains and incremental codec objects are not yet exposed.
+
+Python text methods validate named error policies in development mode (`-X dev`). Private `__codec_encode` and `__codec_decode` spellings reuse the bytes encode/decode labels for low-level registry conversion, where unused policies remain lazy.
+
+`ext.builtin.multibyte` names the Python native CJK mapping primitive. It provides complete CJK character mappings, prefix validation, GB18030 ranges, and Unicode 16.0/3.2 normalization data to the Python codec state machines. Other languages do not register it.

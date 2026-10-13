@@ -48,6 +48,7 @@ impl Env {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Kind {
     Whole,
     Fraction,
@@ -86,6 +87,7 @@ impl Kind {
 /// beneath is answered for where numbers are worked and weighed against
 /// each other and in no other place.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Ratio {
     pub float_style: bool,
     pub above: BigInt,
@@ -2146,6 +2148,7 @@ pub fn decimal_string(above: &BigInt, beneath: &BigInt, places: usize) -> String
 /// How far a member of a class is reached from: from anywhere, from the
 /// class and those built on it, or from the class alone.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Reach {
     Everywhere,
     Within,

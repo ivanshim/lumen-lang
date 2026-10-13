@@ -35,7 +35,14 @@
     "traceback": "runtime_adapters/traceback.py",
     "io": "runtime_adapters/io.py",
     "importlib.metadata": "runtime_adapters/metadata.py",
-    "importlib.resources._common": "runtime_adapters/resources.py"
+    "importlib.resources._common": "runtime_adapters/resources.py",
+    "_py_abc": "runtime_adapters/_py_abc.py",
+    "marshal": "runtime_adapters/marshal.py"
+  },
+  "data": {
+    "_codec_sjis": {
+      "_mapping_source": "../../lib_php/native/mbstring.php"
+    }
   },
   "replacements": {
     "annotationlib": "runtime_adapters/native_annotationlib.py",
