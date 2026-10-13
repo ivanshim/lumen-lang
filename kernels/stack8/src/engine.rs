@@ -27324,7 +27324,7 @@ impl Engine<'_> {
         fields.push(("\0module-owner".into(), Value::text(path)));
         // The builtins word stands among the module's own names, as the
         // reference keeps it in every module's dictionary.
-        let natives = self.native_dict();
+        let natives = self.default_builtin_namespace();
         for word in &self.lang.module_builtins {
             if !fields.iter().any(|(key, _)| key == word) { fields.push((word.clone(), natives.clone())); }
         }
@@ -28218,12 +28218,16 @@ impl Engine<'_> {
     /// The dictionary of builtin words itself, as a value a program may
     /// hold and ask after.
     fn native_dict(&mut self) -> Value {
+        Value::Bond(self.natives_book())
+    }
+
+    fn default_builtin_namespace(&mut self) -> Value {
         if !self.importing.contains("builtins") {
             if let Some(Value::Object(module)) = self.modules.get("builtins") {
                 return Value::Fields(module.clone());
             }
         }
-        Value::Bond(self.natives_book())
+        self.native_dict()
     }
 
     /// Whether a value is that very dictionary, rather than some other
@@ -30093,7 +30097,7 @@ impl Engine<'_> {
                 }
             }
             if existing.is_none() {
-                let natives = self.native_dict();
+                let natives = self.default_builtin_namespace();
                 let owner = outer.borrow().clone();
                 if matches!(&owner, Value::Object(_)) && self.special_value(&owner, 12).is_none() && Self::worth_of(&owner).is_none() {
                     let kind = match &owner { Value::Object(o) => o.class_now().name.clone(), other => other.core_kind() };
@@ -30126,7 +30130,7 @@ impl Engine<'_> {
             let globals = Rc::new(RefCell::new(Value::Fields(module)));
             if let Some(word) = self.lang.module_builtins.first().cloned() {
                 if self.book_builtins(&globals, &word).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?.is_none() {
-                    let builtins = self.native_dict();
+                    let builtins = self.default_builtin_namespace();
                     self.book_put(&globals, &word, Some(builtins)).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
                 }
             }
