@@ -3,5 +3,9 @@ name = "lumen-lzma"
 version = "0.1.0"
 edition = "2021"
 
+[dependencies]
+# Build the bundled codec on every host, including CI without xz-devel.
+lzma-sys = { version = "=0.1.20", features = ["static"] }
+
 [lib]
 path = "lib.rs"
