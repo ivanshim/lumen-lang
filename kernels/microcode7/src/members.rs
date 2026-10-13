@@ -24,26 +24,26 @@ pub struct Request<'a> {
 /// The names each builtin kind answers to, a line of words to a kind:
 /// what CPython keeps in the type's own namespace. A kind answers its
 /// own alone, so a tuple has no append however a list has one.
-const KIND_MEMBERS: &[(&str, &str)] = &[
-    ("str", "upper lower title capitalize swapcase strip lstrip rstrip split rsplit join replace find rfind index rindex count startswith endswith \
-             isdigit isalpha isalnum isspace islower isupper center ljust rjust zfill format encode"),
-    ("list", "append extend insert pop remove sort reverse copy clear index count"),
-    ("dict", "get keys values items setdefault update pop popitem copy clear fromkeys"),
-    ("bytearray", "copy"),
-    ("tuple", "index count"),
-    ("range", "index count"),
-    ("int", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__"),
-    ("bool", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__"),
-    ("float", "real imag conjugate as_integer_ratio is_integer hex __floor__ __ceil__"),
-    ("complex", "real imag conjugate"),
+const KIND_MEMBERS: &[(&str, &[&str])] = &[
+    ("str", &["upper", "lower", "title", "capitalize", "swapcase", "strip", "lstrip", "rstrip", "split", "rsplit", "join", "replace", "find", "rfind", "index", "rindex", "count", "startswith", "endswith", "isdigit", "isalpha", "isalnum", "isspace", "islower", "isupper", "center", "ljust", "rjust", "zfill", "format", "encode"]),
+    ("list", &["append", "extend", "insert", "pop", "remove", "sort", "reverse", "copy", "clear", "index", "count"]),
+    ("dict", &["get", "keys", "values", "items", "setdefault", "update", "pop", "popitem", "copy", "clear", "fromkeys"]),
+    ("bytearray", &["copy"]),
+    ("tuple", &["index", "count"]),
+    ("range", &["index", "count"]),
+    ("int", &["bit_length", "bit_count", "numerator", "denominator", "real", "imag", "conjugate", "as_integer_ratio", "is_integer", "__index__", "__truediv__"]),
+    ("bool", &["bit_length", "bit_count", "numerator", "denominator", "real", "imag", "conjugate", "as_integer_ratio", "is_integer", "__index__", "__truediv__"]),
+    ("float", &["real", "imag", "conjugate", "as_integer_ratio", "is_integer", "hex", "__floor__", "__ceil__"]),
+    ("complex", &["real", "imag", "conjugate"]),
 ];
 
 /// Whether a value of this kind answers to a member of that name.
 pub fn answers_to(value: &Value, operation: &str) -> bool {
-    if matches!(value.settled(), Value::Attributes(_)) { return operation == "clear"; }
-    let kind = value.settled().kind_word();
+    let value = value.settled();
+    if matches!(value, Value::Attributes(_)) { return operation == "clear"; }
+    let kind = value.kind_word();
     KIND_MEMBERS.iter().find(|(named, _)| *named == kind)
-        .map_or(false, |(_, words)| words.split_whitespace().any(|word| word == operation))
+        .is_some_and(|(_, words)| words.contains(&operation))
 }
 
 /// Whether the table above is the whole of what a value's kind answers
@@ -649,20 +649,30 @@ impl Request<'_> {
     }
 
     fn search_text(&self,s:&str)->ResultValue{
-        self.takes(1,3)?;let length=s.chars().count();let raw=self.number(1,0)?;
+        self.takes(1,3)?;
+        let ascii=s.is_ascii();
+        let length=if ascii {s.len()} else {s.chars().count()};
+        let raw=self.number(1,0)?;
         let lo=place(raw,length);let hi=place(self.number(2,length as i64)?,length);
         let valid=raw<=length as i64&&lo<=hi;
-        let part:String=s.chars().skip(lo).take(hi.saturating_sub(lo)).collect();
+        // Search the original bytes; bounds are still Unicode character positions.
+        let cut=|at:usize| {
+            if ascii {at} else if at==length {s.len()}
+            else if at<=length/2 {s.char_indices().nth(at).map_or(s.len(),|(byte,_)|byte)}
+            else {s.char_indices().rev().nth(length-at-1).map_or(0,|(byte,_)|byte)}
+        };
+        let part=if valid {&s[cut(lo)..cut(hi)]} else {""};
         if self.operation=="startswith"||self.operation=="endswith"{
             let patterns=if let Value::Row(row)=&self.given[0]{row.to_vec()}else{vec![self.given[0].clone()]};
             for pattern in patterns{let text=letters(&pattern,self.complaint)?;let matches=if self.operation=="startswith"{part.starts_with(&text)}else{part.ends_with(&text)};if valid&&matches{return Ok(Value::Flag(true));}}
             return Ok(Value::Flag(false));
         }
-        let needle=self.string(0)?;
-        if self.operation=="count"{let count=if !valid{0}else if needle.is_empty(){part.chars().count()+1}else{part.matches(&needle).count()};return Ok(Value::Small(count as i64));}
-        let at=if !valid{None}else if self.operation=="rfind"{part.rfind(&needle)}else{part.find(&needle)};
-        if self.operation=="index"&&at.is_none(){return Err(self.fail("substring"));}
-        Ok(Value::Small(match at{None=>-1,Some(byte)=>(lo+part[..byte].chars().count()) as i64}))
+        let held=self.given[0].settled();
+        let Value::Text(needle)=held else {return Err(self.fail("arguments"));};
+        if self.operation=="count"{let count=if !valid{0}else if needle.is_empty(){hi-lo+1}else{part.matches(needle.as_ref()).count()};return Ok(Value::Small(count as i64));}
+        let at=if !valid{None}else if self.operation=="rfind"||self.operation=="rindex"{part.rfind(needle.as_ref())}else{part.find(needle.as_ref())};
+        if (self.operation=="index"||self.operation=="rindex")&&at.is_none(){return Err(self.fail("substring"));}
+        Ok(Value::Small(match at{None=>-1,Some(byte)=>(lo+if ascii {byte} else {part[..byte].chars().count()}) as i64}))
     }
     fn on_list(&self,mut values:Vec<Value>)->ResultValue{
         match self.operation{

@@ -177,6 +177,8 @@ def _nodefault_reduce(thing):
     return 'NoDefault'
 
 
+GenericAlias = type(list[int])
+
 NoneType = type(None)
 FunctionType = type(lambda: None)
 LambdaType = FunctionType

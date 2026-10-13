@@ -35,10 +35,24 @@ def _check_real(x):
         return
     raise 'TypeError: must be real number, not ' + type(x).__name__
 
+def _special_descriptor(x, name):
+    for owner in type(x).__mro__:
+        namespace = owner.__dict__
+        if name in namespace:
+            return True, namespace[name]
+    return False, None
+
 def _answers_own(x, name):
     if type(x) == type(1) or type(x) == type(1.0) or type(x) == type(True):
         return False
-    return hasattr(type(x), name)
+    return _special_descriptor(x, name)[0]
+
+def _special_method(x, name):
+    found, descriptor = _special_descriptor(x, name)
+    binder = getattr(type(descriptor), '__get__', None)
+    if binder is not None:
+        return binder(descriptor, x, type(x))
+    return descriptor
 
 def floor(x):
     if type(x) == type(1.0):
@@ -49,7 +63,7 @@ def floor(x):
             raise OverflowError('cannot convert float infinity to integer')
         return __math('floor', x)
     if _answers_own(x, '__floor__'):
-        method = x.__floor__
+        method = _special_method(x, '__floor__')
         if method is None:
             raise TypeError("'NoneType' object is not callable")
         return method()
@@ -63,7 +77,7 @@ def floor(x):
 
 def ceil(x):
     if _answers_own(x, '__ceil__'):
-        method = x.__ceil__
+        method = _special_method(x, '__ceil__')
         if method is None:
             raise TypeError("'NoneType' object is not callable")
         answer = method()
@@ -80,10 +94,10 @@ def ceil(x):
     return n
 
 def trunc(x):
-    if not isinstance(x, (int, float)) and not _answers_own(x, '__trunc__'):
+    if not _answers_own(x, '__trunc__') and type(x) not in (int, float, bool):
         raise TypeError("type '" + type(x).__name__ + "' doesn't define __trunc__ method")
     if _answers_own(x, '__trunc__'):
-        method = x.__trunc__
+        method = _special_method(x, '__trunc__')
         if method is None:
             raise TypeError("'NoneType' object is not callable")
         answer = method()

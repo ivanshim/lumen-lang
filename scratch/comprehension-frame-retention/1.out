@@ -1,0 +1,1 @@
+comprehension frames retain and restore locals across calls

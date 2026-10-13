@@ -5,6 +5,8 @@ copied unchanged, apart from one provenance and PSF licence header: enum, netrc,
 pydoc, __future__, pkgutil, reprlib, token, keyword, inspect, linecache, mimetypes,
 tokenize, functools, bisect, heapq, copyreg, genericpath, posixpath, stat, fnmatch, shlex, http.cookies, unittest.util, and the _pyrepl package initializer and pager.
 Their upstream bodies are checked byte for byte during source auditing.
+`inspect.py` is the unchanged CPython v3.14.8 source. Its runtime support lives in
+`runtime_adapters/native_inspect.py`, which differs from CPython.
 
 Native C facilities are modeled separately. `_tokenize` supplies the pinned
 TokenizerIter interface; its Python scanner derives from CPython's older
@@ -43,9 +45,12 @@ behavior and the newer integrated suite inventory are retained.
 `_types`, the runtime export layer corresponding to `Modules/_typesmodule.c`, whose names are
 the runtime's own kinds (the pure fallback in `types.py` reads the same values)
 including the native mapping proxy, plus helpers for unions and subscripted
-kinds. `CapsuleType` binds the native opaque-pointer value kind, whose owned name and finalizer keep native resources alive across value clones. `_datetime` has no C accelerator behind
-it: it re-exports the classes of `_pydatetime`, the very objects `datetime`
-exposes, and has no `datetime_CAPI` capsule.
+kinds. `CapsuleType` binds the native opaque-pointer value kind, whose owned name and finalizer keep native resources alive across value clones. `_datetime` re-exports the classes of `_pydatetime`, the very objects `datetime`
+exposes. Its native `datetime_CAPI` capsule owns the versioned C table described
+in `../datetime_capi.h`: constructors call those classes, results retain native
+values, and errors retain their original exception payload. The capsule name
+`lumen.datetime_CAPI.v1` distinguishes this opaque-handle ABI from CPython
+PyObject/PyDateTime_CAPI binary layouts. It does not provide a CPython extension loader.
 
 Frame, C-API, dataclass, and pickle limitations remain visible as failures or
 honest skips in the reference suite. No reference test is rewritten to conceal

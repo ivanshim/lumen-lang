@@ -1,14 +1,10 @@
-# Bringing a module in is the reader's own work. This module names the
-# parts of that machinery a program is allowed to ask after, and the
-# one call that settles any finder state. The reader reads directories
-# as it goes and keeps nothing of their listing between imports, so
-# there is never a stale cache to clear and the ask is answered with
-# nothing to do. The naming of a bytecode cache stands in
-# importlib.util, beside this module.
+# Runtime imports inspect live search paths; embedded manifest locations are cached.
 
 
+
+# Discard the native manifest index after changes to library symlinks.
 def invalidate_caches():
-    return None
+    __load_module('', 'invalidate')
 
 # The utility part lives in importlib.util; the name below stands ready
 # for the embedded alias that brings that module in beside this one.
@@ -28,3 +24,6 @@ def import_module(name, package=None):
         remainder = name[level:]
         name = parts[0] + '.' + remainder if remainder else parts[0]
     return __load_module(name)
+
+# The standard importlib package exposes its loader definitions.
+from . import machinery

@@ -13,13 +13,27 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 
 use crate::form::{Prim, Routine};
 
+/// Capture membership is indexed by the frame's existing slot numbers.
+#[derive(Default)]
+pub struct CaptureSlots(Vec<u64>);
+
+impl CaptureSlots {
+    pub fn contains(&self, slot: &usize) -> bool {
+        self.0.get(slot / 64).is_some_and(|word| word & (1u64 << (slot % 64)) != 0)
+    }
+    pub fn insert(&mut self, slot: usize) {
+        let word = slot / 64;
+        if word >= self.0.len() { self.0.resize(word + 1, 0); }
+        self.0[word] |= 1u64 << (slot % 64);
+    }
+}
+
 /// A run-time frame: slots, and the frame the program was made in.
 pub struct Env {
     pub cells: RefCell<Vec<Value>>,
-    pub capture_slots: RefCell<HashSet<usize>>,
-    pub outer: Option<Rc<Env>>,
     /// Slots used by closures after this call returns.
-
+    pub capture_slots: RefCell<CaptureSlots>,
+    pub outer: Option<Rc<Env>>,
     pub weak_callback_frame: Cell<bool>,
 }
 
@@ -29,7 +43,7 @@ impl Drop for Env {
 
 impl Env {
     pub fn make(size: usize, parent: Option<Rc<Env>>) -> Rc<Env> {
-        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(HashSet::new()), outer: parent, weak_callback_frame: Cell::new(false) })
+        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(CaptureSlots::default()), outer: parent, weak_callback_frame: Cell::new(false) })
     }
 }
 
@@ -450,6 +464,7 @@ pub struct MapStore {
     pub entry_budget: (usize, usize, bool),
     place: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
     spellings: RefCell<Option<Result<std::collections::HashMap<Rc<str>, usize>, ()>>>,
+    namespace_slots: RefCell<Vec<Option<(Rc<str>, usize)>>>,
 }
 
 impl MapStore {
@@ -483,6 +498,22 @@ impl MapStore {
         }
     }
 
+    /// Reuse a compiled slot's row while keys retain their spelling and order.
+    /// Cache positions only; every read still observes the current value.
+    pub fn namespace_slot_position(&self, slot: usize, name: &str) -> Result<Option<usize>, ()> {
+        if let Some(Some((word, at))) = self.namespace_slots.borrow().get(slot) {
+            if word.as_ref() == name { return Ok(Some(*at)); }
+        }
+        let found = self.namespace_position(name)?;
+        if let Some(at) = found {
+            let mut slots = self.namespace_slots.borrow_mut();
+            if slots.len() <= slot { slots.resize(slot + 1, None); }
+            slots[slot] = Some((Rc::from(name), at));
+        }
+        Ok(found)
+    }
+
+    /// Replace a value while retaining its unchanged namespace key positions.
     pub fn overwrite_namespace(&mut self, at: usize, value: Value) {
         self.serial = dictionary_turn();
         self.place.get_mut().take();
@@ -593,6 +624,9 @@ impl MapStore {
             self.serial = dictionary_turn();
             *self.place.borrow_mut() = None;
         self.spellings.get_mut().take();
+        for cached in self.namespace_slots.get_mut() {
+            if cached.as_ref().is_some_and(|(_, row)| *row == self.pairs.len()) { *cached = None; }
+        }
         }
         result
     }
@@ -604,6 +638,7 @@ impl MapStore {
         Self::extend_positions(&mut self.slots, &mut self.span, &mut self.entry_budget, &self.pairs.last().expect("new pair").0);
         *self.place.borrow_mut() = None;
         self.spellings.get_mut().take();
+        self.namespace_slots.get_mut().clear();
     }
 
     pub fn push(&mut self, incoming: (Value, Value)) {
@@ -637,6 +672,10 @@ impl MapStore {
         self.slots.remove(at);
         *self.place.borrow_mut() = None;
         self.spellings.get_mut().take();
+        for cached in self.namespace_slots.get_mut() {
+            if cached.as_ref().is_some_and(|(_, row)| *row == at) { *cached = None; }
+            else if let Some((_, row)) = cached { if *row > at { *row -= 1; } }
+        }
     }
 
     /// Rows and their positions have to agree before a cursor can inspect them.
@@ -655,7 +694,7 @@ impl MapStore {
     /// the clear-history the map already had.
     pub fn kept(pairs: Vec<(Value, Value)>, slots: Vec<usize>, span: usize, clear_epoch: u64, entry_budget: (usize, usize, bool)) -> Self {
         assert_eq!(pairs.len(), slots.len());
-        MapStore { pairs, serial: dictionary_turn(), span, clear_epoch, slots, entry_budget, place: RefCell::new(None), spellings: RefCell::new(None) }
+        MapStore { pairs, serial: dictionary_turn(), span, clear_epoch, slots, entry_budget, place: RefCell::new(None), spellings: RefCell::new(None), namespace_slots: RefCell::new(Vec::new()) }
     }
 
     /// Empty the pairs and mark the map's places as begun again: the
@@ -667,6 +706,7 @@ impl MapStore {
         self.entry_budget = (1, 0, true);
         *self.place.borrow_mut() = None;
         self.spellings.get_mut().take();
+        self.namespace_slots.get_mut().clear();
         self.pairs.clear();
         self.slots.clear();
     }
@@ -693,7 +733,7 @@ impl From<Vec<(Value, Value)>> for MapStore {
         let mut table_size = if span == 0 { 1 } else { 8 };
         while table_size * 2 / 3 < span { table_size *= 2; }
         let entry_budget = (table_size, table_size * 2 / 3 - span, pairs.iter().all(|entry| Self::string_key(&entry.0)));
-        MapStore { pairs, serial: dictionary_turn(), span, clear_epoch: 0, slots, entry_budget, place: RefCell::new(None), spellings: RefCell::new(None) }
+        MapStore { pairs, serial: dictionary_turn(), span, clear_epoch: 0, slots, entry_budget, place: RefCell::new(None), spellings: RefCell::new(None), namespace_slots: RefCell::new(Vec::new()) }
     }
 }
 
@@ -709,7 +749,7 @@ impl std::iter::FromIterator<(Value, Value)> for MapStore {
 /// again and answers for the copy's own pairs, never the original's.
 impl Clone for MapStore {
     fn clone(&self) -> MapStore {
-        MapStore { pairs: self.pairs.clone(), serial: self.serial, span: self.span, clear_epoch: self.clear_epoch, slots: self.slots.clone(), entry_budget: self.entry_budget, place: RefCell::new(None), spellings: RefCell::new(None) }
+        MapStore { pairs: self.pairs.clone(), serial: self.serial, span: self.span, clear_epoch: self.clear_epoch, slots: self.slots.clone(), entry_budget: self.entry_budget, place: RefCell::new(None), spellings: RefCell::new(None), namespace_slots: RefCell::new(Vec::new()) }
     }
 }
 
@@ -723,6 +763,7 @@ impl std::ops::DerefMut for MapStore {
         self.serial = dictionary_turn();
         *self.place.borrow_mut() = None;
         self.spellings.get_mut().take();
+        self.namespace_slots.get_mut().clear();
         &mut self.pairs
     }
 }
@@ -773,7 +814,59 @@ pub fn reversed_window_kind(portion: char) -> &'static str {
     match portion { 'k' | 'm' => "dict_reversekeyiterator", 'v' => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
 }
 
+pub(super) enum ReferenceState { Permanent, Counted(usize) }
+
+impl ReferenceState {
+    pub(super) fn as_python(self) -> i64 {
+        if let Self::Counted(owners) = self { owners as i64 }
+        else { i64::from(0xc000_0000_u32) }
+    }
+}
+
 impl Value {
+    pub(super) fn ownership_count(&self) -> Option<ReferenceState> {
+        // These identities are encoded in the value itself and cannot be
+        // deallocated. Copying one never creates or releases a heap owner.
+        if matches!(self, Self::Nil | Self::Flag(_) | Self::Small(_) | Self::Ellipsis
+            | Self::Intrinsic(..) | Self::OctetKind { .. } | Self::Channel(_)
+            | Self::Refusal(_)) { return Some(ReferenceState::Permanent); }
+        if let Value::Shared(binding) = self {
+            return match &*binding.borrow() {
+                Value::Vector(_) | Value::Dict(_) => Some(ReferenceState::Counted(Rc::strong_count(binding))),
+                captured => captured.ownership_count(),
+            };
+        }
+        let count = match self {
+            Value::Thing(t) | Value::Attributes(t) => Rc::strong_count(t),
+            Value::Tuple(t) | Value::Vector(t) | Value::Row(t) | Value::Arguments(t) | Value::Span(t) => Rc::strong_count(t),
+            Value::Generator(t) => Rc::strong_count(t),
+            Value::Text(t) | Value::Refusal(t) => Rc::strong_count(t),
+            Value::Huge(t) => Rc::strong_count(t),
+            Value::Frac(t) => Rc::strong_count(t),
+            Value::Complex(t) => Rc::strong_count(t),
+            Value::Mutable(t, _) => Rc::strong_count(t),
+            Value::Iterator(t) => Rc::strong_count(t),
+            Value::Backtrace(t) => Rc::strong_count(t),
+            Value::Member(t, _) | Value::Window(t, _) => Rc::strong_count(t),
+            Value::Unpaired(t) => Rc::strong_count(t),
+            Value::Cursor(t) => Rc::strong_count(t),
+            Value::Octets { cell, .. } => Rc::strong_count(cell),
+            Value::Export(t) => Rc::strong_count(t),
+            Value::Progression(t) => Rc::strong_count(t),
+            Value::TextRow(t, _) => Rc::strong_count(t),
+            Value::Set(t) => Rc::strong_count(t),
+            Value::Dict(t) => Rc::strong_count(t),
+            Value::Couple(t) => Rc::strong_count(t),
+            Value::Blueprint(t) => Rc::strong_count(t),
+            Value::Routine(t) | Value::Bound(t, _) => Rc::strong_count(t),
+            Value::Method(_, _, t) => Rc::strong_count(t),
+            Value::Adorned(t) => Rc::strong_count(t),
+            Value::Dim(t) => Rc::strong_count(t),
+            _ => return None,
+        };
+        Some(ReferenceState::Counted(count))
+    }
+
     pub fn method(code: Rc<Routine>, receiver: Rc<Thing>) -> Value { Value::Method(code, receiver, Rc::new(MethodMark)) }
 
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Sequence::tuple(parts)) }
@@ -799,10 +892,24 @@ impl Value {
         if let Value::Window(owner, 'm') = self { return owner.proxy_pairs(); }
         if let Value::Blueprint(blueprint) = self {
             let fields = blueprint.shared.borrow();
-            return Value::Dict(Rc::new(fields.iter().filter_map(|(word, held)| {
-                if word.starts_with('\0') || word.starts_with('#') { None }
-                else { Some((Value::text(word), held.clone())) }
-            }).collect()));
+            let mut contents=fields.iter().filter_map(|(word,held)|(!word.starts_with(['\0','#'])).then(||(Value::text(word),held.clone()))).collect::<Vec<_>>();
+            for (internal,value) in fields.iter() {
+                if internal=="\0type-keys" {if let Value::Dict(additions)=value {contents.extend(additions.iter().cloned());}}
+            }
+            let original_order=fields.iter().find_map(|(name,value)|if name=="\0type-order" {Some(value)} else {None});
+            if let Some(Value::Tuple(sequence))=original_order {
+                let mut arranged=Vec::new();
+                for stored in sequence.iter() {
+                    let bare=if let Value::Keyed(key,_) = stored {key.as_ref()} else {stored};
+                    let position=contents.iter().position(|(key,_)| {
+                        let key=if let Value::Keyed(inner,_) = key {inner.as_ref()} else {key};
+                        if let (Value::Text(a),Value::Text(b))=(bare,key) {a==b} else {bare.one_place(key)}
+                    });
+                    if let Some(position)=position {arranged.push(contents.remove(position));}
+                }
+                arranged.append(&mut contents);contents=arranged;
+            }
+            return Value::Dict(Rc::new(contents.into()));
         }
         self.settled()
     }
@@ -1173,8 +1280,8 @@ impl Value {
         }
         TEXT_PROPERTIES.with(|cell| {
             let mut notes = cell.borrow_mut();
-            notes.retain(|note| note.0.upgrade().is_some());
-            let found = notes.iter().position(|note| note.0.upgrade().is_some_and(|owner| Rc::ptr_eq(&owner, word)));
+            notes.retain(|note| note.0.strong_count() != 0);
+            let found = notes.iter().position(|note| std::ptr::eq(note.0.as_ptr(), Rc::as_ptr(word)));
             let note = if let Some(index) = found {
                 notes.remove(index)
             } else {
@@ -1767,7 +1874,7 @@ impl Value {
         let value = self.settled();
         if let Value::Thing(thing) = &value {
             let class = thing.blueprint();
-            let string = std::iter::once(class.as_ref()).chain(class.ancestry.borrow().iter().map(Rc::as_ref))
+            let string = std::iter::once(class.as_ref()).chain(class.ancestry().iter().map(Rc::as_ref))
                 .any(|base| base.constants.iter().any(|(key, held)| key == "\0native" && matches!(held, Value::Text(word) if word.as_ref() == "str")));
             if string {
                 if let Some(entry) = thing.holds.borrow().iter().find(|entry| entry.0 == "\0underlying") { return entry.1.settled(); }
@@ -1836,6 +1943,9 @@ impl Value {
             Value::Generator(generator) => {
                 if let Ok(state) = generator.try_borrow() {
                     if !state.titles[1].is_empty() {
+                        if state.of.as_ref().is_some_and(|code| code.flags & 128 != 0) {
+                            return format!("<coroutine object {} at 0x{:x}>", state.titles[1], if state.coroutine_address != 0 { state.coroutine_address } else { Rc::as_ptr(generator) as usize });
+                        }
                         return format!("<generator object {} at 0x1>", state.titles[1]);
                     }
                 }
@@ -1862,9 +1972,12 @@ impl Value {
             // read off the kind's own word stands loose, and is named
             // with that kind, under CPython's own word for the
             // descriptor that carries it.
-            Value::Wrapped(32, fields) if matches!(fields.get(2), Some(Value::Small(-2))) => match &fields[1] {
-                Value::Blueprint(owner) => format!("<attribute '{}' of '{}' objects>", fields[0].bare(), owner.name),
-                _ => "<member wrapper>".into(),
+            Value::Wrapped(180,record)=>format!("<attribute '{}' of 'type' objects>",record[0].bare()),
+            Value::Wrapped(32, layout) => {
+                if let [Value::Text(field), Value::Blueprint(class), ..] = layout.as_slice() {
+                    let label = match (layout.len(), field.as_ref()) { (2, name) if name != "__weakref__" => "member", _ => "attribute" };
+                    format!("<{label} '{field}' of '{}' objects>", class.name)
+                } else { "<member wrapper>".to_string() }
             },
             Value::Wrapped(205, layout) => {
                 if let Value::Blueprint(declaring) = &layout[0] {
@@ -1880,8 +1993,9 @@ impl Value {
             },
             // Both wrapper kinds are written as the wrapping builtin
             // around the routine they hold, as CPython writes them.
-            Value::Wrapped(4, parts) => format!("<staticmethod({})>", parts[0].bare()),
-            Value::Wrapped(5, parts) => format!("<classmethod({})>", parts[0].bare()),
+            Value::Wrapped(4, parts) => format!("<staticmethod({})>", match parts[0] {Value::Nil=>String::from("None"),_=>parts[0].bare()}),
+            Value::Wrapped(5, parts) => format!("<classmethod({})>", match parts[0] {Value::Nil=>String::from("None"),_=>parts[0].bare()}),
+            Value::Wrapped(64, fields) => format!("<coroutine_wrapper object at 0x{:x}>", Rc::as_ptr(fields) as usize),
             Value::Wrapped(..) => "<member wrapper>".into(),
             Value::Tuple(items) => {
                 let among = Among::members(self);
@@ -2122,10 +2236,13 @@ impl BlueprintEntries {
 
 #[derive(Debug)]
 pub struct Blueprint {
+    pub mro_place: std::cell::RefCell<Vec<usize>>,
+    pub mro_ready: std::cell::Cell<bool>,
+    pub base_epoch: std::cell::Cell<u64>,
     /// The mutable names of a Python class, outside its dictionary.
     pub type_names: RefCell<Option<TypeNames>>,
     pub ancestry: RefCell<Vec<Rc<Blueprint>>>,
-    pub parents: std::cell::RefCell<Vec<Rc<Blueprint>>>,
+    pub parents: RefCell<Vec<Rc<Blueprint>>>,
     pub presentation: Option<String>,
     pub name: String,
     pub under: RefCell<Option<Rc<Blueprint>>>,
@@ -2160,6 +2277,21 @@ pub struct Blueprint {
 }
 
 impl Blueprint {
+    pub fn resolution(self: &Rc<Self>) -> Vec<Rc<Blueprint>> {
+        let inherited=self.ancestry();
+        let positions=self.mro_place.borrow();
+        let mut ordered=Vec::with_capacity(inherited.len()+positions.len());
+        let count=inherited.len()+positions.len();
+        let mut cursor=inherited.into_iter();
+        for rank in 0..count {
+            ordered.push(if positions.contains(&rank) {self.clone()}else{cursor.next().unwrap()});
+        }
+        ordered
+    }
+    pub fn ancestry(&self) -> Vec<Rc<Blueprint>> {self.ancestry.borrow().clone()}
+    pub fn parents(&self) -> Vec<Rc<Blueprint>> {self.parents.borrow().clone()}
+    pub fn under(&self) -> Option<Rc<Blueprint>> {self.under.borrow().clone()}
+
     pub(super) fn python_title(&self) -> Option<String> {
         let kept = self.type_names.borrow();
         let names = kept.as_ref()?;
@@ -2231,13 +2363,12 @@ impl Blueprint {
     /// Ask whether an inherited public field exists without constructing
     /// the complete instance layout or cloning its names and values.
     pub fn has_public_field(&self, name: &str) -> bool {
-        if self.fields.iter().enumerate().any(|(at, (key, _))|
-                key == name && self.reaches.get(at) != Some(&Reach::Alone)) { return true; }
-        self.under.borrow().as_ref().is_some_and(|parent| parent.has_public_field(name))
+        self.fields.iter().enumerate().any(|(at,(key,_))|key==name && self.reaches.get(at)!=Some(&Reach::Alone))
+            || self.under().is_some_and(|parent|parent.has_public_field(name))
     }
 
     pub fn every_field(&self) -> Vec<(String, Value)> {
-        let mut all = self.under.borrow().as_ref().map_or_else(Vec::new, |u| u.every_field());
+        let mut all = self.under().as_ref().map_or_else(Vec::new, |u| u.every_field());
         for (at, (name, value)) in self.fields.iter().enumerate() {
             let alone = self.reaches.get(at) == Some(&Reach::Alone);
             let filed = match alone {
@@ -2831,4 +2962,17 @@ mod namespace_tests {
         assert_eq!(pairs.namespace_position("before"), Err(()));
         assert_eq!(pairs.namespace_position("after"), Err(()));
     }
+
+    #[test]
+    fn ascii_flags_follow_live_strings() {
+        for _ in 0..32 {
+            let ascii: Rc<str> = Rc::from("a".repeat(512));
+            let unicode: Rc<str> = Rc::from("é".repeat(256));
+            assert!(Value::ascii_letters(&ascii));
+            assert!(!Value::ascii_letters(&unicode));
+            assert!(Value::ascii_letters(&ascii));
+            assert!(!Value::ascii_letters(&unicode));
+        }
+    }
+
 }
