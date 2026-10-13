@@ -21128,11 +21128,11 @@ impl<'a> Engine<'a> {
         } else { put_key(pairs, key, value); }
     }
 
-    /// A mapping proxy over a mapping the program made is that mapping for what a builtin asks of it.
+    /// Delegate mapping operations while retaining the proxy for iterator validation.
     fn unwrap_proxies(builtin: Builtin, args: &mut [Value]) {
         if matches!(builtin, Builtin::Length | Builtin::Iter | Builtin::List | Builtin::Tuple | Builtin::Sorted | Builtin::Set | Builtin::Frozen
             | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::Bool | Builtin::Hash
-            | Builtin::Dict | Builtin::Fetch | Builtin::All | Builtin::Any | Builtin::Minimum | Builtin::Maximum | Builtin::Sum | Builtin::Next) {
+            | Builtin::Dict | Builtin::Fetch | Builtin::All | Builtin::Any | Builtin::Minimum | Builtin::Maximum | Builtin::Sum) {
             for value in args.iter_mut() {
                 if let Some(mapping) = Self::proxied_mapping(value) { *value = mapping; }
             }
@@ -21335,7 +21335,7 @@ impl<'a> Engine<'a> {
                 // pairs answers to as a set does, needs the view whole
                 // to tell that apart from a view of its values, which
                 // answers to no set working at all.
-                if matches!(builtin, Builtin::SortOf | Builtin::SetDisjoint | Builtin::InstanceOf) {
+                if matches!(builtin, Builtin::SortOf | Builtin::SetDisjoint | Builtin::InstanceOf | Builtin::Next) {
                     if let Some(view) = Self::view_in(value) { *value = view; continue; }
                 }
                 // A mapping proxy is written as the proxy it is, named when it is quoted.
@@ -25984,7 +25984,7 @@ impl Engine<'_> {
                 // `isinstance` asks after a view itself, not after the
                 // row its members would stand as, so that a claim made
                 // for its very kind is honoured.
-                if matches!(b, Builtin::InstanceOf | Builtin::SortOf) {
+                if matches!(b, Builtin::InstanceOf | Builtin::SortOf | Builtin::Next) {
                     if let Some(view) = Self::view_in(value) { *value = view; continue; }
                 }
                 if b == Builtin::Repr && matches!(value, Value::Bond(_) | Value::Binding(_) | Value::Collection(..))

@@ -17969,11 +17969,11 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// A mapping proxy is that mapping for what a primitive asks of it.
+    /// Only mapping protocols delegate to the owner; a window is never its iterator.
     fn unwrapped_proxies(op: Prim, v: &[Value]) -> Option<Vec<Value>> {
         let made = matches!(op, Prim::Length | Prim::Iterator | Prim::Iterate | Prim::Tupled | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Dictionary
             | Prim::SortedValues | Prim::Ordered | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::SomeTrue
-            | Prim::Least | Prim::Greatest | Prim::Total | Prim::Listed | Prim::Truthful | Prim::NextItem);
+            | Prim::Least | Prim::Greatest | Prim::Total | Prim::Listed | Prim::Truthful);
         let read = matches!(op, Prim::Backwards | Prim::Hashed | Prim::AsText | Prim::Say | Prim::Out | Prim::Eq | Prim::Ne | Prim::Contains | Prim::Absent | Prim::At);
         if !made && !read { return None; }
         let swapped: Vec<Option<Value>> = v.iter().map(|value| if made { Self::proxied_mapping(value) } else { Self::proxy_reading(value) }).collect();
@@ -31610,7 +31610,7 @@ impl Machine<'_> {
                 // `isinstance` asks after a view itself, not after the
                 // row its members would stand as, so that a claim made
                 // for its very kind is honoured.
-                if op == Prim::Belongs {
+                if matches!(op, Prim::Belongs | Prim::NextItem) {
                     if let Some(window) = Self::window_inside(item) { *item = window; continue; }
                 }
                 if op == Prim::Quoted && matches!(item, Value::Mutable(..) | Value::Shared(..))
