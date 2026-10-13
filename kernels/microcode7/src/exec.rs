@@ -4094,7 +4094,7 @@ impl<'a> Machine<'a> {
             return Err(format!("RuntimeError: closure binding '{}' is unavailable in {routine}", slot.ident));
         };
         if slot.up > 0 && !Rc::ptr_eq(&f, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0')
-            && self.frames_named.last().is_some_and(|routine| routine.globe.is_none()) {
+            && self.frames_named.last().is_some_and(|routine| routine.annotation_spelling.is_some() || routine.globe.is_none()) {
             if let Some((names, all)) = self.annotation_scope(frame) {
                 let content = v.settled();
                 if all || matches!(content, Value::Unset) {

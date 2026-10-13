@@ -3207,7 +3207,7 @@ impl<'a> Engine<'a> {
                 // read about to be overwritten anyway.
                 let value = if slot.moving { std::mem::replace(&mut *shared.borrow_mut(), Value::Gap) } else { shared.borrow().clone() };
                 if slot.free && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0')
-                    && self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_none()) {
+                    && self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_none() || routine.annotation_source.is_some()) {
                     if let Some((names, all)) = self.annotation_scope() {
                         if all || matches!(value, Value::Blank) {
                             let reference = self.unresolved_annotation_name(&names, &slot.ident)?;
