@@ -1082,6 +1082,20 @@ impl<'a> Engine<'a> {
             else if self.stands_on(&class, 45) { Some(4) } else { None };
         if let Some(wanted) = unicode_arity {
             if args.len() != wanted { return Err(format!("TypeError: {}() takes exactly {} arguments ({} given)", class.name, wanted, args.len()).into()); }
+            // Each place holds the kind the reference reads there: the
+            // encoding and the reason are text, the two positions are
+            // whole numbers, and the object worked on is text for an
+            // encoding or translation but a row of bytes for a reading.
+            let words = |at: usize| args.get(at).and_then(|held| held.type_text().text_codes()).is_some();
+            let counts = |at: usize| matches!(args.get(at), Some(Value::Small(_) | Value::Huge(_) | Value::Flag(_)));
+            let shaped = if self.stands_on(&class, 45) {
+                words(0) && counts(1) && counts(2) && words(3)
+            } else if self.stands_on(&class, 44) {
+                words(0) && matches!(args.get(1), Some(Value::Bytes(..))) && counts(2) && counts(3) && words(4)
+            } else {
+                words(0) && words(1) && counts(2) && counts(3) && words(4)
+            };
+            if !shaped { return Err("TypeError: the codec fault's places are not filled with the right kinds".into()); }
         }
         let made = if class.has_public_field("\0group") {
             if args.len() != 2 { return Err(format!("TypeError: BaseExceptionGroup.__new__() takes exactly 2 arguments ({} given)", args.len()).into()); }
@@ -20619,7 +20633,17 @@ impl<'a> Engine<'a> {
                 let Value::Tuple(pair) = answer else { return Err(self.byte_fault("arguments")); };
                 match &pair[0] {
                     Value::Bytes(bytes, ..) => output.extend_from_slice(&bytes.borrow()),
-                    Value::Text(replacement) => output.extend(self.byte_encode(replacement, codec)?),
+                    Value::Text(_) => {
+                        // Text stands through the codec once more; a
+                        // character it cannot hold is the first fault,
+                        // not a fresh one naming the replacement.
+                        let ceiling = if codec == Self::CODEC_SEVEN { 128 } else { 256 };
+                        let checked = self.codec_library("_apply_encode_replacement", vec![
+                            Value::text(&name), args[0].clone(), Value::Small(at as i64), Value::Small(end as i64),
+                            Value::text(&format!("ordinal not in range({})", ceiling)), pair[0].clone(), Value::Small(ceiling as i64)])?;
+                        let Value::Bytes(rows, ..) = checked else { return Err(self.byte_fault("arguments")); };
+                        output.extend_from_slice(&rows.borrow());
+                    }
                     _ => return Err(self.byte_fault("arguments")),
                 }
                 at = pair[1].as_big()?.to_usize().ok_or_else(|| self.byte_fault("arguments"))?;
@@ -20627,33 +20651,42 @@ impl<'a> Engine<'a> {
             return Ok(self.byte_make(output, false));
         }
         if codec == Self::CODEC_BYTEWISE { return self.byte_decode(row, codec); }
+        // A reading handler may set the fault's object to a fresh row of
+        // bytes; the reader works on that row from then on.
+        let mut input = row.to_vec();
         let mut offset = 0;
-        while offset < row.len() {
-            let tail = &row[offset..];
-            let failure = if codec == Self::CODEC_SEVEN {
-                tail.iter().position(|b| *b >= 128).map(|i| (i, 1, "ordinal not in range(128)"))
-            } else {
-                std::str::from_utf8(tail).err().map(|e| {
-                    let i = e.valid_up_to();
-                    let why = if e.error_len().is_none() { "unexpected end of data" }
-                        else if (194..=244).contains(&tail[i]) { "invalid continuation byte" } else { "invalid start byte" };
-                    (i, e.error_len().unwrap_or(tail.len() - i), why)
-                })
+        while offset < input.len() {
+            let failure = {
+                let tail = &input[offset..];
+                if codec == Self::CODEC_SEVEN {
+                    tail.iter().position(|b| *b >= 128).map(|i| (i, 1, "ordinal not in range(128)"))
+                } else {
+                    std::str::from_utf8(tail).err().map(|e| {
+                        let i = e.valid_up_to();
+                        let why = if e.error_len().is_none() { "unexpected end of data" }
+                            else if (194..=244).contains(&tail[i]) { "invalid continuation byte" } else { "invalid start byte" };
+                        (i, e.error_len().unwrap_or(tail.len() - i), why)
+                    })
+                }
             };
             let Some((valid, count, why)) = failure else {
-                decoded.extend(std::str::from_utf8(tail).map_err(|_| self.byte_fault("unready"))?.chars().map(u32::from)); break;
+                decoded.extend(std::str::from_utf8(&input[offset..]).map_err(|_| self.byte_fault("unready"))?.chars().map(u32::from)); break;
             };
-            decoded.extend(std::str::from_utf8(&tail[..valid]).map_err(|_| self.byte_fault("unready"))?.chars().map(u32::from));
+            decoded.extend(std::str::from_utf8(&input[offset..offset + valid]).map_err(|_| self.byte_fault("unready"))?.chars().map(u32::from));
             let start = offset + valid;
             let end = start + count;
             if policy == "replace" { decoded.push(0xfffd); offset = end; }
             else if policy == "ignore" { offset = end; }
             else {
-                let answer = self.codec_library("_decode_error", vec![Value::text(&name), self.byte_make(row.to_vec(), false), Value::Small(start as i64), Value::Small(end as i64), Value::text(why), Value::text(&policy)])?;
-                let Value::Tuple(pair) = answer else { return Err(self.byte_fault("arguments")); };
-                let replacement = pair[0].text_codes().ok_or_else(|| self.byte_fault("arguments"))?;
+                let answer = self.codec_library("_decode_error_full", vec![Value::text(&name), self.byte_make(input.clone(), false), Value::Small(start as i64), Value::Small(end as i64), Value::text(why), Value::text(&policy)])?;
+                let Value::Tuple(parts) = answer else { return Err(self.byte_fault("arguments")); };
+                let replacement = parts[0].text_codes().ok_or_else(|| self.byte_fault("arguments"))?;
                 decoded.extend(replacement);
-                offset = pair[1].as_big()?.to_usize().ok_or_else(|| self.byte_fault("arguments"))?;
+                offset = parts[1].as_big()?.to_usize().ok_or_else(|| self.byte_fault("arguments"))?;
+                if let Value::Bytes(fresh, ..) = &parts[2] {
+                    let fresh = fresh.borrow().clone();
+                    if fresh != input { input = fresh; }
+                }
             }
         }
         Ok(Value::from_codes(decoded))

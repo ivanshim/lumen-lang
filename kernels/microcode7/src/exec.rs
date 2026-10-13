@@ -1478,6 +1478,20 @@ impl<'a> Machine<'a> {
             else if self.stands_under(&kind, 45) { Some(4) } else { None };
         if let Some(wanted) = unicode_arity {
             if row.len() != wanted { return Err(format!("TypeError: {}() takes exactly {} arguments ({} given)", kind.name, wanted, row.len()).into()); }
+            // What each place may hold: an encoding and a reason are
+            // characters, the two positions are whole numbers, and the
+            // object is characters for an encoding or translation but
+            // octets for a reading.
+            let chars_here = |at: usize| row.get(at).and_then(|held| held.type_text().character_numbers()).is_some();
+            let whole_here = |at: usize| matches!(row.get(at), Some(Value::Small(_) | Value::Huge(_) | Value::Flag(_)));
+            let right_shape = if self.stands_under(&kind, 45) {
+                chars_here(0) && whole_here(1) && whole_here(2) && chars_here(3)
+            } else if self.stands_under(&kind, 44) {
+                chars_here(0) && matches!(row.get(1), Some(Value::Octets { .. })) && whole_here(2) && whole_here(3) && chars_here(4)
+            } else {
+                chars_here(0) && chars_here(1) && whole_here(2) && whole_here(3) && chars_here(4)
+            };
+            if !right_shape { return Err(format!("TypeError: malformed arguments handed to the codec fault").into()); }
         }
         let made = if kind.has_public_field("\0gathers") {
             if row.len() != 2 { return Err(format!("TypeError: BaseExceptionGroup.__new__() takes exactly 2 arguments ({} given)", row.len()).into()); }
@@ -15393,7 +15407,17 @@ impl<'a> Machine<'a> {
                         let replaced = self.codec_function("_encode_error", call)?;
                         if let Value::Tuple(parts) = replaced {
                             let extra = match &parts[0] {
-                                Value::Text(s) => self.octets_from_text(s, alphabet)?,
+                                Value::Text(_) => {
+                                    // A replacement turns through the
+                                    // codec again; a character it cannot
+                                    // hold re-raises the fault that named
+                                    // the original span.
+                                    let bound = ceiling + 1;
+                                    let checked = self.codec_function("_apply_encode_replacement", vec![
+                                        Value::text(&encoding), values[0].clone(), Value::Small(cursor as i64), Value::Small(stop as i64),
+                                        Value::text(&format!("ordinal not in range({bound})")), parts[0].clone(), Value::Small(bound as i64)])?;
+                                    match checked { Value::Octets { cell, .. } => cell.borrow().to_vec(), _ => return Err(self.octet_error("arguments")) }
+                                }
                                 Value::Octets { cell, .. } => cell.borrow().to_vec(),
                                 _ => return Err(self.octet_error("arguments")),
                             };
@@ -15406,10 +15430,13 @@ impl<'a> Machine<'a> {
             return Ok(self.octets(result, false));
         }
         if alphabet == Self::BYTE_FOR_BYTE { return self.octets_to_text(input, alphabet); }
+        // A reading handler may leave a different row of octets on the
+        // fault; the reader continues on whatever row is there now.
+        let mut source = input.to_vec();
         let mut result = Vec::<u32>::new();
         let mut cursor = 0;
-        while cursor < input.len() {
-            let remaining = &input[cursor..];
+        while cursor < source.len() {
+            let remaining = &source[cursor..];
             let bad = match alphabet {
                 Self::SEVEN_BIT => remaining.iter().position(|b| *b > 127).map(|n| (n, n + 1, "ordinal not in range(128)")),
                 _ => match std::str::from_utf8(remaining) {
@@ -15432,11 +15459,15 @@ impl<'a> Machine<'a> {
                     result.extend(std::str::from_utf8(&remaining[..first]).map_err(|_| self.octet_error("unready"))?.chars().map(|ch| ch as u32));
                     if handling == "ignore" { cursor += last; continue; }
                     if handling == "replace" { result.push(65533); cursor += last; continue; }
-                    let call = vec![Value::text(&encoding), self.octets(input.to_vec(), false), Value::Small((cursor + first) as i64), Value::Small((cursor + last) as i64), Value::text(cause), Value::text(&handling)];
-                    match self.codec_function("_decode_error", call)? {
+                    let call = vec![Value::text(&encoding), self.octets(source.clone(), false), Value::Small((cursor + first) as i64), Value::Small((cursor + last) as i64), Value::text(cause), Value::text(&handling)];
+                    match self.codec_function("_decode_error_full", call)? {
                         Value::Tuple(parts) => {
                             result.extend(parts[0].character_numbers().ok_or_else(|| self.octet_error("arguments"))?);
                             cursor = parts[1].as_big()?.to_usize().ok_or_else(|| self.octet_error("arguments"))?;
+                            if let Value::Octets { cell, .. } = &parts[2] {
+                                let fresh = cell.borrow().clone();
+                                if fresh != source { source = fresh; }
+                            }
                         }
                         _ => return Err(self.octet_error("arguments")),
                     }
