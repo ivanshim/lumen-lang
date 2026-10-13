@@ -10267,6 +10267,16 @@ impl<'a> Engine<'a> {
                 return Err(self.operands_complaint(&sign, a, b));
             }
             if direct >= 18 && !joining_kinds && (Self::plain_thing(a) || Self::plain_thing(b)) {
+                // A sequence joined to a thing that is no sequence names
+                // the thing it was handed in the words a sequence keeps
+                // for a joining to what is none of it, rather than the
+                // sign and both kinds a plain working names.
+                if matches!(op, Action::Add)
+                    && (matches!(a, Value::Text(_) | Value::Array(_) | Value::Tuple(_))
+                        || a.core_kind() == "string.templatelib.Template")
+                {
+                    return Err(self.sequence_concat_fault(a, b));
+                }
                 let sign = self.sign_of(op);
                 return Err(self.operands_complaint(&sign, a, b));
             }

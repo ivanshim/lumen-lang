@@ -654,16 +654,21 @@ only. The extension labels so far, all from PHP:
   either side of the two letters named, read the way `about_two` reads
   it.
 - `ext.lexical.string.unterminated`, `.unterminated.triple`,
-  `ext.lexical.string.prefix.format.unterminated` and
-  `.prefix.format.unterminated.triple`: what the language says of a
-  quoted run (plain or formatted, one mark or the tripled one) that
-  reaches the end of the text before its closing mark. Absent, the
-  reading falls back to `ext.lexical.string.amiss`.
+  `ext.lexical.string.prefix.format.unterminated`,
+  `.prefix.format.unterminated.triple`,
+  `ext.lexical.string.prefix.template.unterminated` and
+  `.prefix.template.unterminated.triple`: what the language says of a
+  quoted run (plain, formatted or templated, one mark or the tripled
+  one) that reaches the end of the text before its closing mark.
+  Absent, the reading falls back to `ext.lexical.string.amiss`.
 - `ext.lexical.string.bytes.unavailable` and
   `ext.lexical.string.value.unready`: diagnostic words retained for
   implementations that cannot hold byte text or render a field. The
   current kernels hold distinct byte values and use the following
   label when a field presentation is unsupported.
+- `ext.lexical.string.template.mixed`: what the reader says of adjacent
+  literals that mix a t-string with a plain, formatted, raw or byte
+  string, which a template cannot be joined to.
 - `ext.lexical.string.format.errors`: ordered reader diagnostics for replacement
   fields: missing closing brace, lone closing brace, empty expression (the `{}`
   slot names its delimiter), invalid expression start, unparenthesized lambda,
@@ -673,6 +678,9 @@ only. The extension labels so far, all from PHP:
   comment field, nonbreaking space, a bare starred expression, and a newline
   in a single-quoted format specification. `{}` slots
   in conversion and bracket diagnostics name the offending text.
+  `ext.lexical.string.template.errors` holds the same diagnostics worded
+  for t-strings, so a template's field names its own kind; the two
+  lists share every entry whose wording names no string kind.
 - `ext.lexical.string.format.unavailable`: what is said when a field's
   value or specification asks for a rendering the run has no rule for.
   The field and its specification are read and worked out before this
@@ -5162,7 +5170,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.bytes.mixed` | - | - | `SyntaxError: cannot mix bytes and nonbytes literals` | - | - | - | - | - | - | - |
 | `ext.lexical.string.bytes.unavailable` | - | - | `bytes literals are not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.bytes.unready` | - | - | `NotImplementedError: bytes values are not supported` | - | - | - | - | - | - | - |
-| `ext.lexical.string.format.errors` | - | - | `SyntaxError: f-string: expecting '}'` `SyntaxError: f-string: single '}' is not allowed` `SyntaxError: f-string: valid expression required before '{}'` `SyntaxError: f-string: expecting a valid expression after '{'` `SyntaxError: f-string: lambda expressions are not allowed without parentheses` `SyntaxError: f-string: missing conversion character` `SyntaxError: f-string: invalid conversion character` `SyntaxError: f-string: conversion type must come right after the exclamation mark` `SyntaxError: f-string: expecting '=', or '!', or ':', or '}'` `SyntaxError: f-string: expecting '!', or ':', or '}'` `SyntaxError: f-string: expecting ':' or '}'` `SyntaxError: f-string: invalid conversion character '{}': expected 's', 'r', or 'a'` `SyntaxError: f-string: unmatched '{}'` `SyntaxError: closing parenthesis '{}' does not match opening parenthesis '{}'` `SyntaxError: '{' was never closed` `SyntaxError: invalid non-printable character U+00A0` `SyntaxError: can't use starred expression here` `SyntaxError: f-string: newlines are not allowed in format specifiers` `SyntaxError: f-string: expressions nested too deeply` | - | - | - | - | - | - | - |
+| `ext.lexical.string.format.errors` | - | - | `SyntaxError: f-string: expecting '}'` `SyntaxError: f-string: single '}' is not allowed` `SyntaxError: f-string: valid expression required before '{}'` `SyntaxError: f-string: expecting a valid expression after '{'` `SyntaxError: f-string: lambda expressions are not allowed without parentheses` `SyntaxError: f-string: missing conversion character` `SyntaxError: f-string: invalid conversion character` `SyntaxError: f-string: conversion type must come right after the exclamation mark` `SyntaxError: f-string: expecting '=', or '!', or ':', or '}'` `SyntaxError: f-string: expecting '!', or ':', or '}'` `SyntaxError: f-string: expecting ':' or '}'` `SyntaxError: f-string: invalid conversion character '{}': expected 's', 'r', or 'a'` `SyntaxError: f-string: unmatched '{}'` `SyntaxError: closing parenthesis '{}' does not match opening parenthesis '{}'` `SyntaxError: '{' was never closed` `SyntaxError: invalid non-printable character U+00A0` `SyntaxError: can't use starred expression here` `SyntaxError: f-string: newlines are not allowed in format specifiers` `SyntaxError: f-string: expressions nested too deeply` `SyntaxError: f-string: expecting '}', or format specs` | - | - | - | - | - | - | - |
 | `ext.lexical.string.format.unavailable` | - | - | `this formatted value is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.long` | - | - | `"""` `'''` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.bytes` | - | - | `b` `B` | - | - | - | - | - | - | - |
@@ -5175,6 +5183,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.prefix.plain` | - | - | `u` `U` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.raw` | - | - | `r` `R` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.template` | - | - | `t` `T` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.template.unterminated` | - | - | `SyntaxError: unterminated t-string literal` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.template.unterminated.triple` | - | - | `SyntaxError: unterminated triple-quoted t-string literal` | - | - | - | - | - | - | - |
+| `ext.lexical.string.template.errors` | - | - | `SyntaxError: t-string: expecting '}'` `SyntaxError: t-string: single '}' is not allowed` `SyntaxError: t-string: valid expression required before '{}'` `SyntaxError: t-string: expecting a valid expression after '{'` `SyntaxError: t-string: lambda expressions are not allowed without parentheses` `SyntaxError: t-string: missing conversion character` `SyntaxError: t-string: invalid conversion character` `SyntaxError: t-string: conversion type must come right after the exclamation mark` `SyntaxError: t-string: expecting '=', or '!', or ':', or '}'` `SyntaxError: t-string: expecting '!', or ':', or '}'` `SyntaxError: t-string: expecting ':' or '}'` `SyntaxError: t-string: invalid conversion character '{}': expected 's', 'r', or 'a'` `SyntaxError: t-string: unmatched '{}'` `SyntaxError: closing parenthesis '{}' does not match opening parenthesis '{}'` `SyntaxError: '{' was never closed` `SyntaxError: invalid non-printable character U+00A0` `SyntaxError: can't use starred expression here` `SyntaxError: t-string: newlines are not allowed in format specifiers` `SyntaxError: t-string: expressions nested too deeply` `SyntaxError: t-string: expecting '}', or format specs` | - | - | - | - | - | - | - |
+| `ext.lexical.string.template.mixed` | - | - | `SyntaxError: cannot mix t-string literals with string or bytes literals` | - | - | - | - | - | - | - |
 | `ext.lexical.string.unready` | - | - | `NotImplementedError: this string cannot be represented` | - | - | - | - | - | - | - |
 | `ext.lexical.string.unterminated` | - | - | `SyntaxError: unterminated string literal` | - | - | - | - | - | - | - |
 | `ext.lexical.string.unterminated.triple` | - | - | `SyntaxError: unterminated triple-quoted string literal` | - | - | - | - | - | - | - |

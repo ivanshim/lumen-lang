@@ -4,6 +4,8 @@ _store = __storage_set
 
 class Interpolation:
     __slots__ = ()
+    __module__ = 'string.templatelib'
+    __native_type_name__ = 'string.templatelib.Interpolation'
     __match_args__ = ('value', 'expression', 'conversion', 'format_spec')
     def __init__(self, value, expression, conversion=None, format_spec=''):
         if not isinstance(expression, str) or not isinstance(format_spec, str):
@@ -38,6 +40,8 @@ class Interpolation:
 
 class Template:
     __slots__ = ()
+    __module__ = 'string.templatelib'
+    __native_type_name__ = 'string.templatelib.Template'
     def __init__(self, *args):
         strings = ['']
         interpolations = []
@@ -92,7 +96,5 @@ def convert(value, conversion):
         return value
     raise ValueError('invalid conversion')
 
-Template.__module__ = 'string.templatelib'
-Interpolation.__module__ = 'string.templatelib'
 __seal_class(Template)
 __seal_class(Interpolation)

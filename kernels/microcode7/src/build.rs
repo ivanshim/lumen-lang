@@ -11005,13 +11005,18 @@ impl<'a> Builder<'a> {
                 constant(numeral(&t.lexeme, table)?)
             }
             Shape::ByteQuote | Shape::Quote | Shape::CharacterRow | Shape::Woven | Shape::Unheld => {
+                let template = t.shape == Shape::Woven && t.lexeme.chars().next().map_or(false, |c| table.spells("ext.lexical.string.prefix.template", &c.to_string()));
                 let mut text = self.quotation()?;
                 if table.flag("ext.lexical.string.adjacent") {
                     while matches!(self.look().shape, Shape::ByteQuote | Shape::Quote | Shape::CharacterRow | Shape::Woven | Shape::Unheld) {
+                        let also_template = self.look().shape == Shape::Woven && self.look().lexeme.chars().next().map_or(false, |c| table.spells("ext.lexical.string.prefix.template", &c.to_string()));
+                        if template != also_template {
+                            return Err(table.single("ext.lexical.string.template.mixed").unwrap_or("").to_owned());
+                        }
                         if (t.shape == Shape::ByteQuote) != (self.look().shape == Shape::ByteQuote) {
                             return Err(table.single("ext.lexical.string.bytes.mixed").unwrap_or("").to_owned());
                         }
-                        text = prim_call(if t.shape == Shape::ByteQuote { Prim::Plus } else { Prim::Join }, vec![text, self.quotation()?]);
+                        text = prim_call(if t.shape == Shape::ByteQuote || template { Prim::Plus } else { Prim::Join }, vec![text, self.quotation()?]);
                     }
                 }
                 text

@@ -18325,6 +18325,16 @@ impl<'a> Machine<'a> {
                 return Err(self.operands_refused(&sign, left, right));
             }
             if forward >= 18 && !joining_kinds && (bare(left) || bare(right)) {
+                // A sequence joined to a thing that is no sequence names
+                // the thing it was handed in the words a sequence keeps
+                // for a joining to what is none of it, not the sign and
+                // both kinds a plain working would name.
+                if operation == Prim::Plus
+                    && (matches!(left, Value::Text(_) | Value::Vector(_) | Value::Tuple(_))
+                        || left.kind_word() == "string.templatelib.Template")
+                {
+                    return Err(self.joining_refused(left, right));
+                }
                 let sign = self.written_as(&operation);
                 return Err(self.operands_refused(&sign, left, right));
             }

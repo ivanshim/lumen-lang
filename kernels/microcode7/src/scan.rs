@@ -834,11 +834,13 @@ impl Quotation<'_> {
         let mut part_start = body;
         while !self.source[self.next..].starts_with(end) {
             let ch = self.here().ok_or_else(|| {
-                let key = match (end.len() > 1, fields) {
-                    (false, false) => "ext.lexical.string.unterminated",
-                    (true, false) => "ext.lexical.string.unterminated.triple",
-                    (false, true) => "ext.lexical.string.prefix.format.unterminated",
-                    (true, true) => "ext.lexical.string.prefix.format.unterminated.triple",
+                let key = match (end.len() > 1, fields, template.is_some()) {
+                    (false, false, _) => "ext.lexical.string.unterminated",
+                    (true, false, _) => "ext.lexical.string.unterminated.triple",
+                    (false, true, false) => "ext.lexical.string.prefix.format.unterminated",
+                    (true, true, false) => "ext.lexical.string.prefix.format.unterminated.triple",
+                    (false, true, true) => "ext.lexical.string.prefix.template.unterminated",
+                    (true, true, true) => "ext.lexical.string.prefix.template.unterminated.triple",
                 };
                 match self.table.single(key) {
                     Some(said) if depth < NESTED_UNTERMINATED_DEPTH => said.to_owned(),
@@ -863,7 +865,7 @@ impl Quotation<'_> {
                         self.forward(2);
                         noticed = false;
                     } else {
-                        if ch == '}' { return Err(self.field_fault(1, &[])); }
+                        if ch == '}' { return Err(self.field_fault(1, &[], template)); }
                         self.flush(&mut saved, &mut missing);
                         self.field(part_start, raw, depth, end, 0, template)?;
                         part_start = self.next;
@@ -1035,6 +1037,15 @@ impl Quotation<'_> {
                 self.forward(1);
                 continue;
             }
+            if ch == '\\' && matches!(self.source.get(self.next + 1), Some('\n') | Some('\r')) {
+                self.forward(1);
+                let joined = self.here();
+                self.forward(1);
+                if joined == Some('\r') && self.here() == Some('\n') { self.forward(1); }
+                whitespace.push('\\');
+                whitespace.push('\n');
+                continue;
+            }
             let comment = self.table.scanner.strings_lexical_comment_line.as_slice().iter().any(|word|
                 self.source[self.next..].starts_with(&word.chars().collect::<Vec<_>>()));
             if !comment { break; }
@@ -1042,21 +1053,22 @@ impl Quotation<'_> {
         }
         whitespace
     }
-    fn field_fault(&self, index: usize, inserts: &[String]) -> String {
-        let mut words = self.table.scanner.strings_ext_lexical_string_format_errors.as_slice().get(index)
+    fn field_fault(&self, index: usize, inserts: &[String], template: Option<char>) -> String {
+        let errors = if template.is_some() { self.table.strings("ext.lexical.string.template.errors") } else { self.table.scanner.strings_ext_lexical_string_format_errors.as_slice() };
+        let mut words = errors.get(index)
             .cloned().unwrap_or_else(|| self.bad());
         for insert in inserts { words = words.replacen("{}", insert, 1); }
         words
     }
     fn field(&mut self, body: usize, raw: bool, depth: u32, delimiter: &[char], levels: usize, template: Option<char>) -> Result<(), String> {
-        if levels >= 3 { return Err(self.field_fault(18, &[])); }
+        if levels >= 3 { return Err(self.field_fault(18, &[], template)); }
         self.forward(1);
         let origin = self.next;
         let field_row = self.row;
         let mut nesting = Vec::new();
         let mut comments = Vec::new();
         loop {
-            let ch = self.here().ok_or_else(|| self.field_fault(0, &[]))?;
+            let ch = self.here().ok_or_else(|| self.field_fault(14, &[], template))?;
             // A field is code, so a backslash in it stands exactly as one
             // written outside of any string does: it joins a line ending
             // right after it, and names nothing else. Caught here, before
@@ -1074,7 +1086,7 @@ impl Quotation<'_> {
                     Err(said) => {
                         let unclosed = ["ext.lexical.string.unterminated", "ext.lexical.string.unterminated.triple"]
                             .iter().any(|label| self.table.single(label) == Some(said.as_str()));
-                        return Err(if possible_end && unclosed { self.field_fault(0, &[]) } else { said });
+                        return Err(if possible_end && unclosed { self.field_fault(0, &[], template) } else { said });
                     }
                 }
                 self.made.truncate(previous);
@@ -1085,13 +1097,13 @@ impl Quotation<'_> {
                 let begins = self.next;
                 while self.here().map_or(false, |c| c != '\n') { self.forward(1); }
                 comments.push(begins..self.next);
-                if self.here().is_none() { return Err(self.field_fault(14, &[])); }
+                if self.here().is_none() { return Err(self.field_fault(14, &[], template)); }
                 continue;
             }
-            if ch == '\u{00a0}' { return Err(self.field_fault(15, &[])); }
+            if ch == '\u{00a0}' { return Err(self.field_fault(15, &[], template)); }
             if !nesting.is_empty() && [';', '/', '>'].contains(&ch) {
                 let prior = self.source[origin..self.next].iter().rev().find(|c| !c.is_whitespace());
-                if prior.map_or(false, |c| ['{', '[', '('].contains(c)) { return Err(self.field_fault(3, &[])); }
+                if prior.map_or(false, |c| ['{', '[', '('].contains(c)) { return Err(self.field_fault(3, &[], template)); }
             }
             if nesting.is_empty() {
                 let leading: String = (origin..self.next).filter(|i| !comments.iter().any(|r| r.contains(i)))
@@ -1102,13 +1114,13 @@ impl Quotation<'_> {
                     [',', '/', '>', '<', '%'].contains(&ch)
                     || ch == '*' && following == Some('*')
                     || ch == '.' && !following.map_or(false, |c| c == '.' || c.is_ascii_digit()));
-                if forbidden { return Err(self.field_fault(if needs_value { 3 } else { 8 }, &[])); }
+                if forbidden { return Err(self.field_fault(if needs_value { 3 } else { 8 }, &[], template)); }
                 let word: String = self.source[self.next..].iter().take_while(|c| c.is_alphanumeric() || **c == '_').collect();
                 if !word.is_empty() && !self.source.get(self.next.wrapping_sub(1)).map_or(false, |c| c.is_alphanumeric() || *c == '_')
                     && self.table.spells("ext.op.lambda", &word) {
                     let after_comma = leading.rsplit(',').next().unwrap_or("").trim();
                     let issue = if after_comma.is_empty() { 4 } else { 3 };
-                    return Err(self.field_fault(issue, &[]));
+                    return Err(self.field_fault(issue, &[], template));
                 }
             }
             let after = self.source.get(self.next + 1).copied();
@@ -1120,18 +1132,18 @@ impl Quotation<'_> {
             if let Some(index) = ['(', '[', '{'].iter().position(|&c| c == ch) {
                 nesting.push([')', ']', '}'][index]);
             } else if [')', ']', '}'].contains(&ch) {
-                let Some(wanted) = nesting.pop() else { return Err(self.field_fault(12, &[ch.to_string()])); };
+                let Some(wanted) = nesting.pop() else { return Err(self.field_fault(12, &[ch.to_string()], template)); };
                 if wanted != ch {
                     let opener = ['(', '[', '{'][[')', ']', '}'].iter().position(|c| *c == wanted).unwrap()];
-                    return Err(self.field_fault(13, &[ch.to_string(), opener.to_string()]));
+                    return Err(self.field_fault(13, &[ch.to_string(), opener.to_string()], template));
                 }
             }
             self.forward(1);
         }
         let code: String = (origin..self.next).filter(|i| !comments.iter().any(|r| r.contains(i))).map(|i| self.source[i]).collect();
-        if code.trim().is_empty() { return Err(self.field_fault(2, &[self.here().unwrap().to_string()])); }
+        if code.trim().is_empty() { return Err(self.field_fault(2, &[self.here().unwrap().to_string()], template)); }
         let stripped = code.trim_start();
-        if stripped.starts_with('*') && !stripped.contains(',') { return Err(self.field_fault(16, &[])); }
+        if stripped.starts_with('*') && !stripped.contains(',') { return Err(self.field_fault(16, &[], template)); }
         let words: Vec<&str> = code.split_whitespace().collect();
         if words.len() == 2 && words.iter().all(|word| word.chars().all(|ch| ch.is_ascii_digit())) {
             let where_digit = (origin..self.next).find(|&at| self.source[at].is_ascii_digit()).unwrap_or(origin);
@@ -1154,7 +1166,7 @@ impl Quotation<'_> {
         }
         let convert = if self.here() == Some('!') {
             self.forward(1);
-            if self.here().is_none() || self.source[self.next..].starts_with(delimiter) { return Err(self.field_fault(0, &[])); }
+            if self.here().is_none() || self.source[self.next..].starts_with(delimiter) { return Err(self.field_fault(0, &[], template)); }
             let first = self.here().unwrap();
             let problem = match first {
                 '}' | ':' => Some(5),
@@ -1162,20 +1174,20 @@ impl Quotation<'_> {
                 c if !c.is_alphabetic() && c != '_' => Some(6),
                 _ => None,
             };
-            if let Some(problem) = problem { return Err(self.field_fault(problem, &[])); }
+            if let Some(problem) = problem { return Err(self.field_fault(problem, &[], template)); }
             let mut name = String::new();
             while let Some(c) = self.here().filter(|c| c.is_alphanumeric() || *c == '_') {
                 name.push(c);
                 self.forward(1);
             }
-            if !["a", "r", "s"].contains(&name.as_str()) { return Err(self.field_fault(11, &[name])); }
+            if !["a", "r", "s"].contains(&name.as_str()) { return Err(self.field_fault(11, &[name], template)); }
             self.between_field_marks();
             name
         } else if debugging && self.here() != Some(':') { "r".to_owned() } else { String::new() };
-        if self.source[self.next..].starts_with(delimiter) || self.here().is_none() { return Err(self.field_fault(0, &[])); }
+        if self.source[self.next..].starts_with(delimiter) || self.here().is_none() { return Err(self.field_fault(0, &[], template)); }
         if !matches!(self.here(), Some('}' | ':')) {
             let issue = if debugging || convert.is_empty() { 9 } else { 10 };
-            return Err(self.field_fault(issue, &[]));
+            return Err(self.field_fault(issue, &[], template));
         }
         self.token(Shape::Field, convert);
         self.token(Shape::FieldText, code.clone());
@@ -1212,16 +1224,16 @@ impl Quotation<'_> {
         if self.here() == Some(':') {
             self.forward(1);
             while self.here() != Some('}') {
-                if self.source[self.next..].starts_with(delimiter) { return Err(self.field_fault(0, &[])); }
-                match self.here().ok_or_else(|| self.field_fault(0, &[]))? {
-                    '\n' | '\r' if delimiter.len() == 1 => return Err(self.field_fault(17, &[])),
+                if self.source[self.next..].starts_with(delimiter) { return Err(self.field_fault(19, &[], template)); }
+                match self.here().ok_or_else(|| self.field_fault(0, &[], template))? {
+                    '\n' | '\r' if delimiter.len() == 1 => return Err(self.field_fault(17, &[], template)),
                     '{' => { self.flush(&mut specification, &mut missing); self.field(body, raw, depth, delimiter, levels + 1, template)?; noticed = false; }
                     '\\' => self.slash(body, raw, true, false, &mut specification, &mut missing, &mut noticed)?,
                     c => { specification.push(c); self.forward(1); }
                 }
             }
         }
-        if self.here() != Some('}') { return Err(self.field_fault(0, &[])); }
+        if self.here() != Some('}') { return Err(self.field_fault(0, &[], template)); }
         self.forward(1);
         self.flush(&mut specification, &mut missing);
         self.token(Shape::WovenEnd, String::new());

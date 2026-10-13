@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import unittest
 
 from test import support
 
@@ -11,7 +12,13 @@ from test import support
 # Preserve source strings, filenames, flags and the child's argument order.
 def _to_file_args(args):
     args = list(args)
-    return (args[0], args[1:]) if args else (None, [])
+    at = 0
+    while at < len(args):
+        arg = args[at]
+        if arg in ("-c", "-m", "-") or not arg.startswith("-"):
+            return args[0], args[1:]
+        at += 2 if arg in ("-X", "-W") else 1
+    raise unittest.SkipTest("interactive subprocess mode is not supported")
 
 
 def _option_env(args):
