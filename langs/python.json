@@ -1815,6 +1815,9 @@
   "ext.builtin.uncaught": [
     "__uncaught"
   ],
+  "ext.builtin.profile": [
+    "__profile"
+  ],
   "ext.builtin.text.complaint": [
     "TypeError:",
     "ValueError:",

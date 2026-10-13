@@ -1314,6 +1314,14 @@ impl<'a> Machine<'a> {
             let hash_written = entries.iter().any(|entry| entry.0 == "__hash__");
             if eq_written && !hash_written { entries.push((String::from("__hash__"), Value::Nil)); }
         }
+        // The three names the language wraps on the way into a class are
+        // wrapped here, when the class is made, and read back as stored.
+        for entry in entries.iter_mut() {
+            if !matches!(entry.1, Value::Routine(..) | Value::Bound(..)) { continue; }
+            let wrapping = [("allocate", 4u8), ("getitem", 5), ("subclass", 5)].into_iter()
+                .find(|(part, _)| self.table.single(&format!("ext.stmt.class.detail.{part}")).is_some_and(|word| word == entry.0)).map(|(_, number)| number);
+            if let Some(number) = wrapping { entry.1 = Value::Wrapped(number, Rc::new(vec![entry.1.clone()]).into()); }
+        }
         let class=Rc::new(Blueprint {presentation:Some(format!("<class '{module}.{shown}'>")),name:title,
             under:std::cell::RefCell::new(primary),parents: std::cell::RefCell::new(parents),ancestry:std::cell::RefCell::new(ranks),answers:vec![],fields:vec![],reaches:vec![],
             methods:vec![],constants:fixed,

@@ -1177,6 +1177,16 @@ impl<'a> Engine<'a> {
             slots.iter().any(|slot| !matches!(slot, Value::Text(key) if key.as_ref() == "__dict__" || key.as_ref() == "__weakref__"))
         });
         let module = members.iter().find(|(key, _)| key == self.class_word("module")).map(|(_, value)| value.plain()).unwrap_or_default();
+        // A routine written under one of the three names the language
+        // wraps on the way into a class is kept wrapped, once, as the
+        // class is made; whatever is assigned under the name later is
+        // kept as it comes.
+        for (key, value) in members.iter_mut() {
+            if !matches!(value, Value::Routine(_)) { continue; }
+            let wrapped = [("allocate", 4u8), ("getitem", 5), ("subclass", 5)].iter()
+                .find(|(part, _)| self.lang.class_details.get(*part).and_then(|list| list.first()).is_some_and(|word| word == key)).map(|(_, kind)| *kind);
+            if let Some(kind) = wrapped { *value = Value::Adapter(Rc::new((kind, vec![value.clone()]))); }
+        }
         let c = Rc::new(Class { name: name.clone(), outline: Some(format!("<class '{module}.{display}'>")),
             base: std::cell::RefCell::new(primary), direct: std::cell::RefCell::new(bases), lineage: std::cell::RefCell::new(lineage), answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants,
@@ -1959,7 +1969,7 @@ impl<'a> Engine<'a> {
                     return Ok(crate::sre::decompose(&args)?);
                 }
                 let items = self.call_items_named(&name, args)?;
-                let answer = self.builtin_call(operation, &name, items);
+                let answer = self.builtin_call_expanded(operation, &name, items);
                 if let Some(raised) = self.carried.take() { return Err(raised); }
                 Ok(answer?)
             }
@@ -3285,7 +3295,7 @@ impl<'a> Engine<'a> {
         let args = if self.lang.python_numbers && args.iter().any(|item| matches!(item, Value::Tie(pair) if matches!(pair.0, Value::Flag(_)))) {
             let title = c.python_title().unwrap_or_else(|| c.name.clone());
             self.call_items_named(&title, args)?.into_iter().map(|(name, value)| match name {
-                Some(name) => Value::Tie(Rc::new((Value::text(&name), value))),
+                Some(name) => Value::Tie(Rc::new((name, value))),
                 None => value,
             }).collect()
         } else { args };

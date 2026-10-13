@@ -1237,6 +1237,16 @@ only. The extension labels so far, all from PHP:
   value nobody took, rather than the run telling it in its own words.
   Giving nothing takes the routine away again. PHP's
   `set_exception_handler` is written on it.
+- `ext.builtin.profile`: a builtin naming a routine to be told each time a
+  routine the program wrote is entered and left, with the frame, the word
+  `call` or `return`, and the value handed back (nothing for `call`, nor
+  for a `return` left by a fault). It is also told, with the caller's frame
+  and the builtin function or method itself, each time the program calls
+  one (`c_call`, then `c_return` or `c_exception`); what a builtin does
+  inside itself is not told. Calls made while it is being told are not
+  told to it again; a routine that raises is taken away and its fault
+  passes on. Giving nothing takes it away. Python's `sys.setprofile` is
+  written on it.
 - `ext.builtin.calls`: a builtin answering with the calls under way,
   innermost first and the outermost body left out. Each is an array
   saying what was called (`function`), the class it was written in where
@@ -4906,6 +4916,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.print.sep.amiss` | - | - | `TypeError: sep must be None or a string` | - | - | - | - | - | - | - |
 | `ext.builtin.print.separator` | - | - | `sep` | - | - | - | - | - | - | - |
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
+| `ext.builtin.profile` | - | - | `__profile` | - | - | - | - | - | - | - |
 | `ext.builtin.program.namespace` | - | - | `__program_namespace` | - | - | - | - | - | - | - |
 | `ext.builtin.property` | - | - | `property` | - | - | - | - | - | - | - |
 | `ext.builtin.random.words` | - | - | `true` | - | - | - | - | - | - | - |

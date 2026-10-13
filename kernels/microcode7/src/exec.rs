@@ -840,6 +840,13 @@ pub struct Machine<'a> {
     /// The routine a value nobody took is handed to, where the program
     /// put one in its way.
     untaken: RefCell<Option<Value>>,
+    /// The routine told of each call and return, where the program put
+    /// one in its way, and whether it is being told one just now.
+    watcher: RefCell<Option<Value>>,
+    watching_now: Cell<bool>,
+    /// Whether a builtin already stands told of, so that its own inner
+    /// workings are not told again; the program's routines start afresh.
+    natives_told: Cell<bool>,
     /// Whether anything has gone out of the run yet. What is held back
     /// in a piece of output kept aside has not gone out.
     written_out: std::cell::Cell<bool>,
@@ -2219,6 +2226,9 @@ impl<'a> Machine<'a> {
             text_caller_book: None,
             hearer: RefCell::new(None),
             untaken: RefCell::new(None),
+            watcher: RefCell::new(None),
+            watching_now: Cell::new(false),
+            natives_told: Cell::new(false),
             written_out: std::cell::Cell::new(false),
             unheard: RefCell::new(Vec::new()),
             any_unheard: std::cell::Cell::new(false),
@@ -3946,6 +3956,56 @@ impl<'a> Machine<'a> {
         let Value::Bound(p, env) = self.what_it_spells(v) else { return false };
         let _ = self.invoke(p, env, vec![raised]);
         true
+    }
+
+    /// Hands the routine put in the way of calls the frame of a call
+    /// that was just entered or is being left, with what it gave back.
+    /// A call made while the routine is being told is not told again;
+    /// a routine that fails is dropped and its failure goes on up.
+    fn tell_watcher(&mut self, event: &str, standing: &Option<Rc<Thing>>, given: Value) -> Result<(), Escape> {
+        if self.watching_now.get() { return Ok(()); }
+        let Some(frame) = standing else { return Ok(()) };
+        let Some(put) = self.watcher.borrow().clone() else { return Ok(()) };
+        let Value::Bound(listener, env) = self.what_it_spells(put) else { return Ok(()) };
+        self.watching_now.set(true);
+        let told = self.invoke(listener, env, vec![Value::Thing(frame.clone()), Value::text(event), given]);
+        self.watching_now.set(false);
+        if told.is_err() { *self.watcher.borrow_mut() = None; }
+        told.map(|_| ())
+    }
+
+    /// Whether a primitive named by a word of the language is a builtin
+    /// function or method that is to be told of now.
+    fn native_spoken(&self, op: Prim, name: &str) -> bool {
+        self.watcher.borrow().is_some() && !self.watching_now.get() && !self.natives_told.get()
+            && name.starts_with(|c: char| c.is_alphabetic()) && self.table.prims.get(name) == Some(&op)
+    }
+
+    /// A primitive worked for a builtin function or method named by a
+    /// word of the language, told to the routine put in the way of calls
+    /// before and after, with the builtin itself. Operators, and what a
+    /// builtin does inside itself, are not told.
+    fn prim_watched(&mut self, op: Prim, name: &str, values: &[Value]) -> Result<Value, String> {
+        let spoken = name.starts_with(|c: char| c.is_alphabetic()) && self.table.prims.get(name) == Some(&op);
+        if !spoken || self.watcher.borrow().is_none() || self.watching_now.get() || self.natives_told.get() {
+            return self.prim(op, name, values);
+        }
+        let callable = match (op, values.first()) {
+            (Prim::ValueMethod, Some(receiver)) => Value::Member(Rc::new(receiver.clone()), name.to_string()),
+            _ => Value::Intrinsic(op, Rc::from(name)),
+        };
+        let standing = self.active_trace.clone();
+        self.natives_told.set(true);
+        let answer = match self.tell_watcher("c_call", &standing, callable.clone()) {
+            Ok(()) => self.prim(op, name, values),
+            Err(away) => { self.got_away = Some(away); Err(String::new()) }
+        };
+        self.natives_told.set(false);
+        let event = if answer.is_ok() { "c_return" } else { "c_exception" };
+        match (answer, self.tell_watcher(event, &standing, callable)) {
+            (Ok(_), Err(away)) => { self.got_away = Some(away); Err(String::new()) }
+            (answer, _) => answer,
+        }
     }
 
     pub fn run_main(&mut self, program: &Rc<Routine>) -> Result<(), String> {
@@ -6690,6 +6750,41 @@ impl<'a> Machine<'a> {
             Value::OctetKind { changeable, .. } => Value::Intrinsic(Prim::Octets(u8::from(changeable)), Rc::from(self.octet_kind_word(changeable))),
             callable => callable,
         };
+        if self.native_stands(&stands) { return self.call_told(stands, target, args, frame); }
+        self.call_stands(stands, target, args, frame)
+    }
+
+    /// Whether what a callee stands for is a builtin function or method
+    /// that is to be told of now.
+    fn native_stands(&self, stands: &Value) -> bool {
+        matches!(stands, Value::Intrinsic(..) | Value::TextCall { .. } | Value::Member(..))
+            && self.watcher.borrow().is_some() && !self.watching_now.get() && !self.natives_told.get()
+    }
+
+    /// The call of a builtin told of to the routine put in the way of
+    /// calls, before and after, with the builtin itself.
+    fn call_told(&mut self, stands: Value, target: &Form, args: &[Form], frame: &Rc<Env>) -> Res {
+        // The arguments are worked out first, once and in order, so that
+        // what they call is not taken for part of the builtin.
+        let values = self.value_list(args, frame)?;
+        let given = self.native_arguments(values)?;
+        let standing = self.active_trace.clone();
+        self.natives_told.set(true);
+        let answer = match self.tell_watcher("c_call", &standing, stands.clone()) {
+            Ok(()) => self.native_keyword_check(&given).and_then(|()| self.call_stands(stands.clone(), target, &given, frame)),
+            Err(away) => Err(away),
+        };
+        self.natives_told.set(false);
+        let event = if answer.is_ok() { "c_return" } else { "c_exception" };
+        let left = self.tell_watcher(event, &standing, stands);
+        match (answer, left) {
+            (Ok(_), Err(away)) => Err(away),
+            (answer, _) => answer,
+        }
+    }
+
+    /// The call of what the callee stands for, once it is known.
+    fn call_stands(&mut self, stands: Value, target: &Form, args: &[Form], frame: &Rc<Env>) -> Res {
         if args.is_empty() && !self.rules.words_ext_stmt_class_builder.is_empty() && matches!(stands, Value::Intrinsic(Prim::ClassWork(8) | Prim::HereBook | Prim::MembersOf | Prim::WorldBook, _)) {
             let Value::Intrinsic(operation, _) = stands else { unreachable!() };
             return self.names_here(frame, operation).map_err(Escape::Error);
@@ -7692,6 +7787,30 @@ impl<'a> Machine<'a> {
                 let target = Box::new(Form::Const(self.spread_override(name, *op).unwrap()));
                 self.value_of(&Form::Apply(Callee::Code(target), args.clone()), frame)
             }
+            Form::Apply(Callee::Prim(op, name), args) if self.native_spoken(*op, name) => {
+                // A builtin function or method named outright is told of
+                // before and after, with the builtin itself; a method's
+                // receiver is worked out once here and handed on.
+                let values = self.value_list(args, frame)?;
+                let callable = match (op, values.first()) {
+                    (Prim::ValueMethod, Some(receiver)) => Value::Member(Rc::new(receiver.clone()), name.to_string()),
+                    _ => Value::Intrinsic(*op, name.clone()),
+                };
+                let forms = self.native_arguments(values)?;
+                let standing = self.active_trace.clone();
+                self.natives_told.set(true);
+                let answer = match self.tell_watcher("c_call", &standing, callable.clone()) {
+                    Ok(()) => self.native_keyword_check(&forms).and_then(|()| self.value_of(&Form::Apply(Callee::Prim(*op, name.clone()), forms), frame)),
+                    Err(away) => Err(away),
+                };
+                self.natives_told.set(false);
+                let event = if answer.is_ok() { "c_return" } else { "c_exception" };
+                let left = self.tell_watcher(event, &standing, callable);
+                match (answer, left) {
+                    (Ok(_), Err(away)) => Err(away),
+                    (answer, _) => answer,
+                }
+            }
             Form::Apply(Callee::Prim(op, name), args) => match op {
                 Prim::BindValueMethod => {
                     let receiver = self.value_of(&args[0], frame)?.keep(false);
@@ -8665,7 +8784,7 @@ impl<'a> Machine<'a> {
                             }
                         }
                     }
-                    let made = self.prim(*op, name, &values);
+                    let made = self.prim_watched(*op, name, &values);
                     if let Some(held) = aside { self.text_within = held; }
                     if let Some(away) = self.got_away.take() {
                         return Err(away);
@@ -8795,6 +8914,33 @@ impl<'a> Machine<'a> {
         Ok(given)
     }
 
+    /// Expand once before builtin events, keeping keyword keys for invocation validation.
+    fn native_arguments(&mut self, values: Vec<Value>) -> Res<Vec<Form>> {
+        let (positions, names) = self.expanded_arguments(values)?;
+        let mut used: Vec<Value> = Vec::new();
+        let mut ready: Vec<Form> = positions.into_iter().map(Form::Const).collect();
+        for (key, value) in names {
+            let key = self.word_of_key(&key).map(|word| Value::text(&word)).unwrap_or(key);
+            if used.iter().any(|earlier| earlier.equals(&key)) {
+                return Err(self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key.bare())).into());
+            }
+            used.push(key.clone());
+            ready.push(Form::Const(Value::Couple(Rc::new((key, value)))));
+        }
+        Ok(ready)
+    }
+
+    fn native_keyword_check(&self, prepared: &[Form]) -> Res<()> {
+        for form in prepared {
+            if let Form::Const(Value::Couple(pair)) = form {
+                if !matches!(pair.0, Value::Text(_)) {
+                    return Err(self.argument_fault("ext.syntax.call.spread.pairs.amiss", None).into());
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn value_list(&mut self, args: &[Form], frame: &Rc<Env>) -> Res<Vec<Value>> {
         let mut out = Vec::with_capacity(args.len());
         for a in args {
@@ -8902,7 +9048,7 @@ impl<'a> Machine<'a> {
                 values = positions;
             }
             if op == Prim::SortOf && self.has_class_order() { return self.class_from_type(values); }
-            let made = self.prim(op, &name, &values);
+            let made = self.prim_watched(op, &name, &values);
             if let Some(away) = self.got_away.take() {
                 return Err(away);
             }
@@ -10245,6 +10391,7 @@ impl<'a> Machine<'a> {
             Form::Apply(Callee::Code(target), args) => {
                 let found = self.value_of(target, frame)?;
                 let stands = self.what_it_spells(found);
+                if self.native_stands(&stands) { return self.call_told(stands, target, args, frame).map(Next::Value); }
                 if args.is_empty() && !self.rules.words_ext_stmt_class_builder.is_empty()
                     && matches!(stands, Value::Intrinsic(Prim::ClassWork(8) | Prim::HereBook | Prim::MembersOf | Prim::WorldBook, _)) {
                     let Value::Intrinsic(operation, _) = stands else { unreachable!() };
@@ -13031,19 +13178,29 @@ impl<'a> Machine<'a> {
         self.open_arguments_shown(values, "")
     }
 
-    /// Open a call's arguments, keeping `shown` to name the callee in
-    /// the words of any complaint a spread raises. The words stand empty
-    /// where the callee is not known. A lone spread handed over in order
-    /// is the argument the reader wrote after the star; a spread among
-    /// others is worded as a later one.
     pub(super) fn open_arguments_shown(&mut self, values: Vec<Value>, shown: &str) -> Res<(Vec<Value>, Vec<(String, Value)>)> {
+        let (positions, supplied) = self.expanded_arguments_shown(values, shown)?;
+        let mut named = Vec::with_capacity(supplied.len());
+        for (key, value) in supplied {
+            named.push((self.word_of_key(&key)?, value));
+        }
+        Ok((positions, named))
+    }
+
+    // Retain raw native keyword keys through expansion.
+    fn expanded_arguments(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(Value, Value)>)> {
+        self.expanded_arguments_shown(values, "")
+    }
+
+    // Preserve caller-specific spread diagnostics before native events.
+    fn expanded_arguments_shown(&mut self, values: Vec<Value>, shown: &str) -> Res<(Vec<Value>, Vec<(Value, Value)>)> {
         let lone = values.iter().filter(|given| !matches!(given, Value::Couple(pair) if matches!(pair.0, Value::Text(_)))).count() == 1;
         let mut positions = Vec::new();
         let mut names = Vec::new();
         for worth in values {
             let Value::Couple(pair) = worth else { positions.push(worth); continue };
             match &pair.0 {
-                Value::Text(key) => names.push((key.to_string(), pair.1.clone())),
+                Value::Text(_) => names.push((pair.0.clone(), pair.1.clone())),
                 Value::Flag(true) => {
                     let spread = match &pair.1 {
                         Value::Window(_, 'm') => pair.1.proxy_pairs(),
@@ -13061,16 +13218,14 @@ impl<'a> Machine<'a> {
                         Value::Dict(entries) => {
                             for (k, v) in entries.iter() {
                                 let k = match k { Value::Keyed(inner, _) => inner.as_ref().clone(), other => other.clone() };
-                                let word = self.word_of_key(&k)?;
-                                names.push((word, v.clone()));
+                                names.push((k, v.clone()));
                             }
                         }
                         _ => {
                             let kind = expanded.kind_word().to_string();
                             for key in self.mapping_keys(&expanded, shown, &kind)? {
-                                let word = self.word_of_key(&key)?;
-                                let value = self.prim(Prim::At, "", &[expanded.clone(), key])?;
-                                names.push((word, value));
+                                let value = self.prim(Prim::At, "", &[expanded.clone(), key.clone()])?;
+                                names.push((key, value));
                             }
                         }
                     }
@@ -13996,6 +14151,10 @@ impl<'a> Machine<'a> {
         if mine { self.extent = None; }
         let caller_trace = if mine { self.active_trace.take() } else { None };
         if mine { self.active_trace = if program.ident == "<gathering>" { caller_trace.clone() } else { self.activation(&program, &frame, caller_trace.clone()) }; }
+        let followed = mine && program.ident != "<gathering>" && self.watcher.borrow().is_some();
+        let arrival = if followed { let here = self.active_trace.clone(); self.tell_watcher("call", &here, Value::Nil) } else { Ok(()) };
+        let arrived = followed && arrival.is_ok();
+        let natives_were_told = self.natives_told.replace(false);
         // Ordinary calls retain comprehension locals without copying every name.
         let earlier_gathering = if program.ident == "<gathering>" {
             Some(std::mem::replace(&mut self.gathering_locals,
@@ -14003,7 +14162,7 @@ impl<'a> Machine<'a> {
         } else { None };
         if mine && !self.rules.trace_words.is_empty() { self.row = program.declared_on; }
         let trace_started = if mine && !matches!(self.tracing_function, Value::Nil) { self.emit_trace("call", Value::Nil) } else { Ok(()) };
-        let outcome: Res = if let Err(error) = trace_started { Err(error) } else { loop {
+        let outcome: Res = if let Err(error) = trace_started { Err(error) } else if let Err(refused) = arrival { Err(refused) } else { loop {
             caught |= match program.traps {
                 Traps::Naught => 0,
                 Traps::Yields => 1,
@@ -14118,7 +14277,15 @@ impl<'a> Machine<'a> {
             }
         } };
         let outcome = if mine && !matches!(self.tracing_function, Value::Nil) { match outcome { Ok(value) => self.emit_trace("return", value.clone()).map(|()| value), Err(error) => match self.emit_trace("return", Value::Nil) { Ok(()) => Err(error), Err(callback) => { self.exclude_trace_origin(&callback); Err(callback) } } } } else { outcome };
+        self.natives_told.set(natives_were_told);
         let mut outcome = outcome;
+        if arrived {
+            let given = outcome.as_ref().ok().cloned().unwrap_or(Value::Nil);
+            let here = self.active_trace.clone();
+            if let Err(refused) = self.tell_watcher("return", &here, given) {
+                if outcome.is_ok() { outcome = Err(refused); }
+            }
+        }
         let mut body_namespace = None;
         if outcome.is_ok() {
             if let Some((book_name, cell_name, protocol)) = &program.class_namespace {
@@ -24070,6 +24237,12 @@ impl<'a> Machine<'a> {
                 let put = v.first().cloned().unwrap_or(Value::Nil);
                 let none = matches!(put, Value::Nil | Value::Unset);
                 *self.untaken.borrow_mut() = if none { None } else { Some(put) };
+                Value::Flag(true)
+            }
+            Prim::Profile => {
+                let put = v.first().cloned().unwrap_or(Value::Nil);
+                let none = matches!(put, Value::Nil | Value::Unset);
+                *self.watcher.borrow_mut() = if none { None } else { Some(put) };
                 Value::Flag(true)
             }
             Prim::Hearer => {
