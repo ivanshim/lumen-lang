@@ -28438,6 +28438,8 @@ impl<'a> Machine<'a> {
         let Some(own) = &self.natives_book else { return false };
         match held {
             Value::Shared(cell) | Value::Mutable(cell, _) => Rc::ptr_eq(cell, own),
+            // Module dictionaries may return the settled storage of the marker.
+            Value::Dict(entries) => matches!(&*own.borrow(), Value::Dict(native) if Rc::ptr_eq(entries, native)),
             _ => false,
         }
     }
@@ -30691,8 +30693,7 @@ impl Machine<'_> {
         // very way any name is read from it, so a mapping of its own --
         // read-only, raising, or merely short of a name -- is honoured.
         if !self.is_our_natives(&builtins) {
-            return self.mapping_read(&builtins, name)
-                .map_err(|escape| { self.got_away = Some(escape); self.bad_answer() });
+            return self.builtin_dictionary_item(builtins, name);
         }
         self.builtin_from_module(name)
     }
@@ -30710,6 +30711,11 @@ impl Machine<'_> {
             Ok(book) => book,
             Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
         };
+        self.builtin_dictionary_item(dictionary, name)
+    }
+
+    /// Preserve key-comparison callbacks when reading a captured builtin dictionary.
+    fn builtin_dictionary_item(&mut self, dictionary: Value, name: &str) -> Result<Option<Value>, String> {
         match self.user_operation(Prim::At, &[dictionary, Value::text(name)]) {
             Ok(found) => Ok(found.map(|value| value.settled())),
             Err(words) => {
