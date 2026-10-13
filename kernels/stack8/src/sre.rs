@@ -356,6 +356,13 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         }
         return Ok(Value::tuple(bounds));
     }
+    // Unicode database operations share this existing private native bridge.
+    if op == 18 {
+        if args.len() != 3 { return Err("TypeError: Unicode binding requires three arguments".into()); }
+        let field = u8::try_from(number(1)?).map_err(|_| "ValueError: unknown Unicode property".to_string())?;
+        let word = crate::ucd::METHODS.get(field as usize).ok_or("ValueError: unknown Unicode property")?;
+        return Ok(Value::Native(crate::code::Builtin::UnicodeQuery(field, number(2)? != 0), Rc::from(*word)));
+    }
     if op == 6 {
         return Ok(Value::text(general_category(number(1)? as u32)));
     }
@@ -494,22 +501,5 @@ fn general_category(n: u32) -> &'static str {
 
 // Return the database mapping for one Unicode character, including surrogate halves.
 pub fn decompose(args: &[Value]) -> Result<Value, String> {
-    let [source] = args else { return Err(format!("TypeError: decomposition() takes exactly one argument ({} given)", args.len())); };
-    let invalid = || {
-        let kind = match source.contents() { Value::Null => "None".to_owned(), other => other.core_kind() };
-        format!("TypeError: decomposition() argument must be a unicode character, not {kind}")
-    };
-    let point = match source.type_text() {
-        Value::Text(text) => {
-            let mut chars = text.chars();
-            match (chars.next(), chars.next()) {
-                (Some(point), None) => point as u32,
-                _ => return Err(invalid()),
-            }
-        }
-        Value::Codepoints(points) if points.len() == 1 => points[0],
-        Value::Codepoints(_) => return Err(invalid()),
-        _ => return Err(invalid()),
-    };
-    Ok(Value::text(&crate::unicode::decomposition(point)))
+    crate::ucd::call(8, false, args)
 }

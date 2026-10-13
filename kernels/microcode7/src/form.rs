@@ -80,6 +80,7 @@ pub enum Prim {
     CodecMapping,
     Regex,
     UnicodeDecomposition,
+    UnicodeField { query: u8, historic: bool },
     LoadModule,
     IsInstance,
     WriteMember,

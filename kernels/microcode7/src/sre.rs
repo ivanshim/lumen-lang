@@ -363,6 +363,14 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
         };
         return Ok(Value::tuple(vec![position(first)?, position(last)?]));
     }
+    // The private bridge also supplies UCD queries to the library module.
+    if action == 18 {
+        let [_, index, historical] = input else { return Err(String::from("TypeError: Unicode binding requires three arguments")); };
+        let query = u8::try_from(integer(index)?).map_err(|_| String::from("ValueError: unknown Unicode property"))?;
+        let label = crate::ucd::METHODS.get(usize::from(query)).ok_or_else(|| String::from("ValueError: unknown Unicode property"))?;
+        let operation = crate::form::Prim::UnicodeField { query, historic: integer(historical)? != 0 };
+        return Ok(Value::Intrinsic(operation, Rc::from(*label)));
+    }
     if action == 6 { return Ok(Value::text(character_category(integer(&input[1])? as u32))); }
     if action == 5 {
         return match input.get(1) {
@@ -518,22 +526,6 @@ fn white(n: u32) -> bool { matches!(n, 28..=31) || char::from_u32(n).is_some_and
 
 // Return the database mapping for one Unicode character, including surrogate halves.
 pub fn decompose(args: &[Value]) -> Result<Value, String> {
-    let [source] = args else { return Err(format!("TypeError: decomposition() takes exactly one argument ({} given)", args.len())); };
-    let invalid = || {
-        let kind = match source.settled() { Value::Nil => "None".to_owned(), other => other.kind_word() };
-        format!("TypeError: decomposition() argument must be a unicode character, not {kind}")
-    };
-    let point = match source.type_text() {
-        Value::Text(text) => {
-            let mut chars = text.chars();
-            match (chars.next(), chars.next()) {
-                (Some(point), None) => point as u32,
-                _ => return Err(invalid()),
-            }
-        }
-        Value::Unpaired(points) if points.len() == 1 => points[0],
-        Value::Unpaired(_) => return Err(invalid()),
-        _ => return Err(invalid()),
-    };
-    Ok(Value::text(&crate::unicode::decomposition(point)))
+    let query = 8;
+    crate::ucd::invoke(query, false, args)
 }

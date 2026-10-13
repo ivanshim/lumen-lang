@@ -3873,7 +3873,7 @@ impl<'a> Machine<'a> {
     /// there are none, counting its lines from the program's own first.
     fn text_scanned(&mut self, source: &str) -> Result<Vec<crate::scan::Token>, String> {
         let ahead = self.lines_ahead();
-        match crate::scan::scan_at(source, self.table).and_then(|read| crate::indent::indent(read, self.table, ahead)) {
+        match self.unicode_scan(source).map_err(|(s, r, _)| (s, r)).and_then(|read| crate::indent::indent(read, self.table, ahead)) {
             Ok(tokens) => Ok(tokens),
             Err((said, row)) => Err(self.text_would_not_read(said, row)),
         }
@@ -3887,7 +3887,7 @@ impl<'a> Machine<'a> {
         let reading_text = came_out_of.is_none();
         let tokens = match reading_text {
             true => self.text_scanned(source)?,
-            false => crate::indent::indent(crate::scan::scan(source, self.table)?, self.table, 0).map_err(|(said, _)| said)?,
+            false => crate::indent::indent(self.unicode_scan(source).map_err(|(s, _, _)| s)?, self.table, 0).map_err(|(said, _)| said)?,
         };
         let built = match reading_text {
             true => match crate::build::build_from_at(&tokens, self.table, &self.idents, HashMap::new(), true, 0) {
@@ -11621,9 +11621,7 @@ impl<'a> Machine<'a> {
             crate::text::fit_names(self.table, crate::text::Work::NEWARGS, &mut supplied, keywords)?;
             return self.prim(Prim::Textual(crate::text::Work::NEWARGS), name, &supplied).map_err(Escape::from);
         }
-        let codepoint_method = matches!(&actual, Value::Unpaired(_))
-            && ["lower", "upper", "replace", "count", "index", "rindex", "find", "rfind", "split", "rsplit"].contains(&name);
-        if matches!(&actual, Value::Text(_)) || codepoint_method {
+        if matches!(&actual, Value::Text(_) | Value::Unpaired(_)) {
             if let Some(work) = crate::text::named_work(name) {
                 let mut given = vec![actual]; given.extend(arguments.into_iter().map(|v| v.settled()));
                 if work == crate::text::Work::JOIN && given.len() == 2 { given[1] = Value::Vector(crate::tuples::Sequence::plain(self.gathered_members(&given[1])?)); }
@@ -19945,6 +19943,7 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if let Prim::UnicodeField { query, historic } = op { return crate::ucd::invoke(query, historic, v); }
         // Exact native integers cannot supply user slots or collection
         // behavior. Their arithmetic still uses the normal numeric rules.
         if let [Value::Small(_), Value::Small(right)] = v {
@@ -21877,6 +21876,7 @@ impl<'a> Machine<'a> {
             Prim::CodecMapping => return crate::multibyte::invoke(v),
             Prim::Regex => return crate::sre::invoke(v),
             Prim::UnicodeDecomposition => return crate::sre::decompose(v),
+            Prim::UnicodeField { query, historic } => return crate::ucd::invoke(query, historic, v),
             Prim::CopyWorth => {
                 n(2)?;
                 self.reduction_permitted(&v[0])?;
@@ -27887,9 +27887,6 @@ impl Machine<'_> {
         if self.table.strings("ext.system.module.path").first().map(String::as_str).is_none() {
             if let Some((owner, _)) = split { self.load_namespace(owner)?; }
         }
-        let beginning = self.idents.len();
-        // Earlier module slots contribute only their offset, never readable names.
-        let hidden = vec![String::new(); beginning];
         let namespace_portions = own_file.as_deref().filter(|location| location.starts_with('\0'))
             .map(|location| location[1..].split('\0').collect::<Vec<_>>());
         let empty_origin = format!("<namespace {path}>");
@@ -27898,6 +27895,9 @@ impl Machine<'_> {
             Ok(ready) => ready,
             Err((words, line, offset)) => return Err(self.text_unreadable_at(0, words, filename, line, offset, None, &text)),
         };
+        let beginning = self.idents.len();
+        // Earlier module slots contribute only their offset, never readable names.
+        let hidden = vec![String::new(); beginning];
         // The routines of a module are built beside the dictionary of
         // the module's own names, so that what they read as their world
         // names reads that dictionary and no other.
@@ -29617,7 +29617,19 @@ impl<'a> Machine<'a> {
     /// the same complaint a file being run keeps, so text read through
     /// `compile`, `eval` or `exec` is told apart the same way a file
     /// is, through `text_unreadable_at`.
-    fn text_tokens(&self, source: &str, mode: usize) -> Result<Vec<crate::scan::Token>, (String, u32, usize)> {
+    pub(super) fn unicode_scan(&mut self, source: &str) -> Result<Vec<crate::scan::Token>, (String, u32, usize)> {
+        let table = self.table;
+        if !table.has_any("ext.builtin.exceptions.syntax") { return crate::scan::scan_position(source, table); }
+        let gate = Rc::new(RefCell::new(|| {
+            match self.load_namespace("unicodedata") {
+                Ok(_) => Ok(()),
+                Err(_) => Err(String::from("SyntaxError: (unicode error) \\N escapes not supported (can't load unicodedata module)")),
+            }
+        }));
+        crate::scan::scan_with_gate(source, table, Some(gate))
+    }
+
+    fn text_tokens(&mut self, source: &str, mode: usize) -> Result<Vec<crate::scan::Token>, (String, u32, usize)> {
         if source.is_empty() && self.cached_forms.is_some() { return Ok(vec![]); }
         if mode != 0 && source.is_empty() { return Err(("SyntaxError: invalid syntax".into(), 0, 0)); }
         if mode == 1 {
@@ -29633,7 +29645,7 @@ impl<'a> Machine<'a> {
         if mode == 0 {
             match crate::build::library_tokens(source, self.table) { Some(tokens) => return Ok(tokens), None => {} }
         }
-        crate::scan::scan_position(source, self.table)
+        self.unicode_scan(source)
             .and_then(|read| crate::indent::indent_position(read, self.table, 0))
     }
 

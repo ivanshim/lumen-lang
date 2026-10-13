@@ -1,0 +1,3772 @@
+0	8	Cc	BN	0	0	N			
+9	9	Cc	S	0	0	N			
+A	A	Cc	B	0	0	N			
+B	B	Cc	S	0	0	N			
+C	C	Cc	WS	0	0	N			
+D	D	Cc	B	0	0	N			
+E	1B	Cc	BN	0	0	N			
+1C	1E	Cc	B	0	0	N			
+1F	1F	Cc	S	0	0	N			
+20	20	Zs	WS	0	0	Na			
+21	22	Po	ON	0	0	Na			
+23	23	Po	ET	0	0	Na			
+24	24	Sc	ET	0	0	Na			
+25	25	Po	ET	0	0	Na			
+26	27	Po	ON	0	0	Na			
+28	28	Ps	ON	0	1	Na			
+29	29	Pe	ON	0	1	Na			
+2A	2A	Po	ON	0	0	Na			
+2B	2B	Sm	ET	0	0	Na			
+2C	2C	Po	CS	0	0	Na			
+2D	2D	Pd	ET	0	0	Na			
+2E	2E	Po	CS	0	0	Na			
+2F	2F	Po	ES	0	0	Na			
+30	30	Nd	EN	0	0	Na	0	0	0
+31	31	Nd	EN	0	0	Na	1	1	1
+32	32	Nd	EN	0	0	Na	2	2	2
+33	33	Nd	EN	0	0	Na	3	3	3
+34	34	Nd	EN	0	0	Na	4	4	4
+35	35	Nd	EN	0	0	Na	5	5	5
+36	36	Nd	EN	0	0	Na	6	6	6
+37	37	Nd	EN	0	0	Na	7	7	7
+38	38	Nd	EN	0	0	Na	8	8	8
+39	39	Nd	EN	0	0	Na	9	9	9
+3A	3A	Po	CS	0	0	Na			
+3B	3B	Po	ON	0	0	Na			
+3C	3C	Sm	ON	0	1	Na			
+3D	3D	Sm	ON	0	0	Na			
+3E	3E	Sm	ON	0	1	Na			
+3F	40	Po	ON	0	0	Na			
+41	5A	Lu	L	0	0	Na			
+5B	5B	Ps	ON	0	1	Na			
+5C	5C	Po	ON	0	0	Na			
+5D	5D	Pe	ON	0	1	Na			
+5E	5E	Sk	ON	0	0	Na			
+5F	5F	Pc	ON	0	0	Na			
+60	60	Sk	ON	0	0	Na			
+61	7A	Ll	L	0	0	Na			
+7B	7B	Ps	ON	0	1	Na			
+7C	7C	Sm	ON	0	0	Na			
+7D	7D	Pe	ON	0	1	Na			
+7E	7E	Sm	ON	0	0	Na			
+7F	84	Cc	BN	0	0	N			
+85	85	Cc	B	0	0	N			
+86	9F	Cc	BN	0	0	N			
+A0	A0	Zs	CS	0	0	N			
+A1	A1	Po	ON	0	0	A			
+A2	A3	Sc	ET	0	0	Na			
+A4	A4	Sc	ET	0	0	A			
+A5	A5	Sc	ET	0	0	Na			
+A6	A6	So	ON	0	0	Na			
+A7	A7	So	ON	0	0	A			
+A8	A8	Sk	ON	0	0	A			
+A9	A9	So	ON	0	0	N			
+AA	AA	Ll	L	0	0	A			
+AB	AB	Pi	ON	0	1	N			
+AC	AC	Sm	ON	0	0	Na			
+AD	AD	Pd	ON	0	0	A			
+AE	AE	So	ON	0	0	A			
+AF	AF	Sk	ON	0	0	Na			
+B0	B0	So	ET	0	0	A			
+B1	B1	Sm	ET	0	0	A			
+B2	B2	No	EN	0	0	A	2	2	2
+B3	B3	No	EN	0	0	A	3	3	3
+B4	B4	Sk	ON	0	0	A			
+B5	B5	Ll	L	0	0	N			
+B6	B6	So	ON	0	0	A			
+B7	B7	Po	ON	0	0	A			
+B8	B8	Sk	ON	0	0	A			
+B9	B9	No	EN	0	0	A	1	1	1
+BA	BA	Ll	L	0	0	A			
+BB	BB	Pf	ON	0	1	N			
+BC	BC	No	ON	0	0	A			1/4
+BD	BD	No	ON	0	0	A			1/2
+BE	BE	No	ON	0	0	A			3/4
+BF	BF	Po	ON	0	0	A			
+C0	C5	Lu	L	0	0	N			
+C6	C6	Lu	L	0	0	A			
+C7	CF	Lu	L	0	0	N			
+D0	D0	Lu	L	0	0	A			
+D1	D6	Lu	L	0	0	N			
+D7	D7	Sm	ON	0	0	A			
+D8	D8	Lu	L	0	0	A			
+D9	DD	Lu	L	0	0	N			
+DE	DE	Lu	L	0	0	A			
+DF	E1	Ll	L	0	0	A			
+E2	E5	Ll	L	0	0	N			
+E6	E6	Ll	L	0	0	A			
+E7	E7	Ll	L	0	0	N			
+E8	EA	Ll	L	0	0	A			
+EB	EB	Ll	L	0	0	N			
+EC	ED	Ll	L	0	0	A			
+EE	EF	Ll	L	0	0	N			
+F0	F0	Ll	L	0	0	A			
+F1	F1	Ll	L	0	0	N			
+F2	F3	Ll	L	0	0	A			
+F4	F6	Ll	L	0	0	N			
+F7	F7	Sm	ON	0	0	A			
+F8	FA	Ll	L	0	0	A			
+FB	FB	Ll	L	0	0	N			
+FC	FC	Ll	L	0	0	A			
+FD	FD	Ll	L	0	0	N			
+FE	FE	Ll	L	0	0	A			
+FF	FF	Ll	L	0	0	N			
+100	100	Lu	L	0	0	N			
+101	101	Ll	L	0	0	A			
+102	102	Lu	L	0	0	N			
+103	103	Ll	L	0	0	N			
+104	104	Lu	L	0	0	N			
+105	105	Ll	L	0	0	N			
+106	106	Lu	L	0	0	N			
+107	107	Ll	L	0	0	N			
+108	108	Lu	L	0	0	N			
+109	109	Ll	L	0	0	N			
+10A	10A	Lu	L	0	0	N			
+10B	10B	Ll	L	0	0	N			
+10C	10C	Lu	L	0	0	N			
+10D	10D	Ll	L	0	0	N			
+10E	10E	Lu	L	0	0	N			
+10F	10F	Ll	L	0	0	N			
+110	110	Lu	L	0	0	N			
+111	111	Ll	L	0	0	A			
+112	112	Lu	L	0	0	N			
+113	113	Ll	L	0	0	A			
+114	114	Lu	L	0	0	N			
+115	115	Ll	L	0	0	N			
+116	116	Lu	L	0	0	N			
+117	117	Ll	L	0	0	N			
+118	118	Lu	L	0	0	N			
+119	119	Ll	L	0	0	N			
+11A	11A	Lu	L	0	0	N			
+11B	11B	Ll	L	0	0	A			
+11C	11C	Lu	L	0	0	N			
+11D	11D	Ll	L	0	0	N			
+11E	11E	Lu	L	0	0	N			
+11F	11F	Ll	L	0	0	N			
+120	120	Lu	L	0	0	N			
+121	121	Ll	L	0	0	N			
+122	122	Lu	L	0	0	N			
+123	123	Ll	L	0	0	N			
+124	124	Lu	L	0	0	N			
+125	125	Ll	L	0	0	N			
+126	126	Lu	L	0	0	A			
+127	127	Ll	L	0	0	A			
+128	128	Lu	L	0	0	N			
+129	129	Ll	L	0	0	N			
+12A	12A	Lu	L	0	0	N			
+12B	12B	Ll	L	0	0	A			
+12C	12C	Lu	L	0	0	N			
+12D	12D	Ll	L	0	0	N			
+12E	12E	Lu	L	0	0	N			
+12F	12F	Ll	L	0	0	N			
+130	130	Lu	L	0	0	N			
+131	131	Ll	L	0	0	A			
+132	132	Lu	L	0	0	A			
+133	133	Ll	L	0	0	A			
+134	134	Lu	L	0	0	N			
+135	135	Ll	L	0	0	N			
+136	136	Lu	L	0	0	N			
+137	137	Ll	L	0	0	N			
+138	138	Ll	L	0	0	A			
+139	139	Lu	L	0	0	N			
+13A	13A	Ll	L	0	0	N			
+13B	13B	Lu	L	0	0	N			
+13C	13C	Ll	L	0	0	N			
+13D	13D	Lu	L	0	0	N			
+13E	13E	Ll	L	0	0	N			
+13F	13F	Lu	L	0	0	A			
+140	140	Ll	L	0	0	A			
+141	141	Lu	L	0	0	A			
+142	142	Ll	L	0	0	A			
+143	143	Lu	L	0	0	N			
+144	144	Ll	L	0	0	A			
+145	145	Lu	L	0	0	N			
+146	146	Ll	L	0	0	N			
+147	147	Lu	L	0	0	N			
+148	149	Ll	L	0	0	A			
+14A	14A	Lu	L	0	0	A			
+14B	14B	Ll	L	0	0	A			
+14C	14C	Lu	L	0	0	N			
+14D	14D	Ll	L	0	0	A			
+14E	14E	Lu	L	0	0	N			
+14F	14F	Ll	L	0	0	N			
+150	150	Lu	L	0	0	N			
+151	151	Ll	L	0	0	N			
+152	152	Lu	L	0	0	A			
+153	153	Ll	L	0	0	A			
+154	154	Lu	L	0	0	N			
+155	155	Ll	L	0	0	N			
+156	156	Lu	L	0	0	N			
+157	157	Ll	L	0	0	N			
+158	158	Lu	L	0	0	N			
+159	159	Ll	L	0	0	N			
+15A	15A	Lu	L	0	0	N			
+15B	15B	Ll	L	0	0	N			
+15C	15C	Lu	L	0	0	N			
+15D	15D	Ll	L	0	0	N			
+15E	15E	Lu	L	0	0	N			
+15F	15F	Ll	L	0	0	N			
+160	160	Lu	L	0	0	N			
+161	161	Ll	L	0	0	N			
+162	162	Lu	L	0	0	N			
+163	163	Ll	L	0	0	N			
+164	164	Lu	L	0	0	N			
+165	165	Ll	L	0	0	N			
+166	166	Lu	L	0	0	A			
+167	167	Ll	L	0	0	A			
+168	168	Lu	L	0	0	N			
+169	169	Ll	L	0	0	N			
+16A	16A	Lu	L	0	0	N			
+16B	16B	Ll	L	0	0	A			
+16C	16C	Lu	L	0	0	N			
+16D	16D	Ll	L	0	0	N			
+16E	16E	Lu	L	0	0	N			
+16F	16F	Ll	L	0	0	N			
+170	170	Lu	L	0	0	N			
+171	171	Ll	L	0	0	N			
+172	172	Lu	L	0	0	N			
+173	173	Ll	L	0	0	N			
+174	174	Lu	L	0	0	N			
+175	175	Ll	L	0	0	N			
+176	176	Lu	L	0	0	N			
+177	177	Ll	L	0	0	N			
+178	179	Lu	L	0	0	N			
+17A	17A	Ll	L	0	0	N			
+17B	17B	Lu	L	0	0	N			
+17C	17C	Ll	L	0	0	N			
+17D	17D	Lu	L	0	0	N			
+17E	180	Ll	L	0	0	N			
+181	182	Lu	L	0	0	N			
+183	183	Ll	L	0	0	N			
+184	184	Lu	L	0	0	N			
+185	185	Ll	L	0	0	N			
+186	187	Lu	L	0	0	N			
+188	188	Ll	L	0	0	N			
+189	18B	Lu	L	0	0	N			
+18C	18D	Ll	L	0	0	N			
+18E	191	Lu	L	0	0	N			
+192	192	Ll	L	0	0	N			
+193	194	Lu	L	0	0	N			
+195	195	Ll	L	0	0	N			
+196	198	Lu	L	0	0	N			
+199	19B	Ll	L	0	0	N			
+19C	19D	Lu	L	0	0	N			
+19E	19E	Ll	L	0	0	N			
+19F	1A0	Lu	L	0	0	N			
+1A1	1A1	Ll	L	0	0	N			
+1A2	1A2	Lu	L	0	0	N			
+1A3	1A3	Ll	L	0	0	N			
+1A4	1A4	Lu	L	0	0	N			
+1A5	1A5	Ll	L	0	0	N			
+1A6	1A7	Lu	L	0	0	N			
+1A8	1A8	Ll	L	0	0	N			
+1A9	1A9	Lu	L	0	0	N			
+1AA	1AB	Ll	L	0	0	N			
+1AC	1AC	Lu	L	0	0	N			
+1AD	1AD	Ll	L	0	0	N			
+1AE	1AF	Lu	L	0	0	N			
+1B0	1B0	Ll	L	0	0	N			
+1B1	1B3	Lu	L	0	0	N			
+1B4	1B4	Ll	L	0	0	N			
+1B5	1B5	Lu	L	0	0	N			
+1B6	1B6	Ll	L	0	0	N			
+1B7	1B8	Lu	L	0	0	N			
+1B9	1BA	Ll	L	0	0	N			
+1BB	1BB	Lo	L	0	0	N			
+1BC	1BC	Lu	L	0	0	N			
+1BD	1BF	Ll	L	0	0	N			
+1C0	1C3	Lo	L	0	0	N			
+1C4	1C4	Lu	L	0	0	N			
+1C5	1C5	Lt	L	0	0	N			
+1C6	1C6	Ll	L	0	0	N			
+1C7	1C7	Lu	L	0	0	N			
+1C8	1C8	Lt	L	0	0	N			
+1C9	1C9	Ll	L	0	0	N			
+1CA	1CA	Lu	L	0	0	N			
+1CB	1CB	Lt	L	0	0	N			
+1CC	1CC	Ll	L	0	0	N			
+1CD	1CD	Lu	L	0	0	N			
+1CE	1CE	Ll	L	0	0	A			
+1CF	1CF	Lu	L	0	0	N			
+1D0	1D0	Ll	L	0	0	A			
+1D1	1D1	Lu	L	0	0	N			
+1D2	1D2	Ll	L	0	0	A			
+1D3	1D3	Lu	L	0	0	N			
+1D4	1D4	Ll	L	0	0	A			
+1D5	1D5	Lu	L	0	0	N			
+1D6	1D6	Ll	L	0	0	A			
+1D7	1D7	Lu	L	0	0	N			
+1D8	1D8	Ll	L	0	0	A			
+1D9	1D9	Lu	L	0	0	N			
+1DA	1DA	Ll	L	0	0	A			
+1DB	1DB	Lu	L	0	0	N			
+1DC	1DC	Ll	L	0	0	A			
+1DD	1DD	Ll	L	0	0	N			
+1DE	1DE	Lu	L	0	0	N			
+1DF	1DF	Ll	L	0	0	N			
+1E0	1E0	Lu	L	0	0	N			
+1E1	1E1	Ll	L	0	0	N			
+1E2	1E2	Lu	L	0	0	N			
+1E3	1E3	Ll	L	0	0	N			
+1E4	1E4	Lu	L	0	0	N			
+1E5	1E5	Ll	L	0	0	N			
+1E6	1E6	Lu	L	0	0	N			
+1E7	1E7	Ll	L	0	0	N			
+1E8	1E8	Lu	L	0	0	N			
+1E9	1E9	Ll	L	0	0	N			
+1EA	1EA	Lu	L	0	0	N			
+1EB	1EB	Ll	L	0	0	N			
+1EC	1EC	Lu	L	0	0	N			
+1ED	1ED	Ll	L	0	0	N			
+1EE	1EE	Lu	L	0	0	N			
+1EF	1F0	Ll	L	0	0	N			
+1F1	1F1	Lu	L	0	0	N			
+1F2	1F2	Lt	L	0	0	N			
+1F3	1F3	Ll	L	0	0	N			
+1F4	1F4	Lu	L	0	0	N			
+1F5	1F5	Ll	L	0	0	N			
+1F6	1F8	Lu	L	0	0	N			
+1F9	1F9	Ll	L	0	0	N			
+1FA	1FA	Lu	L	0	0	N			
+1FB	1FB	Ll	L	0	0	N			
+1FC	1FC	Lu	L	0	0	N			
+1FD	1FD	Ll	L	0	0	N			
+1FE	1FE	Lu	L	0	0	N			
+1FF	1FF	Ll	L	0	0	N			
+200	200	Lu	L	0	0	N			
+201	201	Ll	L	0	0	N			
+202	202	Lu	L	0	0	N			
+203	203	Ll	L	0	0	N			
+204	204	Lu	L	0	0	N			
+205	205	Ll	L	0	0	N			
+206	206	Lu	L	0	0	N			
+207	207	Ll	L	0	0	N			
+208	208	Lu	L	0	0	N			
+209	209	Ll	L	0	0	N			
+20A	20A	Lu	L	0	0	N			
+20B	20B	Ll	L	0	0	N			
+20C	20C	Lu	L	0	0	N			
+20D	20D	Ll	L	0	0	N			
+20E	20E	Lu	L	0	0	N			
+20F	20F	Ll	L	0	0	N			
+210	210	Lu	L	0	0	N			
+211	211	Ll	L	0	0	N			
+212	212	Lu	L	0	0	N			
+213	213	Ll	L	0	0	N			
+214	214	Lu	L	0	0	N			
+215	215	Ll	L	0	0	N			
+216	216	Lu	L	0	0	N			
+217	217	Ll	L	0	0	N			
+218	218	Lu	L	0	0	N			
+219	219	Ll	L	0	0	N			
+21A	21A	Lu	L	0	0	N			
+21B	21B	Ll	L	0	0	N			
+21C	21C	Lu	L	0	0	N			
+21D	21D	Ll	L	0	0	N			
+21E	21E	Lu	L	0	0	N			
+21F	21F	Ll	L	0	0	N			
+220	220	Lu	L	0	0	N			
+221	221	Cn		0	0	N			
+222	222	Lu	L	0	0	N			
+223	223	Ll	L	0	0	N			
+224	224	Lu	L	0	0	N			
+225	225	Ll	L	0	0	N			
+226	226	Lu	L	0	0	N			
+227	227	Ll	L	0	0	N			
+228	228	Lu	L	0	0	N			
+229	229	Ll	L	0	0	N			
+22A	22A	Lu	L	0	0	N			
+22B	22B	Ll	L	0	0	N			
+22C	22C	Lu	L	0	0	N			
+22D	22D	Ll	L	0	0	N			
+22E	22E	Lu	L	0	0	N			
+22F	22F	Ll	L	0	0	N			
+230	230	Lu	L	0	0	N			
+231	231	Ll	L	0	0	N			
+232	232	Lu	L	0	0	N			
+233	233	Ll	L	0	0	N			
+234	24F	Cn		0	0	N			
+250	250	Ll	L	0	0	N			
+251	251	Ll	L	0	0	A			
+252	260	Ll	L	0	0	N			
+261	261	Ll	L	0	0	A			
+262	2AD	Ll	L	0	0	N			
+2AE	2AF	Cn		0	0	N			
+2B0	2B8	Lm	L	0	0	N			
+2B9	2BA	Sk	ON	0	0	N			
+2BB	2C1	Lm	L	0	0	N			
+2C2	2C3	Sk	ON	0	0	N			
+2C4	2C4	Sk	ON	0	0	A			
+2C5	2C6	Sk	ON	0	0	N			
+2C7	2C7	Sk	ON	0	0	A			
+2C8	2C8	Sk	ON	0	0	N			
+2C9	2CB	Sk	ON	0	0	A			
+2CC	2CC	Sk	ON	0	0	N			
+2CD	2CD	Sk	ON	0	0	A			
+2CE	2CF	Sk	ON	0	0	N			
+2D0	2D0	Lm	L	0	0	A			
+2D1	2D1	Lm	L	0	0	N			
+2D2	2D7	Sk	ON	0	0	N			
+2D8	2DB	Sk	ON	0	0	A			
+2DC	2DC	Sk	ON	0	0	N			
+2DD	2DD	Sk	ON	0	0	A			
+2DE	2DE	Sk	ON	0	0	N			
+2DF	2DF	Sk	ON	0	0	A			
+2E0	2E4	Lm	L	0	0	N			
+2E5	2ED	Sk	ON	0	0	N			
+2EE	2EE	Lm	L	0	0	N			
+2EF	2FF	Cn		0	0	N			
+300	314	Mn	NSM	230	0	A			
+315	315	Mn	NSM	232	0	A			
+316	319	Mn	NSM	220	0	A			
+31A	31A	Mn	NSM	232	0	A			
+31B	31B	Mn	NSM	216	0	A			
+31C	320	Mn	NSM	220	0	A			
+321	322	Mn	NSM	202	0	A			
+323	326	Mn	NSM	220	0	A			
+327	328	Mn	NSM	202	0	A			
+329	333	Mn	NSM	220	0	A			
+334	338	Mn	NSM	1	0	A			
+339	33C	Mn	NSM	220	0	A			
+33D	344	Mn	NSM	230	0	A			
+345	345	Mn	NSM	240	0	A			
+346	346	Mn	NSM	230	0	A			
+347	349	Mn	NSM	220	0	A			
+34A	34C	Mn	NSM	230	0	A			
+34D	34E	Mn	NSM	220	0	A			
+34F	34F	Mn	NSM	0	0	A			
+350	35F	Cn		0	0	N			
+360	361	Mn	NSM	234	0	A			
+362	362	Mn	NSM	233	0	A			
+363	36F	Mn	NSM	230	0	A			
+370	373	Cn		0	0	N			
+374	375	Sk	ON	0	0	N			
+376	379	Cn		0	0	N			
+37A	37A	Lm	L	0	0	N			
+37B	37D	Cn		0	0	N			
+37E	37E	Po	ON	0	0	N			
+37F	383	Cn		0	0	N			
+384	385	Sk	ON	0	0	N			
+386	386	Lu	L	0	0	N			
+387	387	Po	ON	0	0	N			
+388	38A	Lu	L	0	0	N			
+38B	38B	Cn		0	0	N			
+38C	38C	Lu	L	0	0	N			
+38D	38D	Cn		0	0	N			
+38E	38F	Lu	L	0	0	N			
+390	390	Ll	L	0	0	N			
+391	3A1	Lu	L	0	0	A			
+3A2	3A2	Cn		0	0	N			
+3A3	3A9	Lu	L	0	0	A			
+3AA	3AB	Lu	L	0	0	N			
+3AC	3B0	Ll	L	0	0	N			
+3B1	3C1	Ll	L	0	0	A			
+3C2	3C2	Ll	L	0	0	N			
+3C3	3C9	Ll	L	0	0	A			
+3CA	3CE	Ll	L	0	0	N			
+3CF	3CF	Cn		0	0	N			
+3D0	3D1	Ll	L	0	0	N			
+3D2	3D4	Lu	L	0	0	N			
+3D5	3D7	Ll	L	0	0	N			
+3D8	3D8	Lu	L	0	0	N			
+3D9	3D9	Ll	L	0	0	N			
+3DA	3DA	Lu	L	0	0	N			
+3DB	3DB	Ll	L	0	0	N			
+3DC	3DC	Lu	L	0	0	N			
+3DD	3DD	Ll	L	0	0	N			
+3DE	3DE	Lu	L	0	0	N			
+3DF	3DF	Ll	L	0	0	N			
+3E0	3E0	Lu	L	0	0	N			
+3E1	3E1	Ll	L	0	0	N			
+3E2	3E2	Lu	L	0	0	N			
+3E3	3E3	Ll	L	0	0	N			
+3E4	3E4	Lu	L	0	0	N			
+3E5	3E5	Ll	L	0	0	N			
+3E6	3E6	Lu	L	0	0	N			
+3E7	3E7	Ll	L	0	0	N			
+3E8	3E8	Lu	L	0	0	N			
+3E9	3E9	Ll	L	0	0	N			
+3EA	3EA	Lu	L	0	0	N			
+3EB	3EB	Ll	L	0	0	N			
+3EC	3EC	Lu	L	0	0	N			
+3ED	3ED	Ll	L	0	0	N			
+3EE	3EE	Lu	L	0	0	N			
+3EF	3F3	Ll	L	0	0	N			
+3F4	3F4	Lu	L	0	0	N			
+3F5	3F5	Ll	L	0	0	N			
+3F6	3F6	Sm	ON	0	0	N			
+3F7	3FF	Cn		0	0	N			
+400	400	Lu	L	0	0	N			
+401	401	Lu	L	0	0	A			
+402	40F	Lu	L	0	0	N			
+410	42F	Lu	L	0	0	A			
+430	44F	Ll	L	0	0	A			
+450	450	Ll	L	0	0	N			
+451	451	Ll	L	0	0	A			
+452	45F	Ll	L	0	0	N			
+460	460	Lu	L	0	0	N			
+461	461	Ll	L	0	0	N			
+462	462	Lu	L	0	0	N			
+463	463	Ll	L	0	0	N			
+464	464	Lu	L	0	0	N			
+465	465	Ll	L	0	0	N			
+466	466	Lu	L	0	0	N			
+467	467	Ll	L	0	0	N			
+468	468	Lu	L	0	0	N			
+469	469	Ll	L	0	0	N			
+46A	46A	Lu	L	0	0	N			
+46B	46B	Ll	L	0	0	N			
+46C	46C	Lu	L	0	0	N			
+46D	46D	Ll	L	0	0	N			
+46E	46E	Lu	L	0	0	N			
+46F	46F	Ll	L	0	0	N			
+470	470	Lu	L	0	0	N			
+471	471	Ll	L	0	0	N			
+472	472	Lu	L	0	0	N			
+473	473	Ll	L	0	0	N			
+474	474	Lu	L	0	0	N			
+475	475	Ll	L	0	0	N			
+476	476	Lu	L	0	0	N			
+477	477	Ll	L	0	0	N			
+478	478	Lu	L	0	0	N			
+479	479	Ll	L	0	0	N			
+47A	47A	Lu	L	0	0	N			
+47B	47B	Ll	L	0	0	N			
+47C	47C	Lu	L	0	0	N			
+47D	47D	Ll	L	0	0	N			
+47E	47E	Lu	L	0	0	N			
+47F	47F	Ll	L	0	0	N			
+480	480	Lu	L	0	0	N			
+481	481	Ll	L	0	0	N			
+482	482	So	L	0	0	N			
+483	486	Mn	NSM	230	0	N			
+487	487	Cn		0	0	N			
+488	489	Me	NSM	0	0	N			
+48A	48A	Lu	L	0	0	N			
+48B	48B	Ll	L	0	0	N			
+48C	48C	Lu	L	0	0	N			
+48D	48D	Ll	L	0	0	N			
+48E	48E	Lu	L	0	0	N			
+48F	48F	Ll	L	0	0	N			
+490	490	Lu	L	0	0	N			
+491	491	Ll	L	0	0	N			
+492	492	Lu	L	0	0	N			
+493	493	Ll	L	0	0	N			
+494	494	Lu	L	0	0	N			
+495	495	Ll	L	0	0	N			
+496	496	Lu	L	0	0	N			
+497	497	Ll	L	0	0	N			
+498	498	Lu	L	0	0	N			
+499	499	Ll	L	0	0	N			
+49A	49A	Lu	L	0	0	N			
+49B	49B	Ll	L	0	0	N			
+49C	49C	Lu	L	0	0	N			
+49D	49D	Ll	L	0	0	N			
+49E	49E	Lu	L	0	0	N			
+49F	49F	Ll	L	0	0	N			
+4A0	4A0	Lu	L	0	0	N			
+4A1	4A1	Ll	L	0	0	N			
+4A2	4A2	Lu	L	0	0	N			
+4A3	4A3	Ll	L	0	0	N			
+4A4	4A4	Lu	L	0	0	N			
+4A5	4A5	Ll	L	0	0	N			
+4A6	4A6	Lu	L	0	0	N			
+4A7	4A7	Ll	L	0	0	N			
+4A8	4A8	Lu	L	0	0	N			
+4A9	4A9	Ll	L	0	0	N			
+4AA	4AA	Lu	L	0	0	N			
+4AB	4AB	Ll	L	0	0	N			
+4AC	4AC	Lu	L	0	0	N			
+4AD	4AD	Ll	L	0	0	N			
+4AE	4AE	Lu	L	0	0	N			
+4AF	4AF	Ll	L	0	0	N			
+4B0	4B0	Lu	L	0	0	N			
+4B1	4B1	Ll	L	0	0	N			
+4B2	4B2	Lu	L	0	0	N			
+4B3	4B3	Ll	L	0	0	N			
+4B4	4B4	Lu	L	0	0	N			
+4B5	4B5	Ll	L	0	0	N			
+4B6	4B6	Lu	L	0	0	N			
+4B7	4B7	Ll	L	0	0	N			
+4B8	4B8	Lu	L	0	0	N			
+4B9	4B9	Ll	L	0	0	N			
+4BA	4BA	Lu	L	0	0	N			
+4BB	4BB	Ll	L	0	0	N			
+4BC	4BC	Lu	L	0	0	N			
+4BD	4BD	Ll	L	0	0	N			
+4BE	4BE	Lu	L	0	0	N			
+4BF	4BF	Ll	L	0	0	N			
+4C0	4C1	Lu	L	0	0	N			
+4C2	4C2	Ll	L	0	0	N			
+4C3	4C3	Lu	L	0	0	N			
+4C4	4C4	Ll	L	0	0	N			
+4C5	4C5	Lu	L	0	0	N			
+4C6	4C6	Ll	L	0	0	N			
+4C7	4C7	Lu	L	0	0	N			
+4C8	4C8	Ll	L	0	0	N			
+4C9	4C9	Lu	L	0	0	N			
+4CA	4CA	Ll	L	0	0	N			
+4CB	4CB	Lu	L	0	0	N			
+4CC	4CC	Ll	L	0	0	N			
+4CD	4CD	Lu	L	0	0	N			
+4CE	4CE	Ll	L	0	0	N			
+4CF	4CF	Cn		0	0	N			
+4D0	4D0	Lu	L	0	0	N			
+4D1	4D1	Ll	L	0	0	N			
+4D2	4D2	Lu	L	0	0	N			
+4D3	4D3	Ll	L	0	0	N			
+4D4	4D4	Lu	L	0	0	N			
+4D5	4D5	Ll	L	0	0	N			
+4D6	4D6	Lu	L	0	0	N			
+4D7	4D7	Ll	L	0	0	N			
+4D8	4D8	Lu	L	0	0	N			
+4D9	4D9	Ll	L	0	0	N			
+4DA	4DA	Lu	L	0	0	N			
+4DB	4DB	Ll	L	0	0	N			
+4DC	4DC	Lu	L	0	0	N			
+4DD	4DD	Ll	L	0	0	N			
+4DE	4DE	Lu	L	0	0	N			
+4DF	4DF	Ll	L	0	0	N			
+4E0	4E0	Lu	L	0	0	N			
+4E1	4E1	Ll	L	0	0	N			
+4E2	4E2	Lu	L	0	0	N			
+4E3	4E3	Ll	L	0	0	N			
+4E4	4E4	Lu	L	0	0	N			
+4E5	4E5	Ll	L	0	0	N			
+4E6	4E6	Lu	L	0	0	N			
+4E7	4E7	Ll	L	0	0	N			
+4E8	4E8	Lu	L	0	0	N			
+4E9	4E9	Ll	L	0	0	N			
+4EA	4EA	Lu	L	0	0	N			
+4EB	4EB	Ll	L	0	0	N			
+4EC	4EC	Lu	L	0	0	N			
+4ED	4ED	Ll	L	0	0	N			
+4EE	4EE	Lu	L	0	0	N			
+4EF	4EF	Ll	L	0	0	N			
+4F0	4F0	Lu	L	0	0	N			
+4F1	4F1	Ll	L	0	0	N			
+4F2	4F2	Lu	L	0	0	N			
+4F3	4F3	Ll	L	0	0	N			
+4F4	4F4	Lu	L	0	0	N			
+4F5	4F5	Ll	L	0	0	N			
+4F6	4F7	Cn		0	0	N			
+4F8	4F8	Lu	L	0	0	N			
+4F9	4F9	Ll	L	0	0	N			
+4FA	4FF	Cn		0	0	N			
+500	500	Lu	L	0	0	N			
+501	501	Ll	L	0	0	N			
+502	502	Lu	L	0	0	N			
+503	503	Ll	L	0	0	N			
+504	504	Lu	L	0	0	N			
+505	505	Ll	L	0	0	N			
+506	506	Lu	L	0	0	N			
+507	507	Ll	L	0	0	N			
+508	508	Lu	L	0	0	N			
+509	509	Ll	L	0	0	N			
+50A	50A	Lu	L	0	0	N			
+50B	50B	Ll	L	0	0	N			
+50C	50C	Lu	L	0	0	N			
+50D	50D	Ll	L	0	0	N			
+50E	50E	Lu	L	0	0	N			
+50F	50F	Ll	L	0	0	N			
+510	530	Cn		0	0	N			
+531	556	Lu	L	0	0	N			
+557	558	Cn		0	0	N			
+559	559	Lm	L	0	0	N			
+55A	55F	Po	L	0	0	N			
+560	560	Cn		0	0	N			
+561	587	Ll	L	0	0	N			
+588	588	Cn		0	0	N			
+589	589	Po	L	0	0	N			
+58A	58A	Pd	ON	0	0	N			
+58B	590	Cn		0	0	N			
+591	591	Mn	NSM	220	0	N			
+592	595	Mn	NSM	230	0	N			
+596	596	Mn	NSM	220	0	N			
+597	599	Mn	NSM	230	0	N			
+59A	59A	Mn	NSM	222	0	N			
+59B	59B	Mn	NSM	220	0	N			
+59C	5A1	Mn	NSM	230	0	N			
+5A2	5A2	Cn		0	0	N			
+5A3	5A7	Mn	NSM	220	0	N			
+5A8	5A9	Mn	NSM	230	0	N			
+5AA	5AA	Mn	NSM	220	0	N			
+5AB	5AC	Mn	NSM	230	0	N			
+5AD	5AD	Mn	NSM	222	0	N			
+5AE	5AE	Mn	NSM	228	0	N			
+5AF	5AF	Mn	NSM	230	0	N			
+5B0	5B0	Mn	NSM	10	0	N			
+5B1	5B1	Mn	NSM	11	0	N			
+5B2	5B2	Mn	NSM	12	0	N			
+5B3	5B3	Mn	NSM	13	0	N			
+5B4	5B4	Mn	NSM	14	0	N			
+5B5	5B5	Mn	NSM	15	0	N			
+5B6	5B6	Mn	NSM	16	0	N			
+5B7	5B7	Mn	NSM	17	0	N			
+5B8	5B8	Mn	NSM	18	0	N			
+5B9	5B9	Mn	NSM	19	0	N			
+5BA	5BA	Cn		0	0	N			
+5BB	5BB	Mn	NSM	20	0	N			
+5BC	5BC	Mn	NSM	21	0	N			
+5BD	5BD	Mn	NSM	22	0	N			
+5BE	5BE	Po	R	0	0	N			
+5BF	5BF	Mn	NSM	23	0	N			
+5C0	5C0	Po	R	0	0	N			
+5C1	5C1	Mn	NSM	24	0	N			
+5C2	5C2	Mn	NSM	25	0	N			
+5C3	5C3	Po	R	0	0	N			
+5C4	5C4	Mn	NSM	230	0	N			
+5C5	5CF	Cn		0	0	N			
+5D0	5EA	Lo	R	0	0	N			
+5EB	5EF	Cn		0	0	N			
+5F0	5F2	Lo	R	0	0	N			
+5F3	5F4	Po	R	0	0	N			
+5F5	60B	Cn		0	0	N			
+60C	60C	Po	CS	0	0	N			
+60D	61A	Cn		0	0	N			
+61B	61B	Po	AL	0	0	N			
+61C	61E	Cn		0	0	N			
+61F	61F	Po	AL	0	0	N			
+620	620	Cn		0	0	N			
+621	63A	Lo	AL	0	0	N			
+63B	63F	Cn		0	0	N			
+640	640	Lm	AL	0	0	N			
+641	64A	Lo	AL	0	0	N			
+64B	64B	Mn	NSM	27	0	N			
+64C	64C	Mn	NSM	28	0	N			
+64D	64D	Mn	NSM	29	0	N			
+64E	64E	Mn	NSM	30	0	N			
+64F	64F	Mn	NSM	31	0	N			
+650	650	Mn	NSM	32	0	N			
+651	651	Mn	NSM	33	0	N			
+652	652	Mn	NSM	34	0	N			
+653	654	Mn	NSM	230	0	N			
+655	655	Mn	NSM	220	0	N			
+656	65F	Cn		0	0	N			
+660	660	Nd	AN	0	0	N	0	0	0
+661	661	Nd	AN	0	0	N	1	1	1
+662	662	Nd	AN	0	0	N	2	2	2
+663	663	Nd	AN	0	0	N	3	3	3
+664	664	Nd	AN	0	0	N	4	4	4
+665	665	Nd	AN	0	0	N	5	5	5
+666	666	Nd	AN	0	0	N	6	6	6
+667	667	Nd	AN	0	0	N	7	7	7
+668	668	Nd	AN	0	0	N	8	8	8
+669	669	Nd	AN	0	0	N	9	9	9
+66A	66A	Po	ET	0	0	N			
+66B	66C	Po	AN	0	0	N			
+66D	66D	Po	AL	0	0	N			
+66E	66F	Lo	AL	0	0	N			
+670	670	Mn	NSM	35	0	N			
+671	6D3	Lo	AL	0	0	N			
+6D4	6D4	Po	AL	0	0	N			
+6D5	6D5	Lo	AL	0	0	N			
+6D6	6DC	Mn	NSM	230	0	N			
+6DD	6DD	Cf	AL	0	0	N			
+6DE	6DE	Me	NSM	0	0	N			
+6DF	6E2	Mn	NSM	230	0	N			
+6E3	6E3	Mn	NSM	220	0	N			
+6E4	6E4	Mn	NSM	230	0	N			
+6E5	6E6	Lm	AL	0	0	N			
+6E7	6E8	Mn	NSM	230	0	N			
+6E9	6E9	So	ON	0	0	N			
+6EA	6EA	Mn	NSM	220	0	N			
+6EB	6EC	Mn	NSM	230	0	N			
+6ED	6ED	Mn	NSM	220	0	N			
+6EE	6EF	Cn		0	0	N			
+6F0	6F0	Nd	EN	0	0	N	0	0	0
+6F1	6F1	Nd	EN	0	0	N	1	1	1
+6F2	6F2	Nd	EN	0	0	N	2	2	2
+6F3	6F3	Nd	EN	0	0	N	3	3	3
+6F4	6F4	Nd	EN	0	0	N	4	4	4
+6F5	6F5	Nd	EN	0	0	N	5	5	5
+6F6	6F6	Nd	EN	0	0	N	6	6	6
+6F7	6F7	Nd	EN	0	0	N	7	7	7
+6F8	6F8	Nd	EN	0	0	N	8	8	8
+6F9	6F9	Nd	EN	0	0	N	9	9	9
+6FA	6FC	Lo	AL	0	0	N			
+6FD	6FE	So	AL	0	0	N			
+6FF	6FF	Cn		0	0	N			
+700	70D	Po	AL	0	0	N			
+70E	70E	Cn		0	0	N			
+70F	70F	Cf	BN	0	0	N			
+710	710	Lo	AL	0	0	N			
+711	711	Mn	NSM	36	0	N			
+712	72C	Lo	AL	0	0	N			
+72D	72F	Cn		0	0	N			
+730	730	Mn	NSM	230	0	N			
+731	731	Mn	NSM	220	0	N			
+732	733	Mn	NSM	230	0	N			
+734	734	Mn	NSM	220	0	N			
+735	736	Mn	NSM	230	0	N			
+737	739	Mn	NSM	220	0	N			
+73A	73A	Mn	NSM	230	0	N			
+73B	73C	Mn	NSM	220	0	N			
+73D	73D	Mn	NSM	230	0	N			
+73E	73E	Mn	NSM	220	0	N			
+73F	741	Mn	NSM	230	0	N			
+742	742	Mn	NSM	220	0	N			
+743	743	Mn	NSM	230	0	N			
+744	744	Mn	NSM	220	0	N			
+745	745	Mn	NSM	230	0	N			
+746	746	Mn	NSM	220	0	N			
+747	747	Mn	NSM	230	0	N			
+748	748	Mn	NSM	220	0	N			
+749	74A	Mn	NSM	230	0	N			
+74B	77F	Cn		0	0	N			
+780	7A5	Lo	AL	0	0	N			
+7A6	7B0	Mn	NSM	0	0	N			
+7B1	7B1	Lo	AL	0	0	N			
+7B2	7BF	Cn		0	0	N			
+7C0	7C0	Cn		0	0	N		0	
+7C1	7C1	Cn		0	0	N		1	
+7C2	7C2	Cn		0	0	N		2	
+7C3	7C3	Cn		0	0	N		3	
+7C4	7C4	Cn		0	0	N		4	
+7C5	7C5	Cn		0	0	N		5	
+7C6	7C6	Cn		0	0	N		6	
+7C7	7C7	Cn		0	0	N		7	
+7C8	7C8	Cn		0	0	N		8	
+7C9	7C9	Cn		0	0	N		9	
+7CA	900	Cn		0	0	N			
+901	902	Mn	NSM	0	0	N			
+903	903	Mc	L	0	0	N			
+904	904	Cn		0	0	N			
+905	939	Lo	L	0	0	N			
+93A	93B	Cn		0	0	N			
+93C	93C	Mn	NSM	7	0	N			
+93D	93D	Lo	L	0	0	N			
+93E	940	Mc	L	0	0	N			
+941	948	Mn	NSM	0	0	N			
+949	94C	Mc	L	0	0	N			
+94D	94D	Mn	NSM	9	0	N			
+94E	94F	Cn		0	0	N			
+950	950	Lo	L	0	0	N			
+951	951	Mn	NSM	230	0	N			
+952	952	Mn	NSM	220	0	N			
+953	954	Mn	NSM	230	0	N			
+955	957	Cn		0	0	N			
+958	961	Lo	L	0	0	N			
+962	963	Mn	NSM	0	0	N			
+964	965	Po	L	0	0	N			
+966	966	Nd	L	0	0	N	0	0	0
+967	967	Nd	L	0	0	N	1	1	1
+968	968	Nd	L	0	0	N	2	2	2
+969	969	Nd	L	0	0	N	3	3	3
+96A	96A	Nd	L	0	0	N	4	4	4
+96B	96B	Nd	L	0	0	N	5	5	5
+96C	96C	Nd	L	0	0	N	6	6	6
+96D	96D	Nd	L	0	0	N	7	7	7
+96E	96E	Nd	L	0	0	N	8	8	8
+96F	96F	Nd	L	0	0	N	9	9	9
+970	970	Po	L	0	0	N			
+971	980	Cn		0	0	N			
+981	981	Mn	NSM	0	0	N			
+982	983	Mc	L	0	0	N			
+984	984	Cn		0	0	N			
+985	98C	Lo	L	0	0	N			
+98D	98E	Cn		0	0	N			
+98F	990	Lo	L	0	0	N			
+991	992	Cn		0	0	N			
+993	9A8	Lo	L	0	0	N			
+9A9	9A9	Cn		0	0	N			
+9AA	9B0	Lo	L	0	0	N			
+9B1	9B1	Cn		0	0	N			
+9B2	9B2	Lo	L	0	0	N			
+9B3	9B5	Cn		0	0	N			
+9B6	9B9	Lo	L	0	0	N			
+9BA	9BB	Cn		0	0	N			
+9BC	9BC	Mn	NSM	7	0	N			
+9BD	9BD	Cn		0	0	N			
+9BE	9C0	Mc	L	0	0	N			
+9C1	9C4	Mn	NSM	0	0	N			
+9C5	9C6	Cn		0	0	N			
+9C7	9C8	Mc	L	0	0	N			
+9C9	9CA	Cn		0	0	N			
+9CB	9CC	Mc	L	0	0	N			
+9CD	9CD	Mn	NSM	9	0	N			
+9CE	9D6	Cn		0	0	N			
+9D7	9D7	Mc	L	0	0	N			
+9D8	9DB	Cn		0	0	N			
+9DC	9DD	Lo	L	0	0	N			
+9DE	9DE	Cn		0	0	N			
+9DF	9E1	Lo	L	0	0	N			
+9E2	9E3	Mn	NSM	0	0	N			
+9E4	9E5	Cn		0	0	N			
+9E6	9E6	Nd	L	0	0	N	0	0	0
+9E7	9E7	Nd	L	0	0	N	1	1	1
+9E8	9E8	Nd	L	0	0	N	2	2	2
+9E9	9E9	Nd	L	0	0	N	3	3	3
+9EA	9EA	Nd	L	0	0	N	4	4	4
+9EB	9EB	Nd	L	0	0	N	5	5	5
+9EC	9EC	Nd	L	0	0	N	6	6	6
+9ED	9ED	Nd	L	0	0	N	7	7	7
+9EE	9EE	Nd	L	0	0	N	8	8	8
+9EF	9EF	Nd	L	0	0	N	9	9	9
+9F0	9F1	Lo	L	0	0	N			
+9F2	9F3	Sc	ET	0	0	N			
+9F4	9F4	No	L	0	0	N			1
+9F5	9F5	No	L	0	0	N			2
+9F6	9F6	No	L	0	0	N			3
+9F7	9F7	No	L	0	0	N			4
+9F8	9F8	No	L	0	0	N			
+9F9	9F9	No	L	0	0	N			16
+9FA	9FA	So	L	0	0	N			
+9FB	A01	Cn		0	0	N			
+A02	A02	Mn	NSM	0	0	N			
+A03	A04	Cn		0	0	N			
+A05	A0A	Lo	L	0	0	N			
+A0B	A0E	Cn		0	0	N			
+A0F	A10	Lo	L	0	0	N			
+A11	A12	Cn		0	0	N			
+A13	A28	Lo	L	0	0	N			
+A29	A29	Cn		0	0	N			
+A2A	A30	Lo	L	0	0	N			
+A31	A31	Cn		0	0	N			
+A32	A33	Lo	L	0	0	N			
+A34	A34	Cn		0	0	N			
+A35	A36	Lo	L	0	0	N			
+A37	A37	Cn		0	0	N			
+A38	A39	Lo	L	0	0	N			
+A3A	A3B	Cn		0	0	N			
+A3C	A3C	Mn	NSM	7	0	N			
+A3D	A3D	Cn		0	0	N			
+A3E	A40	Mc	L	0	0	N			
+A41	A42	Mn	NSM	0	0	N			
+A43	A46	Cn		0	0	N			
+A47	A48	Mn	NSM	0	0	N			
+A49	A4A	Cn		0	0	N			
+A4B	A4C	Mn	NSM	0	0	N			
+A4D	A4D	Mn	NSM	9	0	N			
+A4E	A58	Cn		0	0	N			
+A59	A5C	Lo	L	0	0	N			
+A5D	A5D	Cn		0	0	N			
+A5E	A5E	Lo	L	0	0	N			
+A5F	A65	Cn		0	0	N			
+A66	A66	Nd	L	0	0	N	0	0	0
+A67	A67	Nd	L	0	0	N	1	1	1
+A68	A68	Nd	L	0	0	N	2	2	2
+A69	A69	Nd	L	0	0	N	3	3	3
+A6A	A6A	Nd	L	0	0	N	4	4	4
+A6B	A6B	Nd	L	0	0	N	5	5	5
+A6C	A6C	Nd	L	0	0	N	6	6	6
+A6D	A6D	Nd	L	0	0	N	7	7	7
+A6E	A6E	Nd	L	0	0	N	8	8	8
+A6F	A6F	Nd	L	0	0	N	9	9	9
+A70	A71	Mn	NSM	0	0	N			
+A72	A74	Lo	L	0	0	N			
+A75	A80	Cn		0	0	N			
+A81	A82	Mn	NSM	0	0	N			
+A83	A83	Mc	L	0	0	N			
+A84	A84	Cn		0	0	N			
+A85	A8B	Lo	L	0	0	N			
+A8C	A8C	Cn		0	0	N			
+A8D	A8D	Lo	L	0	0	N			
+A8E	A8E	Cn		0	0	N			
+A8F	A91	Lo	L	0	0	N			
+A92	A92	Cn		0	0	N			
+A93	AA8	Lo	L	0	0	N			
+AA9	AA9	Cn		0	0	N			
+AAA	AB0	Lo	L	0	0	N			
+AB1	AB1	Cn		0	0	N			
+AB2	AB3	Lo	L	0	0	N			
+AB4	AB4	Cn		0	0	N			
+AB5	AB9	Lo	L	0	0	N			
+ABA	ABB	Cn		0	0	N			
+ABC	ABC	Mn	NSM	7	0	N			
+ABD	ABD	Lo	L	0	0	N			
+ABE	AC0	Mc	L	0	0	N			
+AC1	AC5	Mn	NSM	0	0	N			
+AC6	AC6	Cn		0	0	N			
+AC7	AC8	Mn	NSM	0	0	N			
+AC9	AC9	Mc	L	0	0	N			
+ACA	ACA	Cn		0	0	N			
+ACB	ACC	Mc	L	0	0	N			
+ACD	ACD	Mn	NSM	9	0	N			
+ACE	ACF	Cn		0	0	N			
+AD0	AD0	Lo	L	0	0	N			
+AD1	ADF	Cn		0	0	N			
+AE0	AE0	Lo	L	0	0	N			
+AE1	AE5	Cn		0	0	N			
+AE6	AE6	Nd	L	0	0	N	0	0	0
+AE7	AE7	Nd	L	0	0	N	1	1	1
+AE8	AE8	Nd	L	0	0	N	2	2	2
+AE9	AE9	Nd	L	0	0	N	3	3	3
+AEA	AEA	Nd	L	0	0	N	4	4	4
+AEB	AEB	Nd	L	0	0	N	5	5	5
+AEC	AEC	Nd	L	0	0	N	6	6	6
+AED	AED	Nd	L	0	0	N	7	7	7
+AEE	AEE	Nd	L	0	0	N	8	8	8
+AEF	AEF	Nd	L	0	0	N	9	9	9
+AF0	B00	Cn		0	0	N			
+B01	B01	Mn	NSM	0	0	N			
+B02	B03	Mc	L	0	0	N			
+B04	B04	Cn		0	0	N			
+B05	B0C	Lo	L	0	0	N			
+B0D	B0E	Cn		0	0	N			
+B0F	B10	Lo	L	0	0	N			
+B11	B12	Cn		0	0	N			
+B13	B28	Lo	L	0	0	N			
+B29	B29	Cn		0	0	N			
+B2A	B30	Lo	L	0	0	N			
+B31	B31	Cn		0	0	N			
+B32	B33	Lo	L	0	0	N			
+B34	B35	Cn		0	0	N			
+B36	B39	Lo	L	0	0	N			
+B3A	B3B	Cn		0	0	N			
+B3C	B3C	Mn	NSM	7	0	N			
+B3D	B3D	Lo	L	0	0	N			
+B3E	B3E	Mc	L	0	0	N			
+B3F	B3F	Mn	NSM	0	0	N			
+B40	B40	Mc	L	0	0	N			
+B41	B43	Mn	NSM	0	0	N			
+B44	B46	Cn		0	0	N			
+B47	B48	Mc	L	0	0	N			
+B49	B4A	Cn		0	0	N			
+B4B	B4C	Mc	L	0	0	N			
+B4D	B4D	Mn	NSM	9	0	N			
+B4E	B55	Cn		0	0	N			
+B56	B56	Mn	NSM	0	0	N			
+B57	B57	Mc	L	0	0	N			
+B58	B5B	Cn		0	0	N			
+B5C	B5D	Lo	L	0	0	N			
+B5E	B5E	Cn		0	0	N			
+B5F	B61	Lo	L	0	0	N			
+B62	B65	Cn		0	0	N			
+B66	B66	Nd	L	0	0	N	0	0	0
+B67	B67	Nd	L	0	0	N	1	1	1
+B68	B68	Nd	L	0	0	N	2	2	2
+B69	B69	Nd	L	0	0	N	3	3	3
+B6A	B6A	Nd	L	0	0	N	4	4	4
+B6B	B6B	Nd	L	0	0	N	5	5	5
+B6C	B6C	Nd	L	0	0	N	6	6	6
+B6D	B6D	Nd	L	0	0	N	7	7	7
+B6E	B6E	Nd	L	0	0	N	8	8	8
+B6F	B6F	Nd	L	0	0	N	9	9	9
+B70	B70	So	L	0	0	N			
+B71	B81	Cn		0	0	N			
+B82	B82	Mn	NSM	0	0	N			
+B83	B83	Lo	L	0	0	N			
+B84	B84	Cn		0	0	N			
+B85	B8A	Lo	L	0	0	N			
+B8B	B8D	Cn		0	0	N			
+B8E	B90	Lo	L	0	0	N			
+B91	B91	Cn		0	0	N			
+B92	B95	Lo	L	0	0	N			
+B96	B98	Cn		0	0	N			
+B99	B9A	Lo	L	0	0	N			
+B9B	B9B	Cn		0	0	N			
+B9C	B9C	Lo	L	0	0	N			
+B9D	B9D	Cn		0	0	N			
+B9E	B9F	Lo	L	0	0	N			
+BA0	BA2	Cn		0	0	N			
+BA3	BA4	Lo	L	0	0	N			
+BA5	BA7	Cn		0	0	N			
+BA8	BAA	Lo	L	0	0	N			
+BAB	BAD	Cn		0	0	N			
+BAE	BB5	Lo	L	0	0	N			
+BB6	BB6	Cn		0	0	N			
+BB7	BB9	Lo	L	0	0	N			
+BBA	BBD	Cn		0	0	N			
+BBE	BBF	Mc	L	0	0	N			
+BC0	BC0	Mn	NSM	0	0	N			
+BC1	BC2	Mc	L	0	0	N			
+BC3	BC5	Cn		0	0	N			
+BC6	BC8	Mc	L	0	0	N			
+BC9	BC9	Cn		0	0	N			
+BCA	BCC	Mc	L	0	0	N			
+BCD	BCD	Mn	NSM	9	0	N			
+BCE	BD6	Cn		0	0	N			
+BD7	BD7	Mc	L	0	0	N			
+BD8	BE5	Cn		0	0	N			
+BE6	BE6	Cn		0	0	N		0	
+BE7	BE7	Nd	L	0	0	N	1	1	1
+BE8	BE8	Nd	L	0	0	N	2	2	2
+BE9	BE9	Nd	L	0	0	N	3	3	3
+BEA	BEA	Nd	L	0	0	N	4	4	4
+BEB	BEB	Nd	L	0	0	N	5	5	5
+BEC	BEC	Nd	L	0	0	N	6	6	6
+BED	BED	Nd	L	0	0	N	7	7	7
+BEE	BEE	Nd	L	0	0	N	8	8	8
+BEF	BEF	Nd	L	0	0	N	9	9	9
+BF0	BF0	No	L	0	0	N			10
+BF1	BF1	No	L	0	0	N			100
+BF2	BF2	No	L	0	0	N			1000
+BF3	C00	Cn		0	0	N			
+C01	C03	Mc	L	0	0	N			
+C04	C04	Cn		0	0	N			
+C05	C0C	Lo	L	0	0	N			
+C0D	C0D	Cn		0	0	N			
+C0E	C10	Lo	L	0	0	N			
+C11	C11	Cn		0	0	N			
+C12	C28	Lo	L	0	0	N			
+C29	C29	Cn		0	0	N			
+C2A	C33	Lo	L	0	0	N			
+C34	C34	Cn		0	0	N			
+C35	C39	Lo	L	0	0	N			
+C3A	C3D	Cn		0	0	N			
+C3E	C40	Mn	NSM	0	0	N			
+C41	C44	Mc	L	0	0	N			
+C45	C45	Cn		0	0	N			
+C46	C48	Mn	NSM	0	0	N			
+C49	C49	Cn		0	0	N			
+C4A	C4C	Mn	NSM	0	0	N			
+C4D	C4D	Mn	NSM	9	0	N			
+C4E	C54	Cn		0	0	N			
+C55	C55	Mn	NSM	84	0	N			
+C56	C56	Mn	NSM	91	0	N			
+C57	C5F	Cn		0	0	N			
+C60	C61	Lo	L	0	0	N			
+C62	C65	Cn		0	0	N			
+C66	C66	Nd	L	0	0	N	0	0	0
+C67	C67	Nd	L	0	0	N	1	1	1
+C68	C68	Nd	L	0	0	N	2	2	2
+C69	C69	Nd	L	0	0	N	3	3	3
+C6A	C6A	Nd	L	0	0	N	4	4	4
+C6B	C6B	Nd	L	0	0	N	5	5	5
+C6C	C6C	Nd	L	0	0	N	6	6	6
+C6D	C6D	Nd	L	0	0	N	7	7	7
+C6E	C6E	Nd	L	0	0	N	8	8	8
+C6F	C6F	Nd	L	0	0	N	9	9	9
+C70	C81	Cn		0	0	N			
+C82	C83	Mc	L	0	0	N			
+C84	C84	Cn		0	0	N			
+C85	C8C	Lo	L	0	0	N			
+C8D	C8D	Cn		0	0	N			
+C8E	C90	Lo	L	0	0	N			
+C91	C91	Cn		0	0	N			
+C92	CA8	Lo	L	0	0	N			
+CA9	CA9	Cn		0	0	N			
+CAA	CB3	Lo	L	0	0	N			
+CB4	CB4	Cn		0	0	N			
+CB5	CB9	Lo	L	0	0	N			
+CBA	CBD	Cn		0	0	N			
+CBE	CBE	Mc	L	0	0	N			
+CBF	CBF	Mn	NSM	0	0	N			
+CC0	CC4	Mc	L	0	0	N			
+CC5	CC5	Cn		0	0	N			
+CC6	CC6	Mn	NSM	0	0	N			
+CC7	CC8	Mc	L	0	0	N			
+CC9	CC9	Cn		0	0	N			
+CCA	CCB	Mc	L	0	0	N			
+CCC	CCC	Mn	NSM	0	0	N			
+CCD	CCD	Mn	NSM	9	0	N			
+CCE	CD4	Cn		0	0	N			
+CD5	CD6	Mc	L	0	0	N			
+CD7	CDD	Cn		0	0	N			
+CDE	CDE	Lo	L	0	0	N			
+CDF	CDF	Cn		0	0	N			
+CE0	CE1	Lo	L	0	0	N			
+CE2	CE5	Cn		0	0	N			
+CE6	CE6	Nd	L	0	0	N	0	0	0
+CE7	CE7	Nd	L	0	0	N	1	1	1
+CE8	CE8	Nd	L	0	0	N	2	2	2
+CE9	CE9	Nd	L	0	0	N	3	3	3
+CEA	CEA	Nd	L	0	0	N	4	4	4
+CEB	CEB	Nd	L	0	0	N	5	5	5
+CEC	CEC	Nd	L	0	0	N	6	6	6
+CED	CED	Nd	L	0	0	N	7	7	7
+CEE	CEE	Nd	L	0	0	N	8	8	8
+CEF	CEF	Nd	L	0	0	N	9	9	9
+CF0	D01	Cn		0	0	N			
+D02	D03	Mc	L	0	0	N			
+D04	D04	Cn		0	0	N			
+D05	D0C	Lo	L	0	0	N			
+D0D	D0D	Cn		0	0	N			
+D0E	D10	Lo	L	0	0	N			
+D11	D11	Cn		0	0	N			
+D12	D28	Lo	L	0	0	N			
+D29	D29	Cn		0	0	N			
+D2A	D39	Lo	L	0	0	N			
+D3A	D3D	Cn		0	0	N			
+D3E	D40	Mc	L	0	0	N			
+D41	D43	Mn	NSM	0	0	N			
+D44	D45	Cn		0	0	N			
+D46	D48	Mc	L	0	0	N			
+D49	D49	Cn		0	0	N			
+D4A	D4C	Mc	L	0	0	N			
+D4D	D4D	Mn	NSM	9	0	N			
+D4E	D56	Cn		0	0	N			
+D57	D57	Mc	L	0	0	N			
+D58	D5F	Cn		0	0	N			
+D60	D61	Lo	L	0	0	N			
+D62	D65	Cn		0	0	N			
+D66	D66	Nd	L	0	0	N	0	0	0
+D67	D67	Nd	L	0	0	N	1	1	1
+D68	D68	Nd	L	0	0	N	2	2	2
+D69	D69	Nd	L	0	0	N	3	3	3
+D6A	D6A	Nd	L	0	0	N	4	4	4
+D6B	D6B	Nd	L	0	0	N	5	5	5
+D6C	D6C	Nd	L	0	0	N	6	6	6
+D6D	D6D	Nd	L	0	0	N	7	7	7
+D6E	D6E	Nd	L	0	0	N	8	8	8
+D6F	D6F	Nd	L	0	0	N	9	9	9
+D70	D81	Cn		0	0	N			
+D82	D83	Mc	L	0	0	N			
+D84	D84	Cn		0	0	N			
+D85	D96	Lo	L	0	0	N			
+D97	D99	Cn		0	0	N			
+D9A	DB1	Lo	L	0	0	N			
+DB2	DB2	Cn		0	0	N			
+DB3	DBB	Lo	L	0	0	N			
+DBC	DBC	Cn		0	0	N			
+DBD	DBD	Lo	L	0	0	N			
+DBE	DBF	Cn		0	0	N			
+DC0	DC6	Lo	L	0	0	N			
+DC7	DC9	Cn		0	0	N			
+DCA	DCA	Mn	NSM	9	0	N			
+DCB	DCE	Cn		0	0	N			
+DCF	DD1	Mc	L	0	0	N			
+DD2	DD4	Mn	NSM	0	0	N			
+DD5	DD5	Cn		0	0	N			
+DD6	DD6	Mn	NSM	0	0	N			
+DD7	DD7	Cn		0	0	N			
+DD8	DDF	Mc	L	0	0	N			
+DE0	DE5	Cn		0	0	N			
+DE6	DE6	Cn		0	0	N		0	
+DE7	DE7	Cn		0	0	N		1	
+DE8	DE8	Cn		0	0	N		2	
+DE9	DE9	Cn		0	0	N		3	
+DEA	DEA	Cn		0	0	N		4	
+DEB	DEB	Cn		0	0	N		5	
+DEC	DEC	Cn		0	0	N		6	
+DED	DED	Cn		0	0	N		7	
+DEE	DEE	Cn		0	0	N		8	
+DEF	DEF	Cn		0	0	N		9	
+DF0	DF1	Cn		0	0	N			
+DF2	DF3	Mc	L	0	0	N			
+DF4	DF4	Po	L	0	0	N			
+DF5	E00	Cn		0	0	N			
+E01	E30	Lo	L	0	0	N			
+E31	E31	Mn	NSM	0	0	N			
+E32	E33	Lo	L	0	0	N			
+E34	E37	Mn	NSM	0	0	N			
+E38	E39	Mn	NSM	103	0	N			
+E3A	E3A	Mn	NSM	9	0	N			
+E3B	E3E	Cn		0	0	N			
+E3F	E3F	Sc	ET	0	0	N			
+E40	E45	Lo	L	0	0	N			
+E46	E46	Lm	L	0	0	N			
+E47	E47	Mn	NSM	0	0	N			
+E48	E4B	Mn	NSM	107	0	N			
+E4C	E4E	Mn	NSM	0	0	N			
+E4F	E4F	Po	L	0	0	N			
+E50	E50	Nd	L	0	0	N	0	0	0
+E51	E51	Nd	L	0	0	N	1	1	1
+E52	E52	Nd	L	0	0	N	2	2	2
+E53	E53	Nd	L	0	0	N	3	3	3
+E54	E54	Nd	L	0	0	N	4	4	4
+E55	E55	Nd	L	0	0	N	5	5	5
+E56	E56	Nd	L	0	0	N	6	6	6
+E57	E57	Nd	L	0	0	N	7	7	7
+E58	E58	Nd	L	0	0	N	8	8	8
+E59	E59	Nd	L	0	0	N	9	9	9
+E5A	E5B	Po	L	0	0	N			
+E5C	E80	Cn		0	0	N			
+E81	E82	Lo	L	0	0	N			
+E83	E83	Cn		0	0	N			
+E84	E84	Lo	L	0	0	N			
+E85	E86	Cn		0	0	N			
+E87	E88	Lo	L	0	0	N			
+E89	E89	Cn		0	0	N			
+E8A	E8A	Lo	L	0	0	N			
+E8B	E8C	Cn		0	0	N			
+E8D	E8D	Lo	L	0	0	N			
+E8E	E93	Cn		0	0	N			
+E94	E97	Lo	L	0	0	N			
+E98	E98	Cn		0	0	N			
+E99	E9F	Lo	L	0	0	N			
+EA0	EA0	Cn		0	0	N			
+EA1	EA3	Lo	L	0	0	N			
+EA4	EA4	Cn		0	0	N			
+EA5	EA5	Lo	L	0	0	N			
+EA6	EA6	Cn		0	0	N			
+EA7	EA7	Lo	L	0	0	N			
+EA8	EA9	Cn		0	0	N			
+EAA	EAB	Lo	L	0	0	N			
+EAC	EAC	Cn		0	0	N			
+EAD	EB0	Lo	L	0	0	N			
+EB1	EB1	Mn	NSM	0	0	N			
+EB2	EB3	Lo	L	0	0	N			
+EB4	EB7	Mn	NSM	0	0	N			
+EB8	EB9	Mn	NSM	118	0	N			
+EBA	EBA	Cn		0	0	N			
+EBB	EBC	Mn	NSM	0	0	N			
+EBD	EBD	Lo	L	0	0	N			
+EBE	EBF	Cn		0	0	N			
+EC0	EC4	Lo	L	0	0	N			
+EC5	EC5	Cn		0	0	N			
+EC6	EC6	Lm	L	0	0	N			
+EC7	EC7	Cn		0	0	N			
+EC8	ECB	Mn	NSM	122	0	N			
+ECC	ECD	Mn	NSM	0	0	N			
+ECE	ECF	Cn		0	0	N			
+ED0	ED0	Nd	L	0	0	N	0	0	0
+ED1	ED1	Nd	L	0	0	N	1	1	1
+ED2	ED2	Nd	L	0	0	N	2	2	2
+ED3	ED3	Nd	L	0	0	N	3	3	3
+ED4	ED4	Nd	L	0	0	N	4	4	4
+ED5	ED5	Nd	L	0	0	N	5	5	5
+ED6	ED6	Nd	L	0	0	N	6	6	6
+ED7	ED7	Nd	L	0	0	N	7	7	7
+ED8	ED8	Nd	L	0	0	N	8	8	8
+ED9	ED9	Nd	L	0	0	N	9	9	9
+EDA	EDB	Cn		0	0	N			
+EDC	EDD	Lo	L	0	0	N			
+EDE	EFF	Cn		0	0	N			
+F00	F00	Lo	L	0	0	N			
+F01	F03	So	L	0	0	N			
+F04	F12	Po	L	0	0	N			
+F13	F17	So	L	0	0	N			
+F18	F19	Mn	NSM	220	0	N			
+F1A	F1F	So	L	0	0	N			
+F20	F20	Nd	L	0	0	N	0	0	0
+F21	F21	Nd	L	0	0	N	1	1	1
+F22	F22	Nd	L	0	0	N	2	2	2
+F23	F23	Nd	L	0	0	N	3	3	3
+F24	F24	Nd	L	0	0	N	4	4	4
+F25	F25	Nd	L	0	0	N	5	5	5
+F26	F26	Nd	L	0	0	N	6	6	6
+F27	F27	Nd	L	0	0	N	7	7	7
+F28	F28	Nd	L	0	0	N	8	8	8
+F29	F29	Nd	L	0	0	N	9	9	9
+F2A	F2A	No	L	0	0	N			1/2
+F2B	F2B	No	L	0	0	N			3/2
+F2C	F2C	No	L	0	0	N			5/2
+F2D	F2D	No	L	0	0	N			7/2
+F2E	F2E	No	L	0	0	N			9/2
+F2F	F2F	No	L	0	0	N			11/2
+F30	F30	No	L	0	0	N			13/2
+F31	F31	No	L	0	0	N			15/2
+F32	F32	No	L	0	0	N			17/2
+F33	F33	No	L	0	0	N			-1/2
+F34	F34	So	L	0	0	N			
+F35	F35	Mn	NSM	220	0	N			
+F36	F36	So	L	0	0	N			
+F37	F37	Mn	NSM	220	0	N			
+F38	F38	So	L	0	0	N			
+F39	F39	Mn	NSM	216	0	N			
+F3A	F3A	Ps	ON	0	0	N			
+F3B	F3B	Pe	ON	0	0	N			
+F3C	F3C	Ps	ON	0	0	N			
+F3D	F3D	Pe	ON	0	0	N			
+F3E	F3F	Mc	L	0	0	N			
+F40	F47	Lo	L	0	0	N			
+F48	F48	Cn		0	0	N			
+F49	F6A	Lo	L	0	0	N			
+F6B	F70	Cn		0	0	N			
+F71	F71	Mn	NSM	129	0	N			
+F72	F72	Mn	NSM	130	0	N			
+F73	F73	Mn	NSM	0	0	N			
+F74	F74	Mn	NSM	132	0	N			
+F75	F79	Mn	NSM	0	0	N			
+F7A	F7D	Mn	NSM	130	0	N			
+F7E	F7E	Mn	NSM	0	0	N			
+F7F	F7F	Mc	L	0	0	N			
+F80	F80	Mn	NSM	130	0	N			
+F81	F81	Mn	NSM	0	0	N			
+F82	F83	Mn	NSM	230	0	N			
+F84	F84	Mn	NSM	9	0	N			
+F85	F85	Po	L	0	0	N			
+F86	F87	Mn	NSM	230	0	N			
+F88	F8B	Lo	L	0	0	N			
+F8C	F8F	Cn		0	0	N			
+F90	F97	Mn	NSM	0	0	N			
+F98	F98	Cn		0	0	N			
+F99	FBC	Mn	NSM	0	0	N			
+FBD	FBD	Cn		0	0	N			
+FBE	FC5	So	L	0	0	N			
+FC6	FC6	Mn	NSM	220	0	N			
+FC7	FCC	So	L	0	0	N			
+FCD	FCE	Cn		0	0	N			
+FCF	FCF	So	L	0	0	N			
+FD0	FFF	Cn		0	0	N			
+1000	1021	Lo	L	0	0	N			
+1022	1022	Cn		0	0	N			
+1023	1027	Lo	L	0	0	N			
+1028	1028	Cn		0	0	N			
+1029	102A	Lo	L	0	0	N			
+102B	102B	Cn		0	0	N			
+102C	102C	Mc	L	0	0	N			
+102D	1030	Mn	NSM	0	0	N			
+1031	1031	Mc	L	0	0	N			
+1032	1032	Mn	NSM	0	0	N			
+1033	1035	Cn		0	0	N			
+1036	1036	Mn	NSM	0	0	N			
+1037	1037	Mn	NSM	7	0	N			
+1038	1038	Mc	L	0	0	N			
+1039	1039	Mn	NSM	9	0	N			
+103A	103F	Cn		0	0	N			
+1040	1040	Nd	L	0	0	N	0	0	0
+1041	1041	Nd	L	0	0	N	1	1	1
+1042	1042	Nd	L	0	0	N	2	2	2
+1043	1043	Nd	L	0	0	N	3	3	3
+1044	1044	Nd	L	0	0	N	4	4	4
+1045	1045	Nd	L	0	0	N	5	5	5
+1046	1046	Nd	L	0	0	N	6	6	6
+1047	1047	Nd	L	0	0	N	7	7	7
+1048	1048	Nd	L	0	0	N	8	8	8
+1049	1049	Nd	L	0	0	N	9	9	9
+104A	104F	Po	L	0	0	N			
+1050	1055	Lo	L	0	0	N			
+1056	1057	Mc	L	0	0	N			
+1058	1059	Mn	NSM	0	0	N			
+105A	108F	Cn		0	0	N			
+1090	1090	Cn		0	0	N		0	
+1091	1091	Cn		0	0	N		1	
+1092	1092	Cn		0	0	N		2	
+1093	1093	Cn		0	0	N		3	
+1094	1094	Cn		0	0	N		4	
+1095	1095	Cn		0	0	N		5	
+1096	1096	Cn		0	0	N		6	
+1097	1097	Cn		0	0	N		7	
+1098	1098	Cn		0	0	N		8	
+1099	1099	Cn		0	0	N		9	
+109A	109F	Cn		0	0	N			
+10A0	10C5	Lu	L	0	0	N			
+10C6	10CF	Cn		0	0	N			
+10D0	10F8	Lo	L	0	0	N			
+10F9	10FA	Cn		0	0	N			
+10FB	10FB	Po	L	0	0	N			
+10FC	10FF	Cn		0	0	N			
+1100	1159	Lo	L	0	0	W			
+115A	115E	Cn		0	0	N			
+115F	115F	Lo	L	0	0	W			
+1160	11A2	Lo	L	0	0	N			
+11A3	11A7	Cn		0	0	N			
+11A8	11F9	Lo	L	0	0	N			
+11FA	11FF	Cn		0	0	N			
+1200	1206	Lo	L	0	0	N			
+1207	1207	Cn		0	0	N			
+1208	1246	Lo	L	0	0	N			
+1247	1247	Cn		0	0	N			
+1248	1248	Lo	L	0	0	N			
+1249	1249	Cn		0	0	N			
+124A	124D	Lo	L	0	0	N			
+124E	124F	Cn		0	0	N			
+1250	1256	Lo	L	0	0	N			
+1257	1257	Cn		0	0	N			
+1258	1258	Lo	L	0	0	N			
+1259	1259	Cn		0	0	N			
+125A	125D	Lo	L	0	0	N			
+125E	125F	Cn		0	0	N			
+1260	1286	Lo	L	0	0	N			
+1287	1287	Cn		0	0	N			
+1288	1288	Lo	L	0	0	N			
+1289	1289	Cn		0	0	N			
+128A	128D	Lo	L	0	0	N			
+128E	128F	Cn		0	0	N			
+1290	12AE	Lo	L	0	0	N			
+12AF	12AF	Cn		0	0	N			
+12B0	12B0	Lo	L	0	0	N			
+12B1	12B1	Cn		0	0	N			
+12B2	12B5	Lo	L	0	0	N			
+12B6	12B7	Cn		0	0	N			
+12B8	12BE	Lo	L	0	0	N			
+12BF	12BF	Cn		0	0	N			
+12C0	12C0	Lo	L	0	0	N			
+12C1	12C1	Cn		0	0	N			
+12C2	12C5	Lo	L	0	0	N			
+12C6	12C7	Cn		0	0	N			
+12C8	12CE	Lo	L	0	0	N			
+12CF	12CF	Cn		0	0	N			
+12D0	12D6	Lo	L	0	0	N			
+12D7	12D7	Cn		0	0	N			
+12D8	12EE	Lo	L	0	0	N			
+12EF	12EF	Cn		0	0	N			
+12F0	130E	Lo	L	0	0	N			
+130F	130F	Cn		0	0	N			
+1310	1310	Lo	L	0	0	N			
+1311	1311	Cn		0	0	N			
+1312	1315	Lo	L	0	0	N			
+1316	1317	Cn		0	0	N			
+1318	131E	Lo	L	0	0	N			
+131F	131F	Cn		0	0	N			
+1320	1346	Lo	L	0	0	N			
+1347	1347	Cn		0	0	N			
+1348	135A	Lo	L	0	0	N			
+135B	1360	Cn		0	0	N			
+1361	1368	Po	L	0	0	N			
+1369	1369	Nd	L	0	0	N	1	1	1
+136A	136A	Nd	L	0	0	N	2	2	2
+136B	136B	Nd	L	0	0	N	3	3	3
+136C	136C	Nd	L	0	0	N	4	4	4
+136D	136D	Nd	L	0	0	N	5	5	5
+136E	136E	Nd	L	0	0	N	6	6	6
+136F	136F	Nd	L	0	0	N	7	7	7
+1370	1370	Nd	L	0	0	N	8	8	8
+1371	1371	Nd	L	0	0	N	9	9	9
+1372	1372	No	L	0	0	N			10
+1373	1373	No	L	0	0	N			20
+1374	1374	No	L	0	0	N			30
+1375	1375	No	L	0	0	N			40
+1376	1376	No	L	0	0	N			50
+1377	1377	No	L	0	0	N			60
+1378	1378	No	L	0	0	N			70
+1379	1379	No	L	0	0	N			80
+137A	137A	No	L	0	0	N			90
+137B	137B	No	L	0	0	N			100
+137C	137C	No	L	0	0	N			10000
+137D	139F	Cn		0	0	N			
+13A0	13F4	Lo	L	0	0	N			
+13F5	1400	Cn		0	0	N			
+1401	166C	Lo	L	0	0	N			
+166D	166E	Po	L	0	0	N			
+166F	1676	Lo	L	0	0	N			
+1677	167F	Cn		0	0	N			
+1680	1680	Zs	WS	0	0	N			
+1681	169A	Lo	L	0	0	N			
+169B	169B	Ps	ON	0	0	N			
+169C	169C	Pe	ON	0	0	N			
+169D	169F	Cn		0	0	N			
+16A0	16EA	Lo	L	0	0	N			
+16EB	16ED	Po	L	0	0	N			
+16EE	16EE	Nl	L	0	0	N			17
+16EF	16EF	Nl	L	0	0	N			18
+16F0	16F0	Nl	L	0	0	N			19
+16F1	16FF	Cn		0	0	N			
+1700	170C	Lo	L	0	0	N			
+170D	170D	Cn		0	0	N			
+170E	1711	Lo	L	0	0	N			
+1712	1713	Mn	NSM	0	0	N			
+1714	1714	Mn	NSM	9	0	N			
+1715	171F	Cn		0	0	N			
+1720	1731	Lo	L	0	0	N			
+1732	1733	Mn	NSM	0	0	N			
+1734	1734	Mn	NSM	9	0	N			
+1735	1736	Po	L	0	0	N			
+1737	173F	Cn		0	0	N			
+1740	1751	Lo	L	0	0	N			
+1752	1753	Mn	NSM	0	0	N			
+1754	175F	Cn		0	0	N			
+1760	176C	Lo	L	0	0	N			
+176D	176D	Cn		0	0	N			
+176E	1770	Lo	L	0	0	N			
+1771	1771	Cn		0	0	N			
+1772	1773	Mn	NSM	0	0	N			
+1774	177F	Cn		0	0	N			
+1780	17B3	Lo	L	0	0	N			
+17B4	17B6	Mc	L	0	0	N			
+17B7	17BD	Mn	NSM	0	0	N			
+17BE	17C5	Mc	L	0	0	N			
+17C6	17C6	Mn	NSM	0	0	N			
+17C7	17C8	Mc	L	0	0	N			
+17C9	17D1	Mn	NSM	0	0	N			
+17D2	17D2	Mn	NSM	9	0	N			
+17D3	17D3	Mn	NSM	0	0	N			
+17D4	17D6	Po	L	0	0	N			
+17D7	17D7	Lm	L	0	0	N			
+17D8	17DA	Po	L	0	0	N			
+17DB	17DB	Sc	ET	0	0	N			
+17DC	17DC	Lo	L	0	0	N			
+17DD	17DF	Cn		0	0	N			
+17E0	17E0	Nd	L	0	0	N	0	0	0
+17E1	17E1	Nd	L	0	0	N	1	1	1
+17E2	17E2	Nd	L	0	0	N	2	2	2
+17E3	17E3	Nd	L	0	0	N	3	3	3
+17E4	17E4	Nd	L	0	0	N	4	4	4
+17E5	17E5	Nd	L	0	0	N	5	5	5
+17E6	17E6	Nd	L	0	0	N	6	6	6
+17E7	17E7	Nd	L	0	0	N	7	7	7
+17E8	17E8	Nd	L	0	0	N	8	8	8
+17E9	17E9	Nd	L	0	0	N	9	9	9
+17EA	17FF	Cn		0	0	N			
+1800	1805	Po	ON	0	0	N			
+1806	1806	Pd	ON	0	0	N			
+1807	180A	Po	ON	0	0	N			
+180B	180D	Mn	NSM	0	0	N			
+180E	180E	Cf	BN	0	0	N			
+180F	180F	Cn		0	0	N			
+1810	1810	Nd	L	0	0	N	0	0	0
+1811	1811	Nd	L	0	0	N	1	1	1
+1812	1812	Nd	L	0	0	N	2	2	2
+1813	1813	Nd	L	0	0	N	3	3	3
+1814	1814	Nd	L	0	0	N	4	4	4
+1815	1815	Nd	L	0	0	N	5	5	5
+1816	1816	Nd	L	0	0	N	6	6	6
+1817	1817	Nd	L	0	0	N	7	7	7
+1818	1818	Nd	L	0	0	N	8	8	8
+1819	1819	Nd	L	0	0	N	9	9	9
+181A	181F	Cn		0	0	N			
+1820	1842	Lo	L	0	0	N			
+1843	1843	Lm	L	0	0	N			
+1844	1877	Lo	L	0	0	N			
+1878	187F	Cn		0	0	N			
+1880	18A8	Lo	L	0	0	N			
+18A9	18A9	Mn	NSM	228	0	N			
+18AA	1945	Cn		0	0	N			
+1946	1946	Cn		0	0	N		0	
+1947	1947	Cn		0	0	N		1	
+1948	1948	Cn		0	0	N		2	
+1949	1949	Cn		0	0	N		3	
+194A	194A	Cn		0	0	N		4	
+194B	194B	Cn		0	0	N		5	
+194C	194C	Cn		0	0	N		6	
+194D	194D	Cn		0	0	N		7	
+194E	194E	Cn		0	0	N		8	
+194F	194F	Cn		0	0	N		9	
+1950	19CF	Cn		0	0	N			
+19D0	19D0	Cn		0	0	N		0	
+19D1	19D1	Cn		0	0	N		1	
+19D2	19D2	Cn		0	0	N		2	
+19D3	19D3	Cn		0	0	N		3	
+19D4	19D4	Cn		0	0	N		4	
+19D5	19D5	Cn		0	0	N		5	
+19D6	19D6	Cn		0	0	N		6	
+19D7	19D7	Cn		0	0	N		7	
+19D8	19D8	Cn		0	0	N		8	
+19D9	19D9	Cn		0	0	N		9	
+19DA	19DA	Cn		0	0	N		1	
+19DB	1A7F	Cn		0	0	N			
+1A80	1A80	Cn		0	0	N		0	
+1A81	1A81	Cn		0	0	N		1	
+1A82	1A82	Cn		0	0	N		2	
+1A83	1A83	Cn		0	0	N		3	
+1A84	1A84	Cn		0	0	N		4	
+1A85	1A85	Cn		0	0	N		5	
+1A86	1A86	Cn		0	0	N		6	
+1A87	1A87	Cn		0	0	N		7	
+1A88	1A88	Cn		0	0	N		8	
+1A89	1A89	Cn		0	0	N		9	
+1A8A	1A8F	Cn		0	0	N			
+1A90	1A90	Cn		0	0	N		0	
+1A91	1A91	Cn		0	0	N		1	
+1A92	1A92	Cn		0	0	N		2	
+1A93	1A93	Cn		0	0	N		3	
+1A94	1A94	Cn		0	0	N		4	
+1A95	1A95	Cn		0	0	N		5	
+1A96	1A96	Cn		0	0	N		6	
+1A97	1A97	Cn		0	0	N		7	
+1A98	1A98	Cn		0	0	N		8	
+1A99	1A99	Cn		0	0	N		9	
+1A9A	1B4F	Cn		0	0	N			
+1B50	1B50	Cn		0	0	N		0	
+1B51	1B51	Cn		0	0	N		1	
+1B52	1B52	Cn		0	0	N		2	
+1B53	1B53	Cn		0	0	N		3	
+1B54	1B54	Cn		0	0	N		4	
+1B55	1B55	Cn		0	0	N		5	
+1B56	1B56	Cn		0	0	N		6	
+1B57	1B57	Cn		0	0	N		7	
+1B58	1B58	Cn		0	0	N		8	
+1B59	1B59	Cn		0	0	N		9	
+1B5A	1BAF	Cn		0	0	N			
+1BB0	1BB0	Cn		0	0	N		0	
+1BB1	1BB1	Cn		0	0	N		1	
+1BB2	1BB2	Cn		0	0	N		2	
+1BB3	1BB3	Cn		0	0	N		3	
+1BB4	1BB4	Cn		0	0	N		4	
+1BB5	1BB5	Cn		0	0	N		5	
+1BB6	1BB6	Cn		0	0	N		6	
+1BB7	1BB7	Cn		0	0	N		7	
+1BB8	1BB8	Cn		0	0	N		8	
+1BB9	1BB9	Cn		0	0	N		9	
+1BBA	1C3F	Cn		0	0	N			
+1C40	1C40	Cn		0	0	N		0	
+1C41	1C41	Cn		0	0	N		1	
+1C42	1C42	Cn		0	0	N		2	
+1C43	1C43	Cn		0	0	N		3	
+1C44	1C44	Cn		0	0	N		4	
+1C45	1C45	Cn		0	0	N		5	
+1C46	1C46	Cn		0	0	N		6	
+1C47	1C47	Cn		0	0	N		7	
+1C48	1C48	Cn		0	0	N		8	
+1C49	1C49	Cn		0	0	N		9	
+1C4A	1C4F	Cn		0	0	N			
+1C50	1C50	Cn		0	0	N		0	
+1C51	1C51	Cn		0	0	N		1	
+1C52	1C52	Cn		0	0	N		2	
+1C53	1C53	Cn		0	0	N		3	
+1C54	1C54	Cn		0	0	N		4	
+1C55	1C55	Cn		0	0	N		5	
+1C56	1C56	Cn		0	0	N		6	
+1C57	1C57	Cn		0	0	N		7	
+1C58	1C58	Cn		0	0	N		8	
+1C59	1C59	Cn		0	0	N		9	
+1C5A	1DFF	Cn		0	0	N			
+1E00	1E00	Lu	L	0	0	N			
+1E01	1E01	Ll	L	0	0	N			
+1E02	1E02	Lu	L	0	0	N			
+1E03	1E03	Ll	L	0	0	N			
+1E04	1E04	Lu	L	0	0	N			
+1E05	1E05	Ll	L	0	0	N			
+1E06	1E06	Lu	L	0	0	N			
+1E07	1E07	Ll	L	0	0	N			
+1E08	1E08	Lu	L	0	0	N			
+1E09	1E09	Ll	L	0	0	N			
+1E0A	1E0A	Lu	L	0	0	N			
+1E0B	1E0B	Ll	L	0	0	N			
+1E0C	1E0C	Lu	L	0	0	N			
+1E0D	1E0D	Ll	L	0	0	N			
+1E0E	1E0E	Lu	L	0	0	N			
+1E0F	1E0F	Ll	L	0	0	N			
+1E10	1E10	Lu	L	0	0	N			
+1E11	1E11	Ll	L	0	0	N			
+1E12	1E12	Lu	L	0	0	N			
+1E13	1E13	Ll	L	0	0	N			
+1E14	1E14	Lu	L	0	0	N			
+1E15	1E15	Ll	L	0	0	N			
+1E16	1E16	Lu	L	0	0	N			
+1E17	1E17	Ll	L	0	0	N			
+1E18	1E18	Lu	L	0	0	N			
+1E19	1E19	Ll	L	0	0	N			
+1E1A	1E1A	Lu	L	0	0	N			
+1E1B	1E1B	Ll	L	0	0	N			
+1E1C	1E1C	Lu	L	0	0	N			
+1E1D	1E1D	Ll	L	0	0	N			
+1E1E	1E1E	Lu	L	0	0	N			
+1E1F	1E1F	Ll	L	0	0	N			
+1E20	1E20	Lu	L	0	0	N			
+1E21	1E21	Ll	L	0	0	N			
+1E22	1E22	Lu	L	0	0	N			
+1E23	1E23	Ll	L	0	0	N			
+1E24	1E24	Lu	L	0	0	N			
+1E25	1E25	Ll	L	0	0	N			
+1E26	1E26	Lu	L	0	0	N			
+1E27	1E27	Ll	L	0	0	N			
+1E28	1E28	Lu	L	0	0	N			
+1E29	1E29	Ll	L	0	0	N			
+1E2A	1E2A	Lu	L	0	0	N			
+1E2B	1E2B	Ll	L	0	0	N			
+1E2C	1E2C	Lu	L	0	0	N			
+1E2D	1E2D	Ll	L	0	0	N			
+1E2E	1E2E	Lu	L	0	0	N			
+1E2F	1E2F	Ll	L	0	0	N			
+1E30	1E30	Lu	L	0	0	N			
+1E31	1E31	Ll	L	0	0	N			
+1E32	1E32	Lu	L	0	0	N			
+1E33	1E33	Ll	L	0	0	N			
+1E34	1E34	Lu	L	0	0	N			
+1E35	1E35	Ll	L	0	0	N			
+1E36	1E36	Lu	L	0	0	N			
+1E37	1E37	Ll	L	0	0	N			
+1E38	1E38	Lu	L	0	0	N			
+1E39	1E39	Ll	L	0	0	N			
+1E3A	1E3A	Lu	L	0	0	N			
+1E3B	1E3B	Ll	L	0	0	N			
+1E3C	1E3C	Lu	L	0	0	N			
+1E3D	1E3D	Ll	L	0	0	N			
+1E3E	1E3E	Lu	L	0	0	N			
+1E3F	1E3F	Ll	L	0	0	N			
+1E40	1E40	Lu	L	0	0	N			
+1E41	1E41	Ll	L	0	0	N			
+1E42	1E42	Lu	L	0	0	N			
+1E43	1E43	Ll	L	0	0	N			
+1E44	1E44	Lu	L	0	0	N			
+1E45	1E45	Ll	L	0	0	N			
+1E46	1E46	Lu	L	0	0	N			
+1E47	1E47	Ll	L	0	0	N			
+1E48	1E48	Lu	L	0	0	N			
+1E49	1E49	Ll	L	0	0	N			
+1E4A	1E4A	Lu	L	0	0	N			
+1E4B	1E4B	Ll	L	0	0	N			
+1E4C	1E4C	Lu	L	0	0	N			
+1E4D	1E4D	Ll	L	0	0	N			
+1E4E	1E4E	Lu	L	0	0	N			
+1E4F	1E4F	Ll	L	0	0	N			
+1E50	1E50	Lu	L	0	0	N			
+1E51	1E51	Ll	L	0	0	N			
+1E52	1E52	Lu	L	0	0	N			
+1E53	1E53	Ll	L	0	0	N			
+1E54	1E54	Lu	L	0	0	N			
+1E55	1E55	Ll	L	0	0	N			
+1E56	1E56	Lu	L	0	0	N			
+1E57	1E57	Ll	L	0	0	N			
+1E58	1E58	Lu	L	0	0	N			
+1E59	1E59	Ll	L	0	0	N			
+1E5A	1E5A	Lu	L	0	0	N			
+1E5B	1E5B	Ll	L	0	0	N			
+1E5C	1E5C	Lu	L	0	0	N			
+1E5D	1E5D	Ll	L	0	0	N			
+1E5E	1E5E	Lu	L	0	0	N			
+1E5F	1E5F	Ll	L	0	0	N			
+1E60	1E60	Lu	L	0	0	N			
+1E61	1E61	Ll	L	0	0	N			
+1E62	1E62	Lu	L	0	0	N			
+1E63	1E63	Ll	L	0	0	N			
+1E64	1E64	Lu	L	0	0	N			
+1E65	1E65	Ll	L	0	0	N			
+1E66	1E66	Lu	L	0	0	N			
+1E67	1E67	Ll	L	0	0	N			
+1E68	1E68	Lu	L	0	0	N			
+1E69	1E69	Ll	L	0	0	N			
+1E6A	1E6A	Lu	L	0	0	N			
+1E6B	1E6B	Ll	L	0	0	N			
+1E6C	1E6C	Lu	L	0	0	N			
+1E6D	1E6D	Ll	L	0	0	N			
+1E6E	1E6E	Lu	L	0	0	N			
+1E6F	1E6F	Ll	L	0	0	N			
+1E70	1E70	Lu	L	0	0	N			
+1E71	1E71	Ll	L	0	0	N			
+1E72	1E72	Lu	L	0	0	N			
+1E73	1E73	Ll	L	0	0	N			
+1E74	1E74	Lu	L	0	0	N			
+1E75	1E75	Ll	L	0	0	N			
+1E76	1E76	Lu	L	0	0	N			
+1E77	1E77	Ll	L	0	0	N			
+1E78	1E78	Lu	L	0	0	N			
+1E79	1E79	Ll	L	0	0	N			
+1E7A	1E7A	Lu	L	0	0	N			
+1E7B	1E7B	Ll	L	0	0	N			
+1E7C	1E7C	Lu	L	0	0	N			
+1E7D	1E7D	Ll	L	0	0	N			
+1E7E	1E7E	Lu	L	0	0	N			
+1E7F	1E7F	Ll	L	0	0	N			
+1E80	1E80	Lu	L	0	0	N			
+1E81	1E81	Ll	L	0	0	N			
+1E82	1E82	Lu	L	0	0	N			
+1E83	1E83	Ll	L	0	0	N			
+1E84	1E84	Lu	L	0	0	N			
+1E85	1E85	Ll	L	0	0	N			
+1E86	1E86	Lu	L	0	0	N			
+1E87	1E87	Ll	L	0	0	N			
+1E88	1E88	Lu	L	0	0	N			
+1E89	1E89	Ll	L	0	0	N			
+1E8A	1E8A	Lu	L	0	0	N			
+1E8B	1E8B	Ll	L	0	0	N			
+1E8C	1E8C	Lu	L	0	0	N			
+1E8D	1E8D	Ll	L	0	0	N			
+1E8E	1E8E	Lu	L	0	0	N			
+1E8F	1E8F	Ll	L	0	0	N			
+1E90	1E90	Lu	L	0	0	N			
+1E91	1E91	Ll	L	0	0	N			
+1E92	1E92	Lu	L	0	0	N			
+1E93	1E93	Ll	L	0	0	N			
+1E94	1E94	Lu	L	0	0	N			
+1E95	1E9B	Ll	L	0	0	N			
+1E9C	1E9F	Cn		0	0	N			
+1EA0	1EA0	Lu	L	0	0	N			
+1EA1	1EA1	Ll	L	0	0	N			
+1EA2	1EA2	Lu	L	0	0	N			
+1EA3	1EA3	Ll	L	0	0	N			
+1EA4	1EA4	Lu	L	0	0	N			
+1EA5	1EA5	Ll	L	0	0	N			
+1EA6	1EA6	Lu	L	0	0	N			
+1EA7	1EA7	Ll	L	0	0	N			
+1EA8	1EA8	Lu	L	0	0	N			
+1EA9	1EA9	Ll	L	0	0	N			
+1EAA	1EAA	Lu	L	0	0	N			
+1EAB	1EAB	Ll	L	0	0	N			
+1EAC	1EAC	Lu	L	0	0	N			
+1EAD	1EAD	Ll	L	0	0	N			
+1EAE	1EAE	Lu	L	0	0	N			
+1EAF	1EAF	Ll	L	0	0	N			
+1EB0	1EB0	Lu	L	0	0	N			
+1EB1	1EB1	Ll	L	0	0	N			
+1EB2	1EB2	Lu	L	0	0	N			
+1EB3	1EB3	Ll	L	0	0	N			
+1EB4	1EB4	Lu	L	0	0	N			
+1EB5	1EB5	Ll	L	0	0	N			
+1EB6	1EB6	Lu	L	0	0	N			
+1EB7	1EB7	Ll	L	0	0	N			
+1EB8	1EB8	Lu	L	0	0	N			
+1EB9	1EB9	Ll	L	0	0	N			
+1EBA	1EBA	Lu	L	0	0	N			
+1EBB	1EBB	Ll	L	0	0	N			
+1EBC	1EBC	Lu	L	0	0	N			
+1EBD	1EBD	Ll	L	0	0	N			
+1EBE	1EBE	Lu	L	0	0	N			
+1EBF	1EBF	Ll	L	0	0	N			
+1EC0	1EC0	Lu	L	0	0	N			
+1EC1	1EC1	Ll	L	0	0	N			
+1EC2	1EC2	Lu	L	0	0	N			
+1EC3	1EC3	Ll	L	0	0	N			
+1EC4	1EC4	Lu	L	0	0	N			
+1EC5	1EC5	Ll	L	0	0	N			
+1EC6	1EC6	Lu	L	0	0	N			
+1EC7	1EC7	Ll	L	0	0	N			
+1EC8	1EC8	Lu	L	0	0	N			
+1EC9	1EC9	Ll	L	0	0	N			
+1ECA	1ECA	Lu	L	0	0	N			
+1ECB	1ECB	Ll	L	0	0	N			
+1ECC	1ECC	Lu	L	0	0	N			
+1ECD	1ECD	Ll	L	0	0	N			
+1ECE	1ECE	Lu	L	0	0	N			
+1ECF	1ECF	Ll	L	0	0	N			
+1ED0	1ED0	Lu	L	0	0	N			
+1ED1	1ED1	Ll	L	0	0	N			
+1ED2	1ED2	Lu	L	0	0	N			
+1ED3	1ED3	Ll	L	0	0	N			
+1ED4	1ED4	Lu	L	0	0	N			
+1ED5	1ED5	Ll	L	0	0	N			
+1ED6	1ED6	Lu	L	0	0	N			
+1ED7	1ED7	Ll	L	0	0	N			
+1ED8	1ED8	Lu	L	0	0	N			
+1ED9	1ED9	Ll	L	0	0	N			
+1EDA	1EDA	Lu	L	0	0	N			
+1EDB	1EDB	Ll	L	0	0	N			
+1EDC	1EDC	Lu	L	0	0	N			
+1EDD	1EDD	Ll	L	0	0	N			
+1EDE	1EDE	Lu	L	0	0	N			
+1EDF	1EDF	Ll	L	0	0	N			
+1EE0	1EE0	Lu	L	0	0	N			
+1EE1	1EE1	Ll	L	0	0	N			
+1EE2	1EE2	Lu	L	0	0	N			
+1EE3	1EE3	Ll	L	0	0	N			
+1EE4	1EE4	Lu	L	0	0	N			
+1EE5	1EE5	Ll	L	0	0	N			
+1EE6	1EE6	Lu	L	0	0	N			
+1EE7	1EE7	Ll	L	0	0	N			
+1EE8	1EE8	Lu	L	0	0	N			
+1EE9	1EE9	Ll	L	0	0	N			
+1EEA	1EEA	Lu	L	0	0	N			
+1EEB	1EEB	Ll	L	0	0	N			
+1EEC	1EEC	Lu	L	0	0	N			
+1EED	1EED	Ll	L	0	0	N			
+1EEE	1EEE	Lu	L	0	0	N			
+1EEF	1EEF	Ll	L	0	0	N			
+1EF0	1EF0	Lu	L	0	0	N			
+1EF1	1EF1	Ll	L	0	0	N			
+1EF2	1EF2	Lu	L	0	0	N			
+1EF3	1EF3	Ll	L	0	0	N			
+1EF4	1EF4	Lu	L	0	0	N			
+1EF5	1EF5	Ll	L	0	0	N			
+1EF6	1EF6	Lu	L	0	0	N			
+1EF7	1EF7	Ll	L	0	0	N			
+1EF8	1EF8	Lu	L	0	0	N			
+1EF9	1EF9	Ll	L	0	0	N			
+1EFA	1EFF	Cn		0	0	N			
+1F00	1F07	Ll	L	0	0	N			
+1F08	1F0F	Lu	L	0	0	N			
+1F10	1F15	Ll	L	0	0	N			
+1F16	1F17	Cn		0	0	N			
+1F18	1F1D	Lu	L	0	0	N			
+1F1E	1F1F	Cn		0	0	N			
+1F20	1F27	Ll	L	0	0	N			
+1F28	1F2F	Lu	L	0	0	N			
+1F30	1F37	Ll	L	0	0	N			
+1F38	1F3F	Lu	L	0	0	N			
+1F40	1F45	Ll	L	0	0	N			
+1F46	1F47	Cn		0	0	N			
+1F48	1F4D	Lu	L	0	0	N			
+1F4E	1F4F	Cn		0	0	N			
+1F50	1F57	Ll	L	0	0	N			
+1F58	1F58	Cn		0	0	N			
+1F59	1F59	Lu	L	0	0	N			
+1F5A	1F5A	Cn		0	0	N			
+1F5B	1F5B	Lu	L	0	0	N			
+1F5C	1F5C	Cn		0	0	N			
+1F5D	1F5D	Lu	L	0	0	N			
+1F5E	1F5E	Cn		0	0	N			
+1F5F	1F5F	Lu	L	0	0	N			
+1F60	1F67	Ll	L	0	0	N			
+1F68	1F6F	Lu	L	0	0	N			
+1F70	1F7D	Ll	L	0	0	N			
+1F7E	1F7F	Cn		0	0	N			
+1F80	1F87	Ll	L	0	0	N			
+1F88	1F8F	Lt	L	0	0	N			
+1F90	1F97	Ll	L	0	0	N			
+1F98	1F9F	Lt	L	0	0	N			
+1FA0	1FA7	Ll	L	0	0	N			
+1FA8	1FAF	Lt	L	0	0	N			
+1FB0	1FB4	Ll	L	0	0	N			
+1FB5	1FB5	Cn		0	0	N			
+1FB6	1FB7	Ll	L	0	0	N			
+1FB8	1FBB	Lu	L	0	0	N			
+1FBC	1FBC	Lt	L	0	0	N			
+1FBD	1FBD	Sk	ON	0	0	N			
+1FBE	1FBE	Ll	L	0	0	N			
+1FBF	1FC1	Sk	ON	0	0	N			
+1FC2	1FC4	Ll	L	0	0	N			
+1FC5	1FC5	Cn		0	0	N			
+1FC6	1FC7	Ll	L	0	0	N			
+1FC8	1FCB	Lu	L	0	0	N			
+1FCC	1FCC	Lt	L	0	0	N			
+1FCD	1FCF	Sk	ON	0	0	N			
+1FD0	1FD3	Ll	L	0	0	N			
+1FD4	1FD5	Cn		0	0	N			
+1FD6	1FD7	Ll	L	0	0	N			
+1FD8	1FDB	Lu	L	0	0	N			
+1FDC	1FDC	Cn		0	0	N			
+1FDD	1FDF	Sk	ON	0	0	N			
+1FE0	1FE7	Ll	L	0	0	N			
+1FE8	1FEC	Lu	L	0	0	N			
+1FED	1FEF	Sk	ON	0	0	N			
+1FF0	1FF1	Cn		0	0	N			
+1FF2	1FF4	Ll	L	0	0	N			
+1FF5	1FF5	Cn		0	0	N			
+1FF6	1FF7	Ll	L	0	0	N			
+1FF8	1FFB	Lu	L	0	0	N			
+1FFC	1FFC	Lt	L	0	0	N			
+1FFD	1FFE	Sk	ON	0	0	N			
+1FFF	1FFF	Cn		0	0	N			
+2000	200A	Zs	WS	0	0	N			
+200B	200B	Zs	BN	0	0	N			
+200C	200D	Cf	BN	0	0	N			
+200E	200E	Cf	L	0	0	N			
+200F	200F	Cf	R	0	0	N			
+2010	2010	Pd	ON	0	0	A			
+2011	2012	Pd	ON	0	0	N			
+2013	2015	Pd	ON	0	0	A			
+2016	2016	Po	ON	0	0	A			
+2017	2017	Po	ON	0	0	N			
+2018	2018	Pi	ON	0	0	A			
+2019	2019	Pf	ON	0	0	A			
+201A	201A	Ps	ON	0	0	N			
+201B	201B	Pi	ON	0	0	N			
+201C	201C	Pi	ON	0	0	A			
+201D	201D	Pf	ON	0	0	A			
+201E	201E	Ps	ON	0	0	N			
+201F	201F	Pi	ON	0	0	N			
+2020	2022	Po	ON	0	0	A			
+2023	2023	Po	ON	0	0	N			
+2024	2027	Po	ON	0	0	A			
+2028	2028	Zl	WS	0	0	N			
+2029	2029	Zp	B	0	0	N			
+202A	202A	Cf	LRE	0	0	N			
+202B	202B	Cf	RLE	0	0	N			
+202C	202C	Cf	PDF	0	0	N			
+202D	202D	Cf	LRO	0	0	N			
+202E	202E	Cf	RLO	0	0	N			
+202F	202F	Zs	WS	0	0	N			
+2030	2030	Po	ET	0	0	A			
+2031	2031	Po	ET	0	0	N			
+2032	2033	Po	ET	0	0	A			
+2034	2034	Po	ET	0	0	N			
+2035	2035	Po	ON	0	0	A			
+2036	2038	Po	ON	0	0	N			
+2039	2039	Pi	ON	0	1	N			
+203A	203A	Pf	ON	0	1	N			
+203B	203B	Po	ON	0	0	A			
+203C	203D	Po	ON	0	0	N			
+203E	203E	Po	ON	0	0	A			
+203F	2040	Pc	ON	0	0	N			
+2041	2043	Po	ON	0	0	N			
+2044	2044	Sm	ON	0	0	N			
+2045	2045	Ps	ON	0	1	N			
+2046	2046	Pe	ON	0	1	N			
+2047	2051	Po	ON	0	0	N			
+2052	2052	Sm	ON	0	0	N			
+2053	2056	Cn		0	0	N			
+2057	2057	Po	ON	0	0	N			
+2058	205E	Cn		0	0	N			
+205F	205F	Zs	WS	0	0	N			
+2060	2063	Cf	BN	0	0	N			
+2064	2069	Cn		0	0	N			
+206A	206F	Cf	BN	0	0	N			
+2070	2070	No	EN	0	0	N	0	0	0
+2071	2071	Ll	L	0	0	N			
+2072	2073	Cn		0	0	N			
+2074	2074	No	EN	0	0	A	4	4	4
+2075	2075	No	EN	0	0	N	5	5	5
+2076	2076	No	EN	0	0	N	6	6	6
+2077	2077	No	EN	0	0	N	7	7	7
+2078	2078	No	EN	0	0	N	8	8	8
+2079	2079	No	EN	0	0	N	9	9	9
+207A	207B	Sm	ET	0	0	N			
+207C	207C	Sm	ON	0	0	N			
+207D	207D	Ps	ON	0	1	N			
+207E	207E	Pe	ON	0	1	N			
+207F	207F	Ll	L	0	0	A			
+2080	2080	No	EN	0	0	N	0	0	0
+2081	2081	No	EN	0	0	A	1	1	1
+2082	2082	No	EN	0	0	A	2	2	2
+2083	2083	No	EN	0	0	A	3	3	3
+2084	2084	No	EN	0	0	A	4	4	4
+2085	2085	No	EN	0	0	N	5	5	5
+2086	2086	No	EN	0	0	N	6	6	6
+2087	2087	No	EN	0	0	N	7	7	7
+2088	2088	No	EN	0	0	N	8	8	8
+2089	2089	No	EN	0	0	N	9	9	9
+208A	208B	Sm	ET	0	0	N			
+208C	208C	Sm	ON	0	0	N			
+208D	208D	Ps	ON	0	1	N			
+208E	208E	Pe	ON	0	1	N			
+208F	209F	Cn		0	0	N			
+20A0	20A8	Sc	ET	0	0	N			
+20A9	20A9	Sc	ET	0	0	H			
+20AA	20AB	Sc	ET	0	0	N			
+20AC	20AC	Sc	ET	0	0	A			
+20AD	20B1	Sc	ET	0	0	N			
+20B2	20CF	Cn		0	0	N			
+20D0	20D1	Mn	NSM	230	0	N			
+20D2	20D3	Mn	NSM	1	0	N			
+20D4	20D7	Mn	NSM	230	0	N			
+20D8	20DA	Mn	NSM	1	0	N			
+20DB	20DC	Mn	NSM	230	0	N			
+20DD	20E0	Me	NSM	0	0	N			
+20E1	20E1	Mn	NSM	230	0	N			
+20E2	20E4	Me	NSM	0	0	N			
+20E5	20E6	Mn	NSM	1	0	N			
+20E7	20E7	Mn	NSM	230	0	N			
+20E8	20E8	Mn	NSM	220	0	N			
+20E9	20E9	Mn	NSM	230	0	N			
+20EA	20EA	Mn	NSM	1	0	N			
+20EB	20FF	Cn		0	0	N			
+2100	2101	So	ON	0	0	N			
+2102	2102	Lu	L	0	0	N			
+2103	2103	So	ON	0	0	A			
+2104	2104	So	ON	0	0	N			
+2105	2105	So	ON	0	0	A			
+2106	2106	So	ON	0	0	N			
+2107	2107	Lu	L	0	0	N			
+2108	2108	So	ON	0	0	N			
+2109	2109	So	ON	0	0	A			
+210A	210A	Ll	L	0	0	N			
+210B	210D	Lu	L	0	0	N			
+210E	210F	Ll	L	0	0	N			
+2110	2112	Lu	L	0	0	N			
+2113	2113	Ll	L	0	0	A			
+2114	2114	So	ON	0	0	N			
+2115	2115	Lu	L	0	0	N			
+2116	2116	So	ON	0	0	A			
+2117	2118	So	ON	0	0	N			
+2119	211D	Lu	L	0	0	N			
+211E	2120	So	ON	0	0	N			
+2121	2122	So	ON	0	0	A			
+2123	2123	So	ON	0	0	N			
+2124	2124	Lu	L	0	0	N			
+2125	2125	So	ON	0	0	N			
+2126	2126	Lu	L	0	0	A			
+2127	2127	So	ON	0	0	N			
+2128	2128	Lu	L	0	0	N			
+2129	2129	So	ON	0	0	N			
+212A	212A	Lu	L	0	0	N			
+212B	212B	Lu	L	0	0	A			
+212C	212D	Lu	L	0	0	N			
+212E	212E	So	ET	0	0	N			
+212F	212F	Ll	L	0	0	N			
+2130	2131	Lu	L	0	0	N			
+2132	2132	So	ON	0	0	N			
+2133	2133	Lu	L	0	0	N			
+2134	2134	Ll	L	0	0	N			
+2135	2138	Lo	L	0	0	N			
+2139	2139	Ll	L	0	0	N			
+213A	213A	So	ON	0	0	N			
+213B	213C	Cn		0	0	N			
+213D	213D	Ll	L	0	0	N			
+213E	213F	Lu	L	0	0	N			
+2140	2140	Sm	ON	0	1	N			
+2141	2144	Sm	ON	0	0	N			
+2145	2145	Lu	L	0	0	N			
+2146	2149	Ll	L	0	0	N			
+214A	214A	So	ON	0	0	N			
+214B	214B	Sm	ON	0	0	N			
+214C	2152	Cn		0	0	N			
+2153	2153	No	ON	0	0	A			1/3
+2154	2154	No	ON	0	0	A			2/3
+2155	2155	No	ON	0	0	N			1/5
+2156	2156	No	ON	0	0	N			2/5
+2157	2157	No	ON	0	0	N			3/5
+2158	2158	No	ON	0	0	N			4/5
+2159	2159	No	ON	0	0	N			1/6
+215A	215A	No	ON	0	0	N			5/6
+215B	215B	No	ON	0	0	A			1/8
+215C	215C	No	ON	0	0	A			3/8
+215D	215D	No	ON	0	0	A			5/8
+215E	215E	No	ON	0	0	A			7/8
+215F	215F	No	ON	0	0	N			1
+2160	2160	Nl	L	0	0	A			1
+2161	2161	Nl	L	0	0	A			2
+2162	2162	Nl	L	0	0	A			3
+2163	2163	Nl	L	0	0	A			4
+2164	2164	Nl	L	0	0	A			5
+2165	2165	Nl	L	0	0	A			6
+2166	2166	Nl	L	0	0	A			7
+2167	2167	Nl	L	0	0	A			8
+2168	2168	Nl	L	0	0	A			9
+2169	2169	Nl	L	0	0	A			10
+216A	216A	Nl	L	0	0	A			11
+216B	216B	Nl	L	0	0	A			12
+216C	216C	Nl	L	0	0	N			50
+216D	216D	Nl	L	0	0	N			100
+216E	216E	Nl	L	0	0	N			500
+216F	216F	Nl	L	0	0	N			1000
+2170	2170	Nl	L	0	0	A			1
+2171	2171	Nl	L	0	0	A			2
+2172	2172	Nl	L	0	0	A			3
+2173	2173	Nl	L	0	0	A			4
+2174	2174	Nl	L	0	0	A			5
+2175	2175	Nl	L	0	0	A			6
+2176	2176	Nl	L	0	0	A			7
+2177	2177	Nl	L	0	0	A			8
+2178	2178	Nl	L	0	0	A			9
+2179	2179	Nl	L	0	0	A			10
+217A	217A	Nl	L	0	0	N			11
+217B	217B	Nl	L	0	0	N			12
+217C	217C	Nl	L	0	0	N			50
+217D	217D	Nl	L	0	0	N			100
+217E	217E	Nl	L	0	0	N			500
+217F	2180	Nl	L	0	0	N			1000
+2181	2181	Nl	L	0	0	N			5000
+2182	2182	Nl	L	0	0	N			10000
+2183	2183	Nl	L	0	0	N			
+2184	218F	Cn		0	0	N			
+2190	2194	Sm	ON	0	0	A			
+2195	2199	So	ON	0	0	A			
+219A	219B	Sm	ON	0	0	N			
+219C	219F	So	ON	0	0	N			
+21A0	21A0	Sm	ON	0	0	N			
+21A1	21A2	So	ON	0	0	N			
+21A3	21A3	Sm	ON	0	0	N			
+21A4	21A5	So	ON	0	0	N			
+21A6	21A6	Sm	ON	0	0	N			
+21A7	21AD	So	ON	0	0	N			
+21AE	21AE	Sm	ON	0	0	N			
+21AF	21B7	So	ON	0	0	N			
+21B8	21B9	So	ON	0	0	A			
+21BA	21CD	So	ON	0	0	N			
+21CE	21CF	Sm	ON	0	0	N			
+21D0	21D1	So	ON	0	0	N			
+21D2	21D2	Sm	ON	0	0	A			
+21D3	21D3	So	ON	0	0	N			
+21D4	21D4	Sm	ON	0	0	A			
+21D5	21E6	So	ON	0	0	N			
+21E7	21E7	So	ON	0	0	A			
+21E8	21F3	So	ON	0	0	N			
+21F4	21FF	Sm	ON	0	0	N			
+2200	2200	Sm	ON	0	0	A			
+2201	2201	Sm	ON	0	1	N			
+2202	2203	Sm	ON	0	1	A			
+2204	2204	Sm	ON	0	1	N			
+2205	2206	Sm	ON	0	0	N			
+2207	2207	Sm	ON	0	0	A			
+2208	2208	Sm	ON	0	1	A			
+2209	220A	Sm	ON	0	1	N			
+220B	220B	Sm	ON	0	1	A			
+220C	220D	Sm	ON	0	1	N			
+220E	220E	Sm	ON	0	0	N			
+220F	220F	Sm	ON	0	0	A			
+2210	2210	Sm	ON	0	0	N			
+2211	2211	Sm	ON	0	1	A			
+2212	2213	Sm	ET	0	0	N			
+2214	2214	Sm	ON	0	0	N			
+2215	2215	Sm	ON	0	1	A			
+2216	2216	Sm	ON	0	1	N			
+2217	2219	Sm	ON	0	0	N			
+221A	221A	Sm	ON	0	1	A			
+221B	221C	Sm	ON	0	1	N			
+221D	221D	Sm	ON	0	1	A			
+221E	221E	Sm	ON	0	0	A			
+221F	2220	Sm	ON	0	1	A			
+2221	2222	Sm	ON	0	1	N			
+2223	2223	Sm	ON	0	0	A			
+2224	2224	Sm	ON	0	1	N			
+2225	2225	Sm	ON	0	0	A			
+2226	2226	Sm	ON	0	1	N			
+2227	222A	Sm	ON	0	0	A			
+222B	222C	Sm	ON	0	1	A			
+222D	222D	Sm	ON	0	1	N			
+222E	222E	Sm	ON	0	1	A			
+222F	2233	Sm	ON	0	1	N			
+2234	2237	Sm	ON	0	0	A			
+2238	2238	Sm	ON	0	0	N			
+2239	2239	Sm	ON	0	1	N			
+223A	223A	Sm	ON	0	0	N			
+223B	223B	Sm	ON	0	1	N			
+223C	223D	Sm	ON	0	1	A			
+223E	2247	Sm	ON	0	1	N			
+2248	2248	Sm	ON	0	1	A			
+2249	224B	Sm	ON	0	1	N			
+224C	224C	Sm	ON	0	1	A			
+224D	2251	Sm	ON	0	0	N			
+2252	2252	Sm	ON	0	1	A			
+2253	2255	Sm	ON	0	1	N			
+2256	225E	Sm	ON	0	0	N			
+225F	225F	Sm	ON	0	1	N			
+2260	2260	Sm	ON	0	1	A			
+2261	2261	Sm	ON	0	0	A			
+2262	2262	Sm	ON	0	1	N			
+2263	2263	Sm	ON	0	0	N			
+2264	2267	Sm	ON	0	1	A			
+2268	2269	Sm	ON	0	1	N			
+226A	226B	Sm	ON	0	1	A			
+226C	226D	Sm	ON	0	0	N			
+226E	226F	Sm	ON	0	1	A			
+2270	2281	Sm	ON	0	1	N			
+2282	2283	Sm	ON	0	1	A			
+2284	2285	Sm	ON	0	1	N			
+2286	2287	Sm	ON	0	1	A			
+2288	228C	Sm	ON	0	1	N			
+228D	228E	Sm	ON	0	0	N			
+228F	2292	Sm	ON	0	1	N			
+2293	2294	Sm	ON	0	0	N			
+2295	2295	Sm	ON	0	0	A			
+2296	2297	Sm	ON	0	0	N			
+2298	2298	Sm	ON	0	1	N			
+2299	2299	Sm	ON	0	0	A			
+229A	22A1	Sm	ON	0	0	N			
+22A2	22A3	Sm	ON	0	1	N			
+22A4	22A4	Sm	ON	0	0	N			
+22A5	22A5	Sm	ON	0	0	A			
+22A6	22B8	Sm	ON	0	1	N			
+22B9	22BD	Sm	ON	0	0	N			
+22BE	22BE	Sm	ON	0	1	N			
+22BF	22BF	Sm	ON	0	1	A			
+22C0	22C8	Sm	ON	0	0	N			
+22C9	22CD	Sm	ON	0	1	N			
+22CE	22CF	Sm	ON	0	0	N			
+22D0	22D1	Sm	ON	0	1	N			
+22D2	22D5	Sm	ON	0	0	N			
+22D6	22ED	Sm	ON	0	1	N			
+22EE	22EF	Sm	ON	0	0	N			
+22F0	22FF	Sm	ON	0	1	N			
+2300	2307	So	ON	0	0	N			
+2308	230B	Sm	ON	0	1	N			
+230C	2311	So	ON	0	0	N			
+2312	2312	So	ON	0	0	A			
+2313	231F	So	ON	0	0	N			
+2320	2321	Sm	ON	0	1	N			
+2322	2328	So	ON	0	0	N			
+2329	2329	Ps	ON	0	1	W			
+232A	232A	Pe	ON	0	1	W			
+232B	2335	So	ON	0	0	N			
+2336	237A	So	L	0	0	N			
+237B	237B	So	ON	0	0	N			
+237C	237C	Sm	ON	0	0	N			
+237D	2394	So	ON	0	0	N			
+2395	2395	So	L	0	0	N			
+2396	239A	So	ON	0	0	N			
+239B	23B3	Sm	ON	0	0	N			
+23B4	23B4	Ps	ON	0	0	N			
+23B5	23B5	Pe	ON	0	0	N			
+23B6	23B6	Po	ON	0	0	N			
+23B7	23CE	So	ON	0	0	N			
+23CF	23FF	Cn		0	0	N			
+2400	2426	So	ON	0	0	N			
+2427	243F	Cn		0	0	N			
+2440	244A	So	ON	0	0	N			
+244B	245F	Cn		0	0	N			
+2460	2460	No	EN	0	0	A		1	1
+2461	2461	No	EN	0	0	A		2	2
+2462	2462	No	EN	0	0	A		3	3
+2463	2463	No	EN	0	0	A		4	4
+2464	2464	No	EN	0	0	A		5	5
+2465	2465	No	EN	0	0	A		6	6
+2466	2466	No	EN	0	0	A		7	7
+2467	2467	No	EN	0	0	A		8	8
+2468	2468	No	EN	0	0	A		9	9
+2469	2469	No	EN	0	0	A			10
+246A	246A	No	EN	0	0	A			11
+246B	246B	No	EN	0	0	A			12
+246C	246C	No	EN	0	0	A			13
+246D	246D	No	EN	0	0	A			14
+246E	246E	No	EN	0	0	A			15
+246F	246F	No	EN	0	0	A			16
+2470	2470	No	EN	0	0	A			17
+2471	2471	No	EN	0	0	A			18
+2472	2472	No	EN	0	0	A			19
+2473	2473	No	EN	0	0	A			20
+2474	2474	No	EN	0	0	A		1	1
+2475	2475	No	EN	0	0	A		2	2
+2476	2476	No	EN	0	0	A		3	3
+2477	2477	No	EN	0	0	A		4	4
+2478	2478	No	EN	0	0	A		5	5
+2479	2479	No	EN	0	0	A		6	6
+247A	247A	No	EN	0	0	A		7	7
+247B	247B	No	EN	0	0	A		8	8
+247C	247C	No	EN	0	0	A		9	9
+247D	247D	No	EN	0	0	A			10
+247E	247E	No	EN	0	0	A			11
+247F	247F	No	EN	0	0	A			12
+2480	2480	No	EN	0	0	A			13
+2481	2481	No	EN	0	0	A			14
+2482	2482	No	EN	0	0	A			15
+2483	2483	No	EN	0	0	A			16
+2484	2484	No	EN	0	0	A			17
+2485	2485	No	EN	0	0	A			18
+2486	2486	No	EN	0	0	A			19
+2487	2487	No	EN	0	0	A			20
+2488	2488	No	EN	0	0	A		1	1
+2489	2489	No	EN	0	0	A		2	2
+248A	248A	No	EN	0	0	A		3	3
+248B	248B	No	EN	0	0	A		4	4
+248C	248C	No	EN	0	0	A		5	5
+248D	248D	No	EN	0	0	A		6	6
+248E	248E	No	EN	0	0	A		7	7
+248F	248F	No	EN	0	0	A		8	8
+2490	2490	No	EN	0	0	A		9	9
+2491	2491	No	EN	0	0	A			10
+2492	2492	No	EN	0	0	A			11
+2493	2493	No	EN	0	0	A			12
+2494	2494	No	EN	0	0	A			13
+2495	2495	No	EN	0	0	A			14
+2496	2496	No	EN	0	0	A			15
+2497	2497	No	EN	0	0	A			16
+2498	2498	No	EN	0	0	A			17
+2499	2499	No	EN	0	0	A			18
+249A	249A	No	EN	0	0	A			19
+249B	249B	No	EN	0	0	A			20
+249C	24E9	So	L	0	0	A			
+24EA	24EA	No	EN	0	0	N		0	0
+24EB	24EB	No	ON	0	0	A			11
+24EC	24EC	No	ON	0	0	A			12
+24ED	24ED	No	ON	0	0	A			13
+24EE	24EE	No	ON	0	0	A			14
+24EF	24EF	No	ON	0	0	A			15
+24F0	24F0	No	ON	0	0	A			16
+24F1	24F1	No	ON	0	0	A			17
+24F2	24F2	No	ON	0	0	A			18
+24F3	24F3	No	ON	0	0	A			19
+24F4	24F4	No	ON	0	0	A			20
+24F5	24F5	No	ON	0	0	A		1	1
+24F6	24F6	No	ON	0	0	A		2	2
+24F7	24F7	No	ON	0	0	A		3	3
+24F8	24F8	No	ON	0	0	A		4	4
+24F9	24F9	No	ON	0	0	A		5	5
+24FA	24FA	No	ON	0	0	A		6	6
+24FB	24FB	No	ON	0	0	A		7	7
+24FC	24FC	No	ON	0	0	A		8	8
+24FD	24FD	No	ON	0	0	A		9	9
+24FE	24FE	No	ON	0	0	A			10
+24FF	24FF	Cn		0	0	N		0	
+2500	254B	So	ON	0	0	A			
+254C	254F	So	ON	0	0	N			
+2550	2573	So	ON	0	0	A			
+2574	257F	So	ON	0	0	N			
+2580	258F	So	ON	0	0	A			
+2590	2591	So	ON	0	0	N			
+2592	2595	So	ON	0	0	A			
+2596	259F	So	ON	0	0	N			
+25A0	25A1	So	ON	0	0	A			
+25A2	25A2	So	ON	0	0	N			
+25A3	25A9	So	ON	0	0	A			
+25AA	25B1	So	ON	0	0	N			
+25B2	25B3	So	ON	0	0	A			
+25B4	25B5	So	ON	0	0	N			
+25B6	25B6	So	ON	0	0	A			
+25B7	25B7	Sm	ON	0	0	A			
+25B8	25BB	So	ON	0	0	N			
+25BC	25BD	So	ON	0	0	A			
+25BE	25BF	So	ON	0	0	N			
+25C0	25C0	So	ON	0	0	A			
+25C1	25C1	Sm	ON	0	0	A			
+25C2	25C5	So	ON	0	0	N			
+25C6	25C8	So	ON	0	0	A			
+25C9	25CA	So	ON	0	0	N			
+25CB	25CB	So	ON	0	0	A			
+25CC	25CD	So	ON	0	0	N			
+25CE	25D1	So	ON	0	0	A			
+25D2	25E1	So	ON	0	0	N			
+25E2	25E5	So	ON	0	0	A			
+25E6	25EE	So	ON	0	0	N			
+25EF	25EF	So	ON	0	0	A			
+25F0	25F7	So	ON	0	0	N			
+25F8	25FF	Sm	ON	0	0	N			
+2600	2604	So	ON	0	0	N			
+2605	2606	So	ON	0	0	A			
+2607	2608	So	ON	0	0	N			
+2609	2609	So	ON	0	0	A			
+260A	260D	So	ON	0	0	N			
+260E	260F	So	ON	0	0	A			
+2610	2613	So	ON	0	0	N			
+2614	2615	Cn		0	0	N			
+2616	2617	So	ON	0	0	N			
+2618	2618	Cn		0	0	N			
+2619	261B	So	ON	0	0	N			
+261C	261C	So	ON	0	0	A			
+261D	261D	So	ON	0	0	N			
+261E	261E	So	ON	0	0	A			
+261F	263F	So	ON	0	0	N			
+2640	2640	So	ON	0	0	A			
+2641	2641	So	ON	0	0	N			
+2642	2642	So	ON	0	0	A			
+2643	265F	So	ON	0	0	N			
+2660	2661	So	ON	0	0	A			
+2662	2662	So	ON	0	0	N			
+2663	2665	So	ON	0	0	A			
+2666	2666	So	ON	0	0	N			
+2667	266A	So	ON	0	0	A			
+266B	266B	So	ON	0	0	N			
+266C	266D	So	ON	0	0	A			
+266E	266E	So	ON	0	0	N			
+266F	266F	Sm	ON	0	0	A			
+2670	267D	So	ON	0	0	N			
+267E	267F	Cn		0	0	N			
+2680	2689	So	ON	0	0	N			
+268A	2700	Cn		0	0	N			
+2701	2704	So	ON	0	0	N			
+2705	2705	Cn		0	0	N			
+2706	2709	So	ON	0	0	N			
+270A	270B	Cn		0	0	N			
+270C	2727	So	ON	0	0	N			
+2728	2728	Cn		0	0	N			
+2729	273C	So	ON	0	0	N			
+273D	273D	So	ON	0	0	A			
+273E	274B	So	ON	0	0	N			
+274C	274C	Cn		0	0	N			
+274D	274D	So	ON	0	0	N			
+274E	274E	Cn		0	0	N			
+274F	2752	So	ON	0	0	N			
+2753	2755	Cn		0	0	N			
+2756	2756	So	ON	0	0	N			
+2757	2757	Cn		0	0	N			
+2758	275E	So	ON	0	0	N			
+275F	2760	Cn		0	0	N			
+2761	2767	So	ON	0	0	N			
+2768	2768	Ps	ON	0	1	N			
+2769	2769	Pe	ON	0	1	N			
+276A	276A	Ps	ON	0	1	N			
+276B	276B	Pe	ON	0	1	N			
+276C	276C	Ps	ON	0	1	N			
+276D	276D	Pe	ON	0	1	N			
+276E	276E	Ps	ON	0	1	N			
+276F	276F	Pe	ON	0	1	N			
+2770	2770	Ps	ON	0	1	N			
+2771	2771	Pe	ON	0	1	N			
+2772	2772	Ps	ON	0	1	N			
+2773	2773	Pe	ON	0	1	N			
+2774	2774	Ps	ON	0	1	N			
+2775	2775	Pe	ON	0	1	N			
+2776	2776	No	ON	0	0	A		1	1
+2777	2777	No	ON	0	0	A		2	2
+2778	2778	No	ON	0	0	A		3	3
+2779	2779	No	ON	0	0	A		4	4
+277A	277A	No	ON	0	0	A		5	5
+277B	277B	No	ON	0	0	A		6	6
+277C	277C	No	ON	0	0	A		7	7
+277D	277D	No	ON	0	0	A		8	8
+277E	277E	No	ON	0	0	A		9	9
+277F	277F	No	ON	0	0	A			10
+2780	2780	No	ON	0	0	N		1	1
+2781	2781	No	ON	0	0	N		2	2
+2782	2782	No	ON	0	0	N		3	3
+2783	2783	No	ON	0	0	N		4	4
+2784	2784	No	ON	0	0	N		5	5
+2785	2785	No	ON	0	0	N		6	6
+2786	2786	No	ON	0	0	N		7	7
+2787	2787	No	ON	0	0	N		8	8
+2788	2788	No	ON	0	0	N		9	9
+2789	2789	No	ON	0	0	N			10
+278A	278A	No	ON	0	0	N		1	1
+278B	278B	No	ON	0	0	N		2	2
+278C	278C	No	ON	0	0	N		3	3
+278D	278D	No	ON	0	0	N		4	4
+278E	278E	No	ON	0	0	N		5	5
+278F	278F	No	ON	0	0	N		6	6
+2790	2790	No	ON	0	0	N		7	7
+2791	2791	No	ON	0	0	N		8	8
+2792	2792	No	ON	0	0	N		9	9
+2793	2793	No	ON	0	0	N			10
+2794	2794	So	ON	0	0	N			
+2795	2797	Cn		0	0	N			
+2798	27AF	So	ON	0	0	N			
+27B0	27B0	Cn		0	0	N			
+27B1	27BE	So	ON	0	0	N			
+27BF	27CF	Cn		0	0	N			
+27D0	27D2	Sm	ON	0	0	N			
+27D3	27D6	Sm	ON	0	1	N			
+27D7	27DB	Sm	ON	0	0	N			
+27DC	27DE	Sm	ON	0	1	N			
+27DF	27E1	Sm	ON	0	0	N			
+27E2	27E5	Sm	ON	0	1	N			
+27E6	27E6	Ps	ON	0	1	Na			
+27E7	27E7	Pe	ON	0	1	Na			
+27E8	27E8	Ps	ON	0	1	Na			
+27E9	27E9	Pe	ON	0	1	Na			
+27EA	27EA	Ps	ON	0	1	Na			
+27EB	27EB	Pe	ON	0	1	Na			
+27EC	27EF	Cn		0	0	N			
+27F0	27FF	Sm	ON	0	0	N			
+2800	28FF	So	ON	0	0	N			
+2900	2982	Sm	ON	0	0	N			
+2983	2983	Ps	ON	0	1	N			
+2984	2984	Pe	ON	0	1	N			
+2985	2985	Ps	ON	0	1	Na			
+2986	2986	Pe	ON	0	1	Na			
+2987	2987	Ps	ON	0	1	N			
+2988	2988	Pe	ON	0	1	N			
+2989	2989	Ps	ON	0	1	N			
+298A	298A	Pe	ON	0	1	N			
+298B	298B	Ps	ON	0	1	N			
+298C	298C	Pe	ON	0	1	N			
+298D	298D	Ps	ON	0	1	N			
+298E	298E	Pe	ON	0	1	N			
+298F	298F	Ps	ON	0	1	N			
+2990	2990	Pe	ON	0	1	N			
+2991	2991	Ps	ON	0	1	N			
+2992	2992	Pe	ON	0	1	N			
+2993	2993	Ps	ON	0	1	N			
+2994	2994	Pe	ON	0	1	N			
+2995	2995	Ps	ON	0	1	N			
+2996	2996	Pe	ON	0	1	N			
+2997	2997	Ps	ON	0	1	N			
+2998	2998	Pe	ON	0	1	N			
+2999	299A	Sm	ON	0	0	N			
+299B	29AF	Sm	ON	0	1	N			
+29B0	29B7	Sm	ON	0	0	N			
+29B8	29B8	Sm	ON	0	1	N			
+29B9	29BF	Sm	ON	0	0	N			
+29C0	29C5	Sm	ON	0	1	N			
+29C6	29C8	Sm	ON	0	0	N			
+29C9	29C9	Sm	ON	0	1	N			
+29CA	29CD	Sm	ON	0	0	N			
+29CE	29D2	Sm	ON	0	1	N			
+29D3	29D3	Sm	ON	0	0	N			
+29D4	29D5	Sm	ON	0	1	N			
+29D6	29D7	Sm	ON	0	0	N			
+29D8	29D8	Ps	ON	0	1	N			
+29D9	29D9	Pe	ON	0	1	N			
+29DA	29DA	Ps	ON	0	1	N			
+29DB	29DB	Pe	ON	0	1	N			
+29DC	29DC	Sm	ON	0	1	N			
+29DD	29E0	Sm	ON	0	0	N			
+29E1	29E1	Sm	ON	0	1	N			
+29E2	29E2	Sm	ON	0	0	N			
+29E3	29E5	Sm	ON	0	1	N			
+29E6	29E7	Sm	ON	0	0	N			
+29E8	29E9	Sm	ON	0	1	N			
+29EA	29F3	Sm	ON	0	0	N			
+29F4	29F9	Sm	ON	0	1	N			
+29FA	29FB	Sm	ON	0	0	N			
+29FC	29FC	Ps	ON	0	1	N			
+29FD	29FD	Pe	ON	0	1	N			
+29FE	2A09	Sm	ON	0	0	N			
+2A0A	2A1C	Sm	ON	0	1	N			
+2A1D	2A1D	Sm	ON	0	0	N			
+2A1E	2A21	Sm	ON	0	1	N			
+2A22	2A23	Sm	ON	0	0	N			
+2A24	2A24	Sm	ON	0	1	N			
+2A25	2A25	Sm	ON	0	0	N			
+2A26	2A26	Sm	ON	0	1	N			
+2A27	2A28	Sm	ON	0	0	N			
+2A29	2A29	Sm	ON	0	1	N			
+2A2A	2A2A	Sm	ON	0	0	N			
+2A2B	2A2E	Sm	ON	0	1	N			
+2A2F	2A33	Sm	ON	0	0	N			
+2A34	2A35	Sm	ON	0	1	N			
+2A36	2A3B	Sm	ON	0	0	N			
+2A3C	2A3E	Sm	ON	0	1	N			
+2A3F	2A56	Sm	ON	0	0	N			
+2A57	2A58	Sm	ON	0	1	N			
+2A59	2A63	Sm	ON	0	0	N			
+2A64	2A65	Sm	ON	0	1	N			
+2A66	2A69	Sm	ON	0	0	N			
+2A6A	2A6D	Sm	ON	0	1	N			
+2A6E	2A6E	Sm	ON	0	0	N			
+2A6F	2A70	Sm	ON	0	1	N			
+2A71	2A72	Sm	ON	0	0	N			
+2A73	2A74	Sm	ON	0	1	N			
+2A75	2A78	Sm	ON	0	0	N			
+2A79	2AA3	Sm	ON	0	1	N			
+2AA4	2AA5	Sm	ON	0	0	N			
+2AA6	2AAD	Sm	ON	0	1	N			
+2AAE	2AAE	Sm	ON	0	0	N			
+2AAF	2AD6	Sm	ON	0	1	N			
+2AD7	2ADB	Sm	ON	0	0	N			
+2ADC	2ADC	Sm	ON	0	1	N			
+2ADD	2ADD	Sm	ON	0	0	N			
+2ADE	2ADE	Sm	ON	0	1	N			
+2ADF	2AE1	Sm	ON	0	0	N			
+2AE2	2AE6	Sm	ON	0	1	N			
+2AE7	2AEB	Sm	ON	0	0	N			
+2AEC	2AEE	Sm	ON	0	1	N			
+2AEF	2AF2	Sm	ON	0	0	N			
+2AF3	2AF3	Sm	ON	0	1	N			
+2AF4	2AF6	Sm	ON	0	0	N			
+2AF7	2AFB	Sm	ON	0	1	N			
+2AFC	2AFC	Sm	ON	0	0	N			
+2AFD	2AFD	Sm	ON	0	1	N			
+2AFE	2AFF	Sm	ON	0	0	N			
+2B00	2E7F	Cn		0	0	N			
+2E80	2E99	So	ON	0	0	W			
+2E9A	2E9A	Cn		0	0	N			
+2E9B	2EF3	So	ON	0	0	W			
+2EF4	2EFF	Cn		0	0	N			
+2F00	2FD5	So	ON	0	0	W			
+2FD6	2FEF	Cn		0	0	N			
+2FF0	2FFB	So	ON	0	0	W			
+2FFC	2FFF	Cn		0	0	N			
+3000	3000	Zs	WS	0	0	F			
+3001	3003	Po	ON	0	0	W			
+3004	3004	So	ON	0	0	W			
+3005	3005	Lm	L	0	0	W			
+3006	3006	Lo	L	0	0	W			
+3007	3007	Nl	L	0	0	W			0
+3008	3008	Ps	ON	0	1	W			
+3009	3009	Pe	ON	0	1	W			
+300A	300A	Ps	ON	0	1	W			
+300B	300B	Pe	ON	0	1	W			
+300C	300C	Ps	ON	0	1	W			
+300D	300D	Pe	ON	0	1	W			
+300E	300E	Ps	ON	0	1	W			
+300F	300F	Pe	ON	0	1	W			
+3010	3010	Ps	ON	0	1	W			
+3011	3011	Pe	ON	0	1	W			
+3012	3013	So	ON	0	0	W			
+3014	3014	Ps	ON	0	1	W			
+3015	3015	Pe	ON	0	1	W			
+3016	3016	Ps	ON	0	1	W			
+3017	3017	Pe	ON	0	1	W			
+3018	3018	Ps	ON	0	1	W			
+3019	3019	Pe	ON	0	1	W			
+301A	301A	Ps	ON	0	1	W			
+301B	301B	Pe	ON	0	1	W			
+301C	301C	Pd	ON	0	0	W			
+301D	301D	Ps	ON	0	0	W			
+301E	301F	Pe	ON	0	0	W			
+3020	3020	So	ON	0	0	W			
+3021	3021	Nl	L	0	0	W			1
+3022	3022	Nl	L	0	0	W			2
+3023	3023	Nl	L	0	0	W			3
+3024	3024	Nl	L	0	0	W			4
+3025	3025	Nl	L	0	0	W			5
+3026	3026	Nl	L	0	0	W			6
+3027	3027	Nl	L	0	0	W			7
+3028	3028	Nl	L	0	0	W			8
+3029	3029	Nl	L	0	0	W			9
+302A	302A	Mn	NSM	218	0	W			
+302B	302B	Mn	NSM	228	0	W			
+302C	302C	Mn	NSM	232	0	W			
+302D	302D	Mn	NSM	222	0	W			
+302E	302F	Mn	NSM	224	0	W			
+3030	3030	Pd	ON	0	0	W			
+3031	3035	Lm	L	0	0	W			
+3036	3037	So	ON	0	0	W			
+3038	3038	Nl	L	0	0	W			10
+3039	3039	Nl	L	0	0	W			20
+303A	303A	Nl	L	0	0	W			30
+303B	303B	Lm	L	0	0	W			
+303C	303C	Lo	L	0	0	W			
+303D	303D	Po	ON	0	0	W			
+303E	303E	So	ON	0	0	W			
+303F	303F	So	ON	0	0	N			
+3040	3040	Cn		0	0	N			
+3041	3096	Lo	L	0	0	W			
+3097	3098	Cn		0	0	N			
+3099	309A	Mn	NSM	8	0	W			
+309B	309C	Sk	ON	0	0	W			
+309D	309E	Lm	L	0	0	W			
+309F	309F	Lo	L	0	0	W			
+30A0	30A0	Pd	ON	0	0	W			
+30A1	30FA	Lo	L	0	0	W			
+30FB	30FB	Pc	ON	0	0	W			
+30FC	30FE	Lm	L	0	0	W			
+30FF	30FF	Lo	L	0	0	W			
+3100	3104	Cn		0	0	N			
+3105	312C	Lo	L	0	0	W			
+312D	3130	Cn		0	0	N			
+3131	318E	Lo	L	0	0	W			
+318F	318F	Cn		0	0	N			
+3190	3191	So	L	0	0	W			
+3192	3192	No	L	0	0	W			1
+3193	3193	No	L	0	0	W			2
+3194	3194	No	L	0	0	W			3
+3195	3195	No	L	0	0	W			4
+3196	319F	So	L	0	0	W			
+31A0	31B7	Lo	L	0	0	W			
+31B8	31EF	Cn		0	0	N			
+31F0	31FF	Lo	L	0	0	W			
+3200	321C	So	L	0	0	W			
+321D	321F	Cn		0	0	N			
+3220	3220	No	L	0	0	W			1
+3221	3221	No	L	0	0	W			2
+3222	3222	No	L	0	0	W			3
+3223	3223	No	L	0	0	W			4
+3224	3224	No	L	0	0	W			5
+3225	3225	No	L	0	0	W			6
+3226	3226	No	L	0	0	W			7
+3227	3227	No	L	0	0	W			8
+3228	3228	No	L	0	0	W			9
+3229	3229	No	L	0	0	W			10
+322A	3243	So	L	0	0	W			
+3244	3250	Cn		0	0	N			
+3251	3251	No	ON	0	0	W			21
+3252	3252	No	ON	0	0	W			22
+3253	3253	No	ON	0	0	W			23
+3254	3254	No	ON	0	0	W			24
+3255	3255	No	ON	0	0	W			25
+3256	3256	No	ON	0	0	W			26
+3257	3257	No	ON	0	0	W			27
+3258	3258	No	ON	0	0	W			28
+3259	3259	No	ON	0	0	W			29
+325A	325A	No	ON	0	0	W			30
+325B	325B	No	ON	0	0	W			31
+325C	325C	No	ON	0	0	W			32
+325D	325D	No	ON	0	0	W			33
+325E	325E	No	ON	0	0	W			34
+325F	325F	No	ON	0	0	W			35
+3260	327B	So	L	0	0	W			
+327C	327E	Cn		0	0	N			
+327F	327F	So	L	0	0	W			
+3280	3280	No	L	0	0	W			1
+3281	3281	No	L	0	0	W			2
+3282	3282	No	L	0	0	W			3
+3283	3283	No	L	0	0	W			4
+3284	3284	No	L	0	0	W			5
+3285	3285	No	L	0	0	W			6
+3286	3286	No	L	0	0	W			7
+3287	3287	No	L	0	0	W			8
+3288	3288	No	L	0	0	W			9
+3289	3289	No	L	0	0	W			10
+328A	32B0	So	L	0	0	W			
+32B1	32B1	No	ON	0	0	W			36
+32B2	32B2	No	ON	0	0	W			37
+32B3	32B3	No	ON	0	0	W			38
+32B4	32B4	No	ON	0	0	W			39
+32B5	32B5	No	ON	0	0	W			40
+32B6	32B6	No	ON	0	0	W			41
+32B7	32B7	No	ON	0	0	W			42
+32B8	32B8	No	ON	0	0	W			43
+32B9	32B9	No	ON	0	0	W			44
+32BA	32BA	No	ON	0	0	W			45
+32BB	32BB	No	ON	0	0	W			46
+32BC	32BC	No	ON	0	0	W			47
+32BD	32BD	No	ON	0	0	W			48
+32BE	32BE	No	ON	0	0	W			49
+32BF	32BF	No	ON	0	0	W			50
+32C0	32CB	So	L	0	0	W			
+32CC	32CF	Cn		0	0	N			
+32D0	32FE	So	L	0	0	W			
+32FF	32FF	Cn		0	0	N			
+3300	3376	So	L	0	0	W			
+3377	337A	Cn		0	0	N			
+337B	33DD	So	L	0	0	W			
+33DE	33DF	Cn		0	0	N			
+33E0	33FE	So	L	0	0	W			
+33FF	33FF	Cn		0	0	N			
+3400	4DB5	Lo	L	0	0	W			
+4DB6	4DFF	Cn		0	0	N			
+4E00	4E00	Lo	L	0	0	W			1
+4E01	4E02	Lo	L	0	0	W			
+4E03	4E03	Lo	L	0	0	W			7
+4E04	4E06	Lo	L	0	0	W			
+4E07	4E07	Lo	L	0	0	W			10000
+4E08	4E08	Lo	L	0	0	W			
+4E09	4E09	Lo	L	0	0	W			3
+4E0A	4E5C	Lo	L	0	0	W			
+4E5D	4E5D	Lo	L	0	0	W			9
+4E5E	4E8B	Lo	L	0	0	W			
+4E8C	4E8C	Lo	L	0	0	W			2
+4E8D	4E93	Lo	L	0	0	W			
+4E94	4E94	Lo	L	0	0	W			5
+4E95	4EAB	Lo	L	0	0	W			
+4EAC	4EAC	Lo	L	0	0	W			10000000000000000
+4EAD	4EBE	Lo	L	0	0	W			
+4EBF	4EBF	Lo	L	0	0	W			100000000
+4EC0	4EDE	Lo	L	0	0	W			
+4EDF	4EDF	Lo	L	0	0	W			1000
+4EE0	4F0C	Lo	L	0	0	W			
+4F0D	4F0D	Lo	L	0	0	W			5
+4F0E	4F6F	Lo	L	0	0	W			
+4F70	4F70	Lo	L	0	0	W			100
+4F71	5103	Lo	L	0	0	W			
+5104	5104	Lo	L	0	0	W			100000000
+5105	5145	Lo	L	0	0	W			
+5146	5146	Lo	L	0	0	W			1000000000000
+5147	5168	Lo	L	0	0	W			
+5169	5169	Lo	L	0	0	W			2
+516A	516A	Lo	L	0	0	W			
+516B	516B	Lo	L	0	0	W			8
+516C	516C	Lo	L	0	0	W			
+516D	516D	Lo	L	0	0	W			6
+516E	5340	Lo	L	0	0	W			
+5341	5341	Lo	L	0	0	W			10
+5342	5342	Lo	L	0	0	W			
+5343	5343	Lo	L	0	0	W			1000
+5344	5344	Lo	L	0	0	W			
+5345	5345	Lo	L	0	0	W			30
+5346	53C0	Lo	L	0	0	W			
+53C1	53C3	Lo	L	0	0	W			3
+53C4	56DA	Lo	L	0	0	W			
+56DB	56DB	Lo	L	0	0	W			4
+56DC	5792	Lo	L	0	0	W			
+5793	5793	Lo	L	0	0	W			100000000000000000000
+5794	58F0	Lo	L	0	0	W			
+58F1	58F1	Lo	L	0	0	W			1
+58F2	58F8	Lo	L	0	0	W			
+58F9	58F9	Lo	L	0	0	W			1
+58FA	5EFE	Lo	L	0	0	W			
+5EFF	5EFF	Lo	L	0	0	W			20
+5F00	5F0B	Lo	L	0	0	W			
+5F0C	5F0C	Lo	L	0	0	W			1
+5F0D	5F0D	Lo	L	0	0	W			2
+5F0E	5F0E	Lo	L	0	0	W			3
+5F0F	5F0F	Lo	L	0	0	W			
+5F10	5F10	Lo	L	0	0	W			2
+5F11	62FD	Lo	L	0	0	W			
+62FE	62FE	Lo	L	0	0	W			10
+62FF	634B	Lo	L	0	0	W			
+634C	634C	Lo	L	0	0	W			8
+634D	67D1	Lo	L	0	0	W			
+67D2	67D2	Lo	L	0	0	W			7
+67D3	7395	Lo	L	0	0	W			
+7396	7396	Lo	L	0	0	W			9
+7397	767D	Lo	L	0	0	W			
+767E	767E	Lo	L	0	0	W			100
+767F	8085	Lo	L	0	0	W			
+8086	8086	Lo	L	0	0	W			4
+8087	842B	Lo	L	0	0	W			
+842C	842C	Lo	L	0	0	W			10000
+842D	8CAD	Lo	L	0	0	W			
+8CAE	8CAE	Lo	L	0	0	W			2
+8CAF	8D2F	Lo	L	0	0	W			
+8D30	8D30	Lo	L	0	0	W			2
+8D31	9645	Lo	L	0	0	W			
+9646	9646	Lo	L	0	0	W			6
+9647	964B	Lo	L	0	0	W			
+964C	964C	Lo	L	0	0	W			100
+964D	9677	Lo	L	0	0	W			
+9678	9678	Lo	L	0	0	W			6
+9679	96F5	Lo	L	0	0	W			
+96F6	96F6	Lo	L	0	0	W			0
+96F7	9FA5	Lo	L	0	0	W			
+9FA6	9FFF	Cn		0	0	N			
+A000	A48C	Lo	L	0	0	W			
+A48D	A48F	Cn		0	0	N			
+A490	A4C6	So	ON	0	0	W			
+A4C7	A61F	Cn		0	0	N			
+A620	A620	Cn		0	0	N		0	
+A621	A621	Cn		0	0	N		1	
+A622	A622	Cn		0	0	N		2	
+A623	A623	Cn		0	0	N		3	
+A624	A624	Cn		0	0	N		4	
+A625	A625	Cn		0	0	N		5	
+A626	A626	Cn		0	0	N		6	
+A627	A627	Cn		0	0	N		7	
+A628	A628	Cn		0	0	N		8	
+A629	A629	Cn		0	0	N		9	
+A62A	A8CF	Cn		0	0	N			
+A8D0	A8D0	Cn		0	0	N		0	
+A8D1	A8D1	Cn		0	0	N		1	
+A8D2	A8D2	Cn		0	0	N		2	
+A8D3	A8D3	Cn		0	0	N		3	
+A8D4	A8D4	Cn		0	0	N		4	
+A8D5	A8D5	Cn		0	0	N		5	
+A8D6	A8D6	Cn		0	0	N		6	
+A8D7	A8D7	Cn		0	0	N		7	
+A8D8	A8D8	Cn		0	0	N		8	
+A8D9	A8D9	Cn		0	0	N		9	
+A8DA	A8FF	Cn		0	0	N			
+A900	A900	Cn		0	0	N		0	
+A901	A901	Cn		0	0	N		1	
+A902	A902	Cn		0	0	N		2	
+A903	A903	Cn		0	0	N		3	
+A904	A904	Cn		0	0	N		4	
+A905	A905	Cn		0	0	N		5	
+A906	A906	Cn		0	0	N		6	
+A907	A907	Cn		0	0	N		7	
+A908	A908	Cn		0	0	N		8	
+A909	A909	Cn		0	0	N		9	
+A90A	A9CF	Cn		0	0	N			
+A9D0	A9D0	Cn		0	0	N		0	
+A9D1	A9D1	Cn		0	0	N		1	
+A9D2	A9D2	Cn		0	0	N		2	
+A9D3	A9D3	Cn		0	0	N		3	
+A9D4	A9D4	Cn		0	0	N		4	
+A9D5	A9D5	Cn		0	0	N		5	
+A9D6	A9D6	Cn		0	0	N		6	
+A9D7	A9D7	Cn		0	0	N		7	
+A9D8	A9D8	Cn		0	0	N		8	
+A9D9	A9D9	Cn		0	0	N		9	
+A9DA	A9EF	Cn		0	0	N			
+A9F0	A9F0	Cn		0	0	N		0	
+A9F1	A9F1	Cn		0	0	N		1	
+A9F2	A9F2	Cn		0	0	N		2	
+A9F3	A9F3	Cn		0	0	N		3	
+A9F4	A9F4	Cn		0	0	N		4	
+A9F5	A9F5	Cn		0	0	N		5	
+A9F6	A9F6	Cn		0	0	N		6	
+A9F7	A9F7	Cn		0	0	N		7	
+A9F8	A9F8	Cn		0	0	N		8	
+A9F9	A9F9	Cn		0	0	N		9	
+A9FA	AA4F	Cn		0	0	N			
+AA50	AA50	Cn		0	0	N		0	
+AA51	AA51	Cn		0	0	N		1	
+AA52	AA52	Cn		0	0	N		2	
+AA53	AA53	Cn		0	0	N		3	
+AA54	AA54	Cn		0	0	N		4	
+AA55	AA55	Cn		0	0	N		5	
+AA56	AA56	Cn		0	0	N		6	
+AA57	AA57	Cn		0	0	N		7	
+AA58	AA58	Cn		0	0	N		8	
+AA59	AA59	Cn		0	0	N		9	
+AA5A	ABEF	Cn		0	0	N			
+ABF0	ABF0	Cn		0	0	N		0	
+ABF1	ABF1	Cn		0	0	N		1	
+ABF2	ABF2	Cn		0	0	N		2	
+ABF3	ABF3	Cn		0	0	N		3	
+ABF4	ABF4	Cn		0	0	N		4	
+ABF5	ABF5	Cn		0	0	N		5	
+ABF6	ABF6	Cn		0	0	N		6	
+ABF7	ABF7	Cn		0	0	N		7	
+ABF8	ABF8	Cn		0	0	N		8	
+ABF9	ABF9	Cn		0	0	N		9	
+ABFA	ABFF	Cn		0	0	N			
+AC00	D7A3	Lo	L	0	0	W			
+D7A4	D7FF	Cn		0	0	N			
+D800	DFFF	Cs	L	0	0	N			
+E000	F8FF	Co	L	0	0	A			
+F900	FA2D	Lo	L	0	0	W			
+FA2E	FA2F	Cn		0	0	N			
+FA30	FA6A	Lo	L	0	0	W			
+FA6B	FA6D	Cn		0	0	N			
+FA6E	FA6F	Cn		0	0	W			
+FA70	FAD9	Cn		0	0	N			
+FADA	FAFF	Cn		0	0	W			
+FB00	FB06	Ll	L	0	0	N			
+FB07	FB12	Cn		0	0	N			
+FB13	FB17	Ll	L	0	0	N			
+FB18	FB1C	Cn		0	0	N			
+FB1D	FB1D	Lo	R	0	0	N			
+FB1E	FB1E	Mn	NSM	26	0	N			
+FB1F	FB28	Lo	R	0	0	N			
+FB29	FB29	Sm	ET	0	0	N			
+FB2A	FB36	Lo	R	0	0	N			
+FB37	FB37	Cn		0	0	N			
+FB38	FB3C	Lo	R	0	0	N			
+FB3D	FB3D	Cn		0	0	N			
+FB3E	FB3E	Lo	R	0	0	N			
+FB3F	FB3F	Cn		0	0	N			
+FB40	FB41	Lo	R	0	0	N			
+FB42	FB42	Cn		0	0	N			
+FB43	FB44	Lo	R	0	0	N			
+FB45	FB45	Cn		0	0	N			
+FB46	FB4F	Lo	R	0	0	N			
+FB50	FBB1	Lo	AL	0	0	N			
+FBB2	FBD2	Cn		0	0	N			
+FBD3	FD3D	Lo	AL	0	0	N			
+FD3E	FD3E	Ps	ON	0	0	N			
+FD3F	FD3F	Pe	ON	0	0	N			
+FD40	FD4F	Cn		0	0	N			
+FD50	FD8F	Lo	AL	0	0	N			
+FD90	FD91	Cn		0	0	N			
+FD92	FDC7	Lo	AL	0	0	N			
+FDC8	FDEF	Cn		0	0	N			
+FDF0	FDFB	Lo	AL	0	0	N			
+FDFC	FDFC	Sc	AL	0	0	N			
+FDFD	FDFF	Cn		0	0	N			
+FE00	FE0F	Mn	NSM	0	0	A			
+FE10	FE1F	Cn		0	0	N			
+FE20	FE23	Mn	NSM	230	0	N			
+FE24	FE2F	Cn		0	0	N			
+FE30	FE30	Po	ON	0	0	W			
+FE31	FE32	Pd	ON	0	0	W			
+FE33	FE34	Pc	ON	0	0	W			
+FE35	FE35	Ps	ON	0	0	W			
+FE36	FE36	Pe	ON	0	0	W			
+FE37	FE37	Ps	ON	0	0	W			
+FE38	FE38	Pe	ON	0	0	W			
+FE39	FE39	Ps	ON	0	0	W			
+FE3A	FE3A	Pe	ON	0	0	W			
+FE3B	FE3B	Ps	ON	0	0	W			
+FE3C	FE3C	Pe	ON	0	0	W			
+FE3D	FE3D	Ps	ON	0	0	W			
+FE3E	FE3E	Pe	ON	0	0	W			
+FE3F	FE3F	Ps	ON	0	0	W			
+FE40	FE40	Pe	ON	0	0	W			
+FE41	FE41	Ps	ON	0	0	W			
+FE42	FE42	Pe	ON	0	0	W			
+FE43	FE43	Ps	ON	0	0	W			
+FE44	FE44	Pe	ON	0	0	W			
+FE45	FE46	Po	ON	0	0	W			
+FE47	FE48	Cn		0	0	N			
+FE49	FE4C	Po	ON	0	0	W			
+FE4D	FE4F	Pc	ON	0	0	W			
+FE50	FE50	Po	CS	0	0	W			
+FE51	FE51	Po	ON	0	0	W			
+FE52	FE52	Po	CS	0	0	W			
+FE53	FE53	Cn		0	0	N			
+FE54	FE54	Po	ON	0	0	W			
+FE55	FE55	Po	CS	0	0	W			
+FE56	FE57	Po	ON	0	0	W			
+FE58	FE58	Pd	ON	0	0	W			
+FE59	FE59	Ps	ON	0	0	W			
+FE5A	FE5A	Pe	ON	0	0	W			
+FE5B	FE5B	Ps	ON	0	0	W			
+FE5C	FE5C	Pe	ON	0	0	W			
+FE5D	FE5D	Ps	ON	0	0	W			
+FE5E	FE5E	Pe	ON	0	0	W			
+FE5F	FE5F	Po	ET	0	0	W			
+FE60	FE61	Po	ON	0	0	W			
+FE62	FE62	Sm	ET	0	0	W			
+FE63	FE63	Pd	ET	0	0	W			
+FE64	FE66	Sm	ON	0	0	W			
+FE67	FE67	Cn		0	0	N			
+FE68	FE68	Po	ON	0	0	W			
+FE69	FE69	Sc	ET	0	0	W			
+FE6A	FE6A	Po	ET	0	0	W			
+FE6B	FE6B	Po	ON	0	0	W			
+FE6C	FE6F	Cn		0	0	N			
+FE70	FE74	Lo	AL	0	0	N			
+FE75	FE75	Cn		0	0	N			
+FE76	FEFC	Lo	AL	0	0	N			
+FEFD	FEFE	Cn		0	0	N			
+FEFF	FEFF	Cf	BN	0	0	N			
+FF00	FF00	Cn		0	0	N			
+FF01	FF02	Po	ON	0	0	F			
+FF03	FF03	Po	ET	0	0	F			
+FF04	FF04	Sc	ET	0	0	F			
+FF05	FF05	Po	ET	0	0	F			
+FF06	FF07	Po	ON	0	0	F			
+FF08	FF08	Ps	ON	0	1	F			
+FF09	FF09	Pe	ON	0	1	F			
+FF0A	FF0A	Po	ON	0	0	F			
+FF0B	FF0B	Sm	ET	0	0	F			
+FF0C	FF0C	Po	CS	0	0	F			
+FF0D	FF0D	Pd	ET	0	0	F			
+FF0E	FF0E	Po	CS	0	0	F			
+FF0F	FF0F	Po	ES	0	0	F			
+FF10	FF10	Nd	EN	0	0	F	0	0	0
+FF11	FF11	Nd	EN	0	0	F	1	1	1
+FF12	FF12	Nd	EN	0	0	F	2	2	2
+FF13	FF13	Nd	EN	0	0	F	3	3	3
+FF14	FF14	Nd	EN	0	0	F	4	4	4
+FF15	FF15	Nd	EN	0	0	F	5	5	5
+FF16	FF16	Nd	EN	0	0	F	6	6	6
+FF17	FF17	Nd	EN	0	0	F	7	7	7
+FF18	FF18	Nd	EN	0	0	F	8	8	8
+FF19	FF19	Nd	EN	0	0	F	9	9	9
+FF1A	FF1A	Po	CS	0	0	F			
+FF1B	FF1B	Po	ON	0	0	F			
+FF1C	FF1C	Sm	ON	0	1	F			
+FF1D	FF1D	Sm	ON	0	0	F			
+FF1E	FF1E	Sm	ON	0	1	F			
+FF1F	FF20	Po	ON	0	0	F			
+FF21	FF3A	Lu	L	0	0	F			
+FF3B	FF3B	Ps	ON	0	1	F			
+FF3C	FF3C	Po	ON	0	0	F			
+FF3D	FF3D	Pe	ON	0	1	F			
+FF3E	FF3E	Sk	ON	0	0	F			
+FF3F	FF3F	Pc	ON	0	0	F			
+FF40	FF40	Sk	ON	0	0	F			
+FF41	FF5A	Ll	L	0	0	F			
+FF5B	FF5B	Ps	ON	0	1	F			
+FF5C	FF5C	Sm	ON	0	0	F			
+FF5D	FF5D	Pe	ON	0	1	F			
+FF5E	FF5E	Sm	ON	0	0	F			
+FF5F	FF5F	Ps	ON	0	1	F			
+FF60	FF60	Pe	ON	0	1	F			
+FF61	FF61	Po	ON	0	0	H			
+FF62	FF62	Ps	ON	0	1	H			
+FF63	FF63	Pe	ON	0	1	H			
+FF64	FF64	Po	ON	0	0	H			
+FF65	FF65	Pc	ON	0	0	H			
+FF66	FF6F	Lo	L	0	0	H			
+FF70	FF70	Lm	L	0	0	H			
+FF71	FF9D	Lo	L	0	0	H			
+FF9E	FF9F	Lm	L	0	0	H			
+FFA0	FFBE	Lo	L	0	0	H			
+FFBF	FFC1	Cn		0	0	N			
+FFC2	FFC7	Lo	L	0	0	H			
+FFC8	FFC9	Cn		0	0	N			
+FFCA	FFCF	Lo	L	0	0	H			
+FFD0	FFD1	Cn		0	0	N			
+FFD2	FFD7	Lo	L	0	0	H			
+FFD8	FFD9	Cn		0	0	N			
+FFDA	FFDC	Lo	L	0	0	H			
+FFDD	FFDF	Cn		0	0	N			
+FFE0	FFE1	Sc	ET	0	0	F			
+FFE2	FFE2	Sm	ON	0	0	F			
+FFE3	FFE3	Sk	ON	0	0	F			
+FFE4	FFE4	So	ON	0	0	F			
+FFE5	FFE6	Sc	ET	0	0	F			
+FFE7	FFE7	Cn		0	0	N			
+FFE8	FFE8	So	ON	0	0	H			
+FFE9	FFEC	Sm	ON	0	0	H			
+FFED	FFEE	So	ON	0	0	H			
+FFEF	FFF8	Cn		0	0	N			
+FFF9	FFFB	Cf	BN	0	0	N			
+FFFC	FFFC	So	ON	0	0	N			
+FFFD	FFFD	So	ON	0	0	A			
+FFFE	102FF	Cn		0	0	N			
+10300	1031E	Lo	L	0	0	N			
+1031F	1031F	Cn		0	0	N			
+10320	10320	No	L	0	0	N			1
+10321	10321	No	L	0	0	N			5
+10322	10322	No	L	0	0	N			10
+10323	10323	No	L	0	0	N			50
+10324	1032F	Cn		0	0	N			
+10330	10349	Lo	L	0	0	N			
+1034A	1034A	Nl	L	0	0	N			
+1034B	103FF	Cn		0	0	N			
+10400	10425	Lu	L	0	0	N			
+10426	10427	Cn		0	0	N			
+10428	1044D	Ll	L	0	0	N			
+1044E	1049F	Cn		0	0	N			
+104A0	104A0	Cn		0	0	N		0	
+104A1	104A1	Cn		0	0	N		1	
+104A2	104A2	Cn		0	0	N		2	
+104A3	104A3	Cn		0	0	N		3	
+104A4	104A4	Cn		0	0	N		4	
+104A5	104A5	Cn		0	0	N		5	
+104A6	104A6	Cn		0	0	N		6	
+104A7	104A7	Cn		0	0	N		7	
+104A8	104A8	Cn		0	0	N		8	
+104A9	104A9	Cn		0	0	N		9	
+104AA	10A3F	Cn		0	0	N			
+10A40	10A40	Cn		0	0	N		1	
+10A41	10A41	Cn		0	0	N		2	
+10A42	10A42	Cn		0	0	N		3	
+10A43	10A43	Cn		0	0	N		4	
+10A44	10D2F	Cn		0	0	N			
+10D30	10D30	Cn		0	0	N		0	
+10D31	10D31	Cn		0	0	N		1	
+10D32	10D32	Cn		0	0	N		2	
+10D33	10D33	Cn		0	0	N		3	
+10D34	10D34	Cn		0	0	N		4	
+10D35	10D35	Cn		0	0	N		5	
+10D36	10D36	Cn		0	0	N		6	
+10D37	10D37	Cn		0	0	N		7	
+10D38	10D38	Cn		0	0	N		8	
+10D39	10D39	Cn		0	0	N		9	
+10D3A	10D3F	Cn		0	0	N			
+10D40	10D40	Cn		0	0	N		0	
+10D41	10D41	Cn		0	0	N		1	
+10D42	10D42	Cn		0	0	N		2	
+10D43	10D43	Cn		0	0	N		3	
+10D44	10D44	Cn		0	0	N		4	
+10D45	10D45	Cn		0	0	N		5	
+10D46	10D46	Cn		0	0	N		6	
+10D47	10D47	Cn		0	0	N		7	
+10D48	10D48	Cn		0	0	N		8	
+10D49	10D49	Cn		0	0	N		9	
+10D4A	10E5F	Cn		0	0	N			
+10E60	10E60	Cn		0	0	N		1	
+10E61	10E61	Cn		0	0	N		2	
+10E62	10E62	Cn		0	0	N		3	
+10E63	10E63	Cn		0	0	N		4	
+10E64	10E64	Cn		0	0	N		5	
+10E65	10E65	Cn		0	0	N		6	
+10E66	10E66	Cn		0	0	N		7	
+10E67	10E67	Cn		0	0	N		8	
+10E68	10E68	Cn		0	0	N		9	
+10E69	11051	Cn		0	0	N			
+11052	11052	Cn		0	0	N		1	
+11053	11053	Cn		0	0	N		2	
+11054	11054	Cn		0	0	N		3	
+11055	11055	Cn		0	0	N		4	
+11056	11056	Cn		0	0	N		5	
+11057	11057	Cn		0	0	N		6	
+11058	11058	Cn		0	0	N		7	
+11059	11059	Cn		0	0	N		8	
+1105A	1105A	Cn		0	0	N		9	
+1105B	11065	Cn		0	0	N			
+11066	11066	Cn		0	0	N		0	
+11067	11067	Cn		0	0	N		1	
+11068	11068	Cn		0	0	N		2	
+11069	11069	Cn		0	0	N		3	
+1106A	1106A	Cn		0	0	N		4	
+1106B	1106B	Cn		0	0	N		5	
+1106C	1106C	Cn		0	0	N		6	
+1106D	1106D	Cn		0	0	N		7	
+1106E	1106E	Cn		0	0	N		8	
+1106F	1106F	Cn		0	0	N		9	
+11070	110EF	Cn		0	0	N			
+110F0	110F0	Cn		0	0	N		0	
+110F1	110F1	Cn		0	0	N		1	
+110F2	110F2	Cn		0	0	N		2	
+110F3	110F3	Cn		0	0	N		3	
+110F4	110F4	Cn		0	0	N		4	
+110F5	110F5	Cn		0	0	N		5	
+110F6	110F6	Cn		0	0	N		6	
+110F7	110F7	Cn		0	0	N		7	
+110F8	110F8	Cn		0	0	N		8	
+110F9	110F9	Cn		0	0	N		9	
+110FA	11135	Cn		0	0	N			
+11136	11136	Cn		0	0	N		0	
+11137	11137	Cn		0	0	N		1	
+11138	11138	Cn		0	0	N		2	
+11139	11139	Cn		0	0	N		3	
+1113A	1113A	Cn		0	0	N		4	
+1113B	1113B	Cn		0	0	N		5	
+1113C	1113C	Cn		0	0	N		6	
+1113D	1113D	Cn		0	0	N		7	
+1113E	1113E	Cn		0	0	N		8	
+1113F	1113F	Cn		0	0	N		9	
+11140	111CF	Cn		0	0	N			
+111D0	111D0	Cn		0	0	N		0	
+111D1	111D1	Cn		0	0	N		1	
+111D2	111D2	Cn		0	0	N		2	
+111D3	111D3	Cn		0	0	N		3	
+111D4	111D4	Cn		0	0	N		4	
+111D5	111D5	Cn		0	0	N		5	
+111D6	111D6	Cn		0	0	N		6	
+111D7	111D7	Cn		0	0	N		7	
+111D8	111D8	Cn		0	0	N		8	
+111D9	111D9	Cn		0	0	N		9	
+111DA	112EF	Cn		0	0	N			
+112F0	112F0	Cn		0	0	N		0	
+112F1	112F1	Cn		0	0	N		1	
+112F2	112F2	Cn		0	0	N		2	
+112F3	112F3	Cn		0	0	N		3	
+112F4	112F4	Cn		0	0	N		4	
+112F5	112F5	Cn		0	0	N		5	
+112F6	112F6	Cn		0	0	N		6	
+112F7	112F7	Cn		0	0	N		7	
+112F8	112F8	Cn		0	0	N		8	
+112F9	112F9	Cn		0	0	N		9	
+112FA	1144F	Cn		0	0	N			
+11450	11450	Cn		0	0	N		0	
+11451	11451	Cn		0	0	N		1	
+11452	11452	Cn		0	0	N		2	
+11453	11453	Cn		0	0	N		3	
+11454	11454	Cn		0	0	N		4	
+11455	11455	Cn		0	0	N		5	
+11456	11456	Cn		0	0	N		6	
+11457	11457	Cn		0	0	N		7	
+11458	11458	Cn		0	0	N		8	
+11459	11459	Cn		0	0	N		9	
+1145A	114CF	Cn		0	0	N			
+114D0	114D0	Cn		0	0	N		0	
+114D1	114D1	Cn		0	0	N		1	
+114D2	114D2	Cn		0	0	N		2	
+114D3	114D3	Cn		0	0	N		3	
+114D4	114D4	Cn		0	0	N		4	
+114D5	114D5	Cn		0	0	N		5	
+114D6	114D6	Cn		0	0	N		6	
+114D7	114D7	Cn		0	0	N		7	
+114D8	114D8	Cn		0	0	N		8	
+114D9	114D9	Cn		0	0	N		9	
+114DA	1164F	Cn		0	0	N			
+11650	11650	Cn		0	0	N		0	
+11651	11651	Cn		0	0	N		1	
+11652	11652	Cn		0	0	N		2	
+11653	11653	Cn		0	0	N		3	
+11654	11654	Cn		0	0	N		4	
+11655	11655	Cn		0	0	N		5	
+11656	11656	Cn		0	0	N		6	
+11657	11657	Cn		0	0	N		7	
+11658	11658	Cn		0	0	N		8	
+11659	11659	Cn		0	0	N		9	
+1165A	116BF	Cn		0	0	N			
+116C0	116C0	Cn		0	0	N		0	
+116C1	116C1	Cn		0	0	N		1	
+116C2	116C2	Cn		0	0	N		2	
+116C3	116C3	Cn		0	0	N		3	
+116C4	116C4	Cn		0	0	N		4	
+116C5	116C5	Cn		0	0	N		5	
+116C6	116C6	Cn		0	0	N		6	
+116C7	116C7	Cn		0	0	N		7	
+116C8	116C8	Cn		0	0	N		8	
+116C9	116C9	Cn		0	0	N		9	
+116CA	116CF	Cn		0	0	N			
+116D0	116D0	Cn		0	0	N		0	
+116D1	116D1	Cn		0	0	N		1	
+116D2	116D2	Cn		0	0	N		2	
+116D3	116D3	Cn		0	0	N		3	
+116D4	116D4	Cn		0	0	N		4	
+116D5	116D5	Cn		0	0	N		5	
+116D6	116D6	Cn		0	0	N		6	
+116D7	116D7	Cn		0	0	N		7	
+116D8	116D8	Cn		0	0	N		8	
+116D9	116D9	Cn		0	0	N		9	
+116DA	116DA	Cn		0	0	N		0	
+116DB	116DB	Cn		0	0	N		1	
+116DC	116DC	Cn		0	0	N		2	
+116DD	116DD	Cn		0	0	N		3	
+116DE	116DE	Cn		0	0	N		4	
+116DF	116DF	Cn		0	0	N		5	
+116E0	116E0	Cn		0	0	N		6	
+116E1	116E1	Cn		0	0	N		7	
+116E2	116E2	Cn		0	0	N		8	
+116E3	116E3	Cn		0	0	N		9	
+116E4	1172F	Cn		0	0	N			
+11730	11730	Cn		0	0	N		0	
+11731	11731	Cn		0	0	N		1	
+11732	11732	Cn		0	0	N		2	
+11733	11733	Cn		0	0	N		3	
+11734	11734	Cn		0	0	N		4	
+11735	11735	Cn		0	0	N		5	
+11736	11736	Cn		0	0	N		6	
+11737	11737	Cn		0	0	N		7	
+11738	11738	Cn		0	0	N		8	
+11739	11739	Cn		0	0	N		9	
+1173A	118DF	Cn		0	0	N			
+118E0	118E0	Cn		0	0	N		0	
+118E1	118E1	Cn		0	0	N		1	
+118E2	118E2	Cn		0	0	N		2	
+118E3	118E3	Cn		0	0	N		3	
+118E4	118E4	Cn		0	0	N		4	
+118E5	118E5	Cn		0	0	N		5	
+118E6	118E6	Cn		0	0	N		6	
+118E7	118E7	Cn		0	0	N		7	
+118E8	118E8	Cn		0	0	N		8	
+118E9	118E9	Cn		0	0	N		9	
+118EA	1194F	Cn		0	0	N			
+11950	11950	Cn		0	0	N		0	
+11951	11951	Cn		0	0	N		1	
+11952	11952	Cn		0	0	N		2	
+11953	11953	Cn		0	0	N		3	
+11954	11954	Cn		0	0	N		4	
+11955	11955	Cn		0	0	N		5	
+11956	11956	Cn		0	0	N		6	
+11957	11957	Cn		0	0	N		7	
+11958	11958	Cn		0	0	N		8	
+11959	11959	Cn		0	0	N		9	
+1195A	11BEF	Cn		0	0	N			
+11BF0	11BF0	Cn		0	0	N		0	
+11BF1	11BF1	Cn		0	0	N		1	
+11BF2	11BF2	Cn		0	0	N		2	
+11BF3	11BF3	Cn		0	0	N		3	
+11BF4	11BF4	Cn		0	0	N		4	
+11BF5	11BF5	Cn		0	0	N		5	
+11BF6	11BF6	Cn		0	0	N		6	
+11BF7	11BF7	Cn		0	0	N		7	
+11BF8	11BF8	Cn		0	0	N		8	
+11BF9	11BF9	Cn		0	0	N		9	
+11BFA	11C4F	Cn		0	0	N			
+11C50	11C50	Cn		0	0	N		0	
+11C51	11C51	Cn		0	0	N		1	
+11C52	11C52	Cn		0	0	N		2	
+11C53	11C53	Cn		0	0	N		3	
+11C54	11C54	Cn		0	0	N		4	
+11C55	11C55	Cn		0	0	N		5	
+11C56	11C56	Cn		0	0	N		6	
+11C57	11C57	Cn		0	0	N		7	
+11C58	11C58	Cn		0	0	N		8	
+11C59	11C59	Cn		0	0	N		9	
+11C5A	11D4F	Cn		0	0	N			
+11D50	11D50	Cn		0	0	N		0	
+11D51	11D51	Cn		0	0	N		1	
+11D52	11D52	Cn		0	0	N		2	
+11D53	11D53	Cn		0	0	N		3	
+11D54	11D54	Cn		0	0	N		4	
+11D55	11D55	Cn		0	0	N		5	
+11D56	11D56	Cn		0	0	N		6	
+11D57	11D57	Cn		0	0	N		7	
+11D58	11D58	Cn		0	0	N		8	
+11D59	11D59	Cn		0	0	N		9	
+11D5A	11D9F	Cn		0	0	N			
+11DA0	11DA0	Cn		0	0	N		0	
+11DA1	11DA1	Cn		0	0	N		1	
+11DA2	11DA2	Cn		0	0	N		2	
+11DA3	11DA3	Cn		0	0	N		3	
+11DA4	11DA4	Cn		0	0	N		4	
+11DA5	11DA5	Cn		0	0	N		5	
+11DA6	11DA6	Cn		0	0	N		6	
+11DA7	11DA7	Cn		0	0	N		7	
+11DA8	11DA8	Cn		0	0	N		8	
+11DA9	11DA9	Cn		0	0	N		9	
+11DAA	11F4F	Cn		0	0	N			
+11F50	11F50	Cn		0	0	N		0	
+11F51	11F51	Cn		0	0	N		1	
+11F52	11F52	Cn		0	0	N		2	
+11F53	11F53	Cn		0	0	N		3	
+11F54	11F54	Cn		0	0	N		4	
+11F55	11F55	Cn		0	0	N		5	
+11F56	11F56	Cn		0	0	N		6	
+11F57	11F57	Cn		0	0	N		7	
+11F58	11F58	Cn		0	0	N		8	
+11F59	11F59	Cn		0	0	N		9	
+11F5A	1612F	Cn		0	0	N			
+16130	16130	Cn		0	0	N		0	
+16131	16131	Cn		0	0	N		1	
+16132	16132	Cn		0	0	N		2	
+16133	16133	Cn		0	0	N		3	
+16134	16134	Cn		0	0	N		4	
+16135	16135	Cn		0	0	N		5	
+16136	16136	Cn		0	0	N		6	
+16137	16137	Cn		0	0	N		7	
+16138	16138	Cn		0	0	N		8	
+16139	16139	Cn		0	0	N		9	
+1613A	16A5F	Cn		0	0	N			
+16A60	16A60	Cn		0	0	N		0	
+16A61	16A61	Cn		0	0	N		1	
+16A62	16A62	Cn		0	0	N		2	
+16A63	16A63	Cn		0	0	N		3	
+16A64	16A64	Cn		0	0	N		4	
+16A65	16A65	Cn		0	0	N		5	
+16A66	16A66	Cn		0	0	N		6	
+16A67	16A67	Cn		0	0	N		7	
+16A68	16A68	Cn		0	0	N		8	
+16A69	16A69	Cn		0	0	N		9	
+16A6A	16ABF	Cn		0	0	N			
+16AC0	16AC0	Cn		0	0	N		0	
+16AC1	16AC1	Cn		0	0	N		1	
+16AC2	16AC2	Cn		0	0	N		2	
+16AC3	16AC3	Cn		0	0	N		3	
+16AC4	16AC4	Cn		0	0	N		4	
+16AC5	16AC5	Cn		0	0	N		5	
+16AC6	16AC6	Cn		0	0	N		6	
+16AC7	16AC7	Cn		0	0	N		7	
+16AC8	16AC8	Cn		0	0	N		8	
+16AC9	16AC9	Cn		0	0	N		9	
+16ACA	16B4F	Cn		0	0	N			
+16B50	16B50	Cn		0	0	N		0	
+16B51	16B51	Cn		0	0	N		1	
+16B52	16B52	Cn		0	0	N		2	
+16B53	16B53	Cn		0	0	N		3	
+16B54	16B54	Cn		0	0	N		4	
+16B55	16B55	Cn		0	0	N		5	
+16B56	16B56	Cn		0	0	N		6	
+16B57	16B57	Cn		0	0	N		7	
+16B58	16B58	Cn		0	0	N		8	
+16B59	16B59	Cn		0	0	N		9	
+16B5A	16D6F	Cn		0	0	N			
+16D70	16D70	Cn		0	0	N		0	
+16D71	16D71	Cn		0	0	N		1	
+16D72	16D72	Cn		0	0	N		2	
+16D73	16D73	Cn		0	0	N		3	
+16D74	16D74	Cn		0	0	N		4	
+16D75	16D75	Cn		0	0	N		5	
+16D76	16D76	Cn		0	0	N		6	
+16D77	16D77	Cn		0	0	N		7	
+16D78	16D78	Cn		0	0	N		8	
+16D79	16D79	Cn		0	0	N		9	
+16D7A	1CCEF	Cn		0	0	N			
+1CCF0	1CCF0	Cn		0	0	N		0	
+1CCF1	1CCF1	Cn		0	0	N		1	
+1CCF2	1CCF2	Cn		0	0	N		2	
+1CCF3	1CCF3	Cn		0	0	N		3	
+1CCF4	1CCF4	Cn		0	0	N		4	
+1CCF5	1CCF5	Cn		0	0	N		5	
+1CCF6	1CCF6	Cn		0	0	N		6	
+1CCF7	1CCF7	Cn		0	0	N		7	
+1CCF8	1CCF8	Cn		0	0	N		8	
+1CCF9	1CCF9	Cn		0	0	N		9	
+1CCFA	1CFFF	Cn		0	0	N			
+1D000	1D0F5	So	L	0	0	N			
+1D0F6	1D0FF	Cn		0	0	N			
+1D100	1D126	So	L	0	0	N			
+1D127	1D129	Cn		0	0	N			
+1D12A	1D164	So	L	0	0	N			
+1D165	1D166	Mc	L	216	0	N			
+1D167	1D169	Mn	NSM	1	0	N			
+1D16A	1D16C	So	L	0	0	N			
+1D16D	1D16D	Mc	L	226	0	N			
+1D16E	1D172	Mc	L	216	0	N			
+1D173	1D17A	Cf	BN	0	0	N			
+1D17B	1D182	Mn	NSM	220	0	N			
+1D183	1D184	So	L	0	0	N			
+1D185	1D189	Mn	NSM	230	0	N			
+1D18A	1D18B	Mn	NSM	220	0	N			
+1D18C	1D1A9	So	L	0	0	N			
+1D1AA	1D1AD	Mn	NSM	230	0	N			
+1D1AE	1D1DD	So	L	0	0	N			
+1D1DE	1D3FF	Cn		0	0	N			
+1D400	1D419	Lu	L	0	0	N			
+1D41A	1D433	Ll	L	0	0	N			
+1D434	1D44D	Lu	L	0	0	N			
+1D44E	1D454	Ll	L	0	0	N			
+1D455	1D455	Cn		0	0	N			
+1D456	1D467	Ll	L	0	0	N			
+1D468	1D481	Lu	L	0	0	N			
+1D482	1D49B	Ll	L	0	0	N			
+1D49C	1D49C	Lu	L	0	0	N			
+1D49D	1D49D	Cn		0	0	N			
+1D49E	1D49F	Lu	L	0	0	N			
+1D4A0	1D4A1	Cn		0	0	N			
+1D4A2	1D4A2	Lu	L	0	0	N			
+1D4A3	1D4A4	Cn		0	0	N			
+1D4A5	1D4A6	Lu	L	0	0	N			
+1D4A7	1D4A8	Cn		0	0	N			
+1D4A9	1D4AC	Lu	L	0	0	N			
+1D4AD	1D4AD	Cn		0	0	N			
+1D4AE	1D4B5	Lu	L	0	0	N			
+1D4B6	1D4B9	Ll	L	0	0	N			
+1D4BA	1D4BA	Cn		0	0	N			
+1D4BB	1D4BB	Ll	L	0	0	N			
+1D4BC	1D4BC	Cn		0	0	N			
+1D4BD	1D4C0	Ll	L	0	0	N			
+1D4C1	1D4C1	Cn		0	0	N			
+1D4C2	1D4C3	Ll	L	0	0	N			
+1D4C4	1D4C4	Cn		0	0	N			
+1D4C5	1D4CF	Ll	L	0	0	N			
+1D4D0	1D4E9	Lu	L	0	0	N			
+1D4EA	1D503	Ll	L	0	0	N			
+1D504	1D505	Lu	L	0	0	N			
+1D506	1D506	Cn		0	0	N			
+1D507	1D50A	Lu	L	0	0	N			
+1D50B	1D50C	Cn		0	0	N			
+1D50D	1D514	Lu	L	0	0	N			
+1D515	1D515	Cn		0	0	N			
+1D516	1D51C	Lu	L	0	0	N			
+1D51D	1D51D	Cn		0	0	N			
+1D51E	1D537	Ll	L	0	0	N			
+1D538	1D539	Lu	L	0	0	N			
+1D53A	1D53A	Cn		0	0	N			
+1D53B	1D53E	Lu	L	0	0	N			
+1D53F	1D53F	Cn		0	0	N			
+1D540	1D544	Lu	L	0	0	N			
+1D545	1D545	Cn		0	0	N			
+1D546	1D546	Lu	L	0	0	N			
+1D547	1D549	Cn		0	0	N			
+1D54A	1D550	Lu	L	0	0	N			
+1D551	1D551	Cn		0	0	N			
+1D552	1D56B	Ll	L	0	0	N			
+1D56C	1D585	Lu	L	0	0	N			
+1D586	1D59F	Ll	L	0	0	N			
+1D5A0	1D5B9	Lu	L	0	0	N			
+1D5BA	1D5D3	Ll	L	0	0	N			
+1D5D4	1D5ED	Lu	L	0	0	N			
+1D5EE	1D607	Ll	L	0	0	N			
+1D608	1D621	Lu	L	0	0	N			
+1D622	1D63B	Ll	L	0	0	N			
+1D63C	1D655	Lu	L	0	0	N			
+1D656	1D66F	Ll	L	0	0	N			
+1D670	1D689	Lu	L	0	0	N			
+1D68A	1D6A3	Ll	L	0	0	N			
+1D6A4	1D6A7	Cn		0	0	N			
+1D6A8	1D6C0	Lu	L	0	0	N			
+1D6C1	1D6C1	Sm	L	0	0	N			
+1D6C2	1D6DA	Ll	L	0	0	N			
+1D6DB	1D6DB	Sm	L	0	0	N			
+1D6DC	1D6E1	Ll	L	0	0	N			
+1D6E2	1D6FA	Lu	L	0	0	N			
+1D6FB	1D6FB	Sm	L	0	0	N			
+1D6FC	1D714	Ll	L	0	0	N			
+1D715	1D715	Sm	L	0	0	N			
+1D716	1D71B	Ll	L	0	0	N			
+1D71C	1D734	Lu	L	0	0	N			
+1D735	1D735	Sm	L	0	0	N			
+1D736	1D74E	Ll	L	0	0	N			
+1D74F	1D74F	Sm	L	0	0	N			
+1D750	1D755	Ll	L	0	0	N			
+1D756	1D76E	Lu	L	0	0	N			
+1D76F	1D76F	Sm	L	0	0	N			
+1D770	1D788	Ll	L	0	0	N			
+1D789	1D789	Sm	L	0	0	N			
+1D78A	1D78F	Ll	L	0	0	N			
+1D790	1D7A8	Lu	L	0	0	N			
+1D7A9	1D7A9	Sm	L	0	0	N			
+1D7AA	1D7C2	Ll	L	0	0	N			
+1D7C3	1D7C3	Sm	L	0	0	N			
+1D7C4	1D7C9	Ll	L	0	0	N			
+1D7CA	1D7CD	Cn		0	0	N			
+1D7CE	1D7CE	Nd	EN	0	0	N	0	0	0
+1D7CF	1D7CF	Nd	EN	0	0	N	1	1	1
+1D7D0	1D7D0	Nd	EN	0	0	N	2	2	2
+1D7D1	1D7D1	Nd	EN	0	0	N	3	3	3
+1D7D2	1D7D2	Nd	EN	0	0	N	4	4	4
+1D7D3	1D7D3	Nd	EN	0	0	N	5	5	5
+1D7D4	1D7D4	Nd	EN	0	0	N	6	6	6
+1D7D5	1D7D5	Nd	EN	0	0	N	7	7	7
+1D7D6	1D7D6	Nd	EN	0	0	N	8	8	8
+1D7D7	1D7D7	Nd	EN	0	0	N	9	9	9
+1D7D8	1D7D8	Nd	EN	0	0	N	0	0	0
+1D7D9	1D7D9	Nd	EN	0	0	N	1	1	1
+1D7DA	1D7DA	Nd	EN	0	0	N	2	2	2
+1D7DB	1D7DB	Nd	EN	0	0	N	3	3	3
+1D7DC	1D7DC	Nd	EN	0	0	N	4	4	4
+1D7DD	1D7DD	Nd	EN	0	0	N	5	5	5
+1D7DE	1D7DE	Nd	EN	0	0	N	6	6	6
+1D7DF	1D7DF	Nd	EN	0	0	N	7	7	7
+1D7E0	1D7E0	Nd	EN	0	0	N	8	8	8
+1D7E1	1D7E1	Nd	EN	0	0	N	9	9	9
+1D7E2	1D7E2	Nd	EN	0	0	N	0	0	0
+1D7E3	1D7E3	Nd	EN	0	0	N	1	1	1
+1D7E4	1D7E4	Nd	EN	0	0	N	2	2	2
+1D7E5	1D7E5	Nd	EN	0	0	N	3	3	3
+1D7E6	1D7E6	Nd	EN	0	0	N	4	4	4
+1D7E7	1D7E7	Nd	EN	0	0	N	5	5	5
+1D7E8	1D7E8	Nd	EN	0	0	N	6	6	6
+1D7E9	1D7E9	Nd	EN	0	0	N	7	7	7
+1D7EA	1D7EA	Nd	EN	0	0	N	8	8	8
+1D7EB	1D7EB	Nd	EN	0	0	N	9	9	9
+1D7EC	1D7EC	Nd	EN	0	0	N	0	0	0
+1D7ED	1D7ED	Nd	EN	0	0	N	1	1	1
+1D7EE	1D7EE	Nd	EN	0	0	N	2	2	2
+1D7EF	1D7EF	Nd	EN	0	0	N	3	3	3
+1D7F0	1D7F0	Nd	EN	0	0	N	4	4	4
+1D7F1	1D7F1	Nd	EN	0	0	N	5	5	5
+1D7F2	1D7F2	Nd	EN	0	0	N	6	6	6
+1D7F3	1D7F3	Nd	EN	0	0	N	7	7	7
+1D7F4	1D7F4	Nd	EN	0	0	N	8	8	8
+1D7F5	1D7F5	Nd	EN	0	0	N	9	9	9
+1D7F6	1D7F6	Nd	EN	0	0	N	0	0	0
+1D7F7	1D7F7	Nd	EN	0	0	N	1	1	1
+1D7F8	1D7F8	Nd	EN	0	0	N	2	2	2
+1D7F9	1D7F9	Nd	EN	0	0	N	3	3	3
+1D7FA	1D7FA	Nd	EN	0	0	N	4	4	4
+1D7FB	1D7FB	Nd	EN	0	0	N	5	5	5
+1D7FC	1D7FC	Nd	EN	0	0	N	6	6	6
+1D7FD	1D7FD	Nd	EN	0	0	N	7	7	7
+1D7FE	1D7FE	Nd	EN	0	0	N	8	8	8
+1D7FF	1D7FF	Nd	EN	0	0	N	9	9	9
+1D800	1E13F	Cn		0	0	N			
+1E140	1E140	Cn		0	0	N		0	
+1E141	1E141	Cn		0	0	N		1	
+1E142	1E142	Cn		0	0	N		2	
+1E143	1E143	Cn		0	0	N		3	
+1E144	1E144	Cn		0	0	N		4	
+1E145	1E145	Cn		0	0	N		5	
+1E146	1E146	Cn		0	0	N		6	
+1E147	1E147	Cn		0	0	N		7	
+1E148	1E148	Cn		0	0	N		8	
+1E149	1E149	Cn		0	0	N		9	
+1E14A	1E2EF	Cn		0	0	N			
+1E2F0	1E2F0	Cn		0	0	N		0	
+1E2F1	1E2F1	Cn		0	0	N		1	
+1E2F2	1E2F2	Cn		0	0	N		2	
+1E2F3	1E2F3	Cn		0	0	N		3	
+1E2F4	1E2F4	Cn		0	0	N		4	
+1E2F5	1E2F5	Cn		0	0	N		5	
+1E2F6	1E2F6	Cn		0	0	N		6	
+1E2F7	1E2F7	Cn		0	0	N		7	
+1E2F8	1E2F8	Cn		0	0	N		8	
+1E2F9	1E2F9	Cn		0	0	N		9	
+1E2FA	1E4EF	Cn		0	0	N			
+1E4F0	1E4F0	Cn		0	0	N		0	
+1E4F1	1E4F1	Cn		0	0	N		1	
+1E4F2	1E4F2	Cn		0	0	N		2	
+1E4F3	1E4F3	Cn		0	0	N		3	
+1E4F4	1E4F4	Cn		0	0	N		4	
+1E4F5	1E4F5	Cn		0	0	N		5	
+1E4F6	1E4F6	Cn		0	0	N		6	
+1E4F7	1E4F7	Cn		0	0	N		7	
+1E4F8	1E4F8	Cn		0	0	N		8	
+1E4F9	1E4F9	Cn		0	0	N		9	
+1E4FA	1E5F0	Cn		0	0	N			
+1E5F1	1E5F1	Cn		0	0	N		0	
+1E5F2	1E5F2	Cn		0	0	N		1	
+1E5F3	1E5F3	Cn		0	0	N		2	
+1E5F4	1E5F4	Cn		0	0	N		3	
+1E5F5	1E5F5	Cn		0	0	N		4	
+1E5F6	1E5F6	Cn		0	0	N		5	
+1E5F7	1E5F7	Cn		0	0	N		6	
+1E5F8	1E5F8	Cn		0	0	N		7	
+1E5F9	1E5F9	Cn		0	0	N		8	
+1E5FA	1E5FA	Cn		0	0	N		9	
+1E5FB	1E94F	Cn		0	0	N			
+1E950	1E950	Cn		0	0	N		0	
+1E951	1E951	Cn		0	0	N		1	
+1E952	1E952	Cn		0	0	N		2	
+1E953	1E953	Cn		0	0	N		3	
+1E954	1E954	Cn		0	0	N		4	
+1E955	1E955	Cn		0	0	N		5	
+1E956	1E956	Cn		0	0	N		6	
+1E957	1E957	Cn		0	0	N		7	
+1E958	1E958	Cn		0	0	N		8	
+1E959	1E959	Cn		0	0	N		9	
+1E95A	1F0FF	Cn		0	0	N			
+1F100	1F101	Cn		0	0	N		0	
+1F102	1F102	Cn		0	0	N		1	
+1F103	1F103	Cn		0	0	N		2	
+1F104	1F104	Cn		0	0	N		3	
+1F105	1F105	Cn		0	0	N		4	
+1F106	1F106	Cn		0	0	N		5	
+1F107	1F107	Cn		0	0	N		6	
+1F108	1F108	Cn		0	0	N		7	
+1F109	1F109	Cn		0	0	N		8	
+1F10A	1F10A	Cn		0	0	N		9	
+1F10B	1FBEF	Cn		0	0	N			
+1FBF0	1FBF0	Cn		0	0	N		0	
+1FBF1	1FBF1	Cn		0	0	N		1	
+1FBF2	1FBF2	Cn		0	0	N		2	
+1FBF3	1FBF3	Cn		0	0	N		3	
+1FBF4	1FBF4	Cn		0	0	N		4	
+1FBF5	1FBF5	Cn		0	0	N		5	
+1FBF6	1FBF6	Cn		0	0	N		6	
+1FBF7	1FBF7	Cn		0	0	N		7	
+1FBF8	1FBF8	Cn		0	0	N		8	
+1FBF9	1FBF9	Cn		0	0	N		9	
+1FBFA	1FFFF	Cn		0	0	N			
+20000	2A6D6	Lo	L	0	0	W			
+2A6D7	2A6DF	Cn		0	0	N			
+2A6E0	2A6FF	Cn		0	0	W			
+2A700	2B739	Cn		0	0	N			
+2B73A	2B73F	Cn		0	0	W			
+2B740	2B81D	Cn		0	0	N			
+2B81E	2B81F	Cn		0	0	W			
+2B820	2CEA1	Cn		0	0	N			
+2CEA2	2CEAF	Cn		0	0	W			
+2CEB0	2EBE0	Cn		0	0	N			
+2EBE1	2EBEF	Cn		0	0	W			
+2EBF0	2EE5D	Cn		0	0	N			
+2EE5E	2F7FF	Cn		0	0	W			
+2F800	2FA1D	Lo	L	0	0	W			
+2FA1E	2FFFD	Cn		0	0	W			
+2FFFE	3134A	Cn		0	0	N			
+3134B	3134F	Cn		0	0	W			
+31350	323AF	Cn		0	0	N			
+323B0	3FFFD	Cn		0	0	W			
+3FFFE	E0000	Cn		0	0	N			
+E0001	E0001	Cf	BN	0	0	N			
+E0002	E001F	Cn		0	0	N			
+E0020	E007F	Cf	BN	0	0	N			
+E0080	EFFFF	Cn		0	0	N			
+F0000	FFFFD	Co	L	0	0	A			
+FFFFE	FFFFF	Cn		0	0	N			
+100000	10FFFD	Co	L	0	0	A			
+10FFFE	10FFFF	Cn		0	0	N			

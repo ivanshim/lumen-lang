@@ -567,6 +567,7 @@ pub enum Builtin {
     Multibyte,
     Sre,
     UnicodeDecomposition,
+    UnicodeQuery(u8, bool),
     ModuleLoad,
     MemberSet,
     MemberGet,

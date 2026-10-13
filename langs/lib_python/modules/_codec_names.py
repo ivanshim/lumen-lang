@@ -44,6 +44,13 @@ def _load():
 
 
 def name(number):
+    try:
+        import unicodedata
+    except ImportError:
+        raise ImportError('PyCapsule_Import could not import module "unicodedata"')
+    return unicodedata.name(chr(number), None)
+
+def _table_name(number):
     global _forward
     if _forward is None:
         _load()

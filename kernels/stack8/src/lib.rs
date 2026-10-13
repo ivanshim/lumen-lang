@@ -1,5 +1,6 @@
 pub mod strings;
 mod unicode;
+mod ucd;
 // Stack kernel, third design: eight words, the five of stack5 and three
 // fused from them where the measurements said a word earns its place.
 //
@@ -462,6 +463,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     // from the very start, so that `sys.modules[__name__]` is the
     // program's own namespace and not a name gone missing.
     machine.register_main_module();
+    if source.contains("\\N{") { machine.unicode_tokens(&source).map_err(|(said, _, _)| said)?; }
     // The room counted against the program is counted from here: what
     // went before was the host reading the program and setting up the
     // machine that runs it, and belongs to the host rather than to the
