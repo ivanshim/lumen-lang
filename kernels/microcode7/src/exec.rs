@@ -27908,9 +27908,9 @@ impl Machine<'_> {
         }
         // The builtins word stands among the module's own names, the
         // same way the world's own dictionary keeps it.
-        let natives = self.natives_kept();
+        let natives = self.default_builtin_namespace();
         for word in self.table.strings("ext.system.module.builtins") {
-            if !members.iter().any(|(name, _)| name == word) { members.push((word.clone(), Value::Shared(natives.clone()))); }
+            if !members.iter().any(|(name, _)| name == word) { members.push((word.clone(), natives.clone())); }
         }
         if !self.rules.words_ext_system_module_name.is_empty() {
             for word in ["__spec__", "__loader__", "__cached__"] {
@@ -28845,6 +28845,13 @@ impl<'a> Machine<'a> {
             }
         }
         Ok(result)
+    }
+
+    fn default_builtin_namespace(&mut self) -> Value {
+        match self.imported.get("builtins") {
+            Some(Value::Thing(module)) if !self.importing.contains("builtins") => Value::Attributes(module.clone()),
+            _ => Value::Shared(self.natives_kept()),
+        }
     }
 
     /// The dictionary of every builtin word, made once.
@@ -30619,7 +30626,7 @@ impl<'a> Machine<'a> {
                 }
             }
             if already.is_none() {
-                let natives = self.natives_kept();
+                let natives = self.default_builtin_namespace();
                 let value = outer.borrow().clone();
                 if matches!(&value, Value::Thing(_)) && self.appointed(&value, 12).is_none() && Self::underlying(&value).is_none() {
                     let kind = match &value { Value::Thing(t) => t.blueprint().name.clone(), other => other.kind_word() };
@@ -30629,7 +30636,7 @@ impl<'a> Machine<'a> {
                     Some(Value::Shared(cell) | Value::Mutable(cell, _)) if matches!(&*cell.borrow(), Value::Dict(_)) => cell,
                     _ => outer.clone(),
                 };
-                if let Err(escape) = self.booked_put(&destination, &word, Some(Value::Shared(natives))) {
+                if let Err(escape) = self.booked_put(&destination, &word, Some(natives)) {
                     self.got_away = Some(escape);
                     return Err(self.bad_answer());
                 }
@@ -30656,7 +30663,7 @@ impl<'a> Machine<'a> {
             if let Some(key) = self.table.single("ext.system.module.builtins").map(str::to_owned) {
                 let present = self.builtin_entry(&book, &key).map_err(|escape| self.carried_native_fault(escape))?;
                 if present.is_none() {
-                    let defaults = Value::Shared(self.natives_kept());
+                    let defaults = self.default_builtin_namespace();
                     self.booked_put(&book, &key, Some(defaults)).map_err(|escape| self.carried_native_fault(escape))?;
                 }
             }

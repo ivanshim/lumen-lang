@@ -27324,9 +27324,9 @@ impl Engine<'_> {
         fields.push(("\0module-owner".into(), Value::text(path)));
         // The builtins word stands among the module's own names, as the
         // reference keeps it in every module's dictionary.
-        let natives = self.natives_book();
+        let natives = self.native_dict();
         for word in &self.lang.module_builtins {
-            if !fields.iter().any(|(key, _)| key == word) { fields.push((word.clone(), Value::Bond(natives.clone()))); }
+            if !fields.iter().any(|(key, _)| key == word) { fields.push((word.clone(), natives.clone())); }
         }
         // Every name the text can reach keeps its own cell under this
         // hidden map, so a binding taken away and put back reaches the
@@ -28218,6 +28218,11 @@ impl Engine<'_> {
     /// The dictionary of builtin words itself, as a value a program may
     /// hold and ask after.
     fn native_dict(&mut self) -> Value {
+        if !self.importing.contains("builtins") {
+            if let Some(Value::Object(module)) = self.modules.get("builtins") {
+                return Value::Fields(module.clone());
+            }
+        }
         Value::Bond(self.natives_book())
     }
 
@@ -30088,7 +30093,7 @@ impl Engine<'_> {
                 }
             }
             if existing.is_none() {
-                let natives = self.natives_book();
+                let natives = self.native_dict();
                 let owner = outer.borrow().clone();
                 if matches!(&owner, Value::Object(_)) && self.special_value(&owner, 12).is_none() && Self::worth_of(&owner).is_none() {
                     let kind = match &owner { Value::Object(o) => o.class_now().name.clone(), other => other.core_kind() };
@@ -30098,7 +30103,7 @@ impl Engine<'_> {
                     Some(Value::Bond(cell) | Value::Collection(cell, _)) if matches!(&*cell.borrow(), Value::Map(_)) => cell,
                     _ => outer.clone(),
                 };
-                if let Err(failure) = self.book_put(&target, word, Some(Value::Bond(natives))) {
+                if let Err(failure) = self.book_put(&target, word, Some(natives)) {
                     self.carried = Some(failure);
                     return Err(self.special_fault());
                 }
