@@ -75,8 +75,10 @@ binding. The inventory is an explicit assertion from the original run's owner;
 its hashes verify the files, not which interpreter produced them. If the
 original release cannot be established, rerun into a new directory instead.
 
-Lambda reference staging collects flat modules through `reference_entry.py`
-under their `test` package namespace, then calls the normal unittest loader.
-This gives `load_tests` callbacks and doctest the module globals established
-by collection, including the real module name. Executable test packages keep
-their `-m` entry point. No reference source is rewritten during staging.
+Lambda reference staging honors flat files' unittest script entry points.
+Files without such an entry point, and files collecting caller-relative
+`DocTestSuite` examples, are imported through `reference_entry.py` before
+unittest collection. The choice follows Python calls and import bindings,
+not reference filenames. Ordinary imports establish the caller's globals and
+loader metadata; doctest does not manufacture module names. Executable test
+packages keep their `-m` entry point. No reference source is rewritten.
