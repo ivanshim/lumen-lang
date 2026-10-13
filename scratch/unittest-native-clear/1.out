@@ -1,0 +1,1 @@
+native assertion cleanup avoids imports and retains the Python fallback

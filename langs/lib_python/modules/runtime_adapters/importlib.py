@@ -1,7 +1,10 @@
-# Imports use the native reader; cache invalidation reaches registered finders.
+# Runtime imports inspect live search paths and invalidate registered finders.
 
 
+
+# Discard the native manifest index after changes to library symlinks.
 def invalidate_caches():
+    __load_module('', 'invalidate')
     import sys
     for finder in list(sys.meta_path):
         if hasattr(finder, "invalidate_caches"):

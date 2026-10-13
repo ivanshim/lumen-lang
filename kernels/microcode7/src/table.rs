@@ -24,7 +24,7 @@ enum Entry {
 }
 
 /// How many places the table keeps to guess where a label is.
-const GUESSES: usize = 1024;
+const GUESSES: usize = 8192;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Infix {
@@ -55,6 +55,10 @@ impl FxHasher {
 }
 
 impl std::hash::Hasher for FxHasher {
+    #[inline]
+    fn write_usize(&mut self, word: usize) {
+        self.add(word);
+    }
     #[inline]
     fn write(&mut self, mut bytes: &[u8]) {
         while bytes.len() >= 8 {

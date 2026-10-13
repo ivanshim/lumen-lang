@@ -4,13 +4,19 @@ _host_class_methods = __class_methods
 _host_clock = __clock
 _host_load_module = __load_module
 _host_program_namespace = __program_namespace
+_host_clear_traceback = __trace_native__
 _traceback_module = None
 
 def _clear_exception_frames(traceback):
-    if traceback is not None:
-        global _traceback_module
-        if _traceback_module is None:
-            _traceback_module = _host_load_module('traceback')
+    if traceback is None:
+        return
+    global _traceback_module
+    if _traceback_module is None:
+        _traceback_module = _host_load_module('traceback', 'cached')
+    if _traceback_module is not None:
+        _traceback_module.clear_frames(traceback)
+    elif not _host_clear_traceback(10, traceback):
+        _traceback_module = _host_load_module('traceback')
         _traceback_module.clear_frames(traceback)
 
 # Assertions and the test lifecycle live beside the modules they serve.

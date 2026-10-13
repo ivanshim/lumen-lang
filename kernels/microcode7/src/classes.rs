@@ -2441,7 +2441,10 @@ impl<'a> Machine<'a> {
                                 Ok(Value::Small(mark))=>{
                                     let mut request=vec![Value::text(&operation),Value::Small(mark)];
                                     request.extend(values.into_iter().skip(1));
-                                    return self.apply_class_member(Value::text("__random"),request);
+                                    // The descriptor already validated this positional native call.
+                                    let result = self.prim(Prim::Chance, "__random", &request);
+                                    if let Some(raised) = self.got_away.take() { return Err(raised); }
+                                    return Ok(result?);
                                 }
                                 Err(error) if !self.missing_member_escape(&error)=>return Err(error),
                                 _=>{},
@@ -3816,8 +3819,37 @@ impl<'a> Machine<'a> {
     /// What a routine holds of its own under a name: its name, full name
     /// or account as the program wrote them, the namespace handed to it,
     /// or an entry of the namespace it keeps.
+    fn routine_member_key(value: &Value) -> Option<(u8, usize, usize)> {
+        match value {
+            Value::Routine(code) => Some((0, Rc::as_ptr(code) as usize, 0)),
+            Value::Bound(code, frame) => Some((1, Rc::as_ptr(code) as usize, Rc::as_ptr(frame) as usize)),
+            Value::Method(code, receiver, _) => Some((2, Rc::as_ptr(code) as usize, Rc::as_ptr(receiver) as usize)),
+            _ => None,
+        }
+    }
+    fn routine_member_weak_key(value: &crate::ghost::Ghost) -> Option<(u8, usize, usize)> {
+        use crate::ghost::Ghost;
+        match value {
+            Ghost::Routine(code) => Some((0, code.as_ptr() as usize, 0)),
+            Ghost::Bound(code, frame) => Some((1, code.as_ptr() as usize, frame.as_ptr() as usize)),
+            Ghost::Method(code, receiver, _) => Some((2, code.as_ptr() as usize, receiver.as_ptr() as usize)),
+            _ => None,
+        }
+    }
+    pub(super) fn reindex_routine_members(&mut self) {
+        self.routine_member_positions = self.routine_members.iter().enumerate()
+            .filter_map(|(at, (key, _))| Self::routine_member_weak_key(key).map(|key| (key, at))).collect();
+    }
+    fn routine_member_index(&self, value: &Value) -> Option<usize> {
+        if let Some(identity) = Self::routine_member_key(value) {
+            let at = *self.routine_member_positions.get(&identity)?;
+            return self.routine_members.get(at).and_then(|(key, _)|
+                key.revive().is_some_and(|key| key.equals(value)).then_some(at));
+        }
+        self.routine_members.iter().position(|(key, _)| key.revive().is_some_and(|key| key.equals(value)))
+    }
     fn routine_holding(&self,value:&Value,key:&str)->Option<Value> {
-        let (_,members)=self.routine_members.iter().find(|(f,_)|f.revive().is_some_and(|key| key.equals(value)))?;
+        let members=&self.routine_members[self.routine_member_index(value)?].1;
         let holds=members.holds.borrow();
         let annotation_key = format!("\0{key}\0");
         if let Some((_, value)) = holds.iter().find(|(word, _)| *word == annotation_key) { return Some(value.clone()); }
@@ -3831,7 +3863,8 @@ impl<'a> Machine<'a> {
         }
     }
     fn routine_holding_names(&self,value:&Value)->Vec<String> {
-        let Some((_,members))=self.routine_members.iter().find(|(f,_)|f.revive().is_some_and(|key| key.equals(value))) else{return Vec::new()};
+        let Some(at)=self.routine_member_index(value) else{return Vec::new()};
+        let members=&self.routine_members[at].1;
         let holds=members.holds.borrow();
         match holds.iter().find(|(k,_)|k==Self::HANDED) {
             Some((_,book))=>match book.settled() {Value::Dict(entries)=>entries.iter().filter_map(|(k,_)|if let Value::Text(t)=k{Some(t.to_string())}else{None}).collect(),_=>Vec::new()},
@@ -4413,7 +4446,7 @@ impl<'a> Machine<'a> {
         fresh
     }
     pub(super) fn routine_storage(&mut self, code: &Value) -> usize {
-        match self.routine_members.iter().position(|(candidate, _)| candidate.revive().is_some_and(|key| key.equals(code))) {
+        match self.routine_member_index(code) {
             Some(found) => found,
             None => {
                 let of = self.common_ancestor(); self.made += 1;
@@ -4421,13 +4454,21 @@ impl<'a> Machine<'a> {
                 let entry = (crate::ghost::ghost_of(code).expect("routine is weakly held"), holder);
                 // Reuse a dead function's slot without moving live indices;
                 // a caller can keep an index while annotation code reenters.
-                if let Some(vacant) = self.routine_members.iter().position(|(key, _)| key.departed()) {
+                let identity = Self::routine_member_weak_key(&entry.0);
+                let at = if let Some(vacant) = self.routine_members.iter().rposition(|(key, _)| key.departed()) {
+                    if let Some(old) = Self::routine_member_weak_key(&self.routine_members[vacant].0) {
+                        if self.routine_member_positions.get(&old) == Some(&vacant) {
+                            self.routine_member_positions.remove(&old);
+                        }
+                    }
                     self.routine_members[vacant] = entry;
                     vacant
                 } else {
                     self.routine_members.push(entry);
                     self.routine_members.len() - 1
-                }
+                };
+                if let Some(identity) = identity { self.routine_member_positions.insert(identity, at); }
+                at
             }
         }
     }
@@ -6190,7 +6231,7 @@ impl<'a> Machine<'a> {
             if key==self.detail("receiver"){return Ok(Value::Thing(t.clone()));}
             if key==self.detail("function"){return Ok(Value::Routine(code.clone()));}
             return self.read_class_member(Value::Routine(code.clone()),key,true);
-        }else if let Value::Routine(_)|Value::Bound(..)=&value {
+        }else if let Value::Routine(original)|Value::Bound(original, _)=&value {
             let (code,room)=self.routine_standing(&value);
             if let Some(held)=self.routine_holding(&value,key){return Ok(held);}
             // The row of type parameters the declaration wrote, made on
@@ -6258,9 +6299,12 @@ impl<'a> Machine<'a> {
                 let reacher=Value::Bound(code.clone(),room.clone());
                 return Ok(Value::tuple(order.into_iter().map(|at|Self::wrap(35,vec![reacher.clone(),Value::Small(at as i64)])).collect()));
             }
-            if key==self.detail("name"){return Ok(self.routine_kept(&value,key,Value::text(&code.ident)));}
-            if key==self.detail("qualified"){let qualified=code.qualification.clone();return Ok(self.routine_kept(&value,key,Value::text(&qualified)));}
-            if key==self.detail("doc"){let fresh=code.doc.as_ref().map_or(Value::Nil,|d|Value::text(d));return Ok(self.routine_kept(&value,key,fresh));}
+            if key==self.detail("name"){return Ok(original.display_name(false));}
+            if key==self.detail("qualified"){return Ok(original.display_name(true));}
+            if key==self.detail("doc") {
+                let Some(doc) = &code.doc else { return Ok(Value::Nil); };
+                return Ok(self.routine_kept(&value,key,Value::text(doc)));
+            }
             if key==self.detail("module"){let place=self.routine_module(&code);return Ok(self.routine_kept(&value,key,place));}
             if key==self.detail("code"){let ran=self.code_run_by(&value);return Ok(self.code_handle(&ran));}
             if key==self.detail("namespace"){let index=self.routine_storage(&value);return Ok(Value::Attributes(self.routine_members[index].1.clone()));}

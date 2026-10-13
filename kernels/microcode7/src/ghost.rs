@@ -74,7 +74,18 @@ impl Ghost {
     }
 
     pub fn departed(&self) -> bool {
-        self.revive().is_none()
+        match self {
+            Ghost::StaticKind(_) | Ghost::Lasting(_) => false,
+            Ghost::Thing(w) => w.strong_count() == 0,
+            Ghost::Cell(w) => w.strong_count() == 0,
+            Ghost::Blueprint(w) => w.strong_count() == 0,
+            Ghost::Walk(w) => w.strong_count() == 0,
+            Ghost::Set(w) => w.strong_count() == 0,
+            Ghost::Bound(p, e) => p.strong_count() == 0 || e.strong_count() == 0,
+            Ghost::Routine(w) => w.strong_count() == 0,
+            Ghost::Method(p, t, identity) => p.strong_count() == 0 || t.strong_count() == 0 || identity.strong_count() == 0,
+            Ghost::WrappedMethod(parts) => parts.strong_count() == 0,
+        }
     }
 }
 
@@ -225,7 +236,17 @@ pub fn release_all_anchors() {
 }
 
 fn anchor_ready() -> bool {
-    ANCHORED.try_with(|all| all.borrow().iter().any(|item| Rc::strong_count(item) == 1)).unwrap_or(false)
+    ANCHORED.try_with(|all| {
+        let all = all.borrow();
+        // Avoid an iterator callback per retained owner at every interpreter step.
+        let mut pending = all.as_slice();
+        while let [a, b, c, d, rest @ ..] = pending {
+            if Rc::strong_count(a) == 1 || Rc::strong_count(b) == 1
+                || Rc::strong_count(c) == 1 || Rc::strong_count(d) == 1 { return true; }
+            pending = rest;
+        }
+        pending.iter().any(|item| Rc::strong_count(item) == 1)
+    }).unwrap_or(false)
 }
 
 /// The method a class bids farewell with, where the language has one.
@@ -725,13 +746,14 @@ impl Knot {
     /// A knot with no place of its own stands for the places it holds:
     /// a bound routine for its frame (the routine itself holds nothing),
     /// a bound method for its thing, a keyed pair for its two values.
-    fn parts(self) -> Vec<Knot> {
-        match self {
-            Knot::Held(Value::Bound(body, env)) => vec![Knot::Held(Value::Routine(body)), Knot::Frame(env)],
-            Knot::Held(Value::Method(body, thing, _)) => vec![Knot::Held(Value::Routine(body)), Knot::Held(Value::Thing(thing))],
-            Knot::Held(Value::Keyed(k, v)) => vec![Knot::Held((*k).clone()), Knot::Held((*v).clone())],
-            other => vec![other],
-        }
+    fn parts(self) -> impl Iterator<Item = Knot> {
+        let (first, second) = match self {
+            Knot::Held(Value::Bound(body, env)) => (Knot::Held(Value::Routine(body)), Some(Knot::Frame(env))),
+            Knot::Held(Value::Method(body, thing, _)) => (Knot::Held(Value::Routine(body)), Some(Knot::Held(Value::Thing(thing)))),
+            Knot::Held(Value::Keyed(k, v)) => (Knot::Held((*k).clone()), Some(Knot::Held((*v).clone()))),
+            other => (other, None),
+        };
+        std::iter::once(first).chain(second)
     }
 }
 
@@ -748,8 +770,8 @@ struct Strand {
 /// and whatever has one, or is reached from something that has one, the
 /// program can still get at. The rest it cannot.
 pub struct Web {
-    strands: HashMap<usize, Strand>,
-    bookkeeping: HashMap<usize, usize>,
+    strands: HashMap<usize, Strand, crate::table::FxBuildHasher>,
+    bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>,
 }
 
 /// An inline value is an engine root even though it has no shared
@@ -792,11 +814,11 @@ impl Web {
 
     /// Woven from the notable things still about.
     pub fn from_notable(extra: Vec<Knot>, live: Vec<Knot>) -> Web {
-        let mut bookkeeping = HashMap::new();
+        let mut bookkeeping = HashMap::default();
         for knot in &extra {
             let parts = match knot {
                 Knot::Held(value) => Knot::Held(value.clone()).parts(),
-                Knot::Frame(room) => vec![Knot::Frame(room.clone())],
+                Knot::Frame(room) => Knot::Frame(room.clone()).parts(),
             };
             for part in parts {
                 if let Some(place) = part.place() { *bookkeeping.entry(place).or_insert(0) += 1; }
@@ -820,8 +842,8 @@ impl Web {
         }
     }
 
-    fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize>) -> Web {
-        let mut strands: HashMap<usize, Strand> = HashMap::new();
+    fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>) -> Web {
+        let mut strands: HashMap<usize, Strand, crate::table::FxBuildHasher> = HashMap::default();
         let mut frontier: Vec<usize> = Vec::new();
         for root in roots.into_iter().flat_map(Knot::parts) {
             if let Some(place) = root.place() {
@@ -857,11 +879,11 @@ impl Web {
         // A bound function's environment can be the live module frame.
         // Its own routine is the part that determines whether the
         // function-attribute record is still owned by the program.
-        let parts = match value {
-            Value::Bound(body, _) => vec![Knot::Held(Value::Routine(body.clone()))],
+        let mut parts = match value {
+            Value::Bound(body, _) => Knot::Held(Value::Routine(body.clone())).parts(),
             other => Knot::Held(other.clone()).parts(),
         };
-        parts.iter().all(|part| {
+        parts.all(|part| {
             part.place().and_then(|place| self.strands.get(&place)).is_some_and(|strand| !strand.reached)
         })
     }

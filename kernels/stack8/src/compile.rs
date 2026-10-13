@@ -43,9 +43,9 @@ thread_local! {
 /// The global names, each with a slot.
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 pub struct Registry {
-    index: HashMap<String, usize>,
-    module_index: HashMap<String, HashMap<String, usize>>,
-    wildcard_index: HashMap<usize, (usize, HashMap<String, usize>)>,
+    index: HashMap<String, usize, crate::value::FxBuildHasher>,
+    module_index: HashMap<String, HashMap<String, usize, crate::value::FxBuildHasher>, crate::value::FxBuildHasher>,
+    wildcard_index: HashMap<usize, (usize, HashMap<String, usize, crate::value::FxBuildHasher>), crate::value::FxBuildHasher>,
     pub idents: Vec<String>,
     /// Whether the next reading is of one expression alone, as text
     /// handed over to be weighed is: nothing may follow it. The mark is
@@ -138,9 +138,7 @@ impl Registry {
             idents: Vec::with_capacity(count),
             ..Self::default()
         };
-        for at in 0..count {
-            registry.idents.push(format!("\0outside:{at}"));
-        }
+        registry.leave_outside(count);
         registry
     }
 
@@ -1238,9 +1236,7 @@ impl<'a> Compiler<'a> {
         }
         // The class's kind word where the unit holds no name of its own
         // for it is the hidden cell an enclosing unit closes over.
-        if !self.piece().idents.iter().any(|named| named == name) {
-            if let Some(cell) = self.class_cell_read(name) { return Cell { moving, ..cell }; }
-        }
+        if let Some(cell) = self.class_cell_read(name) { return Cell { moving, ..cell }; }
         if self.lang.closes_over && !self.discovering {
             if let Some(cell) = self.enclosing_cell(self.pieces.len() - 1, name) { return Cell { moving, ..cell }; }
         }
@@ -1556,7 +1552,7 @@ impl<'a> Compiler<'a> {
     fn class_cell_read(&mut self, name: &str) -> Option<Cell> {
         let words = self.lang.class_details.get("kind")?;
         if self.lang.class_builder.is_empty() || !self.lang.closes_over || self.discovering || !words.iter().any(|word| word == name) { return None; }
-        if !self.in_class_body() { return None; }
+        if !self.in_class_body() || self.piece().idents.iter().any(|named| named == name) { return None; }
         let at = self.gathered.len().checked_sub(2)?;
         self.gathered[at].needs_class_cell = true;
         self.gathered[at].class_cell_protocol = true;
@@ -13500,7 +13496,7 @@ fn operand_of(w: &Instr) -> Option<Operand> {
 /// The peephole: where four or three or two of the five instrs spell one
 /// of the three fused ones, that one replaces them. Jump targets move
 /// with the instrs; a group is left alone if a jump lands inside it.
-fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
+fn peephole(mut instrs: Vec<Instr>) -> Vec<Instr> {
     let mut targets = vec![false; instrs.len() + 1];
     for w in &instrs {
         if let Instr::Skip(t) = w {
@@ -13579,7 +13575,7 @@ fn peephole(instrs: Vec<Instr>) -> Vec<Instr> {
             }
             None => {
                 map[i] = out.len();
-                out.push(instrs[i].clone());
+                out.push(std::mem::replace(&mut instrs[i], Instr::Nothing));
                 i += 1;
             }
         }

@@ -217,6 +217,7 @@ pub struct Engine<'a> {
     pub module_sources: HashMap<String, String>,
     pub library_root: Option<String>,
     pub module_files: HashMap<String, String>,
+    module_locations: RefCell<Option<(HashMap<std::path::PathBuf, String>, std::collections::HashSet<std::path::PathBuf>)>>,
     pub module_aliases: HashMap<String, String>,
     embedded_names: std::collections::HashSet<String>,
     modules: HashMap<String, Value>,
@@ -242,7 +243,7 @@ pub struct Engine<'a> {
     /// but only for code written in that file, whose globals the
     /// dictionary is.
     outer_globals_source: Option<Rc<str>>,
-    wildcard_slots: HashMap<Rc<str>, HashMap<String, usize>>,
+    wildcard_slots: HashMap<Rc<str>, HashMap<String, usize, crate::value::FxBuildHasher>, crate::value::FxBuildHasher>,
     module_slots: HashMap<Rc<str>, (usize, String), crate::value::FxBuildHasher>,
     module_books: Vec<(String, Rc<RefCell<Value>>)>,
     book_source: Option<Rc<str>>,
@@ -1744,6 +1745,7 @@ impl<'a> Engine<'a> {
             module_sources: HashMap::new(),
             library_root: None,
             module_files: HashMap::new(),
+            module_locations: RefCell::new(None),
             module_aliases: HashMap::new(),
             embedded_names: std::collections::HashSet::new(),
             modules: HashMap::new(),
@@ -1758,7 +1760,7 @@ impl<'a> Engine<'a> {
             changed_builtins: std::collections::HashSet::new(),
             outer_globals_source: None,
             native_stack_start: &lang as *const &Lang as usize,
-            wildcard_slots: HashMap::new(),
+            wildcard_slots: HashMap::with_hasher(crate::value::FxBuildHasher::default()),
             module_slots: HashMap::with_hasher(crate::value::FxBuildHasher::default()),
             module_books: Vec::new(),
             book_source: None,
@@ -2654,7 +2656,7 @@ impl<'a> Engine<'a> {
     fn class_for(&self, told: &str) -> Option<String> {
         let told = told.trim_start_matches('\0');
         if !self.lang.exceptions.is_empty() {
-            if let Some(name) = self.lang.exceptions.iter().find(|n| told == n.as_str() || told.starts_with(&format!("{}:", n))) { return Some(name.clone()); }
+            if let Some(name) = self.lang.exceptions.iter().find(|n| told == n.as_str() || told.strip_prefix(n.as_str()).is_some_and(|tail| tail.starts_with(":"))) { return Some(name.clone()); }
             let kind = if self.lang.catch_invalid.as_deref() == Some(told) { &self.lang.fault_kind }
                 else if told.starts_with("Undefined variable") { &self.lang.fault_name }
                 else if told.starts_with("Undefined array key") { &self.lang.fault_key }
@@ -2711,7 +2713,7 @@ impl<'a> Engine<'a> {
     fn exception_words(&self, told: &str, class: &str) -> String {
         let told = told.trim_start_matches('\0');
         if self.lang.catch_invalid.as_deref() == Some(told) { return told.to_string(); }
-        if let Some(rest) = told.strip_prefix(&format!("{class}: ")) {
+        if let Some(rest) = told.strip_prefix(class).and_then(|tail| tail.strip_prefix(": ")) {
             // Native key faults carry a displayed key; the exception's
             // argument holds the key itself so its string form quotes it once.
             if self.lang.fault_key.as_deref() == Some(class) {
@@ -9793,6 +9795,13 @@ impl<'a> Engine<'a> {
     }
 
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        let plain_number = |value: &Value| matches!(value, Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_) | Value::Flag(_));
+        let numerical_work = self.lang.python_numbers && matches!(op,
+            Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power);
+        if (numerical_work || matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge))
+            && plain_number(a) && plain_number(b) {
+            return self.dyadic(op, a, b);
+        }
         if matches!(op, Action::SetWrite(0)) && matches!(Self::view_in(a), Some(Value::View(v)) if v.1 == "mapping") { return Err("TypeError: '|=' is not supported by mappingproxy; use '|' instead".into()); }
 
         if matches!(op, Action::Eq | Action::Ne) {
@@ -9842,13 +9851,6 @@ impl<'a> Engine<'a> {
                     && (matches!(one.1.first(), Some(Value::Adapter(method)) if method.0 == 29) || matches!(one.1.first(), Some(Value::Native(..))))
                     && (matches!(two.1.first(), Some(Value::Adapter(method)) if method.0 == 29) || matches!(two.1.first(), Some(Value::Native(..)))))) {
             return Ok(Value::Flag(a.equals(b) != matches!(op, Action::Ne)));
-        }
-        let plain_number = |value: &Value| matches!(value, Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_) | Value::Flag(_));
-        let numerical_work = self.lang.python_numbers && matches!(op,
-            Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power);
-        if (numerical_work || matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge))
-            && plain_number(a) && plain_number(b) {
-            return self.dyadic(op, a, b);
         }
         if let (Action::At, Value::View(proxy)) = (op, a) {
             if proxy.1 == "mapping" { return self.special_dyad(op, &proxy.0.proxy_dictionary(), b); }
@@ -10367,7 +10369,11 @@ impl<'a> Engine<'a> {
                 return self.dyadic(op, a, b);
             }
         }
-        let (left, right) = (Self::worth_of(a).map(|w| w.contents()), Self::worth_of(b).map(|w| w.contents()));
+        let left = Self::worth_of(a).map(|w| w.contents());
+        // Mapping keys retain their own hash and equality, including native subclasses.
+        let mapping_key = matches!(op, Action::At | Action::Toward | Action::Apart)
+            && matches!(left.as_ref().unwrap_or(a), Value::Map(_));
+        let right = if mapping_key { None } else { Self::worth_of(b).map(|w| w.contents()) };
         if left.is_some() || right.is_some() {
             if let (Action::At | Action::Toward | Action::Apart, Some(Value::Map(entries)), Value::Object(o)) = (op, &left, a) {
                 if let Some(method) = self.lang.missing_key.as_deref().and_then(|word| self.class_value(&o.class_now(), word)) {
@@ -22535,8 +22541,13 @@ impl<'a> Engine<'a> {
                     let names: std::collections::BTreeSet<_> = self.module_sources.keys().map(|word| word.split('.').next().unwrap_or(word).to_string()).collect();
                     return Ok(Value::tuple(names.iter().map(|word| Value::text(word)).collect()));
                 }
+                if args.len() == 2 && matches!(&args[1], Value::Text(mode) if mode.as_ref() == "invalidate") {
+                    self.module_locations.borrow_mut().take();
+                    return Ok(Value::Null);
+                }
                 if args.len() == 2 {
                     let path = args[0].display(&sp);
+                    if matches!(&args[1], Value::Text(mode) if mode.as_ref() == "cached") { return Ok(self.module_cache_value(&path).unwrap_or(Value::Null)); }
                     if matches!(args[1], Value::Flag(false)) { return Ok(Value::Flag(self.lang.warning_backend.first().is_some_and(|word| word == &path) || self.module_sources.contains_key(&path) || self.sys_path_source(&path).is_some())); }
                     if matches!(args[1], Value::Flag(true)) { return Ok(self.sys_path_source(&path).map(|(file, _)| file).or_else(|| self.library_module_file(&path)).map_or(Value::Null, |file| Value::text(&file))); }
                 }
@@ -27464,17 +27475,23 @@ impl Engine<'_> {
             Value::Tuple(items) if self.lang.module_path.is_some() => items,
             _ => return None,
         };
-        let mut locations = std::collections::HashMap::new();
-        let mut directories = std::collections::HashSet::new();
-        if self.lang.module_path.is_some() {
-            for name in self.module_files.keys() {
-                if let Some(file) = self.library_module_file(name) {
-                    let location = std::path::PathBuf::from(file);
-                    for directory in location.ancestors().skip(1) { directories.insert(directory.to_path_buf()); }
-                    locations.insert(location, name);
+        let mut cached = self.module_locations.borrow_mut();
+        // Relative host roots follow chdir; absolute manifest locations survive imports.
+        if self.library_root.as_ref().is_some_and(|root| !std::path::Path::new(root).is_absolute()) { cached.take(); }
+        let (locations, directories) = cached.get_or_insert_with(|| {
+            let mut locations = HashMap::new();
+            let mut directories = std::collections::HashSet::new();
+            if self.lang.module_path.is_some() {
+                for name in self.module_files.keys() {
+                    if let Some(file) = self.library_module_file(name) {
+                        let location = std::path::PathBuf::from(file);
+                        for directory in location.ancestors().skip(1) { directories.insert(directory.to_path_buf()); }
+                        locations.insert(location, name.clone());
+                    }
                 }
             }
-        }
+            (locations, directories)
+        });
         let mut namespace_roots = Vec::new();
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
@@ -27488,8 +27505,8 @@ impl Engine<'_> {
                 // Embedded text has a location, just like disk text. It is
                 // eligible only at a directory in the actual search list.
                 if self.lang.module_path.is_some() {
-                    if let Some(location) = module_location(std::path::Path::new(&file), Some(&directories)) {
-                        if let Some(source) = locations.get(&location).and_then(|name| self.module_sources.get(*name)) {
+                    if let Some(location) = module_location(std::path::Path::new(&file), Some(directories)) {
+                        if let Some(source) = locations.get(&location).and_then(|name| self.module_sources.get(name)) {
                             return Some((location.to_string_lossy().into_owned(), source.as_bytes().to_vec()));
                         }
                     }
@@ -30335,9 +30352,9 @@ impl Engine<'_> {
         let fields = module.fields.borrow();
         let held = &fields.iter().find(|(word, _)| word == member)?.1;
         let Value::Map(entries) = held.contents() else { return None };
-        entries.iter().find_map(|(key, value)| {
-            key_spells(key, path).then(|| value.contents())
-        })
+        let row = entries.named_row(path).unwrap_or_else(|()|
+            entries.iter().position(|(key, _)| key_spells(key, path)));
+        row.map(|at| entries[at].1.contents())
     }
 
     fn module_cache_names(&self, path: &str) -> bool {
