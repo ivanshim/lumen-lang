@@ -8,7 +8,7 @@ type Object = *mut c_void;
 type ErrorOut = *mut Object;
 pub const CAPSULE_NAME: &str = "lumen.datetime_CAPI.v1";
 
-/// See langs/lib_python/datetime_capi.h. This is not the CPython PyObject ABI.
+/// See langs/python_datetime_capi.h. This is not the CPython PyObject ABI.
 #[repr(C)]
 pub struct DateTimeApi {
     pub version: u64, pub size: usize,

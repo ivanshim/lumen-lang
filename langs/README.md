@@ -6216,4 +6216,4 @@ storage report that limitation instead of inventing a count.
 
 `ext.builtin.partial.call` supplies native invocation for Python partial objects, merging their stored positional and keyword arguments without adding a Python frame.
 
-`ext.builtin.datetime.capi` binds the datetime classes and UTC into the owned, versioned native C interface documented in `lib_python/datetime_capi.h`. Its opaque handles use lumen ownership, not the CPython PyObject ABI.
+`ext.builtin.datetime.capi` binds the datetime classes and UTC into the owned, versioned native C interface documented in `python_datetime_capi.h`. Its opaque handles use lumen ownership, not the CPython PyObject ABI.

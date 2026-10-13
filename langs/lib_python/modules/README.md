@@ -47,7 +47,7 @@ the runtime's own kinds (the pure fallback in `types.py` reads the same values)
 including the native mapping proxy, plus helpers for unions and subscripted
 kinds. `CapsuleType` binds the native opaque-pointer value kind, whose owned name and finalizer keep native resources alive across value clones. `_datetime` re-exports the classes of `_pydatetime`, the very objects `datetime`
 exposes. Its native `datetime_CAPI` capsule owns the versioned C table described
-in `../datetime_capi.h`: constructors call those classes, results retain native
+in `../../python_datetime_capi.h`: constructors call those classes, results retain native
 values, and errors retain their original exception payload. The capsule name
 `lumen.datetime_CAPI.v1` distinguishes this opaque-handle ABI from CPython
 PyObject/PyDateTime_CAPI binary layouts. It does not provide a CPython extension loader.
