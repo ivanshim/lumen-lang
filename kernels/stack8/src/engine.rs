@@ -196,6 +196,7 @@ pub struct Engine<'a> {
     opened_descriptors: HashMap<i32, std::fs::File>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
+    exception_roster: Vec<Option<Rc<Class>>>,
     world: Vec<Value>,
     /// The dictionary the outermost names are read from and written
     /// to once the program has asked for it: what the program writes
@@ -806,7 +807,7 @@ impl<'a> Engine<'a> {
     /// The furnished class standing at a place in the roster, and
     /// whether a class stands beneath it.
     fn furnished(&self, at: usize) -> Option<Rc<Class>> {
-        match self.native_exceptions.get(self.lang.exceptions.get(at)?) { Some(Value::Class(class)) => Some(class.clone()), _ => None }
+        self.exception_roster.get(at).and_then(Clone::clone)
     }
 
     fn stands_on(&self, class: &Rc<Class>, at: usize) -> bool {
@@ -1704,6 +1705,10 @@ impl<'a> Engine<'a> {
             direct: std::cell::RefCell::new(vec![]), lineage: RefCell::new(vec![]), base: std::cell::RefCell::new(None), answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![], shared: crate::value::ClassMembers::new(vec![]), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         let native_exceptions = Self::exception_classes(&lang.exceptions, &root);
+        // Runtime checks already know the roster position; keep the same classes there.
+        let exception_roster = lang.exceptions.iter().map(|name| match native_exceptions.get(name) {
+            Some(Value::Class(class)) => Some(class.clone()), _ => None,
+        }).collect();
         for (i, word) in idents.iter().enumerate() {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
@@ -1711,6 +1716,7 @@ impl<'a> Engine<'a> {
             class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, byte_members_seen: RefCell::new(HashMap::default()), prepared_hint: std::cell::Cell::new(None), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
+            exception_roster,
             contexts: crate::context::ContextStore::default(),
             allocation_retained_depth: std::env::var("LUMEN_TRACE_FRAMES").ok().and_then(|s| s.parse().ok()).unwrap_or(1),
             allocation_depth: if lang.allocation_trace.is_empty() { 0 } else { std::env::var("LUMEN_TRACE_FRAMES").ok().and_then(|s| s.parse().ok()).unwrap_or(0) }, allocation_sites: HashMap::new(),

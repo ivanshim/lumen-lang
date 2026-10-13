@@ -704,6 +704,7 @@ pub struct Machine<'a> {
     written_over: HashMap<(usize, usize), (Rc<Routine>, Rc<Env>, Rc<Routine>, Rc<Env>, Rc<Routine>)>,
     table: &'a Table,
     fault_kinds: HashMap<String, Value>,
+    numbered_faults: Vec<Value>,
     pub outermost: Rc<Env>,
     idents: Vec<String>,
     /// Names bound by the source after its library prefix.
@@ -1165,8 +1166,9 @@ impl<'a> Machine<'a> {
     /// The furnished fault kind at a place in the roster, and whether a
     /// kind stands under it.
     fn furnished_kind(&self, place: usize) -> Option<Rc<Blueprint>> {
-        let word = self.rules.words_ext_builtin_exceptions.get(place)?;
-        match self.fault_kinds.get(word) { Some(Value::Blueprint(kind)) => Some(kind.clone()), _ => None }
+        if let Some(Value::Blueprint(ancestor)) = self.numbered_faults.get(place) {
+            Some(Rc::clone(ancestor))
+        } else { None }
     }
 
     fn stands_under(&self, kind: &Rc<Blueprint>, place: usize) -> bool {
@@ -2043,6 +2045,9 @@ impl<'a> Machine<'a> {
             parents: std::cell::RefCell::new(Vec::new()), ancestry: RefCell::new(Vec::new()), under: std::cell::RefCell::new(None), answers: Vec::new(), fields: Vec::new(),
             reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: crate::data::BlueprintEntries::new(Vec::new()), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: std::cell::Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         let fault_kinds = Self::given_faults(table, &ancestor);
+        // Preserve roster aliases while resolving numeric checks without spelling lookups.
+        let numbered_faults = table.strings("ext.builtin.exceptions").iter()
+            .map(|word| fault_kinds.get(word).cloned().unwrap_or(Value::Unset)).collect();
         for (i, word) in idents.iter().enumerate() {
             if let Some(value) = fault_kinds.get(word) { outermost.cells.borrow_mut()[i] = value.clone(); }
         }
@@ -2173,6 +2178,7 @@ impl<'a> Machine<'a> {
                 builtin_namespace_words: table.strings("ext.system.module.builtins"),
             },
             fault_kinds,
+            numbered_faults,
             library_sources: HashMap::new(),
             library_directory: None,
             library_files: HashMap::new(),
