@@ -30444,7 +30444,7 @@ impl Engine<'_> {
         }
         if task == 2 {
             if !given.is_empty() { return Err("TypeError: _code_abi() takes no arguments".into()); }
-            return Ok(Value::tuple(vec![Value::text("lumen-stack8-v5"), Value::Small(u32::from_le_bytes(*b"L8C\x05") as i64)]));
+            return Ok(Value::tuple(vec![Value::text("lumen-stack8-v5"), Value::Small(u32::from_le_bytes(crate::PYTHON_CACHE_MAGIC) as i64)]));
         }
         if given.len() != 1 { return Err("TypeError: compiled cache primitive expects one argument".into()); }
         if task == 0 {

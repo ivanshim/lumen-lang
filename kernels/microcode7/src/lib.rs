@@ -1,3 +1,6 @@
+/// Identify serialized Python code when a cache is supplied as the program.
+pub const PYTHON_CACHE_MAGIC: [u8; 4] = *b"L7C\x05";
+
 pub mod text;
 mod unicode;
 // Microcode kernel, fourth design: seven forms, the four of microcode4

@@ -33164,7 +33164,7 @@ impl Machine<'_> {
             return Err("TypeError: cache ABI inquiry accepts no arguments".into());
         }
         if action == 2 && input.is_empty() {
-            return Ok(Value::tuple(vec![Value::text("lumen-microcode7-v5"), Value::Small(u32::from_le_bytes(*b"L7C\x05") as i64)]));
+            return Ok(Value::tuple(vec![Value::text("lumen-microcode7-v5"), Value::Small(u32::from_le_bytes(crate::PYTHON_CACHE_MAGIC) as i64)]));
         }
         if input.len() != 1 { return Err("TypeError: code cache operation needs one argument".to_owned()); }
         if action == 0 {

@@ -510,7 +510,10 @@ fn source_of(written: Vec<u8>, as_bytes: bool) -> String {
 }
 
 /// Native cache markers written by the two full Python kernels.
-const PYC_MAGICS: [[u8; 4]; 2] = [*b"L8C\x04", *b"L7C\x04"];
+const PYC_MAGICS: [[u8; 4]; 2] = [
+    lumen_stack8::PYTHON_CACHE_MAGIC,
+    lumen_microcode7::PYTHON_CACHE_MAGIC,
+];
 
 /// Whether bytes open with the bytecode marker, and so are a compiled
 /// module rather than source.

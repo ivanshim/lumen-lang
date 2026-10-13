@@ -1,3 +1,6 @@
+/// Python cache header for this kernel; the host uses the same ABI marker.
+pub const PYTHON_CACHE_MAGIC: [u8; 4] = *b"L8C\x05";
+
 pub mod strings;
 mod unicode;
 // Stack kernel, third design: eight words, the five of stack5 and three
