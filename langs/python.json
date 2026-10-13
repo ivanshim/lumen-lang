@@ -912,6 +912,7 @@
   "ext.builtin.binascii_native": [
     "__binascii_native__"
   ],
+  "ext.builtin.lzma_decode": ["__lzma_decode__"],
   "ext.builtin.zlib_native": [
     "__zlib_native__"
   ],
@@ -2914,7 +2915,8 @@
     "co_filename",
     "co_firstlineno",
     "__annotate__",
-    "co_freevars"
+    "co_freevars",
+    "co_cellvars"
   ],
   "ext.stmt.class.detail.code.replace": [
     "replace",
@@ -3542,7 +3544,7 @@
   ],
   "ext.stmt.import.relative.packages": true,
   "ext.stmt.import.relative.unready": [
-    "NotImplementedError: relative imports require a package context"
+    "ImportError: attempted relative import with no known parent package"
   ],
   "ext.stmt.import.value": true,
   "ext.stmt.loop.else": true,
@@ -5612,5 +5614,9 @@
   ],
   "ext.builtin.gc.get_objects": [
     "__gc_objects"
-  ]
+  ],
+  "ext.builtin.allocation.trace": [
+    "__allocation_trace"
+  ],
+  "ext.builtin.lzma_encode": ["__lzma_encode__"]
 }

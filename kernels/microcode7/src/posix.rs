@@ -100,7 +100,7 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                 }
             }
             "constants" => {
-                let flags = vec![libc::O_RDONLY,libc::O_WRONLY,libc::O_RDWR,libc::O_APPEND,libc::O_CREAT,libc::O_EXCL,libc::O_TRUNC,libc::O_NONBLOCK,libc::O_CLOEXEC,libc::O_DIRECTORY,libc::O_NOFOLLOW,libc::SEEK_SET,libc::SEEK_CUR,libc::SEEK_END,libc::F_OK,libc::R_OK,libc::W_OK,libc::X_OK];
+                let flags = vec![libc::O_RDONLY,libc::O_WRONLY,libc::O_RDWR,libc::O_APPEND,libc::O_CREAT,libc::O_EXCL,libc::O_TRUNC,libc::O_NONBLOCK,libc::O_CLOEXEC,libc::O_DIRECTORY,libc::O_NOFOLLOW,libc::SEEK_SET,libc::SEEK_CUR,libc::SEEK_END,libc::F_OK,libc::R_OK,libc::W_OK,libc::X_OK,libc::O_TMPFILE];
                 Ok(Value::tuple(flags.into_iter().map(|f| Value::Small(i64::from(f))).collect()))
             }
             "environ" => {
@@ -287,6 +287,25 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
             "strerror" => {
                 let message = CStr::from_ptr(libc::strerror(int(0)? as _)).to_string_lossy();
                 Ok(Value::text(&message))
+            }
+            "confstr" => {
+                let which = int(0)? as libc::c_int;
+                let extent = libc::confstr(which, std::ptr::null_mut(), 0);
+                if extent == 0 {
+                    // A selector the library does not know has left an
+                    // errno behind; a value that is merely empty would
+                    // have asked for room for its terminating zero.
+                    match std::io::Error::last_os_error().raw_os_error() {
+                        Some(code) if code != 0 => Err(code),
+                        _ => Err(libc::EINVAL),
+                    }
+                }
+                else {
+                    let mut landing = vec![0u8; extent];
+                    libc::confstr(which, landing.as_mut_ptr().cast(), extent);
+                    landing.truncate(extent - 1);
+                    Ok(Value::text(&String::from_utf8_lossy(&landing)))
+                }
             }
             "get_inheritable" | "set_inheritable" => {
             let fd = int(0)? as i32;

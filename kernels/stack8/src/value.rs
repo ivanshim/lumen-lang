@@ -1586,7 +1586,7 @@ impl Value {
     /// replacements change the constants, not that original stream.
     fn routine_content(body: &crate::code::Routine) -> Value {
         Value::tuple(vec![
-            Value::Text(body.source_tokens.clone()), Value::Small(body.source_end as i64),
+            Value::Text(body.source_content.get_or_init(|| Rc::from(format!("{:?}", body.source_tokens))).clone()), Value::Small(body.source_end as i64),
             Value::text(&body.ident), Value::Small(body.declared_on as i64),
             Value::Small(body.code_flags), Value::Small(body.future_bits),
             Value::Flag(body.generator), Value::Flag(body.lineless),

@@ -4532,6 +4532,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.abc.instancecheck` | - | - | `__abc_instancecheck` | - | - | - | - | - | - | - |
 | `ext.builtin.abs` | - | - | `abs` | - | - | - | - | - | - | - |
 | `ext.builtin.all` | - | - | `all` | - | - | - | - | - | - | - |
+| `ext.builtin.allocation.trace` | - | - | `__allocation_trace` | - | - | - | - | - | - | - |
 | `ext.builtin.annotation_call` | - | - | `__annotation_call__` | - | - | - | - | - | - | - |
 | `ext.builtin.any` | - | - | `any` | - | - | - | - | - | - | - |
 | `ext.builtin.args.all` | - | - | - | - | `func_get_args` | - | - | - | - | - |
@@ -4748,6 +4749,8 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.list` | - | - | `list` | - | - | - | - | - | - | - |
 | `ext.builtin.loader.source` | - | - | `__loader_source` | - | - | - | - | - | - | - |
 | `ext.builtin.locals` | - | - | `locals` | - | - | - | - | - | - | - |
+| `ext.builtin.lzma_decode` | - | - | `__lzma_decode__` | - | - | - | - | - | - | - |
+| `ext.builtin.lzma_encode` | - | - | `__lzma_encode__` | - | - | - | - | - | - | - |
 | `ext.builtin.map` | - | - | `map` | - | - | - | - | - | - | - |
 | `ext.builtin.map.arguments.amiss` | - | - | `TypeError: dict expects at most one positional argument` | - | - | - | - | - | - | - |
 | `ext.builtin.map.long` | - | - | `ValueError: map() argument ` ` is longer than argument 1` ` is longer than arguments 1-` | - | - | - | - | - | - | - |
@@ -5402,7 +5405,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.class.detail.closure` | - | - | `__closure__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code` | - | - | `__code__` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.amiss` | - | - | `TypeError: __code__ must be set to a code object` | - | - | - | - | - | - | - |
-| `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` `co_freevars` | - | - | - | - | - | - | - |
+| `ext.stmt.class.detail.code.fields` | - | - | `co_name` `co_qualname` `co_posonlyargcount` `co_kwonlyargcount` `co_nlocals` `co_names` `co_consts` `co_flags` `co_filename` `co_firstlineno` `__annotate__` `co_freevars` `co_cellvars` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.free` | - | - | `ValueError: ` `() requires a code object with ` ` free vars, not ` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.mismatch` | - | - | `code object of non-matching type` | - | - | - | - | - | - | - |
 | `ext.stmt.class.detail.code.replace` | - | - | `replace` `co_linetable` `co_positions` | - | - | - | - | - | - | - |
@@ -5549,7 +5552,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.stmt.import.missing` | - | - | `ModuleNotFoundError: No module named '` `'` | - | - | - | - | - | - | - |
 | `ext.stmt.import.nonpackage` | - | - | `; '` `' is not a package` | - | - | - | - | - | - | - |
 | `ext.stmt.import.relative.packages` | - | - | `true` | - | - | - | - | - | - | - |
-| `ext.stmt.import.relative.unready` | - | - | `NotImplementedError: relative imports require a package context` | - | - | - | - | - | - | - |
+| `ext.stmt.import.relative.unready` | - | - | `ImportError: attempted relative import with no known parent package` | - | - | - | - | - | - | - |
 | `ext.stmt.import.value` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.stmt.legacy_call` | - | - | `print` `exec` | - | - | - | - | - | - | - |
 | `ext.stmt.loop.else` | - | - | `true` | - | - | - | - | - | - | - |
@@ -5906,6 +5909,16 @@ by lexical cancellation. This lookup does not change the path wrapper's
 inherited `realpath` implementation or provide namespace-package/importlib
 protocols.
 
+The debug build prepares lexical tokens and name-only scope surveys for
+bundled Python sources with each full kernel's own lexer and compiler.
+Imports reuse them only for the matching language definition and exact
+source or complete token sequence. Runtime slots, instructions, module
+objects, and values are still built normally. Changed sources, grammar
+settings, compilation contexts, or unsupported preparations use the
+ordinary parsing and scope-discovery paths. Filesystem import lookup
+indexes are invalidated when watched directories or symlink targets change;
+source files are read afresh.
+
 `ext.builtin.heap_native` exposes the Python-only heap accelerator. It operates
 on list storage directly, retaining aliases and catching size changes across
 user comparisons; the four reference kernels ignore this label.
@@ -6207,3 +6220,4 @@ reference-backed values for `sys.getrefcount`; values without reference-counted
 storage report that limitation instead of inventing a count.
 
 `ext.builtin.partial.call` supplies native invocation for Python partial objects, merging their stored positional and keyword arguments without adding a Python frame.
+`ext.builtin.lzma_decode` names the Python-only one-stream system liblzma decoder. It returns decoder status, output bytes and consumed input; the Python facade joins concatenated XZ/LZMA streams. Raw filter chains and incremental codec objects are not yet exposed.

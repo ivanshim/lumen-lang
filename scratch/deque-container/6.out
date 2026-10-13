@@ -1,0 +1,30 @@
+fwd none -> ('_deque_iterator', 1, [2, 3, 4])
+fwd grow -> ('_deque_iterator', 2, [3, 4, 9])
+fwd shrink -> ('_deque_iterator', 0, [1, 2, 3])
+fwd grow2 -> ('_deque_iterator', 3, [3, 4, 9])
+fwd detect !! RuntimeError deque mutated during iteration
+fwd after detect -> ('_deque_iterator', 4, [])
+fwd after detect grow -> ('_deque_iterator', 5, [])
+fwd pickle grown -> [3, 9]
+fwd pickle shrunk -> [1, 2]
+fwd pickle 0 -> [2, 3]
+fwd pickle 1 -> [2, 3]
+fwd pickle 2 -> [2, 3]
+fwd pickle 3 -> [2, 3]
+fwd pickle 4 -> [2, 3]
+fwd pickle 5 -> [2, 3]
+rev none -> ('_deque_reverse_iterator', 1, [3, 2, 1])
+rev grow -> ('_deque_reverse_iterator', 2, [3, 2, 1])
+rev shrink -> ('_deque_reverse_iterator', 0, [3, 2, 1])
+rev grow2 -> ('_deque_reverse_iterator', 3, [2, 1, 0])
+rev detect !! RuntimeError deque mutated during iteration
+rev after detect -> ('_deque_reverse_iterator', 4, [])
+rev after detect grow -> ('_deque_reverse_iterator', 5, [])
+rev pickle grown !! PicklingError Can't pickle <class 'collections._deque_reverse_iterator'>: it's not found as collections._deque_reverse_iterator
+rev pickle shrunk !! PicklingError Can't pickle <class 'collections._deque_reverse_iterator'>: it's not found as collections._deque_reverse_iterator
+rev pickle 0 !! PicklingError Can't pickle <class 'collections._deque_reverse_iterator'>: it's not found as collections._deque_reverse_iterator
+rev pickle 1 !! PicklingError Can't pickle <class 'collections._deque_reverse_iterator'>: it's not found as collections._deque_reverse_iterator
+rev pickle 2 !! PicklingError Can't pickle <class 'collections._deque_reverse_iterator'>: it's not found as collections._deque_reverse_iterator
+rev pickle 3 !! PicklingError Can't pickle <class 'collections._deque_reverse_iterator'>: it's not found as collections._deque_reverse_iterator
+rev pickle 4 !! PicklingError Can't pickle <class 'collections._deque_reverse_iterator'>: it's not found as collections._deque_reverse_iterator
+rev pickle 5 !! PicklingError Can't pickle <class 'collections._deque_reverse_iterator'>: it's not found as collections._deque_reverse_iterator

@@ -2769,3 +2769,35 @@ io, microcode7 calendar) are coverage gains; kernel independence reports no prob
 exceptions runs about a third longer on both kernels and with about a quarter to a half longer (the canonical
 traceback's cold imports, paid again by every child interpreter); decimal, tokenize, io's CTextIOWrapper class,
 argparse, traceback, codecs, email, json, pickle and pickletools time out as whole files or in parts.
+
+### 1bm. Batch 21i merged as #544; batch 21j: warnings, platform, cookiejar, future, tarfile, deque, json, tempfile, zoneinfo
+
+Twelve branches, each reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator; the
+branches came from DeepSeek V4.1 Flash, Claude Sonnet 5.5 and GPT-6.1 Sol workers.
+
+- fix/stdlib-warnings (warnings; finder namespace, replacement and parent-binding fixes), fix/dsflash-platform
+  (platform), fix/stdlib-http-cookiejar (http.cookiejar), fix/dsflash-future-stmt (postponed-annotation grammar),
+  fix/dsflash-type-aliases (type aliases, outer-list GenericAlias repr), fix/stdlib-tarfile (tarfile),
+  fix/claude-deque (deque), fix/dsflash-charmapcodec (charmap codecs), fix/dsflash-json-speed (json speed; closed-stdin
+  communicate), fix/dsflash-source-encoding (source encoding notices in both scanners), fix/stdlib-tempfile
+  (tempfile), fix/stdlib-zoneinfo (zoneinfo, native lzma).
+
+Integration corrections followed the merges: the public POSIX wrapper carried by tempfile forwards natively (native
+errno and BrokenPipeError kept); exact bytes skip a needless memoryview in the shared codec and builtin buffer helpers
+(other buffers keep their validation; a 100-iteration IO probe about 17 % faster); prepared-library metadata uses a
+bounded one-entry proof cache per kernel and the preparation roster includes the large shared start-up libraries and
+locale; dict.get no longer builds mutation-position snapshots. The coroutine requirements of 21i hold: one canonical
+test.support subTests awaits coroutine tests, and failing async tests and async partials fail on both kernels.
+
+Measured: 17985 (stack8) of 19680 and 16041 (microcode7) of 17724, over 209 files, from 15329 of 16974 and 15185 of
+16828 over 198. New files: test_charmapcodec 4/4, test_future_stmt 31/31, test_http_cookiejar 80/80, test_platform
+34/39, test_source_encoding 93/94, test_tempfile 108/118, test_type_aliases 30/30, test_zoneinfo 237/275; deque 77/80
+and tarfile 538/760 by group (both whole files still time out). Also json TIMEOUT -> 222/225 on both kernels, email
+TIMEOUT -> 1800/1810 on stack8, warnings 173 -> 187/197, io 613 -> 615/669 (stack8) and 531 -> 533/585 (microcode7),
+typing 684 -> 685. The full check of the final commit agrees on 1246 scratch programs with no mismatch, passes every
+gate, and shows no regression, length change or broken progress line; its one kernel disagreement is test_email, which
+completes on stack8 and still times out as a whole file on microcode7 under the debug build (it timed out on both
+before; coverage, not a lost pass). Kernel independence reports no problem. Against 21i, pathlib, datetime and
+userstring are no slower; json now completes but runs about a third slower than on its own branch. Still timing out as
+whole files or in parts: deque, tarfile, email (microcode7), io's CTextIOWrapper class, decimal, tokenize, argparse,
+traceback, codecs, pickle and pickletools.
