@@ -135,6 +135,7 @@ impl Machine<'_> {
         let shape = match command.as_str() {
             "append" | "appendleft" | "setlimit" | "setstate" => values.len() == 2,
             "rotate" => values.len() == 1 || values.len() == 2,
+            "index" => (2..=4).contains(&values.len()),
             "pop" | "popleft" | "data" | "state" | "limit" | "length" => values.len() == 1,
             _ => false,
         };
@@ -145,6 +146,7 @@ impl Machine<'_> {
         let stored = if let Value::Thing(object) = target {
             object.holds.borrow().iter().find_map(|(name, value)| (name == &address).then(|| value.clone()))?
         } else { return None };
+        if command == "index" { return self.deque_index_lookup(&stored, values); }
         let argument = if command == "rotate" {
             if values.len() == 1 { Some(Value::Small(1)) }
             else if let next @ Value::Small(_) = values[1].settled() { Some(next) }
@@ -203,5 +205,32 @@ impl Machine<'_> {
         let result = row.get(offset as usize)?.clone();
         instance.holds.borrow_mut().iter_mut().find(|(name, _)| name == remaining)?.1 = Value::Small(count - 1);
         Some(Ok(result))
+    }
+}
+
+impl Machine<'_> {
+    // Keep arbitrary conversion and equality hooks in Python; scan native scalars here.
+    fn deque_index_lookup(&mut self, state: &Value, args: &[Value]) -> Option<super::Res> {
+        let sought = match args[1].settled() { Value::Flag(flag) => Value::Small(flag as i64), other => other };
+        if !scan_scalar(&sought) { return None; }
+        let bounds = args[2..].iter().map(|v| match v.settled() { Value::Small(n) => Some(n), _ => None }).collect::<Option<Vec<_>>>()?;
+        let data = self.deque_work(state, "data", None).ok()?;
+        let Value::Vector(items) = data.settled() else { return None };
+        if !items.iter().all(scan_scalar) { return None; }
+        let normalize = |bound: i64| -> usize {
+            let n = if bound < 0 { (items.len() as i64).saturating_add(bound).max(0) } else { bound };
+            (n as usize).min(items.len())
+        };
+        let first = bounds.first().map_or(0, |n| normalize(*n));
+        let last = bounds.get(1).map_or(items.len(), |n| normalize(*n));
+        let found = (first..last).find(|position| {
+            let item = match items[*position].settled() { Value::Flag(flag) => Value::Small(flag as i64), other => other };
+            let same = match (&item, &sought) { (Value::Complex(left), Value::Complex(right)) => Rc::ptr_eq(left, right), _ => item.one_place(&sought) };
+            same || item.equals(&sought)
+        });
+        match found {
+            Some(position) => Some(Ok(Value::Small(position as i64))),
+            None => Some(self.raised_if_error(Err(String::from("ValueError: deque.index(x): x not in deque").into()))),
+        }
     }
 }

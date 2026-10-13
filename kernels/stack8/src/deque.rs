@@ -115,13 +115,14 @@ impl Engine<'_> {
             if given.len() != 1 || matches!(given[0], Value::Tie(_)) { return None; }
             return self.deque_iterator_step(&given[0].contents(), &descriptor, verb == "reverse_next");
         }
-        let wanted = match verb.as_str() { "append" | "appendleft" | "setstate" | "setlimit" => 2, "rotate" => given.len().clamp(1, 2), "data" | "state" | "limit" | "length" | "pop" | "popleft" => 1, _ => return None };
+        let wanted = match verb.as_str() { "append" | "appendleft" | "setstate" | "setlimit" => 2, "rotate" => given.len().clamp(1, 2), "index" => given.len().clamp(2, 4), "data" | "state" | "limit" | "length" | "pop" | "popleft" => 1, _ => return None };
         if given.len() != wanted || given.iter().any(|v| matches!(v, Value::Tie(_))) { return None; }
         let receiver = given[0].contents();
         let Value::Adapter(slot) = descriptor.contents() else { return None };
         let place = self.slot_place(&receiver, &slot.1).ok()?;
         let Value::Object(owner) = receiver else { return None };
         let storage = owner.fields.borrow().iter().find(|(key, _)| key == &place)?.1.clone();
+        if verb == "index" { return self.deque_index_native(&storage, given); }
         let item = if verb == "rotate" {
             match given.get(1).map(Value::contents) {
                 None => Some(Value::Small(1)),
@@ -177,5 +178,35 @@ impl Engine<'_> {
         let value = items.get(index)?.clone();
         iterator.fields.borrow_mut().iter_mut().find(|(key, _)| key == &remaining_key)?.1 = Value::Small(remaining - 1);
         Some(Ok(value))
+    }
+}
+
+impl Engine<'_> {
+    // Search callback-free scalar rows using clipped integer bounds and Python identity.
+    fn deque_index_native(&mut self, storage: &Value, given: &[Value]) -> Option<super::Flow<Value>> {
+        let value = match given[1].contents() { Value::Flag(b) => Value::Small(i64::from(b)), value => value };
+        if !deque_scalar(&value) { return None; }
+        let mut bounds = [0, i64::MAX];
+        for (slot, argument) in bounds.iter_mut().zip(given.iter().skip(2)) {
+            let Value::Small(number) = argument.contents() else { return None };
+            *slot = number;
+        }
+        let data = self.deque_native_call(storage, "data", None).ok()?;
+        let Value::Array(row) = data.contents() else { return None };
+        if !row.iter().all(deque_scalar) { return None; }
+        let size = row.len() as i64;
+        let clip = |n: i64| if n < 0 { n.saturating_add(size).max(0) } else { n.min(size) };
+        let start = clip(bounds[0]) as usize;
+        let stop = clip(bounds[1]) as usize;
+        for at in start..stop {
+            let item = match row[at].contents() { Value::Flag(b) => Value::Small(i64::from(b)), item => item };
+            let identical = match (&item, &value) {
+                (Value::Real(a), Value::Real(b)) => Rc::ptr_eq(a, b),
+                (Value::Complex(a), Value::Complex(b)) => Rc::ptr_eq(a, b),
+                _ => item.same_value(&value),
+            };
+            if identical || item.equals(&value) { return Some(Ok(Value::Small(at as i64))); }
+        }
+        Some(self.raised_of_note(Err("ValueError: deque.index(x): x not in deque".into())))
     }
 }

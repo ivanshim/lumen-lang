@@ -408,6 +408,8 @@ class deque:
             start = _deque_slice_index(start)
         if type(stop) is not int:
             stop = _deque_slice_index(stop)
+        # Index conversion may have changed either endpoint before the scan.
+        data = _data_of(self)
         size = len(data)
         if start < 0:
             start = max(0, start + size)
@@ -502,6 +504,7 @@ class deque:
             if not hasattr(type(position), '__index__'):
                 raise TypeError("sequence index must be integer, not '" + type(position).__name__ + "'")
             position = _deque_index_value(position)
+            data = _data_of(self)
         try:
             return data[position]
         except IndexError:
@@ -735,7 +738,7 @@ def _state_put(owner, value):
 # for invalid calls, custom index conversion, and replacement function code.
 for _method, _operation in (('append', 'append'), ('appendleft', 'appendleft'),
                             ('pop', 'pop'), ('popleft', 'popleft'),
-                            ('rotate', 'rotate'), ('__len__', 'length')):
+                            ('rotate', 'rotate'), ('__len__', 'length'), ('index', 'index')):
     __deque_native__(deque.__dict__['_data'], 'bind', deque.__dict__[_method], _operation)
 for _function, _operation in ((_data_of, 'data'), (_maxlen_of, 'limit'),
                               (_maxlen_put, 'setlimit'), (_state_of, 'state'),
