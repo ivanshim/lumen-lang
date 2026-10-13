@@ -224,7 +224,7 @@ class deque:
         if not issubclass(cls, deque):
             raise TypeError('collections.deque.__new__(' + cls.__name__ + '): ' + cls.__name__ + ' is not a subtype of collections.deque')
         owner = object.__new__(cls)
-        _data_put(owner, [])
+        _data_put(owner, [[], [], 0, None])
         _maxlen_put(owner, None)
         _state_put(owner, 0)
         return owner
@@ -265,58 +265,44 @@ class deque:
             _deque_check('append', 1, 1, given, keywords)
         self, value = given
         try:
-            data = _data_of(self)
+            storage = _raw_data_of(self)
         except Exception:
             _deque_check('append', 1, 1, given, keywords)
             raise
-        data.append(value)
-        limit = _maxlen_of(self)
-        if limit is not None and len(data) > limit:
-            data.pop(0)
-        _state_put(self, _state_of(self) + 1)
+        return __deque_native__(storage, 'append', value)
 
     def appendleft(*given, **keywords):
         if len(given) != 2 or keywords:
             _deque_check('appendleft', 1, 1, given, keywords)
         self, value = given
         try:
-            data = _data_of(self)
+            storage = _raw_data_of(self)
         except Exception:
             _deque_check('appendleft', 1, 1, given, keywords)
             raise
-        data.insert(0, value)
-        limit = _maxlen_of(self)
-        if limit is not None and len(data) > limit:
-            data.pop()
-        _state_put(self, _state_of(self) + 1)
+        return __deque_native__(storage, 'appendleft', value)
 
     def pop(*given, **keywords):
         if len(given) != 1 or keywords:
             _deque_check('pop', 0, 0, given, keywords)
         self = given[0]
         try:
-            data = _data_of(self)
+            storage = _raw_data_of(self)
         except Exception:
             _deque_check('pop', 0, 0, given, keywords)
             raise
-        if not data:
-            raise IndexError('pop from an empty deque')
-        _state_put(self, _state_of(self) + 1)
-        return data.pop()
+        return __deque_native__(storage, 'pop')
 
     def popleft(*given, **keywords):
         if len(given) != 1 or keywords:
             _deque_check('popleft', 0, 0, given, keywords)
         self = given[0]
         try:
-            data = _data_of(self)
+            storage = _raw_data_of(self)
         except Exception:
             _deque_check('popleft', 0, 0, given, keywords)
             raise
-        if not data:
-            raise IndexError('pop from an empty deque')
-        _state_put(self, _state_of(self) + 1)
-        return data.pop(0)
+        return __deque_native__(storage, 'popleft')
 
     @_deque_method('extend', 1, 1)
     def extend(self, iterable, /):
@@ -337,6 +323,8 @@ class deque:
                 pass
             return
         for value in iterable:
+            # A yielded item may have changed either endpoint stack.
+            data = _data_of(self)
             data.append(value)
             if limit is not None and len(data) > limit:
                 data.pop(0)
@@ -362,6 +350,8 @@ class deque:
                 pass
             return
         for value in iterable:
+            # A yielded item may have changed either endpoint stack.
+            data = _data_of(self)
             data.insert(0, value)
             if limit is not None and len(data) > limit:
                 data.pop()
@@ -380,19 +370,14 @@ class deque:
             _deque_check('rotate', 0, 1, given, keywords)
         self = given[0]
         try:
-            data = _data_of(self)
+            storage = _raw_data_of(self)
         except Exception:
             _deque_check('rotate', 0, 1, given, keywords)
             raise
         n = given[1] if count == 2 else 1
         if type(n) is not int or n > _sys.maxsize or n < -_sys.maxsize - 1:
             n = _deque_size(n)
-        size = len(data)
-        if size > 1:
-            _state_put(self, _state_of(self) + 1)
-            n %= size
-            if n:
-                data[:] = data[-n:] + data[:-n]
+        return __deque_native__(storage, 'rotate', n)
 
     @_deque_method('reverse', 0, 0)
     def reverse(self):
@@ -497,7 +482,7 @@ class deque:
         if len(given) != 1 or keywords:
             _deque_slot_check('__len__', 0, given, keywords)
         try:
-            return len(_data_of(given[0]))
+            return __deque_native__(_raw_data_of(given[0]), 'length')
         except Exception:
             _deque_slot_check('__len__', 0, given, keywords)
             raise
@@ -724,9 +709,32 @@ class deque:
         return GenericAlias(*given)
 
 
-_data_of, _data_put = _deque_bind('_data')
-_maxlen_of, _maxlen_put = _deque_bind('_maxlen')
-_state_of, _state_put = _deque_bind('_state')
+_raw_data_of, _data_put = _deque_bind('_data')
+
+
+# Materialize in the same list cell for ordinary sequence operations and iterators.
+def _data_of(owner):
+    return __deque_native__(_raw_data_of(owner), 'data')
+
+
+# Read the bound without invoking subclass attribute hooks.
+def _maxlen_of(owner):
+    return __deque_native__(_raw_data_of(owner), 'limit')
+
+
+# Set the bound after public constructor validation.
+def _maxlen_put(owner, value):
+    return __deque_native__(_raw_data_of(owner), 'setlimit', value)
+
+
+# Read the mutation version shared by both endpoint stacks.
+def _state_of(owner):
+    return __deque_native__(_raw_data_of(owner), 'state')
+
+
+# Update the mutation version after an ordinary list operation.
+def _state_put(owner, value):
+    return __deque_native__(_raw_data_of(owner), 'setstate', value)
 
 
 _repr_factories = set()

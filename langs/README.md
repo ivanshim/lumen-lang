@@ -4654,6 +4654,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.define` | - | - | - | - | `define` | - | - | - | - | - |
 | `ext.builtin.define.class_constant` | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - | - | - | - |
 | `ext.builtin.delattr` | - | - | `delattr` | - | - | - | - | - | - | - |
+| `ext.builtin.deque_native` | - | - | `__deque_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.dict` | - | - | `dict` | - | - | - | - | - | - | - |
 | `ext.builtin.dir` | - | - | `dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.change` | - | - | `__change_dir` | - | - | - | - | - | - | - |
@@ -6221,3 +6222,5 @@ storage report that limitation instead of inventing a count.
 
 `ext.builtin.partial.call` supplies native invocation for Python partial objects, merging their stored positional and keyword arguments without adding a Python frame.
 `ext.builtin.lzma_decode` names the Python-only one-stream system liblzma decoder. It returns decoder status, output bytes and consumed input; the Python facade joins concatenated XZ/LZMA streams. Raw filter chains and incremental codec objects are not yet exposed.
+
+`ext.builtin.deque_native` names the private accelerator for the Python collections adapter: two list stacks support amortized constant-time endpoints, bounded eviction, and rotation; materialization preserves the backing list identity and iterator mutation state.
