@@ -737,6 +737,19 @@ def _state_put(owner, value):
     return __deque_native__(_raw_data_of(owner), 'setstate', value)
 
 
+# Attach native storage work to these exact functions, keeping Python fallbacks
+# for invalid calls, custom index conversion, and replacement function code.
+for _method, _operation in (('append', 'append'), ('appendleft', 'appendleft'),
+                            ('pop', 'pop'), ('popleft', 'popleft'),
+                            ('rotate', 'rotate'), ('__len__', 'length')):
+    __deque_native__(deque.__dict__['_data'], 'bind', deque.__dict__[_method], _operation)
+for _function, _operation in ((_data_of, 'data'), (_maxlen_of, 'limit'),
+                              (_maxlen_put, 'setlimit'), (_state_of, 'state'),
+                              (_state_put, 'setstate')):
+    __deque_native__(deque.__dict__['_data'], 'bind', _function, _operation)
+del _method, _operation, _function
+
+
 _repr_factories = set()
 
 

@@ -634,6 +634,8 @@ pub struct Machine<'a> {
     /// Routines whose frames a frame walk hides, as C routines are
     /// absent from a Python frame chain in the reference.
     native_frame_routines: std::collections::HashSet<usize, crate::table::FxBuildHasher>,
+    /// Registered routine identities retain their function and storage descriptor.
+    deque_functions: std::collections::HashMap<usize, (Value, Value, String), crate::table::FxBuildHasher>,
     supplied_books: Vec<Option<Rc<RefCell<Value>>>>,
     /// Prevent fresh imports during the interpreter's final teardown.
     shutting_down: bool,
@@ -2128,6 +2130,7 @@ impl<'a> Machine<'a> {
             world_book: None,
             main_world: None,
             native_frame_routines: std::collections::HashSet::with_hasher(crate::table::FxBuildHasher::default()),
+            deque_functions: std::collections::HashMap::with_hasher(crate::table::FxBuildHasher::default()),
             supplied_books: Vec::new(),
             shutting_down: false,
             readings: Vec::new(),
@@ -6742,6 +6745,10 @@ impl<'a> Machine<'a> {
                 return Err(fault);
             }
         };
+        if self.deque_functions.contains_key(&(Rc::as_ptr(&p) as usize)) {
+            let supplied = self.value_list(args, frame)?;
+            return self.invoke(p, env, supplied);
+        }
         let callee = self.env_for(&p, env, args, frame)?;
         let mut chosen = Self::explicit_globals(&p);
         let paused_names = if self.armed_names.is_none() && !self.annotation_scopes.is_empty() {
@@ -13721,6 +13728,7 @@ impl<'a> Machine<'a> {
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
+        if let Some(outcome) = self.deque_function_call(&program, &env, &args) { return outcome; }
         let mut handed = match Self::explicit_globals(&program) {
             Some(namespace) => Some(namespace),
             None if self.armed_names.is_some() => match &program.globe {
@@ -32217,6 +32225,21 @@ impl Machine<'_> {
                 Ok(input[0].clone())
             }
             DequeNative => {
+                require(2, 4)?;
+                if input[1].settled().bare() == "bind" {
+                    require(4, 4)?;
+                    let descriptor = input[0].settled();
+                    if !matches!(descriptor, Value::Wrapped(32, _)) { return Err(String::from("TypeError: deque binding requires a slot descriptor")); }
+                    let function = input[2].settled();
+                    let body = match &function {
+                        Value::Bound(body, _) => body,
+                        _ => return Err(String::from("TypeError: deque binding requires a function")),
+                    };
+                    let verb = match input[3].settled() { Value::Text(text) => text.to_string(), _ => return Err(String::from("TypeError: deque operation must be a string")) };
+                    let key = Rc::as_ptr(body) as usize;
+                    self.deque_functions.insert(key, (function.clone(), descriptor, verb));
+                    return Ok(function);
+                }
                 require(2, 3)?;
                 let command = input[1].settled();
                 if let Value::Text(word) = command {

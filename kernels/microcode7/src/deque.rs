@@ -100,3 +100,36 @@ impl Machine<'_> {
         Ok(result)
     }
 }
+
+impl Machine<'_> {
+    // Accelerate only a registered function's untouched positional call shape.
+    pub(super) fn deque_function_call(&mut self, body: &Rc<super::Routine>, room: &Rc<super::Env>, values: &[Value]) -> Option<super::Res> {
+        let identity = (Rc::as_ptr(body) as usize, Rc::as_ptr(room) as usize);
+        let (original, descriptor, command) = self.deque_functions.get(&identity.0)?.clone();
+        if !matches!(self.tracing_function, Value::Nil) { return None; }
+        if let Value::Bound(_, captured) = original {
+            if self.written_over.contains_key(&(identity.0, Rc::as_ptr(&captured) as usize)) { return None; }
+        }
+        if self.written_over.contains_key(&identity) { return None; }
+        if self.recursion_ceiling().is_some_and(|ceiling| self.standing >= ceiling) { return None; }
+        let shape = match command.as_str() {
+            "append" | "appendleft" | "setlimit" | "setstate" => values.len() == 2,
+            "rotate" => values.len() == 1 || values.len() == 2,
+            "pop" | "popleft" | "data" | "state" | "limit" | "length" => values.len() == 1,
+            _ => false,
+        };
+        if !shape || values.iter().any(|v| matches!(v, Value::Couple(_))) { return None; }
+        let target = values[0].settled();
+        let Value::Wrapped(32, detail) = descriptor else { return None };
+        let address = self.slot_key(&target, &detail).ok()?;
+        let stored = if let Value::Thing(object) = target {
+            object.holds.borrow().iter().find_map(|(name, value)| (name == &address).then(|| value.clone()))?
+        } else { return None };
+        let argument = if command == "rotate" {
+            if values.len() == 1 { Some(Value::Small(1)) }
+            else if let next @ Value::Small(_) = values[1].settled() { Some(next) }
+            else { return None }
+        } else { values.get(1).cloned() };
+        Some(self.deque_work(&stored, &command, argument).map_err(Into::into))
+    }
+}

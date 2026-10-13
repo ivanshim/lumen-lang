@@ -136,6 +136,8 @@ pub struct Engine<'a> {
     /// Routines whose frames a frame walk hides, as C routines are
     /// absent from a Python frame chain in the reference.
     native_frame_routines: std::collections::HashSet<usize, crate::value::FxBuildHasher>,
+    /// Explicitly registered adapter routines and their owned storage descriptors.
+    deque_routines: std::collections::HashMap<usize, (Value, Value, String), crate::value::FxBuildHasher>,
     trace_hook: Value,
     coroutine_depth: usize,
     annotation_scope: Option<(Rc<Routine>, Option<Rc<Class>>, Vec<(Weak<Instance>, String)>)>,
@@ -1690,6 +1692,7 @@ impl<'a> Engine<'a> {
             line: 0,
             trace_frame: None,
             native_frame_routines: std::collections::HashSet::with_hasher(crate::value::FxBuildHasher::default()),
+            deque_routines: std::collections::HashMap::with_hasher(crate::value::FxBuildHasher::default()),
             trace_hook: Value::Null,
             coroutine_depth: 0,
             annotation_scope: None,
@@ -4546,6 +4549,14 @@ impl<'a> Engine<'a> {
     }
 
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
+        if self.deque_routines.contains_key(&(Rc::as_ptr(program) as usize)) {
+            let supplied = self.data[self.data.len() - n..].to_vec();
+            if let Some(done) = self.deque_routine_call(program, &supplied) {
+                self.data.truncate(self.data.len() - n);
+                self.data.push(done?);
+                return Ok(());
+            }
+        }
         let mut annotation_namespace = program.globe.as_ref().and_then(|book| match book { Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => Some(cell.clone()), Value::Map(_) => Some(Rc::new(RefCell::new(book.clone()))), _ => None }).or_else(|| {
             self.armed_names.as_ref()?;
             match program.globe.as_ref() {
@@ -26360,6 +26371,16 @@ impl Engine<'_> {
                 args[0].clone()
             }
             Builtin::DequeNative => {
+                arity(2, 4)?;
+                if args[1].contents().plain() == "bind" {
+                    arity(4, 4)?;
+                    let Value::Adapter(slot) = args[0].contents() else { return Err("TypeError: deque binding requires a slot descriptor".into()) };
+                    let Value::Routine(routine) = args[2].contents() else { return Err("TypeError: deque binding requires a function".into()) };
+                    if slot.0 != 16 { return Err("TypeError: deque binding requires a slot descriptor".into()); }
+                    let Value::Text(verb) = args[3].contents() else { return Err("TypeError: deque operation must be a string".into()) };
+                    self.deque_routines.insert(Rc::as_ptr(&routine) as usize, (args[2].clone(), args[0].clone(), verb.to_string()));
+                    return Ok(args[2].clone());
+                }
                 arity(2, 3)?;
                 if self.lang.deque_native.is_empty() { return Err(self.core_fault("core.unready", name)); }
                 let Value::Text(verb) = args[1].contents() else { return Err("TypeError: deque operation must be a string".into()) };

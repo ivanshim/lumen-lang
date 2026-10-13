@@ -89,3 +89,27 @@ impl Engine<'_> {
         Ok(answer)
     }
 }
+
+impl Engine<'_> {
+    // Fuse registered positional adapter calls without entering a Python frame.
+    pub(super) fn deque_routine_call(&mut self, routine: &Rc<super::Routine>, given: &[Value]) -> Option<super::Flow<Value>> {
+        let (_, descriptor, verb) = self.deque_routines.get(&(Rc::as_ptr(routine) as usize))?.clone();
+        if !matches!(self.trace_hook, Value::Null) { return None; }
+        if routine.revised.borrow().is_some() || self.recursion_ceiling().is_some_and(|n| self.calls.len() + self.reaching >= n) { return None; }
+        let wanted = match verb.as_str() { "append" | "appendleft" | "setstate" | "setlimit" => 2, "rotate" => given.len().clamp(1, 2), "data" | "state" | "limit" | "length" | "pop" | "popleft" => 1, _ => return None };
+        if given.len() != wanted || given.iter().any(|v| matches!(v, Value::Tie(_))) { return None; }
+        let receiver = given[0].contents();
+        let Value::Adapter(slot) = descriptor.contents() else { return None };
+        let place = self.slot_place(&receiver, &slot.1).ok()?;
+        let Value::Object(owner) = receiver else { return None };
+        let storage = owner.fields.borrow().iter().find(|(key, _)| key == &place)?.1.clone();
+        let item = if verb == "rotate" {
+            match given.get(1).map(Value::contents) {
+                None => Some(Value::Small(1)),
+                Some(value @ Value::Small(_)) => Some(value),
+                _ => return None,
+            }
+        } else { given.get(1).cloned() };
+        Some(self.deque_native_call(&storage, &verb, item).map_err(Into::into))
+    }
+}
