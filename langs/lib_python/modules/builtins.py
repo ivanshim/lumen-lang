@@ -926,6 +926,11 @@ class memoryview:
 def _buffer_bytes(source):
     if type(source) is bytes:
         return source
+    # An existing view already keeps its exporter alive for this copy.
+    if type(source) is memoryview:
+        if not source.c_contiguous:
+            raise BufferError('memoryview: underlying buffer is not C-contiguous')
+        return source.tobytes()
     with memoryview(source) as view:
         if not view.c_contiguous:
             raise BufferError('memoryview: underlying buffer is not C-contiguous')
