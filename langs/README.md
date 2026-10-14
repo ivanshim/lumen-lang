@@ -6066,7 +6066,8 @@ class itself and is not inherited by Python subclasses.
 The gettext runtime adapter uses the same bridge for guarded catalog discovery.
 It reads live environment data, expands locale components, and checks current
 filesystem metadata without caching missing catalogs. Changed dependencies,
-custom inputs, and active tracing retain the release implementation.
+custom inputs, custom environment readers, module types, import hooks, and active
+tracing retain the release implementation and their observable calls.
 A bounded private memo stores locale normalization strings while all helper
 code and alias-table revisions remain unchanged; catalog existence stays live.
 

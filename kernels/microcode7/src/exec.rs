@@ -27425,6 +27425,7 @@ impl Machine<'_> {
                 (Value::Bound(one, here), Value::Bound(two, there)) => Rc::ptr_eq(one, two) && Rc::ptr_eq(here, there),
                 (Value::Blueprint(one), Value::Blueprint(two)) => Rc::ptr_eq(one, two),
                 (Value::Intrinsic(..), Value::Intrinsic(..)) => current.equals(&expected),
+                (Value::OctetKind { changeable: first, .. }, Value::OctetKind { changeable: second, .. }) => first == second,
                 (Value::Wrapped(a, one), Value::Wrapped(b, two)) => a == b && Rc::ptr_eq(one, two),
                 _ => current.one_place(&expected),
             };

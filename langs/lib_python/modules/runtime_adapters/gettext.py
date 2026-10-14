@@ -8,13 +8,23 @@ def _install_catalog_discovery():
     def find(domain, localedir=None, languages=None, all=False):
         if installed[0] is not None:
             return installed[0](domain, localedir, languages, all)
-        if (languages is not None or type(domain) is not str
+        builtin_namespace = sys.modules.get('builtins')
+        importer = __import__ if builtin_namespace is None else builtin_namespace.__import__
+        if (type(importer) is not type(len) or hasattr(importer, '__code__')
+                or importer.__module__ != 'builtins' or importer.__name__ != '__import__'
+                or type(os) is not type(sys) or type(os.path) is not type(sys)
+                or languages is not None or type(domain) is not str
                 or (localedir is not None and type(localedir) is not str)
-                or type(all) is not bool or type(os.environ) is not os._Environ):
+                or type(all) is not bool or type(os.environ) is not os._Environ
+                or type(type(os.environ).__getattribute__) is not type(object.__getattribute__)):
             return original(domain, localedir, languages, all)
         result = original(domain, localedir, languages, all)
         import locale
         import posix
+        if type(locale) is not type(sys) or type(posix) is not type(sys):
+            globals()['find'] = original
+            installed[0] = original
+            return result
         expand = _expand_lang
         normalizer = locale.normalize
         host = posix._host
@@ -36,11 +46,20 @@ def _install_catalog_discovery():
             installed[0] = original
             return result
         import builtins
+        if type(builtins) is not type(sys):
+            globals()['find'] = original
+            installed[0] = original
+            return result
+        instance_check = builtins.isinstance
+        byte_type = builtins.bytes
         range_function = builtins.range
         key_error = builtins.KeyError
         namespace = globals()
         # A dependency already replaced before import must keep the interpreted path.
-        ready = (mapping is os._Environ and type(aliases) is dict and type(encodings) is dict
+        ready = (str is type('') and bytes is type(b'')
+                 and type(instance_check) is type(importer) and not hasattr(instance_check, '__code__')
+                 and instance_check.__module__ == 'builtins' and instance_check.__name__ == 'isinstance'
+                 and mapping is os._Environ and type(aliases) is dict and type(encodings) is dict
                  and range_function.__module__ == 'builtins' and not hasattr(range_function, '__code__')
                  and key_error.__module__ == 'builtins' and key_error.__name__ == 'KeyError'
                  and type(os) is type(posix) and type(os.path) is type(posix)
@@ -66,7 +85,6 @@ def _install_catalog_discovery():
             namespace['find'] = original
             installed[0] = original
             return result
-        import sys
         guards = ((os, 'environ', environment), (os, 'path', os.path),
                   (os.path, 'join', join), (os.path, 'exists', exists),
                   (os, 'stat', stat), (namespace, '_expand_lang', expand),
@@ -77,7 +95,9 @@ def _install_catalog_discovery():
                   (posix, 'fspath', posix.fspath),
                   (locale, 'locale_alias', aliases), (locale, 'locale_encoding_alias', encodings),
                   (sys.modules, 'locale', locale),
-                  (builtins, 'range', range_function), (builtins, 'KeyError', key_error))
+                  (builtins, 'range', range_function), (builtins, 'KeyError', key_error),
+                  (builtins, '__import__', importer), (builtins, 'isinstance', instance_check),
+                  (builtins, 'str', str), (builtins, 'bytes', byte_type))
         functions = (expand, normalizer, join, exists, stat, get, getitem, encode, decode,
                      posix._path, posix.fspath)
         owners = (os, os.path, locale, posix, environment)
