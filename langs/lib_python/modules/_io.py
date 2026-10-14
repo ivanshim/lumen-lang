@@ -1097,12 +1097,16 @@ class FileIO(_RawIOBase):
                 os = _finalizer_os
             else:
                 import os
+            # The base close flushes while the stream still reads as open,
+            # then the descriptor goes; a flush error must not leave it open.
             try:
-                if self._closefd:
-                    os.close(self._fd)
+                _IOBase.close(self)
             finally:
-                self._fd = -1
-                self._closed = True
+                try:
+                    if self._closefd and self._fd >= 0:
+                        os.close(self._fd)
+                finally:
+                    self._fd = -1
     def readable(self):
         self._checkClosed()
         return self._readable
