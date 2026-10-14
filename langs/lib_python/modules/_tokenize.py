@@ -290,7 +290,7 @@ def _underflow_readline(tok):
         tok.inp += 1
         tok.implicit_newline = True
     # Keep the current physical line for native buffered span scans.
-    tok.buf = line + ('\n' if tok.implicit_newline else '')
+    tok.buf = str.__getitem__(line, slice(None)) + ('\n' if tok.implicit_newline else '')
     tok.lineno += 1
     return 1
 
