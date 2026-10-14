@@ -6582,6 +6582,11 @@ impl<'a> Machine<'a> {
                     asked?;
                     return Ok(Value::Nil);
                 }
+                // Native octet storage already owns the mutable cell for a derived row.
+                let target = match Self::underlying(&target).map(|v| v.settled()) {
+                    Some(bytes @ Value::Octets { .. }) => bytes,
+                    _ => target,
+                };
                 // A thing whose blueprint appoints no such method parts
                 // with no place, and the kind that will not is named, as
                 // a tuple's and a text's are. A thing keeping a native
@@ -7613,6 +7618,13 @@ impl<'a> Machine<'a> {
                         // A thing over a native worth is written into
                         // through that worth, where its blueprint has no
                         // method of its own for the writing.
+                        if let (Some(mut bytes @ Value::Octets { .. }), Some(index)) = (self.underlying_unless(&original.settled(), &[12]), &key) {
+                            match index {
+                                Value::Span(bounds) => self.span_written(&mut bytes, bounds, &value)?,
+                                _ => { self.prim_values(Prim::Placed, "", &[bytes, index.clone(), value])?; }
+                            }
+                            return Ok(Value::Nil);
+                        }
                         let (target, worth_cell) = match self.underlying_unless(&original.settled(), &[12]) {
                             Some(Value::Mutable(cell, _)) => { let held = cell.borrow().clone(); (held, Some(cell)) }
                             _ => (original.settled(), None),
@@ -17187,6 +17199,15 @@ impl<'a> Machine<'a> {
         // names for it, and for whatever its blueprint did not answer
         // above is the worth itself.
         if let (Prim::Placed | Prim::Erase, Some(target)) = (operation, operands.first()) {
+            let slot = if operation == Prim::Erase { 13 } else { 12 };
+            if self.appointment(target, slot).is_none() {
+                if let Some(storage @ Value::Octets { .. }) = Self::underlying(target) {
+                    let mut inputs = operands.to_vec();
+                    inputs[0] = storage;
+                    self.prim(operation, "", &inputs)?;
+                    return Ok(Some(target.clone()));
+                }
+            }
             if let Some(Value::Mutable(cell, _) | Value::Shared(cell)) = Self::underlying(target).filter(|_| self.appointment(target, if operation == Prim::Placed { 12 } else { 13 }).is_none()) {
                 let mut inner = operands.to_vec();
                 inner[0] = cell.borrow().clone();
@@ -24689,6 +24710,12 @@ impl<'a> Machine<'a> {
                     let row = self.octets(bytes, false);
                     return self.span_written(held, bounds, &row);
                 }
+            }
+        }
+        // A derived octet row shares its byte cell, rather than a value cell.
+        if self.appointment(held, 12).is_none() {
+            if let Some(mut octets) = Self::underlying(held).filter(|v| matches!(v.settled(), Value::Octets { .. })) {
+                return self.span_written(&mut octets, bounds, handed);
             }
         }
         if let Value::Mutable(cell, _) = held { return self.span_written(&mut cell.borrow_mut(), bounds, handed); }

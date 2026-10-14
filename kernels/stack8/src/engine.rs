@@ -9754,6 +9754,12 @@ impl<'a> Engine<'a> {
         // answer itself: the builtin is then given the worths instead.
         if let (Builtin::Replace | Builtin::Erase, Some(place)) = (op, if op == Builtin::Replace { args.get(2) } else { args.first() }) {
             let asked = if op == Builtin::Replace { 12 } else { 13 };
+            if let Some(bytes @ Value::Bytes(..)) = Self::worth_of(place).filter(|_| self.special_value(place, asked).is_none()) {
+                let mut operands = args.to_vec();
+                operands[if op == Builtin::Replace { 2 } else { 0 }] = bytes;
+                self.builtin(op, "", &mut operands)?;
+                return Ok(Some(place.clone()));
+            }
             if let Some(Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell)) = Self::worth_of(place).filter(|_| self.special_value(place, asked).is_none()) {
                 let mut inner: Vec<Value> = args.to_vec();
                 let at = if op == Builtin::Replace { 2 } else { 0 };
@@ -11205,6 +11211,9 @@ impl<'a> Engine<'a> {
                     self.data.push(Value::Null);
                     return Ok(());
                 }
+                // Byte subclasses delete from the shared byte cell after override dispatch.
+                let target = Self::worth_of(&target).filter(|v| matches!(v.contents(), Value::Bytes(..)))
+                    .map(|v| v.contents()).unwrap_or(target);
                 // A thing whose class answers no such method gives up no
                 // place, and the kind that will not is named, as a
                 // tuple's and a text's are. A thing keeping a worth of
@@ -15963,6 +15972,11 @@ impl<'a> Engine<'a> {
         if self.special_method(&target, 12).is_some() {
             let key = Value::Slice(Rc::new(parts.clone()));
             self.special_call(&target, 12, vec![key, given])?;
+            return Ok(target);
+        }
+        // Derived byte kinds mutate their native storage while keeping the instance.
+        if let Some(worth) = Self::worth_of(&target).filter(|v| matches!(v.contents(), Value::Bytes(..))) {
+            self.write_slice(worth.contents(), parts, given)?;
             return Ok(target);
         }
         let given = collection_contents(&given);
