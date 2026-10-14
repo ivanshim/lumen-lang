@@ -3252,7 +3252,9 @@ impl<'a> Compiler<'a> {
             // a subscript of it, not a display.
             if open > began {
                 let before = &self.tokens[open - 1];
-                if before.shape == Shape::Instr && !self.lang.keywords.iter().any(|w| w == before.spelling()) { return None; }
+                // A soft keyword such as `type` before a bracket is a name being called, never a display.
+                let soft = ["type", "match", "case"].contains(&before.spelling().as_ref());
+                if before.shape == Shape::Instr && (soft || !self.lang.keywords.iter().any(|w| w == before.spelling())) { return None; }
                 if before.shape == Shape::Sign && [")", "]", "}"].contains(&before.lexeme.as_str()) { return None; }
             }
             open
