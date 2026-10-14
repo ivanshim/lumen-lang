@@ -3798,6 +3798,9 @@ impl<'a> Machine<'a> {
             if let Some(found) = self.attribute(&value, key) { return Ok(found); }
         }
         if let Value::Octets { changeable, .. } = value.settled() {
+            if self.native_place(&value, key).is_some() || Self::octet_plain_member(&value, key) {
+                return Ok(Value::Member(Rc::new(value.clone()), key.to_string()));
+            }
             if let Some(method) = self.octet_member(key, changeable) {
                 return Ok(Value::Member(Rc::new(value.clone()), method.to_owned()));
             }

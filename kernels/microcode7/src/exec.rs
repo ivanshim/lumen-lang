@@ -8854,6 +8854,16 @@ impl<'a> Machine<'a> {
             }
         }
         let mark = Self::native_mark(receiver).ok_or_else(|| self.bad_answer())?;
+        if "bB".contains(mark) && at == 31 && Self::native_mark(&arguments[0]) != Some(mark) {
+            let title = self.rules.words_ext_stmt_class_special_declined.first().cloned().unwrap_or_default();
+            return Ok(Value::Refusal(Rc::from(title)));
+        }
+        if "bB".contains(mark) && matches!(at, 20 | 28) {
+            let quantity = self.octet_count(&arguments[0])?.ok_or_else(|| self.core_complaint("core.integer", &arguments[0].kind_word()))?;
+            let number = Value::from_big(quantity);
+            let operands = if at == 20 { vec![receiver.clone(), number] } else { vec![number, receiver.clone()] };
+            return self.native_working(Prim::Times, name, operands);
+        }
         match (mark, at) {
             ('t', 82) => return Ok(Value::tuple(vec![receiver.settled()])),
             ('c', 74) => return Ok(receiver.settled()),

@@ -7892,6 +7892,15 @@ impl<'a> Engine<'a> {
         }
         if place == 80 { return self.pickle_position(&receiver.contents(), &args[0]); }
         let family = Self::native_family(receiver).ok_or_else(|| self.special_fault())?;
+        if matches!(family, Kindred::Bytes(_)) {
+            if place == 31 && Self::native_family(&args[0]) != Some(family) {
+                return Ok(Value::Declined(Rc::from(self.lang.special_declined.first().map_or("", String::as_str))));
+            }
+            if matches!(place, 20 | 28) {
+                let count = self.byte_count(&args[0])?.ok_or_else(|| self.core_fault("core.integer", &args[0].core_kind()))?;
+                args[0] = Value::of_big(count);
+            }
+        }
         if family == Kindred::Tuple && place == 82 { return Ok(Value::tuple(vec![receiver.contents()])); }
         if family == Kindred::Complex {
             if place == 74 { return Ok(receiver.contents()); }

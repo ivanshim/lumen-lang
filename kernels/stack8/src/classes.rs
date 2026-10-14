@@ -3714,6 +3714,9 @@ impl<'a> Engine<'a> {
         }
         // Attribute reads through getattr and hasattr share the bytes method inventory.
         if let Value::Bytes(_, mutable, _) = subject.contents() {
+            if self.native_special(&subject, name) {
+                return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_owned()))));
+            }
             if let Some(operation) = self.byte_member(name, mutable) {
                 return Ok(Value::ValueMethod(Rc::new((subject.clone(), operation.to_string()))));
             }
