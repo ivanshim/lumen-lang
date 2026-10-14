@@ -281,6 +281,7 @@ class CodecInfo(tuple):
 _registry_cache = {}
 _registry_started = False
 _registry_normalizer = None
+_registry_names = {}
 
 # Resolve normalized codec names through registered search functions.
 def lookup(encoding):
@@ -293,7 +294,14 @@ def lookup(encoding):
     if _registry_normalizer is None:
         from _codecs import _normalize_encoding
         _registry_normalizer = _normalize_encoding
-    name = _registry_normalizer(encoding).lower()
+    plain = type(encoding) is str
+    name = _registry_names.get(encoding) if plain else None
+    if name is None:
+        name = _registry_normalizer(encoding).lower()
+        if plain:
+            if len(_registry_names) >= 256:
+                _registry_names.clear()
+            _registry_names[encoding] = name
     if name in _registry_cache:
         return _registry_cache[name]
     if not _registry_started:
