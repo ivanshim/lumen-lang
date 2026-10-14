@@ -18168,7 +18168,10 @@ impl<'a> Machine<'a> {
 
     pub(super) fn proxy_reading(value: &Value) -> Option<Value> {
         match value {
-            Value::Window(owner, 'm') => Some(Self::window_inside(owner).unwrap_or_else(|| Self::proxied_mapping(value).unwrap_or_else(|| owner.proxy_pairs()))),
+            Value::Window(owner, 'm') => {
+                let reading = match owner.settled() { Value::Blueprint(_) => owner.proxy_pairs(), _ => owner.as_ref().clone() };
+                Some(reading)
+            },
             Value::Shared(cell) | Value::Mutable(cell, _) => Self::proxy_reading(&cell.borrow()),
             _ => None,
         }
@@ -18194,13 +18197,10 @@ impl<'a> Machine<'a> {
         let mut result: Option<Vec<Value>> = None;
         for index in 0..v.len() {
             let walk = match op {
-                Prim::Zipped => true,
-                Prim::Mapped => index != 0,
-                Prim::Filtered => index == 1,
-                Prim::Iterator | Prim::Least | Prim::Greatest => v.len() == 1 && index == 0,
+                Prim::Least | Prim::Greatest => v.len() == 1 && index == 0,
                 Prim::Length | Prim::Iterate | Prim::Tupled | Prim::Tupling | Prim::Uniques
                     | Prim::Unchanging
-                    | Prim::Numbered | Prim::EveryTrue | Prim::SomeTrue | Prim::Total => index == 0,
+                    | Prim::EveryTrue | Prim::SomeTrue | Prim::Total => index == 0,
                 _ => false,
             };
             let receiver = match op {
@@ -31358,7 +31358,7 @@ impl Machine<'_> {
     }
 
     fn iterated_value(&mut self, source: &Value) -> Result<Value, String> {
-        if let Value::Window(owner, 'm') = source { if matches!(owner.settled(), Value::Thing(_)) { return self.iterated_value(owner); } }
+        if let Some(original) = Self::proxy_reading(source) { return self.iterated_value(&original); }
 
         if self.rules.suspends {
             if let Some(kind) = self.live_walk(source) { return Ok(Self::cursor_value(kind)); }
@@ -31368,7 +31368,7 @@ impl Machine<'_> {
         // Native Python bases supply their iterator before the sequence
         // fallback. An explicit iteration slot on the subclass still wins.
         if !self.rules.words_ext_stmt_class_detail_native_protocols.is_empty() {
-            if let Some(storage) = self.underlying_unless(source, &[15]).filter(|value| Self::walk_named(value).is_some()) {
+            if let Some(storage) = self.underlying_unless(source, &[15]).filter(|value| Self::walk_named(&value.settled()).is_some()) {
                 return self.iterated_value(&storage);
             }
         }
@@ -31386,7 +31386,7 @@ impl Machine<'_> {
             Value::Cursor(_) => Ok(Self::cursor_value(IteratorKind::Handed(source.clone()))),
             Value::Thing(_) => {
                 if let Some(native) = self.underlying_unless(source, &[15, 11]) {
-                    return self.iterated_value(&native.settled());
+                    return self.iterated_value(&native);
                 }
                 if let Some(handed) = self.ask_special(source, 15, &[])? {
                     // What a thing hands over is a walk or it is
@@ -31974,6 +31974,18 @@ impl Machine<'_> {
     }
 
     pub(super) fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
+        if keywords.is_empty() && op == Prim::Iterator && input.len() == 1 {
+            if let Some(owner) = Self::proxy_reading(&input[0]) { return self.iterated_value(&owner); }
+            if matches!(input[0], Value::Thing(_)) { return self.iterated_value(&input[0]); }
+        }
+        if op == Prim::Backwards && input.len() == 1 && keywords.is_empty()
+            && self.rules.suspends && self.rules.has_any_ext_syntax_map_resized {
+            if Self::dict_cell(&input[0]).is_some() {
+                let mut entries = self.gathered_members(&input[0])?;
+                entries.reverse();
+                return Ok(self.walk_over_backwards(&input[0], entries));
+            }
+        }
 
         if matches!(op, Prim::GetMember | Prim::HasAttribute) && input.len() >= 2 {
             if let Some(window @ Value::Window(_, 'm')) = Self::window_inside(&input[0]) {
@@ -32926,7 +32938,7 @@ impl Machine<'_> {
                     // there travels on, as it does through the plain
                     // read itself.
                     if found.is_none() && matches!(op, GetMember | HasAttribute) {
-                        match self.member_for_case(&input[0], &word) {
+                        match self.member_for_case(standing.as_ref().unwrap_or(&input[0]), &word) {
                             Ok(held) => found = held,
                             Err(told) => return Err(told),
                         }

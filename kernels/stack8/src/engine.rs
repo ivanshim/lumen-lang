@@ -21323,12 +21323,9 @@ impl<'a> Engine<'a> {
         let count = args.len();
         for (position, value) in args.iter_mut().enumerate() {
             let iterable = match builtin {
-                Builtin::Zip => true,
-                Builtin::Map => position > 0,
-                Builtin::Filter => position == 1,
-                Builtin::Iter | Builtin::Minimum | Builtin::Maximum => count == 1 && position == 0,
+                Builtin::Minimum | Builtin::Maximum => count == 1 && position == 0,
                 Builtin::Length | Builtin::Tuple | Builtin::Set
-                    | Builtin::Frozen | Builtin::Enumerate | Builtin::Fetch
+                    | Builtin::Frozen | Builtin::Fetch
                     | Builtin::All | Builtin::Any | Builtin::Sum => position == 0,
                 _ => false,
             };
@@ -21351,14 +21348,16 @@ impl<'a> Engine<'a> {
 
     pub(super) fn proxy_reading(value: &Value) -> Option<Value> {
         match value {
-            Value::View(proxy) if proxy.1 == "mapping" => Some(Self::view_in(&proxy.0).unwrap_or_else(|| Self::proxied_mapping(value).unwrap_or_else(|| proxy.0.proxy_dictionary()))),
+            Value::View(proxy) if proxy.1 == "mapping" => Some(if matches!(proxy.0.contents(), Value::Class(_)) {
+                proxy.0.proxy_dictionary()
+            } else { proxy.0.clone() }),
             Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => Self::proxy_reading(&cell.borrow()),
             _ => None,
         }
     }
 
     /// The mapping a proxy reads, where the program made it (a dict subclass,
-    /// a chain of dictionaries): such a proxy answers for it in every question.
+    /// a chain of dictionaries), for its mapping protocols.
     pub(super) fn proxied_mapping(value: &Value) -> Option<Value> {
         match value {
             Value::View(proxy) if proxy.1 == "mapping" => match proxy.0.contents() { thing @ Value::Object(_) => Some(thing), _ => None },
@@ -25557,6 +25556,7 @@ impl Engine<'_> {
     }
 
     pub(super) fn core_iterator(&mut self, source: &Value) -> Res<Value> {
+        if let Some(mapping) = Self::proxy_reading(source) { return self.core_iterator(&mapping); }
         if self.lang.yield_suspends {
             if let Some(live) = self.living_source(source) { return Ok(Self::core_cursor(live)); }
         }
@@ -25586,7 +25586,9 @@ impl Engine<'_> {
             // walk of its own is walked as the worth it stands on is
             // walked: a subclass of the map kind, for one, walks its
             // keys however its own reading of a place is spelled.
-            if let Some(worth) = self.worth_free_of(source, &[15]) { return self.core_iterator(&worth); }
+            if self.special_value(source, 15).is_none() {
+                if let Some(storage) = Self::worth_of(source) { return self.core_iterator(&storage); }
+            }
             if let Some(places) = self.indexed_walk(source) { return Ok(places); }
         }
         // A plain map uses a keys window whose entry position survives
@@ -26154,6 +26156,9 @@ impl Engine<'_> {
     }
 
     fn core_call(&mut self, b: Builtin, name: &str, mut args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if b == Builtin::Iter && args.len() == 1 && named.is_empty() {
+            if let Some(mapping) = Self::proxy_reading(&args[0]) { return self.core_iterator(&mapping); }
+        }
         use num_integer::Integer;
         use num_traits::{Signed, Zero};
         if b == Builtin::Reversed && args.len() == 1 && named.is_empty() {
@@ -27088,7 +27093,7 @@ impl Engine<'_> {
                     // simply not being there travels on, as it does
                     // through the plain read itself.
                     if found.is_none() && matches!(b, Builtin::GetAttr | Builtin::HasAttr) {
-                        match self.member_for_pattern(&args[0], &word) {
+                        match self.member_for_pattern(standing.as_ref().unwrap_or(&args[0]), &word) {
                             Ok(held) => found = held,
                             Err(fault) => return Err(fault.told(&self.wording())),
                         }
