@@ -72,11 +72,12 @@ def _error_argument(errors, function):
 
 # Return a stateless encoder with the C codec tuple interface.
 def _encoder(name):
+    convert = _runtime._raw_text_encode if name in ('ascii', 'latin_1', 'utf_8') else _runtime._encode
     # Encode a Unicode input and report characters consumed.
     def encode(input, errors='strict'):
         input = _text(input)
         errors = _error_argument(errors, name + '_encode')
-        return _runtime._encode(input, name, errors), len(input)
+        return convert(input, name, errors), len(input)
     return _CodecCall(encode, name + '_encode')
 
 # Find the prefix that ends before an unfinished escaped character.
@@ -117,6 +118,7 @@ def _escape_end(data, raw):
 
 # Return a decoder with byte consumption and non-final buffering.
 def _decoder(name, default_final=False):
+    convert = _runtime._raw_text_decode if name in ('ascii', 'latin_1') else _runtime._decode
     # Decode only complete characters when the caller has more bytes to supply.
     def decode(input, errors='strict', final=default_final):
         data = input.encode('utf-8') if isinstance(input, str) and name in ('unicode_escape', 'raw_unicode_escape') else _buffer(input)
@@ -136,7 +138,7 @@ def _decoder(name, default_final=False):
         end = len(data)
         if not final and name in ('unicode_escape', 'raw_unicode_escape'):
             end = _escape_end(data, name == 'raw_unicode_escape')
-        return _runtime._decode(data[:end], name, errors), end
+        return convert(data[:end], name, errors), end
     return _CodecCall(decode, name + '_decode')
 
 ascii_encode = _encoder('ascii')
