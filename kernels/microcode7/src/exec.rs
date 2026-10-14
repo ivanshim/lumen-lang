@@ -31976,7 +31976,6 @@ impl Machine<'_> {
     pub(super) fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
         if keywords.is_empty() && op == Prim::Iterator && input.len() == 1 {
             if let Some(owner) = Self::proxy_reading(&input[0]) { return self.iterated_value(&owner); }
-            if matches!(input[0], Value::Thing(_)) { return self.iterated_value(&input[0]); }
         }
         if op == Prim::Backwards && input.len() == 1 && keywords.is_empty()
             && self.rules.suspends && self.rules.has_any_ext_syntax_map_resized {
