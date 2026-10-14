@@ -6128,12 +6128,12 @@ surrogates, permissive controls, and precise error diagnostics.
 
 `ext.builtin.tokenize.scan` recognizes buffered names, common numeric forms,
 ordinary single-line strings with prefixes and escapes, comments, newlines,
-operators and matching root-mode brackets in a tokenizer iterator's private
-state. It returns a complete token and updates its cursor and line cache, or
+plain single-line interpolation pieces, operators and matching root-mode
+brackets in a tokenizer iterator's private state. It returns a complete token and updates its cursor and line cache, or
 requests the adapter's existing character reader before retrying. Matching
 space-only indentation and blank lines can be prepared natively; indentation
-transitions, tabs, interpolation and diagnostic cases retain the adapter's
-scanner.
+transitions, tabs, complex interpolation and diagnostic cases retain the
+adapter's scanner.
 
 `ext.builtin.text.scan_ascii` scans the bounded ASCII span accepted by a
 character set and returns its ending code-point index. The regular-expression

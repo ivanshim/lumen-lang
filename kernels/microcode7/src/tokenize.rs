@@ -95,6 +95,74 @@ fn number_limit(input: &[u8], origin: usize) -> Option<usize> {
     }
 }
 
+// A plain interpolation span and its closing single quote can share the
+// native tuple path. More complicated quoting still enters the Python port.
+fn literal_piece(owner: &Thing, scanner: &Thing, active: &Thing,
+    nesting: i64, cursor: i64, limit: i64, line_base: i64, row_number: i64) -> Option<Value> {
+    if nesting < 1 || cursor >= limit { return None; }
+    if counter(active, "quote_size")? != 1 || counter(active, "first_line")? != row_number { return None; }
+    let template = counter(active, "string_kind")?;
+    if !(0..=1).contains(&template) { return None; }
+    let Value::Text(delimiter) = slot(active, "quote") else { return None; };
+    let q = match delimiter.as_bytes() { [34] => 34, [39] => 39, _ => return None };
+    let Value::Text(source) = slot(scanner, "buf") else { return None; };
+    let column = usize::try_from(cursor - line_base).ok()?;
+    let origin = crate::text::string_boundary(&source, column)?;
+    let input = source.as_bytes();
+    let final_quote = input.get(origin).copied()? == q;
+    let (mut stop, mut enters_expression) = (origin, None);
+    if final_quote { stop += 1; }
+    else {
+        loop {
+            let &byte = input.get(stop)?;
+            if byte == q { break; }
+            match byte {
+                123 => {
+                    if stop == origin || input.get(stop + 1) == Some(&123) { return None; }
+                    let depth = counter(active, "curly_bracket_expr_start_depth")?.checked_add(1)?;
+                    if depth >= counter(scanner, "_maxexpr")? { return None; }
+                    enters_expression = Some(depth);
+                    break;
+                }
+                125 | 92 | 10 | 13 => return None,
+                _ => stop += 1,
+            }
+        }
+        if stop == origin { return None; }
+    }
+    let last_column = column + source[origin..stop].chars().count();
+    let Value::Tuple(kinds) = slot(scanner, "_token_types") else { return None; };
+    if kinds.len() != 11 { return None; }
+    let index = usize::try_from(template).ok()? + if final_quote { 9 } else { 7 };
+    let selected = kinds[index].clone();
+    let text_line = match counter(owner, "last_lineno") {
+        Some(previous) if previous == row_number => {
+            let cached = slot(owner, "last_line");
+            if matches!(cached, Value::Nil) { return None; }
+            cached
+        }
+        _ => if matches!(slot(scanner, "implicit_newline"), Value::Flag(true)) {
+            Value::text(source.strip_suffix('\n')?)
+        } else { Value::Text(source.clone()) },
+    };
+    store(scanner, "first_lineno", Value::Small(row_number));
+    store(scanner, "cur", Value::Small(line_base + last_column as i64));
+    store(scanner, "start", Value::Small(cursor));
+    if final_quote { store(scanner, "tok_mode_stack_index", Value::Small(nesting - 1)); }
+    else { store(scanner, "multi_line_start", Value::Small(line_base)); }
+    if let Some(depth) = enters_expression {
+        store(active, "in_format_spec", Value::Flag(false));
+        store(active, "kind", Value::Small(0));
+        store(active, "curly_bracket_expr_start_depth", Value::Small(depth));
+        store(active, "last_expr_start", Value::Small(line_base + last_column as i64 + 1));
+    }
+    store(owner, "last_lineno", Value::Small(row_number));
+    store(owner, "last_line", text_line.clone());
+    let start = Value::tuple(vec![Value::Small(row_number), Value::Small(column as i64)]);
+    let end = Value::tuple(vec![Value::Small(row_number), Value::Small(last_column as i64)]);
+    Some(Value::tuple(vec![selected, Value::text(&source[origin..stop]), start, end, text_line]))
+}
+
 // Return a buffered token, leaving ambiguous syntax and input reads to the port.
 pub fn atom(values: &[Value]) -> Result<Value, String> {
     if values.len() != 1 { return Err("TypeError: tokenizer scan needs an iterator".to_owned()); }
@@ -109,7 +177,11 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
     if line_base < 0 || cursor < line_base || nesting < 0 { return Ok(Value::Nil); }
     let Value::Vector(stack) = slot(&scanner, "tok_mode_stack") else { return Ok(Value::Nil); };
     let Some(Value::Thing(active)) = stack.get(nesting as usize).map(Value::settled) else { return Ok(Value::Nil); };
-    if counter(&active, "kind") != Some(0) { return Ok(Value::Nil); }
+    match counter(&active, "kind") {
+        Some(1) => return Ok(literal_piece(&owner, &scanner, &active, nesting, cursor, limit, line_base, row_number).unwrap_or(Value::Nil)),
+        Some(0) => (),
+        _ => return Ok(Value::Nil),
+    }
     let beginning = match slot(&scanner, "atbol") { Value::Flag(yes) => yes, _ => return Ok(Value::Nil) };
     if beginning && cursor == limit { return Ok(Value::Flag(false)); }
     if cursor >= limit { return Ok(Value::Nil); }
@@ -226,7 +298,7 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
         Some((add, used, delimiters, rows))
     } else { None };
     let Value::Tuple(kinds) = slot(&scanner, "_token_types") else { return Ok(Value::Nil); };
-    if kinds.len() != 7 { return Ok(Value::Nil); }
+    if kinds.len() != 11 { return Ok(Value::Nil); }
     let token_type = match tag {
         2 | 4 => {
             let Value::Dict(lookup) = slot(&scanner, "_operator_types") else { return Ok(Value::Nil); };

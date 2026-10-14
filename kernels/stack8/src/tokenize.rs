@@ -85,6 +85,68 @@ fn numeric_end(bytes: &[u8], start: usize) -> Option<usize> {
     bytes.get(at).filter(|byte| byte.is_ascii() && !byte.is_ascii_alphanumeric() && !matches!(**byte, b'_' | b'.')).map(|_| at)
 }
 
+// Finish simple single-line interpolation pieces without another Python
+// scanner/conversion pass. Escapes, doubled braces and multiline forms defer.
+fn interpolation(iterator: &Instance, state: &Instance, mode: &Instance,
+    depth: i64, cur: i64, inp: i64, base: i64, lineno: i64) -> Option<Value> {
+    if depth <= 0 || cur >= inp || number(mode, "quote_size") != Some(1)
+        || number(mode, "first_line") != Some(lineno) { return None; }
+    let flavour = match number(mode, "string_kind")? { 0 => 0, 1 => 1, _ => return None };
+    let Value::Text(quote) = field(mode, "quote") else { return None; };
+    if quote.len() != 1 || !matches!(quote.as_bytes()[0], b'\'' | b'"') { return None; }
+    let mark = quote.as_bytes()[0];
+    let Value::Text(text) = field(state, "buf") else { return None; };
+    let position = usize::try_from(cur - base).ok()?;
+    let begin = crate::strings::character_byte(&text, position)?;
+    let bytes = text.as_bytes();
+    let ending = *bytes.get(begin)? == mark;
+    let mut after = begin;
+    let mut expression = None;
+    if ending { after += 1; }
+    else {
+        while let Some(&byte) = bytes.get(after) {
+            if byte == mark { break; }
+            if byte == b'{' {
+                if after == begin || bytes.get(after + 1) == Some(&b'{') { return None; }
+                let next_depth = number(mode, "curly_bracket_expr_start_depth")?.checked_add(1)?;
+                if next_depth >= number(state, "_maxexpr")? { return None; }
+                expression = Some(next_depth);
+                break;
+            }
+            if matches!(byte, b'}' | b'\\' | b'\n' | b'\r') { return None; }
+            after += 1;
+        }
+        if after == begin || bytes.get(after).is_none() { return None; }
+    }
+    let finish = position + text[begin..after].chars().count();
+    let Value::Tuple(types) = field(state, "_token_types") else { return None; };
+    if types.len() != 11 { return None; }
+    let token = types[if ending { 9 + flavour } else { 7 + flavour }].clone();
+    let line = if number(iterator, "last_lineno") == Some(lineno) {
+        let cached = field(iterator, "last_line");
+        if matches!(cached, Value::Null) { return None; }
+        cached
+    } else if matches!(field(state, "implicit_newline"), Value::Flag(true)) {
+        Value::text(text.strip_suffix('\n')?)
+    } else { Value::Text(text.clone()) };
+    put(state, "start", Value::Small(cur));
+    put(state, "cur", Value::Small(base + finish as i64));
+    put(state, "first_lineno", Value::Small(lineno));
+    if ending { put(state, "tok_mode_stack_index", Value::Small(depth - 1)); }
+    else { put(state, "multi_line_start", Value::Small(base)); }
+    if let Some(next_depth) = expression {
+        put(mode, "last_expr_start", Value::Small(base + finish as i64 + 1));
+        put(mode, "curly_bracket_expr_start_depth", Value::Small(next_depth));
+        put(mode, "kind", Value::Small(0));
+        put(mode, "in_format_spec", Value::Flag(false));
+    }
+    put(iterator, "last_line", line.clone());
+    put(iterator, "last_lineno", Value::Small(lineno));
+    Some(Value::tuple(vec![token, Value::text(&text[begin..after]),
+        Value::tuple(vec![Value::Small(lineno), Value::Small(position as i64)]),
+        Value::tuple(vec![Value::Small(lineno), Value::Small(finish as i64)]), line]))
+}
+
 // Recognize buffered tokens; leave refills and diagnostic cases to the adapter.
 pub fn scan(args: &[Value]) -> Result<Value, String> {
     if args.len() != 1 { return Err("TypeError: tokenizer scan needs an iterator".into()); }
@@ -98,6 +160,9 @@ pub fn scan(args: &[Value]) -> Result<Value, String> {
     if base < 0 || cur < base || depth < 0 { return Ok(Value::Null); }
     let Value::Array(modes) = field(&state, "tok_mode_stack") else { return Ok(Value::Null); };
     let Some(Value::Object(mode)) = modes.get(depth as usize).map(Value::contents) else { return Ok(Value::Null); };
+    if number(&mode, "kind") == Some(1) {
+        return Ok(interpolation(&iterator, &state, &mode, depth, cur, inp, base, lineno).unwrap_or(Value::Null));
+    }
     if number(&mode, "kind") != Some(0) { return Ok(Value::Null); }
     let atbol = match field(&state, "atbol") { Value::Flag(value) => value, _ => return Ok(Value::Null) };
     // Request the adapter's usual next-character call so reader callbacks and faults stay unchanged.
@@ -204,7 +269,7 @@ pub fn scan(args: &[Value]) -> Result<Value, String> {
         Some((chars, lines, level, opening))
     } else { None };
     let Value::Tuple(types) = field(&state, "_token_types") else { return Ok(Value::Null); };
-    if types.len() != 7 { return Ok(Value::Null); }
+    if types.len() != 11 { return Ok(Value::Null); }
     let token = if matches!(kind, 2 | 4) {
         let Value::Map(operators) = field(&state, "_operator_types") else { return Ok(Value::Null); };
         let Some(at) = operators.named_row(&text[start..end]).ok().flatten() else { return Ok(Value::Null); };
