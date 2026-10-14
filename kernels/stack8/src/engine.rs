@@ -21313,16 +21313,9 @@ impl<'a> Engine<'a> {
 
     fn proxy_reversed(&mut self, value: &Value) -> Res<Option<Value>> {
         let Some(mapping) = Self::proxy_reading(value) else { return Ok(None) };
-        // The proxy's method calls __reversed__ by name; it has no sequence fallback.
-        let answer = (|| {
-            let method = self.class_get(mapping, "__reversed__", false)?;
-            self.class_apply(method, Vec::new())
-        })();
-        match answer {
-            Ok(iterator) => Ok(Some(iterator)),
-            Err(Fault::Note(words)) => Err(words),
-            Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
-        }
+        // Ordinary attribute lookup also binds native dictionary methods.
+        let method = self.builtin(Builtin::GetAttr, "getattr", &mut vec![mapping, Value::text("__reversed__")])?;
+        self.call_held(method, Vec::new()).map(Some)
     }
 
     /// Only the operand using a mapping protocol may expose its owner.

@@ -20034,8 +20034,7 @@ impl<'a> Machine<'a> {
         if let (Prim::Backwards, [source]) = (op, v) {
             if let Some(owner) = Self::proxy_reading(source) {
                 // Reverse lookup is a named method on the owner, not generic sequence reversal.
-                let method = self.read_class_member(owner, "__reversed__", false)
-                    .map_err(|fault| self.carried_native_fault(fault))?;
+                let method = self.prim(Prim::GetMember, "getattr", &[owner, Value::text("__reversed__")])?;
                 return self.apply_class_member(method, Vec::new()).map_err(|fault| self.carried_native_fault(fault));
             }
         }
