@@ -31369,7 +31369,10 @@ impl Machine<'_> {
         // fallback. An explicit iteration slot on the subclass still wins.
         if !self.rules.words_ext_stmt_class_detail_native_protocols.is_empty() {
             if let Some(storage) = self.underlying_unless(source, &[15]).filter(|value| Self::walk_named(&value.settled()).is_some()) {
-                return self.iterated_value(&storage);
+                return self.iterated_value(&storage).map(|iterator| {
+                    if let Value::Iterator(cell) = &iterator { cell.borrow_mut().from_thing = Some(source.clone()); }
+                    iterator
+                });
             }
         }
         match source {

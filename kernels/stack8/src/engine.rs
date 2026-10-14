@@ -25587,7 +25587,11 @@ impl Engine<'_> {
             // walked: a subclass of the map kind, for one, walks its
             // keys however its own reading of a place is spelled.
             if self.special_value(source, 15).is_none() {
-                if let Some(storage) = Self::worth_of(source) { return self.core_iterator(&storage); }
+                if let Some(storage) = Self::worth_of(source) {
+                    let walk = self.core_iterator(&storage)?;
+                    if let Value::Cursor(state) = &walk { state.borrow_mut().origin = Some(source.clone()); }
+                    return Ok(walk);
+                }
             }
             if let Some(places) = self.indexed_walk(source) { return Ok(places); }
         }
