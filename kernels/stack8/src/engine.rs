@@ -18354,6 +18354,33 @@ impl<'a> Engine<'a> {
     /// the seven-bit letters as letters, as CPython does. The row has
     /// been taken out of its cell already, and `mutable` says which of
     /// the two kinds the answer is to be of.
+    // Find a byte pattern in linear time, traversing both sequences backwards for rfind.
+    fn byte_seek(hay: &[u8], needle: &[u8], last: bool) -> Option<usize> {
+        if needle.len() > hay.len() { return None; }
+        if needle.is_empty() { return Some(if last { hay.len() } else { 0 }); }
+        if needle.len() == 1 {
+            return if last { hay.iter().rposition(|b| *b == needle[0]) } else { hay.iter().position(|b| *b == needle[0]) };
+        }
+        let letter = |at: usize| needle[if last { needle.len() - 1 - at } else { at }];
+        let mut prefix = vec![0; needle.len()];
+        for end in 1..needle.len() {
+            let mut matched = prefix[end - 1];
+            while matched > 0 && letter(end) != letter(matched) { matched = prefix[matched - 1]; }
+            if letter(end) == letter(matched) { matched += 1; }
+            prefix[end] = matched;
+        }
+        let mut matched = 0;
+        for offset in 0..hay.len() {
+            let byte = hay[if last { hay.len() - 1 - offset } else { offset }];
+            while matched > 0 && byte != letter(matched) { matched = prefix[matched - 1]; }
+            if byte == letter(matched) { matched += 1; }
+            if matched == needle.len() {
+                return Some(if last { hay.len() - 1 - offset } else { offset + 1 - matched });
+            }
+        }
+        None
+    }
+
     fn byte_text_work(&mut self, task: u8, row: &[u8], mutable: bool, given: &[Value]) -> Res<Value> {
         let bad = || self.byte_fault("arguments");
         let unready = || self.byte_fault("unready");
@@ -18388,11 +18415,7 @@ impl<'a> Engine<'a> {
             let upto = edge(end);
             Ok((from, upto.max(from), start <= row.len() as i64 && from <= upto))
         };
-        let seek = |hay: &[u8], needle: &[u8], last: bool| -> Option<usize> {
-            let most = hay.len().checked_sub(needle.len())?;
-            if last { (0..=most).rev().find(|&i| hay[i..].starts_with(needle)) }
-            else { (0..=most).find(|&i| hay[i..].starts_with(needle)) }
-        };
+        let seek = Self::byte_seek;
         match task {
             // Whether the row opens or closes with any of the parts
             // named, between the bounds given.
@@ -19856,7 +19879,7 @@ impl<'a> Engine<'a> {
                     _ => Err(bad()),
                 }
             };
-            let find = |hay: &[u8], needle: &[u8]| if needle.is_empty() { Some(0) } else { hay.windows(needle.len()).position(|part| part == needle) };
+            let find = |hay: &[u8], needle: &[u8]| Self::byte_seek(hay, needle, false);
             let result = match task {
                 3 if given.len() <= 1 => return self.byte_decode(&row, self.byte_codec(given.first())?),
                 4 if given.len() <= 2 => {

@@ -13802,12 +13802,7 @@ impl<'a> Machine<'a> {
             let possible = asked <= content.len() as i64 && closes >= opens;
             Ok((opens, closes.max(opens), possible))
         };
-        let scan = |haystack: &[u8], part: &[u8], backward: bool| -> Option<usize> {
-            let last = haystack.len().checked_sub(part.len())?;
-            let places = 0..=last;
-            if backward { places.rev().find(|&i| haystack[i..].starts_with(part)) }
-            else { places.into_iter().find(|&i| haystack[i..].starts_with(part)) }
-        };
+        let scan = Self::octet_locate;
         let blank = |n: &u8| n.is_ascii_whitespace() || *n == 11;
         match operation {
             41..=48 if arguments.is_empty() => Ok(Value::Flag(self.octets_all(content, operation))),
@@ -14390,6 +14385,39 @@ impl<'a> Machine<'a> {
         Ok(output)
     }
 
+    // Search octets using failure links so repeated prefixes do not restart a scan.
+    fn octet_locate(text: &[u8], pattern: &[u8], reverse: bool) -> Option<usize> {
+        let width = pattern.len();
+        if width == 0 { return Some(if reverse { text.len() } else { 0 }); }
+        if width > text.len() { return None; }
+        if width == 1 {
+            let equals = |byte: &u8| *byte == pattern[0];
+            return if reverse { text.iter().rposition(equals) } else { text.iter().position(equals) };
+        }
+        let wanted: Vec<u8> = if reverse { pattern.iter().rev().copied().collect() } else { pattern.to_vec() };
+        let mut links = vec![0usize; width];
+        let (mut cursor, mut border) = (1, 0);
+        while cursor < width {
+            if wanted[cursor] == wanted[border] {
+                border += 1;
+                links[cursor] = border;
+                cursor += 1;
+            } else if border != 0 { border = links[border - 1]; }
+            else { cursor += 1; }
+        }
+        let (mut position, mut accepted) = (0, 0);
+        while position < text.len() {
+            let current = text[if reverse { text.len() - position - 1 } else { position }];
+            if current == wanted[accepted] {
+                position += 1;
+                accepted += 1;
+                if accepted == width { return Some(if reverse { text.len() - position } else { position - width }); }
+            } else if accepted != 0 { accepted = links[accepted - 1]; }
+            else { position += 1; }
+        }
+        None
+    }
+
     fn octet_work(&mut self, operation: u8, values: &[Value], negative_allowed: bool) -> Result<Value, String> {
         if operation == 64 {
             if values.len() != 1 { return Err("TypeError: intern() takes exactly one argument".to_owned()); }
@@ -14527,7 +14555,7 @@ impl<'a> Machine<'a> {
         }
         let refusal = || self.octet_error("unready");
         let wrong = || self.octet_error("arguments");
-        let seek = |hay: &[u8], part: &[u8]| (0..=hay.len()).find(|&i| hay[i..].starts_with(part));
+        let seek = |hay: &[u8], part: &[u8]| Self::octet_locate(hay, part, false);
         match operation {
             0 | 1 => {
                 let content = match values.len() {
