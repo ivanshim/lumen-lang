@@ -151,11 +151,6 @@ def _is_xdigit(c):
     return c is not None and ('0' <= c <= '9' or 'a' <= c <= 'f' or 'A' <= c <= 'F')
 
 
-def _is_potential_identifier_start(c):
-    return c is not None and (
-        'a' <= c <= 'z' or 'A' <= c <= 'Z' or c == '_' or ord(c) >= 128)
-
-
 def _is_potential_identifier_char(c):
     return c is not None and (
         'a' <= c <= 'z' or 'A' <= c <= 'Z' or '0' <= c <= '9'
@@ -211,18 +206,6 @@ class _TokState(object):
         self.tok_mode_stack_index = 0
 
 
-def _inside_fstring(tok):
-    return tok.tok_mode_stack_index > 0
-
-
-def _inside_fstring_expr(mode):
-    return mode.curly_bracket_expr_start_depth >= 0
-
-
-def _inside_fstring_expr_at_top(mode):
-    return mode.curly_bracket_depth - mode.curly_bracket_expr_start_depth == 1
-
-
 # Parser/tokenizer/helpers.c: _syntaxerror_range.  Columns passed in are
 # character columns already, so the C byte-to-character conversion is the
 # identity here.
@@ -270,7 +253,7 @@ def _parser_warn(tok, msg):
 # Parser/tokenizer/readline_tokenizer.c: tok_readline_string and
 # tok_underflow_readline.
 def _underflow_readline(tok):
-    if tok.start is None and not _inside_fstring(tok):
+    if tok.start is None and not (tok.tok_mode_stack_index > 0):
         tok.bufc = []
         tok.line_null = False
         tok.cur = 0
@@ -541,7 +524,7 @@ def _letter_quote(tok, c):
             tok.line_start = tok.multi_line_start
             start = tok.lineno
             tok.lineno = tok.first_lineno
-            if _inside_fstring(tok):
+            if (tok.tok_mode_stack_index > 0):
                 mode = tok.tok_mode_stack[tok.tok_mode_stack_index]
                 if mode.quote == quote and mode.quote_size == quote_size:
                     prefix = 't' if mode.string_kind == TSTRING else 'f'
@@ -699,7 +682,8 @@ def _tok_get_normal_mode(tok, current_tok):
                 return (ERRORTOKEN, None, None)
 
             nonascii = False
-            if _is_potential_identifier_start(c):
+            if ('a' <= c <= 'z' or 'A' <= c <= 'Z'
+                    or c == '_' or ord(c) >= 128):
                 saw_b = saw_r = saw_u = saw_f = saw_t = False
                 is_string = False
                 while True:
@@ -725,7 +709,9 @@ def _tok_get_normal_mode(tok, current_tok):
                     if saw_f or saw_t:
                         return _f_string_quote(tok, c)
                     return _letter_quote(tok, c)
-                while _is_potential_identifier_char(c):
+                while c is not None and (
+                        'a' <= c <= 'z' or 'A' <= c <= 'Z' or '0' <= c <= '9'
+                        or c == '_' or ord(c) >= 128):
                     if ord(c) >= 128:
                         nonascii = True
                     else:
@@ -776,7 +762,7 @@ def _tok_get_normal_mode(tok, current_tok):
                     _backup(tok, c)
                 return (DOT, tok.start, tok.cur)
 
-            if _is_digit(c):
+            if '0' <= c <= '9':
                 if c == '0':
                     c = _nextc(tok)
                     if c == 'x' or c == 'X':
@@ -888,8 +874,8 @@ def _tok_get_normal_mode(tok, current_tok):
                 continue  # again
 
             is_punctuation = c == ':' or c == '}' or c == '!' or c == '{'
-            if is_punctuation and _inside_fstring(tok) \
-                    and _inside_fstring_expr(current_tok):
+            if is_punctuation and (tok.tok_mode_stack_index > 0) \
+                    and (current_tok.curly_bracket_expr_start_depth >= 0):
                 cursor = current_tok.curly_bracket_depth - (0 if c == '{' else 1)
                 in_format_spec = current_tok.in_format_spec
                 cursor_in_format_with_debug = cursor == 1 and (
@@ -931,10 +917,10 @@ def _tok_get_normal_mode(tok, current_tok):
                 tok.parenstack.append(c)
                 tok.parenlinenostack.append(tok.lineno)
                 tok.level += 1
-                if _inside_fstring(tok):
+                if (tok.tok_mode_stack_index > 0):
                     current_tok.curly_bracket_depth += 1
             elif c == ')' or c == ']' or c == '}':
-                if _inside_fstring(tok) \
+                if (tok.tok_mode_stack_index > 0) \
                         and not current_tok.curly_bracket_depth and c == '}':
                     prefix = 't' if current_tok.string_kind == TSTRING else 'f'
                     _syntaxerror(tok, "%s-string: single '}' is not allowed"
@@ -949,7 +935,7 @@ def _tok_get_normal_mode(tok, current_tok):
                             (opening == '(' and c == ')')
                             or (opening == '[' and c == ']')
                             or (opening == '{' and c == '}')):
-                        if _inside_fstring(tok) and opening == '{':
+                        if (tok.tok_mode_stack_index > 0) and opening == '{':
                             previous_bracket = current_tok.curly_bracket_depth - 1
                             if previous_bracket == current_tok.curly_bracket_expr_start_depth:
                                 prefix = ('t' if current_tok.string_kind == TSTRING
@@ -965,7 +951,7 @@ def _tok_get_normal_mode(tok, current_tok):
                             _syntaxerror(tok, "closing parenthesis '%s' does"
                                          ' not match opening parenthesis'
                                          " '%s'" % (c, opening))
-                if _inside_fstring(tok):
+                if (tok.tok_mode_stack_index > 0):
                     current_tok.curly_bracket_depth -= 1
                     if current_tok.curly_bracket_depth < 0:
                         prefix = ('t' if current_tok.string_kind == TSTRING
@@ -983,7 +969,8 @@ def _tok_get_normal_mode(tok, current_tok):
                 _syntaxerror(tok, 'invalid non-printable character U+%04X'
                              % ord(c))
 
-            if c == '=' and _inside_fstring_expr_at_top(current_tok):
+            if c == '=' and (current_tok.curly_bracket_depth
+                             - current_tok.curly_bracket_expr_start_depth == 1):
                 current_tok.in_debug = True
 
             return (_ONE_CHAR.get(c, OP), tok.start, tok.cur)
@@ -1073,7 +1060,7 @@ def _tok_get_fstring_mode(tok, current_tok):
     while end_quote_size != current_tok.quote_size:
         c = _nextc(tok)
         in_format_spec = current_tok.in_format_spec \
-            and _inside_fstring_expr(current_tok)
+            and (current_tok.curly_bracket_expr_start_depth >= 0)
         if c is None or (current_tok.quote_size == 1 and c == '\n'):
             if in_format_spec and c == '\n':
                 if current_tok.quote_size == 1:
@@ -1171,14 +1158,6 @@ def _tok_get_fstring_mode(tok, current_tok):
     return (FSTRING_MIDDLE, tok.start, tok.cur)
 
 
-# Parser/lexer/lexer.c: tok_get and _PyTokenizer_Get.
-def _tokenizer_get(tok):
-    current_tok = tok.tok_mode_stack[tok.tok_mode_stack_index]
-    if current_tok.kind == TOK_REGULAR_MODE:
-        return _tok_get_normal_mode(tok, current_tok)
-    return _tok_get_fstring_mode(tok, current_tok)
-
-
 class TokenizerIter(object):
     # Python/Python-tokenize.c: tokenizeriter_new and tokenizeriter_next.
     def __init__(self, readline, *, extra_tokens=False, encoding=None):
@@ -1239,7 +1218,12 @@ class TokenizerIter(object):
 
     def __next__(self):
         tok = self.tok
-        type_, tstart, tend = _tokenizer_get(tok)
+        # Dispatch directly, as tok_get does before entering the C scanner.
+        current_tok = tok.tok_mode_stack[tok.tok_mode_stack_index]
+        if current_tok.kind == TOK_REGULAR_MODE:
+            type_, tstart, tend = _tok_get_normal_mode(tok, current_tok)
+        else:
+            type_, tstart, tend = _tok_get_fstring_mode(tok, current_tok)
         if type_ == ERRORTOKEN:
             self._tokenizer_error()
         if self.done:
