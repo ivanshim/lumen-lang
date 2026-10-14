@@ -78,7 +78,36 @@ maxsize = 9223372036854775807
 # written: the reference reads both while naming a cache file.
 pycache_prefix = None
 dont_write_bytecode = True
-version_info = (3, 14, 8, 'final', 0)
+# A struct sequence, as the reference's sys.version_info is: five named
+# fields over a tuple, built by the host the way os.stat_result is.
+_structseq = __posix
+
+
+class version_info(tuple):
+    __slots__ = ()
+    n_sequence_fields = 5
+    n_fields = 5
+    n_unnamed_fields = 0
+    __match_args__ = ('major', 'minor', 'micro', 'releaselevel', 'serial')
+
+    def __new__(cls, *args, **kwargs):
+        raise TypeError("cannot create 'sys.version_info' instances")
+
+    major = property(lambda self: self[0])
+    minor = property(lambda self: self[1])
+    micro = property(lambda self: self[2])
+    releaselevel = property(lambda self: self[3])
+    serial = property(lambda self: self[4])
+
+    def __repr__(self):
+        return 'sys.version_info(' + ', '.join(name + '=' + repr(value) for name, value in zip(self.__match_args__, self)) + ')'
+
+    def __init_subclass__(cls, **kwargs):
+        raise TypeError("type 'sys.version_info' is not an acceptable base type")
+
+
+version_info.__module__ = 'sys'
+version_info = _structseq('structseq_new', version_info, (3, 14, 8, 'final', 0), ())
 version = '3.14.8 (Lumen) [Rust]'
 # The source-control identity the reference build records beside the
 # version. This interpreter is not checked out from CPython's tree, so
