@@ -1899,3 +1899,10 @@ class PythonSymlink:
 
     def call_link(self, *args, returncode=0):
         return self._call(self.link, args, self._env, returncode)
+
+
+def expected_failure_if_gil_disabled():
+    """Expect test failure if the GIL is disabled."""
+    if Py_GIL_DISABLED:
+        return unittest.expectedFailure
+    return lambda test_case: test_case
