@@ -140,6 +140,9 @@ _THREE_CHARS = {
 }
 
 
+_IDENTIFIER_ASCII = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_'
+
+
 def _is_digit(c):
     return c is not None and '0' <= c <= '9'
 
@@ -296,6 +299,8 @@ def _underflow_readline(tok):
         tok.bufc.append('\n')
         tok.inp += 1
         tok.implicit_newline = True
+    # Keep the current physical line for native buffered span scans.
+    tok.buf = line + ('\n' if tok.implicit_newline else '')
     tok.lineno += 1
     return 1
 
@@ -403,7 +408,9 @@ def _verify_identifier(tok):
 def _decimal_tail(tok):
     while True:
         c = _nextc(tok)
-        while _is_digit(c):
+        if _is_digit(c):
+            tok.cur = tok.line_start + __text_scan_ascii(
+                tok.buf, tok.cur - tok.line_start, '0123456789', tok.inp - tok.cur)
             c = _nextc(tok)
         if c != '_':
             return c
@@ -577,8 +584,12 @@ def _tok_get_normal_mode(tok, current_tok):
             while True:
                 c = _nextc(tok)
                 if c == ' ':
-                    col += 1
-                    altcol += 1
+                    end = tok.line_start + __text_scan_ascii(
+                        tok.buf, tok.cur - tok.line_start, ' ', tok.inp - tok.cur)
+                    width = end - tok.cur + 1
+                    tok.cur = end
+                    col += width
+                    altcol += width
                 elif c == '\t':
                     col = (col // tok.tabsize + 1) * tok.tabsize
                     altcol = (altcol // ALTTABSIZE + 1) * ALTTABSIZE
@@ -655,13 +666,21 @@ def _tok_get_normal_mode(tok, current_tok):
         while True:  # again
             tok.start = None
             c = _nextc(tok)
-            while c == ' ' or c == '\t' or c == '\x0c':
+            if c == ' ' or c == '\t' or c == '\x0c':
+                tok.cur = tok.line_start + __text_scan_ascii(
+                    tok.buf, tok.cur - tok.line_start, ' \t\x0c', tok.inp - tok.cur)
                 c = _nextc(tok)
             tok.start = tok.cur - 1
 
             if c == '#':
-                while c is not None and c != '\n' and c != '\r':
-                    c = _nextc(tok)
+                # A physical line always has a real or implicit newline.
+                begin = tok.cur - tok.line_start
+                end = tok.buf.find('\n', begin)
+                cr = tok.buf.find('\r', begin)
+                if cr >= 0 and cr < end:
+                    end = cr
+                tok.cur = tok.line_start + end
+                c = _nextc(tok)
                 if tok.tok_extra_tokens:
                     _backup(tok, c)
                     tok.comment_newline = blankline
@@ -704,6 +723,11 @@ def _tok_get_normal_mode(tok, current_tok):
                 while _is_potential_identifier_char(c):
                     if ord(c) >= 128:
                         nonascii = True
+                    else:
+                        # Stop at Unicode and let the original validation handle it.
+                        tok.cur = tok.line_start + __text_scan_ascii(
+                            tok.buf, tok.cur - tok.line_start,
+                            _IDENTIFIER_ASCII, tok.inp - tok.cur)
                     c = _nextc(tok)
                 _backup(tok, c)
                 if nonascii:
