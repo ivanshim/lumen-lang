@@ -660,8 +660,10 @@ def _tok_get_normal_mode(tok, current_tok):
                 tok.pendin -= 1
                 return (INDENT, p_start, p_end)
 
-        c = _nextc(tok)
-        _backup(tok, c)
+        # Refill before clearing start, but do not peek at buffered text twice.
+        if tok.cur == tok.inp:
+            c = _nextc(tok)
+            _backup(tok, c)
 
         nextline = False
         while True:  # again
@@ -897,23 +899,24 @@ def _tok_get_normal_mode(tok, current_tok):
                     current_tok.in_format_spec = True
                     return (_ONE_CHAR[c], tok.start, tok.cur)
 
-            c2 = _nextc(tok)
-            two = None
-            if c is not None and c2 is not None:
-                two = _TWO_CHARS.get(c + c2)
-                if c == '<' and c2 == '>':
-                    two = OP
-            if two is not None and two != OP:
-                c3 = _nextc(tok)
-                three = None
-                if c3 is not None:
-                    three = _THREE_CHARS.get(c + c2 + c3)
-                if three is not None:
-                    two = three
-                else:
-                    _backup(tok, c3)
-                return (two, tok.start, tok.cur)
-            _backup(tok, c2)
+            if c in '!%&*+-/:<=>@^|':
+                c2 = _nextc(tok)
+                two = None
+                if c is not None and c2 is not None:
+                    two = _TWO_CHARS.get(c + c2)
+                    if c == '<' and c2 == '>':
+                        two = OP
+                if two is not None and two != OP:
+                    c3 = _nextc(tok)
+                    three = None
+                    if c3 is not None:
+                        three = _THREE_CHARS.get(c + c2 + c3)
+                    if three is not None:
+                        two = three
+                    else:
+                        _backup(tok, c3)
+                    return (two, tok.start, tok.cur)
+                _backup(tok, c2)
 
             if c == '(' or c == '[' or c == '{':
                 if tok.level >= MAXLEVEL:
