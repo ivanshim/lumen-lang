@@ -486,8 +486,9 @@ impl<'a> Machine<'a> {
         }
     }
     fn namespace_provider_entries(&mut self, provider: &Value) -> Res<Option<Value>> {
+        // Prefer the live sys.modules entry: that is the interpreter's own external bootstrap, not a test's fresh copy.
         let module = ["_frozen_importlib_external", "importlib._bootstrap_external"].iter()
-            .find_map(|name| self.imported.get(*name).cloned());
+            .find_map(|name| match self.cached_import(name) { Some(Value::Nil) | None => self.imported.get(*name).cloned(), found => found });
         match module {
             None => Ok(None),
             Some(module) => {

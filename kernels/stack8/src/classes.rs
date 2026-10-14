@@ -500,7 +500,9 @@ impl<'a> Engine<'a> {
         self.special_text(value, quoted).map_err(|message| self.carried.take().unwrap_or(Fault::Note(message)))
     }
     fn module_namespace_paths(&mut self, loader: &Value) -> Flow<Option<Value>> {
-        let external = self.modules.get("_frozen_importlib_external").or_else(|| self.modules.get("importlib._bootstrap_external")).cloned();
+        // The bootstrap's own external half, read from sys.modules first: a fresh copy a test imported must not stand in for it.
+        let external = ["_frozen_importlib_external", "importlib._bootstrap_external"].iter()
+            .find_map(|name| self.module_cache_value(name).filter(|held| !matches!(held, Value::Null)).or_else(|| self.modules.get(*name).cloned()));
         let Some(external) = external else { return Ok(None); };
         let category = self.module_member_or(&external, "NamespaceLoader", Value::Null)?;
         if matches!(category, Value::Null) { return Ok(None); }

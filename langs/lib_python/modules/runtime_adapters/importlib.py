@@ -35,6 +35,8 @@ _sys.meta_path = getattr(_sys, "meta_path", [_bootstrap.BuiltinImporter, _bootst
 _sys.path_hooks = getattr(_sys, "path_hooks", [])
 _sys.path_importer_cache = getattr(_sys, "path_importer_cache", {})
 if not getattr(_sys, '_native_importers_installed', False):
+    # The bootstrap learns its external half here, as _install_external_importers tells it.
+    _bootstrap._bootstrap_external = _bootstrap_external
     _bootstrap_external._install(_bootstrap)
     _sys._native_importers_installed = True
 
