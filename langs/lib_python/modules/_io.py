@@ -4,6 +4,7 @@
 import operator
 import sys
 from builtins import _buffer_view
+_memory_cursor = __pickle_buffer_native__
 
 DEFAULT_BUFFER_SIZE = 128 * 1024
 BlockingIOError = BlockingIOError
@@ -296,14 +297,7 @@ class BytesIO(_BufferedIOBase):
     def read(self, size=-1):
         if type(size) is not int or size > _MAXSIZE or size < _MINSIZE:
             size = _size(size)
-        if self._closed:
-            raise ValueError('I/O operation on closed file')
-        end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
-        if end <= self._pos:
-            return b''
-        result = bytes(self._data[self._pos:end])
-        self._pos = end
-        return result
+        return _memory_cursor(6, self, size)
     read1 = read
     def readinto(self, buffer):
         if type(buffer) is bytearray:
@@ -349,16 +343,7 @@ class BytesIO(_BufferedIOBase):
                 raise BufferError('Existing exports of data: object cannot be re-sized')
             return self._store(view.tobytes())
     def _store(self, data):
-        n = len(data)
-        if not n:
-            return 0
-        if self._pos > sys.maxsize - n:
-            raise OverflowError('new position too large')
-        if self._pos > len(self._data):
-            self._data.extend(b'\0' * (self._pos - len(self._data)))
-        self._data[self._pos:self._pos + n] = data
-        self._pos += n
-        return n
+        return _memory_cursor(7, self, data)
     def seek(self, pos, whence=0):
         if type(pos) is not int or pos > _MAXSIZE or pos < _MINSIZE:
             pos = _ssize(pos)
