@@ -138,6 +138,7 @@ pub struct Engine<'a> {
     native_frame_routines: std::collections::HashSet<usize, crate::value::FxBuildHasher>,
     /// Explicitly registered adapter routines and their owned storage descriptors.
     deque_routines: std::collections::HashMap<usize, (Value, Value, String), crate::value::FxBuildHasher>,
+    deque_layouts: std::collections::HashMap<usize, (u64, u64, Value, Vec<String>), crate::value::FxBuildHasher>,
     trace_hook: Value,
     coroutine_depth: usize,
     annotation_scope: Option<(Rc<Routine>, Option<Rc<Class>>, Vec<(Weak<Instance>, String)>)>,
@@ -1693,6 +1694,7 @@ impl<'a> Engine<'a> {
             trace_frame: None,
             native_frame_routines: std::collections::HashSet::with_hasher(crate::value::FxBuildHasher::default()),
             deque_routines: std::collections::HashMap::with_hasher(crate::value::FxBuildHasher::default()),
+            deque_layouts: std::collections::HashMap::with_hasher(crate::value::FxBuildHasher::default()),
             trace_hook: Value::Null,
             coroutine_depth: 0,
             annotation_scope: None,
@@ -26377,7 +26379,9 @@ impl Engine<'_> {
                     if !slots.iter().all(|v| matches!(v, Value::Adapter(slot) if slot.0 == 16)) { return Err("TypeError: deque binding requires slot descriptors".into()); }
                     let Value::Routine(routine) = args[2].contents() else { return Err("TypeError: deque binding requires a function".into()) };
                     let Value::Text(verb) = args[3].contents() else { return Err("TypeError: deque operation must be a string".into()) };
-                    self.deque_routines.insert(Rc::as_ptr(&routine) as usize, (args[2].clone(), args[0].clone(), verb.to_string()));
+                    let identity = Rc::as_ptr(&routine) as usize;
+                    if let Some((_, Value::Tuple(layout), _)) = self.deque_routines.get(&identity) { self.deque_layouts.remove(&(Rc::as_ptr(layout) as usize)); }
+                    self.deque_routines.insert(identity, (args[2].clone(), args[0].clone(), verb.to_string()));
                     return Ok(args[2].clone());
                 }
                 arity(2, 3)?;

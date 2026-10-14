@@ -2173,6 +2173,7 @@ pub struct BlueprintEntries {
 }
 
 impl BlueprintEntries {
+    pub(super) fn epoch() -> u64 { NAMESPACE_CHANGE.with(Cell::get) }
     pub fn new(entries: Vec<(String, Value)>) -> Self {
         Self { values: RefCell::new(entries), positions: RefCell::new(None), missing: RefCell::new(std::collections::HashMap::with_hasher(crate::table::FxBuildHasher::default())) }
     }

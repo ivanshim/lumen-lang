@@ -960,7 +960,7 @@ impl<'a> Engine<'a> {
         }
         Ok(Value::Null)
     }
-    fn storage_slots(&self,class:&Rc<Class>)->Vec<Vec<String>> {
+    pub(super) fn storage_slots(&self,class:&Rc<Class>)->Vec<Vec<String>> {
         let mut groups=class.base().map_or_else(Vec::new,|parent|self.storage_slots(&parent));
         let mut names=class.shared.borrow().iter().filter_map(|(_,member)|match member {
             Value::Adapter(slot) if slot.0==16 && slot.1.len()==2 && matches!(&slot.1[1],Value::Class(owner) if Rc::ptr_eq(owner,class))=>{

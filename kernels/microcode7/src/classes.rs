@@ -1099,7 +1099,7 @@ impl<'a> Machine<'a> {
         }else {Self::change_entry(&mut blueprint.shared.borrow_mut(),word,Some(value));}
         Ok(Value::Nil)
     }
-    fn inherited_storage(&self,class:&Rc<Blueprint>)->Vec<Vec<String>> {
+    pub(super) fn inherited_storage(&self,class:&Rc<Blueprint>)->Vec<Vec<String>> {
         let previous=class.under();
         let mut shape=match previous {Some(base)=>self.inherited_storage(&base),None=>Vec::new()};
         let own=class.shared.borrow();

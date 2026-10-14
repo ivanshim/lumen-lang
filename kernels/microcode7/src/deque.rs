@@ -193,14 +193,53 @@ impl Machine<'_> {
         } else { None }
     }
 
+    // Reuse a validated storage plan until namespaces or the declaring lineage change.
+    fn deque_walk_fields(&mut self, thing: &Rc<super::Thing>, schema: &crate::tuples::Sequence) -> Option<Vec<(String, Value)>> {
+        let of = thing.blueprint();
+        let token = crate::data::BlueprintEntries::epoch();
+        let lineage = of.base_epoch.get();
+        let address = Rc::as_ptr(schema) as usize;
+        if let Some((_, fields, stamp, basis)) = self.deque_field_plans.get(&address) {
+            if (*stamp, *basis) == (token, lineage) {
+                let values = thing.holds.borrow();
+                return fields.iter().map(|field| values.iter().find_map(|(key, item)|
+                    (key == field).then(|| (field.clone(), item.clone())))).collect();
+            }
+        }
+        let entries = of.shared.borrow();
+        for (name, _) in entries.iter() {
+            if ["__getattr__", "__setattr__", "__getattribute__"].contains(&name.as_str()) { return None; }
+        }
+        let layout = self.inherited_storage(&of);
+        let own = layout.last()?;
+        let offset: usize = of.under().map_or(0, |parent| self.inherited_storage(&parent).into_iter().map(|row| row.len()).sum());
+        let held = thing.holds.borrow();
+        let found = schema[..5].iter().map(|slot| {
+            let Value::Wrapped(32, detail) = slot else { return None };
+            let Value::Blueprint(declared) = &detail[1] else { return None };
+            if !Rc::ptr_eq(declared, &of) { return None; }
+            let field = detail[0].bare();
+            let current = entries.iter().find_map(|(name, value)| (name == &field).then(|| value.settled()))?;
+            if !matches!(current, Value::Wrapped(32, ref record) if Rc::ptr_eq(record, detail)) { return None; }
+            let at = own.iter().position(|name| name == &field)? + offset;
+            let address = format!("\0slot:{field}:{at}");
+            let value = held.iter().find_map(|(key, value)| (key == &address).then(|| value.clone()))?;
+            Some((address, value))
+        }).collect::<Option<Vec<_>>>()?;
+        let fields = found.iter().map(|(field, _)| field.clone()).collect();
+        self.deque_field_plans.insert(address, (Value::Tuple(schema.clone()), fields, token, lineage));
+        Some(found)
+    }
+
     // Take one item, retaining the forward and reverse exhaustion order of the adapter.
     fn deque_iterator_take(&mut self, object: Value, layout: Value, backwards: bool) -> Option<super::Res> {
         let Value::Tuple(fields) = layout else { return None };
+        if fields.len() != 6 { return None; }
         let Value::Thing(instance) = &object else { return None };
         let Value::Wrapped(32, declaration) = &fields[0] else { return None };
         let Value::Blueprint(expected) = &declaration[1] else { return None };
         if !Rc::ptr_eq(expected, &instance.blueprint()) { return None; }
-        let captured = fields[..5].iter().map(|slot| self.deque_walk_field(&object, slot)).collect::<Option<Vec<_>>>()?;
+        let captured = self.deque_walk_fields(instance, &fields)?;
         let mut numbers = [0i64; 3];
         for (destination, position) in [2, 3, 4].into_iter().enumerate() {
             if let Value::Small(number) = captured[position].1.settled() { numbers[destination] = number; } else { return None; }

@@ -165,17 +165,53 @@ impl Engine<'_> {
         Some((key, value))
     }
 
+    // Refresh owned iterator slot keys only when class storage or ancestry changes.
+    fn deque_iterator_values(&mut self, object: &Rc<super::Instance>, layout: &crate::tuples::Items) -> Option<Vec<(String, Value)>> {
+        let class = object.class_now();
+        let identity = Rc::as_ptr(layout) as usize;
+        let revision = crate::value::ClassMembers::revision();
+        let base = class.base_epoch.get();
+        if let Some((saved, ancestry, _, keys)) = self.deque_layouts.get(&identity) {
+            if *saved == revision && *ancestry == base {
+                let fields = object.fields.borrow();
+                return keys.iter().map(|key| fields.iter().find(|(name, _)| name == key)
+                    .map(|(_, value)| (key.clone(), value.clone()))).collect();
+            }
+        }
+        let descriptors = &layout[..5];
+        let members = class.shared.borrow();
+        if members.iter().any(|(name, _)| matches!(name.as_str(), "__getattribute__" | "__getattr__" | "__setattr__")) { return None; }
+        let shape = self.storage_slots(&class);
+        let names = shape.last()?;
+        let prefix = class.base().map_or(0, |base| self.storage_slots(&base).iter().map(Vec::len).sum::<usize>());
+        let fields = object.fields.borrow();
+        let mut values = Vec::with_capacity(descriptors.len());
+        for descriptor in descriptors {
+            let Value::Adapter(slot) = descriptor else { return None };
+            if !matches!(&slot.1[1], Value::Class(owner) if Rc::ptr_eq(owner, &class)) { return None; }
+            let word = slot.1[0].plain();
+            let original = members.iter().find(|(name, _)| name == &word)?.1.contents();
+            if !matches!(original, Value::Adapter(ref held) if Rc::ptr_eq(held, slot)) { return None; }
+            let position = names.iter().position(|name| name == &word)?;
+            let key = format!("\0slot:{word}:{}", prefix + position);
+            let value = fields.iter().find(|(name, _)| name == &key)?.1.clone();
+            values.push((key, value));
+        }
+        // Retain the layout identity so a replaced binding cannot reuse its cache key.
+        let keys = values.iter().map(|(key, _)| key.clone()).collect();
+        self.deque_layouts.insert(identity, (revision, base, Value::Tuple(layout.clone()), keys));
+        Some(values)
+    }
+
     // Advance an exact deque iterator with the same remaining-count and mutation rules.
     fn deque_iterator_step(&mut self, target: &Value, descriptors: &Value, reverse: bool) -> Option<super::Flow<Value>> {
         let Value::Tuple(slots) = descriptors.contents() else { return None };
+        if slots.len() != 6 { return None; }
         let Value::Object(iterator) = target else { return None };
         let Value::Adapter(first) = &slots[0] else { return None };
         if !matches!(&first.1[1], Value::Class(class) if Rc::ptr_eq(&iterator.class_now(), class)) { return None; }
-        let (_, data) = self.deque_iterator_slot(target, &slots[0])?;
-        let (_, owner) = self.deque_iterator_slot(target, &slots[1])?;
-        let (_, saved) = self.deque_iterator_slot(target, &slots[2])?;
-        let (remaining_key, left) = self.deque_iterator_slot(target, &slots[3])?;
-        let (_, total) = self.deque_iterator_slot(target, &slots[4])?;
+        let captured = self.deque_iterator_values(iterator, &slots)?;
+        let [(_, data), (_, owner), (_, saved), (remaining_key, left), (_, total)] = captured.as_slice() else { return None };
         let (Value::Small(remaining), Value::Small(size), Value::Small(version)) = (left.contents(), total.contents(), saved.contents()) else { return None };
         if remaining < 0 || size < remaining { return None; }
         let stop = "StopIteration: ";
@@ -184,14 +220,14 @@ impl Engine<'_> {
         let current = self.deque_native_call(&storage, "state", None).ok()?;
         let Value::Small(now) = current else { return None };
         if now != version {
-            iterator.fields.borrow_mut().iter_mut().find(|(key, _)| key == &remaining_key)?.1 = Value::Small(0);
+            iterator.fields.borrow_mut().iter_mut().find(|(key, _)| key == remaining_key)?.1 = Value::Small(0);
             return Some(self.raised_of_note(Err("RuntimeError: deque mutated during iteration".into())));
         }
         if remaining == 0 { return Some(self.raised_of_note(Err(stop.into()))); }
         let Value::Array(items) = data.contents() else { return None };
         let index = if reverse { remaining - 1 } else { size - remaining } as usize;
         let value = items.get(index)?.clone();
-        iterator.fields.borrow_mut().iter_mut().find(|(key, _)| key == &remaining_key)?.1 = Value::Small(remaining - 1);
+        iterator.fields.borrow_mut().iter_mut().find(|(key, _)| key == remaining_key)?.1 = Value::Small(remaining - 1);
         Some(Ok(value))
     }
 }
