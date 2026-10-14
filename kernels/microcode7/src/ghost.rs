@@ -499,12 +499,23 @@ pub fn note(ghost: Ghost) {
     });
 }
 
+// Retain shared owners and the inline forms which expand into shared owners.
+fn carries_links(value: &Value) -> bool {
+    matches!(value, Value::Dim(_) | Value::Thing(_) | Value::Attributes(_) | Value::Blueprint(_)
+        | Value::Generator(_) | Value::Set(_) | Value::SetCursor { .. } | Value::Iterator(_)
+        | Value::Backtrace(_) | Value::Shared(_) | Value::Mutable(..) | Value::Vector(_)
+        | Value::Tuple(_) | Value::Row(_) | Value::Arguments(_) | Value::Span(_) | Value::Wrapped(..)
+        | Value::Dict(_) | Value::Couple(_) | Value::Member(..) | Value::Window(..) | Value::Cursor(_)
+        | Value::Adorned(_) | Value::Routine(_) | Value::Traversal(..) | Value::Bound(..)
+        | Value::Method(..) | Value::Keyed(..))
+}
+
 /// The values embedded in compiled forms are owned by their routine.
 /// In particular, an exception arm may retain nested routine constants
 /// after a generator yields, and those routines may keep its globals.
 pub(crate) fn form_holds(form: &Form, out: &mut Vec<Knot>) {
     match form {
-        Form::Const(value) => out.push(Knot::Held(value.clone())),
+        Form::Const(value) => if carries_links(value) { out.push(Knot::Held(value.clone())); },
         Form::Fits { value, test, kinds, .. } => {
             form_holds(value, out);
             case_holds(test, out);
@@ -564,7 +575,7 @@ pub(crate) fn form_holds(form: &Form, out: &mut Vec<Knot>) {
 
 fn case_holds(test: &CaseTest, out: &mut Vec<Knot>) {
     match test {
-        CaseTest::Equal(value) => out.push(Knot::Held(value.clone())),
+        CaseTest::Equal(value) => if carries_links(value) { out.push(Knot::Held(value.clone())); },
         CaseTest::AnyOf(parts) => for part in parts { case_holds(part, out); },
         CaseTest::Series { members, .. } => for member in members { case_holds(member, out); },
         CaseTest::Also { test, .. } => case_holds(test, out),
@@ -646,7 +657,9 @@ impl Knot {
     /// The knots this one holds directly. A cell being written to at
     /// this moment yields none, which leans towards keeping.
     fn onward(&self, out: &mut Vec<Knot>) {
-        let held = |out: &mut Vec<Knot>, v: &Value| out.push(Knot::Held(v.clone()));
+        let held = |out: &mut Vec<Knot>, v: &Value| {
+            if carries_links(v) { out.push(Knot::Held(v.clone())); }
+        };
         match self {
             Knot::Frame(env) => {
                 if let Ok(cells) = env.cells.try_borrow() {

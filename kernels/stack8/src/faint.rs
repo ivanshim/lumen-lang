@@ -611,6 +611,11 @@ fn holds_on(value: &Value) -> usize {
     }
 }
 
+// Primitive payloads have no place or outgoing holds in this graph.
+fn cycle_edge(value: &Value) -> bool {
+    place_of(value).is_some() || matches!(value, Value::Method(..))
+}
+
 /// The values a value holds directly. A bound method is two holds, on
 /// the object and on the routine, and is listed as both. A cell that is
 /// being written to just now yields nothing: what it holds then counts
@@ -621,14 +626,14 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         Value::Object(o) | Value::Fields(o) => {
             out.push(Value::Class(o.class.clone()));
             if let Ok(fields) = o.fields.try_borrow() {
-                out.extend(fields.iter().map(|(_, v)| v.clone()));
+                out.extend(fields.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
             }
         }
         Value::Class(c) => {
-            out.extend(c.fields.iter().map(|(_, v)| v.clone()));
-            out.extend(c.constants.iter().map(|(_, v)| v.clone()));
+            out.extend(c.fields.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
+            out.extend(c.constants.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
             if let Ok(shared) = c.shared.try_borrow() {
-                out.extend(shared.iter().map(|(_, v)| v.clone()));
+                out.extend(shared.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
             }
             out.extend(c.methods.iter().map(|(_, p)| Value::Routine(p.clone())));
             out.extend(c.base().iter().map(|b| Value::Class(b.clone())));
@@ -640,14 +645,14 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                 out.push(g.async_finalizer.clone());
                 out.extend(g.trace_frame.iter().map(|f| Value::Object(f.clone())));
                 out.extend(g.program.iter().map(|p| Value::Routine(p.clone())));
-                out.extend(g.frame.iter().cloned());
-                out.extend(g.stack.iter().cloned());
-                out.extend(g.items.iter().cloned());
-                out.extend(g.handed.iter().cloned());
+                out.extend(g.frame.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.stack.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.items.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.handed.iter().filter(|value| cycle_edge(value)).cloned());
                 out.push(g.returned.clone());
-                out.extend(g.delegate.iter().cloned());
+                out.extend(g.delegate.iter().filter(|value| cycle_edge(value)).cloned());
                 out.push(g.sent.clone());
-                out.extend(g.current.iter().cloned());
+                out.extend(g.current.iter().filter(|value| cycle_edge(value)).cloned());
                 out.extend(g.watched.iter().map(|(cell, _)| Value::Bond(cell.clone())));
                 out.extend(g.reversed_walk.iter().map(|(cell, _, _)| Value::Bond(cell.clone())));
                 for step in &g.resume {
@@ -661,8 +666,8 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                         _ => {}
                     }
                 }
-                out.extend(g.held.iter().cloned());
-                out.extend(g.hurled.iter().cloned());
+                out.extend(g.held.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.hurled.iter().filter(|value| cycle_edge(value)).cloned());
             }
         }
         Value::Set(s) | Value::SetWalk(s, _) => {
@@ -672,11 +677,11 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         }
         Value::Routine(r) => {
             out.extend(r.annotation.iter().map(|p| Value::Routine(p.clone())));
-            out.extend(r.code_constants.iter().cloned());
-            out.extend(r.globe.iter().cloned());
-            out.extend(r.born.iter().cloned());
-            out.extend(r.held.iter().cloned());
-            out.extend(r.enclosed.iter().map(|(_, v)| v.clone()));
+            out.extend(r.code_constants.iter().filter(|value| cycle_edge(value)).cloned());
+            out.extend(r.globe.iter().filter(|value| cycle_edge(value)).cloned());
+            out.extend(r.born.iter().filter(|value| cycle_edge(value)).cloned());
+            out.extend(r.held.iter().filter(|value| cycle_edge(value)).cloned());
+            out.extend(r.enclosed.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
             if let Ok(revised) = r.revised.try_borrow() {
                 out.extend(revised.iter().map(|p| Value::Routine(p.clone())));
             }
@@ -686,12 +691,12 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                 out.push(inner.clone());
             }
         }
-        Value::Array(a) | Value::Tuple(a) => out.extend(a.iter().cloned()),
-        Value::Slice(parts) => out.extend(parts.iter().cloned()),
+        Value::Array(a) | Value::Tuple(a) => out.extend(a.iter().filter(|value| cycle_edge(value)).cloned()),
+        Value::Slice(parts) => out.extend(parts.iter().filter(|value| cycle_edge(value)).cloned()),
         Value::Map(m) => {
             for (k, v) in m.iter() {
-                out.push(k.clone());
-                out.push(v.clone());
+                if cycle_edge(k) { out.push(k.clone()); }
+                if cycle_edge(v) { out.push(v.clone()); }
             }
         }
         Value::Hashed(p) | Value::Tie(p) => {
@@ -699,12 +704,12 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
             out.push(p.1.clone());
         }
         Value::ValueMethod(p) | Value::View(p) => out.push(p.0.clone()),
-        Value::Adapter(a) => out.extend(a.1.iter().cloned()),
+        Value::Adapter(a) => out.extend(a.1.iter().filter(|value| cycle_edge(value)).cloned()),
         Value::Descriptor(d) => match &**d {
             Descriptor::Static(v) | Descriptor::Class(v) => out.push(v.clone()),
             Descriptor::Property(a, b) => {
                 out.push(a.clone());
-                out.extend(b.iter().cloned());
+                out.extend(b.iter().filter(|value| cycle_edge(value)).cloned());
             }
             Descriptor::Bound(a, b) => {
                 out.push(a.clone());
@@ -714,18 +719,18 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         Value::Walking(w) => {
             if let Ok(w) = w.try_borrow() {
                 out.push(w.0.clone());
-                out.extend(w.1.iter().cloned());
+                out.extend(w.1.iter().filter(|value| cycle_edge(value)).cloned());
             }
         }
         Value::Walk(w) => {
             if let Ok(w) = w.try_borrow() {
-                out.extend(w.0.iter().cloned());
+                out.extend(w.0.iter().filter(|value| cycle_edge(value)).cloned());
             }
         }
         Value::Cursor(c) => {
             if let Ok(c) = c.try_borrow() {
-                out.extend(c.pending.iter().cloned());
-                out.extend(c.origin.iter().cloned());
+                out.extend(c.pending.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(c.origin.iter().filter(|value| cycle_edge(value)).cloned());
                 match &c.source {
                     CursorSource::Items(items, _) => out.push(Value::Tuple(items.clone())),
                     CursorSource::Living(cell, _) => out.push(Value::Bond(cell.clone())),
@@ -737,8 +742,8 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                         if let CursorSource::Called(_, _, Some(v)) = &c.source { out.push(v.clone()); }
                     }
                     CursorSource::Combined(rows, work, _) => {
-                        out.extend(rows.iter().cloned());
-                        out.extend(work.iter().cloned());
+                        out.extend(rows.iter().filter(|value| cycle_edge(value)).cloned());
+                        out.extend(work.iter().filter(|value| cycle_edge(value)).cloned());
                     }
                     CursorSource::Counted(..) => {}
                 }
