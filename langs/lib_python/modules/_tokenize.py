@@ -140,6 +140,8 @@ _THREE_CHARS = {
 }
 
 
+_scan_token = __tokenize_scan
+_OPERATOR_TYPES = {**_ONE_CHAR, **_TWO_CHARS, **_THREE_CHARS}
 _IDENTIFIER_ASCII = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_'
 
 
@@ -177,6 +179,9 @@ class _TokenizerMode(object):
 class _TokState(object):
     def __init__(self, readline, encoding):
         self.buf = ''
+        self._maxlevel = MAXLEVEL
+        self._token_types = (NAME, NUMBER, STRING, OP, NEWLINE, COMMENT)
+        self._operator_types = _OPERATOR_TYPES
         self.cur = 0
         self.inp = 0
         self.start = None
@@ -1217,6 +1222,18 @@ class TokenizerIter(object):
                             None, None))
 
     def __next__(self):
+        buffered = _scan_token(self)
+        if buffered is False:
+            tok = self.tok
+            tok.start = None
+            c = _nextc(tok)
+            if c is not None:
+                tok.cur -= 1
+            buffered = _scan_token(self)
+            if buffered is False:
+                buffered = None
+        if buffered is not None:
+            return buffered
         tok = self.tok
         # Dispatch directly, as tok_get does before entering the C scanner.
         current_tok = tok.tok_mode_stack[tok.tok_mode_stack_index]

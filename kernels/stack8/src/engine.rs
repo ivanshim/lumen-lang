@@ -22282,6 +22282,7 @@ impl<'a> Engine<'a> {
             // (anything else); a third stream told to follow the
             // second is kept as its own pipe, and the library that
             // asked reads the two together afterwards.
+            Builtin::TokenScan => return crate::tokenize::scan(args),
             Builtin::AsciiSpan => {
                 arity(4)?;
                 let begin = as_index(&args[1])?;
