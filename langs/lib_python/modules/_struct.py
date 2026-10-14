@@ -59,6 +59,8 @@ class Struct:
         self._fields = ()
         self._codes = ()
         self._count = 0
+        self._whole = False
+        self._plain = True
         return self
 
     def _ready(self):
@@ -77,6 +79,10 @@ class Struct:
         self._fields = fields
         self._count = sum(0 if code == 'x' else 1 if code in 'sp' else repeat for code, repeat in fields)
         self._codes = tuple(_argument_codes(fields)) if self._count <= 256 else None
+        # One exact integer needs no argument walk, and a format without
+        # complex codes needs no conversion of what unpacking returns.
+        self._whole = self._count == 1 and self._codes is not None and self._codes[0] in 'bBhHiIlLqQnNP'
+        self._plain = 'F' not in format and 'D' not in format
 
     @property
     def format(self):
@@ -127,12 +133,20 @@ class Struct:
         return tuple(normalized)
 
     def pack(self, *values):
-        self._ready()
-        return _call(1, self._format, self._arguments(values))
+        format = self._format
+        if format is None:
+            raise RuntimeError('Struct object is uninitialized')
+        if self._whole and len(values) == 1 and type(values[0]) is int:
+            try:
+                return _native(1, format, values)
+            except ValueError as exc:
+                raise error(exc.args[0])
+        return _call(1, format, self._arguments(values))
 
     def unpack(self, buffer):
-        self._ready()
         format = self._format
+        if format is None:
+            raise RuntimeError('Struct object is uninitialized')
         if isinstance(buffer, (bytes, bytearray)):
             raw = buffer
         else:
@@ -141,8 +155,11 @@ class Struct:
                 if not view.c_contiguous:
                     raise BufferError('memoryview: underlying buffer is not C-contiguous')
                 raw = view.tobytes()
-        result = _call(2, format, raw)
-        if 'F' not in format and 'D' not in format:
+        try:
+            result = _native(2, format, raw)
+        except ValueError as exc:
+            raise error(exc.args[0])
+        if self._plain:
             return result
         converted = []
         i = 0
@@ -222,9 +239,23 @@ def calcsize(format):
     return _get(format).size
 
 def pack(format, *values):
+    if type(format) is str:
+        kept = _cache.get(format)
+        if kept is not None and kept._whole and len(values) == 1 and type(values[0]) is int:
+            try:
+                return _native(1, format, values)
+            except ValueError as exc:
+                raise error(exc.args[0])
     return _get(format).pack(*values)
 
 def unpack(format, buffer):
+    if type(format) is str:
+        kept = _cache.get(format)
+        if kept is not None and kept._plain and type(buffer) is bytes:
+            try:
+                return _native(2, format, buffer)
+            except ValueError as exc:
+                raise error(exc.args[0])
     return _get(format).unpack(buffer)
 
 def pack_into(format, buffer, offset, *values):

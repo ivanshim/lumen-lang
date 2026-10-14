@@ -20484,7 +20484,17 @@ impl<'a> Engine<'a> {
         // Copy a memory-stream range once, or store bytes without Python slice temporaries.
         if action == 6 || action == 7 {
             let [_, owner, item] = args else { return Err("TypeError: buffer cursor operation requires a stream and argument".into()); };
-            if action == 6 && self.class_get(owner.clone(), "_closed", false)?.is_true() { return Err("ValueError: I/O operation on closed file".into()); }
+            // A count that is not a plain whole number the cursor can hold, or a
+            // store of anything but bytes, goes back as None before any state is
+            // read: the Python side then validates it the slow way, in its order.
+            let plain = match (action, item.contents()) {
+                (6, Value::Small(_)) => true,
+                (6, Value::Huge(big)) => big.to_i64().is_some(),
+                (7, Value::Bytes(..)) => true,
+                _ => false,
+            };
+            if !plain { return Ok(Value::Null); }
+            if self.class_get(owner.clone(), "_closed", false)?.is_true() { return Err("ValueError: I/O operation on closed file".into()); }
             let buffer = self.class_get(owner.clone(), "_data", false)?;
             let position = self.class_get(owner.clone(), "_pos", false)?;
             let Value::Bytes(storage, mutable, _) = buffer.contents() else { return Err("TypeError: buffer cursor requires bytes storage".into()); };
@@ -20500,13 +20510,14 @@ impl<'a> Engine<'a> {
                 return Ok(self.byte_make(copy, false));
             }
             if !mutable { return Err("TypeError: buffer store requires a bytearray".into()); }
+            // Any store while a view is out is refused, as the reference refuses it, before the length is looked at.
+            if ByteExport::active(&storage) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
             let Value::Bytes(source, _, _) = item.contents() else { return Err("TypeError: buffer store requires bytes".into()); };
             let copy = source.borrow().to_vec();
             if copy.is_empty() { return Ok(Value::Small(0)); }
             let end = begin.checked_add(copy.len()).filter(|end| *end <= i64::MAX as usize).ok_or("OverflowError: new position too large")?;
             let mut bytes = storage.borrow_mut();
             if end > bytes.len() {
-                if ByteExport::active(&storage) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                 let growth = end - bytes.len();
                 bytes.try_reserve(growth).map_err(|_| "MemoryError: ")?;
                 bytes.resize(end, 0);

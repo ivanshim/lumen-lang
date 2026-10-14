@@ -295,9 +295,10 @@ class BytesIO(_BufferedIOBase):
     writable = readable
     seekable = readable
     def read(self, size=-1):
-        if type(size) is not int or size > _MAXSIZE or size < _MINSIZE:
-            size = _size(size)
-        return _memory_cursor(6, self, size)
+        data = _memory_cursor(6, self, size)
+        if data is None:
+            data = _memory_cursor(6, self, _size(size))
+        return data
     read1 = read
     def readinto(self, buffer):
         if type(buffer) is bytearray:
@@ -327,13 +328,9 @@ class BytesIO(_BufferedIOBase):
         self._pos += len(data)
         return data
     def write(self, b):
-        kind = type(b)
-        if kind is bytes or kind is bytearray:
-            if self._closed:
-                raise ValueError('I/O operation on closed file')
-            if _export(self._data, True):
-                raise BufferError('Existing exports of data: object cannot be re-sized')
-            return self._store(b)
+        stored = _memory_cursor(7, self, b)
+        if stored is not None:
+            return stored
         with _get_buffer(b) as view:
             if not view.c_contiguous:
                 raise BufferError('memoryview: underlying buffer is not C-contiguous')

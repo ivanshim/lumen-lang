@@ -15263,7 +15263,14 @@ impl<'a> Machine<'a> {
     // Transfer a checked memory-stream slice directly between native byte buffers.
     fn memory_cursor(&mut self, writing: bool, parts: &[Value]) -> Res {
         let [stream, argument] = parts else { return Err("TypeError: buffer cursor operation requires a stream and argument".to_owned().into()); };
-        if !writing && self.read_class_member(stream.clone(), "_closed", false)?.is_true() {
+        // Only a whole number the cursor can count with, or bytes to store, are
+        // taken here; anything else is handed back as None untouched, and the
+        // Python side validates it in its own order.
+        let taken = if writing { matches!(argument.settled(), Value::Octets { .. }) } else {
+            match argument.settled() { Value::Small(_) => true, Value::Huge(big) => big.to_i64().is_some(), _ => false }
+        };
+        if !taken { return Ok(Value::Nil); }
+        if self.read_class_member(stream.clone(), "_closed", false)?.is_true() {
             return Err(String::from("ValueError: I/O operation on closed file").into());
         }
         let bytes = self.read_class_member(stream.clone(), "_data", false)?.settled();
@@ -15280,6 +15287,9 @@ impl<'a> Machine<'a> {
             return Ok(self.octets(copied, false));
         }
         if !changeable { return Err(String::from("TypeError: buffer store requires a bytearray").into()); }
+        if OctetLease::held(&cell) {
+            return Err(String::from("BufferError: Existing exports of data: object cannot be re-sized").into());
+        }
         let payload = match argument.settled() {
             Value::Octets { cell: source, .. } => source.borrow().clone(),
             _ => return Err(String::from("TypeError: buffer store requires bytes").into()),
