@@ -527,12 +527,10 @@ def _letter_quote(tok, c):
         # Ordinary buffered text needs no per-character tokenizer calls.
         cur = tok.cur
         end = tok.inp
-        chars = tok.bufc
         for special in (quote, '\\', '\n'):
-            try:
-                end = chars.index(special, cur, end)
-            except ValueError:
-                pass
+            found = tok.buf.find(special, cur - tok.line_start, end - tok.line_start)
+            if found >= 0:
+                end = tok.line_start + found
         if end != cur:
             end_quote_size = 0
             tok.cur = end
@@ -1238,6 +1236,8 @@ class TokenizerIter(object):
             raise StopIteration('EOF')
         if tstart is None or tend is None:
             string = ''
+        elif tstart >= tok.line_start:
+            string = tok.buf[tstart - tok.line_start:tend - tok.line_start]
         else:
             string = ''.join(tok.bufc[tstart:tend])
 
@@ -1257,7 +1257,10 @@ class TokenizerIter(object):
             # _get_current_line: the line is fetched once per tok.lineno and
             # then served from the cache.
             if tok.lineno != self.last_lineno:
-                line = ''.join(tok.bufc[line_start:line_start + size])
+                if line_start == tok.line_start:
+                    line = tok.buf[:size]
+                else:
+                    line = ''.join(tok.bufc[line_start:line_start + size])
                 self.last_line = line
             else:
                 line = self.last_line
