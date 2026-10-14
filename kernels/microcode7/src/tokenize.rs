@@ -26,6 +26,24 @@ fn sequence(record: &Thing, key: &str) -> Option<Rc<RefCell<Value>>> {
     if let Value::Mutable(cell, _) | Value::Shared(cell) = held { Some(cell) } else { None }
 }
 
+// Locate a single-line literal's closing delimiter, stepping over escaped
+// characters. Anything needing another input line stays with the adapter.
+fn closing_quote(input: &[u8], first: usize) -> Option<usize> {
+    let mark = input[first];
+    if input.get(first + 1) == Some(&mark) && input.get(first + 2) == Some(&mark) { return None; }
+    let mut at = first + 1;
+    while let Some(&byte) = input.get(at) {
+        if byte == mark { return Some(at + 1); }
+        if byte == 10 || byte == 13 { break; }
+        if byte == 92 {
+            at += 1;
+            match input.get(at) { None | Some(10 | 13) => break, _ => () }
+        }
+        at += 1;
+    }
+    None
+}
+
 // Return a buffered token, leaving ambiguous syntax and input reads to the port.
 pub fn atom(values: &[Value]) -> Result<Value, String> {
     if values.len() != 1 { return Err("TypeError: tokenizer scan needs an iterator".to_owned()); }
@@ -76,11 +94,15 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
     let tag = match head {
         b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
             while let Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_') = input.get(after) { after += 1; }
-            match input.get(after) {
-                Some(c) if *c < 128 && *c != 34 && *c != 39 => (),
-                _ => return Ok(Value::Nil),
+            if matches!(input.get(after), Some(34 | 39)) {
+                let letters = source[at..after].to_ascii_lowercase();
+                if !["r", "u", "b", "rb", "br"].contains(&letters.as_str()) { return Ok(Value::Nil); }
+                after = match closing_quote(input, after) { Some(boundary) => boundary, None => return Ok(Value::Nil) };
+                3
+            } else {
+                if input.get(after).is_none_or(|byte| *byte >= 128) { return Ok(Value::Nil); }
+                0
             }
-            0
         }
         b'0'..=b'9' => {
             while matches!(input.get(after), Some(b'0'..=b'9')) { after += 1; }
@@ -90,12 +112,7 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
             1
         }
         34 | 39 => {
-            if input.get(after..after + 2) == Some(&[head, head][..]) { return Ok(Value::Nil); }
-            while input.get(after) != Some(&head) {
-                if matches!(input.get(after), None | Some(92 | 10 | 13)) { return Ok(Value::Nil); }
-                after += 1;
-            }
-            after += 1;
+            after = match closing_quote(input, at) { Some(boundary) => boundary, None => return Ok(Value::Nil) };
             3
         }
         10 => {

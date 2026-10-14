@@ -23,6 +23,25 @@ fn list(object: &Instance, name: &str) -> Option<Rc<RefCell<Value>>> {
     }
 }
 
+// A complete ordinary literal needs only delimiter and escape tracking.
+// Refills and malformed or multiline strings retain the port's diagnostics.
+fn quoted_end(bytes: &[u8], opening: usize) -> Option<usize> {
+    let quote = *bytes.get(opening)?;
+    if bytes.get(opening + 1..opening + 3) == Some(&[quote, quote][..]) { return None; }
+    let mut cursor = opening + 1;
+    loop {
+        match *bytes.get(cursor)? {
+            c if c == quote => return Some(cursor + 1),
+            b'\n' | b'\r' => return None,
+            b'\\' => {
+                if matches!(bytes.get(cursor + 1), None | Some(b'\n' | b'\r')) { return None; }
+                cursor += 2;
+            }
+            _ => cursor += 1,
+        }
+    }
+}
+
 // Recognize buffered tokens; leave refills and diagnostic cases to the adapter.
 pub fn scan(args: &[Value]) -> Result<Value, String> {
     if args.len() != 1 { return Err("TypeError: tokenizer scan needs an iterator".into()); }
@@ -69,22 +88,24 @@ pub fn scan(args: &[Value]) -> Result<Value, String> {
     let kind;
     if first.is_ascii_alphabetic() || first == b'_' {
         while bytes.get(end).is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_') { end += 1; }
-        if !bytes.get(end).is_some_and(|c| c.is_ascii() && !matches!(c, b'\'' | b'"')) { return Ok(Value::Null); }
-        kind = 0;
+        if matches!(bytes.get(end), Some(b'\'' | b'"')) {
+            let prefix = text[start..end].to_ascii_lowercase();
+            if !matches!(prefix.as_str(), "b" | "r" | "u" | "br" | "rb") { return Ok(Value::Null); }
+            let Some(stop) = quoted_end(bytes, end) else { return Ok(Value::Null); };
+            end = stop;
+            kind = 3;
+        } else {
+            if !bytes.get(end).is_some_and(u8::is_ascii) { return Ok(Value::Null); }
+            kind = 0;
+        }
     } else if first.is_ascii_digit() {
         while bytes.get(end).is_some_and(u8::is_ascii_digit) { end += 1; }
         if first == b'0' && end != start + 1 { return Ok(Value::Null); }
         if !bytes.get(end).is_some_and(|c| c.is_ascii() && !c.is_ascii_alphanumeric() && !matches!(c, b'_' | b'.')) { return Ok(Value::Null); }
         kind = 1;
     } else if matches!(first, b'\'' | b'"') {
-        if bytes.get(end) == Some(&first) && bytes.get(end + 1) == Some(&first) { return Ok(Value::Null); }
-        loop {
-            match bytes.get(end) {
-                Some(c) if *c == first => { end += 1; break; }
-                None | Some(b'\\' | b'\n' | b'\r') => return Ok(Value::Null),
-                _ => end += 1,
-            }
-        }
+        let Some(stop) = quoted_end(bytes, start) else { return Ok(Value::Null); };
+        end = stop;
         kind = 3;
     } else if first == b'\n' {
         if depth != 0 { return Ok(Value::Null); }
