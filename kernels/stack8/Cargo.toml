@@ -23,6 +23,7 @@ blake2b_simd = "1"
 blake2s_simd = "1"
 base64 = "0.22"
 constant_time_eq = "0.4"
+unicode-ident = "1.0.27"
 
 [lib]
 path = "src/lib.rs"
