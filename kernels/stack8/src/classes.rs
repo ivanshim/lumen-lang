@@ -1325,6 +1325,10 @@ impl<'a> Engine<'a> {
     /// the class that declared it. A thing not of that class has no such
     /// place, and the descriptor says so.
     pub(super) fn slot_place(&self, thing: &Value, parts: &[Value]) -> Flow<String> {
+        // A class's storage layout is settled once the class is made, so the
+        // place a slot word stands at is kept from the first reading; the
+        // members' revision and the class's own identity guard the entry.
+        thread_local! { static SLOT_PLACES: RefCell<std::collections::HashMap<(usize, String), (Weak<Class>, u64, String)>> = RefCell::new(std::collections::HashMap::new()); }
         let Some(Value::Class(owner))=parts.get(1) else{return Err(self.class_refusal())};
         let Value::Object(o)=thing else{return Err(format!("TypeError: descriptor '{}' for '{}' objects doesn't apply to a '{}' object",parts[0].plain(),owner.name,thing.core_kind()).into())};
         let word = parts[0].plain();
@@ -1333,10 +1337,22 @@ impl<'a> Engine<'a> {
             if pieces.len() != 4 { return Err(self.class_refusal()); }
             return Err(format!("{}{word}{}{}{}{}{}", pieces[0], pieces[1], owner.name, pieces[2], o.class_now().name, pieces[3]).into());
         }
+        let revision = crate::value::members_revision();
+        let key = (Rc::as_ptr(owner) as usize, word.clone());
+        let kept = SLOT_PLACES.with(|places| places.borrow().get(&key)
+            .filter(|(class, seen, _)| *seen == revision && class.upgrade().is_some_and(|held| Rc::ptr_eq(&held, owner)))
+            .map(|(_, _, place)| place.clone()));
+        if let Some(place) = kept { return Ok(place); }
         let shape=self.storage_slots(owner);
         let prefix=owner.base().map_or(0,|parent|self.storage_slots(&parent).iter().map(Vec::len).sum::<usize>());
         let own=shape.last().and_then(|names|names.iter().position(|name|name==&word)).unwrap_or(0);
-        Ok(format!("\0slot:{word}:{}",prefix+own))
+        let place = format!("\0slot:{word}:{}",prefix+own);
+        SLOT_PLACES.with(|places| {
+            let mut places = places.borrow_mut();
+            if places.len() >= 4096 { places.clear(); }
+            places.insert(key, (Rc::downgrade(owner), revision, place.clone()));
+        });
+        Ok(place)
     }
     fn namespace_write(&self,o:&Rc<Instance>,value:Option<Value>)->Flow<Value> {
         if Self::kind_beneath(&o.class_now()).as_deref()==Some("module") {return Err("AttributeError: readonly attribute".into());}

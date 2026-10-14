@@ -2261,6 +2261,9 @@ pub enum Reach {
 pub const MAKER_MEMBER: &str = "\0metaclass";
 
 thread_local! { static MEMBERS_REVISION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+/// How many times any class's members have been opened for writing: a
+/// stamp a reading made from them can be checked against later.
+pub fn members_revision() -> u64 { MEMBERS_REVISION.with(|revision| revision.get()) }
 
 /// Ordered class storage with a lazily built index of names, never values.
 /// Every mutable borrow discards the index, including writes through a view.

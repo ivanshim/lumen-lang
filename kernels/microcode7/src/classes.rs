@@ -1481,10 +1481,27 @@ impl<'a> Machine<'a> {
             if words.len()!=4{return Err(self.class_unready());}
             return Err(format!("{}{name}{}{}{}{}{}",words[0],words[1],declared.name,words[2],t.blueprint().name,words[3]).into());
         }
+        // Walking every base's storage twice was most of a slot access; the
+        // answer is remembered per declaring class and field until any class
+        // namespace changes or the class itself is gone.
+        thread_local! { static SLOT_KEYS: RefCell<std::collections::HashMap<(usize, String), (u64, std::rc::Weak<Blueprint>, String)>> = RefCell::new(std::collections::HashMap::new()); }
+        let stamp=crate::data::namespace_change();
+        let lookup=(Rc::as_ptr(declared) as usize, name.clone());
+        let remembered=SLOT_KEYS.with(|table| table.borrow().get(&lookup).and_then(|(seen, class, text)| {
+            let same=*seen==stamp && class.upgrade().map_or(false, |held| Rc::ptr_eq(&held, declared));
+            same.then(|| text.clone())
+        }));
+        if let Some(text)=remembered {return Ok(text);}
         let preceding=declared.under().map_or(0,|base|self.inherited_storage(&base).into_iter().map(|fields|fields.len()).sum::<usize>());
         let groups=self.inherited_storage(declared);
         let position=groups.last().and_then(|fields|fields.iter().position(|field|field==&name)).unwrap_or_default();
-        Ok(format!("\0slot:{name}:{}",preceding+position))
+        let text=format!("\0slot:{name}:{}",preceding+position);
+        SLOT_KEYS.with(|table| {
+            let mut table=table.borrow_mut();
+            if table.len()>=4096 {table.clear();}
+            table.insert(lookup,(stamp,Rc::downgrade(declared),text.clone()));
+        });
+        Ok(text)
     }
     fn replace_instance_book(&self,t:&Rc<Thing>,replacement:Option<Value>)->Res {
         if Self::native_beneath(&t.blueprint()).as_deref()==Some("module"){return Err("AttributeError: readonly attribute".to_owned().into());}
