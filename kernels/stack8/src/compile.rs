@@ -87,8 +87,8 @@ pub struct Registry {
     /// the next reading: the caller's own module's names standing for
     /// its slots, as the reference's eval reads the caller's globals.
     pub pending_globals: Vec<(String, String)>,
-    pub program_bound: std::collections::HashSet<String>,
-    builtin_exports: HashSet<String>,
+    pub program_bound: std::collections::HashSet<String, crate::value::FxBuildHasher>,
+    builtin_exports: HashSet<String, crate::value::FxBuildHasher>,
     /// The names a write has actually bound at the outermost scope,
     /// whether by a plain assignment standing outside every function
     /// and block or by a `global`/`static` declaration reaching back
@@ -261,25 +261,30 @@ struct BindingPlan {
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PreparedScope {
     plans: HashMap<usize, BindingPlan>,
-    bound: HashSet<String>,
-    exports: HashSet<String>,
+    bound: HashSet<String, crate::value::FxBuildHasher>,
+    exports: HashSet<String, crate::value::FxBuildHasher>,
 }
 
 pub type PreparedEntries = &'static [(u64, &'static [u8], &'static [u8])];
 pub type PreparedSources = &'static [(&'static str, usize)];
 thread_local! {
-    static PREPARED_DEFINITIONS: std::cell::RefCell<HashMap<String, (PreparedEntries, PreparedSources)>> = std::cell::RefCell::new(HashMap::new());
+    static PREPARED_DEFINITIONS: std::cell::RefCell<Vec<(String, (PreparedEntries, PreparedSources))>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 pub fn register_prepared(definition: &str, entries: PreparedEntries, sources: PreparedSources) {
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(definition) {
-        PREPARED_DEFINITIONS.with(|all| { all.borrow_mut().insert(value.to_string(), (entries, sources)); });
-    }
+    PREPARED_DEFINITIONS.with(|all| all.borrow_mut().push((definition.to_string(), (entries, sources))));
 }
 
+/// The entries registered for a definition: the one whose text is the
+/// very same is taken at once; otherwise the texts are compared as the
+/// JSON they spell, so that a reshaped definition still finds its own.
 pub(crate) fn prepared_entries(definition: &str) -> Option<(PreparedEntries, PreparedSources)> {
-    let value = serde_json::from_str::<serde_json::Value>(definition).ok()?;
-    PREPARED_DEFINITIONS.with(|all| all.borrow().get(&value.to_string()).copied())
+    PREPARED_DEFINITIONS.with(|all| {
+        let all = all.borrow();
+        if let Some((_, found)) = all.iter().find(|(text, _)| text == definition) { return Some(*found); }
+        let wanted = serde_json::from_str::<serde_json::Value>(definition).ok()?.to_string();
+        all.iter().rev().find(|(text, _)| serde_json::from_str::<serde_json::Value>(text).ok().is_some_and(|value| value.to_string() == wanted)).map(|(_, found)| *found)
+    })
 }
 
 fn token_fingerprint(tokens: &[Token]) -> Vec<u8> {

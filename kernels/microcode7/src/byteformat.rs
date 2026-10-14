@@ -101,6 +101,23 @@ fn read_real(input: &[u8]) -> f64 {
     let positive=match e {0=>f64::from(m)/16777216.0,31=>if m==0 {f64::INFINITY} else {f64::NAN},_=>f64::from(m+1024)*2.0f64.powi(i32::from(e)-25)};
     if word&32768==0 {positive} else {-positive}
 }
+// Up to eight little-endian bytes become a machine word without passing
+// through a big integer; only wider fields, and unsigned words beyond the
+// signed range, are built the long way.
+fn whole_number(chunk: &[u8], signed: bool) -> Value {
+    if chunk.len() > 8 {
+        let number = if signed { BigInt::from_signed_bytes_le(chunk) } else { BigInt::from_bytes_le(num_bigint::Sign::Plus, chunk) };
+        return Value::from_big(number);
+    }
+    let filler = if signed && chunk.last().is_some_and(|top| top & 0x80 != 0) { 0xffu8 } else { 0u8 };
+    let mut word = [filler; 8];
+    word[..chunk.len()].copy_from_slice(chunk);
+    if signed { return Value::Small(i64::from_le_bytes(word)); }
+    let magnitude = u64::from_le_bytes(word);
+    if magnitude > i64::MAX as u64 { return Value::from_big(BigInt::from(magnitude)); }
+    Value::Small(magnitude as i64)
+}
+
 fn integer(v: &Value, symbol: u8, size: usize) -> Result<Vec<u8>, String> {
     let n=match v {Value::Huge(n)=>(**n).clone(),Value::Small(n)=>BigInt::from(*n),Value::Flag(b)=>BigInt::from(i32::from(*b)),_=>return Err(invalid("required argument is not an integer"))};
     let signed=b"bhilqn".contains(&symbol);
@@ -241,7 +258,7 @@ pub fn perform(given: &[Value]) -> Result<Value,String> {
                 b'c' => octets(&chunk),
                 b'e'|b'f'|b'd' => worth_of_binary(read_real(&chunk),17),
                 b'F'|b'D' => Value::tuple(vec![worth_of_binary(read_real(&chunk[..width/2]),17),worth_of_binary(read_real(&chunk[width/2..]),17)]),
-                _ => {let number=if b"bhilqn".contains(&symbol) {BigInt::from_signed_bytes_le(&chunk)} else {BigInt::from_bytes_le(num_bigint::Sign::Plus,&chunk)};Value::from_big(number)},
+                _ => whole_number(&chunk, b"bhilqn".contains(&symbol)),
             };
             results.push(decoded);
         }

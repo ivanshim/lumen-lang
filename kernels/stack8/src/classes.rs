@@ -4,30 +4,23 @@ use super::*;
 
 impl<'a> Engine<'a> {
     pub(super) fn class_word(&self, part: &str) -> &str {
-        match part {
-            "name" => self.member_words[0],
-            "qualified" => self.member_words[1],
-            "module" => self.member_words[2],
-            "kind" => self.member_words[3],
-            "get" => self.member_words[4],
-            "set" => self.member_words[5],
-            "remove" => self.member_words[6],
-            "call" => self.member_words[7],
-            "namespace" => self.member_words[8],
-            "root" => self.member_words[9],
-            "allocate" => self.member_words[10],
-            "descriptor.get" => self.member_words[11],
-            "descriptor.set" => self.member_words[12],
-            "descriptor.delete" => self.member_words[13],
-            "doc" => self.member_words[14],
-            "defaults" => self.member_words[15],
-            "base" => self.member_words[16],
-            "bases" => self.member_words[17],
-            "mro" => self.member_words[18],
-            "order" => self.member_words[19],
-            "receiver" => self.member_words[20],
-            "unready" => self.member_words[21],
-            _ => self.lang.class_details.get(part).and_then(|v| v.first()).map_or("", String::as_str),
+        // The parts are told apart by length first, so that a read compares
+        // against a few words rather than the whole list.
+        let place = match part.len() {
+            3 => match part { "get" => 4, "set" => 5, "doc" => 14, "mro" => 18, _ => usize::MAX },
+            4 => match part { "name" => 0, "kind" => 3, "call" => 7, "root" => 9, "base" => 16, _ => usize::MAX },
+            5 => match part { "bases" => 17, "order" => 19, _ => usize::MAX },
+            6 => match part { "module" => 2, "remove" => 6, _ => usize::MAX },
+            7 => if part == "unready" { 21 } else { usize::MAX },
+            8 => match part { "allocate" => 10, "defaults" => 15, "receiver" => 20, _ => usize::MAX },
+            9 => match part { "qualified" => 1, "namespace" => 8, _ => usize::MAX },
+            14 => match part { "descriptor.get" => 11, "descriptor.set" => 12, _ => usize::MAX },
+            17 => if part == "descriptor.delete" { 13 } else { usize::MAX },
+            _ => usize::MAX,
+        };
+        match place {
+            usize::MAX => self.lang.class_details.get(part).and_then(|v| v.first()).map_or("", String::as_str),
+            at => self.member_words[at],
         }
     }
     // Read once when the language itself was read, since no program
@@ -4178,12 +4171,12 @@ impl<'a> Engine<'a> {
                 match next { Some(value) => subject = value, None => break }
             }
         }
-        if self.lang.class_details.get("root.members").and_then(|fields|fields.get(10)).is_some_and(|field|field==name) && matches!(subject.contents(),Value::Set(_)) {
+        if self.lang.root_member_words.get(10).is_some_and(|field|field==name) && matches!(subject.contents(),Value::Set(_)) {
             let inherited=self.root_member(name,None).ok_or_else(||self.class_refusal())?;
             return Ok(Self::adapter(3,vec![inherited,subject]));
         }
         if (self.is_coroutine(&subject) || matches!(&subject, Value::Adapter(parts) if parts.0 == 34))
-            && self.lang.class_details.get("root.members").is_some_and(|names| names.iter().skip(11).take(2).any(|word| word == name)) {
+            && self.lang.root_member_words.iter().skip(11).take(2).any(|word| word == name) {
             let member = self.root_member(name, None).expect("the root reduction descriptor");
             return Ok(Self::adapter(3, vec![member, subject.clone()]));
         }

@@ -453,6 +453,9 @@ struct ExecutionRules<'a> {
     words_ext_stmt_class_special_stop: &'a [String],
     words_ext_system_names_module: &'a [String],
     words_ext_system_module_name: &'a [String],
+    words_ext_system_module_doc: &'a [String],
+    words_ext_system_source_file: &'a [String],
+    words_ext_stmt_class_detail_text_signature: &'a [String],
     words_ext_stmt_async_generator_methods: &'a [String],
     words_ext_stmt_class_annotations: &'a [String],
     words_ext_stmt_class_detail_code_fields: &'a [String],
@@ -582,9 +585,9 @@ pub struct Machine<'a> {
     gathering_locals: Option<(usize, Vec<String>, Rc<Env>)>,
     extent: Option<(u32, u32, u32, u32)>,
     activation_kind: Option<Rc<Blueprint>>,
-    generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
-    coroutine_bodies: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<Routine>, Option<Weak<Thing>>, Value, usize)>,
-    async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>)>,
+    generator_frames: HashMap<usize, Weak<RefCell<Suspension>>, crate::table::FxBuildHasher>,
+    coroutine_bodies: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<Routine>, Option<Weak<Thing>>, Value, usize), crate::table::FxBuildHasher>,
+    async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>), crate::table::FxBuildHasher>,
     delegated_answers: std::collections::HashSet<usize>,
     code_handles: HashMap<usize, Weak<Vec<Value>>>,
     pub library_sources: HashMap<String, String>,
@@ -593,7 +596,7 @@ pub struct Machine<'a> {
     library_index: RefCell<Option<LibraryIndex>>,
     pub library_aliases: HashMap<String, String>,
     library_origins: std::collections::HashSet<String>,
-    imported: HashMap<String, Value>,
+    imported: HashMap<String, Value, crate::table::FxBuildHasher>,
     /// The dictionary of a loaded space, built the first time globals()
     /// wants it and answered every time after: one dictionary, so a
     /// name changed through it is changed in the space.
@@ -603,7 +606,10 @@ pub struct Machine<'a> {
     native_slots: HashMap<String, usize>,
     wildcard_names: HashMap<Rc<str>, HashMap<String, usize, crate::table::FxBuildHasher>, crate::table::FxBuildHasher>,
     wildcard_source: RefCell<Option<(Rc<str>, (bool, bool))>>,
-    namespace_places: RefCell<Option<HashMap<usize, String>>>,
+    namespace_places: RefCell<Option<HashMap<usize, String, crate::table::FxBuildHasher>>>,
+    // The module holding the recursion limit and where the limit stood among
+    // its entries when last read; checked before it is trusted again.
+    recursion_place: RefCell<Option<(Rc<Thing>, usize)>>,
     revised_members: RefCell<HashMap<usize, (usize, HashMap<String, usize, crate::table::FxBuildHasher>)>>,
     revised_namespaces: std::collections::HashSet<Rc<str>>,
     displaced_primitives: std::collections::BTreeSet<String>,
@@ -684,7 +690,7 @@ pub struct Machine<'a> {
     pub outermost: Rc<Env>,
     idents: Vec<String>,
     /// Names bound by the source after its library prefix.
-    pub main_bindings: std::collections::HashSet<String>,
+    pub main_bindings: std::collections::HashSet<String, crate::table::FxBuildHasher>,
     memo: HashMap<String, Value>,
     identities: std::collections::BTreeMap<(String, u64), i64>,
     /// A loose member descriptor, keyed by the kind's word and the member
@@ -1386,7 +1392,13 @@ impl<'a> Machine<'a> {
         let [module, binding] = self.rules.words_ext_system_recursion_variable else { return original };
         let Some(Value::Thing(namespace)) = self.imported.get(module) else { return original };
         let held = namespace.holds.borrow();
-        held.iter().find(|(key, _)| key == binding).and_then(|(_, item)| match item.settled() {
+        let kept = self.recursion_place.borrow().as_ref().and_then(|(space, at)| (Rc::ptr_eq(space, namespace) && held.get(*at).is_some_and(|(key, _)| key == binding)).then_some(*at));
+        let place = kept.or_else(|| {
+            let at = held.iter().position(|(key, _)| key == binding)?;
+            self.recursion_place.replace(Some((namespace.clone(), at)));
+            Some(at)
+        });
+        place.and_then(|at| match held[at].1.settled() {
             Value::Small(number) => usize::try_from(number).ok(),
             _ => None,
         }).or(original).map(|number| match original {
@@ -2000,6 +2012,9 @@ impl<'a> Machine<'a> {
                 words_ext_stmt_class_special_stop: table.strings("ext.stmt.class.special.stop"),
                 words_ext_system_names_module: table.strings("ext.system.names.module"),
                 words_ext_system_module_name: table.strings("ext.system.module.name"),
+                words_ext_system_module_doc: table.strings("ext.system.module.doc"),
+                words_ext_system_source_file: table.strings("ext.system.source.file"),
+                words_ext_stmt_class_detail_text_signature: table.strings("ext.stmt.class.detail.text_signature"),
                 words_ext_stmt_async_generator_methods: table.strings("ext.stmt.async.generator.methods"),
                 words_ext_stmt_class_annotations: table.strings("ext.stmt.class.annotations"),
                 words_ext_stmt_class_detail_code_fields: table.strings("ext.stmt.class.detail.code.fields"),
@@ -2112,13 +2127,14 @@ impl<'a> Machine<'a> {
             library_aliases: HashMap::new(),
             library_origins: std::collections::HashSet::new(),
             importing: std::collections::HashSet::new(),
-            imported: HashMap::new(),
+            imported: HashMap::default(),
             space_books: HashMap::new(),
             globals_by_cell: HashMap::new(),
             native_slots: table.strings("ext.stmt.class.special").iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
             wildcard_names: HashMap::with_hasher(crate::table::FxBuildHasher::default()),
             wildcard_source: RefCell::new(None),
             namespace_places: RefCell::new(None),
+            recursion_place: RefCell::new(None),
             revised_members: RefCell::new(HashMap::new()),
             revised_namespaces: std::collections::HashSet::new(),
             displaced_primitives: std::collections::BTreeSet::new(),
@@ -2149,7 +2165,7 @@ impl<'a> Machine<'a> {
             args_cell: find("system.args"),
             memo_cell: find("system.memoization"),
             idents,
-            main_bindings: std::collections::HashSet::new(),
+            main_bindings: std::collections::HashSet::default(),
             memo: HashMap::new(),
             identities: std::collections::BTreeMap::new(),
             loose_members: RefCell::new(HashMap::new()),
@@ -2172,9 +2188,9 @@ impl<'a> Machine<'a> {
             gathering_locals: None,
             extent: None,
             activation_kind: None,
-            generator_frames: HashMap::new(),
-            coroutine_bodies: HashMap::new(),
-            async_generators: HashMap::new(),
+            generator_frames: HashMap::default(),
+            coroutine_bodies: HashMap::default(),
+            async_generators: HashMap::default(),
             delegated_answers: std::collections::HashSet::new(),
             code_handles: HashMap::new(),
             holding_fault: Vec::new(),
@@ -10446,7 +10462,7 @@ impl<'a> Machine<'a> {
         let Value::Thing(thing) = value else { return None };
         let mut places = self.namespace_places.borrow_mut();
         let names = places.get_or_insert_with(|| {
-            let mut names = HashMap::new();
+            let mut names = HashMap::default();
             for (name, worth) in &self.imported {
                 if let Value::Thing(space) = worth {
                     names.entry(Rc::as_ptr(space) as usize).or_insert_with(|| name.clone());
@@ -10460,7 +10476,7 @@ impl<'a> Machine<'a> {
         // keep their module ancestor. Ordinary instances cannot own the
         // loader's hidden marker, so avoid scanning their attributes.
         let class = thing.blueprint();
-        if !class.parents().is_empty() && Self::native_beneath(&class).as_deref() != Some("module") { return None; }
+        if !class.parentless() && Self::native_beneath(&class).as_deref() != Some("module") { return None; }
         let saved_name = thing.holds.borrow().iter().find(|row| row.0 == "\0loaded-module").map(|row| row.1.settled());
         if let Some(Value::Text(path)) = saved_name { return Some(path.to_string()); }
         for (path, held) in &self.imported {
@@ -10468,7 +10484,7 @@ impl<'a> Machine<'a> {
         }
         let names = self.rules.words_ext_system_module_name;
         let blueprint = thing.blueprint();
-        if blueprint.parents().is_empty() && blueprint.under().is_none() && blueprint.type_names.borrow().is_none() {
+        if blueprint.parentless() && blueprint.under().is_none() && blueprint.type_names.borrow().is_none() {
             let declared = thing.holds.borrow().iter().find(|entry| names.contains(&entry.0)).map(|entry| entry.1.settled());
             if let Some(Value::Text(label)) = declared { return Some(label.to_string()); }
         }
@@ -28354,15 +28370,15 @@ impl<'a> Machine<'a> {
         if self.world_book.is_none() && self.readings.is_empty() { return None; }
         let ident = self.idents.get(at)?;
         if self.readings.is_empty() && ident.as_bytes().first() == Some(&0) { return None; }
-        let bare = ident.rsplit_once('/').map_or(ident.as_str(), |(_, bare)| bare);
+        let bare = match ident.as_bytes().iter().rposition(|&byte| byte == b'/') { Some(slash) => &ident[slash + 1..], None => ident.as_str() };
         if !Self::visible_name(bare) { return None; }
         if let Some(which) = self.readings.iter().position(|book| (book.from..book.upto).contains(&at)) { return Some(Held::Reading(which)); }
         if self.world_book.is_some() && Self::visible_name(ident) {
-            if self.names_in_calls && !self.user_source_started && !self.table.strings("ext.system.module.doc").contains(ident) { return None; }
+            if self.names_in_calls && !self.user_source_started && !self.rules.words_ext_system_module_doc.contains(ident) { return None; }
             let source_member = self.main_bindings.contains(ident)
                 || self.rules.words_ext_system_module_name.contains(ident)
-                || self.table.strings("ext.system.source.file").contains(ident)
-                || self.table.strings("ext.system.module.doc").contains(ident)
+                || self.rules.words_ext_system_source_file.contains(ident)
+                || self.rules.words_ext_system_module_doc.contains(ident)
                 || self.world_book.as_ref().is_some_and(|book| looked_up(book, ident).is_some());
             if self.names_in_calls && !source_member { return None; }
             return Some(Held::World);

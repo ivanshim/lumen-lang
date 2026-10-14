@@ -150,7 +150,7 @@ pub struct Engine<'a> {
     frame_class: Option<Rc<Class>>,
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>, Value, usize)>,
-    async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>)>,
+    async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>), crate::value::FxBuildHasher>,
     delegated_tokens: std::collections::HashSet<usize>,
     frame_codes: HashMap<usize, Weak<(u8, Vec<Value>)>>,
     class_root: Option<Rc<Class>>,
@@ -224,7 +224,7 @@ pub struct Engine<'a> {
     module_locations: RefCell<Option<SourceLocations>>,
     pub module_aliases: HashMap<String, String>,
     embedded_names: std::collections::HashSet<String>,
-    modules: HashMap<String, Value>,
+    modules: HashMap<String, Value, crate::value::FxBuildHasher>,
     /// Each module's own dictionary, made the first time globals() asks
     /// for it and handed back every time after: one map, so that a name
     /// written through it is a name written in the module.
@@ -232,9 +232,13 @@ pub struct Engine<'a> {
     // These dictionaries remain strongly owned by the module inventory.
     globals_by_cell: HashMap<usize, String>,
     native_slots: HashMap<String, usize>,
-    module_by_address: RefCell<HashMap<usize, String>>,
+    module_by_address: RefCell<HashMap<usize, String, crate::value::FxBuildHasher>>,
     changed_module_positions: RefCell<HashMap<usize, (usize, HashMap<String, usize, crate::value::FxBuildHasher>)>>,
     module_addresses_ready: std::cell::Cell<bool>,
+    /// Where the recursion limit was last found among the fields of the
+    /// module that holds it, so the next reading checks the place rather
+    /// than searching for it again.
+    recursion_source: RefCell<Option<(Rc<Instance>, usize)>>,
     native_stack_start: usize,
     // Only names actually supplied by an import need a runtime check;
     // an empty table leaves ordinary builtin calls on their fast path.
@@ -1705,7 +1709,7 @@ impl<'a> Engine<'a> {
             frame_class: None,
             generator_frames: HashMap::new(),
             coroutines: HashMap::new(),
-            async_generators: HashMap::new(),
+            async_generators: HashMap::default(),
             delegated_tokens: std::collections::HashSet::new(),
             frame_codes: HashMap::new(),
             source: Rc::from(""),
@@ -1775,11 +1779,12 @@ impl<'a> Engine<'a> {
             module_locations: RefCell::new(None),
             module_aliases: HashMap::new(),
             embedded_names: std::collections::HashSet::new(),
-            modules: HashMap::new(),
+            modules: HashMap::default(),
             module_globals: HashMap::new(),
             globals_by_cell: HashMap::new(),
             native_slots: lang.class_special.iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
-            module_by_address: RefCell::new(HashMap::new()),
+            module_by_address: RefCell::new(HashMap::default()),
+            recursion_source: RefCell::new(None),
             changed_module_positions: RefCell::new(HashMap::new()),
             module_addresses_ready: std::cell::Cell::new(false),
             wildcard_file: None,
@@ -4153,7 +4158,16 @@ impl<'a> Engine<'a> {
         let [module, binding] = self.lang.recursion_variable.as_slice() else { return fallback };
         let Some(Value::Object(space)) = self.modules.get(module) else { return fallback };
         let fields = space.fields.borrow();
-        fields.iter().find(|(key, _)| key == binding).and_then(|(_, value)| match value.contents() {
+        let remembered = self.recursion_source.borrow().as_ref().filter(|(held, _)| Rc::ptr_eq(held, space)).map(|(_, at)| *at);
+        let at = match remembered.filter(|&at| fields.get(at).is_some_and(|(key, _)| key == binding)) {
+            Some(at) => Some(at),
+            None => {
+                let found = fields.iter().position(|(key, _)| key == binding);
+                if let Some(at) = found { *self.recursion_source.borrow_mut() = Some((space.clone(), at)); }
+                found
+            }
+        };
+        at.and_then(|at| match fields[at].1.contents() {
             Value::Small(number) => usize::try_from(number).ok(),
             _ => None,
         }).or(fallback).map(|requested| {
@@ -7842,7 +7856,7 @@ impl<'a> Engine<'a> {
         }
         if let Some(path) = self.module_by_address.borrow().get(&(Rc::as_ptr(o) as usize)) { return Some(path.clone()); }
         let own = o.class_now();
-        if !own.direct().is_empty() && Self::kind_beneath(&own).as_deref() != Some("module") { return None; }
+        if !own.direct.borrow().is_empty() && Self::kind_beneath(&own).as_deref() != Some("module") { return None; }
         if let Some((path, _)) = self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, o))) { return Some(path.clone()); }
         let fields = o.fields.try_borrow().ok()?;
         if let Some((_, owner)) = fields.iter().find(|(name, _)| name == "\0module-owner") {
@@ -27677,7 +27691,8 @@ impl Engine<'_> {
     /// A name the program may spell, as against the cells the kernel
     /// keeps for itself.
     fn public_name(name: &str) -> bool {
-        !name.starts_with('#') && !name.contains('\0')
+        let bytes = name.as_bytes();
+        bytes.first() != Some(&b'#') && !bytes.contains(&0)
     }
 
     /// The dictionary a global slot's value is kept in, if it is kept
@@ -27698,7 +27713,8 @@ impl Engine<'_> {
         }
         if self.outer_book.is_none() && self.text_books.is_empty() { return None; }
         let name = ident;
-        if !Self::public_name(name.rfind(':').map_or(name.as_str(), |at| &name[at + 1..])) { return None; }
+        let tail = match name.as_bytes().iter().rposition(|&byte| byte == b':') { Some(at) => &name[at + 1..], None => name.as_str() };
+        if !Self::public_name(tail) { return None; }
         if let Some(at) = self.text_books.iter().position(|book| far >= book.from && far < book.upto) { return Some(Kept::Text(at)); }
         if self.outer_book.is_some() && Self::public_name(name) {
             if self.lang.bind_names && !self.main_started && !self.lang.module_doc.contains(name) { return None; }

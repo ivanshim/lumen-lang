@@ -96,19 +96,23 @@ struct LibrarySurvey {
 pub type SurveyRows = &'static [(u64, &'static [u8], &'static [u8])];
 pub type SourceRows = &'static [(&'static str, usize)];
 thread_local! {
-    static LIBRARY_SURVEYS: std::cell::RefCell<std::collections::BTreeMap<String, (SurveyRows, SourceRows)>> = std::cell::RefCell::new(std::collections::BTreeMap::new());
+    static LIBRARY_SURVEYS: std::cell::RefCell<Vec<(String, (SurveyRows, SourceRows))>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 pub fn register_prepared(definition: &str, rows: SurveyRows, sources: SourceRows) {
-    let Ok(object) = serde_json::from_str::<serde_json::Value>(definition) else { return; };
-    LIBRARY_SURVEYS.with(|library| { library.borrow_mut().insert(object.to_string(), (rows, sources)); });
+    LIBRARY_SURVEYS.with(|library| library.borrow_mut().push((definition.to_owned(), (rows, sources))));
 }
 
+// A definition written out exactly as it was registered is matched by its
+// text alone; any other spelling is settled by reading both as JSON.
 pub(crate) fn library_rows(definition: &str) -> Option<(SurveyRows, SourceRows)> {
-    match serde_json::from_str::<serde_json::Value>(definition) {
-        Ok(object) => LIBRARY_SURVEYS.with(|library| library.borrow().get(&object.to_string()).cloned()),
-        Err(_) => None,
-    }
+    LIBRARY_SURVEYS.with(|library| {
+        let library = library.borrow();
+        if let Some((_, rows)) = library.iter().rev().find(|(text, _)| text == definition) { return Some(*rows); }
+        let sought = serde_json::from_str::<serde_json::Value>(definition).ok()?.to_string();
+        let same = |text: &String| serde_json::from_str::<serde_json::Value>(text).map(|object| object.to_string() == sought).unwrap_or(false);
+        library.iter().rev().find(|(text, _)| same(text)).map(|(_, rows)| *rows)
+    })
 }
 
 fn input_proof(input: &[Token]) -> Vec<u8> {

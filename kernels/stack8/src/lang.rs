@@ -125,6 +125,9 @@ pub struct Lang {
     pub text_repeat: bool,
     pub text_negative_index: bool,
     pub class_details: HashMap<String, Vec<String>, crate::value::FxBuildHasher>,
+    /// The words of `root.members` among the class details, kept apart so
+    /// that an attribute read need not look the list up each time.
+    pub root_member_words: Vec<String>,
     pub native_docs: Vec<String>,
     pub gc_objects: Vec<String>,
     pub namespace_warning: Vec<String>,
@@ -457,7 +460,7 @@ pub struct Lang {
     pub quote_open: Vec<String>,
     pub quote_close: Vec<String>,
 
-    pub builtins: HashMap<String, Builtin>,
+    pub builtins: HashMap<String, Builtin, crate::value::FxBuildHasher>,
     pub builtin_tails: std::rc::Rc<HashMap<String, Vec<String>>>,
     /// The one word each builtin answers by, in the order the labels
     /// name them: a map by word cannot say which of several came first.
@@ -1696,9 +1699,10 @@ impl Lang {
             }
         }
         let extensions = extension_shapes();
+        let known: HashSet<&str> = shapes.iter().chain(extensions.iter()).map(|(_, label)| *label).collect();
         let mut strange: Vec<&str> = map
             .keys()
-            .filter(|k| !k.starts_with('$') && !shapes.iter().chain(extensions.iter()).any(|(_, l)| l == k))
+            .filter(|k| !k.starts_with('$') && !known.contains(k.as_str()))
             .map(String::as_str)
             .collect();
         strange.sort();
@@ -1920,7 +1924,7 @@ impl Lang {
         let mut stack_lists = stack_lists.into_iter();
         let mut next_list = || stack_lists.next().expect("eight stack lists");
 
-        let mut natives = HashMap::new();
+        let mut natives: HashMap<String, Builtin, crate::value::FxBuildHasher> = HashMap::default();
         let mut first_words: Vec<(Builtin, String)> = Vec::new();
         for (tag, native) in [
             ("ext.builtin.complex", Builtin::Complex),
@@ -2248,6 +2252,7 @@ impl Lang {
         let core_words = ["core.ord", "core.chr.range", "core.translate.table", "core.bytes.like", "core.abs.type", "core.bool.declined", "core.integer", "core.not_iterator", "core.power.integer", "core.dict.sequence", "core.unindexable", "core.immutable", "core.power.zero", "core.power.overflow", "core.arity.one", "core.arity.exact", "key", "reverse", "start", "default", "round.ndigits", "round.number", "pow.base", "pow.exp", "pow.mod", "core.uniterable", "core.uncallable", "core.unhashable", "core.unready", "core.exhausted", "core.isinstance.amiss", "core.issubclass.amiss", "core.issubclass.subject", "core.empty", "core.arity", "core.attribute", "core.attribute.name", "core.vars", "core.zero", "core.mod.zero", "core.inverse", "core.default.many", "core.dict.pair", "core.unsized", "core.dict.changed", "zip.strict", "zip.short", "zip.long", "iterable", "enumerate.missing", "enumerate.too_many", "enumerate.keyword", "core.unreversible", "map.short", "map.long", "source.builtins_immutable"].into_iter().map(|n| Ok((n.to_string(), r.strings(&format!("ext.builtin.{}", n))?))).collect::<Result<HashMap<_, _>, String>>()?;
         let mut lang = Lang {
             prepared_scopes: None, prepared_source_tokens: None,
+            root_member_words: Vec::new(),
             definition_words: HashSet::new(),
             string_starters: [false; 128],
             core_words,
@@ -3192,6 +3197,7 @@ impl Lang {
             if stop < word.len() { tails.entry(word[..stop].to_owned()).or_default().push(word.clone()); }
         }
         lang.builtin_tails = std::rc::Rc::new(tails);
+        lang.root_member_words = lang.class_details.get("root.members").cloned().unwrap_or_default();
         Ok(lang)
     }
 

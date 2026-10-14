@@ -4,31 +4,37 @@ use super::*;
 
 impl<'a> Machine<'a> {
     pub(super) fn detail(&self, key: &str) -> &str {
-        match key {
-            "defaults" => self.rules.detail_defaults,
-            "call" => self.rules.detail_call,
-            "descriptor.delete" => self.rules.detail_descriptor_delete,
-            "descriptor.set" => self.rules.detail_descriptor_set,
-            "remove" => self.rules.detail_delete,
-            "subclass" => self.rules.detail_subclass,
-            "set" => self.rules.detail_set,
-            "get" => self.rules.detail_get,
-            "allocate" => self.rules.detail_allocate,
-            "descriptor.get" => self.rules.detail_descriptor_get,
-            "doc" => self.rules.detail_doc,
-            "getitem" => self.rules.detail_getitem,
-            "kind" => self.rules.detail_kind,
-            "main" => self.rules.detail_main,
-            "module" => self.rules.detail_module,
-            "mro" => self.rules.detail_mro,
-            "name" => self.rules.detail_name,
-            "namespace" => self.rules.detail_namespace,
-            "order" => self.rules.detail_order,
-            "qualified" => self.rules.detail_qualified,
-            "receiver" => self.rules.detail_receiver,
-            "root" => self.rules.detail_root,
-            "unready" => self.rules.detail_unready,
-            _ => self.table.single(&format!("ext.stmt.class.detail.{key}")).unwrap_or(""),
+        // Keys of the same length are the only ones worth comparing.
+        let rules = &self.rules;
+        let known = match (key.len(), key) {
+            (3, "set") => Some(rules.detail_set),
+            (3, "get") => Some(rules.detail_get),
+            (3, "doc") => Some(rules.detail_doc),
+            (3, "mro") => Some(rules.detail_mro),
+            (4, "call") => Some(rules.detail_call),
+            (4, "kind") => Some(rules.detail_kind),
+            (4, "main") => Some(rules.detail_main),
+            (4, "name") => Some(rules.detail_name),
+            (4, "root") => Some(rules.detail_root),
+            (5, "order") => Some(rules.detail_order),
+            (6, "remove") => Some(rules.detail_delete),
+            (6, "module") => Some(rules.detail_module),
+            (7, "getitem") => Some(rules.detail_getitem),
+            (7, "unready") => Some(rules.detail_unready),
+            (8, "defaults") => Some(rules.detail_defaults),
+            (8, "subclass") => Some(rules.detail_subclass),
+            (8, "allocate") => Some(rules.detail_allocate),
+            (8, "receiver") => Some(rules.detail_receiver),
+            (9, "namespace") => Some(rules.detail_namespace),
+            (9, "qualified") => Some(rules.detail_qualified),
+            (14, "descriptor.set") => Some(rules.detail_descriptor_set),
+            (14, "descriptor.get") => Some(rules.detail_descriptor_get),
+            (17, "descriptor.delete") => Some(rules.detail_descriptor_delete),
+            _ => None,
+        };
+        match known {
+            Some(word) => word,
+            None => self.table.single(&format!("ext.stmt.class.detail.{key}")).unwrap_or(""),
         }
     }
     // Read once when the roster itself was read, since no program still
@@ -4910,7 +4916,7 @@ impl<'a> Machine<'a> {
         if source_module {
             if let Some(directory) = self.directory_attribute(&value, key) { return Ok(directory); }
         }
-        if self.table.spells("ext.stmt.class.detail.text_signature", key) {
+        if self.rules.words_ext_stmt_class_detail_text_signature.iter().any(|word| word == key) {
             if let Some(text) = self.builtin_text_signature(&value) { return Ok(Value::text(text)); }
         }
         let mut value = value;

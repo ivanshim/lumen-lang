@@ -59,6 +59,22 @@ fn compile(text: &str) -> Result<Format, String> {
     });
     Ok(format)
 }
+/// An integer of at most eight little-endian bytes is read into a machine
+/// word; a wider one, or an unsigned eight-byte value past i64, goes the
+/// long way round through a big integer.
+fn decoded_integer(raw: &[u8], signed: bool) -> Value {
+    if raw.len() <= 8 {
+        let mut word = [0u8; 8];
+        word[..raw.len()].copy_from_slice(raw);
+        if signed {
+            if raw.last().is_some_and(|last| last & 0x80 != 0) { for byte in &mut word[raw.len()..] { *byte = 0xff; } }
+            return Value::Small(i64::from_le_bytes(word));
+        }
+        let unsigned = u64::from_le_bytes(word);
+        return match i64::try_from(unsigned) { Ok(fits) => Value::Small(fits), Err(_) => Value::of_big(BigInt::from(unsigned)) };
+    }
+    Value::of_big(if signed { BigInt::from_signed_bytes_le(raw) } else { BigInt::from_bytes_le(Sign::Plus, raw) })
+}
 fn floating(value: &Value) -> Result<f64, String> {
     Ok(match value {
         Value::Real(r) => { let x=crate::value::as_binary(&r.p, &r.q); if r.below && r.p.is_zero() { -x.abs() } else { x } },
@@ -186,7 +202,7 @@ pub fn apply(args: &[Value]) -> Result<Value,String> {
                 b'c' => bytes(raw),b'?' => Value::Flag(raw[0]!=0),
                 b'e'|b'f'|b'd' => crate::value::real_of(unpack_float(&raw),17),
                 b'F'|b'D' => Value::tuple(vec![crate::value::real_of(unpack_float(&raw[..raw.len()/2]),17),crate::value::real_of(unpack_float(&raw[raw.len()/2..]),17)]),
-                _ => Value::of_big(if b"bhilqn".contains(&field.code) {BigInt::from_signed_bytes_le(&raw)} else {BigInt::from_bytes_le(Sign::Plus,&raw)}),
+                _ => decoded_integer(&raw, b"bhilqn".contains(&field.code)),
             });
         }
     }
