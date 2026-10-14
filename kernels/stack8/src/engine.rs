@@ -17089,6 +17089,12 @@ impl<'a> Engine<'a> {
         match target {
             Value::Bytes(row, mutable, _) => {
                 let row = row.borrow();
+                let (first, last, step) = self.slice_edges(parts, row.len())?;
+                // Copy contiguous bytes directly, without a second row of indices.
+                if step == 1 {
+                    let begin = first as usize;
+                    return Ok(self.byte_make(row[begin..last.max(first) as usize].to_vec(), *mutable));
+                }
                 let (_, _, _, places) = self.slice_places(parts, row.len())?;
                 Ok(self.byte_make(places.into_iter().map(|i| row[i]).collect(), *mutable))
             }
@@ -17127,13 +17133,16 @@ impl<'a> Engine<'a> {
         if let Value::Bytes(row, mutable, _) = &target {
             if !mutable { return Err(self.byte_fault("immutable")); }
             let replacement = self.byte_taken(&given)?;
-            let (start, stop, step, places) = self.slice_places(parts, row.borrow().len())?;
-            if step != 1 && places.len() != replacement.len() { return Err(self.byte_fault("arguments")); }
-            if step == 1 {
-                if ByteExport::active(row) && stop - start != replacement.len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
-                row.borrow_mut().splice(start..stop, replacement);
+            let (begin, end, stride) = self.slice_edges(parts, row.borrow().len())?;
+            if stride == 1 {
+                let span = begin as usize..end.max(begin) as usize;
+                if ByteExport::active(row) && span.len() != replacement.len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                row.borrow_mut().splice(span, replacement);
+            } else {
+                let (_, _, _, places) = self.slice_places(parts, row.borrow().len())?;
+                if places.len() != replacement.len() { return Err(self.byte_fault("arguments")); }
+                for (at, byte) in places.into_iter().zip(replacement) { row.borrow_mut()[at] = byte; }
             }
-            else { for (at, byte) in places.into_iter().zip(replacement) { row.borrow_mut()[at] = byte; } }
             return Ok(target);
         }
         let Value::Array(mut items) = target else {
@@ -19974,6 +19983,13 @@ impl<'a> Engine<'a> {
         let mut held = content.borrow_mut();
         match at {
             Value::Slice(bounds) if self.lang.slice_values() => {
+                let (begin, end, stride) = self.slice_edges(bounds, held.len())?;
+                if stride == 1 {
+                    let interval = begin as usize..end.max(begin) as usize;
+                    if !interval.is_empty() && ByteExport::active(content) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                    held.drain(interval);
+                    return Ok(row.clone());
+                }
                 let (_, _, _, picked) = self.slice_places(bounds, held.len())?;
                 if !picked.is_empty() && ByteExport::active(content) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                 let mut discarded = vec![false; held.len()];

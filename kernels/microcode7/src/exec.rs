@@ -14176,11 +14176,14 @@ impl<'a> Machine<'a> {
         let mut numbers = cell.borrow_mut();
         match at {
             Value::Span(bounds) if self.rules.has_any_ext_builtin_slice => {
-                let (range, picked, unit) = self.span_selection(bounds, numbers.len())?;
-                if !picked.is_empty() && OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                let (ends, _, unit) = self.span_edges(bounds, numbers.len())?;
                 if unit {
-                    numbers.drain(range);
+                    let region = ends[0] as usize..ends[1].max(ends[0]) as usize;
+                    if region.len() > 0 && OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                    numbers.drain(region);
                 } else {
+                    let (_, picked, _) = self.span_selection(bounds, numbers.len())?;
+                    if !picked.is_empty() && OctetLease::held(cell) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                     let removed: std::collections::HashSet<usize> = picked.into_iter().collect();
                     let mut position = 0;
                     numbers.retain(|_| {
@@ -26132,12 +26135,14 @@ impl<'a> Machine<'a> {
         if let Value::Octets { cell, changeable, .. } = held {
             if !*changeable { return Err(self.octet_error("immutable")); }
             let incoming = self.octet_lengthening(handed)?;
-            let (range, positions, contiguous) = self.span_selection(bounds, cell.borrow().len())?;
+            let (limits, _, contiguous) = self.span_edges(bounds, cell.borrow().len())?;
             if contiguous {
-                if OctetLease::held(cell) && range.len() != incoming.len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
-                cell.borrow_mut().splice(range, incoming);
+                let region = limits[0] as usize..limits[1].max(limits[0]) as usize;
+                if OctetLease::held(cell) && region.len() != incoming.len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                cell.borrow_mut().splice(region, incoming);
             }
             else {
+                let (_, positions, _) = self.span_selection(bounds, cell.borrow().len())?;
                 if positions.len() != incoming.len() { return Err(self.octet_error("arguments")); }
                 for (index, byte) in positions.into_iter().zip(incoming) { cell.borrow_mut()[index] = byte; }
             }
@@ -26188,6 +26193,12 @@ impl<'a> Machine<'a> {
             let numbers = cell.borrow();
             return match at {
                 Value::Span(bounds) => {
+                    let (ends, _, unit) = self.span_edges(bounds, numbers.len())?;
+                    if unit {
+                        // A forward unit span needs only the selected byte window.
+                        let interval = ends[0] as usize..ends[1].max(ends[0]) as usize;
+                        return Ok(self.octets(numbers[interval].to_vec(), *changeable));
+                    }
                     let (_, chosen, _) = self.span_selection(bounds, numbers.len())?;
                     Ok(self.octets(chosen.iter().map(|&i| numbers[i]).collect(), *changeable))
                 }
