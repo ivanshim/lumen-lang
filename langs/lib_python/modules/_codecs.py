@@ -124,6 +124,10 @@ def _decoder(name, default_final=False):
         if name.startswith('utf_16') or name.startswith('utf_32'):
             return _runtime._wide_decode(data, name, errors, final)
         if name == 'utf_8':
+            final = bool(final)
+            complete = _runtime._raw_text_decode(data, name, errors, final)
+            if complete is not None:
+                return complete
             decoder = _runtime._IncrementalDecoder(name, errors)
             output = decoder.decode(data, final)
             return output, len(data) - len(decoder.buffer)

@@ -20742,6 +20742,22 @@ impl<'a> Machine<'a> {
             let Some(source) = v.first() else { return Err(self.octet_error("arguments")); };
             let decoding = matches!(op, Prim::Octets(3));
             let buffer = if decoding { self.octet_contents(source, false)? } else { Vec::new() };
+            if decoding && v.len() == 4 {
+                // Give the codec bridge its valid text and consumed byte count;
+                // it retains its usual policy handling for every malformed row.
+                let last = match &v[3] { Value::Flag(flag) => *flag, _ => return Err(self.octet_error("arguments")) };
+                if self.octet_encoding(v.get(1))? != Self::WIDE { return Err(self.octet_error("arguments")); }
+                if !matches!(v[2], Value::Text(_)) { return Ok(Value::Nil); }
+                let consumed = match std::str::from_utf8(&buffer) {
+                    Ok(_) => buffer.len(),
+                    Err(fault) => {
+                        if last || fault.error_len().is_some() { return Ok(Value::Nil); }
+                        fault.valid_up_to()
+                    }
+                };
+                let prefix = std::str::from_utf8(&buffer[..consumed]).map_err(|_| self.octet_error("unready"))?;
+                return Ok(Value::tuple(vec![Value::text(prefix), Value::Small(consumed as i64)]));
+            }
             return self.convert_text(!decoding, &buffer, v, false);
         }
         if let Prim::Octets(which) = op { return self.octet_routine(which, v); }

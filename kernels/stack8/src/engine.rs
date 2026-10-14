@@ -21492,6 +21492,25 @@ impl<'a> Engine<'a> {
             Builtin::Bytes(task @ (2 | 3)) if name == "__codec_encode" || name == "__codec_decode" => {
                 if args.is_empty() { return Err(self.byte_fault("arguments")); }
                 let data = if task == 3 { self.byte_row(&args[0], false)? } else { Vec::new() };
+                // Return a complete UTF-8 prefix without a temporary decoder;
+                // malformed input stays on the adapter's existing error road.
+                if task == 3 && args.len() == 4 {
+                    if self.byte_codec(args.get(1))? != Self::CODEC_WIDE { return Err(self.byte_fault("arguments")); }
+                    let Value::Flag(final_chunk) = args[3] else { return Err(self.byte_fault("arguments")); };
+                    if !matches!(&args[2], Value::Text(_)) { return Ok(Value::Null); }
+                    let complete = match std::str::from_utf8(&data) {
+                        Ok(text) => Some((text, data.len())),
+                        Err(error) if !final_chunk && error.error_len().is_none() => {
+                            let count = error.valid_up_to();
+                            Some((std::str::from_utf8(&data[..count]).map_err(|_| self.byte_fault("unready"))?, count))
+                        }
+                        _ => None,
+                    };
+                    return Ok(match complete {
+                        Some((text, count)) => Value::tuple(vec![Value::text(text), Value::Small(count as i64)]),
+                        None => Value::Null,
+                    });
+                }
                 self.byte_transcode(task == 2, &data, &args, false)?
             }
             Builtin::Bytes(task) => {
