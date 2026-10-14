@@ -2378,7 +2378,7 @@ impl<'a> Engine<'a> {
     }
 
     /// Build ownership including any nodes retained by this collection.
-    fn cycle_graph(&self, retained: &[Value]) -> crate::faint::Graph {
+    fn cycle_graph(&self, retained: &[Value], complete: bool) -> crate::faint::Graph {
         let books = self.text_books.iter().flat_map(|book| {
             std::iter::once(Value::Bond(book.near.clone()))
                 .chain(book.outer.iter().cloned().map(Value::Bond))
@@ -2388,15 +2388,13 @@ impl<'a> Engine<'a> {
         let live = self.world.iter().chain(&self.data).chain(&self.caught).chain(&self.buffer)
             .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
             .chain(self.native_exceptions.values()).chain(std::iter::once(&self.trace_hook)).cloned()
-            // Weak metadata keys must also be graph candidates: a function
-            // owned only by an active local can otherwise be absent, leaving
-            // no node from which to mark its still-live attribute dictionary.
-            .chain(self.function_members.iter().filter_map(|(function, _)| function.revive()))
             .chain(self.outer_book.iter().cloned().map(Value::Bond))
             .chain(self.function_books.iter().flatten().cloned().map(Value::Bond))
             .chain(self.natives.iter().cloned().map(Value::Bond)).collect();
         {
-            let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live);
+            // Weak metadata keys are candidates, never proven outside owners.
+            let weak_keys = self.function_members.iter().filter_map(|(function, _)| function.revive()).collect();
+            let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live, weak_keys, complete);
             for (function, holder) in &self.function_members { if let Some(function) = function.revive() { graph.link_attributes(&function, &Value::Object(holder.clone())); } }
             graph
         }
@@ -2412,7 +2410,7 @@ impl<'a> Engine<'a> {
         // Dead weak keys must release their attributes before ordering finalizers.
         self.function_members.retain(|(function, _)| function.revive().is_some());
         self.settle_departed();
-        let mut graph = self.cycle_graph(&[]);
+        let mut graph = self.cycle_graph(&[], false);
         let mut group = graph.unreached();
         // Nothing unreachable means nothing is said or cleared, so the
         // heap is the same afterwards and the first walk still stands.
@@ -2447,7 +2445,7 @@ impl<'a> Engine<'a> {
             }
         }
         drop(graph);
-        let mut after = self.cycle_graph(&group);
+        let mut after = self.cycle_graph(&group, false);
         let unreached = after.still_unreached(group);
         let count = unreached.len();
         self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !after.unowned(&function)));
@@ -21907,7 +21905,7 @@ impl<'a> Engine<'a> {
             }
             Builtin::TrackedObjects => {
                 if args.len()!=0 {return Err(format!("TypeError: {}() takes no arguments",self.lang.gc_objects.first().map_or("gc.get_objects",String::as_str)));}
-                let graph=self.cycle_graph(&[]);
+                let graph=self.cycle_graph(&[], true);
                 let mut seen=std::collections::HashSet::new();
                 let mut objects=Vec::new();
                 for object in graph.tracked_objects() {

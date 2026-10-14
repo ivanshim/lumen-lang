@@ -3149,7 +3149,7 @@ impl<'a> Machine<'a> {
 
     /// Weave the ownership web, leaving the reaper's retained knots out
     /// of the program's outside holds.
-    fn round_web(&self, retained: &[crate::ghost::Knot]) -> crate::ghost::Web {
+    fn round_web(&self, retained: &[crate::ghost::Knot], enumerate: bool) -> crate::ghost::Web {
         use crate::ghost::{Knot, Web};
         let books = self.readings.iter().flat_map(|book| {
             std::iter::once(Knot::Held(Value::Shared(book.near.clone())))
@@ -3169,7 +3169,7 @@ impl<'a> Machine<'a> {
             .chain(self.natives_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
             .collect();
         {
-            let mut web = Web::from_notable(bookkeeping, live);
+            let mut web = Web::from_notable(bookkeeping, live, enumerate);
             for (function, holder) in &self.routine_members { if let Some(function) = function.revive() { web.link_attributes(&function, &Value::Thing(holder.clone())); } }
             web
         }
@@ -3188,7 +3188,7 @@ impl<'a> Machine<'a> {
         self.routine_members.retain(|(function, _)| function.revive().is_some());
         if self.routine_members.len() != members_before { self.reindex_routine_members(); }
         self.attend_to_gone();
-        let mut web = self.round_web(&[]);
+        let mut web = self.round_web(&[], false);
         let mut original = web.unreachable();
         // With no lost knot there is nothing to silence or farewell, and
         // the web just woven still describes the machine: reuse it.
@@ -3225,7 +3225,7 @@ impl<'a> Machine<'a> {
             }
         }
         drop(web);
-        let mut checked = self.round_web(&original);
+        let mut checked = self.round_web(&original, false);
         let lost = checked.remaining(original);
         let found = lost.len();
         self.routine_members.retain(|(function, _)| function.revive().is_some_and(|function| !checked.unowned(&function)));
@@ -22597,7 +22597,7 @@ impl<'a> Machine<'a> {
             Prim::WeakGet => return self.reference_reading(name, v),
             Prim::HeapObjects => {
                 n(0)?;
-                let snapshot=self.round_web(&[]);
+                let snapshot=self.round_web(&[], true);
                 let mut identities=std::collections::HashSet::new();
                 let mut values=snapshot.heap_values();
                 let mut published=Vec::with_capacity(values.len());

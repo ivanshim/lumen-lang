@@ -813,7 +813,7 @@ impl Web {
     }
 
     /// Woven from the notable things still about.
-    pub fn from_notable(extra: Vec<Knot>, live: Vec<Knot>) -> Web {
+    pub fn from_notable(extra: Vec<Knot>, live: Vec<Knot>, enumerate: bool) -> Web {
         let mut bookkeeping = HashMap::default();
         for knot in &extra {
             let parts = match knot {
@@ -831,8 +831,29 @@ impl Web {
             n.0.iter().filter_map(|g| g.revive()).map(Knot::Held).collect()
         }).unwrap_or_default();
         roots.extend(extra);
-        for knot in live { external_knots(knot, &mut roots); }
-        Web::weave(roots, bookkeeping)
+        let mut anchored: HashSet<usize, crate::table::FxBuildHasher> = HashSet::default();
+        let mut opened: HashSet<usize, crate::table::FxBuildHasher> = HashSet::default();
+        for knot in live {
+            let mut owners = Vec::new();
+            external_knots(knot, &mut owners);
+            if !enumerate {
+                for owner in &owners { if let Some(address) = owner.place() { anchored.insert(address); } }
+                let mut layer = owners.iter().map(|owner| match owner { Knot::Held(value) => Knot::Held(value.clone()), Knot::Frame(frame) => Knot::Frame(frame.clone()) }).collect::<Vec<_>>();
+                // Follow the live cell through its dictionary to the namespace bindings.
+                for _ in [0, 1, 2] {
+                    let mut children = Vec::new();
+                    for knot in layer {
+                        if knot.place().is_some_and(|address| opened.insert(address)) { knot.onward(&mut children); }
+                    }
+                    layer = Vec::new();
+                    for child in children.into_iter().flat_map(Knot::parts) {
+                        if let Some(address) = child.place() { anchored.insert(address); layer.push(child); }
+                    }
+                }
+            }
+            roots.extend(owners);
+        }
+        Web::weave(roots, bookkeeping, anchored)
     }
 
     pub fn link_attributes(&mut self, function: &Value, holder: &Value) {
@@ -842,7 +863,7 @@ impl Web {
         }
     }
 
-    fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>) -> Web {
+    fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>, anchored: HashSet<usize, crate::table::FxBuildHasher>) -> Web {
         let mut strands: HashMap<usize, Strand, crate::table::FxBuildHasher> = HashMap::default();
         let mut frontier: Vec<usize> = Vec::new();
         for root in roots.into_iter().flat_map(Knot::parts) {
@@ -855,6 +876,9 @@ impl Web {
         }
         let mut next = Vec::new();
         while let Some(place) = frontier.pop() {
+            // A machine-owned knot cannot be lost; excluding its outgoing edges
+            // leaves those real holds visible as outside holds on their targets.
+            if anchored.contains(&place) { continue; }
             next.clear();
             strands[&place].knot.onward(&mut next);
             let mut onward = Vec::with_capacity(next.len());

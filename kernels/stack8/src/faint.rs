@@ -788,7 +788,7 @@ impl Graph {
     }
 
     /// Everything reachable from the remembered candidates still alive.
-    pub fn from_candidates(extra: Vec<Value>, live: Vec<Value>) -> Graph {
+    pub fn from_candidates(extra: Vec<Value>, live: Vec<Value>, weak_keys: Vec<Value>, complete: bool) -> Graph {
         let mut bookkeeping = Places::default();
         for value in &extra {
             let parts = match value {
@@ -806,8 +806,33 @@ impl Graph {
             c.0.iter().filter_map(|h| h.revive()).collect()
         }).unwrap_or_default();
         roots.extend(extra);
-        for value in live { external_places(value, &mut roots); }
-        Graph::build(roots, bookkeeping)
+        let mut outside: HashSet<usize, BuildHasherDefault<PlaceHasher>> = HashSet::default();
+        let mut boundary = Vec::new();
+        for value in live {
+            let start = roots.len();
+            external_places(value, &mut roots);
+            if !complete {
+                for root in &roots[start..] {
+                    if place_of(root).is_some_and(|at| outside.insert(at)) { boundary.push(root.clone()); }
+                }
+            }
+        }
+        let mut held = Vec::new();
+        while let Some(root) = boundary.pop() {
+            held.clear();
+            reaches(&root, &mut held);
+            for child in held.drain(..) {
+                let (first, second) = match child {
+                    Value::Method(object, routine, _) => (Value::Object(object), Some(Value::Routine(routine))),
+                    child => (child, None),
+                };
+                for part in std::iter::once(first).chain(second) {
+                    if place_of(&part).is_some_and(|at| outside.insert(at)) { boundary.push(part); }
+                }
+            }
+        }
+        roots.extend(weak_keys);
+        Graph::build(roots, bookkeeping, outside)
     }
 
     pub fn link_attributes(&mut self, function: &Value, holder: &Value) {
@@ -817,7 +842,7 @@ impl Graph {
         }
     }
 
-    fn build(roots: Vec<Value>, bookkeeping: Places<usize>) -> Graph {
+    fn build(roots: Vec<Value>, bookkeeping: Places<usize>, outside: HashSet<usize, BuildHasherDefault<PlaceHasher>>) -> Graph {
         let mut nodes: Places<Node> = Places::default();
         let mut order = Vec::new();
         let mut open: Vec<usize> = Vec::new();
@@ -831,6 +856,9 @@ impl Graph {
         }
         let mut children = Vec::new();
         while let Some(place) = open.pop() {
+            // These owners stay alive in the engine throughout this snapshot.
+            // Their uncounted child holds remain outside ownership of any candidate.
+            if outside.contains(&place) { continue; }
             children.clear();
             reaches(&nodes[&place].held, &mut children);
             let mut reached = Vec::with_capacity(children.len());
