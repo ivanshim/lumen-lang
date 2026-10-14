@@ -412,7 +412,8 @@ def _decimal_tail(tok):
         if _is_digit(c):
             tok.cur = tok.line_start + __text_scan_ascii(
                 tok.buf, tok.cur - tok.line_start, '0123456789', tok.inp - tok.cur)
-            c = _nextc(tok)
+            c = tok.bufc[tok.cur]
+            tok.cur += 1
         if c != '_':
             return c
         c = _nextc(tok)
@@ -672,7 +673,8 @@ def _tok_get_normal_mode(tok, current_tok):
             if c == ' ' or c == '\t' or c == '\x0c':
                 tok.cur = tok.line_start + __text_scan_ascii(
                     tok.buf, tok.cur - tok.line_start, ' \t\x0c', tok.inp - tok.cur)
-                c = _nextc(tok)
+                c = tok.bufc[tok.cur]
+                tok.cur += 1
             tok.start = tok.cur - 1
 
             if c == '#':
@@ -731,8 +733,10 @@ def _tok_get_normal_mode(tok, current_tok):
                         tok.cur = tok.line_start + __text_scan_ascii(
                             tok.buf, tok.cur - tok.line_start,
                             _IDENTIFIER_ASCII, tok.inp - tok.cur)
-                    c = _nextc(tok)
-                _backup(tok, c)
+                    # Identifier spans stop before the buffered newline or delimiter.
+                    c = tok.bufc[tok.cur]
+                    tok.cur += 1
+                tok.cur -= 1
                 if nonascii:
                     _verify_identifier(tok)
                 return (NAME, tok.start, tok.cur)
@@ -900,23 +904,26 @@ def _tok_get_normal_mode(tok, current_tok):
                     return (_ONE_CHAR[c], tok.start, tok.cur)
 
             if c in '!%&*+-/:<=>@^|':
-                c2 = _nextc(tok)
+                # Non-newline operators always have a buffered successor.
+                c2 = tok.bufc[tok.cur]
+                tok.cur += 1
                 two = None
                 if c is not None and c2 is not None:
                     two = _TWO_CHARS.get(c + c2)
                     if c == '<' and c2 == '>':
                         two = OP
                 if two is not None and two != OP:
-                    c3 = _nextc(tok)
+                    c3 = tok.bufc[tok.cur]
+                    tok.cur += 1
                     three = None
                     if c3 is not None:
                         three = _THREE_CHARS.get(c + c2 + c3)
                     if three is not None:
                         two = three
                     else:
-                        _backup(tok, c3)
+                        tok.cur -= 1
                     return (two, tok.start, tok.cur)
-                _backup(tok, c2)
+                tok.cur -= 1
 
             if c == '(' or c == '[' or c == '{':
                 if tok.level >= MAXLEVEL:
