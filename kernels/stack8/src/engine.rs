@@ -8568,7 +8568,7 @@ impl<'a> Engine<'a> {
                 if matches!(code, 'd' | 'i' | 'u' | 'o' | 'x' | 'X') {
                     return class.python_names.borrow().as_ref().map(|names| names.0.plain()).unwrap_or_else(|| class.name.clone());
                 }
-                if code == 'c' { if let Some(title) = class.python_qualified_title() { return title; } }
+                if code == 'c' { if let Some(title) = class.python_qualified_title() { return title.strip_prefix("__main__.").unwrap_or(&title).to_string(); } }
                 let qualified = self.class_value(&class, self.class_word("qualified")).and_then(|v| match v {
                     Value::Text(name) if !name.is_empty() => Some(name.to_string()),
                     _ => None,
@@ -18705,7 +18705,16 @@ impl<'a> Engine<'a> {
     fn byte_filled(&mut self, template: &str, arguments: &Value) -> Res<Vec<u8>> {
         let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
         let mut asked = |value: &Value, code: char, numbering: bool| -> Res<crate::formatting::Answer> {
-            if numbering { return self.rem_number(value, code); }
+            if numbering {
+                if code == 'c' {
+                    if let Some(Value::Bytes(row, mutable, _)) = Self::worth_of(&value.contents()) {
+                        let bytes = row.borrow();
+                        return Ok(if bytes.len() == 1 { crate::formatting::Answer::Whole(Value::Small(i64::from(bytes[0]))) }
+                            else { crate::formatting::Answer::Missing(format!("a {} object of length {}", if mutable { "bytearray" } else { "bytes" }, bytes.len())) });
+                    }
+                }
+                return self.rem_number(value, code);
+            }
             let held = value.contents();
             if matches!(code, 'a' | 'r') {
                 if Self::holds_object(&held) {

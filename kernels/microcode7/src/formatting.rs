@@ -40,7 +40,14 @@ impl Layout<'_> {
             let required = if inserts[1] == "an integer or a unicode character" { "an int or a unicode character" } else { inserts[1] };
             return format!("TypeError: %c requires {}, not {}", required, inserts[2]);
         }
-        if self.table.flag("ext.op.arithmetic.python_numbers") && matches!(label, "ext.op.rem.format.number" | "ext.op.rem.format.real") && inserts.len() == 3 {
+        if self.table.flag("ext.op.arithmetic.python_numbers") {
+            match (label, inserts) {
+                ("ext.op.rem.format.character.range", [_, maximum]) => return format!("OverflowError: %c arg not in range({maximum})"),
+                ("ext.op.rem.format.real", [_, _, kind]) => return format!("TypeError: float argument required, not {}", kind.rsplit('.').next().unwrap_or(kind)),
+                _ => {}
+            }
+        }
+        if self.table.flag("ext.op.arithmetic.python_numbers") && label == "ext.op.rem.format.number" && inserts.len() == 3 {
             let kind = inserts[2].rsplit('.').next().unwrap_or(inserts[2]);
             return format!("TypeError: %{} format: a real number is required, not {}", inserts[1], kind);
         }

@@ -31239,6 +31239,16 @@ impl crate::formatting::Elsewhere for OctetMarks<'_, '_> {
 
     // Use the numeric conversion road already used for text percent fields.
     fn value_numbered(&mut self, item: &Value, code: char) -> Result<crate::formatting::NumberAnswer, String> {
+        if code == 'c' {
+            if let Some(Value::Octets { cell, changeable, .. }) = Machine::underlying(&item.settled()) {
+                let content = cell.borrow();
+                if content.len() != 1 {
+                    let family = if changeable { "bytearray" } else { "bytes" };
+                    return Ok(crate::formatting::NumberAnswer::Missing(format!("a {family} object of length {}", content.len())));
+                }
+                return Ok(crate::formatting::NumberAnswer::Whole(Value::Small(content[0] as i64)));
+            }
+        }
         crate::formatting::Elsewhere::value_numbered(self.machine, item, code)
     }
 
@@ -31323,7 +31333,8 @@ impl crate::formatting::Elsewhere for Machine<'_> {
                     return class.type_names.borrow().as_ref().map_or_else(|| class.name.clone(), |names| names.short.type_text().bare());
                 }
             }
-            qualified.clone().unwrap_or_else(|| other.kind_word())
+            let title = qualified.clone().unwrap_or_else(|| other.kind_word());
+            if code == 'c' { title.strip_prefix("__main__.").unwrap_or(&title).to_owned() } else { title }
         };
         let worth = || Self::underlying(&held).map(|w| w.settled()).filter(|w| match code {
             'd' | 'i' | 'u' | 'e' | 'E' | 'f' | 'F' | 'g' | 'G' => matches!(w, Value::Frac(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_)),

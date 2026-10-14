@@ -45,7 +45,13 @@ impl Writer<'_> {
             let required = if pieces[1] == "an integer or a unicode character" { "an int or a unicode character" } else { pieces[1] };
             return format!("TypeError: %c requires {}, not {}", required, pieces[2]);
         }
-        if self.lang.python_numbers && matches!(key, "ext.op.rem.format.number" | "ext.op.rem.format.real") && pieces.len() == 3 {
+        if self.lang.python_numbers && key == "ext.op.rem.format.character.range" && pieces.len() == 2 {
+            return format!("OverflowError: %c arg not in range({})", pieces[1]);
+        }
+        if self.lang.python_numbers && key == "ext.op.rem.format.real" && pieces.len() == 3 {
+            return format!("TypeError: float argument required, not {}", pieces[2].rsplit('.').next().unwrap_or(pieces[2]));
+        }
+        if self.lang.python_numbers && key == "ext.op.rem.format.number" && pieces.len() == 3 {
             let kind = pieces[2].rsplit('.').next().unwrap_or(pieces[2]);
             return format!("TypeError: %{} format: a real number is required, not {}", pieces[1], kind);
         }
