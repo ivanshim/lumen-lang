@@ -294,6 +294,9 @@ impl Engine<'_> {
 
 impl Engine<'_> {
     fn finder_import(&mut self, path: &str) -> Flow<Option<Value>> {
+        // The import machinery's own modules are the reference's frozen bootstrap: no finder on sys.meta_path is asked for them.
+        const BOOTSTRAP: [&str; 6] = ["_zipimport_path", "_runtime_import", "_imp", "importlib", "importlib._bootstrap", "importlib._bootstrap_external"];
+        if BOOTSTRAP.contains(&path) || BOOTSTRAP.iter().any(|name| self.importing.contains(*name)) { return Ok(None); }
         let Some(sys) = self.modules.get("sys").cloned() else { return Ok(None); };
         let Some(finders) = self.member_of(sys, "meta_path")? else { return Ok(None); };
         let search_path = if let Some((parent, _)) = path.rsplit_once('.') {

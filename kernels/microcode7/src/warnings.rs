@@ -318,6 +318,10 @@ impl Machine<'_> {
 
 impl Machine<'_> {
     fn import_from_finders(&mut self, qualified: &str) -> Result<Option<Value>, String> {
+        // Bootstrap pieces of the import machinery stand outside sys.meta_path, as the reference's frozen importlib does.
+        let bootstrap = ["_zipimport_path", "_runtime_import", "_imp", "importlib", "importlib._bootstrap", "importlib._bootstrap_external"];
+        let booting = bootstrap.iter().any(|name| self.importing.contains(*name));
+        if booting || bootstrap.contains(&qualified) { return Ok(None); }
         let Some(system) = self.imported.get("sys").cloned() else { return Ok(None); };
         if self.attribute(&system, "meta_path").is_none() { return Ok(None); }
         let searchers = self.warning_get(system, "meta_path")?;

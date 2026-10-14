@@ -30041,6 +30041,8 @@ impl<'a> Machine<'a> {
             let globe = v.get(1).map(|source| match Self::underlying(source) { Some(base) => base.settled(), None => source.settled() });
             match &globe {
                 Some(Value::Attributes(_) | Value::Dict(_)) => (),
+                // Without globals there is no __name__ to read from; a wrong kind is refused.
+                None | Some(Value::Nil) => return Err(String::from("KeyError: '__name__' not in globals")),
                 _ => return Err(String::from("TypeError: globals must be a dict")),
             }
             let asked = |word: &str| match &globe {
@@ -30049,7 +30051,15 @@ impl<'a> Machine<'a> {
                 _ => None,
             };
             let parent = match asked("__package__").map(|value| Self::underlying(&value).unwrap_or(value)) {
-                Some(Value::Text(package)) => package.to_string(),
+                Some(Value::Text(package)) => {
+                    // __package__ wins over a spec naming a different parent, once the reference's warning is given.
+                    if let Some(spec) = asked("__spec__").filter(|spec| !matches!(spec, Value::Nil)) {
+                        let told = self.read_class_member(spec, "parent", false).map_err(|escape| self.carried_native_fault(escape))?;
+                        let same = match Self::underlying(&told).unwrap_or_else(|| told.settled()) { Value::Text(word) => word.as_ref() == package.as_ref(), _ => false };
+                        if !same { self.warn_like(26, "__package__ != __spec__.parent").map_err(|escape| self.carried_native_fault(escape))?; }
+                    }
+                    package.to_string()
+                }
                 Some(value) if !matches!(value, Value::Nil) => return Err(String::from("TypeError: package must be a string")),
                 _ => {
                     if let Some(spec) = asked("__spec__").filter(|spec| !matches!(spec, Value::Nil)) {
@@ -30088,9 +30098,12 @@ impl<'a> Machine<'a> {
                 let suffix = name.find('.').map_or(0, |at| name.len() - at);
                 full_name[..full_name.len() - suffix].to_owned()
             };
-        match result_name == full_name {
-            true => Ok(namespace),
-            false => self.load_namespace(&result_name),
+        if result_name == full_name { return Ok(namespace); }
+        if level == 0 { return self.load_namespace(&result_name); }
+        // Relative imports answer with the package member already standing in sys.modules, or complain that it is missing.
+        match self.cached_import(&result_name).or_else(|| self.imported.get(&result_name).cloned()) {
+            Some(found) => Ok(found),
+            None => Err(format!("KeyError: '{result_name}' not in sys.modules as expected")),
         }
     }
 

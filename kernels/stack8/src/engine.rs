@@ -29484,6 +29484,8 @@ impl Engine<'_> {
         let mut absolute = name.to_string();
         if level > 0 {
             let globe = args.get(1).map(|value| Self::worth_of(value).unwrap_or_else(|| value.contents()).contents());
+            // No globals at all leaves no __name__ to read; something that is not a dict is refused.
+            if matches!(globe, None | Some(Value::Null)) { return Err("KeyError: '__name__' not in globals".into()); }
             if !matches!(globe, Some(Value::Map(_) | Value::Fields(_))) { return Err("TypeError: globals must be a dict".into()); }
             let asked = |word: &str| match &globe {
                 Some(Value::Map(pairs)) => pairs.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == word)).map(|(_, held)| held.contents()),
@@ -29491,7 +29493,15 @@ impl Engine<'_> {
                 _ => None,
             };
             let package = match asked("__package__").map(|value| Self::worth_of(&value).unwrap_or(value)) {
-                Some(Value::Text(named)) => named.to_string(),
+                Some(Value::Text(named)) => {
+                    // A spec naming another parent makes __package__ stale: the reference warns and keeps __package__.
+                    if let Some(spec) = asked("__spec__").filter(|spec| !matches!(spec, Value::Null)) {
+                        let parent = self.class_get(spec, "parent", false).map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                        let agree = matches!(Self::worth_of(&parent).unwrap_or_else(|| parent.contents()), Value::Text(word) if word.as_ref() == named.as_ref());
+                        if !agree { self.warn_like(26, "__package__ != __spec__.parent")?; }
+                    }
+                    named.to_string()
+                },
                 Some(other) if !matches!(other, Value::Null) => return Err("TypeError: package must be a string".into()),
                 _ => match asked("__spec__") {
                     Some(found) if !matches!(found, Value::Null) => {
@@ -29526,7 +29536,11 @@ impl Engine<'_> {
             let returned = if level == 0 { absolute.split('.').next().unwrap_or(&absolute) }
                 else if name.is_empty() { absolute.as_str() }
                 else { &absolute[..absolute.len() - name.len() + name.split('.').next().unwrap_or(&name).len()] };
-            if returned == absolute { Ok(module) } else { self.import_module(returned) }
+            if returned == absolute { return Ok(module); }
+            if level == 0 { return self.import_module(returned); }
+            // A relative import hands back the package's first member from sys.modules, where it is expected to stand.
+            self.module_cache_value(returned).or_else(|| self.modules.get(returned).cloned())
+                .ok_or_else(|| Fault::Note(format!("KeyError: '{returned}' not in sys.modules as expected")))
         })();
         match loaded {
             Ok(module) => Ok(module),
