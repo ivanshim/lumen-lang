@@ -206,7 +206,8 @@ class _TokState(object):
         self.tok_extra_tokens = False
         self.comment_newline = False
         self.implicit_newline = False
-        self.tok_mode_stack = [_TokenizerMode() for _ in range(MAXFSTRINGLEVEL)]
+        # Create deeper interpolation modes only when nesting reaches them.
+        self.tok_mode_stack = [_TokenizerMode()]
         self.tok_mode_stack_index = 0
 
 
@@ -474,6 +475,8 @@ def _f_string_quote(tok, c):
         if tok.tok_mode_stack_index + 1 >= MAXFSTRINGLEVEL:
             _syntaxerror(tok, 'too many nested f-strings or t-strings')
         tok.tok_mode_stack_index += 1
+        if tok.tok_mode_stack_index == len(tok.tok_mode_stack):
+            tok.tok_mode_stack.append(_TokenizerMode())
         mode = tok.tok_mode_stack[tok.tok_mode_stack_index]
         mode.kind = TOK_FSTRING_MODE
         mode.quote = quote
