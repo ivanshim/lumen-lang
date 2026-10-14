@@ -50,10 +50,12 @@ pub fn scan(args: &[Value]) -> Result<Value, String> {
     let Some(&first) = bytes.get(start) else { return Ok(Value::Null); };
     if atbol {
         if cur != base || bytes[byte..start].iter().any(|c| *c != b' ')
-            || matches!(first, b'#' | b'\n' | b'\r' | b'\\' | b'\t' | 12) { return Ok(Value::Null); }
+            || matches!(first, b'\r' | b'\\' | b'\t' | 12) { return Ok(Value::Null); }
         let Some(level) = number(&state, "level") else { return Ok(Value::Null); };
         if level < 0 { return Ok(Value::Null); }
-        if level == 0 {
+        let blank = matches!(first, b'#' | b'\n');
+        if blank && !matches!(field(&state, "tok_extra_tokens"), Value::Flag(true)) { return Ok(Value::Null); }
+        if level == 0 && !blank {
             let Some(indent) = number(&state, "indent").filter(|n| *n >= 0) else { return Ok(Value::Null); };
             let (Value::Array(columns), Value::Array(alternates)) = (field(&state, "indstack"), field(&state, "altindstack")) else { return Ok(Value::Null); };
             let column = (start - byte) as i64;
@@ -85,11 +87,14 @@ pub fn scan(args: &[Value]) -> Result<Value, String> {
         }
         kind = 3;
     } else if first == b'\n' {
-        if depth != 0 || number(&state, "level") != Some(0)
-            || !matches!(field(&state, "comment_newline"), Value::Flag(false)) { return Ok(Value::Null); }
-        kind = 5;
+        if depth != 0 { return Ok(Value::Null); }
+        let Some(level) = number(&state, "level").filter(|n| *n >= 0) else { return Ok(Value::Null); };
+        if atbol || level > 0 || matches!(field(&state, "comment_newline"), Value::Flag(true)) {
+            if !matches!(field(&state, "tok_extra_tokens"), Value::Flag(true)) { return Ok(Value::Null); }
+            kind = 7;
+        } else { kind = 5; }
     } else if first == b'#' {
-        if depth != 0 || atbol || !matches!(field(&state, "tok_extra_tokens"), Value::Flag(true)) { return Ok(Value::Null); }
+        if depth != 0 || !matches!(field(&state, "tok_extra_tokens"), Value::Flag(true)) { return Ok(Value::Null); }
         while bytes.get(end).is_some_and(|c| !matches!(c, b'\r' | b'\n')) { end += 1; }
         kind = 6;
     } else if first == b'.' {
@@ -131,12 +136,12 @@ pub fn scan(args: &[Value]) -> Result<Value, String> {
         Some((chars, lines, level, opening))
     } else { None };
     let Value::Tuple(types) = field(&state, "_token_types") else { return Ok(Value::Null); };
-    if types.len() != 6 { return Ok(Value::Null); }
+    if types.len() != 7 { return Ok(Value::Null); }
     let token = if matches!(kind, 2 | 4) {
         let Value::Map(operators) = field(&state, "_operator_types") else { return Ok(Value::Null); };
         let Some(at) = operators.named_row(&text[start..end]).ok().flatten() else { return Ok(Value::Null); };
         if matches!(field(&state, "tok_extra_tokens"), Value::Flag(true)) { types[3].clone() } else { operators[at].1.clone() }
-    } else { types[match kind { 3 => 2, 5 => 4, 6 => 5, other => other as usize }].clone() };
+    } else { types[match kind { 3 => 2, 5 => 4, 6 => 5, 7 => 6, other => other as usize }].clone() };
     let line = if number(&iterator, "last_lineno") == Some(lineno) {
         let cached = field(&iterator, "last_line");
         if matches!(cached, Value::Null) { return Ok(Value::Null); }
@@ -167,10 +172,14 @@ pub fn scan(args: &[Value]) -> Result<Value, String> {
     if kind == 5 {
         put(&state, "atbol", Value::Flag(true));
         put(&state, "cont_line", Value::Flag(false));
-    } else if kind == 6 { put(&state, "comment_newline", Value::Flag(false)); }
+    } else if kind == 6 { put(&state, "comment_newline", Value::Flag(atbol)); }
+    else if kind == 7 {
+        put(&state, "atbol", Value::Flag(true));
+        put(&state, "comment_newline", Value::Flag(false));
+    }
     let extra = matches!(field(&state, "tok_extra_tokens"), Value::Flag(true));
     let implicit = matches!(field(&state, "implicit_newline"), Value::Flag(true));
-    let spelling = if kind == 5 && (!extra || implicit) { Value::text("") } else { Value::text(&text[start..end]) };
+    let spelling = if (kind == 5 && (!extra || implicit)) || (kind == 7 && implicit) { Value::text("") } else { Value::text(&text[start..end]) };
     let last_column = if kind == 5 && !extra { begin } else { finish };
     put(&iterator, "last_line", line.clone());
     put(&iterator, "last_lineno", Value::Small(lineno));

@@ -181,7 +181,7 @@ class _TokState(object):
     def __init__(self, readline, encoding):
         self.buf = ''
         self._maxlevel = MAXLEVEL
-        self._token_types = (NAME, NUMBER, STRING, OP, NEWLINE, COMMENT)
+        self._token_types = (NAME, NUMBER, STRING, OP, NEWLINE, COMMENT, NL)
         self._operator_types = _OPERATOR_TYPES
         self.cur = 0
         self.inp = 0

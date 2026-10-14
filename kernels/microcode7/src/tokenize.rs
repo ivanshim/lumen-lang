@@ -53,9 +53,11 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
     let Some(&head) = input.get(at) else { return Ok(Value::Nil); };
     if beginning {
         if cursor != line_base || !input[origin..at].iter().all(|byte| *byte == 32)
-            || matches!(head, 35 | 10 | 13 | 92 | 9 | 12) { return Ok(Value::Nil); }
+            || matches!(head, 13 | 92 | 9 | 12) { return Ok(Value::Nil); }
+        let trivia = head == 35 || head == 10;
+        if trivia && !matches!(slot(&scanner, "tok_extra_tokens"), Value::Flag(true)) { return Ok(Value::Nil); }
         match counter(&scanner, "level") {
-            Some(0) => {
+            Some(0) if !trivia => {
                 let Some(index) = counter(&scanner, "indent").filter(|n| *n >= 0) else { return Ok(Value::Nil); };
                 let Value::Vector(primary) = slot(&scanner, "indstack") else { return Ok(Value::Nil); };
                 let Value::Vector(secondary) = slot(&scanner, "altindstack") else { return Ok(Value::Nil); };
@@ -64,7 +66,7 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
                     if !matches!(entries.get(index as usize).map(Value::settled), Some(Value::Small(n)) if n == width) { return Ok(Value::Nil); }
                 }
             }
-            Some(n) if n > 0 => (),
+            Some(n) if n >= 0 => (),
             _ => return Ok(Value::Nil),
         }
         store(&scanner, "cur", Value::Small(line_base + (at - origin) as i64));
@@ -97,12 +99,16 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
             3
         }
         10 => {
-            if nesting > 0 || counter(&scanner, "level") != Some(0)
-                || !matches!(slot(&scanner, "comment_newline"), Value::Flag(false)) { return Ok(Value::Nil); }
-            5
+            if nesting != 0 { return Ok(Value::Nil); }
+            let Some(level) = counter(&scanner, "level") else { return Ok(Value::Nil); };
+            if level < 0 { return Ok(Value::Nil); }
+            if beginning || level != 0 || matches!(slot(&scanner, "comment_newline"), Value::Flag(true)) {
+                if !matches!(slot(&scanner, "tok_extra_tokens"), Value::Flag(true)) { return Ok(Value::Nil); }
+                7
+            } else { 5 }
         }
         35 => {
-            if nesting != 0 || beginning || !matches!(slot(&scanner, "tok_extra_tokens"), Value::Flag(true)) { return Ok(Value::Nil); }
+            if nesting != 0 || !matches!(slot(&scanner, "tok_extra_tokens"), Value::Flag(true)) { return Ok(Value::Nil); }
             while !matches!(input.get(after), None | Some(10 | 13)) { after += 1; }
             6
         }
@@ -151,7 +157,7 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
         Some((add, used, delimiters, rows))
     } else { None };
     let Value::Tuple(kinds) = slot(&scanner, "_token_types") else { return Ok(Value::Nil); };
-    if kinds.len() != 6 { return Ok(Value::Nil); }
+    if kinds.len() != 7 { return Ok(Value::Nil); }
     let token_type = match tag {
         2 | 4 => {
             let Value::Dict(lookup) = slot(&scanner, "_operator_types") else { return Ok(Value::Nil); };
@@ -161,6 +167,7 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
         3 => kinds[2].clone(),
         5 => kinds[4].clone(),
         6 => kinds[5].clone(),
+        7 => kinds[6].clone(),
         other => kinds[other as usize].clone(),
     };
     let text_line = match counter(&owner, "last_lineno") {
@@ -200,12 +207,16 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
     }
     match tag {
         5 => { store(&scanner, "cont_line", Value::Flag(false)); store(&scanner, "atbol", Value::Flag(true)); }
-        6 => store(&scanner, "comment_newline", Value::Flag(false)),
+        6 => store(&scanner, "comment_newline", Value::Flag(beginning)),
+        7 => {
+            store(&scanner, "comment_newline", Value::Flag(false));
+            store(&scanner, "atbol", Value::Flag(true));
+        }
         _ => (),
     }
     let extra_tokens = matches!(slot(&scanner, "tok_extra_tokens"), Value::Flag(true));
     let synthetic = matches!(slot(&scanner, "implicit_newline"), Value::Flag(true));
-    let lexeme = if tag == 5 && (!extra_tokens || synthetic) { Value::text("") } else { Value::text(&source[at..after]) };
+    let lexeme = if (tag == 5 && (!extra_tokens || synthetic)) || (tag == 7 && synthetic) { Value::text("") } else { Value::text(&source[at..after]) };
     let endpoint = if tag == 5 && !extra_tokens { column } else { stop };
     store(&owner, "last_lineno", Value::Small(row_number));
     store(&owner, "last_line", text_line.clone());
