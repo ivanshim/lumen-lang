@@ -143,6 +143,7 @@ _THREE_CHARS = {
 _scan_token = __tokenize_scan
 _OPERATOR_TYPES = {**_ONE_CHAR, **_TWO_CHARS, **_THREE_CHARS}
 _IDENTIFIER_ASCII = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_'
+_FSTRING_TEXT_ASCII = '\t\x0c\r !#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz|~\x7f'
 
 
 def _is_digit(c):
@@ -1063,6 +1064,11 @@ def _tok_get_fstring_mode(tok, current_tok):
     end_quote_size = 0
     unicode_escape = False
     while end_quote_size != current_tok.quote_size:
+        if tok.cur < tok.inp and tok.bufc[tok.cur] in _FSTRING_TEXT_ASCII:
+            # Ordinary literal runs cannot change interpolation or quote state.
+            tok.cur = tok.line_start + __text_scan_ascii(
+                tok.buf, tok.cur - tok.line_start, _FSTRING_TEXT_ASCII, tok.inp - tok.cur)
+            end_quote_size = 0
         c = _nextc(tok)
         in_format_spec = current_tok.in_format_spec \
             and (current_tok.curly_bracket_expr_start_depth >= 0)
