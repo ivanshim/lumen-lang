@@ -42,6 +42,49 @@ fn quoted_end(bytes: &[u8], opening: usize) -> Option<usize> {
     }
 }
 
+// Accept complete uncomplicated numbers only; ambiguous suffixes, separators
+// and invalid forms keep the adapter's full validation and error reporting.
+fn numeric_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let first = *bytes.get(start)?;
+    let mut at = start;
+    let base = if first == b'0' { match bytes.get(start + 1) {
+        Some(b'x' | b'X') => 16, Some(b'o' | b'O') => 8,
+        Some(b'b' | b'B') => 2, _ => 10,
+    } } else { 10 };
+    if base != 10 {
+        at += 2;
+        let digits = at;
+        while bytes.get(at).is_some_and(|byte| match base {
+            16 => byte.is_ascii_hexdigit(), 8 => matches!(byte, b'0'..=b'7'),
+            _ => matches!(byte, b'0' | b'1'),
+        }) { at += 1; }
+        if at == digits { return None; }
+    } else {
+        while bytes.get(at).is_some_and(u8::is_ascii_digit) { at += 1; }
+        let integer_end = at;
+        let mut floating = false;
+        if bytes.get(at) == Some(&b'.') {
+            floating = true;
+            at += 1;
+            let decimal = at;
+            while bytes.get(at).is_some_and(u8::is_ascii_digit) { at += 1; }
+            if first == b'.' && at == decimal { return None; }
+        }
+        if matches!(bytes.get(at), Some(b'e' | b'E')) {
+            floating = true;
+            at += 1;
+            if matches!(bytes.get(at), Some(b'+' | b'-')) { at += 1; }
+            let exponent = at;
+            while bytes.get(at).is_some_and(u8::is_ascii_digit) { at += 1; }
+            if at == exponent { return None; }
+        }
+        let imaginary = matches!(bytes.get(at), Some(b'j' | b'J'));
+        if imaginary { at += 1; }
+        if !floating && !imaginary && first == b'0' && integer_end > start + 1 { return None; }
+    }
+    bytes.get(at).filter(|byte| byte.is_ascii() && !byte.is_ascii_alphanumeric() && !matches!(**byte, b'_' | b'.')).map(|_| at)
+}
+
 // Recognize buffered tokens; leave refills and diagnostic cases to the adapter.
 pub fn scan(args: &[Value]) -> Result<Value, String> {
     if args.len() != 1 { return Err("TypeError: tokenizer scan needs an iterator".into()); }
@@ -99,9 +142,8 @@ pub fn scan(args: &[Value]) -> Result<Value, String> {
             kind = 0;
         }
     } else if first.is_ascii_digit() {
-        while bytes.get(end).is_some_and(u8::is_ascii_digit) { end += 1; }
-        if first == b'0' && end != start + 1 { return Ok(Value::Null); }
-        if !bytes.get(end).is_some_and(|c| c.is_ascii() && !c.is_ascii_alphanumeric() && !matches!(c, b'_' | b'.')) { return Ok(Value::Null); }
+        let Some(stop) = numeric_end(bytes, start) else { return Ok(Value::Null); };
+        end = stop;
         kind = 1;
     } else if matches!(first, b'\'' | b'"') {
         let Some(stop) = quoted_end(bytes, start) else { return Ok(Value::Null); };
@@ -119,9 +161,14 @@ pub fn scan(args: &[Value]) -> Result<Value, String> {
         while bytes.get(end).is_some_and(|c| !matches!(c, b'\r' | b'\n')) { end += 1; }
         kind = 6;
     } else if first == b'.' {
-        if bytes.get(end).is_some_and(u8::is_ascii_digit) { return Ok(Value::Null); }
-        if bytes.get(start..start + 3) == Some(b"...") { end = start + 3; }
-        kind = 2;
+        if bytes.get(end).is_some_and(u8::is_ascii_digit) {
+            let Some(stop) = numeric_end(bytes, start) else { return Ok(Value::Null); };
+            end = stop;
+            kind = 1;
+        } else {
+            if bytes.get(start..start + 3) == Some(b"...") { end = start + 3; }
+            kind = 2;
+        }
     } else if matches!(first, b'(' | b')' | b'[' | b']' | b'{' | b'}') {
         if depth != 0 { return Ok(Value::Null); }
         kind = 4;

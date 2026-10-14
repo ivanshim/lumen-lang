@@ -44,6 +44,57 @@ fn closing_quote(input: &[u8], first: usize) -> Option<usize> {
     None
 }
 
+// Recognize a bounded numeric spelling without constructing its value.
+// Keep separators and incomplete spellings on the diagnostic scanner path.
+fn number_limit(input: &[u8], origin: usize) -> Option<usize> {
+    let mut cursor = origin;
+    let radix = match (input.get(origin), input.get(origin + 1)) {
+        (Some(48), Some(120 | 88)) => Some(16),
+        (Some(48), Some(111 | 79)) => Some(8),
+        (Some(48), Some(98 | 66)) => Some(2),
+        _ => None,
+    };
+    match radix {
+        Some(base) => {
+            cursor += 2;
+            let began = cursor;
+            while let Some(&letter) = input.get(cursor) {
+                let allowed = if base == 16 { letter.is_ascii_hexdigit() }
+                    else if base == 8 { (48..56).contains(&letter) } else { letter == 48 || letter == 49 };
+                if !allowed { break; }
+                cursor += 1;
+            }
+            if began == cursor { return None; }
+        }
+        None => {
+            while matches!(input.get(cursor), Some(b'0'..=b'9')) { cursor += 1; }
+            let integer_digits = cursor - origin;
+            let decimal_point = input.get(cursor) == Some(&46);
+            if decimal_point {
+                cursor += 1;
+                let began = cursor;
+                while matches!(input.get(cursor), Some(b'0'..=b'9')) { cursor += 1; }
+                if integer_digits == 0 && cursor == began { return None; }
+            }
+            let exponent = matches!(input.get(cursor), Some(101 | 69));
+            if exponent {
+                cursor += 1;
+                if matches!(input.get(cursor), Some(43 | 45)) { cursor += 1; }
+                let began = cursor;
+                while matches!(input.get(cursor), Some(b'0'..=b'9')) { cursor += 1; }
+                if cursor == began { return None; }
+            }
+            let imaginary = matches!(input.get(cursor), Some(106 | 74));
+            if imaginary { cursor += 1; }
+            if input[origin] == 48 && integer_digits > 1 && !(decimal_point || exponent || imaginary) { return None; }
+        }
+    }
+    match input.get(cursor) {
+        Some(byte) if *byte < 128 && !byte.is_ascii_alphanumeric() && *byte != 95 && *byte != 46 => Some(cursor),
+        _ => None,
+    }
+}
+
 // Return a buffered token, leaving ambiguous syntax and input reads to the port.
 pub fn atom(values: &[Value]) -> Result<Value, String> {
     if values.len() != 1 { return Err("TypeError: tokenizer scan needs an iterator".to_owned()); }
@@ -105,10 +156,7 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
             }
         }
         b'0'..=b'9' => {
-            while matches!(input.get(after), Some(b'0'..=b'9')) { after += 1; }
-            if head == 48 && after - at > 1 { return Ok(Value::Nil); }
-            let Some(&following) = input.get(after) else { return Ok(Value::Nil); };
-            if following >= 128 || following.is_ascii_alphanumeric() || following == 95 || following == 46 { return Ok(Value::Nil); }
+            after = match number_limit(input, at) { Some(end) => end, None => return Ok(Value::Nil) };
             1
         }
         34 | 39 => {
@@ -130,9 +178,13 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
             6
         }
         46 => {
-            if matches!(input.get(after), Some(b'0'..=b'9')) { return Ok(Value::Nil); }
-            if input.get(at..at + 3) == Some(&[46, 46, 46][..]) { after += 2; }
-            2
+            if matches!(input.get(after), Some(b'0'..=b'9')) {
+                after = match number_limit(input, at) { Some(end) => end, None => return Ok(Value::Nil) };
+                1
+            } else {
+                if input.get(at..at + 3) == Some(&[46, 46, 46][..]) { after += 2; }
+                2
+            }
         }
         40 | 41 | 91 | 93 | 123 | 125 => {
             if nesting != 0 { return Ok(Value::Nil); }
