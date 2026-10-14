@@ -30571,10 +30571,26 @@ impl<'a> Machine<'a> {
         open
     }
 
+    /// compile()'s filename settled to plain words: a path spelled as
+    /// str or bytes, or an object whose __fspath__ spells one, looking
+    /// beneath a subclass for the worth it carries.
+    fn compiled_filename(&mut self, given: &Value) -> Result<Rc<str>, String> {
+        let answer = self.path_from_protocol(given.clone())?;
+        let bare = Self::underlying(&answer).unwrap_or(answer).settled();
+        match bare {
+            Value::Text(word) => Ok(word),
+            Value::Unpaired(numbers) => Ok(Rc::from(Value::category_text(&numbers))),
+            // Octets outside UTF-8 become U+FFFD rather than surrogate escapes.
+            Value::Octets { cell, .. } => Ok(Rc::from(String::from_utf8_lossy(&cell.borrow()).into_owned())),
+            other => Err(format!("TypeError: expected str, bytes or os.PathLike object, not {}", other.kind_word())),
+        }
+    }
+
     fn text_prepared(&mut self, name: &str, v: &[Value]) -> Result<Value, String> {
         let formals = self.table.strings("ext.builtin.compile.parameters");
         if v.len() < 3 || v.len() > formals.len() { return Err(self.core_complaint("core.arity", name)); }
-        let (Value::Text(file), Value::Text(manner)) = (v[1].settled(), v[2].settled()) else { return Err(self.source_refused()) };
+        let manner = match v[2].settled() { Value::Text(word) => word, other => return Err(format!("TypeError: compile() argument 'mode' must be str, not {}", other.kind_word())) };
+        let file = self.compiled_filename(&v[1])?;
         let source = match v[0].settled() {
             Value::Text(s) => s,
             Value::Octets { cell, .. } => self.decode_program(&cell.borrow(), &file)?,

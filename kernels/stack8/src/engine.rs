@@ -30014,9 +30014,25 @@ impl Engine<'_> {
         open
     }
 
+    /// The filename compile() was given, read the way the reference
+    /// reads any path: text, bytes, or whatever answers __fspath__,
+    /// with a subclass's own worth taken out from under it.
+    fn compile_filename(&mut self, offered: &Value) -> Res<Rc<str>> {
+        let path = self.filesystem_path(offered.clone())?;
+        let plain = Self::worth_of(&path).unwrap_or(path).contents();
+        Ok(match plain {
+            Value::Text(text) => text,
+            Value::Codepoints(codes) => Rc::from(Value::predicate_text(&codes)),
+            // Bytes that are not UTF-8 decode to U+FFFD here rather than with surrogateescape.
+            Value::Bytes(bytes, ..) => Rc::from(String::from_utf8_lossy(&bytes.borrow()).into_owned()),
+            other => return Err(format!("TypeError: expected str, bytes or os.PathLike object, not {}", Self::shown_kind(&other))),
+        })
+    }
+
     fn text_readied(&mut self, name: &str, args: Vec<Value>) -> Res<Value> {
         if args.len() < 3 || args.len() > self.lang.compile_parameters.len() { return Err(self.core_fault("core.arity", name)); }
-        let (Value::Text(file), Value::Text(manner)) = (args[1].contents(), args[2].contents()) else { return Err(self.source_unready()) };
+        let Value::Text(manner) = args[2].contents() else { return Err(format!("TypeError: compile() argument 'mode' must be str, not {}", Self::shown_kind(&args[2].contents()))) };
+        let file = self.compile_filename(&args[1])?;
         let source = match args[0].contents() {
             Value::Text(source) => source,
             Value::Bytes(bytes, ..) => self.source_bytes(&bytes.borrow(), &file)?,
