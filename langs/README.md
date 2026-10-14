@@ -6130,7 +6130,8 @@ surrogates, permissive controls, and precise error diagnostics.
 ordinary single-line strings with prefixes and escapes, comments, newlines,
 plain single-line interpolation pieces, operators and matching root-mode
 brackets in a tokenizer iterator's private state. It returns a complete token and updates its cursor and line cache, or
-requests the adapter's existing character reader before retrying. Matching
+requests the adapter's reader callback before preparing its decoded line and
+retrying. Matching
 space-only indentation and blank lines can be prepared natively; indentation
 transitions, tabs, complex interpolation and diagnostic cases retain the
 adapter's scanner.

@@ -180,6 +180,8 @@ class _TokenizerMode(object):
 class _TokState(object):
     def __init__(self, readline, encoding):
         self.buf = ''
+        self.bufc = []
+        self.line_null = False
         self._maxlevel = MAXLEVEL
         self._maxexpr = MAX_EXPR_NESTING
         self._token_types = (NAME, NUMBER, STRING, OP, NEWLINE, COMMENT, NL,
@@ -266,6 +268,10 @@ def _underflow_readline(tok):
         tok.line_null = False
         tok.cur = 0
         tok.inp = 0
+    return _append_line(tok, _read_line(tok))
+
+
+def _read_line(tok):
     try:
         line = tok.readline()
     except StopIteration:
@@ -277,6 +283,10 @@ def _underflow_readline(tok):
     else:
         if not isinstance(line, str):
             raise TypeError('readline() returned a non-string object')
+    return line
+
+
+def _append_line(tok, line):
     # The character row only ever grows, exactly as the C tokenizer's
     # buffer does, and one character read off it never rescans the text.
     tok.bufc.extend(line)
@@ -1233,10 +1243,15 @@ class TokenizerIter(object):
         buffered = _scan_token(self)
         if buffered is False:
             tok = self.tok
-            tok.start = None
-            c = _nextc(tok)
-            if c is not None:
-                tok.cur -= 1
+            line = _read_line(tok)
+            prepared = _scan_token(self, line)
+            if prepared is False:
+                if not _append_line(tok, line):
+                    tok.cur = tok.inp
+                if tok.line_null:
+                    _syntaxerror(tok, 'source code cannot contain null bytes')
+            elif prepared == -1:
+                _syntaxerror(tok, 'source code cannot contain null bytes')
             buffered = _scan_token(self)
             if buffered is False:
                 buffered = None

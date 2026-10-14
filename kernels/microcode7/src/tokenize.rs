@@ -163,10 +163,49 @@ fn literal_piece(owner: &Thing, scanner: &Thing, active: &Thing,
     Some(Value::tuple(vec![selected, Value::text(&source[origin..stop]), start, end, text_line]))
 }
 
+// Fill the fresh character row from a decoded reader result. Declining
+// leaves unusual text representations or altered callback state to the port.
+fn accept_line(owner: &Thing, line: &Value) -> Value {
+    let Value::Thing(scanner) = slot(owner, "tok") else { return Value::Flag(false); };
+    let source = match line.settled() { Value::Text(word) => word, _ => return Value::Flag(false) };
+    for (key, expected) in [("cur", 0), ("inp", 0), ("tok_mode_stack_index", 0), ("done", 10)] {
+        if counter(&scanner, key) != Some(expected) { return Value::Flag(false); }
+    }
+    let Some(storage) = sequence(&scanner, "bufc") else { return Value::Flag(false); };
+    match &*storage.borrow() { Value::Vector(row) if row.is_empty() => (), _ => return Value::Flag(false) }
+    let Some(previous_row) = counter(&scanner, "lineno") else { return Value::Flag(false); };
+    store(&scanner, "line_start", Value::Small(0));
+    if source.is_empty() {
+        store(&scanner, "done", Value::Small(11));
+        return Value::Small(0);
+    }
+    let mut row = Vec::with_capacity(source.len() + 1);
+    for unit in source.chars() {
+        let mut utf8 = [0; 4];
+        row.push(Value::text(unit.encode_utf8(&mut utf8)));
+    }
+    let synthesized = source.as_bytes().last() != Some(&10);
+    if synthesized { row.push(Value::text("\n")); }
+    let count = row.len() as i64;
+    *storage.borrow_mut() = Value::Vector(crate::tuples::Sequence::plain(row));
+    let contains_null = source.as_bytes().contains(&0);
+    store(&scanner, "lineno", Value::Small(previous_row + 1));
+    store(&scanner, "implicit_newline", Value::Flag(synthesized));
+    store(&scanner, "line_null", Value::Flag(contains_null));
+    store(&scanner, "inp", Value::Small(count));
+    let buffered = match synthesized {
+        false => Value::Text(source),
+        true => { let mut word = source.to_string(); word.push('\n'); Value::text(&word) }
+    };
+    store(&scanner, "buf", buffered);
+    if contains_null { Value::Small(-1) } else { Value::Small(1) }
+}
+
 // Return a buffered token, leaving ambiguous syntax and input reads to the port.
 pub fn atom(values: &[Value]) -> Result<Value, String> {
-    if values.len() != 1 { return Err("TypeError: tokenizer scan needs an iterator".to_owned()); }
+    if values.is_empty() || values.len() > 2 { return Err("TypeError: tokenizer scan needs an iterator and optional decoded line".to_owned()); }
     let Value::Thing(owner) = values[0].settled() else { return Ok(Value::Nil); };
+    if let Some(line) = values.get(1) { return Ok(accept_line(&owner, line)); }
     let Value::Thing(scanner) = slot(&owner, "tok") else { return Ok(Value::Nil); };
     if !matches!(slot(&owner, "done"), Value::Flag(false)) { return Ok(Value::Nil); }
     if counter(&scanner, "pendin") != Some(0)
@@ -183,7 +222,15 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
         _ => return Ok(Value::Nil),
     }
     let beginning = match slot(&scanner, "atbol") { Value::Flag(yes) => yes, _ => return Ok(Value::Nil) };
-    if beginning && cursor == limit { return Ok(Value::Flag(false)); }
+    if beginning && cursor == limit {
+        if nesting > 0 { return Ok(Value::Nil); }
+        store(&scanner, "inp", Value::Small(0));
+        store(&scanner, "cur", Value::Small(0));
+        store(&scanner, "line_null", Value::Flag(false));
+        store(&scanner, "bufc", Value::Vector(crate::tuples::Sequence::plain(Vec::new())).keep(true));
+        store(&scanner, "start", Value::Nil);
+        return Ok(Value::Flag(false));
+    }
     if cursor >= limit { return Ok(Value::Nil); }
     let Value::Text(source) = slot(&scanner, "buf") else { return Ok(Value::Nil); };
     let offset = (cursor - line_base) as usize;

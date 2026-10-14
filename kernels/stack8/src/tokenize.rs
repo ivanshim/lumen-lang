@@ -147,10 +147,44 @@ fn interpolation(iterator: &Instance, state: &Instance, mode: &Instance,
         Value::tuple(vec![Value::Small(lineno), Value::Small(finish as i64)]), line]))
 }
 
+// Commit one decoded callback result to the already-reset physical buffer.
+// Keep non-native strings and callback-altered records on the Python path.
+fn prepare_line(iterator: &Instance, supplied: &Value) -> Value {
+    let Value::Object(state) = field(iterator, "tok") else { return Value::Flag(false); };
+    let Value::Text(text) = supplied.contents() else { return Value::Flag(false); };
+    if number(&state, "cur") != Some(0) || number(&state, "inp") != Some(0)
+        || number(&state, "tok_mode_stack_index") != Some(0) || number(&state, "done") != Some(10) { return Value::Flag(false); }
+    let Some(buffer) = list(&state, "bufc") else { return Value::Flag(false); };
+    if !matches!(&*buffer.borrow(), Value::Array(row) if row.is_empty()) { return Value::Flag(false); }
+    let Some(lineno) = number(&state, "lineno") else { return Value::Flag(false); };
+    put(&state, "line_start", Value::Small(0));
+    if text.is_empty() {
+        put(&state, "done", Value::Small(11));
+        return Value::Small(0);
+    }
+    let mut characters = text.chars().map(|character| {
+        let mut encoded = [0u8; 4];
+        Value::text(character.encode_utf8(&mut encoded))
+    }).collect::<Vec<_>>();
+    let implicit = !text.ends_with('\n');
+    if implicit { characters.push(Value::text("\n")); }
+    let length = characters.len();
+    *buffer.borrow_mut() = Value::array(characters);
+    let null = text.contains('\0');
+    put(&state, "line_null", Value::Flag(null));
+    put(&state, "inp", Value::Small(length as i64));
+    put(&state, "implicit_newline", Value::Flag(implicit));
+    let physical = if implicit { Value::text(&format!("{text}\n")) } else { Value::Text(text) };
+    put(&state, "buf", physical);
+    put(&state, "lineno", Value::Small(lineno + 1));
+    Value::Small(if null { -1 } else { 1 })
+}
+
 // Recognize buffered tokens; leave refills and diagnostic cases to the adapter.
 pub fn scan(args: &[Value]) -> Result<Value, String> {
-    if args.len() != 1 { return Err("TypeError: tokenizer scan needs an iterator".into()); }
+    if !(1..=2).contains(&args.len()) { return Err("TypeError: tokenizer scan needs an iterator and optional decoded line".into()); }
     let Value::Object(iterator) = args[0].contents() else { return Ok(Value::Null); };
+    if args.len() == 2 { return Ok(prepare_line(&iterator, &args[1])); }
     let Value::Object(state) = field(&iterator, "tok") else { return Ok(Value::Null); };
     if !matches!(field(&iterator, "done"), Value::Flag(false))
         || number(&state, "pendin") != Some(0) || number(&state, "done") != Some(10) { return Ok(Value::Null); }
@@ -165,8 +199,16 @@ pub fn scan(args: &[Value]) -> Result<Value, String> {
     }
     if number(&mode, "kind") != Some(0) { return Ok(Value::Null); }
     let atbol = match field(&state, "atbol") { Value::Flag(value) => value, _ => return Ok(Value::Null) };
-    // Request the adapter's usual next-character call so reader callbacks and faults stay unchanged.
-    if atbol && cur == inp { return Ok(Value::Flag(false)); }
+    // Reset before the callback, exactly where ordinary underflow does so.
+    if atbol && cur == inp {
+        if depth != 0 { return Ok(Value::Null); }
+        put(&state, "start", Value::Null);
+        put(&state, "bufc", Value::array(Vec::new()).held(true));
+        put(&state, "line_null", Value::Flag(false));
+        put(&state, "cur", Value::Small(0));
+        put(&state, "inp", Value::Small(0));
+        return Ok(Value::Flag(false));
+    }
     if cur >= inp { return Ok(Value::Null); }
     let Value::Text(text) = field(&state, "buf") else { return Ok(Value::Null); };
     let position = (cur - base) as usize;
