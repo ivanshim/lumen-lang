@@ -738,7 +738,8 @@ def _state_put(owner, value):
 # for invalid calls, custom index conversion, and replacement function code.
 for _method, _operation in (('append', 'append'), ('appendleft', 'appendleft'),
                             ('pop', 'pop'), ('popleft', 'popleft'),
-                            ('rotate', 'rotate'), ('__len__', 'length'), ('index', 'index')):
+                            ('rotate', 'rotate'), ('__len__', 'length'), ('index', 'index'),
+                            ('__getitem__', 'getitem')):
     __deque_native__(deque.__dict__['_data'], 'bind', deque.__dict__[_method], _operation)
 for _function, _operation in ((_data_of, 'data'), (_maxlen_of, 'limit'),
                               (_maxlen_put, 'setlimit'), (_state_of, 'state'),

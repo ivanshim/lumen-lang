@@ -55,6 +55,16 @@ impl Engine<'_> {
         let left = Self::holding_cell(&left_value).ok_or_else(|| "TypeError: invalid deque left stack".to_string())?;
         let extent = cell_size(&right) + cell_size(&left);
         match verb {
+            "getitem" => {
+                let Some(Value::Small(mut at)) = item.map(|value| value.contents()) else { return Err("TypeError: invalid deque subscript".into()) };
+                if at < 0 { at = at.saturating_add(extent as i64); }
+                if at < 0 || at >= extent as i64 { return Err("IndexError: deque index out of range".into()); }
+                let prefix = cell_size(&left);
+                let (cell, offset) = if (at as usize) < prefix { (&left, prefix - 1 - at as usize) } else { (&right, at as usize - prefix) };
+                let held = cell.borrow();
+                let Value::Array(row) = &*held else { return Err("TypeError: invalid deque stack".into()) };
+                return Ok(row[offset].clone());
+            }
             "length" => return Ok(Value::Small(extent as i64)),
             "state" => return Ok(revision),
             "limit" => return Ok(limit),
@@ -115,7 +125,7 @@ impl Engine<'_> {
             if given.len() != 1 || matches!(given[0], Value::Tie(_)) { return None; }
             return self.deque_iterator_step(&given[0].contents(), &descriptor, verb == "reverse_next");
         }
-        let wanted = match verb.as_str() { "append" | "appendleft" | "setstate" | "setlimit" => 2, "rotate" => given.len().clamp(1, 2), "index" => given.len().clamp(2, 4), "data" | "state" | "limit" | "length" | "pop" | "popleft" => 1, _ => return None };
+        let wanted = match verb.as_str() { "append" | "appendleft" | "setstate" | "setlimit" | "getitem" => 2, "rotate" => given.len().clamp(1, 2), "index" => given.len().clamp(2, 4), "data" | "state" | "limit" | "length" | "pop" | "popleft" => 1, _ => return None };
         if given.len() != wanted || given.iter().any(|v| matches!(v, Value::Tie(_))) { return None; }
         let receiver = given[0].contents();
         let Value::Adapter(slot) = descriptor.contents() else { return None };
@@ -123,6 +133,11 @@ impl Engine<'_> {
         let Value::Object(owner) = receiver else { return None };
         let storage = owner.fields.borrow().iter().find(|(key, _)| key == &place)?.1.clone();
         if verb == "index" { return self.deque_index_native(&storage, given); }
+        if verb == "getitem" {
+            let value @ Value::Small(_) = given[1].contents() else { return None };
+            let result = self.deque_native_call(&storage, &verb, Some(value)).map_err(Into::into);
+            return Some(self.raised_of_note(result));
+        }
         let item = if verb == "rotate" {
             match given.get(1).map(Value::contents) {
                 None => Some(Value::Small(1)),

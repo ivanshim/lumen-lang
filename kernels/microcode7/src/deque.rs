@@ -60,6 +60,18 @@ impl Machine<'_> {
         let back = Stack(Self::native_cell(&parts[0]).ok_or_else(|| String::from("TypeError: invalid deque right stack"))?);
         let front = Stack(Self::native_cell(&parts[1]).ok_or_else(|| String::from("TypeError: invalid deque left stack"))?);
         let size = front.count() + back.count();
+        if command == "getitem" {
+            let index = match supplied.map(|value| value.settled()) { Some(Value::Small(n)) => n, _ => return Err(String::from("TypeError: invalid deque subscript")) };
+            let position = if index < 0 { index.saturating_add(size as i64) } else { index };
+            if !(0..size as i64).contains(&position) { return Err(String::from("IndexError: deque index out of range")); }
+            let n = front.count();
+            let (selected, place) = if position as usize >= n { (&back, position as usize - n) } else { (&front, n - position as usize - 1) };
+            let contents = selected.0.borrow();
+            return match &*contents {
+                Value::Vector(items) => Ok(items[place].clone()),
+                _ => Err(String::from("TypeError: invalid deque stack")),
+            };
+        }
         if command == "length" { return Ok(Value::Small(size as i64)); }
         if command == "state" { return Ok(parts[2].clone()); }
         if command == "limit" { return Ok(parts[3].clone()); }
@@ -133,7 +145,7 @@ impl Machine<'_> {
             return self.deque_iterator_take(values[0].settled(), descriptor, command == "reverse_next");
         }
         let shape = match command.as_str() {
-            "append" | "appendleft" | "setlimit" | "setstate" => values.len() == 2,
+            "append" | "appendleft" | "setlimit" | "setstate" | "getitem" => values.len() == 2,
             "rotate" => values.len() == 1 || values.len() == 2,
             "index" => (2..=4).contains(&values.len()),
             "pop" | "popleft" | "data" | "state" | "limit" | "length" => values.len() == 1,
@@ -147,6 +159,12 @@ impl Machine<'_> {
             object.holds.borrow().iter().find_map(|(name, value)| (name == &address).then(|| value.clone()))?
         } else { return None };
         if command == "index" { return self.deque_index_lookup(&stored, values); }
+        if command == "getitem" {
+            let subscript = values[1].settled();
+            if !matches!(subscript, Value::Small(_)) { return None; }
+            let answer = self.deque_work(&stored, &command, Some(subscript)).map_err(Into::into);
+            return Some(self.raised_if_error(answer));
+        }
         let argument = if command == "rotate" {
             if values.len() == 1 { Some(Value::Small(1)) }
             else if let next @ Value::Small(_) = values[1].settled() { Some(next) }
