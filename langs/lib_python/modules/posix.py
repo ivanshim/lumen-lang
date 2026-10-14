@@ -4,21 +4,25 @@ _host = __posix
 import operator as _operator
 
 
+def _refuse(error, filename=None, filename2=None):
+    message = strerror(error)
+    kind = {2: FileNotFoundError, 17: FileExistsError, 20: NotADirectoryError,
+            21: IsADirectoryError, 13: PermissionError, 1: PermissionError,
+            4: InterruptedError, 32: BrokenPipeError, 11: BlockingIOError,
+            10: ChildProcessError, 3: ProcessLookupError, 110: TimeoutError,
+            103: ConnectionAbortedError, 111: ConnectionRefusedError,
+            104: ConnectionResetError}.get(error, OSError)
+    if filename2 is not None:
+        raise kind(error, message, filename, None, filename2)
+    if filename is not None:
+        raise kind(error, message, filename)
+    raise kind(error, message)
+
+
 def _call(op, *args, filename=None, filename2=None):
     error, result = _host(op, *args)
     if error:
-        message = strerror(error)
-        kind = {2: FileNotFoundError, 17: FileExistsError, 20: NotADirectoryError,
-                21: IsADirectoryError, 13: PermissionError, 1: PermissionError,
-                4: InterruptedError, 32: BrokenPipeError, 11: BlockingIOError,
-                10: ChildProcessError, 3: ProcessLookupError, 110: TimeoutError,
-                103: ConnectionAbortedError, 111: ConnectionRefusedError,
-                104: ConnectionResetError}.get(error, OSError)
-        if filename2 is not None:
-            raise kind(error, message, filename, None, filename2)
-        if filename is not None:
-            raise kind(error, message, filename)
-        raise kind(error, message)
+        _refuse(error, filename, filename2)
     return result
 
 
@@ -245,16 +249,25 @@ def stat(path, *, dir_fd=None, follow_symlinks=True):
             raise ValueError('stat: cannot use fd and follow_symlinks together')
         return fstat(_descriptor(path))
     original = _path(path)
-    return _stat(_call('stat', original, _dir(dir_fd), int(bool(follow_symlinks)), filename=original))
+    error, data = _host('stat', original, _dir(dir_fd), int(bool(follow_symlinks)))
+    if error:
+        _refuse(error, original)
+    return _stat(data)
 
 
 def lstat(path, *, dir_fd=None):
     original = _path(path)
-    return _stat(_call('lstat', original, _dir(dir_fd), 0, filename=original))
+    error, data = _host('lstat', original, _dir(dir_fd), 0)
+    if error:
+        _refuse(error, original)
+    return _stat(data)
 
 
 def fstat(fd):
-    return _stat(_call('fstat', _cint(fd)))
+    error, data = _host('fstat', _cint(fd))
+    if error:
+        _refuse(error)
+    return _stat(data)
 
 
 def getcwdb():
@@ -318,11 +331,16 @@ def replace(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
 
 def open(path, flags, mode=0o777, *, dir_fd=None):
     original = _path(path)
-    return _call('open', original, _cint(flags), _cint(mode), _dir(dir_fd), filename=original)
+    error, fd = _host('open', original, _cint(flags), _cint(mode), _dir(dir_fd))
+    if error:
+        _refuse(error, original)
+    return fd
 
 
 def close(fd):
-    _call('close', _cint(fd))
+    error, _ = _host('close', _cint(fd))
+    if error:
+        _refuse(error)
 
 
 def dup(fd):
@@ -330,7 +348,10 @@ def dup(fd):
 
 
 def read(fd, length, /):
-    return _call('read', _cint(fd), _fd(length))
+    error, data = _host('read', _cint(fd), _fd(length))
+    if error:
+        _refuse(error)
+    return data
 
 
 def readinto(fd, buffer, /):
@@ -356,11 +377,17 @@ def write(fd, data, /):
         if hasattr(view, 'c_contiguous') and not view.c_contiguous:
             raise BufferError('memoryview: underlying buffer is not C-contiguous')
         data = bytes(view)
-    return _call('write', descriptor, bytes(data))
+    error, count = _host('write', descriptor, bytes(data))
+    if error:
+        _refuse(error)
+    return count
 
 
 def lseek(fd, position, whence, /):
-    return _call('lseek', _cint(fd), _fd(position), _cint(whence))
+    error, offset = _host('lseek', _cint(fd), _fd(position), _cint(whence))
+    if error:
+        _refuse(error)
+    return offset
 
 
 def ftruncate(fd, length, /):

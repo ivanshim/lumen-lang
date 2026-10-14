@@ -1429,6 +1429,16 @@ class BufferedReader(_BufferedIOBase):
         impl = self._live
         if impl is None:
             impl = self._impl
+        # A read the buffer already holds is answered here, the way the
+        # reference's fast path answers it, without the lock and the
+        # refill road: only for the plain reader, whose read does not
+        # flush first.
+        if type(self) is BufferedReader and type(size) is int and size >= 0 and not impl._read_lock._held:
+            held = impl._read_buf
+            at = impl._read_pos
+            if size <= len(held) - at:
+                impl._read_pos = at + size
+                return held[at:at + size]
         return impl.read(size)
     def read1(self, size=-1):
         impl = self._live
