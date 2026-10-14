@@ -10971,7 +10971,7 @@ impl<'a> Machine<'a> {
                 let unary = match name { "__hash__" => Some(Prim::Hashed), "__reversed__" => Some(Prim::Backwards), "__iter__" => Some(Prim::Iterator), "__len__" => Some(Prim::Length), _ => None };
                 if let Some(work) = unary {
                     if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
-                    if work == Prim::Backwards { return self.core_primitive(work, name, vec![target], Vec::new()).map_err(Escape::from); }
+                    if work == Prim::Backwards { return self.core_primitive(work, name, vec![receiver.clone()], Vec::new()).map_err(Escape::from); }
                     return self.prim(work, name, &[target]).map_err(Escape::from);
                 }
                 if name == "__ior__" { return Err(String::from("TypeError: '|=' is not supported by mappingproxy; use '|' instead").into()); }
@@ -10993,7 +10993,7 @@ impl<'a> Machine<'a> {
             return match (name, arguments.as_slice()) {
                 ("mapping__len__", []) => self.prim(Prim::Length, "len", &[mine]).map_err(Escape::Error),
                 ("mapping__iter__", []) => self.prim(Prim::Iterator, "iter", &[mine]).map_err(Escape::Error),
-                ("mapping__reversed__", []) => self.prim(Prim::Backwards, "reversed", &[mine]).map_err(Escape::Error),
+                ("mapping__reversed__", []) => self.prim(Prim::Backwards, "reversed", &[receiver.clone()]).map_err(Escape::Error),
                 ("mapping__getitem__", [key]) => self.prim(Prim::At, "", &[mine, key.clone()]).map_err(Escape::Error),
                 ("mapping__contains__", [key]) => self.prim(Prim::Contains, "", &[key.clone(), mine]).map_err(Escape::Error),
                 ("mapping__or__", [other]) => { let other = Self::proxy_reading(other).unwrap_or_else(|| other.clone()); self.prim(Prim::BitsEither, "", &[mine, other]).map_err(Escape::Error) }
@@ -17074,6 +17074,11 @@ impl<'a> Machine<'a> {
     }
 
     fn object_truth(&mut self, subject: &Value) -> Result<bool, String> {
+        if let Some(owner) = Self::proxy_reading(subject) {
+            // Truth belongs to the window's length, not to the owner's numeric slots.
+            let size = self.prim(Prim::Length, "len", &[owner])?;
+            return self.object_truth(&size);
+        }
         if let Value::Attributes(t) = subject { return Ok(!self.attribute_entries(t).is_empty()); }
         if matches!(subject, Value::Refusal(_)) { return Err(self.core_complaint("core.bool.declined", "")); }
         match self.ask_special(subject, 9, &[])? {
@@ -17873,6 +17878,8 @@ impl<'a> Machine<'a> {
 
     fn reserve_hint(&mut self, subject:&Value)->Result<(),String> {
         for operation in [10,78] {
+            let owner = Self::proxy_reading(subject);
+            if operation == 78 && owner.is_some() { break; }
             let asked=if operation==78 {
                 let Some(entry)=self.appointment(subject,operation) else{continue};
                 let declaring=match subject {
@@ -17882,7 +17889,8 @@ impl<'a> Machine<'a> {
                 };
                 let callback=self.member_binding(entry,Some(subject.clone()),declaring).map_err(|away|self.carried_native_fault(away))?;
                 self.apply_class_member(callback,Vec::new()).map(Some).map_err(|escape|self.carried_native_fault(escape))
-            } else {self.ask_special(subject,operation,&[])};
+            } else if let Some(owner) = owner { self.prim(Prim::Length, "len", &[owner]).map(Some) }
+            else {self.ask_special(subject,operation,&[])};
             let answer=match asked {
                 Ok(None)=>continue,
                 Ok(Some(Value::Refusal(_))) if operation==78=>return Ok(()),
@@ -17929,6 +17937,13 @@ impl<'a> Machine<'a> {
     }
     fn object_members(&mut self, subject:&Value)->Result<Vec<Value>,String> {self.list_members(subject,false)}
     fn list_members(&mut self, subject: &Value, hinted:bool) -> Result<Vec<Value>, String> {
+        if let Some(owner) = Self::proxy_reading(subject) {
+            let walk = self.iterated_value(&owner)?;
+            if hinted { self.reserve_hint(subject)?; }
+            let mut items = Vec::new();
+            while let Some(item) = self.next_value(&walk)? { items.push(item); }
+            return Ok(items);
+        }
         if let Some(under) = self.underlying_unless(subject, &[15]) { return self.list_members(&under,hinted); }
         match subject {
             Value::Attributes(t) => {
@@ -18147,7 +18162,7 @@ impl<'a> Machine<'a> {
 
     pub(super) fn proxy_reading(value: &Value) -> Option<Value> {
         match value {
-            Value::Window(owner, 'm') => Some(Self::proxied_mapping(value).unwrap_or_else(|| owner.proxy_pairs())),
+            Value::Window(owner, 'm') => Some(Self::window_inside(owner).unwrap_or_else(|| Self::proxied_mapping(value).unwrap_or_else(|| owner.proxy_pairs()))),
             Value::Shared(cell) | Value::Mutable(cell, _) => Self::proxy_reading(&cell.borrow()),
             _ => None,
         }
@@ -18163,16 +18178,37 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// Only mapping protocols delegate to the owner; a window is never its iterator.
+    /// Forward mapping receivers, leaving keys, callbacks and defaults intact.
     fn unwrapped_proxies(op: Prim, v: &[Value]) -> Option<Vec<Value>> {
-        let made = matches!(op, Prim::Length | Prim::Iterator | Prim::Iterate | Prim::Tupled | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Dictionary
-            | Prim::SortedValues | Prim::Ordered | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::SomeTrue
-            | Prim::Least | Prim::Greatest | Prim::Total | Prim::Listed | Prim::Truthful);
-        let read = matches!(op, Prim::Backwards | Prim::Hashed | Prim::AsText | Prim::Say | Prim::Out | Prim::Eq | Prim::Ne | Prim::Contains | Prim::Absent | Prim::At);
-        if !made && !read { return None; }
-        let swapped: Vec<Option<Value>> = v.iter().map(|value| if made { Self::proxied_mapping(value) } else { Self::proxy_reading(value) }).collect();
-        if swapped.iter().all(Option::is_none) { return None; }
-        Some(v.iter().zip(swapped).map(|(value, other)| other.unwrap_or_else(|| value.clone())).collect())
+        if !matches!(op, Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::Iterator | Prim::Least | Prim::Greatest
+            | Prim::Length | Prim::Iterate | Prim::Tupled | Prim::Tupling | Prim::Uniques | Prim::Unchanging
+            | Prim::Dictionary | Prim::SortedValues | Prim::Ordered | Prim::Numbered | Prim::EveryTrue
+            | Prim::SomeTrue | Prim::Total | Prim::Contains | Prim::Absent | Prim::Say | Prim::Out
+            | Prim::Hashed | Prim::AsText | Prim::At | Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) { return None; }
+        let mut result: Option<Vec<Value>> = None;
+        for index in 0..v.len() {
+            let walk = match op {
+                Prim::Zipped => true,
+                Prim::Mapped => index != 0,
+                Prim::Filtered => index == 1,
+                Prim::Iterator | Prim::Least | Prim::Greatest => v.len() == 1 && index == 0,
+                Prim::Length | Prim::Iterate | Prim::Tupled | Prim::Tupling | Prim::Uniques
+                    | Prim::Unchanging | Prim::Dictionary | Prim::SortedValues | Prim::Ordered
+                    | Prim::Numbered | Prim::EveryTrue | Prim::SomeTrue | Prim::Total => index == 0,
+                _ => false,
+            };
+            let receiver = match op {
+                Prim::Contains | Prim::Absent => index == 1,
+                Prim::Say | Prim::Out => true,
+                Prim::Hashed | Prim::AsText | Prim::At | Prim::Length
+                    | Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => index == 0,
+                _ => false,
+            };
+            let owner = if receiver { Self::proxy_reading(&v[index]) }
+                else if walk { Self::proxied_mapping(&v[index]) } else { None };
+            if let Some(owner) = owner { result.get_or_insert_with(|| v.to_vec())[index] = owner; }
+        }
+        result
     }
 
     fn user_operation(&mut self, operation: Prim, operands: &[Value]) -> Result<Option<Value>, String> {
@@ -19989,6 +20025,14 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if let (Prim::Backwards, [source]) = (op, v) {
+            if let Some(owner) = Self::proxy_reading(source) {
+                // Reverse lookup is a named method on the owner, not generic sequence reversal.
+                let method = self.read_class_member(owner, "__reversed__", false)
+                    .map_err(|fault| self.carried_native_fault(fault))?;
+                return self.apply_class_member(method, Vec::new()).map_err(|fault| self.carried_native_fault(fault));
+            }
+        }
         if let Some(unwrapped) = Self::unwrapped_proxies(op, v) { return self.prim(op, name, &unwrapped); }
         // Exact native integers cannot supply user slots or collection
         // behavior. Their arithmetic still uses the normal numeric rules.
@@ -20085,11 +20129,6 @@ impl<'a> Machine<'a> {
             if let Some(window @ Value::Window(_, 'm')) = Self::window_inside(subject) {
                 return self.read_class_member(window, &word.bare(), false).map_err(|fault| self.carried_native_fault(fault));
             }
-        }
-
-        if matches!(op, Prim::Eq | Prim::Ne) && v.len() == 2 {
-            if let Value::Window(owner, 'm') = &v[0] { return self.prim(op, name, &[owner.proxy_pairs(), v[1].clone()]); }
-            if let Value::Window(owner, 'm') = &v[1] { return self.prim(op, name, &[v[0].clone(), owner.proxy_pairs()]); }
         }
 
         if let [Value::Window(owner, 'm')] = v {
@@ -20673,13 +20712,14 @@ impl<'a> Machine<'a> {
             return self.element(&owner.proxy_pairs(), key, Reading::Plain);
         }
         let view_kept = matches!(op, Prim::Hashed | Prim::SortOf | Prim::Belongs | Prim::SetCall(14) | Prim::Landing(_) | Prim::SetAssign(_) | Prim::Quoted | Prim::Asciied | Prim::Dictionary | Prim::ReadMember | Prim::GetMember | Prim::Of | Prim::HasMember | Prim::FormatValue | Prim::RenderField | Prim::TemplateField | Prim::Mod);
-        if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(..)) && !view_kept)
+        if v.iter().any(|value| matches!(value, Value::Mutable(..)) || matches!(value, Value::Window(_, portion) if *portion != 'm') && !view_kept)
             && !matches!(op, Prim::Say | Prim::Out | Prim::Listed | Prim::MakeArray | Prim::MakeTuple | Prim::MakeMap | Prim::Couple | Prim::ExtendLiteral(..) | Prim::Added | Prim::Placed | Prim::ValueMethod)
             && !(self.writes_a_row_over(op) || matches!(op, Prim::Pointed) && self.works_sequences()
                 || (matches!(op, Prim::SetAssign(0)) || matches!(op, Prim::Landing(place) if matches!(self.table.landing_working(place), Prim::SetAssign(0))))
                     && v.first().is_some_and(|value| Self::dict_cell(value).is_some())) {
             let settled: Vec<Value> = v.iter().map(|value| {
-                if view_kept && matches!(value, Value::Window(..)) { value.clone() } else { value.settled() }
+                if let Some(window @ Value::Window(_, 'm')) = Self::window_inside(value) { window }
+                else if view_kept && matches!(value, Value::Window(..)) { value.clone() } else { value.settled() }
             }).collect();
             return self.prim(op, name, &settled);
         }
@@ -25029,7 +25069,12 @@ impl<'a> Machine<'a> {
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
-                    1 => {let result=Value::Vector(crate::tuples::Sequence::plain(self.gathered_members(&v[0])?)); if matches!(v[0],Value::Window(..)|Value::Mutable(_,true)|Value::Text(_)|Value::Iterator(_)|Value::Generator(_)){result.keep(true)}else{result}},
+                    1 => {
+                        let items = if Self::proxy_reading(&v[0]).is_some() { self.list_members(&v[0], true)? }
+                            else { self.gathered_members(&v[0])? };
+                        let result = Value::Vector(crate::tuples::Sequence::plain(items));
+                        if matches!(v[0],Value::Window(..)|Value::Mutable(_,true)|Value::Text(_)|Value::Iterator(_)|Value::Generator(_)){result.keep(true)}else{result}
+                    },
                     _ => return Err(format!("{}() expects 1 argument, got {}", name, v.len())),
                 }
             }
@@ -31956,7 +32001,7 @@ impl Machine<'_> {
                 // `isinstance` asks after a view itself, not after the
                 // row its members would stand as, so that a claim made
                 // for its very kind is honoured.
-                if matches!(op, Prim::Belongs | Prim::NextItem) {
+                if matches!(op, Prim::Belongs | Prim::NextItem) || Self::proxy_reading(item).is_some() {
                     if let Some(window) = Self::window_inside(item) { *item = window; continue; }
                 }
                 if op == Prim::Quoted && matches!(item, Value::Mutable(..) | Value::Shared(..))

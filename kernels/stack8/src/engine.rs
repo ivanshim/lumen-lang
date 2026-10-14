@@ -9334,6 +9334,11 @@ impl<'a> Engine<'a> {
     }
 
     fn special_truth(&mut self, value: &Value) -> Res<bool> {
+        // A mapping proxy has a length slot, but never inherits its owner's bool slot.
+        if let Some(mapping) = Self::proxy_reading(value) {
+            let count = self.builtin(Builtin::Length, "len", &mut vec![mapping])?;
+            return self.special_truth(&count);
+        }
         if let Value::Fields(o) = value { return Ok(!self.fields_entries(o).is_empty()); }
         if matches!(value, Value::Declined(_)) { return Err(self.core_fault("core.bool.declined", "")); }
         if let Some(answer) = self.special_call(value, 9, Vec::new())? {
@@ -9846,11 +9851,11 @@ impl<'a> Engine<'a> {
         }
         if matches!(op, Action::SetWrite(0)) && matches!(Self::view_in(a), Some(Value::View(v)) if v.1 == "mapping") { return Err("TypeError: '|=' is not supported by mappingproxy; use '|' instead".into()); }
 
-        if matches!(op, Action::Eq | Action::Ne | Action::Contains | Action::Lacks) {
-            let (left, right) = (Self::proxy_reading(a), Self::proxy_reading(b));
-            if left.is_some() || right.is_some() {
-                return self.special_dyad(op, left.as_ref().unwrap_or(a), right.as_ref().unwrap_or(b));
-            }
+        if matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+            if let Some(mapping) = Self::proxy_reading(a) { return self.special_dyad(op, &mapping, b); }
+        }
+        if matches!(op, Action::Contains | Action::Lacks) {
+            if let Some(mapping) = Self::proxy_reading(b) { return self.special_dyad(op, a, &mapping); }
         }
 
         if matches!(op, Action::Contains | Action::Lacks) {
@@ -11882,6 +11887,8 @@ impl<'a> Engine<'a> {
     }
     fn list_hint(&mut self, value:&Value)->Res<()> {
         for slot in [10,78] {
+            let mapping = Self::proxy_reading(value);
+            if slot == 78 && mapping.is_some() { return Ok(()); }
             let outcome=if slot==78 {
                 // Failure while binding the descriptor is not a failed call.
                 let Some(callable)=self.hint_callable(value)? else{continue};
@@ -11890,7 +11897,8 @@ impl<'a> Engine<'a> {
                     Err(Fault::Note(words))=>Err(words),
                     Err(fault)=>{self.carried=Some(fault);Err(self.special_fault())},
                 }
-            } else {self.special_call(value,slot,Vec::new())};
+            } else if let Some(mapping) = mapping { self.builtin(Builtin::Length, "len", &mut vec![mapping]).map(Some) }
+            else {self.special_call(value,slot,Vec::new())};
             let hint=match outcome {
                 Ok(None)=>continue,
                 Ok(Some(Value::Declined(_))) if slot==78=>return Ok(()),
@@ -11920,6 +11928,11 @@ impl<'a> Engine<'a> {
         self.list_items(value, false)
     }
     fn list_items(&mut self, value: &Value, hint: bool) -> Res<Vec<Value>> {
+        if let Some(mapping) = Self::proxy_reading(value) {
+            let iterator = self.core_iterator(&mapping)?;
+            if hint { self.list_hint(value)?; }
+            return self.core_members(&iterator);
+        }
         if self.is_coroutine(value) || self.is_async_generator(value) { return Err(self.core_fault("core.uniterable", &value.core_kind())); }
         if let Value::Fields(o) = value {
             return Ok(self.fields_entries(o).into_iter().map(|(key, _)| match key {
@@ -18488,7 +18501,7 @@ impl<'a> Engine<'a> {
                 let unary = match operation { "__len__" => Some(Builtin::Length), "__iter__" => Some(Builtin::Iter), "__reversed__" => Some(Builtin::Reversed), "__hash__" => Some(Builtin::Hash), _ => None };
                 if let Some(op) = unary {
                     if !args.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
-                    if op == Builtin::Reversed { return self.core_call(op, operation, vec![backing], Vec::new()); }
+                    if op == Builtin::Reversed { return self.core_call(op, operation, vec![receiver.clone()], Vec::new()); }
                     return self.builtin(op, operation, &mut vec![backing]);
                 }
                 if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); }
@@ -18510,7 +18523,7 @@ impl<'a> Engine<'a> {
                 match (operation, args.as_slice()) {
                     ("mapping__len__", []) => return word(Builtin::Length, "len", vec![mine]),
                     ("mapping__iter__", []) => return word(Builtin::Iter, "iter", vec![mine]),
-                    ("mapping__reversed__", []) => return word(Builtin::Reversed, "reversed", vec![mine]),
+                    ("mapping__reversed__", []) => return word(Builtin::Reversed, "reversed", vec![receiver.clone()]),
                     ("mapping__getitem__", [key]) => return word(Builtin::Fetch, "getitem", vec![mine, key.clone()]),
                     ("mapping__contains__", [key]) => return self.special_dyad(&Action::Contains, key, &mine),
                     _ => {}
@@ -21031,6 +21044,9 @@ impl<'a> Engine<'a> {
     }
 
     fn builtin(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if builtin == Builtin::Reversed && args.len() == 1 {
+            if let Some(iterator) = self.proxy_reversed(&args[0])? { return Ok(iterator); }
+        }
         Self::unwrap_proxies(builtin, args);
         if self.lang.bind_names {
             if let Builtin::Text(work @ (crate::strings::TextOp::Count | crate::strings::TextOp::Find | crate::strings::TextOp::Rfind | crate::strings::TextOp::Index | crate::strings::TextOp::Rindex | crate::strings::TextOp::Startswith | crate::strings::TextOp::Endswith)) = builtin {
@@ -21289,20 +21305,38 @@ impl<'a> Engine<'a> {
         } else { put_key(pairs, key, value); }
     }
 
-    /// Delegate mapping operations while retaining the proxy for iterator validation.
-    fn unwrap_proxies(builtin: Builtin, args: &mut [Value]) {
-        if matches!(builtin, Builtin::Length | Builtin::Iter | Builtin::List | Builtin::Tuple | Builtin::Sorted | Builtin::Set | Builtin::Frozen
-            | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::Bool | Builtin::Hash
-            | Builtin::Dict | Builtin::Fetch | Builtin::All | Builtin::Any | Builtin::Minimum | Builtin::Maximum | Builtin::Sum) {
-            for value in args.iter_mut() {
-                if let Some(mapping) = Self::proxied_mapping(value) { *value = mapping; }
-            }
+    fn proxy_reversed(&mut self, value: &Value) -> Res<Option<Value>> {
+        let Some(mapping) = Self::proxy_reading(value) else { return Ok(None) };
+        // The proxy's method calls __reversed__ by name; it has no sequence fallback.
+        let answer = (|| {
+            let method = self.class_get(mapping, "__reversed__", false)?;
+            self.class_apply(method, Vec::new())
+        })();
+        match answer {
+            Ok(iterator) => Ok(Some(iterator)),
+            Err(Fault::Note(words)) => Err(words),
+            Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
         }
-        // Walked backwards, hashed or written out, a proxy is the dictionary it reads.
-        if matches!(builtin, Builtin::Reversed | Builtin::Hash | Builtin::ToText) {
-            for value in args.iter_mut() {
-                if let Some(mapping) = Self::proxy_reading(value) { *value = mapping; }
-            }
+    }
+
+    /// Only the operand using a mapping protocol may expose its owner.
+    fn unwrap_proxies(builtin: Builtin, args: &mut [Value]) {
+        let count = args.len();
+        for (position, value) in args.iter_mut().enumerate() {
+            let iterable = match builtin {
+                Builtin::Zip => true,
+                Builtin::Map => position > 0,
+                Builtin::Filter => position == 1,
+                Builtin::Iter | Builtin::Minimum | Builtin::Maximum => count == 1 && position == 0,
+                Builtin::Length | Builtin::Tuple | Builtin::Sorted | Builtin::Set
+                    | Builtin::Frozen | Builtin::Enumerate | Builtin::Dict | Builtin::Fetch
+                    | Builtin::All | Builtin::Any | Builtin::Sum => position == 0,
+                _ => false,
+            };
+            let direct = position == 0 && matches!(builtin, Builtin::Hash | Builtin::ToText);
+            let replacement = if direct { Self::proxy_reading(value) }
+                else if iterable { Self::proxied_mapping(value) } else { None };
+            if let Some(mapping) = replacement { *value = mapping; }
         }
     }
 
@@ -21318,7 +21352,7 @@ impl<'a> Engine<'a> {
 
     pub(super) fn proxy_reading(value: &Value) -> Option<Value> {
         match value {
-            Value::View(proxy) if proxy.1 == "mapping" => Some(Self::proxied_mapping(value).unwrap_or_else(|| proxy.0.proxy_dictionary())),
+            Value::View(proxy) if proxy.1 == "mapping" => Some(Self::view_in(&proxy.0).unwrap_or_else(|| Self::proxied_mapping(value).unwrap_or_else(|| proxy.0.proxy_dictionary()))),
             Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => Self::proxy_reading(&cell.borrow()),
             _ => None,
         }
@@ -21496,7 +21530,7 @@ impl<'a> Engine<'a> {
                 // pairs answers to as a set does, needs the view whole
                 // to tell that apart from a view of its values, which
                 // answers to no set working at all.
-                if matches!(builtin, Builtin::SortOf | Builtin::SetDisjoint | Builtin::InstanceOf | Builtin::Next) {
+                if matches!(builtin, Builtin::SortOf | Builtin::SetDisjoint | Builtin::InstanceOf | Builtin::Next) || Self::proxy_reading(value).is_some() {
                     if let Some(view) = Self::view_in(value) { *value = view; continue; }
                 }
                 // A mapping proxy is written as the proxy it is, named when it is quoted.
@@ -23811,7 +23845,9 @@ impl<'a> Engine<'a> {
                 arity(1)?;
                 let result = {
                     let source = args[0].contents();
-                    if matches!(source, Value::Object(_)) {
+                    if Self::proxy_reading(&args[0]).is_some() {
+                        Value::array(self.list_items(&args[0], true)?)
+                    } else if matches!(source, Value::Object(_)) {
                         let walk = self.core_iterator(&source)?;
                         self.length_hint_probe(&source)?;
                         Value::array(self.comprehension_items(&walk)?)
@@ -26118,6 +26154,9 @@ impl Engine<'_> {
     fn core_call(&mut self, b: Builtin, name: &str, mut args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         use num_integer::Integer;
         use num_traits::{Signed, Zero};
+        if b == Builtin::Reversed && args.len() == 1 && named.is_empty() {
+            if let Some(iterator) = self.proxy_reversed(&args[0])? { return Ok(iterator); }
+        }
         if b == Builtin::Hash && args.len() == 1 && named.is_empty() {
             if let Some(Value::View(view)) = Self::view_in(&args[0]) {
                 if view.1 == "mapping" { return self.builtin(Builtin::Hash, "hash", &mut vec![view.0.clone()]); }
@@ -26157,7 +26196,7 @@ impl Engine<'_> {
                 // `isinstance` asks after a view itself, not after the
                 // row its members would stand as, so that a claim made
                 // for its very kind is honoured.
-                if matches!(b, Builtin::InstanceOf | Builtin::SortOf | Builtin::Next) {
+                if matches!(b, Builtin::InstanceOf | Builtin::SortOf | Builtin::Next) || Self::proxy_reading(value).is_some() {
                     if let Some(view) = Self::view_in(value) { *value = view; continue; }
                 }
                 if b == Builtin::Repr && matches!(value, Value::Bond(_) | Value::Binding(_) | Value::Collection(..))
