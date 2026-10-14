@@ -1040,8 +1040,8 @@ impl<'a> Engine<'a> {
         let mut dict_seen = 0u32;
         let mut weakref_seen = 0u32;
         for slot in &named {
-            let Value::Text(word) = slot else { return Err("TypeError: __slots__ items must be strings".to_string().into()) };
-            if !Self::valid_slot_name(word) { return Err("TypeError: __slots__ items must be identifiers".to_string().into()); }
+            let Value::Text(word) = slot else { return Err(format!("TypeError: __slots__ items must be strings, not '{}'", slot.core_kind()).into()) };
+            if !Self::valid_slot_name(word) { return Err("TypeError: __slots__ must be identifiers".to_string().into()); }
             match word.as_ref() { "__dict__" => dict_seen += 1, "__weakref__" => weakref_seen += 1, _ => {} }
         }
         if dict_seen > 1 { return Err("TypeError: __dict__ slot disallowed: we already got one".to_string().into()); }
@@ -3440,6 +3440,12 @@ impl<'a> Engine<'a> {
                 };
                 match next { Some(value) => subject = value, None => break }
             }
+        }
+        // A builtin kind read as a class declares no type parameters of
+        // its own, so it answers with none where the class's own line is
+        // asked, just as the maker's own parameter member does.
+        if name == self.class_word("type_params") && !matches!(&subject, Value::Class(_)) && self.stands_for_kind(&subject) {
+            return Ok(Value::tuple(Vec::new()));
         }
         // Exact text values have intrinsic methods, with no instance hooks.
         if let (true, Value::Text(text)) = (self.lang.bind_names, &subject) {

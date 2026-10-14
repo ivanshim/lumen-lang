@@ -1100,8 +1100,8 @@ impl<'a> Machine<'a> {
         let mut dict_seen=0u32;
         let mut weakref_seen=0u32;
         for word in &words {
-            let Value::Text(name)=word else{return Err("TypeError: __slots__ items must be strings".to_owned().into())};
-            if !Self::valid_slot_name(name){return Err("TypeError: __slots__ items must be identifiers".to_owned().into());}
+            let Value::Text(name)=word else{return Err(format!("TypeError: __slots__ items must be strings, not '{}'", word.kind_word()).into())};
+            if !Self::valid_slot_name(name){return Err("TypeError: __slots__ must be identifiers".to_owned().into());}
             match name.as_ref() {"__dict__"=>dict_seen+=1,"__weakref__"=>weakref_seen+=1,_=>{}}
         }
         if dict_seen>1{return Err("TypeError: __dict__ slot disallowed: we already got one".to_owned().into());}
@@ -4528,6 +4528,11 @@ impl<'a> Machine<'a> {
             if let Some(member)=self.attribute(&value,key) { return Ok(member); }
         }
         if let Value::Intrinsic(op,word)=&value {
+            // A kind read as a class declares no parameters of its own,
+            // so it answers with none, as the maker's own entry does.
+            if key == self.detail("type_params") && (Self::names_a_kind(op) || matches!(op, Prim::SortOf)) {
+                return Ok(Value::tuple(Vec::new()));
+            }
             if *op == Prim::AsReal && self.rules.words_ext_builtin_method_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_from_number")));
             }
