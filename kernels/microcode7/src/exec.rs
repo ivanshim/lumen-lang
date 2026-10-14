@@ -11894,7 +11894,7 @@ impl<'a> Machine<'a> {
             }
             else { return Err(self.method_fault("arguments").into()); }
         }
-        let items = self.core_collect(receiver)?;
+        let items = if Self::proxy_reading(receiver).is_some() { self.list_members(receiver, true)? } else { self.core_collect(receiver)? };
         self.arranged(items, &using, reverse).map_err(Escape::from)
     }
 
@@ -16414,6 +16414,12 @@ impl<'a> Machine<'a> {
     }
 
     fn ask_special(&mut self, subject: &Value, index: usize, tail: &[Value]) -> Result<Option<Value>, String> {
+        if tail.len() == 1 && index >= 2 && index <= 7 {
+            if let Some(owner) = Self::proxy_reading(subject) {
+                let comparison = match index { 2 => Prim::Eq, 3 => Prim::Ne, 4 => Prim::Lt, 5 => Prim::Le, 6 => Prim::Gt, _ => Prim::Ge };
+                return self.prim(comparison, "", &[owner, tail[0].clone()]).map(Some);
+            }
+        }
         if index == 15 && self.table.flag("ext.stmt.type_parameters") {
             let reader = self.appointment(subject, index);
             let mut display = None;
@@ -18169,7 +18175,7 @@ impl<'a> Machine<'a> {
     }
 
     /// The mapping a proxy reads, where the program made it (a dict subclass, a
-    /// chain of dictionaries): such a proxy answers for it in every question.
+    /// chain of dictionaries), for operations supported by the proxy.
     pub(super) fn proxied_mapping(value: &Value) -> Option<Value> {
         match value {
             Value::Window(owner, 'm') => match owner.settled() { thing @ Value::Thing(_) => Some(thing), _ => None },
@@ -18182,9 +18188,9 @@ impl<'a> Machine<'a> {
     fn unwrapped_proxies(op: Prim, v: &[Value]) -> Option<Vec<Value>> {
         if !matches!(op, Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::Iterator | Prim::Least | Prim::Greatest
             | Prim::Length | Prim::Iterate | Prim::Tupled | Prim::Tupling | Prim::Uniques | Prim::Unchanging
-            | Prim::Dictionary | Prim::SortedValues | Prim::Ordered | Prim::Numbered | Prim::EveryTrue
+            | Prim::Numbered | Prim::EveryTrue
             | Prim::SomeTrue | Prim::Total | Prim::Contains | Prim::Absent | Prim::Say | Prim::Out
-            | Prim::Hashed | Prim::AsText | Prim::At | Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) { return None; }
+            | Prim::Hashed | Prim::At | Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) { return None; }
         let mut result: Option<Vec<Value>> = None;
         for index in 0..v.len() {
             let walk = match op {
@@ -18193,14 +18199,14 @@ impl<'a> Machine<'a> {
                 Prim::Filtered => index == 1,
                 Prim::Iterator | Prim::Least | Prim::Greatest => v.len() == 1 && index == 0,
                 Prim::Length | Prim::Iterate | Prim::Tupled | Prim::Tupling | Prim::Uniques
-                    | Prim::Unchanging | Prim::Dictionary | Prim::SortedValues | Prim::Ordered
+                    | Prim::Unchanging
                     | Prim::Numbered | Prim::EveryTrue | Prim::SomeTrue | Prim::Total => index == 0,
                 _ => false,
             };
             let receiver = match op {
                 Prim::Contains | Prim::Absent => index == 1,
                 Prim::Say | Prim::Out => true,
-                Prim::Hashed | Prim::AsText | Prim::At | Prim::Length
+                Prim::Hashed | Prim::At | Prim::Length
                     | Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => index == 0,
                 _ => false,
             };
@@ -19517,7 +19523,7 @@ impl<'a> Machine<'a> {
     }
 
     fn dictionary(&mut self, positional: &[Value], keywords: Vec<(String, Value)>) -> Result<Value, String> {
-        let positional: Vec<Value> = positional.iter().map(|value| if !self.rules.words_ext_stmt_class_builder.is_empty() { value.settled() } else { collection_read(value) }).collect();
+        let positional: Vec<Value> = positional.iter().map(|value| if let Some(window @ Value::Window(_, 'm')) = Self::window_inside(value) { window } else if !self.rules.words_ext_stmt_class_builder.is_empty() { value.settled() } else { collection_read(value) }).collect();
         if positional.len() > 1 {
             return Err(self.table.strings("ext.builtin.map.arguments.amiss").first().map(String::as_str).unwrap_or("A map takes at most one source").to_string());
         }
@@ -19531,7 +19537,7 @@ impl<'a> Machine<'a> {
                 entries.to_vec()
             }
             Some(value) => {
-                let reader = if matches!(value, Value::Thing(_)) {
+                let reader = if matches!(value, Value::Thing(_) | Value::Window(_, 'm')) {
                     match self.read_class_member(value.clone(), "keys", false) {
                         Ok(method) => Some(method),
                         Err(escaped) if self.missing_member_escape(&escaped) => {
@@ -20034,6 +20040,10 @@ impl<'a> Machine<'a> {
             }
         }
         if let Some(unwrapped) = Self::unwrapped_proxies(op, v) { return self.prim(op, name, &unwrapped); }
+        if matches!(op, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge)
+            && v.len() == 2 && Self::proxy_reading(&v[1]).is_some() {
+            if let Some(answer) = self.user_operation(op, v)? { return Ok(answer); }
+        }
         // Exact native integers cannot supply user slots or collection
         // behavior. Their arithmetic still uses the normal numeric rules.
         if let [Value::Small(_), Value::Small(right)] = v {
@@ -25229,6 +25239,10 @@ impl<'a> Machine<'a> {
                 }
                 if let [value @ (Value::Text(_) | Value::Unpaired(_))] = v { return Ok(value.clone()); }
                 n(1)?;
+                if Self::proxy_reading(&v[0]).is_some() {
+                    let rendered = self.object_words(&v[0], false)?;
+                    return Ok(Value::text(&rendered));
+                }
                 self.figures_allowed(&v[0])?;
                 // A bound method (or a method closure) is written by the
                 // thing it is bound to, which only the program can word.
@@ -31961,9 +31975,6 @@ impl Machine<'_> {
     }
 
     pub(super) fn core_primitive(&mut self, op: Prim, name: &str, mut input: Vec<Value>, keywords: Vec<(String, Value)>) -> Result<Value, String> {
-        if op == Prim::Ordered && !input.is_empty() {
-            if let Some(Value::Window(mapping, 'm')) = Self::window_inside(&input[0]) { if !matches!(mapping.settled(), Value::Blueprint(_)) { input[0] = mapping.settled(); } }
-        }
 
         if matches!(op, Prim::GetMember | Prim::HasAttribute) && input.len() >= 2 {
             if let Some(window @ Value::Window(_, 'm')) = Self::window_inside(&input[0]) {
@@ -31997,7 +32008,6 @@ impl Machine<'_> {
         if !matches!(op, Prim::IdentityOf | Prim::HeapNative | Prim::ContextStore | Prim::TraceBridge | Prim::NamespaceRead) {
             for (position, item) in input.iter_mut().enumerate() {
                 if op == Prim::SetMember && position == 2 { continue; }
-                if op == Prim::Dictionary && item.kind_word() == "mappingproxy" { *item = item.proxy_pairs(); continue; }
                 // `isinstance` asks after a view itself, not after the
                 // row its members would stand as, so that a claim made
                 // for its very kind is honoured.
@@ -32668,7 +32678,7 @@ impl Machine<'_> {
             Ordered => {
                 require(1, 1)?;
                 let key = ordering.unwrap_or(Value::Nil);
-                let entries = self.core_collect(&input[0])?;
+                let entries = if Self::proxy_reading(&input[0]).is_some() { self.list_members(&input[0], true)? } else { self.core_collect(&input[0])? };
                 let row = self.arranged(entries, &key, descending)?;
                 Ok(Value::Vector(crate::tuples::Sequence::plain(row)).keep(true))
             }

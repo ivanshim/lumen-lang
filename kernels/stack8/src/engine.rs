@@ -8822,6 +8822,12 @@ impl<'a> Engine<'a> {
     }
 
     fn special_call(&mut self, value: &Value, place: usize, args: Vec<Value>) -> Res<Option<Value>> {
+        if (2..=7).contains(&place) && args.len() == 1 {
+            if let Some(mapping) = Self::proxy_reading(value) {
+                let operation = [Action::Eq, Action::Ne, Action::Lt, Action::Le, Action::Gt, Action::Ge][place - 2].clone();
+                return self.special_dyad(&operation, &mapping, &args[0]).map(Some);
+            }
+        }
         if matches!(value, Value::Object(object) if matches!(Self::own_kind(&object.class_now()).as_deref(), Some("TypeAliasType" | "TypeVarTuple"))) {
             match self.type_alias_protocol(value, place, &args) {
                 Ok(Some(answer)) => return Ok(Some(answer)),
@@ -19289,7 +19295,7 @@ impl<'a> Engine<'a> {
             if !seen.insert(name) { return Err(self.lang.method_errors["arguments"].clone()); }
             match self.lang.method_keywords.get(name).map(String::as_str).unwrap_or("") { "reverse" => { if !matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.lang.method_errors["arguments"].clone()); } backwards = self.truth(value); }, "key" => key = value.clone(), _ => return Err(self.lang.method_errors["arguments"].clone()) }
         }
-        let items = self.core_members(source)?;
+        let items = if Self::proxy_reading(source).is_some() { self.list_items(source, true)? } else { self.core_members(source)? };
         self.steady_order(items, &key, backwards)
     }
 
@@ -21328,12 +21334,12 @@ impl<'a> Engine<'a> {
                 Builtin::Map => position > 0,
                 Builtin::Filter => position == 1,
                 Builtin::Iter | Builtin::Minimum | Builtin::Maximum => count == 1 && position == 0,
-                Builtin::Length | Builtin::Tuple | Builtin::Sorted | Builtin::Set
-                    | Builtin::Frozen | Builtin::Enumerate | Builtin::Dict | Builtin::Fetch
+                Builtin::Length | Builtin::Tuple | Builtin::Set
+                    | Builtin::Frozen | Builtin::Enumerate | Builtin::Fetch
                     | Builtin::All | Builtin::Any | Builtin::Sum => position == 0,
                 _ => false,
             };
-            let direct = position == 0 && matches!(builtin, Builtin::Hash | Builtin::ToText);
+            let direct = position == 0 && builtin == Builtin::Hash;
             let replacement = if direct { Self::proxy_reading(value) }
                 else if iterable { Self::proxied_mapping(value) } else { None };
             if let Some(mapping) = replacement { *value = mapping; }
@@ -23959,6 +23965,9 @@ impl<'a> Engine<'a> {
             Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return self.text_from_bytes(&args),
             Builtin::ToText => {
                 arity(1)?;
+                if Self::proxy_reading(&args[0]).is_some() {
+                    return self.special_text(&args[0], false).map(|text| Value::text(&text));
+                }
                 if matches!(args[0], Value::Bytes(..)) && !self.lang.syntax_warning_words.is_empty()
                     && std::env::var("LUMEN_PYTHON_BYTES_WARNING").ok().and_then(|text| text.parse::<usize>().ok()).unwrap_or(0) > 0 {
                     self.runtime_warning(if matches!(args[0], Value::Bytes(_, true, _)) { "str() on a bytearray instance" } else { "str() on a bytes instance" }, "BytesWarning")?;
@@ -26184,15 +26193,11 @@ impl Engine<'_> {
         if b == Builtin::Tuple && args.len() == 1 {
             if let Some(Value::View(view)) = Self::view_in(&args[0]) { if view.1 == "mapping" && matches!(view.0.contents(), Value::Object(_)) { return self.comprehension_items(&view.0.contents()).map(Value::tuple); } }
         }
-        if b == Builtin::Sorted && !args.is_empty() {
-            if let Some(Value::View(view)) = Self::view_in(&args[0]) { if view.1 == "mapping" && !matches!(view.0.contents(), Value::Class(_)) { args[0] = view.0.contents(); } }
-        }
         let standing = if b == Builtin::GetAttr { args.first().cloned() } else { None };
         // A map walked backwards keeps its cell too, for the walk to watch.
         if !matches!(b, Builtin::Identity | Builtin::Reversed | Builtin::HeapNative | Builtin::ContextNative | Builtin::TraceNative | Builtin::StaticNamespace) {
             for (position, value) in args.iter_mut().enumerate() {
                 if b == Builtin::SetAttr && position == 2 { continue; }
-                if b == Builtin::Dict && value.core_kind() == "mappingproxy" { *value = value.proxy_dictionary(); continue; }
                 // `isinstance` asks after a view itself, not after the
                 // row its members would stand as, so that a claim made
                 // for its very kind is honoured.
@@ -26641,7 +26646,7 @@ impl Engine<'_> {
                 arity(0, 1)?;
                 let mut pairs = match args.first() {
                     Some(Value::Map(p)) => p.to_vec(),
-                    Some(Value::View(view)) if view.1 == "mapping" => match view.0.contents() {
+                    Some(Value::View(view)) if view.1 == "mapping" && matches!(view.0.contents(), Value::Map(_)) => match view.0.contents() {
                         Value::Map(entries) => entries.to_vec(),
                         _ => return Err(self.lang.method_errors["unready"].clone()),
                     },
@@ -26842,7 +26847,7 @@ impl Engine<'_> {
             }
             Builtin::Sorted => {
                 arity(1, 1)?;
-                let items = self.core_members(&args[0])?;
+                let items = if Self::proxy_reading(&args[0]).is_some() { self.list_items(&args[0], true)? } else { self.core_members(&args[0])? };
                 Value::array(self.steady_order(items, &key, reverse)?).held(true)
             }
             Builtin::Minimum | Builtin::Maximum => {
