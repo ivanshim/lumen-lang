@@ -4106,6 +4106,27 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        // An ordinary stored field needs no wrapper or native accessor routing.
+        if self.lang.bind_names && !name.starts_with("__") {
+            if let Value::Object(object) = &subject {
+                let fields = object.fields.borrow();
+                let own = (!fields.iter().any(|(key, _)| key.starts_with('\0'))).then(||
+                    fields.iter().find(|(key, held)| key == name && !matches!(held.contents(), Value::Blank))
+                        .map(|(_, held)| held.clone())).flatten();
+                drop(fields);
+                if let Some(own) = own {
+                    let class = object.class_now();
+                    if Self::kind_beneath(&class).as_deref().is_none_or(|word| word == self.class_word("root"))
+                        && self.module_holding(&subject).is_none()
+                        && (plain || self.class_value(&class, self.class_word("get")).is_none()) {
+                        let descriptor = self.class_value(&class, name);
+                        let reads_first = descriptor.as_ref().is_some_and(|entry| self.takes_writes(entry)
+                            && (matches!(entry, Value::Adapter(parts) if matches!(parts.0, 6 | 16 | 28)) || self.descriptor_hook(entry, "descriptor.get").is_some()));
+                        if !reads_first { return Ok(own); }
+                    }
+                }
+            }
+        }
         if name == self.class_word("subclass") && matches!(subject, Value::Null) {
             let kind = self.kind_class("NoneType");
             if let Some(member) = self.root_member(name, Some(&kind)) {

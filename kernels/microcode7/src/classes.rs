@@ -4847,6 +4847,25 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        // Resolve plain instance storage before inspecting unrelated callable kinds.
+        if self.names_in_calls && !key.starts_with("__") {
+            if let Value::Thing(instance) = &value {
+                let entries = instance.holds.borrow();
+                let saved = entries.iter().all(|(word, _)| !word.starts_with('\0'))
+                    .then(|| entries.iter().find(|(word, _)| word == key).map(|(_, member)| member.clone())).flatten();
+                drop(entries);
+                if let Some(saved) = saved {
+                    let kind = instance.blueprint();
+                    let plain_kind = Self::native_word(&kind).is_none()
+                        && Self::native_beneath(&kind).map_or(true, |word| word == self.detail("root"));
+                    if plain_kind {
+                        let hooked = !direct && self.inherited_entry(&kind, self.detail("get")).is_some();
+                        let priority = self.inherited_entry(&kind, key).is_some_and(|member| self.writes_too(&member));
+                        if !hooked && !priority { return Ok(saved); }
+                    }
+                }
+            }
+        }
         if key == self.detail("subclass") && matches!(value, Value::Nil) {
             let kind = self.native_kind("NoneType");
             if let Some(member) = self.from_the_root(key, true, &kind) {
