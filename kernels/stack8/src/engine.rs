@@ -26868,7 +26868,7 @@ impl Engine<'_> {
         if !matches!(self.trace_hook.contents(), Value::Null) { return Ok(unsupported()); }
         if !matches!(args[3].contents(), Value::Null) || !matches!(args[4].contents(), Value::Flag(_)) { return Ok(unsupported()); }
         let Value::Tuple(state) = args[5].contents() else { return Ok(unsupported()); };
-        if state.len() != 7 { return Ok(unsupported()); }
+        if state.len() != 8 { return Ok(unsupported()); }
         // Inspect stored bindings without invoking a descriptor.
         let read = |engine: &Self, owner: &Value, name: &str| -> Option<Value> {
             match owner.contents() {
@@ -26936,7 +26936,24 @@ impl Engine<'_> {
         if !languages.iter().any(|word| word == "C") { languages.push("C".into()); }
         let mut expanded = Vec::new();
         for language in languages {
-            let answer = self.call_held(state[6].clone(), vec![Value::text(&language)])?;
+            let saved = match state[7].contents() {
+                Value::Map(entries) => entries.named_row(&language).ok().flatten().map(|at| entries[at].1.contents()),
+                _ => None,
+            };
+            let answer = match saved {
+                Some(text @ Value::Text(_)) => text,
+                _ => {
+                    let text = self.call_held(state[6].clone(), vec![Value::text(&language)])?;
+                    // Bound the private memo; filesystem results never enter it.
+                    if matches!(text.contents(), Value::Text(_)) {
+                        if let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = &state[7] {
+                            let small = matches!(cell.borrow().contents(), Value::Map(entries) if entries.len() < 64);
+                            if small { book_write(cell, &language, Some(text.clone())); }
+                        }
+                    }
+                    text
+                }
+            };
             let Value::Text(normalized) = answer.contents() else { return Err("TypeError: normalized locale must be str".into()); };
             let mut stem = normalized.as_ref();
             let mut modifier = "";

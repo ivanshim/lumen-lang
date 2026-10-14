@@ -27391,7 +27391,7 @@ impl Machine<'_> {
         let decline = || Value::tuple(vec![Value::Flag(false), Value::Nil]);
         if !matches!(self.tracing_function.settled(), Value::Nil) { return Ok(decline()); }
         if !matches!(input[3].settled(), Value::Nil) || !matches!(input[4].settled(), Value::Flag(_)) { return Ok(decline()); }
-        let state = match input[5].settled() { Value::Tuple(parts) if parts.len() == 7 => parts, _ => return Ok(decline()) };
+        let state = match input[5].settled() { Value::Tuple(parts) if parts.len() == 8 => parts, _ => return Ok(decline()) };
         // Guard reads inspect only stored fields; they never invoke user descriptors.
         let stored = |machine: &Self, subject: &Value, key: &str| -> Option<Value> {
             match subject.settled() {
@@ -27470,8 +27470,19 @@ impl Machine<'_> {
         if !languages.iter().any(|language| language == "C") { languages.push(String::from("C")); }
         let mut candidates: Vec<String> = Vec::new();
         for language in languages {
-            let normalized = self.apply_held(state[6].clone(), vec![Value::text(&language)])
-                .map_err(|escape| { self.got_away = Some(escape); self.bad_answer() })?;
+            let remembered = if let Value::Dict(entries) = state[7].settled() {
+                entries.namespace_position(&language).ok().flatten().map(|at| entries[at].1.settled())
+            } else { None };
+            let normalized = if let Some(Value::Text(text)) = remembered { Value::Text(text) } else {
+                let computed = self.apply_held(state[6].clone(), vec![Value::text(&language)])
+                    .map_err(|escape| { self.got_away = Some(escape); self.bad_answer() })?;
+                // Memoize only successful normalization, with a fixed entry budget.
+                if matches!(computed.settled(), Value::Text(_))
+                    && matches!(state[7].settled(), Value::Dict(entries) if entries.len() < 64) {
+                    Self::write_into_book(&state[7], &language, Some(computed.clone()));
+                }
+                computed
+            };
             let Value::Text(normalized) = normalized.settled() else { return Err(String::from("TypeError: normalized locale must be str")); };
             let mut fragments = [normalized.as_ref(), "", "", ""];
             let mut available = 0;

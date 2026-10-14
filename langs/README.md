@@ -6067,6 +6067,8 @@ The gettext runtime adapter uses the same bridge for guarded catalog discovery.
 It reads live environment data, expands locale components, and checks current
 filesystem metadata without caching missing catalogs. Changed dependencies,
 custom inputs, and active tracing retain the release implementation.
+A bounded private memo stores locale normalization strings while all helper
+code and alias-table revisions remain unchanged; catalog existence stays live.
 
 
 `ext.stmt.class.bases.resolve` names the Python base substitution hook and the attribute retaining the original bases. Both full kernels consult it when constructing a class; other language tables leave it absent.

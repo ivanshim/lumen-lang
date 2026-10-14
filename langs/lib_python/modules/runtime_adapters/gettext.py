@@ -84,8 +84,30 @@ def _install_catalog_discovery():
         getters = tuple(type(owner).__getattribute__ for owner in owners)
         guards += tuple((type(owner), '__getattribute__', getter) for owner, getter in zip(owners, getters))
         functions += tuple(getter for getter in getters if hasattr(getter, '__code__'))
-        revisions = ((aliases, alias_revision), (encodings, encoding_revision))
-        state = (namespace, environment, expand, guards, functions, revisions, normalizer)
+        codec_module = locale.encodings
+        codec_aliases = codec_module.aliases
+        codec_names = codec_aliases.aliases
+        helpers = (locale._replace_encoding, locale._append_modifier, codec_module.normalize_encoding)
+        # Only unchanged release helpers and plain alias tables can be memoized.
+        if (not _all(hasattr(helper, '__code__') for helper in helpers)
+                or helpers[0].__code__.co_name != '_replace_encoding'
+                or not helpers[0].__code__.co_filename.endswith('locale.py')
+                or helpers[1].__code__.co_name != '_append_modifier'
+                or not helpers[1].__code__.co_filename.endswith('locale.py')
+                or helpers[2].__code__.co_name != 'normalize_encoding'
+                or not helpers[2].__code__.co_filename.endswith('encodings/__init__.py')):
+            namespace['find'] = original
+            installed[0] = original
+            return result
+        guards += ((locale, 'encodings', codec_module),
+                   (codec_module, 'aliases', codec_aliases), (codec_aliases, 'aliases', codec_names),
+                   (locale, '_replace_encoding', helpers[0]), (locale, '_append_modifier', helpers[1]),
+                   (codec_module, 'normalize_encoding', helpers[2]))
+        functions += helpers
+        revisions = ((aliases, alias_revision), (encodings, encoding_revision),
+                     (codec_names, host('catalog_revision', codec_names)))
+        normalization_cache = {}
+        state = (namespace, environment, expand, guards, functions, revisions, normalizer, normalization_cache)
 
         # Let the kernels check dependency identities without interpreted metadata reads.
         def find(domain, localedir=None, languages=None, all=False):
