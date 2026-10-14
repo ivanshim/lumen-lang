@@ -138,6 +138,7 @@ pub struct Engine<'a> {
     native_frame_routines: std::collections::HashSet<usize, crate::value::FxBuildHasher>,
     /// Explicitly registered adapter routines and their owned storage descriptors.
     deque_routines: std::collections::HashMap<usize, (Value, Value, String), crate::value::FxBuildHasher>,
+    deque_routine_bits: [u64; 4],
     deque_layouts: std::collections::HashMap<usize, (u64, u64, Value, Vec<String>), crate::value::FxBuildHasher>,
     trace_hook: Value,
     coroutine_depth: usize,
@@ -1694,6 +1695,7 @@ impl<'a> Engine<'a> {
             trace_frame: None,
             native_frame_routines: std::collections::HashSet::with_hasher(crate::value::FxBuildHasher::default()),
             deque_routines: std::collections::HashMap::with_hasher(crate::value::FxBuildHasher::default()),
+            deque_routine_bits: [0; 4],
             deque_layouts: std::collections::HashMap::with_hasher(crate::value::FxBuildHasher::default()),
             trace_hook: Value::Null,
             coroutine_depth: 0,
@@ -4549,7 +4551,9 @@ impl<'a> Engine<'a> {
     }
 
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
-        if self.deque_routines.contains_key(&(Rc::as_ptr(program) as usize)) {
+        let address = Rc::as_ptr(program) as usize;
+        let bit = (address >> 4) & 255;
+        if self.deque_routine_bits[bit / 64] & (1u64 << (bit % 64)) != 0 && self.deque_routines.contains_key(&address) {
             let supplied = self.data[self.data.len() - n..].to_vec();
             if let Some(done) = self.deque_routine_call(program, &supplied) {
                 self.data.truncate(self.data.len() - n);
@@ -26380,6 +26384,8 @@ impl Engine<'_> {
                     let Value::Routine(routine) = args[2].contents() else { return Err("TypeError: deque binding requires a function".into()) };
                     let Value::Text(verb) = args[3].contents() else { return Err("TypeError: deque operation must be a string".into()) };
                     let identity = Rc::as_ptr(&routine) as usize;
+                    let bit = (identity >> 4) & 255;
+                    self.deque_routine_bits[bit / 64] |= 1u64 << (bit % 64);
                     if let Some((_, Value::Tuple(layout), _)) = self.deque_routines.get(&identity) { self.deque_layouts.remove(&(Rc::as_ptr(layout) as usize)); }
                     self.deque_routines.insert(identity, (args[2].clone(), args[0].clone(), verb.to_string()));
                     return Ok(args[2].clone());

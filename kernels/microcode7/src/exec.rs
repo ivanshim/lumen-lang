@@ -636,6 +636,7 @@ pub struct Machine<'a> {
     native_frame_routines: std::collections::HashSet<usize, crate::table::FxBuildHasher>,
     /// Registered routine identities retain their function and storage descriptor.
     deque_functions: std::collections::HashMap<usize, (Value, Value, String), crate::table::FxBuildHasher>,
+    deque_candidates: [u64; 8],
     deque_field_plans: std::collections::HashMap<usize, (Value, Vec<String>, u64, u64), crate::table::FxBuildHasher>,
     supplied_books: Vec<Option<Rc<RefCell<Value>>>>,
     /// Prevent fresh imports during the interpreter's final teardown.
@@ -2132,6 +2133,7 @@ impl<'a> Machine<'a> {
             main_world: None,
             native_frame_routines: std::collections::HashSet::with_hasher(crate::table::FxBuildHasher::default()),
             deque_functions: std::collections::HashMap::with_hasher(crate::table::FxBuildHasher::default()),
+            deque_candidates: [0; 8],
             deque_field_plans: std::collections::HashMap::with_hasher(crate::table::FxBuildHasher::default()),
             supplied_books: Vec::new(),
             shutting_down: false,
@@ -6747,7 +6749,9 @@ impl<'a> Machine<'a> {
                 return Err(fault);
             }
         };
-        if self.deque_functions.contains_key(&(Rc::as_ptr(&p) as usize)) {
+        let location = Rc::as_ptr(&p) as usize;
+        let flagged = self.deque_candidates[(location >> 9) & 7] & (1u64 << ((location >> 3) & 63)) != 0;
+        if flagged && self.deque_functions.contains_key(&location) {
             let supplied = self.value_list(args, frame)?;
             return self.invoke(p, env, supplied);
         }
@@ -13730,7 +13734,10 @@ impl<'a> Machine<'a> {
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
-        if let Some(outcome) = self.deque_function_call(&program, &env, &args) { return outcome; }
+        let location = Rc::as_ptr(&program) as usize;
+        if self.deque_candidates[(location >> 9) & 7] & (1u64 << ((location >> 3) & 63)) != 0 {
+            if let Some(outcome) = self.deque_function_call(&program, &env, &args) { return outcome; }
+        }
         let mut handed = match Self::explicit_globals(&program) {
             Some(namespace) => Some(namespace),
             None if self.armed_names.is_some() => match &program.globe {
@@ -32244,6 +32251,7 @@ impl Machine<'_> {
                     };
                     let verb = match input[3].settled() { Value::Text(text) => text.to_string(), _ => return Err(String::from("TypeError: deque operation must be a string")) };
                     let key = Rc::as_ptr(body) as usize;
+                    self.deque_candidates[(key >> 9) & 7] |= 1u64 << ((key >> 3) & 63);
                     if let Some((_, Value::Tuple(previous), _)) = self.deque_functions.get(&key) {
                         let address = Rc::as_ptr(previous) as usize;
                         self.deque_field_plans.remove(&address);
