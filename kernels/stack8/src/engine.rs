@@ -171,7 +171,7 @@ pub struct Engine<'a> {
     function_members: Vec<(crate::faint::Hold, Rc<Instance>)>,
     collecting_cycles: bool,
     kind_names: RefCell<HashMap<String, Vec<String>>>,
-    member_words: [&'a str; 22],
+    member_words: [&'a str; 24],
     opened_descriptors: HashMap<i32, std::fs::File>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
@@ -235,6 +235,8 @@ pub struct Engine<'a> {
     module_by_address: RefCell<HashMap<usize, String>>,
     changed_module_positions: RefCell<HashMap<usize, (usize, HashMap<String, usize, crate::value::FxBuildHasher>)>>,
     module_addresses_ready: std::cell::Cell<bool>,
+    /// Where the recursion limit last stood among the system module's fields.
+    recursion_slot: std::cell::Cell<usize>,
     native_stack_start: usize,
     // Only names actually supplied by an import need a runtime check;
     // an empty table leaves ordinary builtin calls on their fast path.
@@ -1675,6 +1677,8 @@ impl<'a> Engine<'a> {
                 lang.class_details.get("order").and_then(|list| list.first()).map_or("", String::as_str),
                 lang.class_details.get("receiver").and_then(|list| list.first()).map_or("", String::as_str),
                 lang.class_details.get("unready").and_then(|list| list.first()).map_or("", String::as_str),
+                lang.class_details.get("subclass").and_then(|list| list.first()).map_or("", String::as_str),
+                lang.class_details.get("text_signature").and_then(|list| list.first()).map_or("", String::as_str),
             ],
             lang,
             world,
@@ -1782,6 +1786,7 @@ impl<'a> Engine<'a> {
             module_by_address: RefCell::new(HashMap::new()),
             changed_module_positions: RefCell::new(HashMap::new()),
             module_addresses_ready: std::cell::Cell::new(false),
+            recursion_slot: std::cell::Cell::new(usize::MAX),
             wildcard_file: None,
             wildcard_active: false,
             changed_builtin_scopes: std::collections::HashSet::new(),
@@ -4153,7 +4158,14 @@ impl<'a> Engine<'a> {
         let [module, binding] = self.lang.recursion_variable.as_slice() else { return fallback };
         let Some(Value::Object(space)) = self.modules.get(module) else { return fallback };
         let fields = space.fields.borrow();
-        fields.iter().find(|(key, _)| key == binding).and_then(|(_, value)| match value.contents() {
+        // The field keeps its place between reads; a scan is needed only
+        // when the remembered place no longer holds the limit's name.
+        let remembered = self.recursion_slot.get();
+        let found = match fields.get(remembered) {
+            Some(entry) if entry.0 == *binding => Some(entry),
+            _ => fields.iter().position(|(key, _)| key == binding).map(|at| { self.recursion_slot.set(at); &fields[at] }),
+        };
+        found.and_then(|(_, value)| match value.contents() {
             Value::Small(number) => usize::try_from(number).ok(),
             _ => None,
         }).or(fallback).map(|requested| {
@@ -7843,7 +7855,6 @@ impl<'a> Engine<'a> {
         if let Some(path) = self.module_by_address.borrow().get(&(Rc::as_ptr(o) as usize)) { return Some(path.clone()); }
         let own = o.class_now();
         if !own.direct().is_empty() && Self::kind_beneath(&own).as_deref() != Some("module") { return None; }
-        if let Some((path, _)) = self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, o))) { return Some(path.clone()); }
         let fields = o.fields.try_borrow().ok()?;
         if let Some((_, owner)) = fields.iter().find(|(name, _)| name == "\0module-owner") {
             if let Value::Text(path) = owner.contents() { return Some(path.to_string()); }
@@ -11989,9 +12000,9 @@ impl<'a> Engine<'a> {
                     let class = self.drop_top()?.contents();
                     Some(self.class_get(class, name, false)?)
                 },
-                Action::Grab(name) if self.data.last().is_some_and(|value| self.module_holding(value).is_some())
-                    && (self.lang.class_annotations.first().is_some_and(|word| word == name.as_ref())
-                        || self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).is_some_and(|word| word == name.as_ref())) => {
+                Action::Grab(name) if (self.lang.class_annotations.first().is_some_and(|word| word == name.as_ref())
+                        || self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).is_some_and(|word| word == name.as_ref()))
+                    && self.data.last().is_some_and(|value| self.module_holding(value).is_some()) => {
                     let module = self.drop_top()?;
                     Some(self.class_get(module, name, false)?)
                 },

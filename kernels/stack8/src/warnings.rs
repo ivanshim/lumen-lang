@@ -38,7 +38,7 @@ impl Engine<'_> {
         self.made += 1;
         let module = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(entries), mark: self.made }));
         self.warning_module = Some(module.clone());
-        self.modules.insert(names[0].clone(), module.clone());
+        self.modules.insert(names[0].clone(), module.clone()); self.module_addresses_ready.set(false);
         self.module_addresses_ready.set(false);
         self.refresh_module_cache(&names[0]);
         Ok(module)
@@ -335,7 +335,7 @@ impl Engine<'_> {
                         return Err(fault);
                     }
                 };
-                self.modules.insert(path.to_string(), module.clone());
+                self.modules.insert(path.to_string(), module.clone()); self.module_addresses_ready.set(false);
                 self.module_addresses_ready.set(false);
                 if let Some((parent, child)) = path.rsplit_once('.') {
                     if let Some(owner) = self.module_cache_value(parent).or_else(|| self.modules.get(parent).cloned()) {

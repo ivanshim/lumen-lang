@@ -49,7 +49,7 @@ impl Machine<'_> {
         let kind = self.native_kind("module"); self.made += 1;
         let result = Value::Thing(Rc::new(Thing { of: kind, reclassified: RefCell::new(None), holds: RefCell::new(namespace), turn: self.made }));
         self.warning_fallback = Some(result.clone());
-        self.imported.insert(words[0].clone(), result.clone());
+        self.imported.insert(words[0].clone(), result.clone()); self.namespace_places.borrow_mut().take();
         self.namespace_places.borrow_mut().take();
         self.refresh_import_table(&words[0]);
         Ok(result)
@@ -359,7 +359,7 @@ impl Machine<'_> {
                 if completion.is_err() { self.imported.remove(qualified); }
                 self.namespace_places.borrow_mut().take();
                 let namespace = completion?.settled();
-                self.imported.insert(qualified.to_owned(), namespace.clone());
+                self.imported.insert(qualified.to_owned(), namespace.clone()); self.namespace_places.borrow_mut().take();
                 if let Some((ancestor, member)) = qualified.rsplit_once('.') {
                     if let Some(parent) = self.cached_import(ancestor).or_else(|| self.imported.get(ancestor).cloned()) {
                         self.alter_class_member(parent, member, Some(namespace.clone()), false).map_err(|fault| self.carried_native_fault(fault))?;
