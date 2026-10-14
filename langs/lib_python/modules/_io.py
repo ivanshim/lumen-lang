@@ -1327,7 +1327,7 @@ def _buffered_impl(kind):
             # Retain the consumed prefix of small refills for backward seeks.
             def _read_unlocked(self, size):
                 result = base._read_unlocked(self, size)
-                if 0 < size <= self.buffer_size and result and self._read_pos == 0:
+                if size is not None and 0 < size <= self.buffer_size and result and self._read_pos == 0:
                     unread = len(self._read_buf)
                     self._read_buf = (result + self._read_buf)[-self.buffer_size:]
                     self._read_pos = len(self._read_buf) - unread
