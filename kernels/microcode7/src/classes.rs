@@ -3798,7 +3798,7 @@ impl<'a> Machine<'a> {
     }
     /// The program whose code a routine runs: its own, or the one whose
     /// code was written over it.
-    fn code_run_by(&self,value:&Value)->Rc<Routine> {
+    pub(super) fn code_run_by(&self,value:&Value)->Rc<Routine> {
         if let Some(entry)=self.written_over.get(&Self::written_key(value,&self.outermost)) {return entry.4.clone();}
         match value {Value::Bound(code,_)|Value::Routine(code)|Value::Method(code, _, _)=>code.clone(),_=>unreachable!("only a routine runs code")}
     }

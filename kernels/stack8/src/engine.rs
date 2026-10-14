@@ -21834,6 +21834,17 @@ impl<'a> Engine<'a> {
             Builtin::PosixCall => {
                 match args.first().map(Value::contents) {
                     Some(Value::Text(op)) if op.as_ref() == "fspath" => { arity(2)?; self.filesystem_path(args[1].clone())? },
+                    Some(Value::Text(op)) if op.as_ref() == "catalog_revision" => {
+                        arity(2)?;
+                        match args[1].contents() {
+                            Value::Map(rows) if rows.iter().all(|(key, value)| matches!(key.contents(), Value::Text(_)) && matches!(value.contents(), Value::Text(_))) => Value::of_big(rows.revision.into()),
+                            _ => Value::Null,
+                        }
+                    }
+                    Some(Value::Text(op)) if op.as_ref() == "catalog_find" => {
+                        arity(6)?;
+                        self.catalog_paths(args)?
+                    }
                     Some(Value::Text(op)) if op.as_ref() == "stat_native" => {
                         arity(4)?;
                         let Value::Class(class) = args[1].contents() else { return Err("TypeError: a class is required".into()); };
@@ -26851,6 +26862,122 @@ impl Engine<'_> {
 
     /// A module owns cells in the same world, under names no source can
     /// spell. Its routines keep those addresses after the reader returns.
+    /// Discover catalogs with fresh environment values and filesystem checks.
+    fn catalog_paths(&mut self, args: &[Value]) -> Res<Value> {
+        let unsupported = || Value::tuple(vec![Value::Flag(false), Value::Null]);
+        if !matches!(self.trace_hook.contents(), Value::Null) { return Ok(unsupported()); }
+        if !matches!(args[3].contents(), Value::Null) || !matches!(args[4].contents(), Value::Flag(_)) { return Ok(unsupported()); }
+        let Value::Tuple(state) = args[5].contents() else { return Ok(unsupported()); };
+        if state.len() != 7 { return Ok(unsupported()); }
+        // Inspect stored bindings without invoking a descriptor.
+        let read = |engine: &Self, owner: &Value, name: &str| -> Option<Value> {
+            match owner.contents() {
+                Value::Object(object) | Value::Fields(object) => {
+                    if object.replacement_class.borrow().is_some() { return None; }
+                    let fields = object.fields.borrow();
+                    if let Some((_, value)) = fields.iter().find(|(key, _)| key == name) { return Some(value.contents()); }
+                    let Value::Map(rows) = fields.iter().find(|(key, _)| key == "\0namespace")?.1.contents() else { return None; };
+                    rows.named_row(name).ok().flatten().map(|at| rows[at].1.contents())
+                }
+                Value::Class(class) => engine.class_value(&class, name),
+                Value::Map(rows) => rows.named_row(name).ok().flatten().map(|at| rows[at].1.contents()),
+                _ => None,
+            }
+        };
+        for guard in one_after_another(&state[3]) {
+            let Value::Tuple(parts) = guard.contents() else { return Ok(unsupported()); };
+            let [owner, Value::Text(name), expected] = parts.as_slice() else { return Ok(unsupported()); };
+            let Some(actual) = read(self, owner, name) else {
+                // Absent stored entries leave the immutable native attribute reader in force.
+                if name.as_ref() == "__getattribute__" && matches!(expected.contents(), Value::Native(..) | Value::Adapter(_)) { continue; }
+                return Ok(unsupported());
+            };
+            let expected = expected.contents();
+            let same = match (&actual, &expected) {
+                (Value::Routine(found), Value::Routine(saved)) => Rc::ptr_eq(found, saved),
+                _ => actual.same_value(&expected) || actual.same_place(&expected),
+            };
+            if !same { return Ok(unsupported()); }
+        }
+        for function in one_after_another(&state[4]) {
+            let Value::Routine(body) = function.contents() else { return Ok(unsupported()); };
+            if body.revised.borrow().is_some() { return Ok(unsupported()); }
+        }
+        for snapshot in one_after_another(&state[5]) {
+            let Value::Tuple(parts) = snapshot.contents() else { return Ok(unsupported()); };
+            let [mapping, revision] = parts.as_slice() else { return Ok(unsupported()); };
+            let Value::Map(rows) = mapping.contents() else { return Ok(unsupported()); };
+            if !Value::of_big(rows.revision.into()).equals(revision) { return Ok(unsupported()); }
+        }
+        let directory = if matches!(args[2].contents(), Value::Null) {
+            read(self, &state[0], "_default_localedir").unwrap_or(Value::Null)
+        } else { args[2].contents() };
+        let (Value::Text(domain), Value::Text(directory), Some(Value::Map(environment))) =
+            (args[1].contents(), directory, read(self, &state[1], "_data")) else { return Ok(unsupported()); };
+        if let Value::Object(object) = state[1].contents() {
+            if object.fields.borrow().iter().any(|(name, _)| matches!(name.as_str(), "get" | "__getitem__")) { return Ok(unsupported()); }
+        }
+        // Unexpected backing keys or undecodable bytes retain the mapping protocol.
+        let mut variables = std::collections::HashMap::new();
+        for (key, value) in environment.iter() {
+            let (Value::Bytes(key, false, _), Value::Bytes(value, false, _)) =
+                (key.contents(), value.contents()) else { return Ok(unsupported()); };
+            let (Ok(key), Ok(value)) = (String::from_utf8(key.borrow().clone()), String::from_utf8(value.borrow().clone()))
+                else { return Ok(unsupported()); };
+            variables.insert(key, value);
+        }
+        let mut languages = Vec::new();
+        for name in ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"] {
+            if let Some(value) = variables.get(name).filter(|value| !value.is_empty()) {
+                languages.extend(value.split(':').map(str::to_owned));
+                break;
+            }
+        }
+        if !languages.iter().any(|word| word == "C") { languages.push("C".into()); }
+        let mut expanded = Vec::new();
+        for language in languages {
+            let answer = self.call_held(state[6].clone(), vec![Value::text(&language)])?;
+            let Value::Text(normalized) = answer.contents() else { return Err("TypeError: normalized locale must be str".into()); };
+            let mut stem = normalized.as_ref();
+            let mut modifier = "";
+            let mut encoding = "";
+            let mut territory = "";
+            let mut mask = 0;
+            if let Some(at) = stem.find('@') { modifier = &stem[at..]; stem = &stem[..at]; mask |= 4; }
+            if let Some(at) = stem.find('.') { encoding = &stem[at..]; stem = &stem[..at]; mask |= 1; }
+            if let Some(at) = stem.find('_') { territory = &stem[at..]; stem = &stem[..at]; mask |= 2; }
+            for bits in (0..=mask).rev().filter(|bits| bits & !mask == 0) {
+                let mut word = stem.to_owned();
+                if bits & 2 != 0 { word.push_str(territory); }
+                if bits & 1 != 0 { word.push_str(encoding); }
+                if bits & 4 != 0 { word.push_str(modifier); }
+                let word: Rc<str> = Rc::from(word);
+                if !expanded.contains(&word) { expanded.push(word); }
+            }
+        }
+        let all = args[4].is_true();
+        let mut matches = Vec::new();
+        for language in expanded {
+            if language.as_ref() == "C" { break; }
+            let mut path = directory.to_string();
+            let filename = format!("{domain}.mo");
+            for part in [language.as_ref(), "LC_MESSAGES", filename.as_str()] {
+                if part.starts_with('/') || path.is_empty() { path = part.to_string(); }
+                else {
+                    if !path.ends_with('/') { path.push('/'); }
+                    path.push_str(part);
+                }
+            }
+            if !path.contains('\0') && std::fs::metadata(&path).is_ok() {
+                let found = Value::text(&path);
+                if !all { return Ok(Value::tuple(vec![Value::Flag(true), found])); }
+                matches.push(found);
+            }
+        }
+        let result = if all { Value::array(matches) } else { Value::Null };
+        Ok(Value::tuple(vec![Value::Flag(true), result]))
+    }
+
     fn filesystem_path(&mut self, offered: Value) -> Res<Value> {
         let path = offered.contents();
         let acceptable = |value: &Value| matches!(value, Value::Text(_) | Value::Codepoints(_) | Value::Bytes(_, false, _))

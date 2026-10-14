@@ -22497,6 +22497,15 @@ impl<'a> Machine<'a> {
                 if matches!(&action, Some(Value::Text(word)) if word.as_ref() == "fspath") {
                     n(2)?;
                     self.path_from_protocol(v[1].clone())?
+                } else if matches!(&action, Some(Value::Text(word)) if word.as_ref() == "catalog_revision") {
+                    n(2)?;
+                    match v[1].settled() {
+                        Value::Dict(entries) if entries.iter().all(|(key, value)| matches!((key.settled(), value.settled()), (Value::Text(_), Value::Text(_)))) => Value::from_big(entries.serial.into()),
+                        _ => Value::Nil,
+                    }
+                } else if matches!(&action, Some(Value::Text(word)) if word.as_ref() == "catalog_find") {
+                    n(6)?;
+                    self.discover_message_files(v)?
                 } else if matches!(&action, Some(Value::Text(word)) if word.as_ref() == "stat_native") {
                     n(4)?;
                     let kind = match v[1].settled() {
@@ -27377,6 +27386,129 @@ fn suspension_within(form: &Form) -> bool {
 }
 
 impl Machine<'_> {
+    /// Search the current catalog locations without caching missing files.
+    fn discover_message_files(&mut self, input: &[Value]) -> Result<Value, String> {
+        let decline = || Value::tuple(vec![Value::Flag(false), Value::Nil]);
+        if !matches!(self.tracing_function.settled(), Value::Nil) { return Ok(decline()); }
+        if !matches!(input[3].settled(), Value::Nil) || !matches!(input[4].settled(), Value::Flag(_)) { return Ok(decline()); }
+        let state = match input[5].settled() { Value::Tuple(parts) if parts.len() == 7 => parts, _ => return Ok(decline()) };
+        // Guard reads inspect only stored fields; they never invoke user descriptors.
+        let stored = |machine: &Self, subject: &Value, key: &str| -> Option<Value> {
+            match subject.settled() {
+                Value::Thing(object) | Value::Attributes(object) => {
+                    if object.reclassified.borrow().is_some() { return None; }
+                    let values = object.holds.borrow();
+                    if let Some((_, value)) = values.iter().find(|(word, _)| word == key) { return Some(value.settled()); }
+                    let hidden = values.iter().find(|(word, _)| word == "\0dictionary")?.1.settled();
+                    match hidden {
+                        Value::Dict(entries) => entries.namespace_position(key).ok().flatten().map(|at| entries[at].1.settled()),
+                        _ => None,
+                    }
+                }
+                Value::Blueprint(kind) => machine.inherited_entry(&kind, key),
+                Value::Dict(entries) => entries.namespace_position(key).ok().flatten().map(|at| entries[at].1.settled()),
+                _ => None,
+            }
+        };
+        for specification in self.gathered_members(&state[3])? {
+            let Value::Tuple(parts) = specification.settled() else { return Ok(decline()); };
+            if parts.len() != 3 { return Ok(decline()); }
+            let Value::Text(word) = &parts[1] else { return Ok(decline()); };
+            let Some(current) = stored(self, &parts[0], word) else {
+                // Builtin wrapper descriptors supply the default when no class entry is stored.
+                if word.as_ref() == "__getattribute__" && matches!(parts[2].settled(), Value::Intrinsic(..) | Value::Wrapped(10 | 60, _)) { continue; }
+                return Ok(decline());
+            };
+            let expected = parts[2].settled();
+            let same = match (&current, &expected) {
+                (Value::Routine(one), Value::Routine(two)) => Rc::ptr_eq(one, two),
+                (Value::Bound(one, here), Value::Bound(two, there)) => Rc::ptr_eq(one, two) && Rc::ptr_eq(here, there),
+                (Value::Blueprint(one), Value::Blueprint(two)) => Rc::ptr_eq(one, two),
+                (Value::Intrinsic(..), Value::Intrinsic(..)) => current.equals(&expected),
+                (Value::Wrapped(a, one), Value::Wrapped(b, two)) => a == b && Rc::ptr_eq(one, two),
+                _ => current.one_place(&expected),
+            };
+            if !same { return Ok(decline()); }
+        }
+        for function in self.gathered_members(&state[4])? {
+            let code = match &function { Value::Bound(code, _) | Value::Routine(code) => code, _ => return Ok(decline()) };
+            if !Rc::ptr_eq(code, &self.code_run_by(&function)) { return Ok(decline()); }
+        }
+        for version in self.gathered_members(&state[5])? {
+            let Value::Tuple(pair) = version.settled() else { return Ok(decline()); };
+            if pair.len() != 2 { return Ok(decline()); }
+            let Value::Dict(entries) = pair[0].settled() else { return Ok(decline()); };
+            if !Value::from_big(entries.serial.into()).equals(&pair[1]) { return Ok(decline()); }
+        }
+        let domain = match input[1].settled() { Value::Text(text) => text, _ => return Ok(decline()) };
+        let directory = if matches!(input[2].settled(), Value::Nil) {
+            stored(self, &state[0], "_default_localedir").unwrap_or(Value::Nil)
+        } else { input[2].settled() };
+        let base = match directory { Value::Text(text) => text, _ => return Ok(decline()) };
+        let Some(Value::Dict(data)) = stored(self, &state[1], "_data") else { return Ok(decline()); };
+        if let Value::Thing(environment) = state[1].settled() {
+            if environment.holds.borrow().iter().any(|(word, _)| word == "get" || word == "__getitem__") { return Ok(decline()); }
+        }
+        let mut environment = Vec::new();
+        for (key, value) in data.iter() {
+            let key = match key.settled() {
+                Value::Octets { cell, changeable: false, .. } => String::from_utf8(cell.borrow().clone()),
+                _ => return Ok(decline()),
+            };
+            let value = match value.settled() {
+                Value::Octets { cell, changeable: false, .. } => String::from_utf8(cell.borrow().clone()),
+                _ => return Ok(decline()),
+            };
+            match (key, value) {
+                (Ok(key), Ok(value)) => environment.push((key, value)),
+                _ => return Ok(decline()),
+            }
+        }
+        let selected = ["LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|name|
+            environment.iter().find(|(key, value)| key == name && !value.is_empty()).map(|(_, value)| value));
+        let mut languages: Vec<String> = selected.map_or_else(Vec::new, |value| value.split(':').map(String::from).collect());
+        if !languages.iter().any(|language| language == "C") { languages.push(String::from("C")); }
+        let mut candidates: Vec<String> = Vec::new();
+        for language in languages {
+            let normalized = self.apply_held(state[6].clone(), vec![Value::text(&language)])
+                .map_err(|escape| { self.got_away = Some(escape); self.bad_answer() })?;
+            let Value::Text(normalized) = normalized.settled() else { return Err(String::from("TypeError: normalized locale must be str")); };
+            let mut fragments = [normalized.as_ref(), "", "", ""];
+            let mut available = 0;
+            for (separator, index, bit) in [('@', 3, 4), ('.', 2, 1), ('_', 1, 2)] {
+                if let Some(offset) = fragments[0].find(separator) {
+                    fragments[index] = &fragments[0][offset..];
+                    fragments[0] = &fragments[0][..offset];
+                    available |= bit;
+                }
+            }
+            for choice in (0..=available).rev() {
+                if choice & !available != 0 { continue; }
+                let mut variant = fragments[0].to_string();
+                for (index, bit) in [(1, 2), (2, 1), (3, 4)] {
+                    if choice & bit != 0 { variant.push_str(fragments[index]); }
+                }
+                if !candidates.contains(&variant) { candidates.push(variant); }
+            }
+        }
+        let mut results = Vec::new();
+        for language in candidates.into_iter().take_while(|language| language != "C") {
+            let filename = domain.to_string() + ".mo";
+            let mut joined = base.to_string();
+            for segment in [&language, "LC_MESSAGES", &filename] {
+                if joined.is_empty() || segment.starts_with('/') { joined.clear(); }
+                else if !joined.ends_with('/') { joined.push('/'); }
+                joined.push_str(segment);
+            }
+            if joined.as_bytes().contains(&0) || std::fs::metadata(&joined).is_err() { continue; }
+            let value = Value::text(&joined);
+            if !input[4].is_true() { return Ok(Value::tuple(vec![Value::Flag(true), value])); }
+            results.push(value);
+        }
+        let answer = if input[4].is_true() { Value::Vector(crate::tuples::Sequence::plain(results)) } else { Value::Nil };
+        Ok(Value::tuple(vec![Value::Flag(true), answer]))
+    }
+
     fn path_from_protocol(&mut self, original: Value) -> Result<Value, String> {
         fn fits(value: &Value) -> bool {
             match value {

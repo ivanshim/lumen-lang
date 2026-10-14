@@ -33,7 +33,8 @@
     "builtins": "runtime_adapters/builtins.py",
     "unicodedata": "runtime_adapters/unicodedata.py",
     "traceback": "runtime_adapters/traceback.py",
-    "io": "runtime_adapters/io.py"
+    "io": "runtime_adapters/io.py",
+    "gettext": "runtime_adapters/gettext.py"
   },
   "replacements": {
     "annotationlib": "runtime_adapters/native_annotationlib.py",
