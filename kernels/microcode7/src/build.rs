@@ -9040,6 +9040,13 @@ impl<'a> Builder<'a> {
         let mut depth: Vec<String> = Vec::new();
         let mut cuts = Vec::new();
         let t = self.table;
+        // The three bracket families are looked up once for the whole scan,
+        // not once for every sign met along it.
+        let families = [
+            (t.single("syntax.group.open"), t.single("syntax.group.close")),
+            (t.single("syntax.array.open"), t.single("syntax.array.close")),
+            (t.single("syntax.map.open"), t.single("syntax.map.close")),
+        ];
         for i in start..limit {
             let word = &self.tokens[i];
             if depth.is_empty() {
@@ -9053,9 +9060,9 @@ impl<'a> Builder<'a> {
                     depth.pop();
                     continue;
                 }
-                for family in ["syntax.group", "syntax.array", "syntax.map"] {
-                    if t.single(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
-                        if let Some(close) = t.single(&format!("{}.close", family)) { depth.push(close.to_string()); }
+                for (open, close) in families {
+                    if open == Some(word.lexeme.as_str()) {
+                        if let Some(close) = close { depth.push(close.to_string()); }
                         break;
                     }
                 }
