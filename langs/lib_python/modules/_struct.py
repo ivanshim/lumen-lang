@@ -94,6 +94,9 @@ class Struct:
         expected = self._count
         if len(values) != expected:
             raise error('pack expected ' + str(expected) + ' items for packing (got ' + str(len(values)) + ')')
+        # Exact single integers need no protocol conversion; native packing still checks their range.
+        if expected == 1 and self._codes is not None and self._codes[0] in 'bBhHiIlLqQnNP' and type(values[0]) is int:
+            return values
         normalized = []
         codes = self._codes if self._codes is not None else _argument_codes(self._fields)
         for code, value in zip(codes, values):
