@@ -4244,7 +4244,7 @@ impl<'a> Machine<'a> {
 
     fn store(&mut self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
         // A copied annotation namespace owns its global writes.
-        if !slot.ident.starts_with('#') && Rc::ptr_eq(ascend(frame, slot.up), &self.outermost)
+        if slot.ident.as_bytes().first() != Some(&b'#') && Rc::ptr_eq(ascend(frame, slot.up), &self.outermost)
             && self.annotation_scope(frame).is_some() && self.frames_named.last().is_some_and(|running| running.globe.is_some()) {
             if let Some(book) = self.world_book.clone() {
                 let content = self.collection_cell(value);
@@ -4260,7 +4260,7 @@ impl<'a> Machine<'a> {
                 *cell.borrow_mut() = stored;
                 return Ok(());
             }
-            if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") && !slot.ident.starts_with('#') {
+            if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].as_bytes().starts_with(b"\0import/") && slot.ident.as_bytes().first() != Some(&b'#') {
                 self.booked_write(slot.at, &slot.ident, Some(stored.clone()));
                 let binding = match &destination.cells.borrow()[slot.at] {
                     Value::Shared(cell) => Some(cell.clone()),
@@ -6519,7 +6519,7 @@ impl<'a> Machine<'a> {
         if self.any_unheard.get() {
             self.hand_over_unheard()?;
         }
-        if crate::ghost::stirred() {
+        if !matches!(node, Form::Const(_) | Form::Read(_)) && crate::ghost::stirred() {
             self.attend_to_gone();
         }
         match node {
@@ -8562,7 +8562,7 @@ impl<'a> Machine<'a> {
                                     || self.rules.words_ext_stmt_class_detail_code_fields.get(10).is_some_and(|word| word == &values[1].bare())) => {
                                 return self.read_class_member(values[0].clone(), &values[1].bare(), false);
                             },
-                            Prim::Of if values.len() == 2 && values[1].bare() == self.detail("allocate") && matches!(values[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) => {
+                            Prim::Of if values.len() == 2 && matches!(values[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) && values[1].bare() == self.detail("allocate") => {
                                 return self.read_class_member(values[0].settled(), &values[1].bare(), false);
                             },
                             Prim::Of if values.len()==2 && (matches!(&values[0], Value::OctetKind { .. }) || matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(..)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
@@ -10313,7 +10313,7 @@ impl<'a> Machine<'a> {
     fn bind_program(&mut self, program: &Rc<Routine>, defining: &Rc<Env>) -> Value {
         let environment = self.closure_environment(program, defining);
         let lambda = self.rules.words_ext_stmt_function_anonymous.iter().any(|word| word == &program.ident);
-        let function = !program.ident.starts_with('#') && (!program.ident.starts_with('<') || lambda);
+        let function = program.ident.as_bytes().first() != Some(&b'#') && (program.ident.as_bytes().first() != Some(&b'<') || lambda);
         // Python makes a new function each time a definition is reached,
         // even when its defining environment is the unchanged module root.
         // Its code remains the compiled definition; its attributes belong
@@ -10460,7 +10460,7 @@ impl<'a> Machine<'a> {
         // keep their module ancestor. Ordinary instances cannot own the
         // loader's hidden marker, so avoid scanning their attributes.
         let class = thing.blueprint();
-        if !class.parents().is_empty() && Self::native_beneath(&class).as_deref() != Some("module") { return None; }
+        if !class.parents.borrow().is_empty() && !Self::native_beneath_is(&class, "module") { return None; }
         let saved_name = thing.holds.borrow().iter().find(|row| row.0 == "\0loaded-module").map(|row| row.1.settled());
         if let Some(Value::Text(path)) = saved_name { return Some(path.to_string()); }
         for (path, held) in &self.imported {
@@ -10468,7 +10468,7 @@ impl<'a> Machine<'a> {
         }
         let names = self.rules.words_ext_system_module_name;
         let blueprint = thing.blueprint();
-        if blueprint.parents().is_empty() && blueprint.under().is_none() && blueprint.type_names.borrow().is_none() {
+        if blueprint.parents.borrow().is_empty() && blueprint.under.borrow().is_none() && blueprint.type_names.borrow().is_none() {
             let declared = thing.holds.borrow().iter().find(|entry| names.contains(&entry.0)).map(|entry| entry.1.settled());
             if let Some(Value::Text(label)) = declared { return Some(label.to_string()); }
         }
@@ -15299,9 +15299,6 @@ impl<'a> Machine<'a> {
         let finish = position.checked_add(size).filter(|size| *size <= i64::MAX as usize)
             .ok_or_else(|| "OverflowError: new position too large".to_owned())?;
         let mut content = cell.borrow_mut();
-        if finish > content.len() && OctetLease::held(&cell) {
-            return Err(String::from("BufferError: Existing exports of data: object cannot be re-sized").into());
-        }
         let missing = finish.saturating_sub(content.len());
         content.try_reserve(missing).map_err(|_| String::from("MemoryError: "))?;
         if missing > 0 { content.resize(finish, 0); }

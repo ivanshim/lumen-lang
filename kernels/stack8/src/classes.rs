@@ -27,6 +27,9 @@ impl<'a> Engine<'a> {
             "order" => self.member_words[19],
             "receiver" => self.member_words[20],
             "unready" => self.member_words[21],
+            "subclass" => self.member_words[22],
+            "text_signature" => self.member_words[23],
+            "slots" => self.member_words[24],
             _ => self.lang.class_details.get(part).and_then(|v| v.first()).map_or("", String::as_str),
         }
     }
@@ -346,6 +349,13 @@ impl<'a> Engine<'a> {
     /// The builtin kind a class stands on, through any of its line.
     pub(super) fn kind_beneath(c: &Class) -> Option<String> {
         std::iter::once(c).chain(c.lineage.borrow().iter().map(Rc::as_ref)).find_map(Self::own_kind)
+    }
+    /// Whether the builtin kind beneath a class is the word named, read
+    /// without writing any class's kind out as a fresh string.
+    pub(super) fn kind_beneath_is(c: &Class, word: &str) -> bool {
+        let own = |held: &Class| held.constants.iter().find(|(n, _)| n == "\0kind")
+            .map(|(_, v)| match v { Value::Text(t) => t.as_ref() == word, other => other.plain() == word });
+        std::iter::once(c).chain(c.lineage.borrow().iter().map(Rc::as_ref)).find_map(own).unwrap_or(false)
     }
 
     /// Whether a class stands on the builtin kind named, through any of
@@ -4268,7 +4278,7 @@ impl<'a> Engine<'a> {
                 let class = object.class_now();
                 let ordinary = Self::kind_beneath(&class).as_deref().is_none_or(|word| word == self.class_word("root"))
                     && self.module_holding(&subject).is_none()
-                    && !object.fields.borrow().iter().any(|(key, _)| key.starts_with('\0'));
+                    && !object.fields.borrow().iter().any(|(key, _)| key.as_bytes().first() == Some(&0));
                 if ordinary && (plain || self.class_value(&class, self.class_word("get")).is_none()) {
                     let member = self.class_value(&class, name);
                     if name == self.class_word("kind") {
@@ -4582,7 +4592,7 @@ impl<'a> Engine<'a> {
                 if Self::own_kind(&owner).is_none() && Self::kind_beneath(&owner).map_or(true, |kind| kind == self.class_word("root")) {
                     let own = {
                         let fields = instance.fields.borrow();
-                        if fields.iter().any(|(key, _)| key.starts_with('\0')) { None }
+                        if fields.iter().any(|(key, _)| key.as_bytes().first() == Some(&0)) { None }
                         else { fields.iter().find(|(key, _)| key == name).map(|(_, value)| value.clone()) }
                     };
                     if let Some(held) = own {
@@ -6220,10 +6230,10 @@ impl<'a> Engine<'a> {
             else {return Err(self.missing_member(&subject,name));}
             *storage.borrow_mut()=Value::Map(Rc::new(edited.into()));return Ok(Value::Null);
         }
-        if self.lang.bind_names && !name.starts_with("__") && !name.starts_with('\0') {
+        if self.lang.bind_names && !name.as_bytes().starts_with(b"__") && name.as_bytes().first() != Some(&0) {
             if let Value::Object(object) = &subject {
                 let class = object.class_now();
-                let compact = { let fields = object.fields.borrow(); fields.len() < 30 && !fields.iter().any(|entry| entry.0.starts_with('\0')) };
+                let compact = { let fields = object.fields.borrow(); fields.len() < 30 && !fields.iter().any(|entry| entry.0.as_bytes().first() == Some(&0)) };
                 if compact && Self::kind_beneath(&class).is_none() && self.module_holding(&subject).is_none()
                     && self.slots_allow(&class, name)
                     && (plain || self.class_value(&class, self.class_word(if value.is_some() { "set" } else { "remove" })).is_none())

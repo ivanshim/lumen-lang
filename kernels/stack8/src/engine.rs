@@ -171,7 +171,7 @@ pub struct Engine<'a> {
     function_members: Vec<(crate::faint::Hold, Rc<Instance>)>,
     collecting_cycles: bool,
     kind_names: RefCell<HashMap<String, Vec<String>>>,
-    member_words: [&'a str; 22],
+    member_words: [&'a str; 25],
     opened_descriptors: HashMap<i32, std::fs::File>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
@@ -232,7 +232,7 @@ pub struct Engine<'a> {
     // These dictionaries remain strongly owned by the module inventory.
     globals_by_cell: HashMap<usize, String>,
     native_slots: HashMap<String, usize>,
-    module_by_address: RefCell<HashMap<usize, String>>,
+    module_by_address: RefCell<HashMap<usize, String, crate::value::FxBuildHasher>>,
     changed_module_positions: RefCell<HashMap<usize, (usize, HashMap<String, usize, crate::value::FxBuildHasher>)>>,
     module_addresses_ready: std::cell::Cell<bool>,
     native_stack_start: usize,
@@ -1675,6 +1675,9 @@ impl<'a> Engine<'a> {
                 lang.class_details.get("order").and_then(|list| list.first()).map_or("", String::as_str),
                 lang.class_details.get("receiver").and_then(|list| list.first()).map_or("", String::as_str),
                 lang.class_details.get("unready").and_then(|list| list.first()).map_or("", String::as_str),
+                lang.class_details.get("subclass").and_then(|list| list.first()).map_or("", String::as_str),
+                lang.class_details.get("text_signature").and_then(|list| list.first()).map_or("", String::as_str),
+                lang.class_details.get("slots").and_then(|list| list.first()).map_or("", String::as_str),
             ],
             lang,
             world,
@@ -1779,7 +1782,7 @@ impl<'a> Engine<'a> {
             module_globals: HashMap::new(),
             globals_by_cell: HashMap::new(),
             native_slots: lang.class_special.iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
-            module_by_address: RefCell::new(HashMap::new()),
+            module_by_address: RefCell::new(HashMap::with_hasher(crate::value::FxBuildHasher::default())),
             changed_module_positions: RefCell::new(HashMap::new()),
             module_addresses_ready: std::cell::Cell::new(false),
             wildcard_file: None,
@@ -3237,7 +3240,7 @@ impl<'a> Engine<'a> {
                 // rather than a clone of everything held paid for a
                 // read about to be overwritten anyway.
                 let value = if slot.moving { std::mem::replace(&mut *shared.borrow_mut(), Value::Gap) } else { shared.borrow().clone() };
-                if slot.free && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0')
+                if slot.free && !matches!(slot.ident.as_bytes().first(), Some(b'#' | 0))
                     && self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_none()) {
                     if let Some((names, all)) = self.annotation_scope() {
                         if all || matches!(value, Value::Blank) {
@@ -3451,7 +3454,7 @@ impl<'a> Engine<'a> {
     /// Clear the binding itself so retained frames and closures observe
     /// deletion too, rather than keeping the old value through its cell.
     fn forget_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Flow<()> {
-        if slot.near.is_empty() && !slot.ident.starts_with('#') && self.annotation_scope().is_some()
+        if slot.near.is_empty() && slot.ident.as_bytes().first() != Some(&b'#') && self.annotation_scope().is_some()
             && self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_some()) {
             if let Some(book) = &self.outer_book {
                 book_write(book, &slot.ident, None);
@@ -3459,7 +3462,7 @@ impl<'a> Engine<'a> {
             }
         }
         for &s in &slot.near {
-            if self.lang.closes_over && !slot.ident.starts_with('#') {
+            if self.lang.closes_over && slot.ident.as_bytes().first() != Some(&b'#') {
                 if let Value::Binding(cell) = &frame[s] { *cell.borrow_mut() = Value::Blank; continue; }
             }
             frame[s] = Value::Blank;
@@ -3576,7 +3579,7 @@ impl<'a> Engine<'a> {
     /// else the first local, or the global when there is none.
     fn store_cell(&mut self, slot: &Cell, frame: &mut [Value], v: Value) -> Res<()> {
         // An isolated annotator writes its supplied dictionary, not a module cell.
-        if slot.near.is_empty() && !slot.ident.starts_with('#') && self.annotation_scope().is_some()
+        if slot.near.is_empty() && slot.ident.as_bytes().first() != Some(&b'#') && self.annotation_scope().is_some()
             && self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_some()) {
             if let Some(book) = self.outer_book.clone() {
                 let held = self.keep_collection(v);
@@ -6282,7 +6285,7 @@ impl<'a> Engine<'a> {
             (keys[5].clone(), code),
             (keys[11].clone(), back.map_or(Value::Null, Value::Object)),
             (keys[12].clone(), Value::Null), (keys[13].clone(), global_book),
-            ("\0slots".into(), Value::tuple(program.idents.iter().zip(locals).map(|(name, value)| if name.starts_with('#') && !(program.generator && program.formals.first() == Some(name)) { Value::Blank } else { value.clone() }).collect())),
+            ("\0slots".into(), Value::tuple(program.idents.iter().zip(locals).map(|(name, value)| if name.as_bytes().first() == Some(&b'#') && !(program.generator && program.formals.first() == Some(name)) { Value::Blank } else { value.clone() }).collect())),
             ("\0routine".into(), Value::Routine(program.clone())),
             ("\0observed".into(), Value::Null),
             ("\0instruction".into(), Value::Small(-1)),
@@ -7842,7 +7845,7 @@ impl<'a> Engine<'a> {
         }
         if let Some(path) = self.module_by_address.borrow().get(&(Rc::as_ptr(o) as usize)) { return Some(path.clone()); }
         let own = o.class_now();
-        if !own.direct().is_empty() && Self::kind_beneath(&own).as_deref() != Some("module") { return None; }
+        if !own.direct.borrow().is_empty() && !Self::kind_beneath_is(&own, "module") { return None; }
         if let Some((path, _)) = self.modules.iter().find(|(_, held)| matches!(held, Value::Object(m) if Rc::ptr_eq(m, o))) { return Some(path.clone()); }
         let fields = o.fields.try_borrow().ok()?;
         if let Some((_, owner)) = fields.iter().find(|(name, _)| name == "\0module-owner") {
@@ -10364,7 +10367,7 @@ impl<'a> Engine<'a> {
         // thing among them asked for the whole number it stands for;
         // a counted row sliced is a counted row still, over the places
         // the bounds pick out of it.
-        if let (Action::At, Value::Slice(bounds), true) = (op, b, self.lang.slice_values()) {
+        if let (Action::At, Value::Slice(bounds), true) = (op, b, matches!((op, b), (Action::At, Value::Slice(_))) && self.lang.slice_values()) {
             if !matches!(a, Value::Object(_) | Value::Map(_)) {
                 let settled = self.slice_settled(bounds)?;
                 if let Value::Counted(row) = a {

@@ -378,6 +378,13 @@ impl<'a> Machine<'a> {
     pub(super) fn native_beneath(b:&Blueprint)->Option<String> {
         std::iter::once(b).chain(b.ancestry.borrow().iter().map(Rc::as_ref)).find_map(Self::native_word)
     }
+    /// Whether the native kind under a blueprint is the one named, decided
+    /// without copying any kind's spelling out.
+    pub(super) fn native_beneath_is(b:&Blueprint,word:&str)->bool {
+        let spelled=|held:&Blueprint| held.constants.iter().find(|(k,_)|k=="\0native")
+            .map(|(_,v)| match v {Value::Text(text)=>text.as_ref()==word, other=>other.bare()==word});
+        std::iter::once(b).chain(b.ancestry.borrow().iter().map(Rc::as_ref)).find_map(spelled).unwrap_or(false)
+    }
 
     /// Whether a blueprint stands on the native kind named, through any
     /// of its line: a blueprint written with several native parents
@@ -4982,7 +4989,7 @@ impl<'a> Machine<'a> {
                             return self.complete_member_read(&value, key, direct, sought);
                         }
                     }
-                    if reader.is_none() && !key.starts_with("__") {
+                    if reader.is_none() && !key.as_bytes().starts_with(b"__") {
                         if let Some(meta) = &builder {
                             if let Some(entry) = self.inherited_entry(meta, key).filter(|entry| self.writes_too(entry) && (matches!(entry, Value::Wrapped(6 | 32 | 58, _)) || self.protocol_entry(entry, "descriptor.get").is_some())) {
                                 let sought = self.member_binding(entry, Some(value.clone()), meta.clone()); return self.complete_member_read(&value, key, direct, sought);
@@ -4999,10 +5006,10 @@ impl<'a> Machine<'a> {
         }
         // A heap instance with plain storage can use the normal Python order
         // before considering any of the native blueprint-specific readers.
-        if self.names_in_calls && (!key.starts_with("__") || key == self.detail("kind")) {
+        if self.names_in_calls && (!key.as_bytes().starts_with(b"__") || key == self.detail("kind")) {
             if let Value::Thing(thing) = &value {
                 let owner = thing.blueprint();
-                let simple = !thing.holds.borrow().iter().any(|entry| entry.0.starts_with('\0'))
+                let simple = !thing.holds.borrow().iter().any(|entry| entry.0.as_bytes().first() == Some(&0))
                     && Self::native_beneath(&owner).as_deref().is_none_or(|word| word == self.detail("root")) && self.namespace_holding(&value).is_none();
                 let default_reader = direct || self.inherited_entry(&owner, self.detail("get")).is_none();
                 if simple && default_reader {
@@ -5023,7 +5030,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        if self.names_in_calls && !key.starts_with("__") {
+        if self.names_in_calls && !key.as_bytes().starts_with(b"__") {
             let slot = match &value {
                 Value::Thing(thing) => {
                     let blueprint = thing.blueprint();
