@@ -106,6 +106,7 @@ def _interpreted_genops(data, yield_end_pos=False, position=0):
 # Describe native field layouts independently of opcode spellings.
 _field_batch = __bytes_memory__
 _native_mapping = code2op
+_native_opcodes = tuple(code2op.get(chr(code)) for code in range(256))
 _reader_type = type(_stream_genops)
 _field_readers = (
     None, read_uint1, read_uint2, read_int4, read_uint4, read_uint8,
@@ -194,6 +195,66 @@ _memory_genops = _genops
 _memory_pickler = pickle._Pickler
 _memory_framer = pickle._Framer
 
+# Parse a synchronous optimization pass without per-yield descriptor lookups.
+# Native fields cannot invoke Python callbacks. Changed descriptors and fields
+# needing the canonical readers restart through the ordinary lazy parser.
+_native_descriptors = tuple(None if op is None else op.arg for op in _native_opcodes)
+_native_names = tuple(None if op is None else op.name for op in _native_opcodes)
+_native_protocols = tuple(None if op is None else op.proto for op in _native_opcodes)
+
+def _optimization_plan(data):
+    assigned = set()
+    referenced = {}
+    operations = []
+    protocol = 0
+    header = b''
+    position = 0
+    checked = set()
+    while True:
+        records = _field_batch(data, position, _native_layouts, False, 3)
+        if not records:
+            return None
+        for code, argument, start, end in records:
+            if code not in checked:
+                opcode = code2op.get(_opcode_characters[code])
+                if opcode is not _native_opcodes[code]:
+                    return None
+                descriptor = opcode.arg
+                if (descriptor is not _native_descriptors[code]
+                        or descriptor is not None and descriptor.reader is not _native_expected[code]
+                        or opcode.name != _native_names[code]
+                        or opcode.proto != _native_protocols[code]):
+                    return None
+                checked.add(code)
+            position = end
+            if code in (112, 113, 114, 148):
+                if code == 148:
+                    argument = len(assigned)
+                assigned.add(argument)
+                operations.append((-1, argument))
+            elif code in (103, 104, 106):
+                protocol = max(protocol, _native_protocols[code])
+                referenced[argument] = None
+                operations.append((-2, argument))
+            elif code == 149:
+                continue
+            elif code == 128:
+                if start and argument >= 4:
+                    return None
+                protocol = max(protocol, argument)
+                if start == 0:
+                    header = data[start:end]
+                else:
+                    operations.append((start, end))
+            else:
+                # Without framing, adjacent unchanged opcodes form one span.
+                if protocol < 4 and operations and operations[-1][1] == start and operations[-1][0] >= 0:
+                    operations[-1] = (operations[-1][0], end)
+                else:
+                    operations.append((start, end))
+            if code == 46:
+                return referenced, operations, protocol, header
+
 # Assemble each complete frame once instead of calling stream methods per opcode.
 def _append_frame(output, pieces, length, minimum):
     if length >= minimum:
@@ -205,37 +266,42 @@ def optimize(p):
     if (type(p) is not bytes or _genops is not _memory_genops
             or code2op is not _native_mapping
             or pickle._Pickler is not _memory_pickler
-            or pickle._Framer is not _memory_framer):
+            or pickle._Framer is not _memory_framer
+            or sys.gettrace() is not None):
         return _stream_optimize(p)
-    assigned = set()
-    referenced = {}
-    operations = []
-    protocol = 0
-    header = b''
-    for opcode, argument, start, end in _genops(p, yield_end_pos=True):
-        name = opcode.name
-        if 'PUT' in name:
-            assigned.add(argument)
-            operations.append((-1, argument))
-        elif name == 'MEMOIZE':
-            index = len(assigned)
-            assigned.add(index)
-            operations.append((-1, index))
-        elif 'FRAME' in name:
-            continue
-        elif 'GET' in name:
-            protocol = max(protocol, opcode.proto)
-            referenced[argument] = None
-            operations.append((-2, argument))
-        elif name == 'PROTO':
-            protocol = max(protocol, argument)
-            if start == 0:
-                header = p[start:end]
+    plan = _optimization_plan(p)
+    if plan is not None:
+        referenced, operations, protocol, header = plan
+    else:
+        assigned = set()
+        referenced = {}
+        operations = []
+        protocol = 0
+        header = b''
+        for opcode, argument, start, end in _genops(p, yield_end_pos=True):
+            name = opcode.name
+            if 'PUT' in name:
+                assigned.add(argument)
+                operations.append((-1, argument))
+            elif name == 'MEMOIZE':
+                index = len(assigned)
+                assigned.add(index)
+                operations.append((-1, index))
+            elif 'FRAME' in name:
+                continue
+            elif 'GET' in name:
+                protocol = max(protocol, opcode.proto)
+                referenced[argument] = None
+                operations.append((-2, argument))
+            elif name == 'PROTO':
+                protocol = max(protocol, argument)
+                if start == 0:
+                    header = p[start:end]
+                else:
+                    operations.append((start, end))
             else:
                 operations.append((start, end))
-        else:
-            operations.append((start, end))
-    del assigned
+        del assigned
     pickler = pickle._Pickler(io.BytesIO(), protocol)
     target = pickler.framer._FRAME_SIZE_TARGET
     minimum = pickler.framer._FRAME_SIZE_MIN
