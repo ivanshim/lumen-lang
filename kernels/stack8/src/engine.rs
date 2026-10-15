@@ -169,6 +169,11 @@ pub struct Engine<'a> {
     kind_classes: Vec<(String, Rc<Class>)>,
     kind_descriptors: RefCell<Vec<(String, String, Value)>>,
     function_members: Vec<(crate::faint::Hold, Rc<Instance>)>,
+    /// Where each function of `function_members` stands, by the
+    /// addresses it answers to, so a reading finds its row at once.
+    function_rows: RefCell<HashMap<(usize, usize), usize>>,
+    /// Where the last short walk for a dead row of `function_members` ended.
+    function_sweep: usize,
     collecting_cycles: bool,
     kind_names: RefCell<HashMap<String, Vec<String>>>,
     member_words: [&'a str; 22],
@@ -1645,7 +1650,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
+            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
             contexts: crate::context::ContextStore::default(),
@@ -2408,6 +2413,7 @@ impl<'a> Engine<'a> {
         self.collecting_cycles = true;
         // Dead weak keys must release their attributes before ordering finalizers.
         self.function_members.retain(|(function, _)| function.revive().is_some());
+        self.reindex_function_rows();
         self.settle_departed();
         let mut graph = self.cycle_graph(&[]);
         let mut group = graph.unreached();
@@ -2415,6 +2421,7 @@ impl<'a> Engine<'a> {
         // heap is the same afterwards and the first walk still stands.
         if group.is_empty() {
             self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !graph.unowned(&function)));
+            self.reindex_function_rows();
             drop(graph);
             self.settle_departed();
             self.collecting_cycles = false;
@@ -2448,6 +2455,7 @@ impl<'a> Engine<'a> {
         let unreached = after.still_unreached(group);
         let count = unreached.len();
         self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !after.unowned(&function)));
+        self.reindex_function_rows();
 
         let grave = crate::faint::Graph::sever(&unreached);
         drop(unreached);
@@ -4716,8 +4724,8 @@ impl<'a> Engine<'a> {
             generator.walked = if program.code_flags & 512 != 0 { Some(Rc::from("async_generator")) }
                 else if program.code_flags & 128 != 0 { Some(Rc::from("coroutine")) } else { None };
             let function = Value::Routine(program.clone());
-            generator.name = self.class_get(function.clone(), &self.class_word("name").to_string(), true)?.plain();
-            generator.qualified = self.class_get(function, &self.class_word("qualified").to_string(), true)?.plain();
+            generator.name = self.routine_title(&function, "name");
+            generator.qualified = self.routine_title(&function, "qualified");
             generator.trace_frame = self.make_frame(program, &generator.frame, None);
             let walk = Rc::new(RefCell::new(generator));
             if !self.lang.coroutine_fields.is_empty() && program.code_flags & 128 != 0 {
