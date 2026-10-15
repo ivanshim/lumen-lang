@@ -90,17 +90,20 @@ commit_frame.__qualname__ = '_Framer.commit_frame'
 _Framer.commit_frame = commit_frame
 del commit_frame
 
-# Decode consecutive scalar pushes in exact memory streams as one read-only
-# transfer. Other opcodes keep the canonical dispatch and framing machinery.
+# Decode scalar pushes and new integer memo entries in exact memory streams
+# as one read-only transfer. Other opcodes retain ordinary dispatch and framing.
 _scalar_formats = {
     NONE[0]: 0, NEWTRUE[0]: 24, NEWFALSE[0]: 25,
     INT[0]: 18, BININT[0]: 3, BININT1[0]: 1, BININT2[0]: 2,
     LONG[0]: 19, LONG1[0]: 14, LONG4[0]: 15,
+    BINPUT[0]: 1, LONG_BINPUT[0]: 4, MEMOIZE[0]: 0,
     BINBYTES[0]: 8, SHORT_BINBYTES[0]: 7, BINBYTES8[0]: 9,
     UNICODE[0]: 21, BINUNICODE[0]: 12,
     SHORT_BINUNICODE[0]: 11, BINUNICODE8[0]: 13,
 }
 _scalar_layouts = tuple(_scalar_formats.get(code, -1) for code in range(256))
+_memory_memoize_code = MEMOIZE[0]
+_scalar_memo_codes = frozenset((BINPUT[0], LONG_BINPUT[0], _memory_memoize_code))
 _scalar_handlers = {code: (_Unpickler.dispatch[code], _Unpickler.dispatch[code].__code__)
                     for code in _scalar_formats}
 _memory_transfer = __bytes_memory__
@@ -115,6 +118,7 @@ _memory_append_type = type([].append)
 _memory_method_type = type(io.BytesIO().read)
 _memory_unpack = unpack
 _memory_integer = int
+_memory_length, _memory_all, _memory_type = len, all, type
 _memory_string = str
 _memory_long = decode_long
 _memory_long_body = decode_long.__code__
@@ -164,7 +168,9 @@ def _load_memory(self):
     try:
         while True:
             append = self.append
-            if (_pickle_code_watch[0] and type(dispatch) is dict and self.read is read and self.readline is readline
+            memo = self.memo
+            if (_pickle_code_watch[0] and type(dispatch) is dict and type(memo) is dict
+                    and self.read is read and self.readline is readline
                     and type(self.stack) is list and type(append) is _memory_append_type
                     and append.__self__ is self.stack and append.__name__ == 'append'
                     and io.BytesIO.read is _memory_stream_read
@@ -186,13 +192,29 @@ def _load_memory(self):
                         records = _memory_transfer(stream._data, stream._pos, _scalar_layouts,
                                                    stream._closed, 3)
                         if records:
+                            plain_memo = None
                             for code, argument, start, end in records:
                                 if not checked[code]:
                                     handler, body = _scalar_handlers[code]
                                     if dispatch.get(code) is not handler:
                                         break
                                     checked[code] = True
-                                append(argument)
+                                if code in _scalar_memo_codes:
+                                    if plain_memo is None:
+                                        if (len is not _memory_length or all is not _memory_all
+                                                or type is not _memory_type):
+                                            break
+                                        plain_memo = all(type(key) is _memory_integer for key in memo)
+                                    if not plain_memo:
+                                        break
+                                    if code == _memory_memoize_code:
+                                        argument = len(memo)
+                                    # Overwriting can release an object and call user code.
+                                    if not self.stack or argument in memo:
+                                        break
+                                    memo[argument] = self.stack[-1]
+                                else:
+                                    append(argument)
                             else:
                                 stream._pos = end
                                 continue
