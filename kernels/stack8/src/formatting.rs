@@ -252,7 +252,7 @@ impl Writer<'_> {
         // general form. Text has no such presentation and says so. The
         // grouping belongs to the locale, so none may be named beside
         // it.
-        let locale_number = rule.code == 'n';
+        let locale_number = self.lang.python_numbers && rule.code == 'n';
         if rule.code == 'n' {
             if rule.group != '\0' || rule.fraction_group != '\0' { return Err(self.fault("ext.text.format.invalid", &[])); }
             if !matches!(value, Value::Text(_)) {

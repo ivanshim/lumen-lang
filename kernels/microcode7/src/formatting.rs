@@ -283,7 +283,7 @@ impl Layout<'_> {
         // stays with the tens and everything else takes the general
         // form. Text has no such presentation and says so. The
         // grouping belongs to the locale, so none may stand beside it.
-        let locale_number = shape.letter == Some('n');
+        let locale_number = self.table.flag("ext.op.arithmetic.python_numbers") && shape.letter == Some('n');
         if shape.letter == Some('n') {
             if shape.separator.is_some() || shape.fraction_separator.is_some() { return Err(self.invalid()); }
             if !matches!(item, Value::Text(_)) {
