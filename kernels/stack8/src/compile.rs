@@ -13337,6 +13337,7 @@ impl<'a> Compiler<'a> {
         // Whether a named argument, or a spread of pairs, has been
         // written yet: what stands in order may not follow either.
         let (mut after_name, mut after_pairs) = (false, false);
+        let mut spread_seen = false;
         while !self.at_symbol(&pair.close) {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", pair.close));
@@ -13364,6 +13365,7 @@ impl<'a> Compiler<'a> {
             }
             after_name |= tagged;
             after_pairs |= named_spread && self.lang.bind_names;
+            spread_seen |= spread;
             if tagged {
                 let word = self.spelled[self.pos].lexeme.clone();
                 let raw_word = self.spelled[self.pos].spelling().to_string();
@@ -13417,6 +13419,26 @@ impl<'a> Compiler<'a> {
         // Positional spreads run before named values even when a named
         // argument was written before a spread.
         pieces.sort_by_key(|(named, _)| *named);
+        // Past thirty plain arguments the values are gathered into one
+        // array (and one map for the named ones) and handed over as a
+        // spread, so the working stack stays shallow however long the call.
+        if pieces.len() > 30 && !spread_seen {
+            let mut handed = 0;
+            for pairs in [false, true] {
+                let group: Vec<_> = pieces.iter().filter(|(named, _)| *named == pairs).collect();
+                if group.is_empty() { continue; }
+                self.constant(Value::Flag(pairs));
+                self.act(if pairs { Action::MakeMap } else { Action::MakeArray }, 0);
+                for (_, code) in group {
+                    let start = self.mark();
+                    self.piece().instrs.extend(relocated(code.clone(), start as i64));
+                    self.act(Action::GatherItem { map: pairs, spread: false }, 2);
+                }
+                self.act(Action::Tie, 2);
+                handed += 1;
+            }
+            return Ok(handed);
+        }
         for (_, code) in pieces {
             let start = self.mark();
             self.piece().instrs.extend(relocated(code, start as i64));

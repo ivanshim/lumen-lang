@@ -12572,6 +12572,7 @@ impl<'a> Builder<'a> {
         let misplaced = self.table.strings("ext.syntax.call.amiss.order").to_vec();
         let mut keyword_written = false;
         let mut pairs_written = false;
+        let mut starred = false;
         while !self.sign(&close) {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", close));
@@ -12631,6 +12632,7 @@ impl<'a> Builder<'a> {
             }
             let value = self.expr(0)?;
             let named = matches!(tag, Some(Value::Text(_) | Value::Flag(true)));
+            starred |= matches!(tag, Some(Value::Flag(_)));
             let argument = match tag {
                 Some(key) => prim_call(Prim::Couple, vec![constant(key), value]),
                 None => value,
@@ -12645,6 +12647,18 @@ impl<'a> Builder<'a> {
             }
         }
         self.advance();
+        // A call of more than thirty plain arguments takes them as one
+        // array (and one map of the named ones), so that evaluating the
+        // call holds a few values at a time however long it is.
+        if bind_list_long(items.len() + named_values.len(), starred) {
+            let spread = |flag: bool, body: Form| prim_call(Prim::Couple, vec![constant(Value::Flag(flag)), body]);
+            let mut handed = Vec::new();
+            let gather = |start: Prim, grows: Prim, parts: Vec<Form>| parts.into_iter()
+                .fold(prim_call(start, Vec::new()), |row, part| prim_call(grows.clone(), vec![row, part]));
+            if !items.is_empty() { handed.push(spread(false, gather(Prim::MakeArray, Prim::ExtendLiteral(false, false), items))); }
+            if !named_values.is_empty() { handed.push(spread(true, gather(Prim::MakeMap, Prim::ExtendLiteral(true, false), named_values))); }
+            return Ok(handed);
+        }
         items.extend(named_values);
         Ok(items)
     }
@@ -13760,4 +13774,9 @@ fn settle_doc_indentation(source: &str) -> String {
         result.push_str(&row[removed..]);
     }
     result
+}
+
+/// Whether a call's argument list is long and plain enough to be handed over as a gathered array.
+fn bind_list_long(count: usize, starred: bool) -> bool {
+    count > 30 && !starred
 }
