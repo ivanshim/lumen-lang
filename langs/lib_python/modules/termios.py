@@ -1,6 +1,7 @@
 # Native terminal-control adapter for CPython v3.14.8 Modules/termios.c.
 # Copyright (c) Python Software Foundation; PSF License in tests/python-3.14.8/LICENSE.
 from posix import _call, _cint
+import operator as _operator
 
 
 class error(Exception):
@@ -27,6 +28,15 @@ def _run(op, *args):
         return _call(op, *args)
     except OSError as exc:
         raise error(exc.errno, exc.strerror) from None
+
+
+# A flag or speed word is an unsigned C int: CPython converts through a long and truncates, so
+# CRTSCTS (bit 31) passes and only a value beyond a long is refused.
+def _flag(value):
+    number = _operator.index(value)
+    if not -9223372036854775808 <= number <= 9223372036854775807:
+        raise OverflowError('Python int too large to convert to C long')
+    return number & 0xFFFFFFFF
 
 
 # Read a terminal's mode as [iflag, oflag, cflag, lflag, ispeed, ospeed, cc].
@@ -57,7 +67,7 @@ def tcsetattr(fd, when, attributes, /):
             controls.append(item & 255)
         else:
             raise TypeError('tcsetattr: elements of attributes must be characters or integers')
-    iflag, oflag, cflag, lflag, ispeed, ospeed = (_cint(attributes[i]) for i in range(6))
+    iflag, oflag, cflag, lflag, ispeed, ospeed = (_flag(attributes[i]) for i in range(6))
     _run('tcsetattr', descriptor, when, iflag, oflag, cflag, lflag, ispeed, ospeed, bytes(controls))
 
 
