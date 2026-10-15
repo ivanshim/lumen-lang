@@ -9,13 +9,13 @@ class UCD:
     def __init__(self, table, version):
         self._table = table
         self.unidata_version = version
+        self._names = _ucd_3_2_0 if table == 'ucd32' else _codec_names
 
     # Read names from the selected release without changing property/normalization data.
     def name(self, char, default=_no_default):
         if not isinstance(char, str) or len(char) != 1:
             raise TypeError('name() argument 1 must be a unicode character')
-        table = _ucd_3_2_0 if self._table == 'ucd32' else _codec_names
-        answer = table.name(ord(char))
+        answer = self._names.name(ord(char))
         if answer is not None:
             return answer
         if default is not _no_default:
@@ -120,8 +120,38 @@ bidirectional = _default.bidirectional
 combining = _default.combining
 mirrored = _default.mirrored
 
-name = _default.name
-lookup = _default.lookup
+# Exact-spelling hits answer from the loaded name tables in one step; both
+# tables start empty and are bound once the first full call has loaded them.
+_forward = {}
+_reverse = {}
+
+def name(char, default=_no_default):
+    global _forward
+    if type(char) is str and len(char) == 1:
+        number = ord(char)
+        answer = _forward.get(number)
+        if answer is None and _forward:
+            if number >= 0x3400:
+                answer = _codec_names.name(number)
+            if answer is None:
+                if default is not _no_default:
+                    return default
+                raise ValueError('no such name')
+        if answer is not None:
+            return answer
+    answer = _default.name(char, default)
+    _forward = _codec_names._forward
+    return answer
+
+def lookup(spelling):
+    global _reverse
+    if type(spelling) is str:
+        found = _reverse.get(spelling)
+        if found is not None:
+            return found
+    found = _default.lookup(spelling)
+    _reverse = _codec_names._reverse
+    return found
 
 # Native decomposition retains the complete CPython descriptor contract.
 decomposition = __unicode_decomposition
