@@ -8026,7 +8026,7 @@ impl<'a> Engine<'a> {
         if word.as_ref() == "type" && [self.class_word("mro"), self.class_word("namespace"), self.class_word("name")].contains(&name) {
             return Some(self.held_kind_descriptor(&word, name));
         }
-        if word.as_ref() == "type" && [8, 17].iter().any(|index| self.lang.class_special.get(*index).map_or(false, |slot| slot == name)) {
+        if word.as_ref() == "type" && [1, 8, 17, 76, 77].iter().any(|index| self.lang.class_special.get(*index).map_or(false, |slot| slot == name)) {
             return Some(self.held_kind_descriptor(&word, name));
         }
         let sample = self.kind_sample(&word)?;
@@ -8861,7 +8861,17 @@ impl<'a> Engine<'a> {
         if let Value::Class(class) = value {
             let Some(maker) = Self::maker_beneath(class) else { return Ok(None); };
             let Some(word) = self.lang.class_special.get(place) else { return Ok(None); };
-            let Some(method) = self.class_value(&maker, word) else { return Ok(None); };
+            let Some(method) = self.class_value(&maker, word) else {
+                // No __ne__ of the maker's own: its __eq__ answers, turned about.
+                if place == 3 {
+                    return match self.special_call(value, 2, args)? {
+                        Some(told @ Value::Declined(_)) => Ok(Some(told)),
+                        Some(told) => Ok(Some(Value::Flag(!self.special_truth(&told)?))),
+                        None => Ok(None),
+                    };
+                }
+                return Ok(None);
+            };
             // The inherited native hash slot must use the class identity fallback.
             if place == 8 && matches!(&method, Value::Adapter(slot) if slot.0 == 29) { return Ok(None); }
             let answer = self.bind_class_value(method, Some(value.clone()), maker).and_then(|bound| self.class_apply(bound, args));
@@ -10197,6 +10207,10 @@ impl<'a> Engine<'a> {
                         Err(escape) => { self.carried = Some(escape); Err(self.special_fault()) }
                     };
                 }
+                return Err(format!("TypeError: type '{}' is not subscriptable", c.name).into());
+            } else {
+                // No class-getitem and no metaclass item method: the
+                // class is not subscriptable, and is refused by name.
                 return Err(format!("TypeError: type '{}' is not subscriptable", c.name).into());
             }
         }
@@ -28851,7 +28865,11 @@ impl Engine<'_> {
         if (kind == Builtin::OuterNames || program.body_of_all) && self.reading_in.is_none() {
             let home = self.routine_home(program);
             if home != self.class_word("main") {
-                if let Some(module) = self.modules.get(&home).cloned() {
+                // The module the routine was read into answers, not whichever
+                // module now stands under its name: a fresh import of the same
+                // name leaves the routine's own globals where they were.
+                let own = match &program.globe { Some(Value::Fields(object)) => Some(Value::Object(object.clone())), _ => None };
+                if let Some(module) = own.or_else(|| self.modules.get(&home).cloned()) {
                     if kind == Builtin::ClassTool(8) { return self.class_work(8, vec![module]); }
                     let namespace = self.class_word("namespace").to_string();
                     return self.class_get(module, &namespace, false);

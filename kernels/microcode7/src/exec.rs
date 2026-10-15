@@ -9633,7 +9633,7 @@ impl<'a> Machine<'a> {
         }
         if word == "type" {
             let slots = self.rules.specials;
-            if slots.get(8).map_or(false, |slot| slot == name) || slots.get(17).map_or(false, |slot| slot == name) {
+            if [1usize, 8, 17, 76, 77].iter().any(|at| slots.get(*at).map_or(false, |slot| slot == name)) {
                 return Some(self.kind_entry(&word, name));
             }
         }
@@ -16447,6 +16447,14 @@ impl<'a> Machine<'a> {
                     if index == 8 && matches!(&entry, Value::Wrapped(60, _)) { return Ok(None); }
                     let call = self.member_binding(entry, Some(subject.clone()), factory).and_then(|bound| self.apply_class_member(bound, tail.to_vec()));
                     return call.map(Some).map_err(|escape| self.carried_native_fault(escape));
+                }
+                // Lacking a __ne__, the builder's __eq__ is asked and its answer inverted.
+                if index == 3 {
+                    return match self.ask_special(subject, 2, tail)? {
+                        Some(refused @ Value::Refusal(_)) => Ok(Some(refused)),
+                        Some(told) => Ok(Some(Value::Flag(!self.object_truth(&told)?))),
+                        None => Ok(None),
+                    };
                 }
             }
             return Ok(None);
@@ -24662,7 +24670,9 @@ impl<'a> Machine<'a> {
                     let alias_class = self.namespace_item(&namespace, "types", "GenericAlias")?;
                     self.apply_class_member(alias_class, vec![v[0].clone(), v[1].clone()]).map_err(|escape| self.carried_native_fault(escape))?
                 } else {
-                    return Err(self.rules.detail_unready.to_owned());
+                    // Neither a class-getitem nor a fault kind: a plain class
+                    // read at a key is refused under its own name.
+                    return Err(format!("TypeError: type '{}' is not subscriptable", class.name));
                 }
             }
             Prim::At => self.element(&v[0], &v[1], Reading::Plain)?,
@@ -29323,7 +29333,17 @@ impl<'a> Machine<'a> {
         if (op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost)) && self.reading_now.is_none() {
             let origin = self.frames_named.last().map(|routine| self.routine_home(routine));
             if let Some(origin) = origin.filter(|name| name != self.detail("main")) {
-                if let Some(namespace) = self.imported.get(&origin).cloned() {
+                // sys.modules is the registry a program sees: the module it
+                // keeps under the name, put back there after a fresh import
+                // of the same name, is the one these globals belong to.
+                let sys = self.imported.get("sys").cloned();
+                let listed = sys.and_then(|space| match space.settled() { Value::Thing(thing) => self.indexed_module_member(&thing, "modules"), _ => None })
+                    .and_then(|table| match table.settled() {
+                        Value::Dict(rows) => rows.iter().find(|(key, _)| matches!(key.settled(), Value::Text(word) if word.as_ref() == origin.as_str())).map(|(_, held)| held.settled()),
+                        _ => None,
+                    })
+                    .filter(|held| matches!(held, Value::Thing(_)));
+                if let Some(namespace) = listed.or_else(|| self.imported.get(&origin).cloned()) {
                     if op == Prim::ClassWork(8) { return self.work_on_class(8, vec![namespace]).map_err(|escaped| self.suspension_fault(escaped)); }
                     let key = self.detail("namespace").to_owned();
                     return self.read_class_member(namespace, &key, false).map_err(|error| self.suspension_fault(error));

@@ -409,3 +409,7 @@ def compile(pattern, flags, code, groups, groupindex, indexgroup):
     from _sre_validation import validate
     validate(converted, groups)
     return Pattern(_TOKEN, pattern, flags, converted, groups, groupindex, indexgroup)
+
+# Neither class is an acceptable base type, as the C types are not.
+__seal_class(Pattern)
+__seal_class(Match)

@@ -282,7 +282,7 @@ impl<'a> Engine<'a> {
             let key = self.class_word(detail);
             if !key.is_empty() { c.shared.borrow_mut().push((key.to_string(), self.held_kind_descriptor("type", key))); }
         }
-        for at in [8, 17] { if let Some(name) = self.lang.class_special.get(at) {
+        for at in [1, 8, 17, 76, 77] { if let Some(name) = self.lang.class_special.get(at) {
             c.shared.borrow_mut().push((name.clone(), self.held_kind_descriptor("type", name)));
         } }
         c
@@ -2448,6 +2448,17 @@ impl<'a> Engine<'a> {
                         self.perform(&Action::At, 2)?;
                         return self.drop_top().map_err(Fault::Note);
                     }
+                    // A union made already joins any operand at all, the
+                    // operand read as the typing module reads a type: a
+                    // text becomes a forward reference.
+                    let formed = |v: &Value| matches!(v.contents(), Value::Object(ref o) if Self::own_kind(&o.class_now()).as_deref() == Some("Union"));
+                    let loose = if formed(&args[0]) && !self.union_member(&args[1]) { Some(1) } else if formed(&args[1]) && !self.union_member(&args[0]) { Some(0) } else { None };
+                    if let Some(side) = loose {
+                        let typing = self.import_module("typing")?;
+                        let convert = self.class_get(typing, "_type_convert", false)?.contents();
+                        args[side] = self.class_apply(convert, vec![args[side].clone()])?;
+                        return self.join_types(&args[0], &args[1]);
+                    }
                     if self.union_member(&args[0]) && self.union_member(&args[1]) {
                         self.join_types(&args[0], &args[1])
                     } else { Ok(Value::Declined(Rc::from("NotImplemented"))) }
@@ -2866,6 +2877,25 @@ impl<'a> Engine<'a> {
                         }
                         if self.lang.class_special.get(8).map_or(false, |slot| slot == &member) && args.is_empty() {
                             return Ok(self.builtin_call(Builtin::Hash, &member, vec![(None, receiver)])?);
+                        }
+                        if self.lang.class_special.get(1).is_some_and(|slot| slot == &member) && args.is_empty() {
+                            // type.__repr__ names the class itself and asks no metaclass.
+                            return Ok(Value::text(&receiver.plain()));
+                        }
+                        let membership = [76, 77].iter().position(|at| self.lang.class_special.get(*at).is_some_and(|slot| slot == &member));
+                        if let Some(which) = membership {
+                            if args.len() != 1 { return Err(format!("TypeError: expected 1 argument, got {}", args.len()).into()); }
+                            // The plain checks read the class line alone, every hook aside:
+                            // the thing's own class for an instance check, the class given
+                            // (and it must be one) for a subclass check.
+                            let owner = self.super_type_arg(&receiver)?;
+                            let given = args.remove(0);
+                            let candidate = if which == 1 {
+                                if !self.stands_for_kind(&given) { return Err(self.unclassed("core.issubclass.subject").into()); }
+                                given
+                            } else { self.builtin_call(Builtin::SortOf, "type", vec![(None, given)])? };
+                            let line = self.super_type_arg(&candidate)?;
+                            return Ok(Value::Flag(Self::class_order(&line).iter().any(|base| Self::super_same_class(base, &owner))));
                         }
                     }
                     // Buffer wrappers share native method validation and the canonical exporter.
@@ -4930,7 +4960,7 @@ impl<'a> Engine<'a> {
                     return Ok(Value::View(Rc::new((Value::Class(owner), "mapping".into()))));
                 }
                 let mut listed = self.kind_sample(&word).map_or_else(Vec::new, |sample| self.kind_member_names(&sample));
-                if word.as_ref() == "type" { listed.extend([8, 17].iter().filter_map(|at| self.lang.class_special.get(*at).cloned())); }
+                if word.as_ref() == "type" { listed.extend([1, 8, 17, 76, 77].iter().filter_map(|at| self.lang.class_special.get(*at).cloned())); }
                 if word.as_ref() == "dict" { listed.extend(self.lang.value_methods.iter().filter(|(_, op)| op.as_str() == "fromkeys").map(|(key, _)| key.clone())); }
                 let mut pairs: Vec<(Value, Value)> = listed.iter().filter_map(|key| self.loose_kind_member(&subject, key).map(|held| {
                     let raw = if word.as_ref() == "dict" && key == "fromkeys" { Self::adapter(29, vec![Value::text("dict"), Value::text(key), Value::Flag(true)]) } else { held };
@@ -6510,6 +6540,15 @@ impl<'a> Engine<'a> {
         let absent=self.missing_member(&subject,name);
         match &subject {
             Value::Object(o) => {
+                // A property keeps no namespace: only its documentation and name take a write.
+                if Rc::ptr_eq(&o.class_now(), &self.property_class()) && !["__doc__", "__name__"].contains(&name) {
+                    let tail = if value.is_some() { " and no __dict__ for setting new attributes" } else { "" };
+                    return Err(match name {
+                        "fget" | "fset" | "fdel" => "AttributeError: readonly attribute".to_string(),
+                        "__isabstractmethod__" => format!("AttributeError: attribute '{name}' of 'property' objects is not writable"),
+                        _ => format!("AttributeError: 'property' object has no attribute '{name}'{tail}"),
+                    }.into());
+                }
                 if o.fields.borrow().iter().any(|(key, _)| key == "\0structseq") {
                     return Err(if name.starts_with("st_") { "AttributeError: readonly attribute".to_string().into() } else { format!("AttributeError: 'os.stat_result' object has no attribute '{}' and no __dict__ for setting new attributes", name).into() });
                 }
@@ -7017,7 +7056,7 @@ impl<'a> Engine<'a> {
         let tracked = Self::own_kind(c).is_none()
             && !matches!(Self::kind_beneath(c).as_deref(), Some("tuple" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray"));
         let protocol = self.class_value(c, "__abc_tpflags__").map_or(0, |v| match v.contents() { Value::Small(n) => n, _ => 0 }) & 96;
-        protocol + if c.constants.iter().any(|(key, _)| key == "\0native-name") && !Self::class_sealed(c) { 256 } else { 0 } + if c.python_names.borrow().is_some() { 512 } else { 0 } + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
+        protocol + if c.constants.iter().any(|(key, _)| key == "\0native-name") && !Self::class_sealed(c) { 256 } else { 0 } + if c.python_names.borrow().is_some() || (self.lang.type_parameters && Self::own_kind(c).as_deref() == Some("Generic")) { 512 } else { 0 } + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
     }
     pub(super) fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
         if !self.lang.class_builder.is_empty() {
@@ -7035,7 +7074,7 @@ impl<'a> Engine<'a> {
         if let Value::Adapter(w)=value.contents() {if w.0==9 && w.1.is_empty(){let name=self.lang.parent_words.first().cloned().unwrap_or_default();return Ok(self.kind_class(&name));}}
         match value.contents() {
             Value::Class(class) if Self::class_sealed(&class) => {
-                let name = if class.shared.borrow().iter().any(|(key, flag)| key == "\0buffer_allocator" && flag.is_true()) { class.python_title().unwrap_or_else(|| class.name.clone()) } else if !self.lang.weak_refused.is_empty() && matches!(class.name.as_str(), "ProxyType" | "CallableProxyType") { format!("weakref.{}", class.name) } else if self.lang.type_parameters && Self::own_kind(&class).is_some_and(|kind| matches!(kind.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Union" | "ParamSpecArgs" | "ParamSpecKwargs")) { format!("typing.{}", class.name) } else { class.name.clone() };
+                let name = if class.shared.borrow().iter().any(|(key, flag)| key == "\0buffer_allocator" && flag.is_true()) || class.python_names.borrow().is_some() { class.python_title().unwrap_or_else(|| class.name.clone()) } else if !self.lang.weak_refused.is_empty() && matches!(class.name.as_str(), "ProxyType" | "CallableProxyType") { format!("weakref.{}", class.name) } else if self.lang.type_parameters && Self::own_kind(&class).is_some_and(|kind| matches!(kind.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Union" | "ParamSpecArgs" | "ParamSpecKwargs")) { format!("typing.{}", class.name) } else { class.name.clone() };
                 Err(format!("TypeError: type '{name}' is not an acceptable base type").into())
             },
             Value::Class(class) => Ok(class),
@@ -7137,6 +7176,8 @@ impl<'a> Engine<'a> {
         let Some(maker)=Self::maker_beneath(class) else{return Ok(None);};
         let Some(name)=self.lang.class_special.get(if subclass{77}else{76}).cloned() else{return Ok(None);};
         let Some(member)=self.class_value(&maker,&name) else{return Ok(None);};
+        // The kind's own check is the native road itself, not a hook over it.
+        if matches!(&member, Value::Adapter(slot) if slot.0 == 29) { return Ok(None); }
         if self.lang.bind_names {
             if let Value::Routine(body) = &member {
                 self.invoke(body, vec![wanted.clone(), given.clone()])?;
@@ -8500,9 +8541,12 @@ impl<'a> Engine<'a> {
         let Some(start) = order.iter().position(|class| Self::super_same_class(class, owner)) else { return Ok(None) };
         let root_class = self.root_class();
         for class in &order[start + 1..] {
+            // Generic is a plain class to a walk past it: it allocates
+            // and constructs nothing of its own.
+            let native = Self::own_kind(class).filter(|word| !self.lang.type_parameters || word != "Generic");
             if name == self.class_word("allocate") {
                 if let Some(declared) = Self::own_class_value(class, name) { return Ok(Some(declared)); }
-                if let Some(word) = Self::own_kind(class) {
+                if let Some(word) = native.clone() {
                     if word != self.class_word("root") {
                         let maker = Self::own_class_value(class, name).unwrap_or_else(|| Self::adapter(14, vec![Value::text(&word)]));
                         return Ok(Some(maker));
@@ -8532,7 +8576,7 @@ impl<'a> Engine<'a> {
                 }
                 continue;
             }
-            if Self::own_kind(class).is_some() || self.exception_class(class) || self.is_metaclass_root(class) {
+            if native.is_some() || self.exception_class(class) || self.is_metaclass_root(class) {
                 let constructing = self.lang.constructor.as_deref() == Some(name) || name == self.class_word("allocate");
                 let native_method = match Self::worth_of(receiver) {
                     Some(worth) => matches!(self.builtin_member(&worth, name)?, Some(Value::ValueMethod(_))),
@@ -8543,7 +8587,7 @@ impl<'a> Engine<'a> {
                 }
             }
             if Self::own_class_value(class, self.class_word("module")).is_none() {
-                let base_value = Self::own_kind(class).and_then(|word| self.spelled_kind(&word)).unwrap_or_else(|| Value::Class(class.clone()));
+                let base_value = native.clone().and_then(|word| self.spelled_kind(&word)).unwrap_or_else(|| Value::Class(class.clone()));
                 match self.class_get(base_value, name, false) {
                     Ok(value) => {
                         // A read on the class itself binds by what the

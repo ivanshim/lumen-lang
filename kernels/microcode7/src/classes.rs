@@ -444,7 +444,7 @@ impl<'a> Machine<'a> {
         for word in [self.detail("namespace"), self.detail("mro")] {
             if !word.is_empty() { kind.shared.borrow_mut().push((word.to_owned(), self.kind_entry("type", word))); }
         }
-        for at in [8, 17] { if let Some(key) = self.rules.specials.get(at) {
+        for at in [1, 8, 17, 76, 77] { if let Some(key) = self.rules.specials.get(at) {
             kind.shared.borrow_mut().push((key.clone(), self.kind_entry("type", key)));
         } }
         kind
@@ -2407,6 +2407,16 @@ impl<'a> Machine<'a> {
                             let factory = self.read_class_member(namespace, "Union", false)?;
                             return Ok(self.prim(Prim::At, "", &[factory, Value::tuple(values)])?);
                         }
+                        // Beside a union already built any operand goes, read
+                        // the way typing reads one: text becomes a forward reference.
+                        let union_built = |item: &Value| matches!(item.settled(), Value::Thing(t) if Self::native_word(&t.blueprint()).as_deref() == Some("Union"));
+                        let odd_one = (0..2).find(|at| union_built(&values[1 - at]) && !self.union_member(&values[*at]));
+                        if let Some(at) = odd_one {
+                            let typing = self.load_namespace("typing")?;
+                            let reader = self.read_class_member(typing, "_type_convert", false)?.settled();
+                            values[at] = self.apply_class_member(reader, vec![values[at].clone()])?;
+                            return self.combined_types(&values);
+                        }
                         let valid = values.iter().all(|value| self.union_member(value));
                         if !valid { Ok(Value::Refusal(Rc::from("NotImplemented"))) }
                         else { self.combined_types(&values) }
@@ -3023,6 +3033,27 @@ impl<'a> Machine<'a> {
                             let slots = self.rules.specials;
                             let calls = slots.get(17).map_or(false, |name| name == &entry);
                             let hashes = slots.get(8).map_or(false, |name| name == &entry);
+                            if slots.get(1).is_some_and(|name| name == &entry) && values.is_empty() {
+                                // The kind's repr of a class names it without the metaclass.
+                                return Ok(Value::text(&receiver.bare()));
+                            }
+                            let check = [76usize, 77].into_iter().find(|at| slots.get(*at).is_some_and(|name| name == &entry));
+                            if let Some(at) = check {
+                                if values.len() != 1 { return Err(format!("TypeError: expected 1 argument, got {}", values.len()).into()); }
+                                // Hooks aside, the line of the class decides: a thing's own
+                                // blueprint for the instance check, the class handed over
+                                // (which has to be a class) for the subclass check.
+                                let owner = self.parent_type_arg(&receiver)?;
+                                let handed = values.remove(0).settled();
+                                let line = if at == 77 {
+                                    if !self.stands_for_a_kind(&handed) { return Err(self.not_a_class("core.issubclass.subject").into()); }
+                                    self.parent_type_arg(&handed)?
+                                } else {
+                                    let actual = self.prim(Prim::SortOf, "type", &[handed]).map_err(Escape::from)?;
+                                    self.parent_type_arg(&actual)?
+                                };
+                                return Ok(Value::Flag(Self::resolution_order(&line).iter().any(|base| Self::parent_same_class(base, &owner))));
+                            }
                             if calls {
                                 // The native type call constructs without asking the
                                 // metaclass to dispatch this same call again.
@@ -5732,7 +5763,7 @@ impl<'a> Machine<'a> {
                     return Ok(Value::Window(Rc::new(Value::Blueprint(actual)), 'm'));
                 }
                 let mut names = self.kind_stand_in(&word).map_or_else(Vec::new, |sample| self.native_directory(&sample));
-                if word.as_ref() == "type" { let slots = self.rules.specials; names.extend([8, 17].iter().filter_map(|at| slots.get(*at).cloned())); }
+                if word.as_ref() == "type" { let slots = self.rules.specials; names.extend([1, 8, 17, 76, 77].iter().filter_map(|at| slots.get(*at).cloned())); }
                 if word.as_ref() == "dict" { names.extend(self.table.strings("ext.builtin.method.fromkeys").iter().cloned()); }
                 let mut pairs = names.into_iter().filter_map(|name| {
                     if word.as_ref() == "dict" && name == "fromkeys" {
@@ -6024,7 +6055,7 @@ impl<'a> Machine<'a> {
                 // The seal takes the base-standing bit off and puts the
                 // unchangeable one on.
                 let mut bits = if Self::sealed(b) { 256 } else { 1024 };
-                if b.type_names.borrow().is_some() {bits|=512;}
+                if b.type_names.borrow().is_some() || (self.table.flag("ext.stmt.type_parameters") && Self::native_word(b).as_deref() == Some("Generic")) {bits|=512;}
                 if b.constants.iter().any(|(label, _)| label == "\0native-name") { bits |= 256; }
                 // Things of a class's own making answer to the cycle
                 // collector; what stands on an atomic worth does not.
@@ -7075,6 +7106,14 @@ impl<'a> Machine<'a> {
         } else { None };
         let success=match &subject {
             Value::Thing(t)=>{
+                // No namespace lies under a property; its doc and name alone are written.
+                if Rc::ptr_eq(&t.blueprint(), &self.property_blueprint()) && key != "__doc__" && key != "__name__" {
+                    let ending = match replacement { Some(_) => " and no __dict__ for setting new attributes", None => "" };
+                    let told = if ["fget", "fset", "fdel"].contains(&key) { String::from("AttributeError: readonly attribute") }
+                        else if key == "__isabstractmethod__" { format!("AttributeError: attribute '{key}' of 'property' objects is not writable") }
+                        else { format!("AttributeError: 'property' object has no attribute '{key}'{ending}") };
+                    return Err(told.into());
+                }
                 let named_sequence = t.holds.borrow().iter().any(|entry| entry.0 == "\0named-sequence");
                 if named_sequence {
                     if key.starts_with("st_") {return Err("AttributeError: readonly attribute".to_string().into());}
@@ -7517,6 +7556,9 @@ impl<'a> Machine<'a> {
                 } else { match class.name.as_str() {
                     "ProxyType" | "CallableProxyType" if self.rules.weak_members => "weakref.".to_owned() + &class.name,
                     _ if self.table.flag("ext.stmt.type_parameters") && Self::native_word(&class).is_some_and(|word| ["TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "Union", "ParamSpecArgs", "ParamSpecKwargs"].contains(&word.as_str())) => format!("typing.{}", class.name),
+                    // A library class sealed by its module is named the
+                    // way a static type is: by module and name.
+                    _ if Self::own_entry(&class, self.detail("module")).is_some() => self.full_class_name(&class),
                     _ => class.name.clone(),
                 } };
                 return Err(format!("TypeError: type '{qualified}' is not an acceptable base type").into());
@@ -7618,6 +7660,8 @@ impl<'a> Machine<'a> {
         let Some(builder)=Self::builder_over(class) else{return Ok(None);};
         let Some(key)=self.rules.specials.get(if class_only{77}else{76}).cloned() else{return Ok(None);};
         let Some(entry)=self.inherited_entry(&builder,&key) else{return Ok(None);};
+        // The kind's own entry stands for the native road, which asks no hook.
+        if matches!(&entry, Value::Wrapped(60, _)) { return Ok(None); }
         let ordinary = if self.names_in_calls {
             match &entry {
                 Value::Routine(code) => Some((code.clone(), self.outermost.clone())),
@@ -9162,14 +9206,18 @@ impl<'a> Machine<'a> {
         let mut passed = false;
         let root = self.common_ancestor();
         let lookup_order = Self::resolution_order(&actual);
+        let typed = self.table.flag("ext.stmt.type_parameters");
         for base in &lookup_order {
             if passed {
+                // Generic allocates and constructs nothing itself: the
+                // walk reads it as any plain class.
+                let kind = Self::native_word(base).filter(|word| !typed || word != "Generic");
                 if key == self.detail("allocate") {
-                    if Self::native_word(base).as_deref() == Some("GenericAlias") {
+                    if kind.as_deref() == Some("GenericAlias") {
                         if let Some(entry) = Self::own_entry(base, key) { return Ok(Some(self.member_binding(entry, None, actual.clone())?)); }
                     }
                     if let Some(declared) = Self::own_entry(base, key) { return Ok(Some(declared)); }
-                    if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
+                    if let Some(native) = kind.clone().filter(|word| word != self.detail("root")) {
                         return Ok(Some(match Self::own_entry(base, key) {
                             Some(allocator) => allocator,
                             None => Self::wrap(14, vec![Value::text(&native)]),
@@ -9197,7 +9245,7 @@ impl<'a> Machine<'a> {
                     }
                     continue;
                 }
-                if Self::native_word(base).is_some() || self.is_fault_kind(base) {
+                if kind.is_some() || self.is_fault_kind(base) {
                     if self.table.single("ext.stmt.class.constructor") == Some(key) {
                         // The constructing of a native forebear runs the
                         // way a parent's call of the method spelled out
@@ -9209,7 +9257,7 @@ impl<'a> Machine<'a> {
                     }
                 }
                 if Self::own_entry(base, self.detail("module")).is_none() {
-                    let prototype = Self::native_word(base).and_then(|word| self.kind_by_word(&word)).unwrap_or_else(|| Value::Blueprint(base.clone()));
+                    let prototype = kind.clone().and_then(|word| self.kind_by_word(&word)).unwrap_or_else(|| Value::Blueprint(base.clone()));
                     let inherited = self.read_class_member(prototype, key, false);
                     match inherited {
                         Ok(found) => {
