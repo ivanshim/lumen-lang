@@ -417,10 +417,14 @@ impl Default for QuickHash {
 impl std::hash::Hasher for QuickHash {
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
+        // Indexed rather than iterated: the per-byte iterator call is the
+        // dearest part of this loop where the build is not optimised.
         let mut running = self.0;
-        for &byte in bytes {
-            running ^= byte as u64;
+        let mut at = 0;
+        while at < bytes.len() {
+            running ^= bytes[at] as u64;
             running = running.wrapping_mul(Self::PRIME);
+            at += 1;
         }
         self.0 = running;
     }

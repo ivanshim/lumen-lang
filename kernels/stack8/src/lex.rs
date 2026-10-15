@@ -265,6 +265,15 @@ fn continued_names(lang: &Lang) -> std::rc::Rc<std::collections::HashMap<String,
     std::rc::Rc::new(names)
 }
 
+fn string_lead(lang: &Lang) -> u128 {
+    let mut bits = 0u128;
+    for c in lang.quotes.iter().chain(&lang.raw_prefixes).chain(&lang.byte_prefixes).chain(&lang.plain_prefixes)
+        .chain(&lang.format_prefixes).chain(&lang.template_prefixes) {
+        if c.is_ascii() { bits |= 1u128 << (*c as u32); }
+    }
+    bits
+}
+
 struct Cursor<'a> {
     lang: &'a Lang,
     continued: std::rc::Rc<std::collections::HashMap<String, Vec<String>>>,
@@ -278,6 +287,8 @@ struct Cursor<'a> {
     /// The template letter the string being read opened with, so the
     /// beginnings pushed for it name it: none for any other string.
     template: Option<char>,
+    /// The ASCII letters and quotes a string can begin with, one bit each.
+    lead: u128,
 }
 
 /// How many fields deep a string may nest and still be named
@@ -512,7 +523,17 @@ impl<'a> Cursor<'a> {
         Ok(())
     }
 
+    /// Whether the next character could open a string or be a prefix
+    /// letter of one; a plain ASCII letter outside both lists cannot.
+    fn may_open_string(&self) -> bool {
+        match self.look(0) {
+            Some(c) if c.is_ascii() => (self.lead >> (c as u32)) & 1 == 1,
+            _ => true,
+        }
+    }
+
     fn string_open(&self) -> Option<(usize, String, bool, bool)> {
+        if !self.may_open_string() { return None; }
         let lang = self.lang;
         let mut count = 0;
         let (mut raw, mut bytes, mut plain, mut format) = (false, false, false, false);
@@ -544,6 +565,7 @@ impl<'a> Cursor<'a> {
     /// byte and plain, byte and format, or format and template) name
     /// the incompatible pair by Python's prefix precedence.
     fn prefix_conflict(&self) -> Option<String> {
+        if !self.may_open_string() { return None; }
         let lang = self.lang;
         let mut present = [false; 5];
         let mut repeated = false;
@@ -931,7 +953,7 @@ impl<'a> Cursor<'a> {
         self.push(Shape::StringExpression, expression.clone(), 0, line, col);
         let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
         self.push(Shape::Sign, group.open.clone(), 0, line, col);
-        let mut inner = Cursor { lang: self.lang, continued: self.continued.clone(), text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+        let mut inner = Cursor { lang: self.lang, continued: self.continued.clone(), text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None, lead: self.lead };
         if let Err(message) = inner.run(false) {
             self.row = inner.row;
             self.column = inner.column;
@@ -1186,7 +1208,7 @@ impl<'a> Cursor<'a> {
                 self.push(Shape::Quote, part, 0, line, col);
                 continue;
             }
-            let mut inner = Cursor { lang, continued: self.continued.clone(), text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+            let mut inner = Cursor { lang, continued: self.continued.clone(), text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None, lead: string_lead(lang) };
             inner.run(false)?;
             self.out.append(&mut inner.out);
         }
@@ -1527,7 +1549,7 @@ pub fn escape_warnings(source: &str, lang: &Lang) -> Vec<(String, usize)> {
     let source = normalized.as_deref().unwrap_or(source);
     if lang.template || (!lang.syntax_members.is_empty() && source.contains('\0')) { return Vec::new(); }
     let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-    let mut cur = Cursor { lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
+    let mut cur = Cursor { lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None, lead: string_lead(lang) };
     let _ = cur.run(true);
     cur.out.into_iter().filter(|t| t.shape == Shape::EscapeWarning).map(|t| (t.lexeme, t.row)).collect()
 }
@@ -1542,7 +1564,7 @@ fn lex_notices(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, 
         true => woven_source(source, lang).map_err(|(s, r)| (s, r, 1))?,
         false => {
             let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-            let mut cur = Cursor { lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
+            let mut cur = Cursor { lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None, lead: string_lead(lang) };
             if let Err(said) = cur.run(true) {
                 if !lang.syntax_members.is_empty() && said == "SyntaxError: unexpected EOF while parsing" {
                     let mut opens = Vec::new();
@@ -1737,7 +1759,7 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
             None => (after, ""),
         };
         let text = drop_comments(code, lang);
-        let mut cur = Cursor { lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+        let mut cur = Cursor { lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None, lead: string_lead(lang) };
         if let Err(said) = cur.run(true) {
             return Err((said, cur.row));
         }
@@ -1764,7 +1786,13 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
 
 /// Whether a mark stands written at that place in a run of characters.
 fn at_word(chars: &[char], at: usize, mark: &str) -> bool {
-    !mark.is_empty() && chars.len() >= at + mark.chars().count() && chars[at..].iter().zip(mark.chars()).all(|(c, m)| *c == m)
+    if mark.is_empty() { return false; }
+    let mut place = at;
+    for m in mark.chars() {
+        if chars.get(place) != Some(&m) { return false; }
+        place += 1;
+    }
+    true
 }
 
 /// Where a mark next stands, from that place onwards; nothing where it

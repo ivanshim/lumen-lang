@@ -268,6 +268,9 @@ struct Piece {
     outermost: bool,
     ident: String,
     idents: Vec<String>,
+    /// Every slot each name holds, in the order they were made: the
+    /// lookup `unblocked` answers from instead of walking `idents`.
+    slots: HashMap<String, Vec<usize>, crate::value::FxBuildHasher>,
     /// Which slots a bare block declared: found from inside that block
     /// only, never once it has closed.
     declared: Vec<bool>,
@@ -296,8 +299,23 @@ struct Piece {
     instrs: Vec<Instr>,
 }
 
+fn slot_index(idents: &[String]) -> HashMap<String, Vec<usize>, crate::value::FxBuildHasher> {
+    let mut index: HashMap<String, Vec<usize>, crate::value::FxBuildHasher> = HashMap::default();
+    for (at, name) in idents.iter().enumerate() { index.entry(name.clone()).or_default().push(at); }
+    index
+}
+
+impl Piece {
+    fn add_ident(&mut self, name: String) {
+        self.slots.entry(name.clone()).or_default().push(self.idents.len());
+        self.idents.push(name);
+    }
+}
+
 pub struct Compiler<'a> {
     source_tokens: Rc<str>,
+    /// The words the language gives for a class's own kind, read once.
+    kind_words: Vec<String>,
     plans: HashMap<usize, BindingPlan>,
     discovering: bool,
     annotation_target: Option<usize>,
@@ -724,6 +742,7 @@ fn compile_pass(
         outermost: alone,
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
+        slots: slot_index(&already),
         idents: already,
         scopes: Vec::new(),
         globals: std::mem::take(&mut table.pending_globals),
@@ -766,7 +785,7 @@ fn compile_pass(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let future_bits = table.future_bits;
-    let mut a = Compiler { source_tokens: if discovering { Rc::from("") } else { Rc::from(format!("{tokens:?}")) }, reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { kind_words: lang.class_details.get("kind").cloned().unwrap_or_default(), source_tokens: if discovering { Rc::from("") } else { Rc::from(format!("{tokens:?}")) }, reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1154,7 +1173,7 @@ impl<'a> Compiler<'a> {
     /// The slot a name has outside every bare block: none at the top
     /// level, where such names are global.
     fn unblocked(unit: &Piece, name: &str) -> Option<usize> {
-        (0..unit.idents.len()).rev().find(|&s| unit.idents[s] == name && !unit.declared[s])
+        unit.slots.get(name)?.iter().rev().copied().find(|&s| !unit.declared[s])
     }
 
     /// Where a name is read: every slot of that name from the innermost
@@ -1213,7 +1232,7 @@ impl<'a> Compiler<'a> {
         let source = self.enclosing_cell(depth - 1, name)?;
         let unit = &mut self.pieces[depth];
         let at = unit.idents.len();
-        unit.idents.push(name.to_string());
+        unit.add_ident(name.to_string());
         unit.declared.push(false);
         unit.enclosed.push((at, source));
         Some(Cell { free: true, ident: Rc::from(name), near: vec![at], far, moving: false })
@@ -1283,7 +1302,7 @@ impl<'a> Compiler<'a> {
             } else {
                 let parent = &mut self.pieces[owner];
                 if !parent.idents.iter().any(|n| n == name) && !parent.nonlocals.iter().any(|n| n == name) {
-                    parent.idents.push(name.to_string());
+                    parent.add_ident(name.to_string());
                     parent.declared.push(false);
                 }
                 self.piece().nonlocals.push(name.to_string());
@@ -1316,7 +1335,7 @@ impl<'a> Compiler<'a> {
             None => Self::unblocked(unit, name),
         };
         let slot = found.unwrap_or_else(|| {
-            unit.idents.push(name.to_string());
+            unit.add_ident(name.to_string());
             unit.declared.push(!unit.scopes.is_empty());
             let s = unit.idents.len() - 1;
             if let Some(block) = unit.scopes.last_mut() {
@@ -1449,23 +1468,27 @@ impl<'a> Compiler<'a> {
         // The routine a piece is written in, the class that routine
         // belongs to, and the two written together: all known while the
         // program is put together, so each stands for what it names.
-        let unit = self.piece();
-        let routine = match unit.outermost {
-            true => String::new(),
-            false => unit.ident.clone(),
-        };
-        let within = self.within.as_ref().map(|(named, _)| named.clone()).unwrap_or_default();
-        for (binding, said) in [
-            (&self.lang.routine_binding, routine.clone()),
-            (&self.lang.class_binding, within.clone()),
-            (&self.lang.method_binding, match within.is_empty() {
-                true => routine,
-                false => format!("{}::{}", within, routine),
-            }),
-        ] {
-            if binding.as_deref() == Some(name) {
-                self.constant(Value::text(&said));
-                return;
+        let named_binding = [&self.lang.routine_binding, &self.lang.class_binding, &self.lang.method_binding]
+            .iter().any(|binding| binding.as_deref() == Some(name));
+        if named_binding {
+            let unit = self.piece();
+            let routine = match unit.outermost {
+                true => String::new(),
+                false => unit.ident.clone(),
+            };
+            let within = self.within.as_ref().map(|(named, _)| named.clone()).unwrap_or_default();
+            for (binding, said) in [
+                (&self.lang.routine_binding, routine.clone()),
+                (&self.lang.class_binding, within.clone()),
+                (&self.lang.method_binding, match within.is_empty() {
+                    true => routine,
+                    false => format!("{}::{}", within, routine),
+                }),
+            ] {
+                if binding.as_deref() == Some(name) {
+                    self.constant(Value::text(&said));
+                    return;
+                }
             }
         }
         // A name an annotation reads is read when the annotation is, not settled
@@ -1537,8 +1560,7 @@ impl<'a> Compiler<'a> {
     /// the name into the cell's own, so the write goes where the cell
     /// is kept rather than to a member or a name of the unit's own.
     fn class_cell_written(&self, name: &str) -> Option<String> {
-        let words = self.lang.class_details.get("kind")?;
-        if self.lang.class_builder.is_empty() || !words.iter().any(|word| word == name) { return None; }
+        if self.lang.class_builder.is_empty() || !Lang::spells(&self.kind_words, name) { return None; }
         let unit = self.pieces.last()?;
         self.gathered.iter().rev().map(|held| held.class_cell.clone())
             .find(|cell| unit.nonlocals.iter().any(|named| named == cell))
@@ -1550,8 +1572,7 @@ impl<'a> Compiler<'a> {
     /// that class carry, however many functions stand between. A method
     /// never reaches here: the parent word's own arm reads it first.
     fn class_cell_read(&mut self, name: &str) -> Option<Cell> {
-        let words = self.lang.class_details.get("kind")?;
-        if self.lang.class_builder.is_empty() || !self.lang.closes_over || self.discovering || !words.iter().any(|word| word == name) { return None; }
+        if self.lang.class_builder.is_empty() || !self.lang.closes_over || self.discovering || !Lang::spells(&self.kind_words, name) { return None; }
         if !self.in_class_body() || self.piece().idents.iter().any(|named| named == name) { return None; }
         let at = self.gathered.len().checked_sub(2)?;
         self.gathered[at].needs_class_cell = true;
@@ -1743,7 +1764,7 @@ impl<'a> Compiler<'a> {
         if unit.outermost || !marked || unit.idents.iter().any(|n| n == name) {
             return;
         }
-        unit.idents.push(name.to_string());
+        unit.add_ident(name.to_string());
         unit.declared.push(false);
     }
 
@@ -1982,6 +2003,7 @@ impl<'a> Compiler<'a> {
         self.pieces.push(Piece { python_fallthrough: false, asynchronous_walk: false, asynchronous, comprehension_kind: None, named_expressions: Vec::new(), parameters: formals.clone(), declarations: Vec::new(), nonlocals: Vec::new(), class_nonlocals: Vec::new(), enclosed: Vec::new(), seen: Vec::new(),
             outermost: false,
             ident: name.to_string(),
+            slots: slot_index(&formals),
             idents: formals.clone(),
             declared: vec![false; formals.len()],
             scopes: Vec::new(),
@@ -2003,7 +2025,7 @@ impl<'a> Compiler<'a> {
                 }
                 let unit = self.piece();
                 for name in plan.names {
-                    if !unit.idents.contains(&name) { unit.idents.push(name); unit.declared.push(false); }
+                    if !unit.idents.contains(&name) { unit.add_ident(name); unit.declared.push(false); }
                 }
                 unit.globals = plan.globals;
                 unit.nonlocals = plan.nonlocals;
@@ -3624,10 +3646,11 @@ impl<'a> Compiler<'a> {
             self.constant(Value::text(&self.lang.binding_unrun));
             self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
         }
-        let group = self.lang.grouping.clone().expect("group marks");
-        let array = self.lang.array_brackets.clone().expect("array marks");
-        let paired = if self.at_symbol(&group.open) { Some(group) }
-            else if self.at_symbol(&array.open) { Some(array) } else { None };
+        let lang = self.lang;
+        let group = lang.grouping.as_ref().expect("group marks");
+        let array = lang.array_brackets.as_ref().expect("array marks");
+        let paired = if self.at_symbol(&group.open) { Some(group.clone()) }
+            else if self.at_symbol(&array.open) { Some(array.clone()) } else { None };
         if let Some(pair) = paired {
             let (count, comma, starred) = self.target_count(true);
             let grouped = !comma && count == 1 && self.lang.grouping.as_ref().map_or(false, |g| g.open == pair.open);
@@ -3730,7 +3753,7 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Grab(Rc::from(member.as_str())), 1);
                 self.called_on_value(None)?;
                 on_call = matches!(self.piece().instrs.last(), Some(Instr::Act(Action::Invoke(_), _)));
-            } else if let Some(pair) = self.lang.index_brackets.clone().filter(|p| self.at_symbol(&p.open)) {
+            } else if let Some(pair) = self.lang.index_brackets.as_ref().filter(|p| self.at_symbol(&p.open)).cloned() {
                 self.take();
                 let at = self.mark();
                 if self.lang.type_parameters {

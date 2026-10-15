@@ -28115,6 +28115,12 @@ impl Engine<'_> {
 
     /// String keys alone name module attributes; rendering another key
     /// cannot make it a binding name.
+    /// Whether a dictionary key spells exactly this name, said without
+    /// making the key's text over into an owned word first.
+    fn globals_key_is(key: &Value, name: &str) -> bool {
+        let held = match key { Value::Hashed(pair) => pair.0.contents(), other => other.contents() };
+        matches!(Self::worth_of(&held).unwrap_or(held).contents(), Value::Text(word) if word.as_ref() == name)
+    }
     fn globals_key_word(key: &Value) -> Option<String> {
         let held = match key { Value::Hashed(pair) => pair.0.contents(), other => other.contents() };
         match Self::worth_of(&held).unwrap_or(held).contents() {
@@ -28362,6 +28368,7 @@ impl Engine<'_> {
     /// handed its dictionary out joins the dictionary too, under the
     /// binding's own cell.
     fn globals_mirror_binding(&mut self, far: usize, binding: &Rc<RefCell<Value>>) {
+        if self.module_globals.is_empty() { return; }
         let Some(ident) = self.registry.idents.get(far) else { return };
         let Some(rest) = ident.strip_prefix("\0module:") else { return };
         let Some((_, rest)) = rest.split_once(':') else { return };
@@ -28369,8 +28376,8 @@ impl Engine<'_> {
         let Some(book) = self.module_globals.get(path).cloned() else { return };
         let mut book_mut = book.borrow_mut();
         if let Value::Map(pairs) = &mut *book_mut {
-            let rows = Rc::make_mut(pairs);
-            if !rows.iter().any(|(key, _)| Self::globals_key_word(key).as_deref() == Some(name.as_ref())) { rows.push((Value::text(name), Value::Bond(binding.clone()))); }
+            if pairs.iter().any(|(key, _)| Self::globals_key_is(key, name)) { return; }
+            Rc::make_mut(pairs).push((Value::text(name), Value::Bond(binding.clone())));
         }
     }
     /// A name written into a module's own dictionary that the module
