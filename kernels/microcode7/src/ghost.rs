@@ -239,8 +239,10 @@ pub fn release_all_anchors() {
 }
 
 /// A sweep covers this many anchored things. Up to this many, every
-/// step sweeps them all, exactly as before; beyond it the steps take
-/// turns over consecutive stretches, keeping a step's cost fixed while
+/// step sweeps them all, exactly as before. Beyond it, every step still
+/// sweeps the latest arrivals, which are the things most likely to be
+/// let go at any moment, and the steps take turns over consecutive
+/// stretches of the earlier ones, keeping a step's cost fixed while
 /// still reaching every thing within a bounded number of steps.
 const SWEEP_SPAN: usize = 32;
 
@@ -249,11 +251,13 @@ fn anchor_ready() -> bool {
         let all = all.borrow();
         let mut pending = all.as_slice();
         if pending.len() > SWEEP_SPAN {
+            let (earlier, latest) = pending.split_at(pending.len() - SWEEP_SPAN);
+            if latest.iter().any(|thing| Rc::strong_count(thing) == 1) { return true; }
             let offset = SWEEP_OFFSET.try_with(|o| o.get()).unwrap_or(0);
-            let begin = if offset + SWEEP_SPAN > pending.len() { 0 } else { offset };
-            let end = (begin + SWEEP_SPAN).min(pending.len());
+            let begin = if offset + SWEEP_SPAN > earlier.len() { 0 } else { offset };
+            let end = (begin + SWEEP_SPAN).min(earlier.len());
             let _ = SWEEP_OFFSET.try_with(|o| o.set(end));
-            pending = &pending[begin..end];
+            pending = &earlier[begin..end];
         }
         // Avoid an iterator callback per retained owner at every interpreter step.
         while let [a, b, c, d, rest @ ..] = pending {

@@ -283,20 +283,25 @@ pub fn release_all_anchors() {
 }
 
 /// How many anchored objects one step looks at. Fewer than this and
-/// every step sees them all, as it always did; more, and each step
-/// takes the next stretch of them in turn, so that a step costs the
-/// same however many objects wait on their last words, and each of
+/// every step sees them all, as it always did. More, and every step
+/// still sees the newest of them, since an object let go soon after it
+/// was made is the common case and is then found at once, and takes
+/// the next stretch of the older ones in turn, so that a step costs
+/// the same however many objects wait on their last words and each of
 /// them is seen again within a bounded number of steps.
 const ANCHOR_LOOK_AT: usize = 32;
 
 fn anchor_ready() -> bool {
+    let ready = |item: &Rc<Instance>| Rc::strong_count(item) == 1;
     ANCHORED.try_with(|all| {
         let all = all.borrow();
-        if all.len() <= ANCHOR_LOOK_AT { return all.iter().any(|item| Rc::strong_count(item) == 1); }
-        let from = ANCHOR_LOOK.try_with(|at| at.get()).unwrap_or(0) % all.len();
-        let stop = (from + ANCHOR_LOOK_AT).min(all.len());
-        let _ = ANCHOR_LOOK.try_with(|at| at.set(if stop == all.len() { 0 } else { stop }));
-        all[from..stop].iter().any(|item| Rc::strong_count(item) == 1)
+        if all.len() <= ANCHOR_LOOK_AT { return all.iter().any(ready); }
+        let (older, newest) = all.split_at(all.len() - ANCHOR_LOOK_AT);
+        if newest.iter().any(ready) { return true; }
+        let from = ANCHOR_LOOK.try_with(|at| at.get()).unwrap_or(0) % older.len();
+        let stop = (from + ANCHOR_LOOK_AT).min(older.len());
+        let _ = ANCHOR_LOOK.try_with(|at| at.set(if stop == older.len() { 0 } else { stop }));
+        older[from..stop].iter().any(ready)
     }).unwrap_or(false)
 }
 
