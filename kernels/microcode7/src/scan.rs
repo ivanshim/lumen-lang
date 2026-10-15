@@ -587,7 +587,18 @@ fn scan_code_marking(source: &str, table: &Table, first: u32) -> Result<Vec<Toke
 }
 
 /// The marks and letters opening a string, found before names are cut.
+/// Whether the character standing here can start a string or one of its
+/// prefixes; any character that is not ASCII is left to the full reading.
+fn may_quote(src: &[char], offset: usize, table: &Table) -> bool {
+    match src.get(offset) {
+        Some(c) if c.is_ascii() => (table.quoted_ascii >> *c as u32) & 1 == 1,
+        Some(_) => true,
+        None => false,
+    }
+}
+
 fn quoted_start(src: &[char], offset: usize, table: &Table) -> Option<(usize, Vec<char>, bool, bool)> {
+    if !may_quote(src, offset, table) { return None; }
     let quotes = &table.quoted_letters;
     let mut flags = 0u8;
     let mut begin = offset;
@@ -616,6 +627,7 @@ fn quoted_start(src: &[char], offset: usize, table: &Table) -> Option<(usize, Ve
 /// byte and format, or format and template) name the conflicting
 /// pair in Python's prefix order.
 fn prefix_conflict(src: &[char], offset: usize, table: &Table) -> Option<String> {
+    if !may_quote(src, offset, table) { return None; }
     let mut seen = 0u8;
     let mut duplicate = false;
     let mut at = offset;
@@ -845,7 +857,7 @@ impl Quotation<'_> {
             return Err(message);
         }
         let count = ["ext.lexical.escape.codepoint", "ext.lexical.escape.codepoint.wide"].iter()
-            .find(|key| table.spells(key, &letter)).and_then(|key| table.count(&format!("{key}.digits")));
+            .find(|key| table.spells(key, &letter)).and_then(|key| table.count_dyn(&format!("{key}.digits")));
         if let Some(count) = count {
             let amiss = table.single("ext.lexical.escape.codepoint.amiss").unwrap_or("Invalid Unicode escape");
             let beyond = table.single("ext.lexical.escape.codepoint.beyond").unwrap_or("Unicode code point out of range");
@@ -1787,7 +1799,7 @@ fn weave(s: &str, plain: &[usize], table: &Table, row: u32, tokens: &mut Vec<Tok
 /// Separators have a place between figures, and one may follow a base
 /// mark. Keep them until this asking is over, lest a bad spelling pass.
 pub fn check_numeral(word: &str, table: &Table) -> Result<(), String> {
-    let failure = |label: &str| table.single(label).or_else(|| table.single("ext.lexical.number.amiss"))
+    let failure = |label: &'static str| table.single(label).or_else(|| table.single("ext.lexical.number.amiss"))
         .map(str::to_owned).unwrap_or_else(|| format!("Invalid number: {}", word));
     let breaks = table.letters("ext.lexical.number.separator");
     let digits = |run: &str, base: u32, prefixed: bool| {

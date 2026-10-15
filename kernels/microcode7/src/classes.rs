@@ -28,7 +28,7 @@ impl<'a> Machine<'a> {
             "receiver" => self.rules.detail_receiver,
             "root" => self.rules.detail_root,
             "unready" => self.rules.detail_unready,
-            _ => self.table.single(&format!("ext.stmt.class.detail.{key}")).unwrap_or(""),
+            _ => self.table.single_dyn(&format!("ext.stmt.class.detail.{key}")).unwrap_or(""),
         }
     }
     // Read once when the roster itself was read, since no program still
@@ -1680,7 +1680,7 @@ impl<'a> Machine<'a> {
     /// around its name, where it was given one, and the blueprint of
     /// the thing it was asked about.
     fn accessor_complaint(&self,part:&str,property:&Thing,about:&Value)->Escape {
-        let words=self.table.strings(&format!("ext.stmt.class.detail.{part}"));
+        let words=self.table.strings_dyn(&format!("ext.stmt.class.detail.{part}"));
         if words.len()!=3{return self.class_unready();}
         let title=Self::kept_accessor(property,"\0name").map(|n|format!(" '{}'",n.bare())).unwrap_or_default();
         let of=match about {Value::Thing(t)=>{ let b=t.blueprint(); let shown=b.type_names.borrow().as_ref().map_or_else(||b.name.clone(),|names|names.full.bare()); shown },Value::Blueprint(b)=>if self.detail("name").is_empty(){b.name.clone()}else{Self::builder_over(b).map_or_else(||b.name.clone(),|builder|builder.type_names.borrow().as_ref().map_or_else(||builder.name.clone(),|names|names.short.type_text().bare()))},other=>other.bare()};
@@ -4086,7 +4086,7 @@ impl<'a> Machine<'a> {
             (false,false)=>(if working=='n'{"arguments.none"}else{label},class.name.clone()),
             (false,true)=>return Ok(()),
         };
-        let words=self.table.strings(&format!("ext.stmt.class.detail.{label}"));
+        let words=self.table.strings_dyn(&format!("ext.stmt.class.detail.{label}"));
         if words.len()!=2{return Err(self.class_unready());}
         Err(format!("{}{named}{}",words[0],words[1]).into())
     }

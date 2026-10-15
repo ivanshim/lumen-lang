@@ -42,7 +42,7 @@ pub fn complaint(t: &Table, ending: &str) -> String {
             [before, t.single("ext.builtin.complex").unwrap_or_default(), after].concat()
         });
     }
-    t.single(&format!("ext.builtin.complex.{ending}")).unwrap_or_default().to_owned()
+    t.single_dyn(&format!("ext.builtin.complex.{ending}")).unwrap_or_default().to_owned()
 }
 
 pub fn floor(t: &Table, left: &Value, right: &Value, symbol: &str) -> String {

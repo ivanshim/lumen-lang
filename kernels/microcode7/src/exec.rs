@@ -1918,7 +1918,7 @@ impl<'a> Machine<'a> {
         if table.has_any("ext.builtin.signal") {
             ask_host_for_signals();
         }
-        let find = |key: &str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
+        let find = |key: &'static str| table.single(key).and_then(|n| idents.iter().position(|x| x == n));
         let outermost = Env::make(idents.len(), None);
         crate::ghost::set_farewell_name(table.single("ext.stmt.class.finaliser").map(str::to_string));
         if table.has_any("ext.stmt.catch.as") {
@@ -3426,7 +3426,7 @@ impl<'a> Machine<'a> {
                 else { None };
             if let Some(label) = label { return self.table.single(label).map(str::to_string); }
         }
-        let told_of = |label: &str| self.table.single(label) == Some(told);
+        let told_of = |label: &'static str| self.table.single(label) == Some(told);
         let by_kind = match told {
             // Words the definition itself gave for a place outside the
             // range a value may take are known by being those very words.
@@ -3467,7 +3467,7 @@ impl<'a> Machine<'a> {
     /// Whether these words are a reading that stopped: they open with
     /// one of the three openings the definition gives for one.
     fn would_not_read_words(&self, told: &str) -> bool {
-        let opening = |key: &str| self.table.around(key).map(|(head, _)| head);
+        let opening = |key: &'static str| self.table.around(key).map(|(head, _)| head);
         [self.table.strings("ext.system.reading.unexpected").first().map(String::as_str), opening("ext.system.reading.unclosed"), opening("ext.system.reading.unmatched")]
             .into_iter()
             .flatten()
@@ -4369,7 +4369,7 @@ impl<'a> Machine<'a> {
     }
 
     fn generator_words(&self, suffix: &str) -> String {
-        self.table.single(&format!("ext.stmt.yield.{}", suffix)).unwrap_or_default().to_string()
+        self.table.single_dyn(&format!("ext.stmt.yield.{}", suffix)).unwrap_or_default().to_string()
     }
 
     /// The members a walk hands over for taking apart: no more than the
@@ -9745,7 +9745,7 @@ impl<'a> Machine<'a> {
                 return Some(Value::Member(Rc::new(value.settled()), name.to_owned()));
             }
         } else if matches!(value.settled(), Value::Generator(_)) && ["throw", "send", "close"].iter()
-            .any(|part| self.table.spells(&format!("ext.stmt.yield.{part}"), name)) {
+            .any(|part| self.table.spells_dyn(&format!("ext.stmt.yield.{part}"), name)) {
             return Some(Value::Member(Rc::new(value.settled()), name.to_owned()));
         }
         if let Value::Window(owner, 'm') = value {
@@ -10295,7 +10295,7 @@ impl<'a> Machine<'a> {
     }
 
     fn method_fault(&self, kind: &str) -> String {
-        self.table.single(&format!("ext.builtin.method.error.{kind}")).unwrap_or_default().to_string()
+        self.table.single_dyn(&format!("ext.builtin.method.error.{kind}")).unwrap_or_default().to_string()
     }
 
     /// Three words about a member and what it was sought on: what that
@@ -12761,7 +12761,7 @@ impl<'a> Machine<'a> {
     /// What a stepped walk complains of. The table's words already open
     /// with the class the complaint answers to, so the reply is marked
     /// as told in full and nothing further is written over it.
-    fn walk_fault(&self, key: &str, named: Option<&str>) -> String {
+    fn walk_fault(&self, key: &'static str, named: Option<&str>) -> String {
         let said = self.argument_fault(key, named);
         match said.is_empty() || !self.rules.has_any_ext_builtin_exceptions {
             true => said,
@@ -12776,7 +12776,7 @@ impl<'a> Machine<'a> {
     /// to, so it goes back marked as told in full and nothing further is
     /// put over it. A table holding too few pieces leaves nothing to
     /// write and the caller says its own plain words instead.
-    fn apart_words(&self, key: &str, written: &[String]) -> Option<String> {
+    fn apart_words(&self, key: &'static str, written: &[String]) -> Option<String> {
         let pieces = self.table.strings(key);
         if pieces.len() <= written.len() { return None; }
         let mut said: String = pieces.iter().zip(written).map(|(piece, part)| format!("{piece}{part}")).collect();
@@ -12788,7 +12788,7 @@ impl<'a> Machine<'a> {
     }
 
     fn argument_fault(&self, key: &str, name: Option<&str>) -> String {
-        let words = self.table.strings(key);
+        let words = self.table.strings_dyn(key);
         let mut said = words.first().cloned().unwrap_or_default();
         if let Some(name) = name {
             said.push_str(name);
@@ -14008,7 +14008,7 @@ impl<'a> Machine<'a> {
     }
 
     fn octet_worded(&self, reason: &str, at: usize) -> String {
-        self.table.strings(&format!("ext.system.bytes.{reason}")).get(at).map_or_else(String::new, String::clone)
+        self.table.strings_dyn(&format!("ext.system.bytes.{reason}")).get(at).map_or_else(String::new, String::clone)
     }
 
     /// The workings a row of bytes answers to by name, each beside the
@@ -16178,7 +16178,7 @@ impl<'a> Machine<'a> {
 
     /// A membership complaint the table words about a kind: the words
     /// before it, the kind, and the words after it.
-    fn membership_words(&self, label: &str, kind: &str) -> String {
+    fn membership_words(&self, label: &'static str, kind: &str) -> String {
         let words = self.table.strings(label);
         format!("{}{kind}{}", words.first().map_or("", |w| w.as_str()), words.get(1).map_or("", |w| w.as_str()))
     }
@@ -25431,7 +25431,7 @@ impl<'a> Machine<'a> {
     /// One piece of a sequence label, or nothing where the table is
     /// silent about it.
     fn sequence_piece(&self, label: &str, at: usize) -> &str {
-        self.table.strings(&format!("ext.op.sequence.{label}")).get(at).map_or("", String::as_str)
+        self.table.strings_dyn(&format!("ext.op.sequence.{label}")).get(at).map_or("", String::as_str)
     }
 
     /// The refusal of a joining that cannot be made. The kind on the
@@ -25798,7 +25798,7 @@ impl<'a> Machine<'a> {
     }
 
     fn span_complaint(&self, part: &str) -> String {
-        self.table.single(&format!("ext.op.index.slice.{}", part)).unwrap_or("").to_owned()
+        self.table.single_dyn(&format!("ext.op.index.slice.{}", part)).unwrap_or("").to_owned()
     }
 
     fn span_number(&self, part: &Value) -> Result<Option<BigInt>, String> {
@@ -26123,7 +26123,7 @@ impl<'a> Machine<'a> {
 
     fn set_complaint(&self, suffix: &str, insert: &str) -> String {
         let label = format!("ext.builtin.set.{suffix}");
-        let parts = self.table.strings(&label);
+        let parts = self.table.strings_dyn(&label);
         if suffix == "unhashable" {
             if let [lead, middle, end] = parts { return format!("{lead}{insert}{middle}{insert}{end}"); }
         }
@@ -26632,7 +26632,7 @@ pub fn complaint_head(table: &Table, word: &str, about: &str) -> String {
 /// wrapped as the language would have it, and the break of line that
 /// ends a complaint after the two.
 pub fn complaint_tail(table: &Table, place: &str, row: u32) -> String {
-    let wrapped = |label: &str, held: String| match table.around(label) {
+    let wrapped = |label: &'static str, held: String| match table.around(label) {
         Some((opens, closes)) => format!("{opens}{held}{closes}"),
         None => held,
     };
@@ -30419,7 +30419,7 @@ impl Machine<'_> {
 
     pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
         let label = format!("ext.builtin.{}", key);
-        let words = self.table.strings(&label);
+        let words = self.table.strings_dyn(&label);
         match words { [] => String::new(), [one] => one.clone(), [head, tail, ..] => format!("{head}{middle}{tail}") }
     }
 
@@ -31188,7 +31188,7 @@ impl Machine<'_> {
     /// zip's complaint of unequal sources: which one, then the close
     /// naming the first alone or the span up to the one before.
     fn unequal_zip(&self, key: &str, which: usize) -> String {
-        match self.table.strings(&format!("ext.builtin.{}", key)) {
+        match self.table.strings_dyn(&format!("ext.builtin.{}", key)) {
             [opening, alone, span] => format!("{}{}{}", opening, which + 1, if which == 1 { alone.clone() } else { format!("{}{}", span, which) }),
             _ => String::new(),
         }
@@ -31556,7 +31556,7 @@ impl Machine<'_> {
         let mut iter_stop_value = None;
         let mut iter_stop_exception = None;
         for (label, value) in keywords {
-            let is = |tail: &str| self.table.spells(&format!("ext.builtin.{}", tail), &label);
+            let is = |tail: &str| self.table.spells_dyn(&format!("ext.builtin.{}", tail), &label);
             if op == Prim::Iterator && is("iter.stop_value") {
                 if iter_stop_value.is_some() || input.len() != 1 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
                 iter_stop_value = Some(value);
@@ -31609,7 +31609,7 @@ impl Machine<'_> {
         let require = |lower, upper| -> Result<(), String> {
             if input.len() < lower || input.len() > upper || input.iter().any(|v| matches!(v, Value::Unset)) {
                 let which = if lower == 1 && upper == 1 { "core.arity.one" } else if lower == upper { "core.arity.exact" } else { "core.arity" };
-                let parts = self.table.strings(&format!("ext.builtin.{}",which));
+                let parts = self.table.strings_dyn(&format!("ext.builtin.{}",which));
                 let complaint = match which {
                     "core.arity.one" => format!("{}{}{}{}{}",parts[0],name,parts[1],input.len(),parts[2]),
                     "core.arity.exact" => format!("{}{}{}{}{}{}",parts[0],name,parts[1],lower,parts[2],input.len()),

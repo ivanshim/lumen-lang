@@ -600,7 +600,7 @@ fn span_complaint_named(table: &Table, words: &str) -> bool {
 /// complaint that begins with the same class.
 fn sequence_complaint_named(table: &Table, words: &str) -> bool {
     if !table.flag("ext.op.sequence.values") { return false; }
-    let pieces = |label: &str| table.strings(&format!("ext.op.sequence.{label}"));
+    let pieces = |label: &str| table.strings_dyn(&format!("ext.op.sequence.{label}"));
     let paired = |label: &str, opens: usize, closes: usize| {
         let said = pieces(label);
         match (said.get(opens), said.get(closes)) {

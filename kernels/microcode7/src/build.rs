@@ -392,6 +392,17 @@ enum Mode {
 
 /// `before` is how many lines stand ahead of the program's own text,
 /// which the host knows and a line named in a complaint must not count.
+/// The last place a name stands among a scope's names, looked for by hand:
+/// the iterator forms cost a call and a comparison trait per name here.
+fn last_slot(names: &[String], name: &str) -> Option<usize> {
+    let mut at = names.len();
+    while at > 0 {
+        at -= 1;
+        if names[at].len() == name.len() && names[at].as_bytes() == name.as_bytes() { return Some(at); }
+    }
+    None
+}
+
 pub fn build(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Res<Built> {
     build_marking(tokens, table, seeded, assumed, strict, before, None, None, None, None, None, None, false, false, 0, &[], 0)
 }
@@ -1240,11 +1251,11 @@ impl<'a> Builder<'a> {
         matches!(self.look().shape, Shape::Sign | Shape::Bare) && self.look().lexeme == s
     }
 
-    fn on_any(&self, key: &str) -> bool {
+    fn on_any(&self, key: &'static str) -> bool {
         self.table.strings(key).iter().any(|w| self.lexeme_of(w))
     }
 
-    fn key(&self, key: &str) -> bool {
+    fn key(&self, key: &'static str) -> bool {
         self.look().shape == Shape::Bare && self.table.spells(key, self.look().spelling())
     }
 
@@ -1389,7 +1400,7 @@ impl<'a> Builder<'a> {
             let set_aside = self.read_in && index < self.outer_layers && index + 1 < self.layers.len();
             if !set_aside && !(borrowed && index == owner) {
                 if layer.aliases.iter().any(|pair| pair.0 == name) { return None; }
-                if let Some(at) = layer.idents.iter().rposition(|word| word == name) {
+                if let Some(at) = last_slot(&layer.idents, name) {
                     let slot = Address { ident: Rc::from(name), up: distance, at, fallback: None };
                     for (which, stood) in through {
                         let layer = &mut self.layers[which];
@@ -1434,7 +1445,7 @@ impl<'a> Builder<'a> {
         // name of its own would be kept, and how far up it stands.
         let mut routine: Option<(usize, usize)> = None;
         for (i, scope) in self.layers.iter().enumerate().rev() {
-            if let Some(index) = scope.idents.iter().rposition(|n| n == name).filter(|_| scope.holds != Holds::Nothing) {
+            if let Some(index) = last_slot(&scope.idents, name).filter(|_| scope.holds != Holds::Nothing) {
                 found = Some((i, depth, index));
                 break;
             }
@@ -1534,7 +1545,7 @@ impl<'a> Builder<'a> {
                 // Makes no frame when it runs.
                 Holds::Nothing => continue,
                 Holds::Fresh | Holds::Every => {
-                    let index = match if i == 0 { global } else { scope.idents.iter().rposition(|n| n == name) } {
+                    let index = match if i == 0 { global } else { last_slot(&scope.idents, name) } {
                         Some(i) => i,
                         None => {
                             scope.idents.push(name.to_string());
@@ -2957,7 +2968,7 @@ impl<'a> Builder<'a> {
         self.plain_or_kind()
     }
 
-    fn scope_unrun(&self, label: &str) -> Form {
+    fn scope_unrun(&self, label: &'static str) -> Form {
         prim_call(Prim::Raise, vec![constant(Value::text(self.table.single(label).unwrap_or("")))])
     }
 
@@ -5144,8 +5155,8 @@ impl<'a> Builder<'a> {
             if word.shape != Shape::Sign { continue; }
             if depth.last().map(String::as_str) == Some(word.lexeme.as_str()) { depth.pop(); continue; }
             for family in ["syntax.group", "syntax.array", "syntax.map"] {
-                if table.single(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
-                    if let Some(close) = table.single(&format!("{}.close", family)) { depth.push(close.to_string()); }
+                if table.single_dyn(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
+                    if let Some(close) = table.single_dyn(&format!("{}.close", family)) { depth.push(close.to_string()); }
                     break;
                 }
             }
@@ -5245,8 +5256,8 @@ impl<'a> Builder<'a> {
             if word.shape != Shape::Sign { continue; }
             if depth.last().map(String::as_str) == Some(word.lexeme.as_str()) { depth.pop(); continue; }
             for family in ["syntax.group", "syntax.array", "syntax.map"] {
-                if table.single(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
-                    if let Some(close) = table.single(&format!("{}.close", family)) { depth.push(close.to_string()); }
+                if table.single_dyn(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
+                    if let Some(close) = table.single_dyn(&format!("{}.close", family)) { depth.push(close.to_string()); }
                     break;
                 }
             }
@@ -5271,8 +5282,8 @@ impl<'a> Builder<'a> {
             if word.shape != Shape::Sign { continue; }
             if depth.last().map(String::as_str) == Some(word.lexeme.as_str()) { depth.pop(); continue; }
             for family in ["syntax.group", "syntax.array", "syntax.map"] {
-                if table.single(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
-                    if let Some(close) = table.single(&format!("{}.close", family)) { depth.push(close.to_string()); }
+                if table.single_dyn(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
+                    if let Some(close) = table.single_dyn(&format!("{}.close", family)) { depth.push(close.to_string()); }
                     break;
                 }
             }
@@ -6649,8 +6660,8 @@ impl<'a> Builder<'a> {
                 if nesting.last().map_or(false, |end: &&str| *end == token.lexeme) { nesting.pop(); }
                 else {
                     for stem in ["syntax.group", "syntax.array", "syntax.map"] {
-                        if table.spells(&format!("{}.open", stem), &token.spelling()) {
-                            nesting.push(table.single(&format!("{}.close", stem)).unwrap_or_default());
+                        if table.spells_dyn(&format!("{}.open", stem), &token.spelling()) {
+                            nesting.push(table.single_dyn(&format!("{}.close", stem)).unwrap_or_default());
                             break;
                         }
                     }
@@ -7723,7 +7734,7 @@ impl<'a> Builder<'a> {
         if member.starts_with("__") && !member.ends_with("__") && !class.is_empty() { format!("_{class}{member}") } else { member.to_owned() }
     }
 
-    fn put_by_annotation(&mut self, boundaries: &[&str]) -> Res<()> {
+    fn put_by_annotation(&mut self, boundaries: &[&'static str]) -> Res<()> {
         let table = self.table;
         let mut nesting = Vec::new();
         let mut count = 0;
@@ -8305,7 +8316,7 @@ impl<'a> Builder<'a> {
 
     /// A declaration with its kind put by. A name alone has no work;
     /// a subscript without a value still works out its two parts.
-    fn divided_at(&self, start: usize, limit: usize, label: &str) -> Vec<usize> {
+    fn divided_at(&self, start: usize, limit: usize, label: &'static str) -> Vec<usize> {
         let mut depth: Vec<String> = Vec::new();
         let mut cuts = Vec::new();
         let t = self.table;
@@ -8322,9 +8333,9 @@ impl<'a> Builder<'a> {
                     depth.pop();
                     continue;
                 }
-                for family in ["syntax.group", "syntax.array", "syntax.map"] {
-                    if t.single(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
-                        if let Some(close) = t.single(&format!("{}.close", family)) { depth.push(close.to_string()); }
+                for (open, close) in [("syntax.group.open", "syntax.group.close"), ("syntax.array.open", "syntax.array.close"), ("syntax.map.open", "syntax.map.close")] {
+                    if t.single(open) == Some(word.lexeme.as_str()) {
+                        if let Some(close) = t.single(close) { depth.push(close.to_string()); }
                         break;
                     }
                 }
@@ -8425,7 +8436,7 @@ impl<'a> Builder<'a> {
                 else if self.table.spells("syntax.array.open", &token.spelling()) { "syntax.array" }
                 else if self.table.spells("syntax.group.open", &token.spelling()) { "syntax.group" }
                 else { break; };
-            let ending = self.table.single(&format!("{}.close", family)).unwrap();
+            let ending = self.table.single_dyn(&format!("{}.close", family)).unwrap();
             let mut level = 1;
             let mut ends = lo + 1;
             while ends < hi {
@@ -11612,7 +11623,7 @@ impl<'a> Builder<'a> {
 
     /// Find a word at this level, before an item ends. Quoted text is
     /// never a mark, however it happens to be spelled.
-    fn ahead_in_item(&self, label: &str) -> Option<usize> {
+    fn ahead_in_item(&self, label: &'static str) -> Option<usize> {
         let table = self.table;
         let mut nesting = Vec::new();
         let mut awaiting_body = 0usize;
@@ -11646,8 +11657,8 @@ impl<'a> Builder<'a> {
     }
 
     fn gathered_literal(&mut self, family: &str) -> Res<Form> {
-        let closing = self.table.single(&format!("syntax.{}.close", family)).unwrap().to_string();
-        let separator = self.table.single(&format!("syntax.{}.separator", family)).unwrap().to_string();
+        let closing = self.table.single_dyn(&format!("syntax.{}.close", family)).unwrap().to_string();
+        let separator = self.table.single_dyn(&format!("syntax.{}.separator", family)).unwrap().to_string();
         let mapped = family == "map" && (!self.table.flag("ext.syntax.set") || self.sign(&closing)
             || self.ahead_in_item("syntax.map.pair").is_some() || self.on_any("ext.syntax.map.spread"));
         if self.table.has_any("ext.builtin.exceptions.syntax") {
@@ -11875,9 +11886,9 @@ impl<'a> Builder<'a> {
         } else {
             let token = &self.tokens[first];
             let family = ["syntax.group", "syntax.array"].into_iter().find(|family|
-                token.shape == Shape::Sign && self.table.single(&format!("{family}.open")) == Some(token.lexeme.as_str()));
+                token.shape == Shape::Sign && self.table.single_dyn(&format!("{family}.open")) == Some(token.lexeme.as_str()));
             if let Some(family) = family {
-                let closing = self.table.single(&format!("{family}.close")).unwrap();
+                let closing = self.table.single_dyn(&format!("{family}.close")).unwrap();
                 let mut level = 1;
                 let mut cursor = first + 1;
                 while cursor < limit {
@@ -12044,7 +12055,7 @@ impl<'a> Builder<'a> {
         Ok(sequence(vec![hold, begin, cycle]))
     }
 
-    fn elements(&mut self, close_key: &str, sep_key: &str) -> Res<Vec<Form>> {
+    fn elements(&mut self, close_key: &'static str, sep_key: &'static str) -> Res<Vec<Form>> {
         let close = self.table.single(close_key).unwrap().to_string();
         let sep = self.table.single(sep_key).map(str::to_string);
         let mark = self.table.single("syntax.map.pair").map(str::to_string);
@@ -12085,7 +12096,7 @@ impl<'a> Builder<'a> {
     /// The arguments of a call by name: where the program said the
     /// reference sign, the name's own cell goes rather than a copy of
     /// what it holds, so the caller sees what the program writes.
-    fn arguments_of(&mut self, called: &str, close_key: &str, sep_key: &str) -> Res<Vec<Form>> {
+    fn arguments_of(&mut self, called: &str, close_key: &'static str, sep_key: &'static str) -> Res<Vec<Form>> {
         let shared = self.shared_args.get(called).cloned().unwrap_or_default();
         if !shared.iter().any(|x| *x) {
             return self.args(close_key, sep_key);
@@ -12187,7 +12198,7 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    fn args(&mut self, close_key: &str, sep_key: &str) -> Res<Vec<Form>> {
+    fn args(&mut self, close_key: &'static str, sep_key: &'static str) -> Res<Vec<Form>> {
         if self.table.has_any("ext.builtin.exceptions.syntax") { self.unparenthesized_generator()?; }
         if let Some(at) = self.ahead_in_item("ext.op.comprehension.for") {
             if self.table.has_any("ext.builtin.exceptions.syntax") && self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == "=" {

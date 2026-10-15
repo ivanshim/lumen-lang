@@ -18,7 +18,7 @@ pub enum Work {
 }
 
 pub fn complaint(table: &Table, reason: &str) -> String {
-    table.single(&format!("ext.builtin.text.fault.{}", reason)).unwrap_or_default().to_owned()
+    table.single_dyn(&format!("ext.builtin.text.fault.{}", reason)).unwrap_or_default().to_owned()
 }
 
 pub fn bears_kind(table: &Table, message: &str) -> bool {
@@ -74,7 +74,7 @@ pub fn fit_names(table: &Table, work: Work, values: &mut Vec<Value>, named: Vec<
             Work::REPLACE => &[(3,"count")],
             _ => &[],
         };
-        let chosen = candidates.iter().find(|(_, tail)| table.spells(&format!("ext.builtin.text.keyword.{}",tail), &name));
+        let chosen = candidates.iter().find(|(_, tail)| table.spells_dyn(&format!("ext.builtin.text.keyword.{}",tail), &name));
         let Some(&(position,_)) = chosen else {
             return Err(if method.is_empty() { complaint(table,"arguments") } else { format!("TypeError: '{name}' is an invalid keyword argument for {method}()") });
         };

@@ -98,11 +98,11 @@ pub struct Table {
     /// lies in memory: the builder asks after the same few labels by the
     /// same literals, and confirming a guess costs less than hashing a
     /// long label again.
-    guesses: Vec<std::cell::Cell<u32>>,
-    pub dyadic: HashMap<String, Infix>,
-    pub monadic: HashMap<String, Infix>,
-    pub precedence: HashMap<String, u32>,
-    pub prims: HashMap<String, Prim>,
+    guesses: Vec<std::cell::Cell<(usize, u32, u32)>>,
+    pub dyadic: HashMap<String, Infix, FxBuildHasher>,
+    pub monadic: HashMap<String, Infix, FxBuildHasher>,
+    pub precedence: HashMap<String, u32, FxBuildHasher>,
+    pub prims: HashMap<String, Prim, FxBuildHasher>,
     builtin_continuations: HashMap<String, Vec<String>>,
     /// Method spellings indexed once from the immutable definition.
     pub method_names: HashMap<String, &'static str>,
@@ -111,7 +111,7 @@ pub struct Table {
     /// a primitive spelled several ways has to answer by a settled one.
     pub prim_words: Vec<(Prim, String)>,
     /// `x op= e` for each binary operator (ext.op.assign.compound).
-    pub compound: HashMap<String, Prim>,
+    pub compound: HashMap<String, Prim, FxBuildHasher>,
     /// The labels the definition wrote out, empty ones included.
     given: HashSet<String>,
     pub keywords: HashSet<String>,
@@ -124,6 +124,9 @@ pub struct Table {
     pub has_class_order: bool,
     pub quoted_letters: Vec<char>,
     pub quoted_prefixes: Vec<(char, u8)>,
+    /// Every ASCII character a string can begin with or be prefixed by,
+    /// as a bit set: a character outside it starts no string at all.
+    pub quoted_ascii: u128,
     pub quoted_terminators: Vec<Vec<char>>,
 }
 
@@ -533,30 +536,33 @@ impl Table {
             cells,
             names,
             held,
-            guesses: (0..GUESSES).map(|_| std::cell::Cell::new(0)).collect(),
-            dyadic: HashMap::new(),
-            monadic: HashMap::new(),
-            precedence: HashMap::new(),
-            prims: HashMap::new(),
-            builtin_continuations: HashMap::new(),
-            method_names: HashMap::new(),
+            guesses: (0..GUESSES).map(|_| std::cell::Cell::new((0, 0, 0))).collect(),
+            dyadic: HashMap::default(),
+            monadic: HashMap::default(),
+            precedence: HashMap::default(),
+            prims: HashMap::default(),
+            builtin_continuations: HashMap::default(),
+            method_names: HashMap::default(),
             prim_words: Vec::new(),
-            compound: HashMap::new(),
+            compound: HashMap::default(),
             given: map.keys().cloned().collect(),
             keywords: HashSet::new(),
             signs: Vec::new(),
             has_class_order: false,
-            quoted_letters: Vec::new(), quoted_prefixes: Vec::new(), quoted_terminators: Vec::new(),
+            quoted_letters: Vec::new(), quoted_prefixes: Vec::new(), quoted_ascii: 0, quoted_terminators: Vec::new(),
         };
         table.has_class_order = table.single("ext.stmt.class.detail.root").map_or(false, |s| !s.is_empty());
         table.quoted_letters = table.letters("lexical.string_quotes");
         table.quoted_terminators = table.strings("ext.lexical.string.long").iter().map(|word| word.chars().collect()).collect();
         for (category, part) in ["raw", "bytes", "plain", "format", "template"].iter().enumerate() {
-            for character in table.letters(&format!("ext.lexical.string.prefix.{part}")) {
+            for character in table.letters_dyn(&format!("ext.lexical.string.prefix.{part}")) {
                 if !table.quoted_prefixes.iter().any(|(letter, _)| *letter == character) {
                     table.quoted_prefixes.push((character, category as u8));
                 }
             }
+        }
+        for letter in table.quoted_letters.iter().chain(table.quoted_prefixes.iter().map(|(letter, _)| letter)) {
+            if letter.is_ascii() { table.quoted_ascii |= 1u128 << *letter as u32; }
         }
         if !matches!(table.lone("system.real.render"), Some("library" | "shortest")) {
             return Err(String::from("The real rendering is neither 'library' nor 'shortest'"));
@@ -600,18 +606,61 @@ impl Table {
         self.builtin_continuations.get(prefix).map_or(&[], Vec::as_slice)
     }
 
-    fn cell(&self, key: &str) -> Option<&Entry> {
-        let hint = ((key.as_ptr() as usize >> 3) ^ key.len().wrapping_mul(0x9e37)) % GUESSES;
-        let guess = self.guesses[hint].get() as usize;
-        if guess != 0 && self.names[guess - 1] == key {
-            return Some(&self.held[guess - 1]);
+    /// A label read by a name that is a literal in the kernel: the same
+    /// words at the same address are the same label, so the answer is
+    /// remembered by where the words stand and no word is compared.
+    fn cell(&self, key: &'static str) -> Option<&Entry> {
+        let place = key.as_ptr() as usize;
+        let hint = ((place >> 3) ^ key.len().wrapping_mul(0x9e37)) % GUESSES;
+        let (seen, length, at) = self.guesses[hint].get();
+        if seen == place && length as usize == key.len() {
+            return Some(&self.held[at as usize]);
         }
         let at = *self.cells.get(key)?;
-        self.guesses[hint].set(at as u32 + 1);
+        self.guesses[hint].set((place, key.len() as u32, at as u32));
         Some(&self.held[at])
     }
 
-    pub fn strings(&self, key: &str) -> &[String] {
+    /// The same for a label whose name was put together at run time: its
+    /// words may stand anywhere, so only the words themselves identify it.
+    fn cell_dyn(&self, key: &str) -> Option<&Entry> {
+        self.cells.get(key).map(|&at| &self.held[at])
+    }
+
+    pub fn strings_dyn(&self, key: &str) -> &[String] {
+        match self.cell_dyn(key) {
+            Some(Entry::Strings(l)) => l,
+            _ => panic!("'{key}' is not a list label"),
+        }
+    }
+
+    pub fn single_dyn(&self, key: &str) -> Option<&str> {
+        self.strings_dyn(key).first().map(String::as_str)
+    }
+
+    pub fn spells_dyn(&self, key: &str, lexeme: &str) -> bool {
+        self.strings_dyn(key).iter().any(|w| w == lexeme)
+    }
+
+    pub fn around_dyn(&self, key: &str) -> Option<(&str, &str)> {
+        match self.strings_dyn(key) {
+            [before, after, ..] => Some((before.as_str(), after.as_str())),
+            _ => None,
+        }
+    }
+
+    pub fn count_dyn(&self, key: &str) -> Option<usize> {
+        match self.cell_dyn(key) {
+            Some(Entry::Count(n)) => *n,
+            _ => None,
+        }
+    }
+
+    pub fn letters_dyn(&self, key: &str) -> Vec<char> {
+        self.strings_dyn(key).iter().filter_map(|w| if w.chars().count() == 1 { w.chars().next() } else { None }).collect()
+    }
+
+    pub fn strings(&self, key: &'static str) -> &[String] {
         match self.cell(key) {
             Some(Entry::Strings(l)) => l,
             _ => panic!("'{key}' is not a list label"),
@@ -622,7 +671,7 @@ impl Table {
     /// such label. It is for a kernel asking after a label by a name it
     /// puts together rather than one the roster writes out.
     pub fn loose_strings(&self, key: &str) -> &[String] {
-        match self.cell(key) {
+        match self.cell_dyn(key) {
             Some(Entry::Strings(words)) => words,
             _ => &[],
         }
@@ -649,13 +698,13 @@ impl Table {
         self.spells("stmt.terminator", sign) || self.spells("ext.stmt.separator", sign)
     }
 
-    pub fn single(&self, key: &str) -> Option<&str> {
+    pub fn single(&self, key: &'static str) -> Option<&str> {
         self.strings(key).first().map(String::as_str)
     }
 
     /// A label whose words stand on either side of what the kernel
     /// writes between them: the first word before, the second after.
-    pub fn around(&self, key: &str) -> Option<(&str, &str)> {
+    pub fn around(&self, key: &'static str) -> Option<(&str, &str)> {
         match self.strings(key) {
             [before, after, ..] => Some((before.as_str(), after.as_str())),
             _ => None,
@@ -668,15 +717,21 @@ impl Table {
         self.given.contains(key)
     }
 
-    pub fn has_any(&self, key: &str) -> bool {
+    pub fn has_any(&self, key: &'static str) -> bool {
         !self.strings(key).is_empty()
     }
 
-    pub fn spells(&self, key: &str, lexeme: &str) -> bool {
-        self.strings(key).iter().any(|w| w == lexeme)
+    pub fn spells(&self, key: &'static str, lexeme: &str) -> bool {
+        let words = self.strings(key);
+        let mut at = 0;
+        while at < words.len() {
+            if words[at].len() == lexeme.len() && words[at].as_bytes() == lexeme.as_bytes() { return true; }
+            at += 1;
+        }
+        false
     }
 
-    pub fn flag(&self, key: &str) -> bool {
+    pub fn flag(&self, key: &'static str) -> bool {
         matches!(self.cell(key), Some(Entry::Flag(true)))
     }
 
@@ -728,14 +783,14 @@ impl Table {
         }
     }
 
-    pub fn count(&self, key: &str) -> Option<usize> {
+    pub fn count(&self, key: &'static str) -> Option<usize> {
         match self.cell(key) {
             Some(Entry::Count(n)) => *n,
             _ => None,
         }
     }
 
-    pub fn lone(&self, key: &str) -> Option<&str> {
+    pub fn lone(&self, key: &'static str) -> Option<&str> {
         match self.cell(key) {
             Some(Entry::One(w)) => w.as_deref(),
             _ => None,
@@ -749,7 +804,7 @@ impl Table {
         }
     }
 
-    pub fn letter(&self, key: &str) -> Option<char> {
+    pub fn letter(&self, key: &'static str) -> Option<char> {
         let mut it = self.single(key)?.chars();
         match (it.next(), it.next()) {
             (Some(c), None) => Some(c),
@@ -757,7 +812,7 @@ impl Table {
         }
     }
 
-    pub fn letters(&self, key: &str) -> Vec<char> {
+    pub fn letters(&self, key: &'static str) -> Vec<char> {
         self.strings(key).iter().filter_map(|w| if w.chars().count() == 1 { w.chars().next() } else { None }).collect()
     }
 

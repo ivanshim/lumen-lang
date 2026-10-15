@@ -23,7 +23,7 @@ fn paired(table: &Table) -> Vec<(String, String)> {
             "block" => ("block.open".to_string(), "block.close".to_string()),
             _ => (format!("{stem}.open"), format!("{stem}.close")),
         };
-        if let (Some(a), Some(z)) = (table.single(&ends.0), table.single(&ends.1)) {
+        if let (Some(a), Some(z)) = (table.single_dyn(&ends.0), table.single_dyn(&ends.1)) {
             both.push((a.to_string(), z.to_string()));
         }
     }

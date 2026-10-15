@@ -48,7 +48,7 @@ impl Layout<'_> {
             let kind = inserts[2].rsplit('.').next().unwrap_or(inserts[2]);
             return format!("TypeError: %{} format: an integer is required, not {}", inserts[1], kind);
         }
-        self.table.strings(label).iter().enumerate().map(|(n, word)| {
+        self.table.strings_dyn(label).iter().enumerate().map(|(n, word)| {
             let mut fragment = word.clone();
             fragment.push_str(inserts.get(n).copied().unwrap_or(""));
             fragment
@@ -164,7 +164,7 @@ impl Layout<'_> {
     /// is "too many decimal digits" whatever the run means, and a run
     /// that fits but still names a width or a precision past what the
     /// field could ever use is worded by which of the two it was.
-    fn read_count(&self, input: &mut std::iter::Peekable<std::str::Chars<'_>>, big: &str, strict: bool) -> Result<Option<usize>, String> {
+    fn read_count(&self, input: &mut std::iter::Peekable<std::str::Chars<'_>>, big: &'static str, strict: bool) -> Result<Option<usize>, String> {
         let mut digits = String::new();
         while input.peek().map_or(false, |c| c.is_ascii_digit()) { digits.push(input.next().unwrap()); }
         if digits.is_empty() { return Ok(None); }
