@@ -174,20 +174,14 @@ def _put(node, key, value, hashed, shift):
     if kind == 'C':
         if node[1] != hashed:
             return _join(node, ('L', hashed, key, value), shift), True
-        found = False
-        pairs = []
-        for old_key, old_value in node[2]:
+        entries = node[2]
+        for at in range(len(entries)):
+            old_key, old_value = entries[at]
             if _same_key(old_key, key):
-                found = True
                 if old_value is value:
                     return node, False
-                pairs.append((old_key, value))
-            else:
-                pairs.append((old_key, old_value))
-        if not found:
-            pairs.append((key, value))
-            return ('C', hashed, tuple(pairs)), True
-        return ('C', hashed, tuple(pairs)), False
+                return ('C', hashed, entries[:at] + ((old_key, value),) + entries[at + 1:]), False
+        return ('C', hashed, entries + ((key, value),)), True
     index = (hashed >> shift) & _SLOT
     children = node[1]
     child = children[index]
