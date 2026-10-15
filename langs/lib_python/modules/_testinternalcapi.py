@@ -349,6 +349,8 @@ class hamt:
     def __eq__(self, other):
         if type(other) is not hamt:
             return NotImplemented
+        if self is other:
+            return True
         if self._len != other._len:
             return False
         pairs = []
@@ -357,7 +359,7 @@ class hamt:
             found = _find(other._root, key, _hash_bits(key), 0)
             if found is _MISSING:
                 return False
-            if found != value:
+            if not (found is value or found == value):
                 return False
         return True
 
