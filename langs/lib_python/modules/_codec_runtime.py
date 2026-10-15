@@ -269,6 +269,7 @@ class CodecInfo(tuple):
         self.incrementaldecoder = incrementaldecoder
 
 _registry_cache = {}
+_lookup_names = {}
 _registry_started = False
 _registry_normalizer = None
 
@@ -277,6 +278,10 @@ def lookup(encoding):
     global _registry_started, _registry_normalizer
     if not isinstance(encoding, str):
         raise TypeError('encoding must be str, not ' + type(encoding).__name__)
+    if type(encoding) is str and encoding in _lookup_names:
+        found = _registry_cache.get(_lookup_names[encoding])
+        if found is not None:
+            return found
     encoding.encode('utf-8')
     if '\0' in encoding:
         raise ValueError('embedded null character')
@@ -284,6 +289,8 @@ def lookup(encoding):
         from _codecs import _normalize_encoding
         _registry_normalizer = _normalize_encoding
     name = _registry_normalizer(encoding).lower()
+    if type(encoding) is str and len(_lookup_names) < 512:
+        _lookup_names[encoding] = name
     if name in _registry_cache:
         return _registry_cache[name]
     if not _registry_started:
@@ -619,19 +626,55 @@ def _escaped_encode(text, raw):
             out.extend(list(_escape(c).encode('ascii')))
     return bytes(out)
 
+# Text whose escapes are all plain ones (the one-letter names and the \x,
+# \u, \U forms with their full digits) is read here a pair of backslashes
+# at a time; anything else (octal, \N, a bad or short escape, a trailing
+# backslash) answers None and goes to the full loop below.
+_plain_escapes = (('\\n', '\n'), ('\\r', '\r'), ('\\t', '\t'), ('\\a', '\a'), ('\\b', '\b'), ('\\f', '\f'),
+                  ('\\v', '\v'), ("\\'", "'"), ('\\"', '"'))
+_escape_widths = {'u': 4, 'U': 8, 'x': 2}
+
+def _escaped_plain(text, raw):
+    segments = text.split('\\\\')
+    for at in range(len(segments)):
+        rest = segments[at]
+        if '\\' not in rest:
+            continue
+        if not raw:
+            for spelled, plain in _plain_escapes:
+                rest = rest.replace(spelled, plain)
+        pieces = rest.split('\\')
+        rest = pieces[0]
+        for piece in pieces[1:]:
+            width = _escape_widths.get(piece[:1])
+            if width is None or raw and width == 2:
+                return None
+            digits = piece[1:1 + width]
+            if len(digits) != width or digits.strip('0123456789abcdefABCDEF'):
+                return None
+            code = int(digits, 16)
+            if code > 0x10ffff:
+                return None
+            rest += chr(code) + piece[1 + width:]
+        segments[at] = rest
+    return ('\\\\' if raw else '\\').join(segments)
+
 def _escaped_decode(data, raw, errors):
     text = data.decode('latin-1')
+    quick = _escaped_plain(text, raw)
+    if quick is not None:
+        return quick
     out = ''
     i = 0
     encoding = 'rawunicodeescape' if raw else 'unicodeescape'
     warning = None
     while i < len(text):
-        start = i
-        c = text[i]
-        i += 1
-        if c != '\\':
-            out += c
-            continue
+        start = text.find('\\', i)
+        if start < 0:
+            out += text[i:]
+            break
+        out += text[i:start]
+        i = start + 1
         if i == len(text):
             if raw:
                 out += '\\'
@@ -640,6 +683,10 @@ def _escaped_decode(data, raw, errors):
             out += repl
             continue
         c = text[i]
+        if not raw and c in _escape_decode:
+            out += _escape_decode[c]
+            i += 1
+            continue
         if raw and c not in 'uU':
             out += '\\'
             if c == '\\':
@@ -872,6 +919,11 @@ def _decode(obj, encoding='utf-8', errors=_default_errors):
     obj = bytes(obj)
     if not isinstance(errors, str):
         raise TypeError('errors must be str')
+    if name in ('unicode_escape', 'raw_unicode_escape'):
+        # Without a backslash there is no escape to read: Latin-1 as it stands.
+        if 92 not in obj:
+            return _raw_text_decode(obj, 'latin-1', 'strict')
+        return _escaped_decode(obj, name == 'raw_unicode_escape', errors)
     if name in ('utf_8', 'ascii', 'latin_1'):
         return _raw_text_decode(obj, name, errors)
     if name == 'utf_8_sig':
@@ -880,11 +932,6 @@ def _decode(obj, encoding='utf-8', errors=_default_errors):
         return _wide_decode(obj, name, errors)[0]
     if name == 'utf_7':
         return _utf7_decode(obj, errors)[0]
-    if name in ('unicode_escape', 'raw_unicode_escape'):
-        # Without a backslash there is no escape to read: Latin-1 as it stands.
-        if 92 not in obj:
-            return _raw_text_decode(obj, 'latin-1', 'strict')
-        return _escaped_decode(obj, name == 'raw_unicode_escape', errors)
     if name in _charmaps:
         return charmap_decode(obj, errors, _charmaps[name])[0]
     entry = lookup(encoding)

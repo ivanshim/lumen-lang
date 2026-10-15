@@ -82,8 +82,24 @@ def _encoder(name):
     return _CodecCall(encode, name + '_encode')
 
 # Find the prefix that ends before an unfinished escaped character.
+_escape_openers = frozenset([117, 85, 120, 78, 48, 49, 50, 51, 52, 53, 54, 55])
+
 def _escape_end(data, raw):
     i = 0
+    # Only the last backslash can open an unfinished escape; without \N
+    # (whose name may run on) the backslashes before it pair off, so an even
+    # run leaves nothing to hold back and an odd one is read from its start.
+    if raw or b'\\N' not in data:
+        last = data.rfind(b'\\')
+        if last < 0:
+            return len(data)
+        run = 1
+        while run <= last and data[last - run] == 92:
+            run += 1
+        if run % 2 == 0:
+            return len(data)
+        i = last
+    openers = (117, 85) if raw else _escape_openers
     while i < len(data):
         start = data.find(b'\\', i)
         if start < 0:
@@ -93,6 +109,8 @@ def _escape_end(data, raw):
             return start
         c = data[i]
         i += 1
+        if c not in openers:
+            continue
         if c in (117, 85) or c == 120 and not raw:
             width = 4 if c == 117 else 8 if c == 85 else 2
             digits = 0
@@ -118,11 +136,30 @@ def _escape_end(data, raw):
 
 # Return a decoder with byte consumption and non-final buffering.
 def _decoder(name, default_final=False):
+    wide = name.startswith('utf_16') or name.startswith('utf_32')
+    utf8 = name == 'utf_8'
+    form = _runtime._wide_forms.get(name)
+    # A fixed byte order: whole units go to the kernel without the general routine.
+    unit = form[0] if form is not None and name not in ('utf_16', 'utf_32') else 0
+    aligned = _runtime._aligned_handlers
+    native = _runtime._raw_text_decode
     # Decode only complete characters when the caller has more bytes to supply.
     def decode(input, errors='strict', final=default_final):
-        data = input.encode('utf-8') if isinstance(input, str) and name in ('unicode_escape', 'raw_unicode_escape') else _buffer(input)
-        errors = _error_argument(errors, name + '_decode')
-        if name.startswith('utf_16') or name.startswith('utf_32'):
+        if type(input) is bytes and type(errors) is str and '\x00' not in errors:
+            data = input
+            if utf8:
+                # Whole, valid text reads the same under every policy and `final`.
+                try:
+                    return native(data, 'utf-8', 'strict'), len(data)
+                except UnicodeDecodeError:
+                    pass
+            elif unit and len(data) % unit == 0 and (final or errors in aligned):
+                if final or unit == 4 or len(data) < 2 or not 0xd8 <= data[-1 if form[1] else -2] <= 0xdb:
+                    return native(data, form[2], errors), len(data)
+        else:
+            data = input.encode('utf-8') if isinstance(input, str) and name in ('unicode_escape', 'raw_unicode_escape') else _buffer(input)
+            errors = _error_argument(errors, name + '_decode')
+        if wide:
             return _runtime._wide_decode(data, name, errors, final)
         if name == 'utf_8':
             decoder = _runtime._IncrementalDecoder(name, errors)
