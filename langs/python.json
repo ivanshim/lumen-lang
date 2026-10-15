@@ -3913,7 +3913,8 @@
     "**"
   ],
   "ext.syntax.map.spread.unmapped": [
-    "TypeError: value is not a mapping"
+    "TypeError: '",
+    "' object is not a mapping"
   ],
   "ext.syntax.map.resized": [
     "RuntimeError: dictionary changed size during iteration"

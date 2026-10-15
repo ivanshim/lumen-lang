@@ -3821,6 +3821,15 @@ impl<'a> Builder<'a> {
     fn comma_expression(&mut self, writes: bool) -> Res<Form> {
         let (first, spreads) = self.comma_part(writes)?;
         if !self.on_any("ext.op.tuple") {
+            // A lone star is refused for where it stands once the
+            // expression closes beyond it; inside parentheses the
+            // reference words it with "cannot".
+            let closed = self.on_stmt_end() || self.exhausted() || self.look().shape == Shape::Close || self.on_assign()
+                || self.on_any("syntax.group.close") || self.on_any("syntax.array.close") || self.on_any("syntax.map.close");
+            if spreads && closed && self.grammar.has_any_ext_builtin_exceptions_syntax {
+                let word = if self.on_any("syntax.group.close") { "cannot" } else { "can't" };
+                return Err(format!("SyntaxError: {word} use starred expression here"));
+            }
             return if spreads { Err(self.grammar.single_ext_stmt_unpack_amiss.unwrap_or("Invalid tuple").to_string()) }
                 else { Ok(first) };
         }
@@ -9383,6 +9392,7 @@ impl<'a> Builder<'a> {
         let bad = self.grammar.single_ext_stmt_unpack_amiss.unwrap_or("Invalid assignment target").to_string();
         let (mut lo, mut hi) = (span.start, span.end);
         if lo >= hi { return Err(bad); }
+        let outer_lo = lo;
         if self.grammar.has_any_ext_builtin_exceptions_syntax && hi == lo + 1 {
             let entry = &self.tokens[lo];
             let reserved = entry.spelling() == "__debug__" || ["literal.true", "literal.false", "literal.null"]
@@ -9437,6 +9447,11 @@ impl<'a> Builder<'a> {
         }
         let cuts = self.divided_at(lo, hi, "ext.op.tuple");
         if cuts.is_empty() && !array {
+            if self.table.has_any("ext.builtin.exceptions.syntax") && self.tokens[lo].shape == Shape::Sign
+                && self.table.spells("ext.stmt.unpack.rest", &self.tokens[lo].lexeme) {
+                return Err(String::from(if lo == outer_lo { "SyntaxError: starred assignment target must be in a list or tuple" }
+                    else { "SyntaxError: cannot use starred expression here" }));
+            }
             self.pos = lo;
             if self.grammar.has_any_ext_stmt_class_builder && self.in_class_body() && hi == lo + 1
                 && self.look().shape == Shape::Bare && !self.declared_outside_class(&self.look().lexeme) {
@@ -9488,6 +9503,10 @@ impl<'a> Builder<'a> {
         for (number, piece) in pieces.iter_mut().enumerate() {
             let lead = &self.tokens[piece.start];
             if lead.shape == Shape::Sign && self.table.spells("ext.stmt.unpack.rest", &lead.spelling()) {
+                if self.table.has_any("ext.builtin.exceptions.syntax") {
+                    if starred.is_some() { return Err(String::from("SyntaxError: multiple starred expressions in assignment")); }
+                    if number >= 256 { return Err(String::from("SyntaxError: too many expressions in star-unpacking assignment")); }
+                }
                 if starred.is_some() { return Err(bad); }
                 starred = Some(number);
                 piece.start += 1;
@@ -9517,7 +9536,9 @@ impl<'a> Builder<'a> {
         if signs.is_empty() || (signs.len() > 1 && !self.grammar.flag_ext_stmt_assign_chain) { return Ok(None); }
         if !self.divided_at(left, signs[0], "ext.stmt.annotation").is_empty() { return Ok(None); }
         let enclosed = self.on_any("syntax.group.open") || self.on_any("syntax.array.open");
-        if signs.len() == 1 && !enclosed && self.divided_at(left, signs[0], "ext.op.tuple").is_empty() { return Ok(None); }
+        let leading_star = self.grammar.has_any_ext_builtin_exceptions_syntax && self.tokens[left].shape == Shape::Sign
+            && self.table.spells("ext.stmt.unpack.rest", &self.tokens[left].lexeme);
+        if signs.len() == 1 && !enclosed && !leading_star && self.divided_at(left, signs[0], "ext.op.tuple").is_empty() { return Ok(None); }
         if self.grammar.has_any_ext_builtin_exceptions_syntax && self.has_added_target(left..signs[0]) {
             return Err(String::from("SyntaxError: cannot assign to expression"));
         }
@@ -9722,6 +9743,11 @@ impl<'a> Builder<'a> {
                 if let Some(description) = target {
                     return Err(format!("SyntaxError: cannot assign to {description} here. Maybe you meant '==' instead of '='?"));
                 }
+            }
+            if self.look().shape == Shape::Sign && self.table.spells("ext.stmt.unpack.rest", &self.look().lexeme)
+                && self.divided_at(self.pos, self.tokens.len(), "ext.op.tuple").is_empty()
+                && self.divided_at(self.pos, self.tokens.len(), "stmt.assign").is_empty() {
+                return Err(String::from("SyntaxError: can't use starred expression here"));
             }
             if self.look().spelling() == "None" && self.table.compound.contains_key(&self.glance(1).lexeme) {
                 return Err(String::from("SyntaxError: 'None' is an illegal expression for augmented assignment"));

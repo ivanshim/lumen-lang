@@ -9213,7 +9213,19 @@ impl<'a> Compiler<'a> {
     fn tuple_read(&mut self, writable: bool) -> Res<()> {
         let first_spreads = self.tuple_piece(writable)?;
         if !self.on_any(&self.lang.tuple_marks) {
-            if first_spreads { return Err(self.lang.unpack_amiss.clone().unwrap_or_default()); }
+            if first_spreads {
+                // A lone star is refused for where it stands once the
+                // expression closes beyond it; inside parentheses the
+                // reference words it with "cannot".
+                let closed = self.on_sep() || self.exhausted() || self.look().shape == Shape::Close
+                    || self.on_any(&self.lang.assign_words)
+                    || [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets].into_iter().flatten().any(|p| self.at_symbol(&p.close));
+                if closed && !self.lang.syntax_members.is_empty() {
+                    let grouped = self.lang.grouping.as_ref().is_some_and(|p| self.at_symbol(&p.close));
+                    return Err(if grouped { "SyntaxError: cannot use starred expression here" } else { "SyntaxError: can't use starred expression here" }.into());
+                }
+                return Err(self.lang.unpack_amiss.clone().unwrap_or_default());
+            }
             return Ok(());
         }
         if !first_spreads { self.act(Action::MakeArray, 1); }
@@ -9418,6 +9430,7 @@ impl<'a> Compiler<'a> {
     fn give_places(&mut self, mut begin: usize, mut end: usize, held: &str) -> Res<()> {
         let amiss = self.lang.unpack_amiss.clone().unwrap_or_else(|| "Invalid assignment target".to_string());
         if begin == end { return Err(amiss.clone()); }
+        let outermost = begin;
         if !self.lang.syntax_members.is_empty() && end == begin + 1 {
             let word = &self.tokens[begin];
             let kind = if word.spelling() == "__debug__" { Some("__debug__") }
@@ -9465,6 +9478,11 @@ impl<'a> Compiler<'a> {
         let (commas, _) = self.outer_marks(begin, end, &self.lang.tuple_marks);
         listed |= !commas.is_empty();
         if !listed {
+            if !self.lang.syntax_members.is_empty() && self.tokens[begin].shape == Shape::Sign
+                && Lang::spells(&self.lang.unpack_rest, &self.tokens[begin].lexeme) {
+                return Err(if begin == outermost { "SyntaxError: starred assignment target must be in a list or tuple" }
+                    else { "SyntaxError: cannot use starred expression here" }.into());
+            }
             self.pos = begin;
             if !self.lang.class_builder.is_empty() && self.in_class_body() && end == begin + 1
                 && self.look().shape == Shape::Instr && !self.declared_outside_class(&self.look().lexeme) {
@@ -9524,6 +9542,10 @@ impl<'a> Compiler<'a> {
         let mut rest = None;
         for (i, (a, _)) in spans.iter_mut().enumerate() {
             if self.tokens[*a].shape == Shape::Sign && Lang::spells(&self.lang.unpack_rest, &self.tokens[*a].spelling()) {
+                if !self.lang.syntax_members.is_empty() {
+                    if rest.is_some() { return Err("SyntaxError: multiple starred expressions in assignment".into()); }
+                    if i >= 1 << 8 { return Err("SyntaxError: too many expressions in star-unpacking assignment".into()); }
+                }
                 if rest.replace(i).is_some() { return Err(amiss.clone()); }
                 *a += 1;
             }
@@ -9553,7 +9575,9 @@ impl<'a> Compiler<'a> {
         if !self.outer_marks(begin, signs[0], &self.lang.annotation_marks).0.is_empty() { return Ok(false); }
         let enclosed = [&self.lang.grouping, &self.lang.array_brackets].into_iter().flatten()
             .any(|pair| self.tokens[begin].is_lexeme(Shape::Sign, &pair.open));
-        if signs.len() == 1 && !enclosed && self.outer_marks(begin, last, &self.lang.tuple_marks).0.is_empty() { return Ok(false); }
+        let bare_star = !self.lang.syntax_members.is_empty() && self.tokens[begin].shape == Shape::Sign
+            && Lang::spells(&self.lang.unpack_rest, &self.tokens[begin].lexeme);
+        if signs.len() == 1 && !enclosed && !bare_star && self.outer_marks(begin, last, &self.lang.tuple_marks).0.is_empty() { return Ok(false); }
         if signs.len() > 1 && !self.lang.assign_chain { return Ok(false); }
         if !self.lang.syntax_members.is_empty() && self.added_target_expression(begin, signs[0]) {
             return Err("SyntaxError: cannot assign to expression".into());
@@ -9640,6 +9664,11 @@ impl<'a> Compiler<'a> {
                         return Err("SyntaxError: cannot assign to conditional expression".into());
                     } else { None };
                 if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind} here. Maybe you meant '==' instead of '='?")); }
+            }
+            if self.look().shape == Shape::Sign && Lang::spells(&self.lang.unpack_rest, &self.look().lexeme)
+                && self.outer_marks(self.pos, self.tokens.len(), &self.lang.tuple_marks).0.is_empty()
+                && self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.is_empty() {
+                return Err("SyntaxError: can't use starred expression here".into());
             }
             if self.look().spelling() == "None" && self.lang.compound.contains_key(self.look_ahead(1).spelling()) {
                 return Err("SyntaxError: 'None' is an illegal expression for augmented assignment".into());

@@ -1811,8 +1811,16 @@ impl<'a> Machine<'a> {
             let [value] = given else { return Err(String::from("TypeError: state is not a dictionary").into()) };
             let Value::Dict(pairs) = value.settled() else { return Err(String::from("TypeError: state is not a dictionary").into()) };
             for (key, item) in pairs.iter() {
-                let Value::Text(name) = key else { return Err(String::from("TypeError: attribute name must be string").into()) };
-                self.alter_class_member(Value::Thing(thing.clone()), name, Some(item.clone()), true)?;
+                // A key of a kind standing on text names a member by its
+                // whole worth, as an attribute name must; anything else
+                // is no name at all.
+                let bare = match key { Value::Keyed(inner, _) => inner.as_ref().clone(), other => other.clone() };
+                let held = match bare.settled() {
+                    Value::Text(_) => bare.settled(),
+                    _ => Self::underlying(&bare).map(|under| under.settled()).unwrap_or_else(|| bare.settled()),
+                };
+                let Value::Text(name) = held else { return Err(String::from("TypeError: attribute name must be string").into()) };
+                self.alter_class_member(Value::Thing(thing.clone()), &name, Some(item.clone()), true)?;
             }
             return Ok(Value::Nil);
         }
@@ -13376,10 +13384,14 @@ impl<'a> Machine<'a> {
         let lone = values.iter().filter(|given| !matches!(given, Value::Couple(pair) if matches!(pair.0, Value::Text(_)))).count() == 1;
         let mut positions = Vec::new();
         let mut names = Vec::new();
+        let mut folded = Vec::new();
         for worth in values {
             let Value::Couple(pair) = worth else { positions.push(worth); continue };
             match &pair.0 {
-                Value::Text(_) => names.push((pair.0.clone(), pair.1.clone())),
+                Value::Text(_) => {
+                    self.note_keyword(&mut folded, &pair.0, shown)?;
+                    names.push((pair.0.clone(), pair.1.clone()));
+                },
                 Value::Flag(true) => {
                     let spread = match &pair.1 {
                         Value::Window(_, 'm') => pair.1.proxy_pairs(),
@@ -13397,12 +13409,14 @@ impl<'a> Machine<'a> {
                         Value::Dict(entries) => {
                             for (k, v) in entries.iter() {
                                 let k = match k { Value::Keyed(inner, _) => inner.as_ref().clone(), other => other.clone() };
+                                self.note_keyword(&mut folded, &k, shown)?;
                                 names.push((k, v.clone()));
                             }
                         }
                         _ => {
                             let kind = expanded.kind_word().to_string();
                             for key in self.mapping_keys(&expanded, shown, &kind)? {
+                                self.note_keyword(&mut folded, &key, shown)?;
                                 let value = self.prim(Prim::At, "", &[expanded.clone(), key.clone()])?;
                                 names.push((key, value));
                             }
@@ -13424,6 +13438,18 @@ impl<'a> Machine<'a> {
             }
         }
         Ok((positions, names))
+    }
+
+    fn note_keyword(&mut self, folded: &mut Vec<(Value, Value)>, key: &Value, shown: &str) -> Res<()> {
+        if !self.map_enter(folded, key.clone(), Value::Unset)? {
+            let label = match key { Value::Text(text) => text.to_string(), _ => self.prim(Prim::Quoted, "repr", &[key.clone()])?.bare() };
+            let words = self.table.strings("ext.syntax.call.amiss.keyword");
+            let said = if !shown.is_empty() && words.len() >= 3 {
+                self.whole_complaint(format!("{}{}{}{}{}", words[0], shown.trim_end_matches("() "), words[1], label, words[2]))
+            } else { self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&label)) };
+            return Err(said.into());
+        }
+        Ok(())
     }
 
     /// The keys a spread of pairs lists: the pairs of a map are read
@@ -16570,15 +16596,12 @@ impl<'a> Machine<'a> {
             converted = self.prim(Prim::Dictionary, "dict", std::slice::from_ref(item))?;
             &converted
         } else { item };
-        let incoming = match (expanded, item.settled()) {
-            (false, Value::Couple(pair)) => vec![pair.as_ref().clone()],
-            (true, Value::Dict(entries)) => entries.to_vec(),
-            _ => return Err(self.table.strings("ext.syntax.map.spread.unmapped").first().map(String::as_str).unwrap_or("A map spread needs a map").into()),
-        };
-        for (key, value) in incoming {
-            if let Some(words) = self.cannot_key(&key) { return Err(words); }
-            self.store_write(prior, key, value)?;
+        if expanded {
+            return self.spread_into_dict(prior, item);
         }
+        let Value::Couple(pair) = item.settled() else { return Err(self.mapping_amiss(item)); };
+        if let Some(words) = self.cannot_key(&pair.0) { return Err(words); }
+        self.store_write(prior, pair.0.clone(), pair.1.clone())?;
         Ok(())
     }
 
@@ -20065,7 +20088,52 @@ impl<'a> Machine<'a> {
         Ok(Value::Dict(Rc::new(store)))
     }
 
-    pub(super) fn collection_cell(&self, value: Value) -> Value {
+    /// Merge display mappings in getter/insertion order, allowing overwrites.
+    fn spread_into_dict(&mut self, destination: &mut Rc<MapStore>, source: &Value) -> Result<(), String> {
+        let candidate = match source.settled() {
+            Value::Dict(_) => source.settled(),
+            _ => Self::underlying(source).map(|under| under.settled()).unwrap_or_else(|| source.settled()),
+        };
+        let ready = match candidate {
+            Value::Dict(entries) => entries.to_vec(),
+            Value::Attributes(owner) => self.attribute_entries(&owner),
+            value @ Value::Thing(_) => {
+                let method = match self.read_class_member(value.clone(), "keys", false) {
+                    Ok(method) => method,
+                    Err(escaped) if self.missing_member_escape(&escaped) => {
+                        self.sought_in_vain = None;
+                        return Err(self.mapping_amiss(source));
+                    }
+                    Err(escaped) => return Err(self.suspension_fault(escaped)),
+                };
+                let keys = self.apply_class_member(method, Vec::new()).map_err(|escaped| self.suspension_fault(escaped))?;
+                for key in self.gathered_members(&keys)? {
+                    let item = self.prim(Prim::At, "", &[value.clone(), key.clone()])?;
+                    if let Some(words) = self.cannot_key(&key) { return Err(words); }
+                    self.store_write(destination, key, item)?;
+                }
+                return Ok(());
+            }
+            _ => return Err(self.mapping_amiss(source)),
+        };
+        for (key, item) in ready {
+            if let Some(words) = self.cannot_key(&key) { return Err(words); }
+            self.store_write(destination, key, item)?;
+        }
+        Ok(())
+    }
+
+    /// The complaint a value that is no mapping draws: the label's two
+    /// pieces with the value's kind written between them.
+    fn mapping_amiss(&self, value: &Value) -> String {
+        let words = self.table.strings("ext.syntax.map.spread.unmapped");
+        match words.len() {
+            0 => format!("TypeError: '{}' object is not a mapping", value.kind_word()),
+            _ => format!("{}{}{}", words[0], value.kind_word(), words.get(1).map_or("", String::as_str)),
+        }
+    }
+
+    fn collection_cell(&self, value: Value) -> Value {
         match value {
             Value::Vector(_) | Value::Dict(_) if self.names_in_calls =>
                 Value::Shared(Rc::new(RefCell::new(value))),
@@ -22057,7 +22125,10 @@ impl<'a> Machine<'a> {
             }
             Prim::ExtendLiteral(dictionary, expanded) => {
                 if let Value::Set(kept) = &v[0] {
-                    let additions = if expanded { self.literal_members(&v[1])? } else { vec![v[1].clone()] };
+                    // A set display takes its spread value's members in
+                    // its own words, so an unwalkable value is said of
+                    // plainly rather than as a call's spread says it.
+                    let additions = if expanded { self.gathered_members(&v[1])? } else { vec![v[1].clone()] };
                     let held = kept.clone();
                     for addition in additions { self.set_include(&held, addition)?; }
                     v[0].clone()
@@ -22073,22 +22144,9 @@ impl<'a> Machine<'a> {
                     // than the one map it grows, so paying to clone it
                     // once is the whole of the cost, not the shape of it.
                     let Value::Dict(prior) = &v[0] else { unreachable!() };
-                    let spread_dict;
-                    let v1 = if expanded && matches!(v[1].settled(), Value::Attributes(_) | Value::Window(..)) {
-                        spread_dict = self.prim(Prim::Dictionary, "dict", std::slice::from_ref(&v[1]))?;
-                        spread_dict.settled()
-                    } else { v[1].clone() };
-                    let incoming = match &v1 {
-                        Value::Couple(pair) if !expanded => vec![pair.as_ref().clone()],
-                        Value::Dict(entries) if expanded => entries.to_vec(),
-                        _ => return Err(self.table.strings("ext.syntax.map.spread.unmapped").first().map(String::as_str).unwrap_or("A map spread needs a map").into()),
-                    };
-                    let mut combined = prior.to_vec();
-                    for (key, value) in incoming {
-                        if let Some(words) = self.cannot_key(&key) { return Err(words); }
-                        self.map_enter(&mut combined, key, value)?;
-                    }
-                    Value::Dict(Rc::new(combined.into()))
+                    let mut combined = prior.clone();
+                    self.extend_dict_grown(&mut combined, &v[1], expanded)?;
+                    Value::Dict(combined)
                 }
             }
             Prim::MakeArray => assembled(v.to_vec(), false, self.plain_keys),

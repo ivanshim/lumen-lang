@@ -1385,8 +1385,13 @@ impl<'a> Engine<'a> {
             let [state] = args else { return Err("TypeError: state is not a dictionary".into()) };
             let Value::Map(entries) = state.contents() else { return Err("TypeError: state is not a dictionary".into()) };
             for (key, item) in entries.iter() {
-                let Value::Text(word) = key else { return Err("TypeError: attribute name must be string".into()) };
-                self.class_write(Value::Object(object.clone()), word, Some(item.clone()), true)?;
+                // A key of a kind standing on text names a member by its
+                // whole worth, as an attribute name must; anything else
+                // is no name at all.
+                let bare = match key { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
+                let held = Self::worth_of(&bare).unwrap_or_else(|| bare.contents());
+                let Value::Text(word) = held else { return Err("TypeError: attribute name must be string".into()) };
+                self.class_write(Value::Object(object.clone()), &word, Some(item.clone()), true)?;
             }
             return Ok(Value::Null);
         }
@@ -3796,10 +3801,14 @@ impl<'a> Engine<'a> {
         let shown = callee.shown();
         let lone = args.iter().filter(|given| !matches!(given, Value::Tie(pair) if matches!(pair.0, Value::Text(_)))).count() == 1;
         let mut items = Vec::new();
+        let mut folded = Vec::new();
         for value in args {
             match value {
                 Value::Tie(pair) => match &pair.0 {
-                    Value::Text(_) => items.push((Some(pair.0.clone()), pair.1.clone())),
+                    Value::Text(_) => {
+                        self.note_keyword(&mut folded, &pair.0, &shown)?;
+                        items.push((Some(pair.0.clone()), pair.1.clone()));
+                    },
                     Value::Flag(false) => {
                         let kind = pair.1.core_kind();
                         let plain = format!("TypeError: '{kind}' object is not iterable");
@@ -3813,32 +3822,30 @@ impl<'a> Engine<'a> {
                             Err(other) => return Err(other),
                         }
                     }
-                    Value::Flag(true) => items.extend(self.mapping_pairs(&pair.1, &shown)?),
+                    Value::Flag(true) => items.extend(self.mapping_pairs(&pair.1, &shown, &mut folded)?),
                     _ => return Err(self.lang.call_amiss[0].clone().into()),
                 },
                 other => items.push((None, other)),
             }
         }
-        // A builtin owns no keyword it means, so the same keyword twice
-        // over is the reference's own complaint. A routine's duplicates
-        // are left to the binding, which names the module it belongs to.
-        if let Callee::Builtin(name) = callee {
-            let mut seen: Vec<Value> = Vec::new();
-            for (key, _) in &items {
-                if let Some(key) = key {
-                    if seen.iter().any(|prior| prior.equals(key)) { return Err(self.keyword_repeated(name, &self.word_of_key(key).unwrap_or_else(|_| key.plain())).into()); }
-                    seen.push(key.clone());
-                }
-            }
-        }
         Ok(items)
+    }
+
+    fn note_keyword(&mut self, folded: &mut Vec<(Value, Value)>, key: &Value, shown: &str) -> Flow<()> {
+        if !self.map_enter(folded, key.clone(), Value::Null)? {
+            let label = self.word_of_key(key).unwrap_or_else(|_| key.plain());
+            let said = if shown.is_empty() { Self::named_fault(&self.lang.call_duplicate, &label) }
+                else { self.keyword_repeated(shown.trim_end_matches("() "), &label) };
+            return Err(said.into());
+        }
+        Ok(())
     }
 
     /// What a spread of pairs hands over, each with the name it was
     /// written under. A map gives its own pairs; any other thing gives
     /// the pairs its `keys` method lists, read back one by one. A key
     /// that is no text is refused as the reference refuses it.
-    fn mapping_pairs(&mut self, source: &Value, shown: &str) -> Flow<Vec<(Option<Value>, Value)>> {
+    fn mapping_pairs(&mut self, source: &Value, shown: &str, folded: &mut Vec<(Value, Value)>) -> Flow<Vec<(Option<Value>, Value)>> {
         let held = match source {
             Value::View(proxy) if proxy.1 == "mapping" => source.proxy_dictionary(),
             _ => match source.contents() {
@@ -3857,6 +3864,7 @@ impl<'a> Engine<'a> {
             Value::Map(entries) => {
                 for (key, value) in entries.iter() {
                     let key = match key { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
+                    self.note_keyword(folded, &key, shown)?;
                     pairs.push((Some(key), value.clone()));
                 }
             }
@@ -3866,6 +3874,7 @@ impl<'a> Engine<'a> {
                 };
                 let listed = self.call_held(keys, Vec::new())?;
                 for key in self.core_members(&listed)? {
+                    self.note_keyword(folded, &key, shown)?;
                     let value = self.special_dyad(&Action::At, &held, &key)?;
                     pairs.push((Some(key), value));
                 }
@@ -13075,7 +13084,10 @@ impl<'a> Engine<'a> {
                 let gathered_so_far = both.next().expect("growing literal").contents();
                 let next = both.next().expect("literal item");
                 if let Value::Set(cell) = gathered_so_far {
-                    let incoming = if *spread { self.spread_members(&next)? } else { vec![next] };
+                    // A set display takes each spread value apart itself,
+                    // so a value that cannot be walked speaks as the
+                    // reference does of it, not as a call's spread does.
+                    let incoming = if *spread { self.comprehension_items(&next)? } else { vec![next] };
                     for item in incoming { self.set_put(&cell, item)?; }
                     Value::Set(cell)
                 } else if *map {
@@ -13087,19 +13099,19 @@ impl<'a> Engine<'a> {
                     // and grows in step with the rows rather than being
                     // thrown away and rebuilt on the next key.
                     let mut pairs = match gathered_so_far { Value::Map(p) => p, _ => unreachable!() };
-                    // A namespace or a mapping of the program's own is spread by
-                    // the pairs it gives as a map, as `dict` reads it.
-                    let next = if *spread && matches!(next.contents(), Value::Fields(_) | Value::View(_)) {
-                        self.builtin(Builtin::Dict, "dict", &mut vec![next])?
-                    } else { next };
-                    let new_pairs = match (spread, next.contents()) {
-                        (true, Value::Map(p)) => p.to_vec(),
-                        (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
-                        _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
-                    };
-                    for (key, value) in new_pairs {
-                        if let Some(told) = self.unkeyable(&key) { return Err(told.into()); }
-                        self.store_write(&mut pairs, key, value)?;
+                    if *spread {
+                        let spread = if matches!(next.contents(), Value::Fields(_) | Value::View(_)) {
+                            self.builtin(Builtin::Dict, "dict", &mut vec![next])?
+                        } else { next };
+                        if !self.merge_display_mapping(&mut pairs, &spread)? {
+                            return Err(self.mapping_amiss(&spread).into());
+                        }
+                    } else {
+                        let Value::Tie(pair) = next.contents() else {
+                            return Err(self.mapping_amiss(&next).into());
+                        };
+                        if let Some(told) = self.unkeyable(&pair.0) { return Err(told.into()); }
+                        self.store_write(&mut pairs, pair.0.clone(), pair.1.clone())?;
                     }
                     Value::Map(pairs)
                 } else {
@@ -18180,18 +18192,19 @@ impl<'a> Engine<'a> {
     /// is answered by its reader; nothing where the thing has no such
     /// member.
     fn member_of(&mut self, owner: Value, member: &str) -> Res<Option<Value>> {
-        let mut asked = vec![owner.clone(), Value::text(member)];
-        let has = self.builtin(Builtin::HasAttr, "hasattr", &mut asked)?;
-        if !self.truth(&has) { return Ok(None); }
+        // One read of the name: a member made of a reader is answered by
+        // that reader once. Only the name simply not being there means
+        // nothing; every other complaint travels on as it stands.
         let floor = self.data.len();
         self.data.push(owner);
         let read = match self.perform(&Action::Grab(Rc::from(member)), 1) {
-            Ok(()) => self.drop_top(),
+            Ok(()) => self.drop_top().map(Some),
+            Err(fault) if self.attribute_fault(&fault) => { self.absent_member = None; Ok(None) }
             Err(Fault::Note(words)) => Err(words),
             Err(fled) => { self.carried = Some(fled); Err(self.lang.stream_failed[0].clone()) }
         };
         self.data.truncate(floor);
-        read.map(Some)
+        read
     }
 
     /// Call a value the program could call, with these arguments, and
@@ -19826,6 +19839,46 @@ impl<'a> Engine<'a> {
             }
         }
         Ok(Value::Map(Rc::new(pairs.into())))
+    }
+
+    /// Insert each display entry before reading the next mapping value.
+    fn merge_display_mapping(&mut self, target: &mut Rc<KeyedPairs>, source: &Value) -> Res<bool> {
+        let held = match source.contents() {
+            Value::Fields(owner) => Value::Map(Rc::new(self.fields_entries(&owner).into())),
+            Value::View(proxy) if proxy.1 == "mapping" => source.proxy_dictionary().contents(),
+            other => other,
+        };
+        let direct = match &held {
+            Value::Map(pairs) => Some(pairs.clone()),
+            _ => match Self::worth_of(source).map(|worth| worth.contents()) {
+                Some(Value::Map(pairs)) => Some(pairs),
+                _ => None,
+            },
+        };
+        if let Some(pairs) = direct {
+            for (key, value) in pairs.iter() {
+                if let Some(told) = self.unkeyable(key) { return Err(told); }
+                self.store_write(target, key.clone(), value.clone())?;
+            }
+        } else if let Some(reader) = self.member_of(held.clone(), "keys")? {
+            let window = self.call_held(reader, Vec::new())?;
+            for key in self.core_members(&window)? {
+                let value = self.special_dyad(&Action::At, &held, &key)?;
+                if let Some(told) = self.unkeyable(&key) { return Err(told); }
+                self.store_write(target, key, value)?;
+            }
+        } else { return Ok(false); }
+        Ok(true)
+    }
+
+    /// The complaint a value that is no mapping draws: the label's two
+    /// pieces with the value's kind written between them.
+    fn mapping_amiss(&self, value: &Value) -> String {
+        let words = &self.lang.spread_unmapped;
+        match words.len() {
+            0 => format!("TypeError: '{}' object is not a mapping", value.core_kind()),
+            _ => format!("{}{}{}", words[0], value.core_kind(), words.get(1).map_or("", String::as_str)),
+        }
     }
 
     fn byte_fault(&self, part: &str) -> String {
