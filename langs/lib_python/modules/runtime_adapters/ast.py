@@ -933,14 +933,15 @@ _ParseUncached = parse
 _TreeCache = {}
 
 def _copy_tree(node):
-    copy = node.__class__.__new__(node.__class__)
-    held = dict(node.__dict__)
-    for name in node._fields:
+    kind = node.__class__
+    copy = kind.__new__(kind)
+    held = node.__dict__.copy()
+    for name in kind._fields:
         value = held.get(name)
-        if isinstance(value, AST):
-            held[name] = _copy_tree(value)
-        elif type(value) is list:
+        if type(value) is list:
             held[name] = [_copy_tree(item) if isinstance(item, AST) else item for item in value]
+        elif isinstance(value, AST):
+            held[name] = _copy_tree(value)
     copy.__dict__.update(held)
     return copy
 
