@@ -19281,8 +19281,105 @@ impl<'a> Engine<'a> {
         Ok(result)
     }
 
+    // Decode bounded opcode fields using a caller-supplied layout table.
+    fn byte_fields(&self, args: &[Value]) -> Res<Value> {
+        let [Value::Bytes(storage, false, _), Value::Small(origin), Value::Tuple(layouts), Value::Flag(closed), Value::Small(3)] = args else {
+            return Err("TypeError: invalid memory field arguments".into());
+        };
+        if *closed { return Err("ValueError: I/O operation on closed file.".into()); }
+        let mut position = usize::try_from(*origin).map_err(|_| "ValueError: negative memory stream position")?;
+        let bytes = storage.borrow();
+        let mut records = Vec::new();
+        while records.len() < 32 {
+            let start = position;
+            let Some(&code) = bytes.get(start) else { break };
+            let Some(Value::Small(marked)) = layouts.get(code as usize) else { break };
+            if !(0..=511).contains(marked) { break; }
+            let tag = &(marked & 255);
+            position = start + 1;
+            let argument = match *tag {
+                0 => Value::Null,
+                1..=5 => {
+                    let width = match tag { 1 => 1, 2 => 2, 3 | 4 => 4, _ => 8 };
+                    let Some(part) = bytes.get(position..position + width) else { break };
+                    position += width;
+                    let mut little = [0u8; 8];
+                    little[..width].copy_from_slice(part);
+                    let number = u64::from_le_bytes(little);
+                    if *tag == 3 { Value::Small(number as u32 as i32 as i64) }
+                    else { Value::of_big(BigInt::from(number)) }
+                }
+                7..=17 => {
+                    let width = match tag { 7 | 11 | 14 | 16 => 1, 8 | 12 | 15 | 17 => 4, _ => 8 };
+                    let Some(prefix) = bytes.get(position..position + width) else { break };
+                    if matches!(tag, 15 | 17) && prefix[width - 1] & 128 != 0 { break; }
+                    let mut little = [0u8; 8];
+                    little[..width].copy_from_slice(prefix);
+                    let length = u64::from_le_bytes(little);
+                    if length > 4096 { break; }
+                    position += width;
+                    let end = position + length as usize;
+                    let Some(part) = bytes.get(position..end) else { break };
+                    let value = match tag {
+                        7..=10 => self.byte_make(part.to_vec(), *tag == 10),
+                        11..=13 => {
+                            let Ok(text) = std::str::from_utf8(part) else { break };
+                            Value::text(text)
+                        }
+                        14 | 15 => Value::of_big(BigInt::from_signed_bytes_le(part)),
+                        _ => Value::text(&part.iter().copied().map(char::from).collect::<String>()),
+                    };
+                    position = end;
+                    value
+                }
+                18 | 19 | 21..=23 => {
+                    let Some(offset) = bytes[position..].iter().position(|b| *b == b'\n') else { break };
+                    if offset > 4096 { break; }
+                    let part = &bytes[position..position + offset];
+                    position += offset + 1;
+                    match tag {
+                        18 | 19 => {
+                            if *tag == 18 && matches!(part, b"00" | b"01") { Value::Flag(part == b"01") }
+                            else {
+                                let number = if *tag == 19 { part.strip_suffix(b"L").unwrap_or(part) } else { part };
+                                let digits = number.strip_prefix(b"-").or_else(|| number.strip_prefix(b"+")).unwrap_or(number);
+                                if number.len() > 32 || digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) { break; }
+                                let Some(number) = BigInt::parse_bytes(number, 10) else { break };
+                                Value::of_big(number)
+                            }
+                        }
+                        21 => {
+                            if part.contains(&b'\\') { break; }
+                            Value::text(&part.iter().copied().map(char::from).collect::<String>())
+                        }
+                        22 | 23 => {
+                            if part.contains(&b'\\') { break; }
+                            let Ok(first) = std::str::from_utf8(part) else { break };
+                            if *tag == 22 { Value::text(first) }
+                            else {
+                                let Some(count) = bytes[position..].iter().position(|b| *b == b'\n') else { break };
+                                if count > 4096 { break; }
+                                let second = &bytes[position..position + count];
+                                if second.contains(&b'\\') { break; }
+                                let Ok(second) = std::str::from_utf8(second) else { break };
+                                position += count + 1;
+                                Value::text(&format!("{first} {second}"))
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                _ => break,
+            };
+            records.push(Value::tuple(vec![Value::Small(i64::from(code)), argument, Value::Small(start as i64), Value::Small(position as i64)]));
+            if marked & 256 != 0 { break; }
+        }
+        Ok(Value::array(records))
+    }
+
     // Read or write bounded memory-stream storage without intermediate Python slices.
     fn byte_memory(&self, args: &[Value]) -> Res<Value> {
+        if matches!(args.last(), Some(Value::Small(3))) { return self.byte_fields(args); }
         let [Value::Bytes(storage, true, _), Value::Small(position), input, Value::Flag(closed), Value::Small(mode)] = args else {
             return Err("TypeError: invalid memory stream arguments".into());
         };

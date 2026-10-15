@@ -16,9 +16,8 @@ _line_readers = {read_decimalnl_short: 0, read_decimalnl_long: 1,
                  read_stringnl_noescape: 4, read_stringnl_noescape_pair: 5}
 
 # Fall back at the opcode boundary so truncation and reader errors keep their wording.
-def _buffer_genops(data, yield_end_pos=False):
+def _interpreted_genops(data, yield_end_pos=False, position=0):
     size = len(data)
-    position = 0
     while position < size:
         start = position
         code = data[position]
@@ -104,6 +103,77 @@ def _buffer_genops(data, yield_end_pos=False):
     stream.seek(start)
     yield from _stream_genops(stream, yield_end_pos)
 
+# Describe native field layouts independently of opcode spellings.
+_field_batch = __bytes_memory__
+_native_mapping = code2op
+_reader_type = type(_stream_genops)
+_field_readers = (
+    None, read_uint1, read_uint2, read_int4, read_uint4, read_uint8,
+    read_float8, read_bytes1, read_bytes4, read_bytes8, read_bytearray8,
+    read_unicodestring1, read_unicodestring4, read_unicodestring8,
+    read_long1, read_long4, read_string1, read_string4,
+    read_decimalnl_short, read_decimalnl_long, read_floatnl,
+    read_unicodestringnl, read_stringnl_noescape, read_stringnl_noescape_pair)
+_native_readers = {reader: tag for tag, reader in enumerate(_field_readers)}
+
+# Identify a field only while its reader remains a recognized function.
+def _field_layout(opcode):
+    if opcode is None:
+        return -1
+    descriptor = opcode.arg
+    if descriptor is None:
+        return 0
+    reader = descriptor.reader
+    return _native_readers.get(reader, -1) if type(reader) is _reader_type else -1
+
+_stop_byte = pickle.STOP[0]
+_native_layouts = tuple(_field_layout(code2op.get(chr(code)))
+                        + (256 if code == _stop_byte else 0) for code in range(256))
+_native_expected = tuple(None if layout < 0 else _field_readers[layout & 255]
+                         for layout in _native_layouts)
+_opcode_characters = tuple(chr(code) for code in range(256))
+
+# Resume stream parsing at the same opcode boundary when callers replace the table.
+def _stream_from(data, position, yield_end_pos):
+    stream = io.BytesIO(data)
+    stream.seek(position)
+    return _stream_genops(stream, yield_end_pos)
+
+# Validate each descriptor at its yield boundary, allowing changes between yields.
+def _buffer_genops(data, yield_end_pos=False):
+    position = 0
+    while True:
+        if code2op is not _native_mapping:
+            yield from _stream_from(data, position, yield_end_pos)
+            return
+        records = _field_batch(data, position, _native_layouts, False, 3)
+        if not records:
+            break
+        for code, argument, start, end in records:
+            if code2op is not _native_mapping:
+                yield from _stream_from(data, position, yield_end_pos)
+                return
+            opcode = code2op.get(_opcode_characters[code])
+            if opcode is None:
+                unchanged = False
+            else:
+                descriptor = opcode.arg
+                expected = _native_expected[code]
+                unchanged = (descriptor is None if expected is None else
+                             descriptor is not None and descriptor.reader is expected)
+            if not unchanged:
+                yield from _interpreted_genops(data, yield_end_pos, position)
+                return
+            position = end
+            if yield_end_pos:
+                yield opcode, argument, start, end
+            else:
+                yield opcode, argument, start
+            if code == 46:
+                assert opcode.name == 'STOP'
+                return
+    yield from _interpreted_genops(data, yield_end_pos, position)
+
 # Choose a generator without consulting mutable opcode descriptors before its first step.
 _buffer_starts = frozenset(ord(code) for code, opcode in code2op.items()
                            if opcode.arg is None
@@ -113,6 +183,8 @@ _buffer_starts = frozenset(ord(code) for code, opcode in code2op.items()
 
 # Select a lazy parser without observing mutable descriptors during generator creation.
 def _genops(data, yield_end_pos=False):
+    if code2op is not _native_mapping:
+        return _stream_genops(data, yield_end_pos)
     if type(data) is bytes and data and data[0] in _buffer_starts:
         return _buffer_genops(data, yield_end_pos)
     return _stream_genops(data, yield_end_pos)
@@ -131,6 +203,7 @@ def _append_frame(output, pieces, length, minimum):
 # Renumber referenced memo entries while keeping protocol and frame boundaries intact.
 def optimize(p):
     if (type(p) is not bytes or _genops is not _memory_genops
+            or code2op is not _native_mapping
             or pickle._Pickler is not _memory_pickler
             or pickle._Framer is not _memory_framer):
         return _stream_optimize(p)

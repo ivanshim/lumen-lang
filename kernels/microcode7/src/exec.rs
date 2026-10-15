@@ -14207,8 +14207,97 @@ impl<'a> Machine<'a> {
         Ok(output)
     }
 
+    // Gather a small batch of fields without invoking Python stream methods.
+    fn gather_octet_fields(&self, given: &[Value]) -> Result<Value, String> {
+        if given.len() != 5 { return Err("TypeError: invalid memory field arguments".to_owned()); }
+        let (cell, index, table, closed) = match (&given[0], &given[1], &given[2], &given[3]) {
+            (Value::Octets { cell, changeable: false, .. }, Value::Small(index), Value::Tuple(table), Value::Flag(closed)) => (cell, *index, table, *closed),
+            _ => return Err("TypeError: invalid memory field arguments".to_owned()),
+        };
+        if closed { return Err("ValueError: I/O operation on closed file.".to_owned()); }
+        let mut at = usize::try_from(index).map_err(|_| String::from("ValueError: negative memory stream position"))?;
+        let source = cell.borrow();
+        let mut batch = Vec::new();
+        for _ in 0..32 {
+            let begin = at;
+            let Some(byte) = source.get(begin).copied() else { break };
+            let format = match table.get(usize::from(byte)) { Some(Value::Small(n)) if (0..512).contains(n) => *n, _ => break };
+            let layout = format % 256;
+            at += 1;
+            let item;
+            if layout == 0 {
+                item = Value::Nil;
+            } else if (18..=19).contains(&layout) || (21..=23).contains(&layout) {
+                let Some(line_length) = source[at..].iter().position(|b| b == &10) else { break };
+                if line_length > 4096 { break; }
+                let line = &source[at..at + line_length];
+                at += line_length + 1;
+                if layout < 20 {
+                    if layout == 18 && (line == b"00" || line == b"01") {
+                        item = Value::Flag(line[1] == b'1');
+                    } else {
+                        let decimal = if layout == 19 && line.last() == Some(&b'L') { &line[..line.len() - 1] } else { line };
+                        let mut digits = decimal;
+                        if matches!(digits.first(), Some(b'-' | b'+')) { digits = &digits[1..]; }
+                        if decimal.len() > 32 || digits.len() == 0 || digits.iter().any(|b| !b.is_ascii_digit()) { break; }
+                        match BigInt::parse_bytes(decimal, 10) { Some(n) => item = Value::from_big(n), None => break }
+                    }
+                } else if layout == 21 {
+                    if line.iter().any(|b| *b == 92) { break; }
+                    let text: String = line.iter().map(|b| char::from(*b)).collect();
+                    item = Value::text(&text);
+                } else {
+                    if line.contains(&92) { break; }
+                    let Ok(left) = std::str::from_utf8(line) else { break };
+                    if layout == 22 { item = Value::text(left); }
+                    else {
+                        let Some(n) = source[at..].iter().position(|b| *b == 10) else { break };
+                        if n > 4096 { break; }
+                        let right_bytes = &source[at..at + n];
+                        if right_bytes.contains(&92) { break; }
+                        let Ok(right) = std::str::from_utf8(right_bytes) else { break };
+                        let mut text = left.to_owned(); text.push(' '); text.push_str(right);
+                        item = Value::text(&text);
+                        at += n + 1;
+                    }
+                }
+            } else if (1..=5).contains(&layout) {
+                let size = if layout < 3 { layout as usize } else if layout < 5 { 4 } else { 8 };
+                let Some(raw) = source.get(at..at + size) else { break };
+                let mut number = 0u64;
+                for (shift, digit) in raw.iter().enumerate() { number |= u64::from(*digit) << (shift * 8); }
+                item = if layout == 3 { Value::Small(i64::from(number as u32 as i32)) } else { Value::from_big(BigInt::from(number)) };
+                at += size;
+            } else if (7..=17).contains(&layout) {
+                let prefix_size = if matches!(layout, 7 | 11 | 14 | 16) { 1 } else if matches!(layout, 8 | 12 | 15 | 17) { 4 } else { 8 };
+                let Some(prefix) = source.get(at..at + prefix_size) else { break };
+                if (layout == 15 || layout == 17) && prefix[prefix_size - 1] >= 128 { break; }
+                let amount = prefix.iter().rev().fold(0u64, |n, digit| (n << 8) | u64::from(*digit));
+                if amount > 4096 { break; }
+                at += prefix_size;
+                let stop = at + amount as usize;
+                let Some(raw) = source.get(at..stop) else { break };
+                if layout <= 10 { item = self.octets(raw.to_vec(), layout == 10); }
+                else if layout <= 13 {
+                    let Ok(text) = std::str::from_utf8(raw) else { break };
+                    item = Value::text(text);
+                } else if layout <= 15 { item = Value::from_big(BigInt::from_signed_bytes_le(raw)); }
+                else {
+                    let letters: String = raw.iter().map(|n| char::from(*n)).collect();
+                    item = Value::text(&letters);
+                }
+                at = stop;
+            } else { break; }
+            let record = vec![Value::Small(byte.into()), item, Value::Small(begin as i64), Value::Small(at as i64)];
+            batch.push(Value::tuple(record));
+            if format >= 256 { break; }
+        }
+        Ok(Value::Vector(crate::tuples::Sequence::plain(batch)))
+    }
+
     // Keep memory-stream transfers proportional to the bytes requested or supplied.
     fn memory_octets(&self, supplied: &[Value]) -> Result<Value, String> {
+        if supplied.last().is_some_and(|value| matches!(value, Value::Small(3))) { return self.gather_octet_fields(supplied); }
         if supplied.len() != 5 { return Err("TypeError: invalid memory stream arguments".to_owned()); }
         let (buffer, cursor, closed, action) = match (&supplied[0], &supplied[1], &supplied[3], &supplied[4]) {
             (Value::Octets { cell, changeable: true, .. }, Value::Small(at), Value::Flag(shut), Value::Small(action)) =>
