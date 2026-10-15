@@ -230,7 +230,17 @@ class _HostFile:
         self.name = name
         self.mode = mode
         self._binary = 'b' in mode
-        self.encoding = None if self._binary else (encoding if encoding is not None else 'utf-8')
+        if self._binary:
+            self.encoding = None
+        elif encoding is not None:
+            self.encoding = encoding
+        else:
+            import sys as _sys
+            if _sys.flags.utf8_mode:
+                self.encoding = 'utf-8'
+            else:
+                import locale as _locale
+                self.encoding = _locale.getencoding()
         self.errors = errors if errors is not None else 'strict'
         self.closed = False
         self._descriptor = None

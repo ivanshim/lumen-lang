@@ -114,6 +114,34 @@ fn group_record(group: &libc::group) -> Value {
     Value::tuple(vec![text(group.gr_name), text(group.gr_passwd),
         Value::Small(group.gr_gid.into()), Value::Vector(crate::tuples::Sequence::plain(members))])
 }
+
+// Open a terminal, fork, and make the child the session leader on the slave.
+fn split_onto_terminal() -> Result<Value, i32> {
+    let mut held: libc::c_int = -1;
+    let born = unsafe {
+        libc::forkpty(&mut held, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut())
+    };
+    if born < 0 {
+        return Err(errno());
+    }
+    if born == 0 {
+        // The kernel hangs up this session when the master closes. Python
+        // handlers do not change the host disposition, so swallow that one.
+        unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN); }
+    }
+    Ok(Value::tuple(vec![Value::Small(i64::from(born)), Value::Small(i64::from(held))]))
+}
+
+fn harvest(pid: i64, flags: i64) -> Result<Value, i32> {
+    let mut code: libc::c_int = 0;
+    let got = unsafe { libc::waitpid(pid as libc::pid_t, &mut code, flags as libc::c_int) };
+    if got < 0 {
+        Err(errno())
+    } else {
+        Ok(Value::tuple(vec![Value::Small(i64::from(got)), Value::Small(i64::from(code))]))
+    }
+}
+
 pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), String>) -> Result<Value, String> {
     let operation = match given.first().map(Value::settled) {
         Some(Value::Text(name)) => name,
@@ -652,6 +680,10 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                 let result = std::fs::File::open("/dev/urandom").and_then(|mut source| source.read_exact(&mut content));
                 match result {Err(e) => Err(e.raw_os_error().unwrap_or(libc::EIO)), Ok(()) => Ok(octets(content))}
             }
+            "forkpty" => split_onto_terminal(),
+            "_exit" => { libc::_exit(int(0)? as libc::c_int); },
+            "waitpid" => harvest(int(0)?, int(1)?),
+            "kill" => checked(libc::kill(int(0)? as libc::pid_t, int(1)? as libc::c_int) as i64),
             _ => return Err(String::from("NotImplementedError: unknown POSIX operation")),
         }
     };

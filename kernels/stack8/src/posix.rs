@@ -494,6 +494,27 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
                 status(libc::fcntl(fd, libc::F_SETFL, next) as i64)
             }
         },
+        "forkpty" => {
+            let mut master: libc::c_int = -1;
+            let born = libc::forkpty(&mut master, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut());
+            if born < 0 {
+                Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO))
+            } else {
+                // Closing the master hangs up the session leader. A Python
+                // handler is not a host disposition, so the child ignores
+                // that hangup and exits on its own.
+                if born == 0 { libc::signal(libc::SIGHUP, libc::SIG_IGN); }
+                Ok(Value::tuple(vec![Value::Small(born as i64), Value::Small(master as i64)]))
+            }
+        },
+        "_exit" => { libc::_exit(number(0)? as libc::c_int); },
+        "waitpid" => {
+            let mut state: libc::c_int = 0;
+            let found = libc::waitpid(number(0)? as libc::pid_t, &mut state, number(1)? as libc::c_int);
+            if found < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            else { Ok(Value::tuple(vec![Value::Small(found as i64), Value::Small(state as i64)])) }
+        },
+        "kill" => status(libc::kill(number(0)? as libc::pid_t, number(1)? as libc::c_int) as i64),
         "pipe" => {
             let mut descriptors = [-1; 2];
             status(libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) as i64)
