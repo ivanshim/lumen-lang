@@ -32637,6 +32637,13 @@ impl Machine<'_> {
                         let program = match target.settled() {
                             Value::Bound(body, _) | Value::Routine(body) => body,
                             Value::Wrapped(7, data) => match &data[0] { Value::Routine(body) => body.clone(), _ => return Err("TypeError: expected code".into()) },
+                            Value::Thing(made) if Self::native_word(&made.blueprint()).as_deref() == Some("code") => {
+                                let slots = made.holds.borrow();
+                                match slots.iter().find(|(word, _)| word == "\0native_forms") {
+                                    Some((_, Value::Routine(body))) => body.clone(),
+                                    _ => return Err("ValueError: no compiled instruction forms".into()),
+                                }
+                            }
                             _ => return Err("TypeError: expected a function or code object".into()),
                         };
                         let mut rows = Vec::new();

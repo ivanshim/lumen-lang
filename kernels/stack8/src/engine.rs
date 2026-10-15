@@ -6325,6 +6325,13 @@ impl<'a> Engine<'a> {
         let body = match target.contents() {
             Value::Routine(body) => body,
             Value::Adapter(parts) if parts.0 == 7 => match &parts.1[0] { Value::Routine(body) => body.clone(), _ => return Err("TypeError: expected code".into()) },
+            Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str()) => {
+                let fields = code.fields.borrow();
+                match fields.iter().find(|(key, _)| key == "\0compiled_program") {
+                    Some((_, Value::Routine(body))) => body.clone(),
+                    _ => return Err("ValueError: no compiled instruction graph".into()),
+                }
+            }
             _ => return Err("TypeError: expected a function or code object".into()),
         };
         let mut row = body.declared_on;

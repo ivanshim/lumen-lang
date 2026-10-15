@@ -48,7 +48,7 @@ class Instruction:
     def __init__(self, offset, opcode, argval, is_jump, positions):
         self.offset = offset
         self.opcode = self.opname = opcode
-        self.arg = self.argval = argval
+        self.arg = self.oparg = self.argval = argval
         self.argrepr = '' if argval is None else str(argval)
         self.positions = Positions(positions)
         self.starts_line = self.positions.lineno
@@ -58,6 +58,8 @@ class Instruction:
 
 def get_instructions(x, *, first_line=None, show_caches=False, adaptive=False):
     """Yield real native instructions and their retained source coordinates."""
+    if isinstance(x, (str, bytes)):
+        x = compile(x, '<disassembly>', 'exec')
     rows = __trace_native__(2, x)
     adjustment = 0
     if first_line is not None:
