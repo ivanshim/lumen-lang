@@ -593,7 +593,7 @@ pub struct Machine<'a> {
     library_index: RefCell<Option<LibraryIndex>>,
     pub library_aliases: HashMap<String, String>,
     library_origins: std::collections::HashSet<String>,
-    imported: HashMap<String, Value>,
+    imported: HashMap<String, Value, crate::table::FxBuildHasher>,
     /// The dictionary of a loaded space, built the first time globals()
     /// wants it and answered every time after: one dictionary, so a
     /// name changed through it is changed in the space.
@@ -601,9 +601,14 @@ pub struct Machine<'a> {
     // These dictionaries remain strongly owned by the module inventory.
     globals_by_cell: HashMap<usize, String>,
     native_slots: HashMap<String, usize>,
-    wildcard_names: HashMap<Rc<str>, HashMap<String, usize, crate::table::FxBuildHasher>, crate::table::FxBuildHasher>,
+    wildcard_names: HashMap<Rc<str>, Rc<HashMap<String, usize, crate::table::FxBuildHasher>>, crate::table::FxBuildHasher>,
     wildcard_source: RefCell<Option<(Rc<str>, (bool, bool))>>,
-    namespace_places: RefCell<Option<HashMap<usize, String>>>,
+    /// The wildcard names of the module being written in, found once for
+    /// as long as the reader stays in that module's own text.
+    wildcard_view: RefCell<Option<(Rc<str>, Option<Rc<HashMap<String, usize, crate::table::FxBuildHasher>>>)>>,
+    /// Where the recursion-limit variable last stood among its module's holds.
+    recursion_slot: Cell<usize>,
+    namespace_places: RefCell<Option<HashMap<usize, String, crate::table::FxBuildHasher>>>,
     revised_members: RefCell<HashMap<usize, (usize, HashMap<String, usize, crate::table::FxBuildHasher>)>>,
     revised_namespaces: std::collections::HashSet<Rc<str>>,
     displaced_primitives: std::collections::BTreeSet<String>,
@@ -1386,7 +1391,11 @@ impl<'a> Machine<'a> {
         let [module, binding] = self.rules.words_ext_system_recursion_variable else { return original };
         let Some(Value::Thing(namespace)) = self.imported.get(module) else { return original };
         let held = namespace.holds.borrow();
-        held.iter().find(|(key, _)| key == binding).and_then(|(_, item)| match item.settled() {
+        let found = match held.get(self.recursion_slot.get()) {
+            Some(entry) if entry.0 == *binding => Some(entry),
+            _ => held.iter().position(|(key, _)| key == binding).map(|at| { self.recursion_slot.set(at); &held[at] }),
+        };
+        found.and_then(|(_, item)| match item.settled() {
             Value::Small(number) => usize::try_from(number).ok(),
             _ => None,
         }).or(original).map(|number| match original {
@@ -2112,12 +2121,14 @@ impl<'a> Machine<'a> {
             library_aliases: HashMap::new(),
             library_origins: std::collections::HashSet::new(),
             importing: std::collections::HashSet::new(),
-            imported: HashMap::new(),
+            imported: HashMap::with_hasher(crate::table::FxBuildHasher::default()),
             space_books: HashMap::new(),
             globals_by_cell: HashMap::new(),
             native_slots: table.strings("ext.stmt.class.special").iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
             wildcard_names: HashMap::with_hasher(crate::table::FxBuildHasher::default()),
             wildcard_source: RefCell::new(None),
+            wildcard_view: RefCell::new(None),
+            recursion_slot: Cell::new(0),
             namespace_places: RefCell::new(None),
             revised_members: RefCell::new(HashMap::new()),
             revised_namespaces: std::collections::HashSet::new(),
@@ -10446,7 +10457,7 @@ impl<'a> Machine<'a> {
         let Value::Thing(thing) = value else { return None };
         let mut places = self.namespace_places.borrow_mut();
         let names = places.get_or_insert_with(|| {
-            let mut names = HashMap::new();
+            let mut names = HashMap::with_hasher(crate::table::FxBuildHasher::default());
             for (name, worth) in &self.imported {
                 if let Value::Thing(space) = worth {
                     names.entry(Rc::as_ptr(space) as usize).or_insert_with(|| name.clone());
@@ -10460,7 +10471,7 @@ impl<'a> Machine<'a> {
         // keep their module ancestor. Ordinary instances cannot own the
         // loader's hidden marker, so avoid scanning their attributes.
         let class = thing.blueprint();
-        if !class.parents().is_empty() && Self::native_beneath(&class).as_deref() != Some("module") { return None; }
+        if !class.parents.borrow().is_empty() && Self::native_beneath(&class).as_deref() != Some("module") { return None; }
         let saved_name = thing.holds.borrow().iter().find(|row| row.0 == "\0loaded-module").map(|row| row.1.settled());
         if let Some(Value::Text(path)) = saved_name { return Some(path.to_string()); }
         for (path, held) in &self.imported {
@@ -21888,8 +21899,8 @@ impl<'a> Machine<'a> {
                         // Ordinary imported names already use their shared global slots.
                         if self.rules.names_shadow_builtins && self.table.prims.contains_key(&name) {
                             *self.wildcard_source.borrow_mut() = None;
-                            self.wildcard_names.entry(self.written_in.clone())
-                                .or_default().insert(name, slot);
+                            *self.wildcard_view.borrow_mut() = None;
+                            Rc::make_mut(self.wildcard_names.entry(self.written_in.clone()).or_default()).insert(name, slot);
                         }
                     }
                 }
@@ -27800,7 +27811,17 @@ impl Machine<'_> {
         // the calling module has imported a replacement for that word.
         if self.calls.last().is_some_and(|call| call.of_library && !self.stands_for_the_run(&call.named)) { return None; }
         if !wildcard { return None; }
-        let names = self.wildcard_names.get(&self.written_in)?;
+        let names = {
+            let mut view = self.wildcard_view.borrow_mut();
+            match view.as_ref() {
+                Some((source, names)) if Rc::ptr_eq(source, &self.written_in) => names.clone(),
+                _ => {
+                    let names = self.wildcard_names.get(&self.written_in).cloned();
+                    *view = Some((self.written_in.clone(), names.clone()));
+                    names
+                }
+            }
+        }?;
         let slot = names.get(word)?;
         let cells = self.outermost.cells.borrow();
         match cells.get(*slot)? {
