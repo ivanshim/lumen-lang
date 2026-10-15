@@ -13048,8 +13048,7 @@ impl<'a> Machine<'a> {
                     };
                     let rows = match expanded {
                         Value::Dict(entries) => entries.iter().map(|(k, v)| {
-                            let k = match k { Value::Keyed(inner, _) => inner.as_ref().clone(), other => other.clone() };
-                            (k, v.clone())
+                            (k.clone(), v.clone())
                         }).collect(),
                         other => {
                             let kind = other.kind_word().to_string();
@@ -13062,10 +13061,11 @@ impl<'a> Machine<'a> {
                         }
                     };
                     for (key, value) in rows {
-                        let word = self.word_of_key(&key);
+                        let bare = match &key { Value::Keyed(inner, _) => inner.as_ref().clone(), other => other.clone() };
+                        let word = self.word_of_key(&bare);
                         let again = self.keyword_already(&met_keys, &key)?;
                         if again && (word.is_err() || !shown.is_empty()) {
-                            let label = match &word { Ok(name) => name.clone(), Err(_) => key.render(self.wording()) };
+                            let label = match &word { Ok(name) => name.clone(), Err(_) => bare.render(self.wording()) };
                             return Err(self.repeated_keyword(shown, &label).into());
                         }
                         met_keys.push(self.hash_key(&key).map_err(Escape::Error)?);

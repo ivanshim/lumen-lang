@@ -3747,11 +3747,12 @@ impl<'a> Engine<'a> {
                     }
                     Value::Flag(true) => {
                         for (key, value) in self.mapping_pairs(&pair.1, &shown)? {
-                            let word = self.word_of_key(&key);
+                            let bare = match &key { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
+                            let word = self.word_of_key(&bare);
                             if self.same_keyword(&seen_keywords, &key)? {
                                 let named = matches!(callee, Callee::Routine(_) | Callee::Builtin(_));
                                 if word.is_err() || named {
-                                    let label = word.unwrap_or_else(|_| key.display(&self.wording()));
+                                    let label = word.unwrap_or_else(|_| bare.display(&self.wording()));
                                     return Err(self.keyword_clash(callee, &label).into());
                                 }
                             }
@@ -3827,8 +3828,8 @@ impl<'a> Engine<'a> {
         match held.contents() {
             Value::Map(entries) => {
                 for (key, value) in entries.iter() {
-                    let key = match key { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
-                    pairs.push((key, value.clone()));
+                    // The hash a key was stored with travels along; it is not asked for again.
+                    pairs.push((key.clone(), value.clone()));
                 }
             }
             Value::Object(_) => {
