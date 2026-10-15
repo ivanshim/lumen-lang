@@ -62,22 +62,29 @@ del load_string
 # Snapshot frames only for synchronous writes to an exact in-memory stream.
 # Other writers retain the exported view, including writers that keep chunks.
 _stream_write = io.BytesIO.write
+_stream_write_body = _stream_write.__code__
 _commit_exported_frame = _Framer.commit_frame
 
 def commit_frame(self, force=False):
     frame = self.current_frame
     if frame and (frame.tell() >= self._FRAME_SIZE_TARGET or force):
         write = self.file_write
-        if (type(frame) is io.BytesIO
-                and type(getattr(write, '__self__', None)) is io.BytesIO
-                and getattr(write, '__func__', None) is _stream_write):
+        if (type(frame) is _memory_stream_type
+                and type(write) is _memory_method_type
+                and type(write.__self__) is _memory_stream_type
+                and write.__func__ is _stream_write
+                and _stream_write.__code__ is _stream_write_body):
             data = frame.getvalue()
             if len(data) >= self._FRAME_SIZE_MIN:
                 write(FRAME + pack('<Q', len(data)))
             write(data)
             self.current_frame = io.BytesIO()
         else:
-            _commit_exported_frame(self, force)
+            data = frame.getbuffer()
+            if len(data) >= self._FRAME_SIZE_MIN:
+                write(FRAME + pack('<Q', len(data)))
+            write(data)
+            self.current_frame = io.BytesIO()
 
 commit_frame.__qualname__ = '_Framer.commit_frame'
 _Framer.commit_frame = commit_frame
