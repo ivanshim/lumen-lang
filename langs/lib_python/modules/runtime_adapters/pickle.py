@@ -192,10 +192,11 @@ def _load_memory(self):
                                     if dispatch.get(code) is not handler:
                                         break
                                     checked[code] = True
-                                stream._pos = end
                                 append(argument)
                             else:
+                                stream._pos = end
                                 continue
+                            stream._pos = start
             checked = [False] * 256
             key = read(1)
             if not key:
