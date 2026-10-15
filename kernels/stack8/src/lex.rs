@@ -279,7 +279,7 @@ fn string_lead(lang: &Lang) -> u128 {
 struct Cursor<'a> {
     lang: &'a Lang,
     continued: std::rc::Rc<std::collections::HashMap<String, Vec<String>>>,
-    text: Vec<char>,
+    text: Box<[char]>,
     at: usize,
     row: usize,
     column: usize,

@@ -1130,7 +1130,9 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
     } else { std::borrow::Cow::Borrowed(source) };
     let source = input.as_ref();
     let text = drop_comments(source, table);
-    let src: Vec<char> = text.chars().collect();
+    let src_chars: Vec<char> = text.chars().collect();
+    // Indexed through a slice: indexing the vector itself is a call or two.
+    let src: &[char] = &src_chars;
     let quotes = table.letters("lexical.string_quotes");
     let raw = table.letters("lexical.raw_quotes");
     let weaving = table.letters("ext.lexical.interpolating_quotes");

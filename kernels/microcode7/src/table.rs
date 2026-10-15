@@ -60,21 +60,29 @@ impl std::hash::Hasher for FxHasher {
         self.add(word);
     }
     #[inline]
-    fn write(&mut self, mut bytes: &[u8]) {
-        while bytes.len() >= 8 {
-            self.add(usize::from_ne_bytes(bytes[..8].try_into().unwrap()));
-            bytes = &bytes[8..];
+    fn write(&mut self, bytes: &[u8]) {
+        // The words are put together byte by byte, least significant first,
+        // which is how this host reads them from memory, rather than through
+        // the array conversions, each of which is a call where the build is
+        // not optimised; the scattering of every key is as it was.
+        let end = bytes.len();
+        let mut at = 0;
+        while at + 8 <= end {
+            let low = bytes[at] as usize | (bytes[at + 1] as usize) << 8 | (bytes[at + 2] as usize) << 16 | (bytes[at + 3] as usize) << 24;
+            let high = (bytes[at + 4] as usize) | (bytes[at + 5] as usize) << 8 | (bytes[at + 6] as usize) << 16 | (bytes[at + 7] as usize) << 24;
+            self.add(low | high << 32);
+            at += 8;
         }
-        if bytes.len() >= 4 {
-            self.add(u32::from_ne_bytes(bytes[..4].try_into().unwrap()) as usize);
-            bytes = &bytes[4..];
+        if at + 4 <= end {
+            self.add(bytes[at] as usize | (bytes[at + 1] as usize) << 8 | (bytes[at + 2] as usize) << 16 | (bytes[at + 3] as usize) << 24);
+            at += 4;
         }
-        if bytes.len() >= 2 {
-            self.add(u16::from_ne_bytes(bytes[..2].try_into().unwrap()) as usize);
-            bytes = &bytes[2..];
+        if at + 2 <= end {
+            self.add(bytes[at] as usize | (bytes[at + 1] as usize) << 8);
+            at += 2;
         }
-        if let Some(&last) = bytes.first() {
-            self.add(last as usize);
+        if at < end {
+            self.add(bytes[at] as usize);
         }
     }
     #[inline]
@@ -93,12 +101,12 @@ pub struct Table {
     cells: HashMap<&'static str, usize, FxBuildHasher>,
     /// The labels in the order they were made, and what each holds.
     names: Vec<&'static str>,
-    held: Vec<Entry>,
+    held: Box<[Entry]>,
     /// Where a label was last found, guessed from where the asking word
     /// lies in memory: the builder asks after the same few labels by the
     /// same literals, and confirming a guess costs less than hashing a
     /// long label again.
-    guesses: Vec<std::cell::Cell<(usize, u32, u32)>>,
+    guesses: Box<[std::cell::Cell<(usize, u32, u32)>]>,
     pub dyadic: HashMap<String, Infix, FxBuildHasher>,
     pub monadic: HashMap<String, Infix, FxBuildHasher>,
     pub precedence: HashMap<String, u32, FxBuildHasher>,
@@ -535,8 +543,8 @@ impl Table {
             rpn: false,
             cells,
             names,
-            held,
-            guesses: (0..GUESSES).map(|_| std::cell::Cell::new((0, 0, 0))).collect(),
+            held: held.into_boxed_slice(),
+            guesses: (0..GUESSES).map(|_| std::cell::Cell::new((0, 0, 0))).collect::<Vec<_>>().into_boxed_slice(),
             dyadic: HashMap::default(),
             monadic: HashMap::default(),
             precedence: HashMap::default(),
@@ -688,7 +696,9 @@ impl Table {
         match self.cells.get(key).copied() {
             Some(at) => self.held[at] = Entry::Strings(Vec::new()),
             None => {
-                self.held.push(Entry::Strings(Vec::new()));
+                let mut grown = std::mem::take(&mut self.held).into_vec();
+                grown.push(Entry::Strings(Vec::new()));
+                self.held = grown.into_boxed_slice();
                 self.names.push(key);
                 self.cells.insert(key, self.held.len() - 1);
             }
