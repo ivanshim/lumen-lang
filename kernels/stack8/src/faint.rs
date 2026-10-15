@@ -283,17 +283,6 @@ fn anchor_ready() -> bool {
     ANCHORED.try_with(|all| all.borrow().iter().any(|item| Rc::strong_count(item) == 1)).unwrap_or(false)
 }
 
-/// How many of the most recently anchored objects are looked at when a
-/// call comes back; the whole list waits for the edge of a statement.
-const RECENT_ANCHORS: usize = 32;
-
-fn recent_anchor_ready() -> bool {
-    ANCHORED.try_with(|all| {
-        let all = all.borrow();
-        all[all.len().saturating_sub(RECENT_ANCHORS)..].iter().any(|item| Rc::strong_count(item) == 1)
-    }).unwrap_or(false)
-}
-
 /// Tell the module the name a class gives its last words. Until this
 /// is called, nothing that dies is looked at.
 pub fn name_last_word(word: Option<String>) {
@@ -306,17 +295,6 @@ pub fn pending() -> bool {
     match PENDING.try_with(|flags| flags.get()).unwrap_or_default() {
         0 => false,
         2 => anchor_ready(),
-        _ => true,
-    }
-}
-
-/// The same asked where a call comes back, short of a statement's edge:
-/// only the latest anchored objects are looked at, the rest at the edge.
-#[inline(always)]
-pub fn pending_recent() -> bool {
-    match PENDING.try_with(|flags| flags.get()).unwrap_or_default() {
-        0 => false,
-        2 => recent_anchor_ready(),
         _ => true,
     }
 }

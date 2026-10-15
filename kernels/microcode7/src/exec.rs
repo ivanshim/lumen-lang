@@ -6542,7 +6542,7 @@ impl<'a> Machine<'a> {
         if self.any_unheard.get() {
             self.hand_over_unheard()?;
         }
-        if crate::ghost::stirred(matches!(node, Form::OnLine(..))) {
+        if crate::ghost::stirred() {
             self.attend_to_gone();
         }
         match node {

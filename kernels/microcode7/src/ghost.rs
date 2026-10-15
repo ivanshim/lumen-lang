@@ -251,17 +251,6 @@ fn anchor_ready() -> bool {
     ANCHORED.try_with(|all| nothing_else_holds(all.borrow().as_slice())).unwrap_or(false)
 }
 
-// How many of the most recently anchored things are looked at between two
-// statements; the older ones wait for the edge of a statement.
-const RECENT_ANCHORS: usize = 32;
-
-fn recent_anchor_ready() -> bool {
-    ANCHORED.try_with(|all| {
-        let all = all.borrow();
-        nothing_else_holds(&all[all.len().saturating_sub(RECENT_ANCHORS)..])
-    }).unwrap_or(false)
-}
-
 /// The method a class bids farewell with, where the language has one.
 /// Until it is named, nothing that goes is looked at.
 pub fn set_farewell_name(word: Option<String>) {
@@ -274,11 +263,8 @@ pub fn bidding() -> bool {
 }
 
 /// Whether the machine has anything to attend to before its next step.
-/// At the edge of a statement every anchored thing is looked at; between
-/// two edges only the latest few are, since a long-held thing that goes
-/// is seen to at the next edge, as the other kernel sees to it.
 #[inline(always)]
-pub fn stirred(edge: bool) -> bool {
+pub fn stirred() -> bool {
     let flags = GHOST_STATE.try_with(|s| s.get()).unwrap_or(0);
     if flags == 0 { return false; }
     if flags & G_POLL != 0 {
@@ -294,7 +280,7 @@ pub fn stirred(edge: bool) -> bool {
         }
     }
     if flags & G_STIRRED != 0 { return true; }
-    if flags & G_ANCHOR != 0 { return if edge { anchor_ready() } else { recent_anchor_ready() }; }
+    if flags & G_ANCHOR != 0 { return anchor_ready(); }
     false
 }
 

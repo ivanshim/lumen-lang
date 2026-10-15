@@ -4946,7 +4946,7 @@ impl<'a> Engine<'a> {
         if outcome.is_ok() && self.any_waiting.get() {
             outcome = self.hand_over_complaints();
         }
-        if crate::faint::pending_recent() {
+        if crate::faint::pending() {
             self.settle_departed();
         }
         if outcome.is_err() {
