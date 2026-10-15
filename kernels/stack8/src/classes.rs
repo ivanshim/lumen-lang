@@ -5828,7 +5828,7 @@ impl<'a> Engine<'a> {
     /// account of itself as the program wrote them over, the namespace
     /// handed to it, or an entry of whichever namespace it keeps.
     fn routine_member(&self, subject: &Value, name: &str) -> Option<Value> {
-        let (_,members)=self.function_members.iter().find(|(v,_)| v.revive().map_or(false, |key| key.equals(subject)))?;
+        let (_,members)=&self.function_members[self.member_place(subject)?];
         let fields=members.fields.borrow();
         {
             let own=format!("\0{name}");
@@ -5845,7 +5845,8 @@ impl<'a> Engine<'a> {
     }
     /// The names a routine's own namespace holds, for its directory.
     fn routine_member_names(&self, subject: &Value) -> Vec<String> {
-        let Some((_,members))=self.function_members.iter().find(|(v,_)| v.revive().map_or(false, |key| key.equals(subject))) else {return Vec::new()};
+        let Some(at)=self.member_place(subject) else {return Vec::new()};
+        let (_,members)=&self.function_members[at];
         let fields=members.fields.borrow();
         if let Some((_,book))=fields.iter().find(|(n,_)| n==Self::HANDED_BOOK) {
             let Value::Map(pairs)=book.contents() else {return Vec::new()};
@@ -5898,22 +5899,52 @@ impl<'a> Engine<'a> {
         self.function_members[at].1.fields.borrow_mut().push((own,fresh.clone()));
         fresh
     }
+    /// Where a routine value's attribute holder stands. A plain routine
+    /// is found by its address in the places index, confirmed against
+    /// the hold standing there, since an address may be reused once the
+    /// routine it named has gone; any other kind of callable is still
+    /// looked for by reviving each hold in turn.
+    fn member_place(&self, function: &Value) -> Option<usize> {
+        let Value::Routine(code) = function else {
+            return self.function_members.iter().position(|(v, _)| v.revive().map_or(false, |key| key.equals(function)));
+        };
+        let at = *self.member_places.get(&(Rc::as_ptr(code) as usize))?;
+        let (held, _) = self.function_members.get(at)?;
+        match held {
+            crate::faint::Hold::Routine(weak) if weak.as_ptr() == Rc::as_ptr(code) && weak.strong_count() > 0 => Some(at),
+            _ => None,
+        }
+    }
+    /// Rebuild the places index after the list was reordered.
+    pub(super) fn relocate_member_places(&mut self) {
+        self.member_places.clear();
+        for (at, (held, _)) in self.function_members.iter().enumerate() {
+            if let crate::faint::Hold::Routine(weak) = held { self.member_places.insert(weak.as_ptr() as usize, at); }
+        }
+    }
     pub(super) fn function_storage(&mut self, function: &Value) -> usize {
-        if let Some(at) = self.function_members.iter().position(|(v, _)| v.revive().map_or(false, |key| key.equals(function))) { return at; }
+        if let Some(at) = self.member_place(function) { return at; }
         let class = self.root_class();
         self.made += 1;
         let fields = Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(Vec::new()), mark: self.made });
         let entry = (crate::faint::hold_of(function).expect("function has a weak identity"), fields);
+        let place = match &entry.0 { crate::faint::Hold::Routine(weak) => Some(weak.as_ptr() as usize), _ => None };
         // Reclaim dead metadata without moving live indices held across
         // annotation callbacks. Repeated short-lived functions must not
         // leave an ever-growing lookup table behind.
-        if let Some(vacant) = self.function_members.iter().position(|(key, _)| key.gone()) {
+        let at = if let Some(vacant) = self.function_members.iter().position(|(key, _)| key.gone()) {
+            if let crate::faint::Hold::Routine(stale) = &self.function_members[vacant].0 {
+                let stale = stale.as_ptr() as usize;
+                if self.member_places.get(&stale) == Some(&vacant) { self.member_places.remove(&stale); }
+            }
             self.function_members[vacant] = entry;
             vacant
         } else {
             self.function_members.push(entry);
             self.function_members.len() - 1
-        }
+        };
+        if let Some(place) = place { self.member_places.insert(place, at); }
+        at
     }
     /// The annotations a class carries: its own, worked out the first
     /// time they are asked for from the routines its body kept and held

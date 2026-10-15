@@ -164,6 +164,10 @@ pub struct Engine<'a> {
     kind_classes: Vec<(String, Rc<Class>)>,
     kind_descriptors: RefCell<Vec<(String, String, Value)>>,
     function_members: Vec<(crate::faint::Hold, Rc<Instance>)>,
+    /// Where the holder of a plain routine's own attributes stands in
+    /// that list, by the routine's address, so a read need not revive
+    /// every hold in the list to find the one that matches.
+    member_places: HashMap<usize, usize>,
     collecting_cycles: bool,
     kind_names: RefCell<HashMap<String, Vec<String>>>,
     member_words: [&'a str; 22],
@@ -1615,7 +1619,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
+            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), member_places: HashMap::new(), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
             contexts: crate::context::ContextStore::default(),
@@ -2375,6 +2379,7 @@ impl<'a> Engine<'a> {
         // heap is the same afterwards and the first walk still stands.
         if group.is_empty() {
             self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !graph.unowned(&function)));
+            self.relocate_member_places();
             drop(graph);
             self.settle_departed();
             self.collecting_cycles = false;
@@ -2408,6 +2413,7 @@ impl<'a> Engine<'a> {
         let unreached = after.still_unreached(group);
         let count = unreached.len();
         self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !after.unowned(&function)));
+        self.relocate_member_places();
 
         let grave = crate::faint::Graph::sever(&unreached);
         drop(unreached);
