@@ -331,17 +331,26 @@ def decode(obj, encoding='utf-8', errors=_default_errors):
 # UTF-16/32 operate on code units; error spans always refer to the
 # original byte string, including its byte order mark.
 def _wide_encode(text, name, errors):
-    if name in ('utf_16', 'utf_16_le', 'utf_16_be', 'utf_32', 'utf_32_le', 'utf_32_be'):
+    # Plain text goes to the kernel; a str subclass keeps the loop below,
+    # which hands the object itself to the error handlers.
+    if type(text) is str and name in ('utf_16', 'utf_16_le', 'utf_16_be', 'utf_32', 'utf_32_le', 'utf_32_be'):
         return _raw_text_encode(text, name.replace('_', '-'), errors)
     width = 4 if name.startswith('utf_32') else 2
     little = not name.endswith('_be')
     row = []
+    if name in ('utf_16', 'utf_32'):
+        row = [255, 254] if width == 2 else [255, 254, 0, 0]
+    if str.isascii(text):
+        ascii_bytes = text.encode('ascii')
+        units = bytearray(len(ascii_bytes) * width)
+        units[0 if little else width - 1::width] = ascii_bytes
+        return bytes(row) + bytes(units)
     i = 0
     while i < len(text):
         n = ord(text[i])
         if 0xd800 <= n <= 0xdfff and errors != 'surrogatepass':
             repl, i = _encode_error(name.replace('_', '-'), text, i, i + 1, 'surrogates not allowed', errors)
-            row.extend(list(repl if isinstance(repl, bytes) else _wide_encode(repl, name, errors)))
+            row.extend(list(repl if isinstance(repl, bytes) else _wide_encode(repl, name + ('_le' if name in ('utf_16', 'utf_32') else ''), errors)))
             continue
         units = [n]
         if width == 2 and n >= 0x10000:
@@ -433,7 +442,7 @@ _b64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 
 def _utf7_encode(text):
     # Text of directly encoded characters alone is its own ASCII spelling.
-    if str.isascii(text) and text.replace('\t', '').replace('\r', '').replace('\n', '').isprintable() and '+' not in text and '\\' not in text and '~' not in text:
+    if type(text) is str and text.isascii() and text.replace('\t', '').replace('\r', '').replace('\n', '').isprintable() and '+' not in text and '\\' not in text and '~' not in text:
         return _raw_text_encode(text, 'ascii', 'strict')
     result = ''
     i = 0
@@ -839,7 +848,7 @@ def _encode(obj, encoding='utf-8', errors=_default_errors):
         return _utf7_encode(obj)
     if name in ('unicode_escape', 'raw_unicode_escape'):
         # Printable ASCII without a backslash is its own escaped spelling.
-        if isinstance(obj, str) and obj.isascii() and (name == 'raw_unicode_escape' or ('\\' not in obj and obj.isprintable())):
+        if type(obj) is str and obj.isascii() and (name == 'raw_unicode_escape' or ('\\' not in obj and obj.isprintable())):
             return _raw_text_encode(obj, 'ascii', 'strict')
         return _escaped_encode(obj, name == 'raw_unicode_escape')
     if name in _charmaps:
