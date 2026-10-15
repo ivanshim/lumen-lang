@@ -647,9 +647,9 @@ fn match_suite_at(words: &[Token], arm: usize, lang: &Lang) -> bool {
     words.first().map_or(false, |head| lang.match_words.contains(&head.lexeme))
 }
 
-fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
+fn private_tokens<'t>(source: &'t [Token], lang: &Lang) -> std::borrow::Cow<'t, [Token]> {
+    if !lang.class_details.get("slots").map_or(false, |v| !v.is_empty()) { return std::borrow::Cow::Borrowed(source); }
     let mut result = source.to_vec();
-    if !lang.class_details.get("slots").map_or(false, |v| !v.is_empty()) { return result; }
     // Work from the original spelling on every pass, including the body
     // of an inner class whose enclosing body has already been visited.
     for at in 0..source.len() {
@@ -709,7 +709,7 @@ fn private_tokens(source: &[Token], lang: &Lang) -> Vec<Token> {
             }
         }
     }
-    result
+    std::borrow::Cow::Owned(result)
 }
 
 fn compile_pass(
@@ -734,7 +734,7 @@ fn compile_pass(
     }
     let spelled = tokens;
     let renamed = private_tokens(tokens, lang);
-    let tokens = renamed.as_slice();
+    let tokens: &[Token] = &renamed;
     for name in &lang.exceptions { table.slot(name); }
     let alone = inside.is_none();
     let already = inside.unwrap_or_default();
@@ -982,12 +982,17 @@ impl<'a> Compiler<'a> {
         if self.registry.stopped_end_row == 0 { self.registry.stopped_end_row = if token.shape == Shape::LineEnd { token.row } else { token.end_row.max(token.row) }; }
     }
 
+    #[inline(always)]
     fn look(&self) -> &Token {
-        &self.tokens[self.pos.min(self.tokens.len() - 1)]
+        let last = self.tokens.len() - 1;
+        &self.tokens[if self.pos < last { self.pos } else { last }]
     }
 
+    #[inline(always)]
     fn look_ahead(&self, ahead: usize) -> &Token {
-        &self.tokens[(self.pos + ahead).min(self.tokens.len() - 1)]
+        let last = self.tokens.len() - 1;
+        let at = self.pos + ahead;
+        &self.tokens[if at < last { at } else { last }]
     }
 
     fn take(&mut self) -> Token {

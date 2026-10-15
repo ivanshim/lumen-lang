@@ -48,12 +48,14 @@ pub struct Token {
 }
 
 impl Token {
+    #[inline(always)]
     pub fn is_lexeme(&self, shape: Shape, text: &str) -> bool {
         self.shape == shape && self.lexeme == text
     }
 
     /// The spelling the language's own words are matched against: the
     /// text as written, which NFKC folding may have changed.
+    #[inline(always)]
     pub fn spelling(&self) -> &str {
         self.raw.as_deref().unwrap_or(&self.lexeme)
     }

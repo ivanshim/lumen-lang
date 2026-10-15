@@ -17,10 +17,25 @@ pub enum Blocks {
 }
 
 #[derive(Clone, Debug)]
-pub struct Brackets {
+pub struct BracketWords {
     pub open: String,
     pub close: String,
     pub between: Option<String>,
+}
+
+/// A pair of marks around a group, shared between every holder: the
+/// compiler takes copies of the pairs it is reading with, many times for
+/// each line of a program.
+#[derive(Clone, Debug)]
+pub struct Brackets(std::sync::Arc<BracketWords>);
+
+impl std::ops::Deref for Brackets {
+    type Target = BracketWords;
+    fn deref(&self) -> &BracketWords { &self.0 }
+}
+
+impl std::ops::DerefMut for Brackets {
+    fn deref_mut(&mut self) -> &mut BracketWords { std::sync::Arc::make_mut(&mut self.0) }
 }
 
 #[derive(Clone, Debug)]
@@ -1530,7 +1545,7 @@ impl<'a> Reader<'a> {
             None => None,
         };
         match (self.head(open)?, self.head(close)?) {
-            (Some(open), Some(close)) => Ok(Some(Brackets { open, close, between: sep })),
+            (Some(open), Some(close)) => Ok(Some(Brackets(std::sync::Arc::new(BracketWords { open, close, between: sep })))),
             (None, None) if sep.is_none() => Ok(None),
             _ => Err(format!("labels '{open}' and '{close}' must be given together")),
         }
@@ -3247,6 +3262,7 @@ impl Lang {
         Ok(())
     }
 
+    #[inline(always)]
     pub fn spells(list: &[String], word: &str) -> bool {
         let mut at = 0;
         while at < list.len() {
