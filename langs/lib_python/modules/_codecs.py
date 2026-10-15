@@ -70,10 +70,16 @@ def _error_argument(errors, function):
 
 # Return a stateless encoder with the C codec tuple interface.
 def _encoder(name):
-    # Encode a Unicode input and report characters consumed.
+    # Encode a Unicode input and report characters consumed. A plain text
+    # input with a plain error policy is checked here; anything else is
+    # checked by the helpers, which answer or complain as the C codecs do.
     def encode(input, errors='strict'):
-        input = _text(input)
-        errors = _error_argument(errors, name + '_encode')
+        if type(input) is not str:
+            input = _text(input)
+        if errors is None:
+            errors = 'strict'
+        elif type(errors) is not str or '\x00' in errors:
+            errors = _error_argument(errors, name + '_encode')
         return _runtime._encode(input, name, errors), len(input)
     return _CodecCall(encode, name + '_encode')
 
