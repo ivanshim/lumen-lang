@@ -59,14 +59,14 @@ def _call_with_names(annotate, names, symbolic):
                 else:
                     copied.append(cell)
             closure = tuple(copied)
-        namespace = {} if symbolic else dict(annotate.__globals__)
+        namespace = {} if symbolic else {**annotate.__builtins__, **annotate.__globals__}
         isolated = types.FunctionType(code, namespace,
                                       argdefs=annotate.__defaults__, closure=closure)
         isolated.__kwdefaults__ = annotate.__kwdefaults__
         annotate = isolated
     return __annotation_call__(annotate, names, symbolic)
 
-def call_annotate_function(annotate, format, owner=None):
+def call_annotate_function(annotate, format, owner=None, *, _is_evaluate=False):
     """Call an __annotate__ function in any of the formats.
 
     Explicit supported answers are returned directly. Fallback calls use
@@ -91,6 +91,8 @@ def call_annotate_function(annotate, format, owner=None):
             pass
         names = _StringifierDict({}, format=format)
         annos = _call_with_names(annotate, names, True)
+        if _is_evaluate:
+            return _stringify_single(annos)
         return {key: _stringify_single(val) for key, val in annos.items()}
     if format == Format.FORWARDREF:
         # First read with the real globals and builtins, a name nowhere
@@ -111,6 +113,8 @@ def call_annotate_function(annotate, format, owner=None):
         names = _StringifierDict({}, globals=scope, owner=owner, is_class=is_class, format=format)
         result = _call_with_names(annotate, names, True)
         names.transmogrify(names.cells)
+        if _is_evaluate:
+            return result.evaluate(format=Format.FORWARDREF) if isinstance(result, ForwardRef) else result
         return {
             key: val.evaluate(format=Format.FORWARDREF) if isinstance(val, ForwardRef) else val
             for key, val in result.items()
@@ -129,8 +133,7 @@ def _stringify_single(anno):
         return repr(anno)
 
 def call_evaluate_function(evaluate, format, owner=None):
-    _check_format(format)
-    return evaluate(format)
+    return call_annotate_function(evaluate, format, owner=owner, _is_evaluate=True)
 
 def _get_and_call_annotate(obj, format):
     """Get the __annotate__ function and call it.

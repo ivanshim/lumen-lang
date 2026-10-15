@@ -139,6 +139,9 @@ impl<'a> Engine<'a> {
         if word == "super" {
             hooks.push((self.lang.constructor.clone().unwrap_or_default(), Self::adapter(236, Vec::new())));
         }
+        if word == "_ConstEvaluator" {
+            hooks.extend([("__call__".into(), Self::adapter(48, vec![Value::Small(0)])), ("__repr__".into(), Self::adapter(48, vec![Value::Small(1)])), ("__module__".into(), Value::text("_typing"))]);
+        }
         if let Some(doc) = Self::builtin_kind_doc(word) {
             hooks.push((self.class_word("doc").to_owned(), Value::text(doc)));
         }
@@ -147,10 +150,10 @@ impl<'a> Engine<'a> {
                 hooks.push((self.class_word(part).to_string(), Self::adapter(207, vec![Value::Small(mode as i64)])));
             }
         }
-        let public = if matches!(word, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "NoDefaultType" | "ParamSpecArgs" | "ParamSpecKwargs") { format!("typing.{word}") } else if matches!(word, "SimpleNamespace" | "GenericAlias") { format!("types.{word}") } else if word == "Union" { String::from("typing.Union") } else { word.to_owned() };
+        let public = if word == "_ConstEvaluator" { String::from("_typing._ConstEvaluator") } else if matches!(word, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "Generic" | "NoDefaultType" | "ParamSpecArgs" | "ParamSpecKwargs") { format!("typing.{word}") } else if matches!(word, "SimpleNamespace" | "GenericAlias") { format!("types.{word}") } else if word == "Union" { String::from("typing.Union") } else { word.to_owned() };
         let c = Rc::new(Class { outline: Some(format!("<class '{public}'>")), name: word.to_string(),
             direct: std::cell::RefCell::new(vec![root.clone()]), lineage: RefCell::new(ancestry), base: std::cell::RefCell::new(Some(root)), answers: vec![], fields: vec![], reaches: vec![],
-            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: crate::value::ClassMembers::new(hooks), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+            methods: vec![], constants: vec![("\0kind".to_string(), Value::text(word))], shared: crate::value::ClassMembers::new(hooks), weak_storage: std::cell::Cell::new(None), declares_slots: word == "_ConstEvaluator", sealed: std::cell::Cell::new(word == "_ConstEvaluator"), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         if word == "SimpleNamespace" && !self.class_word("namespace").is_empty() {
             let name = self.class_word("namespace").to_owned();
             c.shared.borrow_mut().push((name.clone(), Self::adapter(16, vec![Value::text(&name), Value::Class(c.clone()), Value::text("\0instance-namespace")])));
@@ -1072,7 +1075,13 @@ impl<'a> Engine<'a> {
         while lines.iter().any(|s| !s.is_empty()) {
             let head = lines.iter().filter_map(|s| s.first()).find(|head|
                 !lines.iter().any(|s| s.iter().skip(1).any(|tail| Rc::ptr_eq(head, tail)))).cloned()
-                .ok_or_else(|| self.class_word("mro.amiss").to_string())?;
+                .ok_or_else(|| {
+                    if self.lang.type_parameters {
+                        let mut blocked = Vec::new();
+                        for line in &lines { if let Some(head) = line.first() { if !blocked.contains(&head.name) { blocked.push(head.name.clone()); } } }
+                        format!("TypeError: Cannot create a consistent method resolution\norder (MRO) for bases {}", blocked.join(", "))
+                    } else { self.class_word("mro.amiss").to_string() }
+                })?;
             if lineage.iter().any(|c| Rc::ptr_eq(c, &head)) { return Err(self.class_word("mro.amiss").to_string().into()); }
             for line in &mut lines { if line.first().map_or(false, |c| Rc::ptr_eq(c, &head)) { line.remove(0); } }
             lineage.push(head);
@@ -1731,19 +1740,19 @@ impl<'a> Engine<'a> {
             Value::Small(n) => n,
             Value::Flag(flag) => i64::from(flag),
             Value::Huge(_) => match self.special_index(value)? {
-                Some(Value::Huge(big)) => big.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())?,
-                _ => return Err("OverflowError: Python int too large to convert to C int".into()),
+                Some(Value::Huge(big)) => big.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C long".to_string())?,
+                _ => return Err("OverflowError: Python int too large to convert to C long".into()),
             },
             Value::Object(_) => match self.special_index(value)? {
                 Some(Value::Small(n)) => n,
-                Some(Value::Huge(big)) => big.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())?,
+                Some(Value::Huge(big)) => big.to_i64().ok_or_else(|| "OverflowError: Python int too large to convert to C long".to_string())?,
                 Some(other) => return Err(format!("TypeError: __index__ returned non-int (type {})", other.core_kind()).into()),
                 None => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", value.core_kind()).into()),
             },
             other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind()).into()),
         };
         if number < i32::MIN as i64 || number > i32::MAX as i64 {
-            return Err("OverflowError: Python int too large to convert to C int".into());
+            return Err("OverflowError: Python int too large to convert to C long".into());
         }
         Ok(number)
     }
@@ -2270,7 +2279,7 @@ impl<'a> Engine<'a> {
                     return self.set_reduction(&args[0]);
                 },
                 132 => {
-                    if !args.is_empty() { return Err(format!("TypeError: builtin_function_or_method.__reduce__() takes no arguments ({} given)", args.len()).into()); }
+                    if !args.is_empty() { return Err(format!("TypeError: {}.__reduce__() takes no arguments ({} given)", w.1.get(1).map_or_else(|| "builtin_function_or_method".into(), Value::plain), args.len()).into()); }
                     Ok(w.1[0].clone())
                 },
                 1 => {
@@ -2333,13 +2342,16 @@ impl<'a> Engine<'a> {
                     }
                     Ok(alias)
                 }
-                74 if args.len() == 3 => {
+                74 if matches!(args.len(), 3 | 4) => {
                     let reading = self.annotation_scope();
                     if let Some((names, true)) = &reading {
                         return self.unresolved_annotation_name(names, &args[1].plain()).map_err(Fault::Note);
                     }
                     if let Value::Class(owner) = args[0].contents() {
                         if let Some(value) = Self::own_class_value(&owner, &args[1].plain()) { return Ok(value.contents()); }
+                    } else if args.get(3).is_some_and(|book| !matches!(book.contents(), Value::Null)) {
+                        let Value::Tuple(found) = self.class_namespace_read(vec![args[3].clone(), args[1].clone()])? else { unreachable!() };
+                        if found[0].is_true() { return Ok(found[1].clone()); }
                     }
                     let previous = std::mem::replace(&mut self.armed_names, reading);
                     let answer = self.class_apply(args[2].clone(), Vec::new());
@@ -2395,16 +2407,6 @@ impl<'a> Engine<'a> {
                     self.class_apply(function, args)
                 }
                 152 | 153 => {
-                    if w.0 == 152 {
-                        if let Some(Value::Class(owner)) = args.first() {
-                            if let Some(parameters) = Self::own_class_value(owner, "__type_params__") {
-                                if parameters.is_true() {
-                                    owner.shared.borrow_mut().push(("__parameters__".into(), parameters));
-                                    return Ok(Value::Null);
-                                }
-                            }
-                        }
-                    }
                     let module = self.import_module("typing")?;
                     let word = if w.0 == 152 { "_generic_init_subclass" } else { "_generic_class_getitem" };
                     let function = self.class_get(module, word, false)?;
@@ -2412,24 +2414,46 @@ impl<'a> Engine<'a> {
                 }
                 49 if args.len() == 1 => {
                     let module = self.import_module("typing")?;
-                    let alias = self.class_get(module, "_GenericAlias", false)?;
+                    let alias = self.class_get(module.clone(), "_GenericAlias", false)?;
                     let generic = Value::Class(self.kind_class("Generic"));
-                    self.class_apply(alias.contents(), vec![generic, args.remove(0)])
+                    let Value::Tuple(parameters) = args[0].contents() else { return Err(self.class_refusal()); };
+                    let mut bases = Vec::new();
+                    for parameter in parameters.iter() {
+                        let parameter = if matches!(parameter.contents(), Value::Object(ref object) if Self::own_kind(&object.class_now()).as_deref() == Some("TypeVarTuple")) {
+                            let unpack = self.class_get(module.clone(), "Unpack", false)?;
+                            let subscript = self.class_get(unpack, "__getitem__", false)?;
+                            self.class_apply(subscript, vec![parameter.clone()])?
+                        } else { parameter.clone() };
+                        bases.push(parameter);
+                    }
+                    self.class_apply(alias.contents(), vec![generic, Value::tuple(bases)])
                 }
                 49 if args.is_empty() => {
                     self.typing_module();
                     Ok(Value::Class(self.kind_class("Generic")))
                 }
                 48 => {
-                    if args.len() != 1 { return Err("TypeError: constevaluator.__call__() takes exactly 1 argument (0 given)".into()); }
-                    self.data.extend([args[0].clone(), Value::Small(4)]);
-                    self.perform(&Action::Eq, 2)?;
-                    if self.drop_top()?.is_true() {
-                        let shown = w.1[0].plain();
-                        let text = shown.strip_prefix("<class '").and_then(|s| s.strip_suffix("'>")).unwrap_or(&shown);
-                        return Ok(Value::text(text));
+                    let Some(Value::Object(object)) = args.first().map(Value::contents) else { return Err(self.class_refusal()); };
+                    let payload = object.fields.borrow().iter().find(|(key, _)| key == "\0constant").map(|(_, value)| value.clone()).ok_or_else(|| self.class_refusal())?;
+                    if w.1[0].is_true() {
+                        return Ok(Value::text(&format!("<constevaluator {}>", self.special_text(&payload, true).map_err(Fault::Note)?)));
                     }
-                    Ok(w.1[0].clone())
+                    if args.len() != 2 { return Err(format!("TypeError: constevaluator.__call__() takes exactly 1 argument ({} given)", args.len() - 1).into()); }
+                    let integer = match args[1].contents() {
+                        whole @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => whole,
+                        other => self.special_index(&other).map_err(Fault::Note)?.ok_or_else(|| Fault::Note(format!("TypeError: '{}' object cannot be interpreted as an integer", if matches!(other, Value::Null) { "NoneType".to_owned() } else { Self::format_given_kind(&other) })))?,
+                    };
+                    let wide = match integer { Value::Small(number) => Some(number), Value::Huge(number) => number.to_i64(), Value::Flag(flag) => Some(i64::from(flag)), _ => None }.ok_or_else(|| Fault::Note("OverflowError: Python int too large to convert to C long".into()))?;
+                    let format = i32::try_from(wide).map_err(|_| Fault::Note(format!("OverflowError: signed integer is {} than {}", if wide < 0 { "less" } else { "greater" }, if wide < 0 { "minimum" } else { "maximum" })))?;
+                    if format != 4 { return Ok(payload); }
+                    let module = self.import_module("annotationlib")?;
+                    let render = self.class_get(module, "type_repr", false)?;
+                    let text = if let Value::Tuple(items) = payload.contents() {
+                        let mut names = Vec::new();
+                        for item in items.iter() { names.push(self.class_apply(render.clone(), vec![item.clone()])?.plain()); }
+                        format!("({})", names.join(", "))
+                    } else { self.class_apply(render, vec![payload])?.plain() };
+                    Ok(Value::text(&text))
                 }
                 47 => {
                     if args.len() > 1 { return Err("TypeError: evaluator takes at most one argument".into()); }
@@ -2441,7 +2465,7 @@ impl<'a> Engine<'a> {
                 }
                 46 if args.len() == 5 => {
                     let class = self.kind_class(&args[1].plain());
-                    let parameter = self.typing_instance(class, vec![args[0].clone()])?;
+                    let parameter = self.typing_instance(class, vec![args[0].clone()], true)?;
                     let Value::Object(instance) = &parameter else { unreachable!() };
                     let mut fields = instance.fields.borrow_mut();
                     if !matches!(args[2], Value::Null) {
@@ -2999,7 +3023,7 @@ impl<'a> Engine<'a> {
         let result = module.fields.borrow().iter().find(|(key, _)| key == "NoDefault").expect("type default sentinel").1.clone();
         result
     }
-    fn typing_instance(&mut self, class: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+    fn typing_instance(&mut self, class: Rc<Class>, args: Vec<Value>, syntax_parameter: bool) -> Flow<Value> {
         let mut positional = Vec::new();
         let mut keywords = Vec::new();
         for (key, value) in self.call_items(args)? {
@@ -3022,7 +3046,7 @@ impl<'a> Engine<'a> {
         let Some(Value::Text(name)) = positional.first().map(|value| value.contents()) else {
             return Err("TypeError: name must be a str".into());
         };
-        let module = self.parameter_module();
+        let module = if syntax_parameter { Value::text("typing") } else { self.parameter_module() };
         let mut fields: Vec<(String, Value)> = vec![("__name__".into(), Value::Text(name.clone())), ("__module__".into(), module),
             ("\0typing_repr".into(), Value::Text(name))];
         if class.name == "TypeAliasType" {
@@ -3068,7 +3092,7 @@ impl<'a> Engine<'a> {
     fn lazy_type_alias(&mut self, evaluator: Value) -> Flow<Value> {
         let Value::Routine(routine) = evaluator.contents() else { return Err(self.class_refusal()); };
         let class = self.kind_class("TypeAliasType");
-        let mut alias = self.typing_instance(class, vec![Value::text(&routine.ident), Value::Null])?;
+        let mut alias = self.typing_instance(class, vec![Value::text(&routine.ident), Value::Null], false)?;
         let home = match &routine.globe {
             Some(globe) => Self::globals_named(globe).map_or(Value::Null, |word| Value::text(&word)),
             None => self.module_named().map_or(Value::Null, |word| Value::text(&word)),
@@ -3080,6 +3104,11 @@ impl<'a> Engine<'a> {
             fields.push(("\0lazy:__value__".into(), evaluator));
         }
         Ok(alias)
+    }
+    fn constant_evaluator(&mut self, value: Value) -> Value {
+        let class = self.kind_class("_ConstEvaluator");
+        self.made += 1;
+        Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(vec![("\0constant".into(), value)]), mark: self.made }))
     }
     /// The name a globals mapping gives itself, read where the type
     /// statement that made an alias wrote its name down.
@@ -3174,9 +3203,10 @@ impl<'a> Engine<'a> {
             return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: c, mark: self.made,
                 fields: RefCell::new(vec![("__origin__".into(), origin), ("\0typing_repr".into(), display)]) })));
         }
+        if Self::own_kind(&c).as_deref() == Some("_ConstEvaluator") { return Err("TypeError: cannot create '_typing._ConstEvaluator' instances".into()); }
         if self.lang.fuller_classes && Self::super_descended(&c) { return self.super_made(c, args); }
         if Self::own_kind(&c).is_some() && matches!(c.name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType") {
-            return self.typing_instance(c, args);
+            return self.typing_instance(c, args, false);
         }
         if matches!(Self::own_kind(&c).as_deref(), Some("range_iterator" | "longrange_iterator")) {
             return Err(format!("TypeError: cannot create '{}' instances", c.name).into());
@@ -3249,8 +3279,9 @@ impl<'a> Engine<'a> {
                 _ => return Err("TypeError: arg 5 (closure) must be tuple".into()),
             };
             if closure.len() != made.enclosing.len() { return Err("ValueError: function requires a closure of the right length".into()); }
+            made.enclosed.clear();
             let mut free = made.enclosing.clone();
-            free.sort_by(|(one, _), (two, _)| made.idents[*one].cmp(&made.idents[*two]));
+            free.sort_by_key(|(slot, _)| Self::closure_title(&made.idents[*slot]));
             for ((at, _), cell) in free.iter().zip(closure.iter()) {
                 let Value::Adapter(wrapped) = cell.contents() else { return Err("TypeError: arg 5 (closure) must contain cells".into()); };
                 if wrapped.0 != 31 { return Err("TypeError: arg 5 (closure) must contain cells".into()); }
@@ -3995,8 +4026,8 @@ impl<'a> Engine<'a> {
                 return Ok(value);
             }
             return match w.0 {
-                2 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
-                29 | 122 | 124 | 126 | 133 | 180 | 155 | 156 | 157 | 158 | 236 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                2 if !w.1.is_empty() && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                29 | 48 | 122 | 124 | 126 | 133 | 180 | 155 | 156 | 157 | 158 | 236 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 64 if w.1[0].plain() == "normal_pdf" && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 119 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
@@ -5309,6 +5340,13 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if Self::own_kind(&o.class_now()).is_some_and(|kind| matches!(kind.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType")) {
+                if matches!(o.class_now().name.as_str(), "TypeVar" | "ParamSpec" | "TypeVarTuple") {
+                    if name == "__reduce__" {
+                        let title = o.fields.borrow().iter().find(|(key, _)| key == "__name__").expect("parameter name").1.clone();
+                        return Ok(Self::adapter(132, vec![title, Value::text(&o.class_now().name)]));
+                    }
+                    if name == "__reduce_ex__" { return Ok(Value::ValueMethod(Rc::new((subject.clone(), "callable_reduce_ex".into())))); }
+                }
                 if matches!(name, "args" | "kwargs") && o.class_now().name == "ParamSpec" {
                     let class = self.kind_class(if name == "args" { "ParamSpecArgs" } else { "ParamSpecKwargs" });
                     let title = o.fields.borrow().iter().find(|(key, _)| key == "__name__").map(|(_, value)| value.plain()).unwrap_or_default();
@@ -5335,6 +5373,7 @@ impl<'a> Engine<'a> {
                 if o.class_now().name == "TypeVar" && name == "__typing_prepare_subst__" {
                     return Ok(Self::adapter(3, vec![Self::adapter(158, vec![Value::text("typevar_prepare")]), subject.clone()]));
                 }
+                if name == "__typing_subst__" && o.class_now().name == "TypeVarTuple" { return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.into())))); }
                 let substitution = match (o.class_now().name.as_str(), name) {
                     ("TypeVar", "__typing_subst__") => Some("_typevar_subst"),
                     ("ParamSpec", "__typing_subst__") => Some("_paramspec_subst"),
@@ -5354,10 +5393,10 @@ impl<'a> Engine<'a> {
                             let constrained = fields.iter().any(|(key, value)| key == "\0type_constraints" && value.is_true());
                             if (attribute == "__constraints__") == constrained { fields.iter().find(|(key, _)| key == "\0type_bound").map(|(_, source)| source.clone()) } else { None }
                         } else { None });
-                    if let Some(source) = source { return Ok(Self::adapter(47, vec![source])); }
+                    if let Some(source) = source { return Ok(source); }
                     if let Some((_, held)) = fields.iter().find(|(key, _)| key == attribute) {
                         if matches!(attribute, "__bound__" | "__constraints__") && (matches!(held, Value::Null) || matches!(held, Value::Tuple(items) if items.is_empty())) { return Ok(Value::Null); }
-                        return Ok(Self::adapter(48, vec![held.clone()]));
+                        return Ok(self.constant_evaluator(held.clone()));
                     }
                 }
                 if matches!(name, "__bound__" | "__constraints__") {
@@ -6607,7 +6646,7 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if Self::class_sealed(c) || c.constants.iter().any(|(key, _)| key == "\0native-name") || (c.python_names.borrow().is_none() && ["name", "qualified", "doc"].iter().any(|key| !self.class_word(key).is_empty() && name == self.class_word(key))) {
-                    return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{}'", c.name).into());
+                    return Err(format!("TypeError: cannot set '{name}' attribute of immutable type '{}'", if Self::own_kind(c).as_deref() == Some("_ConstEvaluator") { "_typing._ConstEvaluator" } else { &c.name }).into());
                 }
                 // The kinds of the two named singletons are fixed the
                 // way the reference fixes them: nothing is written onto
@@ -6892,7 +6931,7 @@ impl<'a> Engine<'a> {
     pub(super) fn weak_layout(&self, c: &Class) -> bool {
         if let Some(layout) = c.weak_storage.get() { return layout; }
         if matches!(Self::kind_beneath(c).as_deref(), Some("int" | "tuple" | "bytes")) { return false; }
-        if let Some(kind) = Self::own_kind(c) { return matches!(kind.as_str(), "module" | "set" | "frozenset" | "TypeVar" | "ParamSpec" | "TypeVarTuple" | "Union" | "GenericAlias"); }
+        if let Some(kind) = Self::own_kind(c) { return matches!(kind.as_str(), "module" | "set" | "frozenset" | "TypeVar" | "ParamSpec" | "TypeVarTuple" | "Union" | "GenericAlias" | "ParamSpecArgs" | "ParamSpecKwargs"); }
         if c.direct().is_empty() { return false; }
         match Self::own_class_value(c, self.class_word("slots")) {
             None => true,
@@ -6921,12 +6960,13 @@ impl<'a> Engine<'a> {
     /// unless its things keep a worth of an atomic builtin kind, which
     /// can take no part in a cycle.
     pub(super) fn flags_of(&self, c: &Class) -> i64 {
+        let generic_heap = self.lang.type_parameters && Self::own_kind(c).as_deref() == Some("Generic");
         let dictionary = self.slots_allow(c, self.class_word("namespace"));
         let inline = dictionary && Self::kind_beneath(c).is_none();
-        let tracked = Self::own_kind(c).is_none()
+        let tracked = (Self::own_kind(c).is_none() || generic_heap)
             && !matches!(Self::kind_beneath(c).as_deref(), Some("tuple" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray"));
         let protocol = self.class_value(c, "__abc_tpflags__").map_or(0, |v| match v.contents() { Value::Small(n) => n, _ => 0 }) & 96;
-        protocol + if c.constants.iter().any(|(key, _)| key == "\0native-name") && !Self::class_sealed(c) { 256 } else { 0 } + if c.python_names.borrow().is_some() { 512 } else { 0 } + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
+        protocol + if c.constants.iter().any(|(key, _)| key == "\0native-name") && !Self::class_sealed(c) && !generic_heap { 256 } else { 0 } + if c.python_names.borrow().is_some() { 512 } else { 0 } + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
     }
     pub(super) fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
         if !self.lang.class_builder.is_empty() {

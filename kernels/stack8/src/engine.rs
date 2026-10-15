@@ -4695,12 +4695,13 @@ impl<'a> Engine<'a> {
             count
         } else { n };
         if program.checks_annotation_format && n == 1 {
-            self.data.push(self.data.last().expect("annotation format").clone());
-            self.data.push(Value::Small(2));
-            self.perform(&Action::Gt, 2)?;
-            if self.drop_top()?.is_true() {
-                return Err("NotImplementedError: ".into());
+            let mut format = self.data.last().expect("annotation format").contents();
+            if matches!(format, Value::Blank) {
+                if let Some(default) = program.carried.iter().position(|slot| *slot == 0).and_then(|i| program.held.get(i)) { format = default.contents(); }
             }
+            self.data.extend([format, Value::Small(2)]);
+            self.perform(&Action::Gt, 2)?;
+            if self.drop_top()?.is_true() { return Err("NotImplementedError: ".into()); }
         }
         // Where a language can read what a call was given, a call may
         // give more than the routine names; the rest is kept aside.
@@ -9603,7 +9604,7 @@ impl<'a> Engine<'a> {
     /// The whole number a thing stands for, by its index method: none
     /// where it has no such method, and a complaint naming the kind
     /// where the method answered with something else.
-    fn special_index(&mut self, value: &Value) -> Res<Option<Value>> {
+    pub(super) fn special_index(&mut self, value: &Value) -> Res<Option<Value>> {
         Ok(match self.special_call(value, 43, Vec::new())? {
             None => Self::worth_of(value).map(|inner| inner.contents())
                 .filter(|inner| matches!(inner, Value::Small(_) | Value::Huge(_) | Value::Flag(_))),
@@ -12140,7 +12141,7 @@ impl<'a> Engine<'a> {
                 Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; self.cause_written(&o, name); Some(self.class_write(o,name,Some(v),false)?) },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
                 Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(self.what_it_spells(v.clone()), Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_) | Value::Native(Builtin::ClassTool(9..=11),_))) => {self.drop_top()?; Some(Value::Flag(true))},
-                Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) if !matches!(builtin, Builtin::SortOf) || argc != 1 || self.data.last().map_or(false, |v| matches!(v, Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {
+                Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) if !matches!(builtin, Builtin::SortOf) || argc != 1 || self.data.last().map_or(false, |v| matches!(v.contents(), Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {
                     let supplied=self.drop_many(argc)?;let mut args=Vec::new();
                     if *builtin == Builtin::SortOf {
                         let class = self.class_type(supplied)?; self.data.push(class); return Ok(());
@@ -18586,6 +18587,11 @@ impl<'a> Engine<'a> {
                 Err(fault) => { self.carried = Some(fault); Err(String::new()) }
             };
         }
+        if operation == "__typing_subst__" && self.lang.type_parameters {
+            if !named.is_empty() { return Err("TypeError: TypeVarTuple.__typing_subst__() takes no keyword arguments".into()); }
+            if args.len() != 1 { return Err(format!("TypeError: TypeVarTuple.__typing_subst__() takes exactly one argument ({} given)", args.len())); }
+            return Err("TypeError: Substitution of bare TypeVarTuple is not supported".into());
+        }
         if operation == "callable_reduce_ex" {
             if !named.is_empty() || args.len() != 1 { return Err(String::from("TypeError: __reduce_ex__() takes exactly one argument")); }
             let number = self.special_index(&args[0])?.unwrap_or_else(|| args[0].contents());
@@ -24329,7 +24335,7 @@ impl<'a> Engine<'a> {
                 };
             }
             Builtin::SortOf => {
-                if self.fuller_classes() && args.len() != 1 {
+                if self.fuller_classes() && (args.len() != 1 || args.first().is_some_and(|value| matches!(value.contents(), Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)))) {
                     return self.class_type(args.clone()).map_err(|fault| match fault {
                         Fault::Note(message) => message,
                         raised => { self.carried = Some(raised); String::new() },
@@ -28716,7 +28722,7 @@ impl Engine<'_> {
     /// behind the frame at the top answers for it, since a builtin
     /// called through a name rather than spelled out still stands
     /// inside the call it was made in.
-    fn running_outer(&mut self) -> Rc<RefCell<Value>> {
+    pub(super) fn running_outer(&mut self) -> Rc<RefCell<Value>> {
         let stands = self.trace_frame.as_ref().and_then(|frame| {
             frame.fields.borrow().iter().find(|(name, _)| name == "\0routine").and_then(|(_, held)| match held {
                 Value::Routine(code) => Some(code.clone()),
