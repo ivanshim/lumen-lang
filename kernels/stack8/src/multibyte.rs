@@ -45,6 +45,78 @@ fn locate(data: &[u8], start: usize, count: usize, key: (u32, u64), decoding: bo
 }
 fn scalar(value: &Value) -> Result<u32, String> { value.as_big()?.to_u32().ok_or("ValueError: invalid Unicode point".into()) }
 fn output(bytes: Vec<u8>) -> Value { Value::Bytes(Rc::new(RefCell::new(bytes)), false, Rc::from("b")) }
+/// The bytes of one character, or of a character and the one after it
+/// where the table holds the pair; GB18030's arithmetic ranges stand in
+/// for the rest of its single characters.
+fn encode_point(data: &[u8], name: &str, encoding_count: usize, ranges: usize, first: u32, second: u32) -> Option<Vec<u8>> {
+    if let Some(at) = locate(data, 8, encoding_count, (first, second.into()), false) {
+        let n = word(data, at+8) as usize;
+        return Some(wide(data, at+12).to_be_bytes()[8-n..].to_vec());
+    }
+    if second == 0 && name == "gb18030" {
+        for row in 0..word(data, ranges) as usize {
+            let at = ranges + 4 + row * 16;
+            if (word(data, at)..=word(data, at+4)).contains(&first) {
+                let pointer = word(data, at+8) + first - word(data, at);
+                return Some(vec![(pointer/12600+129) as u8, (pointer/1260%10+48) as u8, (pointer/10%126+129) as u8, (pointer%10+48) as u8]);
+            }
+        }
+    }
+    None
+}
+/// Whether a character begins any pair the table knows.
+fn pair_lead(data: &[u8], encoding_count: usize, point: u32) -> bool {
+    let mut lo = 0; let mut hi = encoding_count;
+    while lo < hi {
+        let mid = (lo+hi)/2; let at = 8+mid*20;
+        if (word(data,at), word(data,at+4)) < (point,1) { lo=mid+1; } else { hi=mid; }
+    }
+    lo < encoding_count && word(data,8+lo*20) == point && word(data,12+lo*20) != 0
+}
+/// The character or characters a whole unit of bytes stands for.
+fn decode_unit(data: &[u8], name: &str, decoding_start: usize, decoding_count: usize, ranges: usize, raw: &[u8]) -> Option<Vec<u32>> {
+    let length = raw.len();
+    if length > 8 { return None; }
+    let mut code = 0u64; for byte in raw.iter() { code = (code << 8) | u64::from(*byte); }
+    if let Some(at) = locate(data, decoding_start, decoding_count, (length as u32, code), true) {
+        let mut points = vec![word(data, at+12)]; let second = word(data, at+16);
+        if second != 0 { points.push(second); }
+        return Some(points);
+    }
+    if name == "gb18030" && length == 4 && (129..=254).contains(&raw[0]) && (48..=57).contains(&raw[1]) && (129..=254).contains(&raw[2]) && (48..=57).contains(&raw[3]) {
+        let pointer = ((u32::from(raw[0])-129)*10+u32::from(raw[1])-48)*1260+(u32::from(raw[2])-129)*10+u32::from(raw[3])-48;
+        for row in 0..word(data, ranges) as usize {
+            let at = ranges + 4 + row * 16;
+            if (word(data, at+8)..=word(data, at+12)).contains(&pointer) { return Some(vec![word(data, at)+pointer-word(data, at+8)]); }
+        }
+    }
+    None
+}
+/// Whether some longer unit begins with these bytes.
+fn longer_exists(data: &[u8], name: &str, decoding_start: usize, decoding_count: usize, raw: &[u8]) -> bool {
+    let length = raw.len();
+    if length > 8 { return false; }
+    let mut code = 0u64; for byte in raw.iter() { code = (code << 8) | u64::from(*byte); }
+    for width in length+1..=8 {
+        let shift = (width-length)*8;
+        if shift >= 64 { continue; }
+        let low = code << shift; let high = low | if shift == 0 {0} else {(1u64 << shift)-1};
+        let mut l = 0; let mut r = decoding_count;
+        while l < r {
+            let m = (l+r)/2; let at = decoding_start + m*20;
+            if (word(data,at),wide(data,at+4)) < (width as u32, low) { l=m+1; } else { r=m; }
+        }
+        if l < decoding_count {
+            let at = decoding_start+l*20;
+            if word(data,at) == width as u32 && wide(data,at+4) <= high { return true; }
+        }
+    }
+    if name == "gb18030" && length < 4 {
+        let valid = !raw.is_empty() && (129..=254).contains(&raw[0]) && (length < 2 || (48..=57).contains(&raw[1])) && (length < 3 || (129..=254).contains(&raw[2]));
+        if valid { return true; }
+    }
+    false
+}
 pub fn call(args: &[Value]) -> Result<Value, String> {
     if args.len() != 4 { return Err("TypeError: multibyte mapping expects four arguments".into()); }
     let Some(Value::Text(name)) = args.get(1).map(Value::contents) else { return Err("TypeError: codec name must be str".into()); };
@@ -63,71 +135,66 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
     let decoding_start = 8 + encoding_count * 20;
     let ranges = decoding_start + decoding_count * 20;
     let op = scalar(&args[0])?;
-    if op == 3 {
-        let point = scalar(&args[2])?;
-        let mut lo = 0; let mut hi = encoding_count;
-        while lo < hi {
-            let mid = (lo+hi)/2; let at = 8+mid*20;
-            if (word(data,at), word(data,at+4)) < (point,1) { lo=mid+1; } else { hi=mid; }
-        }
-        return Ok(Value::Flag(lo < encoding_count && word(data,8+lo*20) == point && word(data,12+lo*20) != 0));
-    }
+    if op == 3 { return Ok(Value::Flag(pair_lead(data, encoding_count, scalar(&args[2])?))); }
     if op == 0 {
         let first = scalar(&args[2])?; let second = scalar(&args[3])?;
-        if let Some(at) = locate(data, 8, encoding_count, (first, second.into()), false) {
-            let n = word(data, at+8) as usize;
-            return Ok(output(wide(data, at+12).to_be_bytes()[8-n..].to_vec()));
-        }
-        if second == 0 && name.as_ref() == "gb18030" {
-            for row in 0..word(data, ranges) as usize {
-                let at = ranges + 4 + row * 16;
-                if (word(data, at)..=word(data, at+4)).contains(&first) {
-                    let pointer = word(data, at+8) + first - word(data, at);
-                    return Ok(output(vec![(pointer/12600+129) as u8, (pointer/1260%10+48) as u8, (pointer/10%126+129) as u8, (pointer%10+48) as u8]));
-                }
+        return Ok(encode_point(data, &name, encoding_count, ranges, first, second).map_or(Value::Null, output));
+    }
+    if op == 7 {
+        // Whole text written by a stateless codec: the row of bytes, where
+        // writing stopped, and why: 0 the end, 1 a character the codec has
+        // no bytes for, 2 a last character that may yet begin a pair.
+        let codes = args[2].contents().text_codes().ok_or("TypeError: mapping input must be str")?;
+        let packed = scalar(&args[3])?;
+        let (last_input, mut pos) = (packed & 1 == 1, (packed >> 1) as usize);
+        let mut row = Vec::new();
+        let mut stop = 0;
+        while pos < codes.len() {
+            let first = codes[pos];
+            if pos + 1 == codes.len() && !last_input && pair_lead(data, encoding_count, first) { stop = 2; break; }
+            if pos + 1 < codes.len() {
+                if let Some(wire) = encode_point(data, &name, encoding_count, ranges, first, codes[pos+1]) { row.extend(wire); pos += 2; continue; }
+            }
+            match encode_point(data, &name, encoding_count, ranges, first, 0) {
+                Some(wire) => { row.extend(wire); pos += 1; }
+                None => { stop = 1; break; }
             }
         }
-        return Ok(Value::Null);
+        return Ok(Value::tuple(vec![output(row), Value::Small(pos as i64), Value::Small(stop)]));
     }
     let Value::Bytes(raw, ..) = args[2].contents() else { return Err("TypeError: mapping input must be bytes".into()); };
-    let raw = raw.borrow(); let length = raw.len();
-    if length > 8 { return Ok(Value::Null); }
-    let mut code = 0u64; for byte in raw.iter() { code = (code << 8) | u64::from(*byte); }
-    if op == 1 {
-        if let Some(at) = locate(data, decoding_start, decoding_count, (length as u32, code), true) {
-            let mut points = vec![word(data, at+12)]; let second = word(data, at+16);
-            if second != 0 { points.push(second); }
-            return Ok(Value::from_codes(points));
-        }
-        if name.as_ref() == "gb18030" && length == 4 && (129..=254).contains(&raw[0]) && (48..=57).contains(&raw[1]) && (129..=254).contains(&raw[2]) && (48..=57).contains(&raw[3]) {
-            let pointer = ((u32::from(raw[0])-129)*10+u32::from(raw[1])-48)*1260+(u32::from(raw[2])-129)*10+u32::from(raw[3])-48;
-            for row in 0..word(data, ranges) as usize {
-                let at = ranges + 4 + row * 16;
-                if (word(data, at+8)..=word(data, at+12)).contains(&pointer) { return Ok(Value::from_codes(vec![word(data, at)+pointer-word(data, at+8)])); }
+    let raw = raw.borrow();
+    if op == 8 {
+        // Whole bytes read by a stateless codec: the text, where reading
+        // stopped, and why: 0 the end, 1 an illegal unit, 2 an unfinished
+        // unit with more bytes to come, 3 an unfinished unit at the end.
+        let packed = scalar(&args[3])?;
+        let (last_input, mut pos) = (packed & 1 == 1, (packed >> 1) as usize);
+        let fixed_width = matches!(name.as_ref(), "cp932" | "shift_jis" | "shift_jis_2004" | "shift_jisx0213");
+        let mut text = Vec::new();
+        let mut stop = 0;
+        while pos < raw.len() {
+            let mut width = 1;
+            while width <= 8 && pos + width <= raw.len() {
+                let unit = &raw[pos..pos+width];
+                if decode_unit(data, &name, decoding_start, decoding_count, ranges, unit).is_some() { break; }
+                if !longer_exists(data, &name, decoding_start, decoding_count, unit) { break; }
+                width += 1;
+            }
+            if width == 1 && raw[pos] >= 128 && !fixed_width && decode_unit(data, &name, decoding_start, decoding_count, ranges, &raw[pos..pos+1]).is_none() {
+                width = if name.starts_with("euc_j") && raw[pos] == 143 { 3 } else { 2 };
+            }
+            if pos + width > raw.len() { stop = if last_input { 3 } else { 2 }; break; }
+            match decode_unit(data, &name, decoding_start, decoding_count, ranges, &raw[pos..pos+width]) {
+                Some(points) => { text.extend(points); pos += width; }
+                None => { stop = 1; break; }
             }
         }
-        return Ok(Value::Null);
+        return Ok(Value::tuple(vec![Value::from_codes(text), Value::Small(pos as i64), Value::Small(stop)]));
     }
+    if op == 1 { return Ok(decode_unit(data, &name, decoding_start, decoding_count, ranges, &raw).map_or(Value::Null, Value::from_codes)); }
     if op != 2 { return Err("ValueError: invalid multibyte mapping operation".into()); }
-    for width in length+1..=8 {
-        let shift = (width-length)*8;
-        if shift >= 64 { continue; }
-        let low = code << shift; let high = low | if shift == 0 {0} else {(1u64 << shift)-1};
-        let mut l = 0; let mut r = decoding_count;
-        while l < r {
-            let m = (l+r)/2; let at = decoding_start + m*20;
-            if (word(data,at),wide(data,at+4)) < (width as u32, low) { l=m+1; } else { r=m; }
-        }
-        if l < decoding_count {
-            let at = decoding_start+l*20;
-            if word(data,at) == width as u32 && wide(data,at+4) <= high { return Ok(Value::Flag(true)); }
-        }
-    }
-    if name.as_ref() == "gb18030" && length < 4 {
-        let valid = !raw.is_empty() && (129..=254).contains(&raw[0]) && (length < 2 || (48..=57).contains(&raw[1])) && (length < 3 || (129..=254).contains(&raw[2]));
-        if valid { return Ok(Value::Flag(true)); }
-    }
-    Ok(Value::Flag(false))
+    Ok(Value::Flag(longer_exists(data, &name, decoding_start, decoding_count, &raw)))
 }
 const CATEGORIES: &[&str] = &["Cn", "Lu", "Ll", "Lt", "Lm", "Lo", "Mn", "Mc", "Me", "Nd", "Nl", "No", "Pc", "Pd", "Ps", "Pe", "Pi", "Pf", "Po", "Sm", "Sc", "Sk", "So", "Zs", "Zl", "Zp", "Cc", "Cf", "Cs", "Co"];
 const BIDI: &[&str] = &["", "L", "R", "AL", "EN", "ES", "ET", "AN", "CS", "NSM", "BN", "B", "S", "WS", "ON", "LRE", "LRO", "RLE", "RLO", "PDF", "LRI", "RLI", "FSI", "PDI"];
