@@ -266,10 +266,10 @@ pub(crate) fn library_tokens(source: &str, table: &Table) -> Option<Vec<Token>> 
 pub fn source_key(source: &str) -> u64 { input_key(source.as_bytes()) }
 
 fn input_key(proof: &[u8]) -> u64 {
-    use std::hash::Hash;
-    let mut digest = std::collections::hash_map::DefaultHasher::new();
-    proof.hash(&mut digest);
-    std::hash::Hasher::finish(&digest)
+    use std::hash::Hasher;
+    let mut digest = crate::table::FxHasher::default();
+    digest.write(proof);
+    digest.finish()
 }
 
 // Decode a build-owned proof with a bounded native codec result.

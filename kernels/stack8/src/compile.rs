@@ -415,9 +415,9 @@ pub(crate) fn prepared_tokens(source: &str, lang: &Lang) -> Option<(Vec<Token>, 
 pub fn source_stamp(source: &str) -> u64 { token_stamp(source.as_bytes()) }
 
 fn token_stamp(bytes: &[u8]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hash);
+    use std::hash::Hasher;
+    let mut hash = crate::value::QuickHash::default();
+    hash.write(bytes);
     hash.finish()
 }
 
