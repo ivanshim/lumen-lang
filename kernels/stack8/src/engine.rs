@@ -22216,6 +22216,7 @@ impl<'a> Engine<'a> {
         })
     }
 
+    #[allow(unused_variables)]
     pub(super) fn builtin_values(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
         if matches!(builtin, Builtin::Append | Builtin::Replace) {
             if let Some(original @ (Value::Collection(..) | Value::Bond(_))) = args.last().cloned() {
@@ -22266,7 +22267,467 @@ impl<'a> Engine<'a> {
             // A method spelled with its class before it (float.fromhex,
             // int.__truediv__) is called on its first argument, as the
             // method would be on a value of that class.
-            Builtin::ValueMethod => {
+            Builtin::ValueMethod => { return self.builtin_arm_1(builtin, name, args); }
+            Builtin::Sorted => { if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); } return self.order_values(&args[0], &[]).map(|v| Value::array(v).held(true)); },
+            Builtin::SetMake | Builtin::SetAdd | Builtin::SetRemove | Builtin::SetDiscard | Builtin::SetPop | Builtin::SetClear | Builtin::SetCopy | Builtin::SetUpdate | Builtin::SetUnion | Builtin::SetIntersection | Builtin::SetDifference | Builtin::SetSymmetric | Builtin::SetSubset | Builtin::SetSuperset | Builtin::SetDisjoint | Builtin::SetMeetUpdate | Builtin::SetLessUpdate | Builtin::SetXorUpdate | Builtin::SetSorted => self.set_builtin(builtin, args)?,
+            Builtin::Format => { return self.builtin_arm_2(builtin, name, args); }
+            // Bytes are made of the numbers they are handed, and a walk
+            // stands for its numbers as plainly as a list does. Gather
+            // the walk into a row first so that a walk backwards over a
+            // byte string can be built straight back into one.
+            Builtin::Bytes(task @ (2 | 3)) if name == "__codec_encode" || name == "__codec_decode" => {
+                if args.is_empty() { return Err(self.byte_fault("arguments")); }
+                let data = if task == 3 { self.byte_row(&args[0], false)? } else { Vec::new() };
+                self.byte_transcode(task == 2, &data, &args, false)?
+            }
+            Builtin::Bytes(task) => { return self.builtin_arm_3(builtin, name, args); }
+            Builtin::Text(op) => { return self.builtin_arm_4(builtin, name, args); },
+            Builtin::ClassTool(work) =>return self.class_work(work, args.clone()).map_err(|fault| match fault {
+                Fault::Note(words)=>words,
+                raised=>{self.carried=Some(raised);String::new()},
+            }),
+            Builtin::Echo => {
+                arity(1)?;
+                if let Value::Codepoints(row) = &args[0] { return Ok(Value::Small(row[0] as i64)); }
+                let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
+                self.utter(s);
+                Value::Null
+            }
+            // One bound is the stop; two or three are start, stop and
+            // step, the rest standing for nothing.
+            Builtin::MakeSlice => {
+                if args.is_empty() || args.len() > 3 { return Err(self.slice_word("ext.builtin.slice.arity")); }
+                let mut bounds = [Value::Null, Value::Null, Value::Null];
+                if args.len() == 1 { bounds[1] = args[0].clone(); }
+                else { for (i, bound) in args.iter().enumerate() { bounds[i] = bound.clone(); } }
+                Value::Slice(Rc::new(bounds))
+            }
+            // The reader the definition routes to does the asking, so
+            // that a program which puts another stream in its place is
+            // answered from there.
+            Builtin::Ask => { return self.builtin_arm_5(builtin, name, args); }
+            // Text and a flag: on the error stream when the flag holds,
+            // else out the ordinary way. Answers how many characters went.
+            Builtin::StreamPut => { return self.builtin_arm_6(builtin, name, args); }
+            // A count and a flag: so many characters, all of them when the
+            // count is below nought, and no further than the end of the
+            // line when the flag holds. Bytes are gathered until they
+            // spell a character, so a character never comes back in part.
+            Builtin::StreamTake => { return self.builtin_arm_7(builtin, name, args); }
+            // The readers of text and the handing out of names are
+            // answered before the arguments are opened, where the
+            // language spells the manners text may be read in; a
+            // language spelling the words without the manners is
+            // refused here.
+            Builtin::OuterNames | Builtin::NearNames | Builtin::ClassLocalsPlace | Builtin::RunText | Builtin::ReadyText | Builtin::Summon => return Err(self.source_unready()),
+            // Source read while the program runs, assembled against
+            // the same globals and run where it stands. A file that
+            // cannot be read gives false back, as such a language says.
+            Builtin::Eval | Builtin::Include | Builtin::IncludeOnce => { return self.builtin_arm_8(builtin, name, args); }
+            // Reaching outside the run: only a language that spells
+            // these labels can, and what cannot be done gives false
+            // back rather than stopping, as such a language expects.
+            Builtin::FileReadBytes => {
+                arity(1)?;
+                match std::fs::read(args[0].display(&self.wording())) {
+                    Ok(data) => self.byte_make(data, false),
+                    Err(_) => Value::Flag(false),
+                }
+            }
+            Builtin::FileRead => { return self.builtin_arm_9(builtin, name, args); }
+            Builtin::FileWrite => { return self.builtin_arm_10(builtin, name, args); }
+            Builtin::FileThere => {
+                arity(1)?;
+                let sp = self.wording();
+                Value::Flag(std::path::Path::new(&args[0].display(&sp)).exists())
+            }
+            Builtin::FileGone => {
+                arity(1)?;
+                let sp = self.wording();
+                Value::Flag(std::fs::remove_file(args[0].display(&sp)).is_ok())
+            }
+            // A fresh empty file made at the path given: nothing where
+            // it stands afterwards, and the host's own number and words
+            // where it could not be made.
+            Builtin::FileCreate => { return self.builtin_arm_11(builtin, name, args); }
+            // A directory's own entries, in no particular order but
+            // sorted here for a run to answer the same way twice: the
+            // bare name of each, with no directory before it. False
+            // where the path is not a directory this run can list.
+            Builtin::DirList => { return self.builtin_arm_12(builtin, name, args); }
+            // A fresh, empty directory made under an already-standing
+            // one, its name built from a prefix and a suffix around
+            // letters this run has not used there before. False where
+            // the standing directory itself is not one a directory can
+            // be made under.
+            Builtin::DirMake => { return self.builtin_arm_13(builtin, name, args); }
+            // A directory taken away along with everything under it.
+            Builtin::DirGone => {
+                arity(1)?;
+                let sp = self.wording();
+                Value::Flag(std::fs::remove_dir_all(args[0].display(&sp)).is_ok())
+            }
+            // One directory taken away where it stands: true when it
+            // is gone afterward, false where it still holds anything
+            // or no such directory stood there at all.
+            Builtin::DirRemove => {
+                arity(1)?;
+                let sp = self.wording();
+                Value::Flag(std::fs::remove_dir(args[0].display(&sp)).is_ok())
+            }
+            // One directory made to stand at the path given: true
+            // when it stands afterwards, false when it stood there
+            // already or the way to it does not stand.
+            Builtin::DirMakeOne => {
+                arity(1)?;
+                let sp = self.wording();
+                Value::Flag(std::fs::create_dir(args[0].display(&sp)).is_ok())
+            }
+            // The directory this run works inside becomes the one
+            // named, so a path given short opens from there: false
+            // where the name is not a standing directory's.
+            Builtin::DirChange => {
+                arity(1)?;
+                let sp = self.wording();
+                Value::Flag(std::env::set_current_dir(args[0].display(&sp)).is_ok())
+            }
+            // The fault in hand: its kind's name and its words, or the
+            // pair of nothing when none is being handled. Given a fault,
+            // that one is told of instead.
+            Builtin::FaultItself => {
+                arity(0)?;
+                self.caught.last().cloned().unwrap_or(Value::Null)
+            }
+            Builtin::TrackedObjects => { return self.builtin_arm_14(builtin, name, args); }
+            Builtin::WeakMake => return self.faint_allocate(name, args),
+            Builtin::WeakGet => return self.faint_reading(args),
+            Builtin::Collect => {
+                arity(0)?;
+                Value::Small(self.collect_cycles() as i64)
+            }
+            Builtin::FaultInHand => { return self.builtin_arm_15(builtin, name, args); }
+            // One for a file, two for a directory, nought for neither.
+            Builtin::FileKind => { return self.builtin_arm_16(builtin, name, args); }
+            Builtin::LoaderSource => { return self.builtin_arm_17(builtin, name, args); }
+            // Whether the name given is a link standing for somewhere
+            // else: asked of the link itself, and not of whatever
+            // stands at its far end.
+            Builtin::FileLink => {
+                arity(1)?;
+                let sp = self.wording();
+                let path = std::path::PathBuf::from(args[0].display(&sp));
+                Value::Flag(std::fs::symlink_metadata(&path).map(|m| m.file_type().is_symlink()).unwrap_or(false))
+            }
+            // The working directory (or nothing), the word for the
+            // system, the word for the machine, and the environment as
+            // a map, in that order.
+            Builtin::Crypto => { return self.builtin_arm_18(builtin, name, args); }
+            Builtin::PosixCall => { return self.builtin_arm_19(builtin, name, args); },
+            Builtin::HostFacts => { return self.builtin_arm_20(builtin, name, args); }
+            // A command put before the host's own shell. It travels as
+            // the bytes its text stands for, and everything the shell
+            // wrote where a run writes is read back from bytes the same
+            // way, the break of line ending it kept as it came. What
+            // the shell said in complaint is left to go where this
+            // run's own complaints go. A command that wrote nothing at
+            // all answers with nothing, and a shell that would not
+            // start at all answers false.
+            Builtin::ShellSaid => { return self.builtin_arm_21(builtin, name, args); }
+            // A connection made to a host and a port, written on
+            // once and then read until the far end closes it. That is
+            // the whole of what a request saying the connection is to
+            // be closed needs, and nothing here answers otherwise.
+            // Standing still for so many millionths of a second. A run
+            // that is waiting on something outside itself must be able
+            // to wait, or it asks after it as fast as it can and calls
+            // the first refusal final.
+            Builtin::Waited => { return self.builtin_arm_22(builtin, name, args); }
+            Builtin::NetAsk => { return self.builtin_arm_23(builtin, name, args); }
+            // A program started beside this one, whose own writing goes
+            // nowhere: this is for raising something that answers on a
+            // connection, not for reading what a program says.
+            Builtin::RunBegin => { return self.builtin_arm_24(builtin, name, args); }
+            Builtin::RunEnd => { return self.builtin_arm_25(builtin, name, args); }
+            // The host's signals, one step at a time: give a number
+            // the handler it answers with (0), answering the one it had;
+            // ask which handler a number was given (1); or leave a
+            // number pending (2), to be taken up at the next
+            // statement's edge. A number never given a handler keeps
+            // the signal's own way.
+            Builtin::Signal => { return self.builtin_arm_26(builtin, name, args); }
+            // A second interpreter started beside this one, its writing
+            // reached through pipes, one step at a time: begin one (0,
+            // with the words, the surroundings, and how each of the
+            // three streams is to go), write into its input (1), close
+            // that input (2), read all a stream has said (3), wait for
+            // it to end (4), ask whether it has ended (5), and stop it
+            // (6). Streams go as nothing (0), a pipe (1), or inherited
+            // (anything else); a third stream told to follow the
+            // second is kept as its own pipe, and the library that
+            // asked reads the two together afterwards.
+            Builtin::AsciiSpan => { return self.builtin_arm_27(builtin, name, args); }
+            Builtin::JsonString => { return self.builtin_arm_28(builtin, name, args); }
+            Builtin::Subprocess => { return self.builtin_arm_29(builtin, name, args); }
+            Builtin::TimeLimit => {
+                arity(1)?;
+                let seconds = as_index(&args[0])?;
+                self.limit.set(seconds);
+                self.began.set(Some(std::time::Instant::now()));
+                Value::Flag(true)
+            }
+            // The room the run has taken, as the allocator the host set
+            // up has counted it: the bytes it holds at this moment, the
+            // most it ever held at once, and the forgetting of that
+            // highest reading so that it is counted afresh from here.
+            Builtin::RoomUsed => {
+                arity(0)?;
+                Value::Small(lumen_room::used() as i64)
+            }
+            Builtin::RoomMost => {
+                arity(0)?;
+                Value::Small(lumen_room::most() as i64)
+            }
+            Builtin::RoomForget => {
+                arity(0)?;
+                lumen_room::forget_most();
+                Value::Null
+            }
+            // How much room the run may take from here, in bytes.
+            Builtin::RoomLimit => {
+                arity(1)?;
+                let bytes = as_index(&args[0])?;
+                self.ceiling.set(bytes);
+                Value::Flag(true)
+            }
+            // Words said as a complaint of a kind the language names,
+            // where the run stands.
+            // The calls under way, as the program may read them: each
+            // one what it called, the class it stands in, where the call
+            // itself is written, and what it was handed.
+            Builtin::Calls => { return self.builtin_arm_30(builtin, name, args); }
+            Builtin::Complain => { return self.builtin_arm_31(builtin, name, args); }
+            // The routine every complaint is to be handed to, or none.
+            // What the run has bound under a name, by name: the
+            // classes, and the routines.
+            Builtin::ModuleLoad => { return self.builtin_arm_32(builtin, name, args); }
+            Builtin::DeriveClass => { return self.builtin_arm_33(builtin, name, args); }
+            Builtin::Multibyte => return crate::multibyte::call(args),
+            Builtin::Sre => return crate::sre::call(args),
+            Builtin::UnicodeDecomposition => return crate::sre::decompose(args),
+            Builtin::CopyValue => { return self.builtin_arm_34(builtin, name, args); }
+            Builtin::CallOutcome => { return self.builtin_arm_35(builtin, name, args); }
+            Builtin::ProductStep => self.iterator_operation(args)?,
+            Builtin::AllocationTrace => self.allocation_command(args)?,
+            Builtin::ProgramNamespace => { return self.builtin_arm_36(builtin, name, args); }
+            // The tracing hook and whether one stands: what is set here
+            // is handed to every later frame at its own line.
+            // The module the routine running `depth` frames up the call
+            // chain answers as its own: the same walk the
+            // program-namespace builtin makes, answered as the routine's
+            // own `__module__` member would answer.
+            // Report actual strong owners of reference-backed runtime values.
+            Builtin::ReferenceCount => { return self.builtin_arm_37(builtin, name, args); }
+            Builtin::FrameModule => { return self.builtin_arm_38(builtin, name, args); }
+            // Sealing a class marks it against change: the mark is the
+            // class's own and no member of it, so no program write can
+            // reach it, and every later look at the class answers from it.
+            Builtin::ClassSeal => { return self.builtin_arm_39(builtin, name, args); }
+            Builtin::MemberGet => { return self.builtin_arm_40(builtin, name, args); }
+            Builtin::MemberSet => { return self.builtin_arm_41(builtin, name, args); }
+            Builtin::ClassesBound | Builtin::RoutinesBound => { return self.builtin_arm_42(builtin, name, args); }
+            // The words the language spells of its own, by name: what
+            // a program may call without anybody having written it.
+            Builtin::Spelled => {
+                arity(0)?;
+                let mut words: Vec<Value> = self.lang.builtins.keys().map(|w| Value::text(w)).collect();
+                words.sort_by(|a, b| a.plain().cmp(&b.plain()));
+                Value::array(words)
+            }
+            // What a class answers to, by name: the methods it has, or
+            // the properties its things hold, its own first and then
+            // those of the class it stands on. A thing is asked of the
+            // class it is of.
+            Builtin::ClassMethods | Builtin::ClassProperties => { return self.builtin_arm_43(builtin, name, args); }
+            // The class a class stands on, by name: a thing is asked of
+            // the class it is of. Nothing where it stands on none.
+            Builtin::ClassBeneath => { return self.builtin_arm_44(builtin, name, args); }
+            // How far the clock the system keeps has come since the
+            // year it counts from. A clock that will not answer counts
+            // as standing at the start of it.
+            Builtin::Clock => { return self.builtin_arm_45(builtin, name, args); }
+            // The roots, the curves and the angles, worked over the
+            // reals of the width and named by the first thing given.
+            // They are worked where the width is worked and nowhere
+            // else, since a root is seldom a ratio and would otherwise
+            // have to be held to some chosen count of figures.
+            Builtin::Math => { return self.builtin_arm_46(builtin, name, args); }
+            // The Mersenne Twister stream the library lends its chance
+            // from, worked by name (ext.builtin._random): a stream
+            // begun, planted from a whole number or from the system's
+            // own disorder, drawn on as a real of the width's 53 bits
+            // or as a run of whole bits, and told or set back to where
+            // it stands. The words a stream keeps never leave the
+            // kernel: a library holds only the number its stream was
+            // lent under, and the disorder of the system itself can be
+            // asked for as raw bytes.
+            Builtin::Twister => { return self.builtin_arm_47(builtin, name, args); }
+            Builtin::OutBegun => {
+                arity(0)?;
+                Value::Flag(self.written_out.get())
+            }
+            Builtin::Untaken => {
+                let put = args.first().cloned().unwrap_or(Value::Null);
+                let held = matches!(put, Value::Null | Value::Blank);
+                *self.untaken.borrow_mut() = if held { None } else { Some(put) };
+                Value::Flag(true)
+            }
+            Builtin::Complainer => {
+                let put = args.first().cloned().unwrap_or(Value::Null);
+                let held = matches!(put, Value::Null | Value::Blank);
+                *self.complainer.borrow_mut() = if held { None } else { Some(put) };
+                Value::Flag(true)
+            }
+            // A routine to run when the run is over, with whatever else
+            // was given to stand as its arguments.
+            Builtin::WhenDone => { return self.builtin_arm_48(builtin, name, args); }
+            // Keeping what the run writes out, and giving it up again.
+            Builtin::HoldOut => {
+                self.holding.borrow_mut().push(String::new());
+                Value::Flag(true)
+            }
+            Builtin::HeldOut => match self.holding.borrow().last() {
+                Some(kept) => Value::text(kept),
+                None => Value::Flag(false),
+            },
+            Builtin::DropOut => {
+                let held = self.holding.borrow_mut().pop();
+                Value::Flag(held.is_some())
+            }
+            Builtin::DeepOut => Value::Small(self.holding.borrow().len() as i64),
+            Builtin::Given | Builtin::GivenCount | Builtin::GivenAt => { return self.builtin_arm_49(builtin, name, args); }
+            Builtin::Say => {
+                self.utter(&format!("{}\n", self.render(&args)));
+                Value::Null
+            }
+            Builtin::Out => {
+                self.utter(&self.render(&args));
+                Value::Null
+            }
+            Builtin::Tell => {
+                let sp = self.wording();
+                for v in args.iter() {
+                    self.utter(&v.display(&sp));
+                }
+                Value::Null
+            }
+            Builtin::Define => return Err(format!("{}() needs a quoted name as its first argument", name)),
+            Builtin::Dump => {
+                for v in args.iter() {
+                    self.utter(&format!("{}\n", dumped(v, 0, self.lang.real_bits.is_some(), &self.wording())));
+                }
+                Value::Null
+            }
+            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
+            Builtin::List => { return self.builtin_arm_50(builtin, name, args); }
+            Builtin::Any => { return self.builtin_arm_51(builtin, name, args); }
+            Builtin::Sum => { return self.builtin_arm_52(builtin, name, args); }
+            Builtin::Span if self.lang.range_value => { return self.builtin_arm_53(builtin, name, args); }
+            Builtin::Span => return Err(format!("{}() spells a range, which belongs in a for loop", name)),
+            Builtin::MakeReal => { return self.builtin_arm_54(builtin, name, args); }
+            Builtin::Places => {
+                arity(1)?;
+                match &args[0] {
+                    Value::Real(r) => Value::Small(r.places as i64),
+                    _ => return Err(format!("{}() requires a real argument", name)),
+                }
+            }
+            Builtin::ToText if !self.lang.to_string_object.is_empty() && args.is_empty() => Value::text(""),
+            Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return self.text_from_bytes(&args),
+            Builtin::ToText => { return self.builtin_arm_55(builtin, name, args); }
+            Builtin::ToInt if !self.lang.to_int_base.is_empty() => return self.integer_call(args),
+            Builtin::ToInt => {
+                arity(1)?;
+                let whole = arith::whole_of(&args[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
+                Value::of_big(whole)
+            }
+            Builtin::AsReal if self.lang.to_real_text && args.is_empty() => arith::to_real(&Value::Small(0), arith::DEFAULT_PLACES).unwrap(),
+            Builtin::AsReal if self.lang.to_real_text && matches!(args.first(), Some(Value::Text(_) | Value::Codepoints(_))) => { return self.builtin_arm_56(builtin, name, args); }
+            Builtin::AsReal if matches!(args.as_slice(), [Value::Bytes(..)]) => { return self.builtin_arm_57(builtin, name, args); }
+            Builtin::AsReal if self.lang.arithmetic_flags && matches!(args.as_slice(), [Value::Flag(_)]) => {
+                let Value::Flag(b) = args[0] else { unreachable!() };
+                arith::to_real(&Value::Small(i64::from(b)), arith::DEFAULT_PLACES).unwrap()
+            }
+            // A text kept apart as bare code points (an unpaired surrogate,
+            // say) stands for a string that no floating point reader can
+            // take, which CPython reports as a broken string.
+            Builtin::AsReal if matches!(args.first(), Some(Value::Codepoints(_))) => {
+                return Err(format!("ValueError: could not convert string to float: {}", args[0].representation(&sp)));
+            }
+            Builtin::AsReal => { return self.builtin_arm_58(builtin, name, args); }
+            Builtin::Length => { return self.builtin_arm_59(builtin, name, args); }
+            Builtin::CharAtIndex => { return self.builtin_arm_60(builtin, name, args); }
+            Builtin::CodeOf => { return self.builtin_arm_61(builtin, name, args); }
+            Builtin::CharOf => { return self.builtin_arm_62(builtin, name, args); }
+            Builtin::Leave => return Err("the run is over".to_string()),
+            Builtin::Raise => {
+                arity(1)?;
+                return match &args[0] {
+                    Value::Text(s) => Err(s.to_string()),
+                    _ => Err(format!("{}() argument must be a string", name)),
+                };
+            }
+            Builtin::SortOf => { return self.builtin_arm_63(builtin, name, args); }
+            Builtin::Numer | Builtin::Denom => {
+                arity(1)?;
+                let (p, q) = arith::parts(&args[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
+                Value::of_big(if builtin == Builtin::Numer { p } else { q })
+            }
+            Builtin::Fetch => {
+                arity(2)?;
+                self.element(&args[0], &args[1], Reading::Plain)?
+            }
+            Builtin::Append => { return self.builtin_arm_64(builtin, name, args); }
+            Builtin::Replace => { return self.builtin_arm_65(builtin, name, args); }
+            Builtin::Pack => return Err(format!("{}() is a literal, not a call", name)),
+            // Asking is done where the program is put together, since
+            // what is asked about is a name and not its value.
+            Builtin::Held | Builtin::Hollow => return Err("Only a name or a place in an array can be asked about".into()),
+            Builtin::Lead => { return self.builtin_arm_66(builtin, name, args); }
+            Builtin::Erase => { return self.builtin_arm_67(builtin, name, args); }
+            Builtin::Layout => {
+                arity(1)?;
+                self.utter(&laid_out(&args[0], 0, &sp));
+                Value::Flag(true)
+            }
+            // A write back into what held a place never reaches here:
+            // it is either nothing at all or a plain write, and is
+            // settled before the builtins are reached.
+            Builtin::Restore => unreachable!(),
+            // These two are read only where a language binds names,
+            // which reaches them through `core_call` instead.
+            Builtin::WarningBackend(_) | Builtin::LzmaEncode | Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
+            Builtin::External => self.external(name, &args)?,
+        })
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_1(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
+            }
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::ValueMethod
+            => {
                 if self.lang.float_getformat.iter().any(|word| word == name) {
                     let receiver = Value::Native(Builtin::AsReal, Rc::from("float"));
                     return self.value_method(&receiver, "float_getformat", std::mem::take(args), Vec::new());
@@ -22293,10 +22754,30 @@ impl<'a> Engine<'a> {
                     return self.dict_fromkeys(&receiver, filling);
                 }
                 return self.value_method(&receiver, operation, rest, Vec::new());
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_2(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Sorted => { if args.len() != 1 { return Err(self.lang.method_errors["arguments"].clone()); } return self.order_values(&args[0], &[]).map(|v| Value::array(v).held(true)); },
-            Builtin::SetMake | Builtin::SetAdd | Builtin::SetRemove | Builtin::SetDiscard | Builtin::SetPop | Builtin::SetClear | Builtin::SetCopy | Builtin::SetUpdate | Builtin::SetUnion | Builtin::SetIntersection | Builtin::SetDifference | Builtin::SetSymmetric | Builtin::SetSubset | Builtin::SetSuperset | Builtin::SetDisjoint | Builtin::SetMeetUpdate | Builtin::SetLessUpdate | Builtin::SetXorUpdate | Builtin::SetSorted => self.set_builtin(builtin, args)?,
-            Builtin::Format => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Format
+            => {
                 if args.is_empty() || args.len() > 2 { return Err(self.lang.call_amiss[0].clone()); }
                 let writer = crate::formatting::Writer { lang: self.lang, words: sp };
                 let spec = match args.get(1) {
@@ -22311,17 +22792,30 @@ impl<'a> Engine<'a> {
                     },
                 };
                 writer.field_value(&args[0], &spec, "")?
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_3(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // Bytes are made of the numbers they are handed, and a walk
-            // stands for its numbers as plainly as a list does. Gather
-            // the walk into a row first so that a walk backwards over a
-            // byte string can be built straight back into one.
-            Builtin::Bytes(task @ (2 | 3)) if name == "__codec_encode" || name == "__codec_decode" => {
-                if args.is_empty() { return Err(self.byte_fault("arguments")); }
-                let data = if task == 3 { self.byte_row(&args[0], false)? } else { Vec::new() };
-                self.byte_transcode(task == 2, &data, &args, false)?
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
             }
-            Builtin::Bytes(task) => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Bytes(task)
+            => {
                 if task == 0 && args.len() == 1 {
                     if let Value::Object(object) = &args[0] {
                         if let Some(method) = self.class_value(&object.class_now(), "__bytes__") {
@@ -22353,8 +22847,30 @@ impl<'a> Engine<'a> {
                     if let Ok(items) = self.core_members(&source) { return self.byte_call(task, &[Value::array(items)]); }
                 }
                 return self.byte_call(task, args);
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_4(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Text(op) => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Text(op)
+            => {
                 let mut normalized: Vec<Value> = args.iter().map(|v| match Self::worth_of(v) { Some(text @ Value::Text(_)) => text, _ => v.contents() }).collect();
                 // Native text descriptors use the same encoder as bound string methods.
                 if op == crate::strings::TextOp::Encode && self.lang.builtin_words.iter().any(|(kind, _)| *kind == Builtin::Bytes(2)) {
@@ -22439,30 +22955,29 @@ impl<'a> Engine<'a> {
                 }
                 answer
             },
-            Builtin::ClassTool(work) =>return self.class_work(work, args.clone()).map_err(|fault| match fault {
-                Fault::Note(words)=>words,
-                raised=>{self.carried=Some(raised);String::new()},
-            }),
-            Builtin::Echo => {
-                arity(1)?;
-                if let Value::Codepoints(row) = &args[0] { return Ok(Value::Small(row[0] as i64)); }
-                let Value::Text(s) = &args[0] else { return Err(format!("{}() requires a string argument", name)) };
-                self.utter(s);
-                Value::Null
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_5(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // One bound is the stop; two or three are start, stop and
-            // step, the rest standing for nothing.
-            Builtin::MakeSlice => {
-                if args.is_empty() || args.len() > 3 { return Err(self.slice_word("ext.builtin.slice.arity")); }
-                let mut bounds = [Value::Null, Value::Null, Value::Null];
-                if args.len() == 1 { bounds[1] = args[0].clone(); }
-                else { for (i, bound) in args.iter().enumerate() { bounds[i] = bound.clone(); } }
-                Value::Slice(Rc::new(bounds))
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
             }
-            // The reader the definition routes to does the asking, so
-            // that a program which puts another stream in its place is
-            // answered from there.
-            Builtin::Ask => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Ask
+            => {
                 let route = self.lang.input_route.clone();
                 if route.len() != 2 { return Err(self.lang.stream_amiss[0].clone()); }
                 let module = self.route_module(&route[0])?;
@@ -22471,10 +22986,30 @@ impl<'a> Engine<'a> {
                     line @ Value::Text(_) => line,
                     _ => return Err(self.lang.stream_amiss[0].clone()),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_6(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // Text and a flag: on the error stream when the flag holds,
-            // else out the ordinary way. Answers how many characters went.
-            Builtin::StreamPut => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::StreamPut
+            => {
                 use std::io::Write;
                 if args.len() == 3 && self.truth(&args[2]) {
                     let Value::Bytes(bytes, _, _) = args[0].contents() else { return Err(self.lang.stream_amiss[0].clone()); };
@@ -22507,12 +23042,30 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Value::Small(text.chars().count() as i64)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_7(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // A count and a flag: so many characters, all of them when the
-            // count is below nought, and no further than the end of the
-            // line when the flag holds. Bytes are gathered until they
-            // spell a character, so a character never comes back in part.
-            Builtin::StreamTake => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::StreamTake
+            => {
                 use std::io::Read;
                 if args.len() == 3 && self.truth(&args[2]) {
                     let Value::Small(wanted) = args[0].contents() else { return Err(self.lang.stream_amiss[0].clone()); };
@@ -22553,17 +23106,30 @@ impl<'a> Engine<'a> {
                     if ended { break; }
                 }
                 Value::text(&taken)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_8(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // The readers of text and the handing out of names are
-            // answered before the arguments are opened, where the
-            // language spells the manners text may be read in; a
-            // language spelling the words without the manners is
-            // refused here.
-            Builtin::OuterNames | Builtin::NearNames | Builtin::ClassLocalsPlace | Builtin::RunText | Builtin::ReadyText | Builtin::Summon => return Err(self.source_unready()),
-            // Source read while the program runs, assembled against
-            // the same globals and run where it stands. A file that
-            // cannot be read gives false back, as such a language says.
-            Builtin::Eval | Builtin::Include | Builtin::IncludeOnce => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Eval | Builtin::Include | Builtin::IncludeOnce
+            => {
                 // A source read in stands as a call of its own, so that
                 // a fault raised in the reading, or by what it reads,
                 // names the reading among the calls it stood under.
@@ -22588,18 +23154,30 @@ impl<'a> Engine<'a> {
                 }
                 self.calls.pop();
                 return done;
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_9(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // Reaching outside the run: only a language that spells
-            // these labels can, and what cannot be done gives false
-            // back rather than stopping, as such a language expects.
-            Builtin::FileReadBytes => {
-                arity(1)?;
-                match std::fs::read(args[0].display(&self.wording())) {
-                    Ok(data) => self.byte_make(data, false),
-                    Err(_) => Value::Flag(false),
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
                 }
             }
-            Builtin::FileRead => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::FileRead
+            => {
                 let binary = !self.lang.syntax_members.is_empty() && args.len() == 2 && self.truth(&args[1]);
                 if args.len() != 2 || self.lang.syntax_members.is_empty() { arity(1)?; }
                 let sp = self.wording();
@@ -22617,8 +23195,30 @@ impl<'a> Engine<'a> {
                     },
                     Err(_) => Value::Flag(false),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_10(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::FileWrite => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::FileWrite
+            => {
                 if args.len() != 2 {
                     return Err(format!("{}() expects 2 arguments, got {}", name, args.len()));
                 }
@@ -22633,21 +23233,30 @@ impl<'a> Engine<'a> {
                     Ok(()) => Value::Small(length as i64),
                     Err(_) => Value::Flag(false),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_11(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::FileThere => {
-                arity(1)?;
-                let sp = self.wording();
-                Value::Flag(std::path::Path::new(&args[0].display(&sp)).exists())
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
             }
-            Builtin::FileGone => {
-                arity(1)?;
-                let sp = self.wording();
-                Value::Flag(std::fs::remove_file(args[0].display(&sp)).is_ok())
-            }
-            // A fresh empty file made at the path given: nothing where
-            // it stands afterwards, and the host's own number and words
-            // where it could not be made.
-            Builtin::FileCreate => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::FileCreate
+            => {
                 arity(1)?;
                 let sp = self.wording();
                 match std::fs::File::create(args[0].display(&sp)) {
@@ -22659,12 +23268,30 @@ impl<'a> Engine<'a> {
                         Value::tuple(vec![Value::Small(number), Value::text(&words)])
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_12(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // A directory's own entries, in no particular order but
-            // sorted here for a run to answer the same way twice: the
-            // bare name of each, with no directory before it. False
-            // where the path is not a directory this run can list.
-            Builtin::DirList => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::DirList
+            => {
                 arity(1)?;
                 let sp = self.wording();
                 match std::fs::read_dir(args[0].display(&sp)) {
@@ -22675,13 +23302,30 @@ impl<'a> Engine<'a> {
                     }
                     Err(_) => Value::Flag(false),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_13(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // A fresh, empty directory made under an already-standing
-            // one, its name built from a prefix and a suffix around
-            // letters this run has not used there before. False where
-            // the standing directory itself is not one a directory can
-            // be made under.
-            Builtin::DirMake => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::DirMake
+            => {
                 arity(3)?;
                 let sp = self.wording();
                 let (parent, prefix, suffix) = (args[0].display(&sp), args[1].display(&sp), args[2].display(&sp));
@@ -22699,45 +23343,30 @@ impl<'a> Engine<'a> {
                     Some(made) => Value::text(&made.to_string_lossy()),
                     None => Value::Flag(false),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_14(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // A directory taken away along with everything under it.
-            Builtin::DirGone => {
-                arity(1)?;
-                let sp = self.wording();
-                Value::Flag(std::fs::remove_dir_all(args[0].display(&sp)).is_ok())
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
             }
-            // One directory taken away where it stands: true when it
-            // is gone afterward, false where it still holds anything
-            // or no such directory stood there at all.
-            Builtin::DirRemove => {
-                arity(1)?;
-                let sp = self.wording();
-                Value::Flag(std::fs::remove_dir(args[0].display(&sp)).is_ok())
-            }
-            // One directory made to stand at the path given: true
-            // when it stands afterwards, false when it stood there
-            // already or the way to it does not stand.
-            Builtin::DirMakeOne => {
-                arity(1)?;
-                let sp = self.wording();
-                Value::Flag(std::fs::create_dir(args[0].display(&sp)).is_ok())
-            }
-            // The directory this run works inside becomes the one
-            // named, so a path given short opens from there: false
-            // where the name is not a standing directory's.
-            Builtin::DirChange => {
-                arity(1)?;
-                let sp = self.wording();
-                Value::Flag(std::env::set_current_dir(args[0].display(&sp)).is_ok())
-            }
-            // The fault in hand: its kind's name and its words, or the
-            // pair of nothing when none is being handled. Given a fault,
-            // that one is told of instead.
-            Builtin::FaultItself => {
-                arity(0)?;
-                self.caught.last().cloned().unwrap_or(Value::Null)
-            }
-            Builtin::TrackedObjects => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::TrackedObjects
+            => {
                 if args.len()!=0 {return Err(format!("TypeError: {}() takes no arguments",self.lang.gc_objects.first().map_or("gc.get_objects",String::as_str)));}
                 let graph=self.cycle_graph(&[]);
                 let mut seen=std::collections::HashSet::new();
@@ -22748,23 +23377,60 @@ impl<'a> Engine<'a> {
                     if seen.insert(identity) {objects.push(object);}
                 }
                 Value::array(objects)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_15(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::WeakMake => return self.faint_allocate(name, args),
-            Builtin::WeakGet => return self.faint_reading(args),
-            Builtin::Collect => {
-                arity(0)?;
-                Value::Small(self.collect_cycles() as i64)
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
             }
-            Builtin::FaultInHand => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::FaultInHand
+            => {
                 if args.len() > 1 { return Err(self.lang.module_helper_amiss.clone()); }
                 let held = match args.first() { Some(given) => Some(given.clone()), None => self.caught.last().cloned() };
                 let Some(fault) = held else { return Ok(Value::array(vec![Value::Null, Value::Null])) };
                 let kind = match &fault { Value::Object(o) => Value::text(&o.class_now().name), _ => Value::Null };
                 let words = self.special_text(&fault, false)?;
                 Value::array(vec![kind, Value::text(&words)])
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_16(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // One for a file, two for a directory, nought for neither.
-            Builtin::FileKind => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::FileKind
+            => {
                 if !(1..=3).contains(&args.len()) { arity(1)?; }
                 if let Some(value) = self.file_descriptor_operation(args) { return value; }
                 let path = std::path::PathBuf::from(args[0].display(&self.wording()));
@@ -22790,8 +23456,30 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_17(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::LoaderSource => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::LoaderSource
+            => {
                 arity(1)?;
                 let Value::Text(name) = args[0].contents() else { return Err("TypeError: module name must be a string".into()); };
                 let raw = if name.as_ref() == "__main__" {
@@ -22806,20 +23494,30 @@ impl<'a> Engine<'a> {
                     .ok_or_else(|| "ImportError: source decoder is unavailable".to_string())?;
                 let bytes = self.byte_make(raw, false);
                 self.call_held(decoder, vec![bytes])?
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_18(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // Whether the name given is a link standing for somewhere
-            // else: asked of the link itself, and not of whatever
-            // stands at its far end.
-            Builtin::FileLink => {
-                arity(1)?;
-                let sp = self.wording();
-                let path = std::path::PathBuf::from(args[0].display(&sp));
-                Value::Flag(std::fs::symlink_metadata(&path).map(|m| m.file_type().is_symlink()).unwrap_or(false))
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
             }
-            // The working directory (or nothing), the word for the
-            // system, the word for the machine, and the environment as
-            // a map, in that order.
-            Builtin::Crypto => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Crypto
+            => {
                 let operation = as_index(args.first().ok_or("TypeError: missing cryptographic operation")?)?;
                 match operation {
                     0 => {
@@ -22865,8 +23563,30 @@ impl<'a> Engine<'a> {
                     }
                     _ => return Err("NotImplementedError: unsupported cryptographic operation".into()),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_19(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::PosixCall => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::PosixCall
+            => {
                 match args.first().map(Value::contents) {
                     Some(Value::Text(op)) if op.as_ref() == "fspath" => { arity(2)?; self.filesystem_path(args[1].clone())? },
                     Some(Value::Text(op)) if op.as_ref() == "structseq_new" => {
@@ -22893,7 +23613,29 @@ impl<'a> Engine<'a> {
                     })?,
                 }
             },
-            Builtin::HostFacts => {
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_20(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
+            }
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::HostFacts
+            => {
                 if args.len() == 1 && matches!(&args[0], Value::Text(query) if query.as_ref() == "build") {
                     return Ok(Value::text(option_env!("RUSTFLAGS").unwrap_or("")));
                 }
@@ -22903,16 +23645,30 @@ impl<'a> Engine<'a> {
                     .filter_map(|(k, v)| Some((Value::text(k.to_str()?), Value::text(v.to_str()?))))
                     .collect();
                 Value::array(vec![directory, Value::text(std::env::consts::OS), Value::text(std::env::consts::ARCH), Value::Map(Rc::new(surroundings.into()))])
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_21(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // A command put before the host's own shell. It travels as
-            // the bytes its text stands for, and everything the shell
-            // wrote where a run writes is read back from bytes the same
-            // way, the break of line ending it kept as it came. What
-            // the shell said in complaint is left to go where this
-            // run's own complaints go. A command that wrote nothing at
-            // all answers with nothing, and a shell that would not
-            // start at all answers false.
-            Builtin::ShellSaid => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::ShellSaid
+            => {
                 arity(1)?;
                 let sp = self.wording();
                 let told = self.lang.bytes_of(&args[0].display(&sp));
@@ -22932,16 +23688,30 @@ impl<'a> Engine<'a> {
                     Ok(done) if done.stdout.is_empty() => Value::Null,
                     Ok(done) => Value::text(&self.lang.text_of(&done.stdout)),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_22(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // A connection made to a host and a port, written on
-            // once and then read until the far end closes it. That is
-            // the whole of what a request saying the connection is to
-            // be closed needs, and nothing here answers otherwise.
-            // Standing still for so many millionths of a second. A run
-            // that is waiting on something outside itself must be able
-            // to wait, or it asks after it as fast as it can and calls
-            // the first refusal final.
-            Builtin::Waited => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Waited
+            => {
                 arity(1)?;
                 let millionths = as_index(&args[0])?;
                 let mut requested = libc::timespec { tv_sec: (millionths / 1_000_000) as libc::time_t, tv_nsec: ((millionths % 1_000_000) * 1000) as libc::c_long };
@@ -22956,8 +23726,30 @@ impl<'a> Engine<'a> {
                     requested = rest;
                 }
                 Value::Null
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_23(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::NetAsk => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::NetAsk
+            => {
                 arity(4)?;
                 use std::io::{Read as _, Write as _};
                 let sp = self.wording();
@@ -22993,11 +23785,30 @@ impl<'a> Engine<'a> {
                     Ok(came) => Value::text(&self.lang.text_of(&came)),
                     Err(_) => Value::Flag(false),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_24(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // A program started beside this one, whose own writing goes
-            // nowhere: this is for raising something that answers on a
-            // connection, not for reading what a program says.
-            Builtin::RunBegin => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::RunBegin
+            => {
                 arity(3)?;
                 use std::os::unix::ffi::OsStrExt as _;
                 let sp = self.wording();
@@ -23025,8 +23836,30 @@ impl<'a> Engine<'a> {
                         Value::Small(which)
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_25(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::RunEnd => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::RunEnd
+            => {
                 arity(1)?;
                 let which = as_index(&args[0])? as i64;
                 match self.beside.borrow_mut().remove(&which) {
@@ -23037,14 +23870,30 @@ impl<'a> Engine<'a> {
                         Value::Flag(true)
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_26(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // The host's signals, one step at a time: give a number
-            // the handler it answers with (0), answering the one it had;
-            // ask which handler a number was given (1); or leave a
-            // number pending (2), to be taken up at the next
-            // statement's edge. A number never given a handler keeps
-            // the signal's own way.
-            Builtin::Signal => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Signal
+            => {
                 if args.is_empty() { return Err(format!("{}() expects at least 1 argument", name)); }
                 let step = as_index(&args[0])?;
                 match step {
@@ -23114,18 +23963,30 @@ impl<'a> Engine<'a> {
                     }
                     _ => return Err(format!("{name}() knows no step {step}")),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_27(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // A second interpreter started beside this one, its writing
-            // reached through pipes, one step at a time: begin one (0,
-            // with the words, the surroundings, and how each of the
-            // three streams is to go), write into its input (1), close
-            // that input (2), read all a stream has said (3), wait for
-            // it to end (4), ask whether it has ended (5), and stop it
-            // (6). Streams go as nothing (0), a pipe (1), or inherited
-            // (anything else); a third stream told to follow the
-            // second is kept as its own pipe, and the library that
-            // asked reads the two together afterwards.
-            Builtin::AsciiSpan => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::AsciiSpan
+            => {
                 arity(4)?;
                 let begin = as_index(&args[1])?;
                 let bound = as_index(&args[3])?;
@@ -23141,8 +24002,30 @@ impl<'a> Engine<'a> {
                 };
                 let consumed = characters.take(bound).take_while(|point| *point < 128 && members.as_bytes().contains(&(*point as u8))).count();
                 Value::Small((begin + consumed) as i64)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_28(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::JsonString => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::JsonString
+            => {
                 if args.len() == 3 && self.truth(&args[2]) {
                     let Value::Text(text) = args[0].contents() else { return Ok(Value::Null); };
                     let ascii_only = self.truth(&args[1]);
@@ -23187,8 +24070,30 @@ impl<'a> Engine<'a> {
                     });
                 }
                 Value::Null
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_29(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Subprocess => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Subprocess
+            => {
                 if args.is_empty() { return Err(format!("{}() expects at least 1 argument", name)); }
                 let step = as_index(&args[0])?;
                 match step {
@@ -23332,44 +24237,30 @@ impl<'a> Engine<'a> {
                     }
                     _ => return Err(format!("{}() unknown step {}", name, step)),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_30(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::TimeLimit => {
-                arity(1)?;
-                let seconds = as_index(&args[0])?;
-                self.limit.set(seconds);
-                self.began.set(Some(std::time::Instant::now()));
-                Value::Flag(true)
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
             }
-            // The room the run has taken, as the allocator the host set
-            // up has counted it: the bytes it holds at this moment, the
-            // most it ever held at once, and the forgetting of that
-            // highest reading so that it is counted afresh from here.
-            Builtin::RoomUsed => {
-                arity(0)?;
-                Value::Small(lumen_room::used() as i64)
-            }
-            Builtin::RoomMost => {
-                arity(0)?;
-                Value::Small(lumen_room::most() as i64)
-            }
-            Builtin::RoomForget => {
-                arity(0)?;
-                lumen_room::forget_most();
-                Value::Null
-            }
-            // How much room the run may take from here, in bytes.
-            Builtin::RoomLimit => {
-                arity(1)?;
-                let bytes = as_index(&args[0])?;
-                self.ceiling.set(bytes);
-                Value::Flag(true)
-            }
-            // Words said as a complaint of a kind the language names,
-            // where the run stands.
-            // The calls under way, as the program may read them: each
-            // one what it called, the class it stands in, where the call
-            // itself is written, and what it was handed.
-            Builtin::Calls => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Calls
+            => {
                 arity(0)?;
                 let mut told = Vec::new();
                 for call in self.calls.iter().rev() {
@@ -23392,8 +24283,30 @@ impl<'a> Engine<'a> {
                     told.push(Value::Map(Rc::new(pairs.into())));
                 }
                 Value::array(told)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_31(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Complain => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Complain
+            => {
                 arity(2)?;
                 let sp = self.wording();
                 let said = args.pop().expect("what to say").display(&sp);
@@ -23405,11 +24318,30 @@ impl<'a> Engine<'a> {
                     }
                     None => Value::Flag(false),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_32(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // The routine every complaint is to be handed to, or none.
-            // What the run has bound under a name, by name: the
-            // classes, and the routines.
-            Builtin::ModuleLoad => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::ModuleLoad
+            => {
                 if args.len() == 2 && matches!(&args[1], Value::Text(mode) if mode.as_ref() == "invalidate") {
                     self.module_locations.borrow_mut().take();
                     return Ok(Value::Null);
@@ -23437,8 +24369,30 @@ impl<'a> Engine<'a> {
                     Err(Fault::Note(words)) => return Err(words),
                     Err(fault) => { self.carried = Some(fault); return Err("module did not finish".into()); }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_33(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::DeriveClass => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::DeriveClass
+            => {
                 arity(3)?;
                 let (Value::Text(title), Value::Class(parent), Value::Map(entries)) = (&args[0], &args[1], &args[2]) else {
                     return Err(self.lang.module_helper_amiss.clone());
@@ -23453,19 +24407,60 @@ impl<'a> Engine<'a> {
                     name: title.to_string(), base: std::cell::RefCell::new(Some(parent.clone())), answers: Vec::new(),
                     fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
                     constants: Vec::new(), shared: crate::value::ClassMembers::new(shared), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)}))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_34(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Multibyte => return crate::multibyte::call(args),
-            Builtin::Sre => return crate::sre::call(args),
-            Builtin::UnicodeDecomposition => return crate::sre::decompose(args),
-            Builtin::CopyValue => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::CopyValue
+            => {
                 arity(2)?;
                 self.check_native_reduction(&args[0])?;
                 if matches!(args[0], Value::Generator(_)) {
                     return Err("TypeError: cannot pickle 'generator' object".into());
                 }
                 duplicate_value(&args[0], matches!(args[1], Value::Flag(true)), &mut HashMap::new(), &mut self.made)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_35(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::CallOutcome => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::CallOutcome
+            => {
                 arity(1)?;
                 let depth = self.data.len();
                 self.data.push(args[0].clone());
@@ -23490,10 +24485,30 @@ impl<'a> Engine<'a> {
                 };
                 self.data.truncate(depth);
                 answer
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_36(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::ProductStep => self.iterator_operation(args)?,
-            Builtin::AllocationTrace => self.allocation_command(args)?,
-            Builtin::ProgramNamespace => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::ProgramNamespace
+            => {
 
                 if let [value] = args.as_slice() {
                     if let Value::Object(module) = value.contents() {
@@ -23530,15 +24545,30 @@ impl<'a> Engine<'a> {
                 }
                 rows.push((Value::text("__program_finalizing"), Value::Flag(self.finalizing)));
                 Value::Map(Rc::new(rows.into()))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_37(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // The tracing hook and whether one stands: what is set here
-            // is handed to every later frame at its own line.
-            // The module the routine running `depth` frames up the call
-            // chain answers as its own: the same walk the
-            // program-namespace builtin makes, answered as the routine's
-            // own `__module__` member would answer.
-            // Report actual strong owners of reference-backed runtime values.
-            Builtin::ReferenceCount => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::ReferenceCount
+            => {
                 if args.len() != 1 || self.lang.reference_count_words.is_empty() { return Err(self.core_fault("core.arity", name)); }
                 let value = args[0].contents();
                 let count = match &value {
@@ -23554,8 +24584,30 @@ impl<'a> Engine<'a> {
                     _ => return Err("NotImplementedError: this value has no reference-counted storage".into()),
                 };
                 return Ok(Value::Small(count.saturating_sub(1) as i64));
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_38(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::FrameModule => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::FrameModule
+            => {
                 if let [Value::Small(depth)] = args.as_slice() {
                     let mut current = self.trace_frame.clone().map_or(Value::Null, Value::Object);
                     for _ in 0..(*depth).max(0) {
@@ -23571,11 +24623,30 @@ impl<'a> Engine<'a> {
                     return Err("ValueError: call stack is not deep enough".into());
                 }
                 return Err("TypeError: an integer is required".into());
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_39(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // Sealing a class marks it against change: the mark is the
-            // class's own and no member of it, so no program write can
-            // reach it, and every later look at the class answers from it.
-            Builtin::ClassSeal => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::ClassSeal
+            => {
                 arity(1)?;
                 if let Value::Object(object) = args[0].contents() {
                     object.fields.borrow_mut().push(("\0immutable".to_string(), Value::Flag(true)));
@@ -23584,8 +24655,30 @@ impl<'a> Engine<'a> {
                 let Value::Class(c) = args[0].contents() else { return Err("TypeError: a class or instance is required".into()) };
                 c.sealed.set(true);
                 Value::Null
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_40(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::MemberGet => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::MemberGet
+            => {
                 if args.len() != 2 && args.len() != 3 { return Err(self.lang.module_helper_amiss.clone()); }
                 let name = args[1].display(&sp);
                 let value = &args[0];
@@ -23605,8 +24698,30 @@ impl<'a> Engine<'a> {
                     Some(v) => v,
                     None => return Err(Self::named_fault(&self.lang.member_absent, &name)),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_41(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::MemberSet => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::MemberSet
+            => {
                 arity(3)?;
                 if matches!(&args[0], Value::Object(object) if object.fields.borrow().iter().any(|(key, _)| key == "\0immutable"))
                     || matches!(&args[0], Value::Class(class) if class.sealed.get()) {
@@ -23619,8 +24734,30 @@ impl<'a> Engine<'a> {
                     if let Value::Bond(cell) = old { *cell.borrow_mut() = value; } else { *old = value; }
                 } else { fields.push((name, value)); }
                 Value::Null
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_42(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::ClassesBound | Builtin::RoutinesBound => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::ClassesBound | Builtin::RoutinesBound
+            => {
                 arity(0)?;
                 let wanted = |v: &Value| match builtin {
                     Builtin::ClassesBound => matches!(v, Value::Class(_)),
@@ -23637,20 +24774,30 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Value::array(named)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_43(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // The words the language spells of its own, by name: what
-            // a program may call without anybody having written it.
-            Builtin::Spelled => {
-                arity(0)?;
-                let mut words: Vec<Value> = self.lang.builtins.keys().map(|w| Value::text(w)).collect();
-                words.sort_by(|a, b| a.plain().cmp(&b.plain()));
-                Value::array(words)
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
             }
-            // What a class answers to, by name: the methods it has, or
-            // the properties its things hold, its own first and then
-            // those of the class it stands on. A thing is asked of the
-            // class it is of.
-            Builtin::ClassMethods | Builtin::ClassProperties => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::ClassMethods | Builtin::ClassProperties
+            => {
                 arity(1)?;
                 let of = match self.class_it_spells(args[0].clone()) {
                     Value::Object(o) => Some(o.class_now().clone()),
@@ -23685,10 +24832,30 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Value::array(seen.into_iter().map(|n| Value::text(&n)).collect())
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_44(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // The class a class stands on, by name: a thing is asked of
-            // the class it is of. Nothing where it stands on none.
-            Builtin::ClassBeneath => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::ClassBeneath
+            => {
                 arity(1)?;
                 let of = match self.class_it_spells(args[0].clone()) {
                     Value::Object(o) => Some(o.class_now().clone()),
@@ -23699,11 +24866,30 @@ impl<'a> Engine<'a> {
                     Some(under) => Value::text(&under.name),
                     None => Value::Null,
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_45(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // How far the clock the system keeps has come since the
-            // year it counts from. A clock that will not answer counts
-            // as standing at the start of it.
-            Builtin::Clock => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Clock
+            => {
                 if self.lang.clock_parts {
                     if let Some(Value::Text(task))=args.first() {
                         if task.as_ref()=="struct_time" && args.len()==1 {return Ok(Value::Class(self.calendar_kind()))}
@@ -23771,13 +24957,30 @@ impl<'a> Engine<'a> {
                 arity(0)?;
                 let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
                 Value::Small(since.map_or(0, |gone| gone.as_secs() as i64))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_46(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // The roots, the curves and the angles, worked over the
-            // reals of the width and named by the first thing given.
-            // They are worked where the width is worked and nowhere
-            // else, since a root is seldom a ratio and would otherwise
-            // have to be held to some chosen count of figures.
-            Builtin::Math => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Math
+            => {
                 let Some(working) = args.first().map(|v| v.display(&sp)) else {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
@@ -24189,17 +25392,30 @@ impl<'a> Engine<'a> {
                 let mut value = crate::value::real_of(got, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
                 if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = self.lang.math_floating; }
                 value
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_47(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            // The Mersenne Twister stream the library lends its chance
-            // from, worked by name (ext.builtin._random): a stream
-            // begun, planted from a whole number or from the system's
-            // own disorder, drawn on as a real of the width's 53 bits
-            // or as a run of whole bits, and told or set back to where
-            // it stands. The words a stream keeps never leave the
-            // kernel: a library holds only the number its stream was
-            // lent under, and the disorder of the system itself can be
-            // asked for as raw bytes.
-            Builtin::Twister => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Twister
+            => {
                 // The six hundred and twenty-four words, and the place
                 // among them the next draw reads.
                 struct Stream { words: Vec<u32>, place: usize }
@@ -24437,26 +25653,30 @@ impl<'a> Engine<'a> {
                     }
                     _ => return Err(format!("{}(): there is no working called '{}'", name, working)),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_48(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::OutBegun => {
-                arity(0)?;
-                Value::Flag(self.written_out.get())
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
             }
-            Builtin::Untaken => {
-                let put = args.first().cloned().unwrap_or(Value::Null);
-                let held = matches!(put, Value::Null | Value::Blank);
-                *self.untaken.borrow_mut() = if held { None } else { Some(put) };
-                Value::Flag(true)
-            }
-            Builtin::Complainer => {
-                let put = args.first().cloned().unwrap_or(Value::Null);
-                let held = matches!(put, Value::Null | Value::Blank);
-                *self.complainer.borrow_mut() = if held { None } else { Some(put) };
-                Value::Flag(true)
-            }
-            // A routine to run when the run is over, with whatever else
-            // was given to stand as its arguments.
-            Builtin::WhenDone => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::WhenDone
+            => {
                 if args.is_empty() {
                     return Err(format!("{}() needs a program to run", name));
                 }
@@ -24464,22 +25684,30 @@ impl<'a> Engine<'a> {
                 let work = given.remove(0);
                 self.when_done.borrow_mut().push((work, given));
                 Value::Null
-            }
-            // Keeping what the run writes out, and giving it up again.
-            Builtin::HoldOut => {
-                self.holding.borrow_mut().push(String::new());
-                Value::Flag(true)
-            }
-            Builtin::HeldOut => match self.holding.borrow().last() {
-                Some(kept) => Value::text(kept),
-                None => Value::Flag(false),
             },
-            Builtin::DropOut => {
-                let held = self.holding.borrow_mut().pop();
-                Value::Flag(held.is_some())
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_49(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::DeepOut => Value::Small(self.holding.borrow().len() as i64),
-            Builtin::Given | Builtin::GivenCount | Builtin::GivenAt => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Given | Builtin::GivenCount | Builtin::GivenAt
+            => {
                 let Some(given) = self.given.last().cloned() else {
                     // What a language says when one of these is reached
                     // where no call is running, in its own words where
@@ -24519,31 +25747,30 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_50(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Say => {
-                self.utter(&format!("{}\n", self.render(&args)));
-                Value::Null
-            }
-            Builtin::Out => {
-                self.utter(&self.render(&args));
-                Value::Null
-            }
-            Builtin::Tell => {
-                let sp = self.wording();
-                for v in args.iter() {
-                    self.utter(&v.display(&sp));
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
                 }
-                Value::Null
             }
-            Builtin::Define => return Err(format!("{}() needs a quoted name as its first argument", name)),
-            Builtin::Dump => {
-                for v in args.iter() {
-                    self.utter(&format!("{}\n", dumped(v, 0, self.lang.real_bits.is_some(), &self.wording())));
-                }
-                Value::Null
-            }
-            Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars => unreachable!(),
-            Builtin::List => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::List
+            => {
                 if args.is_empty() { return Ok(Value::array(Vec::new())); }
                 arity(1)?;
                 let result = {
@@ -24557,16 +25784,60 @@ impl<'a> Engine<'a> {
                     }
                 };
                 if matches!(args[0], Value::View(_) | Value::Collection(_, true) | Value::Text(_) | Value::Cursor(_) | Value::Walk(_) | Value::Generator(_)) { result.held(true) } else { result }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_51(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Any => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Any
+            => {
                 arity(1)?;
                 let walk = self.core_iterator(&args[0])?;
                 while let Some(item) = self.core_step(&walk)? {
                     if self.special_truth(&item)? { return Ok(Value::Flag(true)); }
                 }
                 Value::Flag(false)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_52(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Sum => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Sum
+            => {
                 if args.is_empty() { return Err(format!("TypeError: {name}() takes at least 1 positional argument (0 given)")); }
                 if args.len() > 2 { return Err(format!("TypeError: {name}() takes at most 2 arguments ({} given)", args.len())); }
                 let mut total = args.get(1).cloned().unwrap_or(Value::Small(0));
@@ -24617,8 +25888,30 @@ impl<'a> Engine<'a> {
                     }
                 }
                 self.sum_result(total, running)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_53(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Span if self.lang.range_value => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Span
+            => {
                 if args.is_empty() { return Err("TypeError: range expected at least 1 argument, got 0".to_string()); }
                 if args.len() > 3 { return Err(format!("TypeError: range expected at most 3 arguments, got {}", args.len())); }
                 let mut bounds = Vec::new();
@@ -24634,9 +25927,30 @@ impl<'a> Engine<'a> {
                 if bounds.len() == 2 { bounds.push(BigInt::from(1)); }
                 if bounds[2] == BigInt::from(0) { return Err(self.lang.range_zero[0].clone()); }
                 Value::Counted(Rc::new(crate::value::Counted { start: bounds[0].clone(), stop: bounds[1].clone(), step: bounds[2].clone(), name: name.to_string() }))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_54(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Span => return Err(format!("{}() spells a range, which belongs in a for loop", name)),
-            Builtin::MakeReal => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::MakeReal
+            => {
                 if args.is_empty() || args.len() > 2 {
                     return Err(format!("{}() expects 1 or 2 arguments, got {}", name, args.len()));
                 }
@@ -24648,17 +25962,30 @@ impl<'a> Engine<'a> {
                 };
                 arith::to_real(&args[0], places)
                     .ok_or_else(|| format!("{}() requires a number, rational, or real argument", name))?
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_55(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Places => {
-                arity(1)?;
-                match &args[0] {
-                    Value::Real(r) => Value::Small(r.places as i64),
-                    _ => return Err(format!("{}() requires a real argument", name)),
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
                 }
             }
-            Builtin::ToText if !self.lang.to_string_object.is_empty() && args.is_empty() => Value::text(""),
-            Builtin::ToText if !self.lang.to_string_object.is_empty() && args.len() > 1 => return self.text_from_bytes(&args),
-            Builtin::ToText => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::ToText
+            => {
                 arity(1)?;
                 if matches!(args[0], Value::Bytes(..)) && !self.lang.syntax_warning_words.is_empty()
                     && std::env::var("LUMEN_PYTHON_BYTES_WARNING").ok().and_then(|text| text.parse::<usize>().ok()).unwrap_or(0) > 0 {
@@ -24667,15 +25994,30 @@ impl<'a> Engine<'a> {
                 if matches!(args[0], Value::Text(_) | Value::Codepoints(_)) { return Ok(args[0].clone()); }
                 self.digits_shown(&args[0])?;
                 Value::text(&self.told(&args[0], &sp))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_56(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::ToInt if !self.lang.to_int_base.is_empty() => return self.integer_call(args),
-            Builtin::ToInt => {
-                arity(1)?;
-                let whole = arith::whole_of(&args[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
-                Value::of_big(whole)
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
             }
-            Builtin::AsReal if self.lang.to_real_text && args.is_empty() => arith::to_real(&Value::Small(0), arith::DEFAULT_PLACES).unwrap(),
-            Builtin::AsReal if self.lang.to_real_text && matches!(args.first(), Some(Value::Text(_) | Value::Codepoints(_))) => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::AsReal
+            => {
                 arity(1)?;
                 // A separator may stand between two figures and nowhere else.
                 // The message names the very string handed over, in
@@ -24710,26 +26052,60 @@ impl<'a> Engine<'a> {
                 let number = number_spelled(text).ok_or_else(|| amiss(self, &args[0]))?;
                 let widened = match arith::to_real(&number, arith::DEFAULT_PLACES) { Some(w) => w, None => return Err(amiss(self, &args[0])) };
                 self.at_real_width(widened)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_57(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::AsReal if matches!(args.as_slice(), [Value::Bytes(..)]) => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::AsReal
+            => {
                 let Value::Bytes(row, ..) = &args[0] else { unreachable!() };
                 let raw = row.borrow();
                 let bad = || format!("ValueError: could not convert string to float: {}", args[0].representation(&sp));
                 let source = std::str::from_utf8(&raw).ok().filter(|s| s.is_ascii()).ok_or_else(bad)?;
                 let mut forwarded = vec![Value::text(source)];
                 return self.builtin(Builtin::AsReal, name, &mut forwarded).map_err(|_| bad());
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_58(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::AsReal if self.lang.arithmetic_flags && matches!(args.as_slice(), [Value::Flag(_)]) => {
-                let Value::Flag(b) = args[0] else { unreachable!() };
-                arith::to_real(&Value::Small(i64::from(b)), arith::DEFAULT_PLACES).unwrap()
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
             }
-            // A text kept apart as bare code points (an unpaired surrogate,
-            // say) stands for a string that no floating point reader can
-            // take, which CPython reports as a broken string.
-            Builtin::AsReal if matches!(args.first(), Some(Value::Codepoints(_))) => {
-                return Err(format!("ValueError: could not convert string to float: {}", args[0].representation(&sp)));
-            }
-            Builtin::AsReal => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::AsReal
+            => {
                 arity(1)?;
                 match &args[0] {
                     v @ Value::Real(_) => v.clone(),
@@ -24758,8 +26134,30 @@ impl<'a> Engine<'a> {
                         self.at_real_width(exact)
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_59(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Length => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Length
+            => {
                 arity(1)?;
                 if let Some(native) = Self::worth_of(&args[0]) {
                     let mut plain = vec![native.contents()];
@@ -24783,8 +26181,30 @@ impl<'a> Engine<'a> {
                         _ => format!("{}() requires a string or array argument", name),
                     }),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_60(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::CharAtIndex => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::CharAtIndex
+            => {
                 arity(2)?;
                 match (&args[0], &args[1]) {
                     (Value::Text(s), Value::Small(i)) => match usize::try_from(*i).ok().and_then(|i| s.chars().nth(i)) {
@@ -24794,8 +26214,30 @@ impl<'a> Engine<'a> {
                     (Value::Text(_), _) => return Err(format!("{}() second argument must be an integer", name)),
                     _ => return Err(format!("{}() first argument must be a string", name)),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_61(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::CodeOf => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::CodeOf
+            => {
                 arity(1)?;
                 if let Some(words) = self.lang.core_words.get("core.ord").filter(|words| words.len() == 4) {
                     let given = args[0].contents();
@@ -24819,8 +26261,30 @@ impl<'a> Engine<'a> {
                         None => return Err(format!("{}() requires a non-empty string", name)),
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_62(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::CharOf => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::CharOf
+            => {
                 arity(1)?;
                 if self.lang.core_words["core.chr.range"].is_empty() {
                     let code = match &args[0] {
@@ -24846,16 +26310,30 @@ impl<'a> Engine<'a> {
                         None => Value::from_codes(vec![code]),
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_63(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Leave => return Err("the run is over".to_string()),
-            Builtin::Raise => {
-                arity(1)?;
-                return match &args[0] {
-                    Value::Text(s) => Err(s.to_string()),
-                    _ => Err(format!("{}() argument must be a string", name)),
-                };
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
             }
-            Builtin::SortOf => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::SortOf
+            => {
                 if self.fuller_classes() && args.len() != 1 {
                     return self.class_type(args.clone()).map_err(|fault| match fault {
                         Fault::Note(message) => message,
@@ -24927,17 +26405,30 @@ impl<'a> Engine<'a> {
                         None => return Err(format!("{}(): the language has no word for that kind", name)),
                     },
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_64(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Numer | Builtin::Denom => {
-                arity(1)?;
-                let (p, q) = arith::parts(&args[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
-                Value::of_big(if builtin == Builtin::Numer { p } else { q })
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
             }
-            Builtin::Fetch => {
-                arity(2)?;
-                self.element(&args[0], &args[1], Reading::Plain)?
-            }
-            Builtin::Append => {
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Append
+            => {
                 arity(2)?;
                 let target = args.pop().expect("the array");
                 if matches!(target, Value::Tuple(_) | Value::Set(_)) { return Err(self.core_fault("core.immutable", &target.core_kind())); }
@@ -24967,8 +26458,30 @@ impl<'a> Engine<'a> {
                     }
                     _ => return Err(self.not_an_array()),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_65(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Replace => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Replace
+            => {
                 arity(3)?;
                 let target = args.pop().expect("the array");
                 // Text holds its letters for good where a language of
@@ -25109,12 +26622,30 @@ impl<'a> Engine<'a> {
                     }
                     _ => return Err(self.not_an_array()),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_66(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Pack => return Err(format!("{}() is a literal, not a call", name)),
-            // Asking is done where the program is put together, since
-            // what is asked about is a name and not its value.
-            Builtin::Held | Builtin::Hollow => return Err("Only a name or a place in an array can be asked about".into()),
-            Builtin::Lead => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Lead
+            => {
                 if args.len() < 2 {
                     return Err(format!("{}() expects an array and a value at least", name));
                 }
@@ -25143,8 +26674,30 @@ impl<'a> Engine<'a> {
                     true => Value::array(kept.into_iter().map(|(_, v)| v).collect()),
                     false => Value::Map(Rc::new(kept.into())),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn builtin_arm_67(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        let sp = self.wording();
+        let arity = |n: usize| -> Res<()> {
+            if args.len() == n {
+                return Ok(());
             }
-            Builtin::Erase => {
+            if matches!(builtin, Builtin::Any | Builtin::CharOf) {
+                if let [head, middle, tail] = self.lang.core_words["core.arity.one"].as_slice() {
+                    return Err(format!("{head}{name}{middle}{}{tail}", args.len()));
+                }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
+        };
+
+        let result = match builtin {
+            Builtin::Erase
+            => {
                 // Taking a place out of an array: the array is given back
                 // without it.
                 arity(2)?;
@@ -25187,22 +26740,12 @@ impl<'a> Engine<'a> {
                     }
                     v => return Err(format!("{}() cannot take a place out of {}", name, v.plain())),
                 }
-            }
-            Builtin::Layout => {
-                arity(1)?;
-                self.utter(&laid_out(&args[0], 0, &sp));
-                Value::Flag(true)
-            }
-            // A write back into what held a place never reaches here:
-            // it is either nothing at all or a plain write, and is
-            // settled before the builtins are reached.
-            Builtin::Restore => unreachable!(),
-            // These two are read only where a language binds names,
-            // which reaches them through `core_call` instead.
-            Builtin::WarningBackend(_) | Builtin::LzmaEncode | Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
-            Builtin::External => self.external(name, &args)?,
-        })
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
     }
+
 
     /// The external capabilities of docs/LUMEN_LANGUAGE_EXTERN_SYSTEM.md.
     fn external(&self, name: &str, args: &[Value]) -> Res<Value> {
