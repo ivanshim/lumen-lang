@@ -33,3 +33,7 @@ class HeapCTypeMetaclassNullNew(type):
 
 def pytype_fromspec_meta(metaclass):
     return type.__new__(metaclass, 'HeapCType', (object,), {})
+
+# This interpreter uses IEEE-754 quiet NaNs: the most significant
+# fraction bit is set. Platforms that invert that bit use 1.
+nan_msb_is_signaling = 0
