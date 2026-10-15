@@ -428,7 +428,8 @@ impl std::hash::Hasher for QuickHash {
         while at + 8 <= length {
             let word = bytes[at] as u64 | (bytes[at + 1] as u64) << 8 | (bytes[at + 2] as u64) << 16 | (bytes[at + 3] as u64) << 24
                 | (bytes[at + 4] as u64) << 32 | (bytes[at + 5] as u64) << 40 | (bytes[at + 6] as u64) << 48 | (bytes[at + 7] as u64) << 56;
-            running = (running ^ word).wrapping_mul(Self::PRIME).rotate_left(29);
+            let mixed = (running ^ word).wrapping_mul(Self::PRIME);
+            running = mixed << 29 | mixed >> 35;
             at += 8;
         }
         while at < length {

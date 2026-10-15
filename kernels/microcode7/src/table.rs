@@ -50,7 +50,7 @@ impl FxHasher {
     const SEED: usize = 0x51_7c_c1_b7_27_22_0a_95;
     #[inline]
     fn add(&mut self, word: usize) {
-        self.hash = (self.hash.rotate_left(5) ^ word).wrapping_mul(Self::SEED);
+        self.hash = ((self.hash << 5 | self.hash >> (usize::BITS - 5)) ^ word).wrapping_mul(Self::SEED);
     }
 }
 
@@ -760,9 +760,11 @@ impl Table {
 
     fn cell(&self, key: &str) -> Option<&Entry> {
         let hint = ((key.as_ptr() as usize >> 3) ^ key.len().wrapping_mul(0x9e37)) % GUESSES;
-        let guess = self.guesses[hint].get() as usize;
-        if guess != 0 && self.names[guess - 1] == key {
-            return Some(&self.held[guess - 1]);
+        // Indexed as slices: a plain slice index is the build's own step,
+        // where a vector's goes through calls the unoptimised build pays for.
+        let guess = self.guesses.as_slice()[hint].get() as usize;
+        if guess != 0 && self.names.as_slice()[guess - 1] == key {
+            return Some(&self.held.as_slice()[guess - 1]);
         }
         let at = *self.cells.get(key)?;
         self.guesses[hint].set(at as u32 + 1);
