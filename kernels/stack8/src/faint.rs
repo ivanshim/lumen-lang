@@ -596,6 +596,12 @@ fn place_of(value: &Value) -> Option<usize> {
     })
 }
 
+/// A variable slot nothing was ever assigned to: it holds nothing to reach and cannot
+/// be part of a round, so the graph leaves it out (every hold on it counts as outside).
+fn unset_slot(value: &Value) -> bool {
+    matches!(value, Value::Bond(cell) if matches!(cell.try_borrow().as_deref(), Ok(Value::Blank)))
+}
+
 /// How many strong holds there are on a value's pointer.
 fn holds_on(value: &Value) -> usize {
     match value {
@@ -874,6 +880,7 @@ impl Graph {
         }
         for root in roots {
             let Some(place) = place_of(&root) else { continue };
+            if unset_slot(&root) { continue; }
             row_of(&mut nodes, &mut rows, &mut open, root, place, 0);
         }
         let mut children = Vec::new();
@@ -889,9 +896,13 @@ impl Graph {
                     Value::Method(o, r, _) => (Value::Object(o), Some(Value::Routine(r))),
                     other => (other, None),
                 };
-                if let Some(place) = place_of(&first) { reached.push(row_of(&mut nodes, &mut rows, &mut open, first, place, 1)); }
+                if let Some(place) = place_of(&first) {
+                    if !unset_slot(&first) { reached.push(row_of(&mut nodes, &mut rows, &mut open, first, place, 1)); }
+                }
                 if let Some(second) = second {
-                    if let Some(place) = place_of(&second) { reached.push(row_of(&mut nodes, &mut rows, &mut open, second, place, 1)); }
+                    if let Some(place) = place_of(&second) {
+                        if !unset_slot(&second) { reached.push(row_of(&mut nodes, &mut rows, &mut open, second, place, 1)); }
+                    }
                 }
             }
             nodes[at].reaches = reached;

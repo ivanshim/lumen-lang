@@ -7133,6 +7133,9 @@ impl<'a> Engine<'a> {
                         Some(v) if matches!(v.contents(), Value::Null) || matches!(v.contents(), Value::Object(e) if self.exception_class(&e.class_now())) => {},
                         _ => return Err(format!("TypeError: exception {} must be None or derive from BaseException", if cause { "cause" } else { "context" }).into()),
                     }
+                    if context {
+                        if let Some(Value::Object(behind)) = value.as_ref().map(Value::contents) { Self::mark_context_target(&behind); }
+                    }
                 }
                 if self.lang.exception_suppress.as_deref() == Some(name) {
                     match &value {

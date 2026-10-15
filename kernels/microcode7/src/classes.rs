@@ -7288,6 +7288,9 @@ impl<'a> Machine<'a> {
                         _ => false,
                     };
                     if !valid { return Err(format!("TypeError: exception {description} must be None or derive from BaseException").into()); }
+                    if description == "context" {
+                        if let Value::Thing(older) = v.settled() { Self::stand_behind(&older); }
+                    }
                 }
                 if self.table.strings("ext.builtin.exceptions.suppress").first().map(String::as_str) == Some(key) {
                     if replacement.is_none() { return Err(String::from("TypeError: can't delete numeric/char attribute").into()); }
