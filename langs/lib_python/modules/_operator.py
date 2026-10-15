@@ -5,6 +5,8 @@ __doc__ = 'Operator accelerator supplied by the Python runtime.'
 __all__ = ['add', 'index']
 
 def index(a):
+    if type(a) is int:
+        return a
     if isinstance(a, int):
         return int.__index__(a)
     method = getattr(type(a), '__index__', None)
