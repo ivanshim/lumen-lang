@@ -170,8 +170,8 @@ pub struct Table {
     /// same literals, and confirming a guess costs less than hashing a
     /// long label again.
     guesses: Vec<std::cell::Cell<u32>>,
-    pub dyadic: HashMap<String, Infix>,
-    pub monadic: HashMap<String, Infix>,
+    pub dyadic: HashMap<String, Infix, FxBuildHasher>,
+    pub monadic: HashMap<String, Infix, FxBuildHasher>,
     pub precedence: HashMap<String, u32>,
     pub prims: HashMap<String, Prim, FxBuildHasher>,
     builtin_continuations: HashMap<String, Vec<String>>,
@@ -182,7 +182,7 @@ pub struct Table {
     /// a primitive spelled several ways has to answer by a settled one.
     pub prim_words: Vec<(Prim, String)>,
     /// `x op= e` for each binary operator (ext.op.assign.compound).
-    pub compound: HashMap<String, Prim>,
+    pub compound: HashMap<String, Prim, FxBuildHasher>,
     /// The labels the definition wrote out, empty ones included.
     given: HashSet<String>,
     pub keywords: HashSet<String>,
@@ -616,14 +616,14 @@ impl Table {
             names,
             held,
             guesses: (0..GUESSES).map(|_| std::cell::Cell::new(0)).collect(),
-            dyadic: HashMap::new(),
-            monadic: HashMap::new(),
+            dyadic: HashMap::default(),
+            monadic: HashMap::default(),
             precedence: HashMap::new(),
             prims: HashMap::default(),
             builtin_continuations: HashMap::new(),
             method_names: HashMap::new(),
             prim_words: Vec::new(),
-            compound: HashMap::new(),
+            compound: HashMap::default(),
             given: map.keys().cloned().collect(),
             keywords: HashSet::new(),
             signs: Vec::new(),
