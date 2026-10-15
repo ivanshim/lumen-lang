@@ -612,29 +612,20 @@ class memoryview:
             raise ValueError('operation forbidden on released memoryview object')
 
     def _byte(self, offset):
-        source = self._source
-        if type(source) is bytearray:
-            return bytearray.__getitem__(source, offset)
-        if type(source) is bytes:
-            return bytes.__getitem__(source, offset)
         from array import array
-        if isinstance(source, array):
-            return source._buffer[offset]
-        if isinstance(source, bytes):
-            return bytes.__getitem__(source, offset)
-        return bytearray.__getitem__(source, offset)
+        if isinstance(self._source, array):
+            return self._source._buffer[offset]
+        if isinstance(self._source, bytes):
+            return bytes.__getitem__(self._source, offset)
+        return bytearray.__getitem__(self._source, offset)
 
     def _put_byte(self, offset, value):
-        source = self._source
-        if type(source) is bytearray:
-            source[offset] = value
-            return
         from array import array
-        if isinstance(source, array):
-            storage = source._buffer
+        if isinstance(self._source, array):
+            storage = self._source._buffer
             storage[offset] = value
         else:
-            source[offset] = value
+            self._source[offset] = value
 
     @property
     def obj(self):
@@ -663,8 +654,7 @@ class memoryview:
 
     @property
     def readonly(self):
-        if self._released:
-            raise ValueError('operation forbidden on released memoryview object')
+        self._check()
         return self._readonly
 
     @property
@@ -687,9 +677,8 @@ class memoryview:
 
     @property
     def nbytes(self):
-        if self._released:
-            raise ValueError('operation forbidden on released memoryview object')
-        return len(self._offsets) * self._itemsize
+        self._check()
+        return len(self._offsets) * self.itemsize
 
     @property
     def ndim(self):
@@ -702,21 +691,13 @@ class memoryview:
         return self._shape
 
     def __len__(self):
-        if self._released:
-            raise ValueError('operation forbidden on released memoryview object')
+        self._check()
         return self._shape[0]
 
     def __getitem__(self, key):
-        if self._released:
-            raise ValueError('operation forbidden on released memoryview object')
-        if len(self._shape) != 1:
+        self._check()
+        if self.ndim != 1:
             raise NotImplementedError('multi-dimensional sub-views are not implemented')
-        if type(key) is int and self._format == 'B':
-            try:
-                first = self._offsets[key]
-            except IndexError:
-                raise IndexError('index out of bounds on dimension 1')
-            return self._byte(first)
         if isinstance(key, slice):
             child = memoryview(self)
             child._offsets = self._offsets[key]
@@ -737,15 +718,7 @@ class memoryview:
         return struct.unpack('@' + format, raw[:struct.calcsize('@' + format)])[0]
 
     def __setitem__(self, key, value):
-        if self._released:
-            raise ValueError('operation forbidden on released memoryview object')
-        if type(key) is int and self._format == 'B' and type(value) is int and 0 <= value < 256 and not self._readonly:
-            try:
-                first = self._offsets[key]
-            except IndexError:
-                raise IndexError('index out of bounds on dimension 1')
-            self._put_byte(first, value)
-            return
+        self._check()
         format = self._format[1:] if self._format.startswith('@') else self._format
         if self._readonly:
             raise TypeError('cannot modify read-only memory')
@@ -821,17 +794,12 @@ class memoryview:
         return result
 
     def tobytes(self):
-        if self._released:
-            raise ValueError('operation forbidden on released memoryview object')
+        self._check()
         if self.c_contiguous:
-            storage = self._source
-            if type(storage) is not bytes and type(storage) is not bytearray:
-                from array import array
-                if isinstance(storage, array):
-                    storage = storage._buffer
-            offsets = self._offsets
-            start = offsets[0] if offsets else 0
-            stop = start + len(offsets) * self._itemsize
+            from array import array
+            storage = self._source._buffer if isinstance(self._source, array) else self._source
+            start = self._offsets[0] if self._offsets else 0
+            stop = start + len(self._offsets) * self._itemsize
             if isinstance(storage, bytes):
                 return bytes.__getitem__(storage, slice(start, stop))
             return bytes(bytearray.__getitem__(storage, slice(start, stop)))
@@ -857,8 +825,7 @@ class memoryview:
     def cast(self, format, shape=None):
         if not isinstance(format, str):
             raise TypeError("cast() argument 'format' must be str, not " + ('None' if format is None else type(format).__name__))
-        if self._released:
-            raise ValueError('operation forbidden on released memoryview object')
+        self._check()
         if not self.c_contiguous:
             raise TypeError('memoryview: casts are restricted to C-contiguous views')
         start = self._offsets[0] if self._offsets else 0
@@ -871,15 +838,11 @@ class memoryview:
         source = self._format[1:] if self._format.startswith('@') else self._format
         if source not in ('b', 'B', 'c') and destination not in ('b', 'B', 'c'):
             raise TypeError('memoryview: cannot cast between two non-byte formats')
-        if destination in 'bBc':
-            width = 1
-        else:
-            import struct
-            width = struct.calcsize('@' + destination)
-        nbytes = len(self._offsets) * self._itemsize
-        if nbytes % width:
+        import struct
+        width = struct.calcsize('@' + destination)
+        if self.nbytes % width:
             raise TypeError('memoryview: length is not a multiple of itemsize')
-        dimensions = (nbytes // width,)
+        dimensions = (self.nbytes // width,)
         if shape is not None:
             product = 1
             if not shape or len(shape) > 64:
@@ -890,7 +853,7 @@ class memoryview:
                 if length <= 0:
                     raise ValueError('memoryview.cast(): elements of shape must be integers > 0')
                 product *= length
-            if product != nbytes // width:
+            if product != self.nbytes // width:
                 raise TypeError('memoryview: product(shape) * itemsize != buffer size')
             dimensions = tuple(shape)
         result = memoryview(self)
@@ -902,12 +865,8 @@ class memoryview:
         return result
 
     def __del__(self):
-        try:
-            if self._released:
-                return
-        except AttributeError:
-            return
-        self.release()
+        if hasattr(self, '_released'):
+            self.release()
 
     def release(self):
         if self._released:
@@ -923,13 +882,11 @@ class memoryview:
             self._owner_view = None
 
     def __enter__(self):
-        if self._released:
-            raise ValueError('operation forbidden on released memoryview object')
+        self._check()
         return self
 
     def __exit__(self, kind, value, traceback):
-        if not self._released:
-            self.release()
+        self.release()
 
     def __eq__(self, other):
         from array import array
@@ -956,7 +913,7 @@ class memoryview:
 # There is no object behind any of these here: aiter, anext, ascii,
 # copyright, credits, exit, help, license,
 # quit, GeneratorExit, StopAsyncIteration, BufferError,
-# MemoryError, ReferenceError, SystemError,
+# MemoryError, ReferenceError, SystemError, FloatingPointError,
 # IndentationError, TabError, and the OSError kinds
 # the operating system raises besides FileNotFoundError,
 # IsADirectoryError, NotADirectoryError and PermissionError --
@@ -967,6 +924,8 @@ class memoryview:
 
 
 def _buffer_bytes(source):
+    if type(source) is bytes:
+        return source
     with memoryview(source) as view:
         if not view.c_contiguous:
             raise BufferError('memoryview: underlying buffer is not C-contiguous')
@@ -993,4 +952,3 @@ NotADirectoryError = NotADirectoryError
 PermissionError = PermissionError
 ProcessLookupError = ProcessLookupError
 TimeoutError = TimeoutError
-FloatingPointError = FloatingPointError

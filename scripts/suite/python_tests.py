@@ -16,3 +16,8 @@ def python_test_path(root, name, directory=None):
     directory = root / directory if directory is not None else root / "tests" / "python-3.14.8"
     module = directory / (name + ".py")
     return module if module.is_file() else directory / name / "__main__.py"
+
+def python_test_module(path):
+    """The library module an executable test package runs under: a
+    reference test package lives in the library's `test` namespace."""
+    return "test." + path.parent.name if path.name == "__main__.py" else None

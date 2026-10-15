@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/shift_jisx0213.py; PSF License.
 #
 # shift_jisx0213.py: Python Unicode Codec for SHIFT_JISX0213
 #

@@ -164,7 +164,7 @@ impl Engine<'_> {
                 let class = module.fields.borrow().iter().find(|(name, _)| name == class_name).map(|(_, value)| value.contents());
                 let Some(Value::Class(class)) = class else { continue; };
                 let actual = object.class_now();
-                if !std::rc::Rc::ptr_eq(&actual, &class) && !actual.lineage.borrow().iter().any(|base| std::rc::Rc::ptr_eq(base, &class)) { continue; }
+                if !std::rc::Rc::ptr_eq(&actual, &class) && !actual.lineage().iter().any(|base| std::rc::Rc::ptr_eq(base, &class)) { continue; }
                 if class_name == "memoryview" {
                     match self.class_get(held.clone(), "c_contiguous", false) {
                         Ok(value) if !self.truth(&value) => return Err("BufferError: memoryview: underlying buffer is not C-contiguous".into()),
@@ -185,7 +185,8 @@ impl Engine<'_> {
 
     pub(super) fn binary_ascii(&self, values: &[Value]) -> Res<Value> {
         let Value::Text(operation) = values[0].contents() else { return Err("TypeError: binary operation must be a string".into()); };
-        let Value::Bytes(bytes, ..) = values[1].contents() else { return Err("TypeError: binary operation requires bytes".into()); };
+        let supplied=Self::worth_of(&values[1]).unwrap_or_else(||values[1].contents());
+        let Value::Bytes(bytes, ..) = supplied.contents() else { return Err("TypeError: binary operation requires bytes".into()); };
         let input = bytes.borrow();
         let flag = |i: usize| values.get(i).is_some_and(Value::is_true);
         let number = |i: usize| match values.get(i).map(Value::contents) { Some(Value::Small(n)) => n, _ => 0 };

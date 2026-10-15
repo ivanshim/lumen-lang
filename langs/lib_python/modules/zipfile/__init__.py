@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/zipfile/__init__.py; PSF License.
 """
 Read and write ZIP files.
 

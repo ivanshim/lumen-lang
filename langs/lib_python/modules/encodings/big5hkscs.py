@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/big5hkscs.py; PSF License.
 #
 # big5hkscs.py: Python Unicode Codec for BIG5HKSCS
 #

@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/cp932.py; PSF License.
 #
 # cp932.py: Python Unicode Codec for CP932
 #

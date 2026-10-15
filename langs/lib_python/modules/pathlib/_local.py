@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/pathlib/_local.py; PSF License.
 """
 This module exists so that pathlib objects pickled under Python 3.13 can be
 unpickled in 3.14+.

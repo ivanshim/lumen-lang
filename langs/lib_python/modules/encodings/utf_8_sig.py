@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/utf_8_sig.py; PSF License.
 """ Python 'utf-8-sig' Codec
 This work similar to UTF-8 with the following changes:
 

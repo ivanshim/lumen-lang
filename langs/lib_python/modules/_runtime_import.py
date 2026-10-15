@@ -132,16 +132,15 @@ class SourceFinder:
         pass
 
 def make_spec(name, filename):
-    import sys
-    bootstrap = sys.modules.get('importlib._bootstrap')
+    import sys as _system
+    bootstrap = _system.modules.get('importlib._bootstrap')
     factory = getattr(bootstrap, 'ModuleSpec', ModuleSpec) if bootstrap is not None else ModuleSpec
     loader = SourceLoader(name, filename)
     spec = factory(name, loader, origin=filename, is_package=filename.endswith('/__init__.py'))
-    if name in sys.builtin_module_names:
+    spec.has_location = True
+    if name in getattr(_system, 'builtin_module_names', ()):
         spec.origin = 'built-in'
         spec.has_location = False
-    else:
-        spec.has_location = True
     if spec.submodule_search_locations is not None:
         spec.submodule_search_locations.append(filename.rsplit('/', 1)[0])
     return spec
@@ -149,7 +148,10 @@ def make_spec(name, filename):
 def find_custom(name, parent_path):
     import sys
     for finder in sys.meta_path:
-        spec = finder.find_spec(name, parent_path, None)
+        find_spec = getattr(finder, 'find_spec', None)
+        if find_spec is None:
+            continue
+        spec = find_spec(name, parent_path, None)
         if spec is not None:
             if type(finder) is SourceFinder and type(spec.loader) is SourceLoader:
                 return True, None

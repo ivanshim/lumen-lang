@@ -16,7 +16,6 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 use crate::code::Routine;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Sort {
     Integer,
     Rational,
@@ -45,7 +44,6 @@ impl Sort {
 
 /// p/q in lowest terms, q > 1.
 #[derive(Debug, Clone)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Frac {
     pub p: BigInt,
     pub q: BigInt,
@@ -63,7 +61,6 @@ pub struct Frac {
 /// for where numbers are worked and set against one another and nowhere
 /// else.
 #[derive(Debug, Clone)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Real {
     pub floating: bool,
     pub p: BigInt,
@@ -167,6 +164,8 @@ pub enum Phase {
     /// The last part, with what the try had already come to and how deep
     /// the stack stood before the part began.
     Last(Ending, usize),
+    /// An asynchronous exit keeps the outcome while its awaitable yields.
+    ContextExit(Ending, Value, usize),
 }
 
 /// What a try had come to before its last part ran, kept apart from the
@@ -197,6 +196,10 @@ pub struct Step {
 pub struct Generator {
     pub name: String,
     pub qualified: String,
+    pub coroutine_identity: usize,
+    pub coroutine_origin: Value,
+    pub async_hooks_initialized: bool,
+    pub async_finalizer: Value,
     pub trace_frame: Option<Rc<Instance>>,
     pub suspended_position: Option<(u32, u32, u32, u32)>,
     pub program: Option<Rc<Routine>>,
@@ -226,6 +229,9 @@ pub struct Generator {
     /// whether the body is on its way back to where it left off.
     pub resume: Vec<Step>,
     pub resuming: bool,
+    /// Whether the body stands on the stack right now, so that entering
+    /// it again is refused the way the reference refuses it.
+    pub running: bool,
     /// The faults the body itself is handling, kept while it sleeps so
     /// that what is raised next stands behind them.
     pub held: Vec<Value>,
@@ -239,10 +245,10 @@ pub struct Generator {
 
 impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
-        Self { name: String::new(), qualified: String::new(), trace_frame: None, suspended_position: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
+        Self { name: String::new(), qualified: String::new(), coroutine_identity: 0, coroutine_origin: Value::Null, async_hooks_initialized: false, async_finalizer: Value::Null, trace_frame: None, suspended_position: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, finalized: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None, reversed_walk: None,
-            resume: Vec::new(), resuming: false, held: Vec::new(), hurled: None, walked: None }
+            resume: Vec::new(), resuming: false, running: false, held: Vec::new(), hurled: None, walked: None }
     }
 }
 
@@ -308,9 +314,9 @@ pub struct Traceback {
 }
 
 #[derive(Debug)]
-pub struct MethodStamp;
+pub struct MethodStamp { pub callback_held: std::cell::Cell<bool> }
 impl Drop for MethodStamp {
-    fn drop(&mut self) { crate::faint::plain_departing(); }
+    fn drop(&mut self) { crate::faint::plain_departing(self as *const Self as usize); }
 }
 
 #[derive(Debug, Clone)]
@@ -591,6 +597,7 @@ pub struct KeyedPairs {
     pub entry_budget: (usize, usize, bool),
     lookup: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
     names: RefCell<Option<Box<NameLookup>>>,
+    compiled_names: RefCell<Vec<Option<(Rc<str>, usize)>>>,
 }
 
 impl std::fmt::Debug for KeyedPairs {
@@ -631,6 +638,25 @@ impl KeyedPairs {
             NameLookup::Fixed(positions) => Ok(positions.get(name).copied()),
             NameLookup::Mutable => Err(()),
         }
+    }
+
+    /// Find a compiled name without hashing it again on every load or store.
+    /// Row mutations discard these addresses; value replacements preserve them.
+    pub fn compiled_row(&self, name: &str, binding: usize) -> Result<Option<usize>, ()> {
+        let known = self.compiled_names.borrow();
+        let prior = known.get(binding).and_then(Option::as_ref);
+        if let Some((_, row)) = prior.filter(|(spelling, _)| spelling.as_ref() == name) {
+            return Ok(Some(*row));
+        }
+        drop(known);
+        let row = self.named_row(name)?;
+        if let Some(position) = row {
+            let mut compiled = self.compiled_names.borrow_mut();
+            let needed = compiled.len().max(binding + 1);
+            compiled.resize_with(needed, || None);
+            compiled[binding] = Some((Rc::from(name), position));
+        }
+        Ok(row)
     }
 
     /// A namespace write used to borrow the rows mutably, advancing the
@@ -686,7 +712,7 @@ impl KeyedPairs {
     /// the clear-history the map already had, with each row's own place.
     pub fn kept(rows: Vec<(Value, Value)>, slots: Vec<usize>, span: usize, clear_epoch: u64, entry_budget: (usize, usize, bool)) -> Self {
         assert_eq!(rows.len(), slots.len());
-        KeyedPairs { rows, revision: next_map_revision(), span, clear_epoch, slots, entry_budget, lookup: RefCell::new(None), names: RefCell::new(None) }
+        KeyedPairs { rows, revision: next_map_revision(), span, clear_epoch, slots, entry_budget, lookup: RefCell::new(None), names: RefCell::new(None), compiled_names: RefCell::new(Vec::new()) }
     }
 
     fn exact_string(key: &Value) -> bool {
@@ -742,6 +768,9 @@ impl KeyedPairs {
         self.revision = next_map_revision();
         *self.lookup.borrow_mut() = None;
         *self.names.borrow_mut() = None;
+        for cached in self.compiled_names.get_mut() {
+            if cached.as_ref().is_some_and(|(_, row)| *row == self.rows.len()) { *cached = None; }
+        }
         Some(pair)
     }
 
@@ -778,6 +807,10 @@ impl KeyedPairs {
         self.revision = next_map_revision();
         *self.lookup.borrow_mut() = None;
         *self.names.borrow_mut() = None;
+        for cached in self.compiled_names.get_mut() {
+            if cached.as_ref().is_some_and(|(_, row)| *row == at) { *cached = None; }
+            else if let Some((_, row)) = cached { if *row > at { *row -= 1; } }
+        }
         self.rows.remove(at);
         self.slots.remove(at);
     }
@@ -797,6 +830,7 @@ impl KeyedPairs {
         self.entry_budget = (1, 0, true);
         *self.lookup.borrow_mut() = None;
         *self.names.borrow_mut() = None;
+        self.compiled_names.get_mut().clear();
         self.rows.clear();
         self.slots.clear();
     }
@@ -816,6 +850,7 @@ impl KeyedPairs {
         let at = self.rows.len();
         self.revision = next_map_revision();
         *self.names.borrow_mut() = None;
+        self.compiled_names.get_mut().clear();
         self.rows.push((key, value));
         Self::append_entry(&mut self.slots, &mut self.span, &mut self.entry_budget, &self.rows.last().expect("added row").0);
         self.lookup.borrow_mut().as_mut().expect("just settled").0.insert(keytext, at);
@@ -828,7 +863,7 @@ impl From<Vec<(Value, Value)>> for KeyedPairs {
         let slots = (0..span).collect();
         let width = if span == 0 { 1 } else { (span * 3).div_ceil(2).max(8).next_power_of_two() };
         let entry_budget = (width, width * 2 / 3 - span, rows.iter().all(|(key, _)| Self::exact_string(key)));
-        KeyedPairs { rows, revision: next_map_revision(), span, clear_epoch: 0, slots, entry_budget, lookup: RefCell::new(None), names: RefCell::new(None) }
+        KeyedPairs { rows, revision: next_map_revision(), span, clear_epoch: 0, slots, entry_budget, lookup: RefCell::new(None), names: RefCell::new(None), compiled_names: RefCell::new(Vec::new()) }
     }
 }
 
@@ -837,7 +872,7 @@ impl From<Vec<(Value, Value)>> for KeyedPairs {
 /// rows and never the rows it was copied from.
 impl Clone for KeyedPairs {
     fn clone(&self) -> KeyedPairs {
-        KeyedPairs { rows: self.rows.clone(), revision: self.revision, span: self.span, clear_epoch: self.clear_epoch, slots: self.slots.clone(), entry_budget: self.entry_budget, lookup: RefCell::new(None), names: RefCell::new(None) }
+        KeyedPairs { rows: self.rows.clone(), revision: self.revision, span: self.span, clear_epoch: self.clear_epoch, slots: self.slots.clone(), entry_budget: self.entry_budget, lookup: RefCell::new(None), names: RefCell::new(None), compiled_names: RefCell::new(Vec::new()) }
     }
 }
 
@@ -857,6 +892,7 @@ impl std::ops::DerefMut for KeyedPairs {
         self.revision = next_map_revision();
         *self.lookup.borrow_mut() = None;
         *self.names.borrow_mut() = None;
+        self.compiled_names.get_mut().clear();
         &mut self.rows
     }
 }
@@ -898,11 +934,77 @@ pub fn view_kind(tag: &str) -> &'static str {
 /// The word CPython gives a walk taken backwards over a map's keys,
 /// values or pairs.
 pub fn reversed_view_kind(tag: &str) -> &'static str {
-    match tag { "keys" => "dict_reversekeyiterator", "values" => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
+    match tag { "keys" | "mapping" => "dict_reversekeyiterator", "values" => "dict_reversevalueiterator", _ => "dict_reverseitemiterator" }
+}
+
+/// Inline identities have no allocation to release. They remain canonical
+/// for the whole runtime lifetime; heap identities instead count their owners.
+pub(super) enum Retention {
+    Immortal,
+    Owners(usize),
+}
+
+impl Retention {
+    pub(super) fn python_count(self) -> i64 {
+        match self {
+            Self::Owners(count) => count as i64,
+            // CPython's immortal header marker is a lifetime state, not a
+            // number of references to an allocation.
+            Self::Immortal => (3_u32 << 30) as i64,
+        }
+    }
 }
 
 impl Value {
-    pub fn method(owner: Rc<Instance>, code: Rc<Routine>) -> Self { Self::Method(owner, code, Rc::new(MethodStamp)) }
+    pub fn method(owner: Rc<Instance>, code: Rc<Routine>) -> Self { Self::Method(owner, code, Rc::new(MethodStamp { callback_held: std::cell::Cell::new(false) })) }
+    pub(super) fn retained_count(&self) -> Option<Retention> {
+        match self {
+            Value::Small(_) | Value::Flag(_) | Value::Null | Value::Ellipsis
+                | Value::Native(..) | Value::ByteKind(..) | Value::Stream(_)
+                | Value::Declined(_) => Some(Retention::Immortal),
+            Value::Binding(cell) => cell.borrow().retained_count(),
+            Value::Bond(cell) => {
+                let held = cell.borrow();
+                if matches!(&*held, Value::Array(_) | Value::Map(_)) { Some(Retention::Owners(Rc::strong_count(cell))) }
+                else { held.retained_count() }
+            }
+            Value::Collection(p, _) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Codepoints(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::ValueMethod(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::View(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Cursor(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Trace(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Hashed(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Fields(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Walking(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Walk(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Bytes(p, _, _) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Export(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Adapter(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Counted(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Huge(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Frac(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Real(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Complex(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Text(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Words(p, _) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Array(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Tuple(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Generator(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Set(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Slice(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Map(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Class(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Object(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Tie(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Routine(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Method(_, _, p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Descriptor(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            Value::Faint(p) => Some(Retention::Owners(Rc::strong_count(p))),
+            _ => None,
+        }
+    }
+
 
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Items::tuple(parts)) }
 
@@ -927,9 +1029,23 @@ impl Value {
         match self {
             Value::Bond(cell) | Value::Collection(cell, _) | Value::Binding(cell) => cell.borrow().proxy_dictionary(),
             Value::View(proxy) if proxy.1 == "mapping" => proxy.0.proxy_dictionary(),
-            Value::Class(class) => Value::Map(Rc::new(class.shared.borrow().iter()
-                .filter(|(key, _)| !key.starts_with(['\0', '#']))
-                .map(|(key, value)| (Value::text(key), value.clone())).collect())),
+            Value::Class(class) => {
+                let fields=class.shared.borrow();
+                let mut pairs:Vec<_>=fields.iter().filter(|(key,_)|!key.starts_with(['\0','#'])).map(|(key,value)|(Value::text(key),value.clone())).collect();
+                if let Some((_,Value::Map(extra)))=fields.iter().find(|(key,_)|key=="\0type-keys") {pairs.extend(extra.iter().cloned());}
+                if let Some((_,Value::Tuple(order)))=fields.iter().find(|(name,_)|name=="\0type-order") {
+                    let mut ordered=Vec::with_capacity(pairs.len());
+                    for original in order.iter() {
+                        let original=match original {Value::Hashed(pair)=>&pair.0,other=>other};
+                        if let Some(index)=pairs.iter().position(|(candidate,_)| {
+                            let candidate=match candidate {Value::Hashed(pair)=>&pair.0,other=>other};
+                            match (original,candidate) {(Value::Text(left),Value::Text(right))=>left==right,_=>original.same_value(candidate)}
+                        }) {ordered.push(pairs.remove(index));}
+                    }
+                    ordered.extend(pairs);pairs=ordered;
+                }
+                Value::Map(Rc::new(pairs.into()))
+            },
             other => other.contents(),
         }
     }
@@ -1445,6 +1561,7 @@ impl Value {
             (Value::Set(x), Value::Set(y)) => Rc::ptr_eq(x, y),
             (Value::Text(x), Value::Text(y)) => Rc::ptr_eq(x, y),
             (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+            (Value::Bytes(x, ..), Value::Bytes(y, ..)) => Rc::ptr_eq(x, y),
             // A cell asked after twice is the one cell: the wrappers
             // differ, the storage they look into is one.
             (Value::Adapter(x), Value::Adapter(y)) if x.0 == 31 && y.0 == 31 => match (x.1.first(), y.1.first()) {
@@ -1469,7 +1586,7 @@ impl Value {
     /// replacements change the constants, not that original stream.
     fn routine_content(body: &crate::code::Routine) -> Value {
         Value::tuple(vec![
-            Value::Text(body.source_tokens.clone()), Value::Small(body.source_end as i64),
+            Value::Text(body.source_content.get_or_init(|| Rc::from(format!("{:?}", body.source_tokens))).clone()), Value::Small(body.source_end as i64),
             Value::text(&body.ident), Value::Small(body.declared_on as i64),
             Value::Small(body.code_flags), Value::Small(body.future_bits),
             Value::Flag(body.generator), Value::Flag(body.lineless),
@@ -1635,6 +1752,15 @@ impl Value {
             (Value::Adapter(a), Value::Adapter(b)) if a.0 == 31 && b.0 == 31 => match (a.1.first(), b.1.first()) {
                 (Some(Value::Bond(x) | Value::Binding(x)), Some(Value::Bond(y) | Value::Binding(y))) => Rc::ptr_eq(x, y),
                 _ => Rc::ptr_eq(a, b),
+            },
+            (Value::Adapter(a), Value::Adapter(b)) if a.0 == 183 && b.0 == 183 => {
+                match (a.1.first(), b.1.first(), a.1.last(), b.1.last()) {
+                    (Some(Value::Class(x)), Some(Value::Class(y)), Some(Value::Object(left)), Some(Value::Object(right))) => {
+                        let same_code = match (a.1.get(1), b.1.get(1)) { (Some(Value::Text(one)), Some(Value::Text(two))) => one == two, (Some(Value::Object(_)), Some(Value::Object(_))) => true, _ => false };
+                        Rc::ptr_eq(x, y) && Rc::ptr_eq(left, right) && same_code
+                    }
+                    _ => Rc::ptr_eq(a, b),
+                }
             },
             (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a,b),
             _ => false,
@@ -1841,7 +1967,7 @@ impl Value {
         let held = self.contents();
         if let Value::Object(object) = &held {
             let class = object.class_now();
-            let string = std::iter::once(class.as_ref()).chain(class.lineage.borrow().iter().map(Rc::as_ref))
+            let string = std::iter::once(class.as_ref()).chain(class.lineage().iter().map(Rc::as_ref))
                 .any(|base| base.constants.iter().any(|(key, value)| key == "\0kind" && matches!(value, Value::Text(word) if word.as_ref() == "str")));
             if string {
                 if let Some((_, text)) = object.fields.borrow().iter().find(|(key, _)| key == "\0worth") { return text.contents(); }
@@ -1899,7 +2025,10 @@ impl Value {
             }),
             Value::Tie(pair) => format!("{} => {}", pair.0.plain(), pair.1.plain()),
             Value::Generator(cell) => match cell.try_borrow() {
-                Ok(g) if !g.qualified.is_empty() => format!("<generator object {} at 0x1>", g.qualified),
+                Ok(g) if !g.qualified.is_empty() => {
+                    if g.walked.as_deref() == Some("coroutine") { format!("<coroutine object {} at 0x{:x}>", g.qualified, if g.coroutine_identity == 0 { Rc::as_ptr(cell) as usize } else { g.coroutine_identity }) }
+                    else { format!("<generator object {} at 0x1>", g.qualified) }
+                },
                 _ => "<generator>".to_string(),
             },
             Value::Tuple(items) => members_written(self, || format!("({}{})", items.iter().map(Value::plain).collect::<Vec<_>>().join(", "), if items.len() == 1 { "," } else { "" })),
@@ -1924,9 +2053,14 @@ impl Value {
             // nothing and is written with the kind it belongs to; a data
             // member reads the same way, but under CPython's own word
             // for the descriptor that carries it.
-            Value::Adapter(w) if w.0 == 16 && w.1.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") => {
-                let owner = match &w.1[1] { Value::Class(c) => c.name.as_str(), _ => "" };
-                format!("<attribute '{}' of '{}' objects>", w.1[0].plain(), owner)
+            Value::Adapter(metadata) if metadata.0==250 => format!("<attribute '{}' of 'type' objects>",metadata.1[0].plain()),
+            Value::Adapter(w) if w.0 == 16 => match w.1.as_slice() {
+                [Value::Text(name), Value::Class(owner), ..] => format!("<{} '{}' of '{}' objects>", if w.1.len()>2 || name.as_ref()=="__weakref__" {"attribute"} else {"member"}, name, owner.name),
+                _ => "<member wrapper>".to_owned(),
+            },
+            Value::Adapter(w) if w.0 == 205 => match &w.1[1] {
+                Value::Class(owner) => format!("<attribute '{}' of '{}' objects>", w.1[2].plain(), owner.name),
+                _ => "<member wrapper>".to_string(),
             },
             Value::Adapter(w) if w.0 == 29 => match w.1.as_slice() {
                 [Value::Text(kind), Value::Text(word)] => match Self::loose_member_descriptor(kind, word) {
@@ -1938,8 +2072,9 @@ impl Value {
             // A routine wrapped as a static or class method reads as the
             // wrapping builtin around the routine it holds, as CPython
             // writes it.
-            Value::Adapter(w) if w.0 == 4 => format!("<staticmethod({})>", w.1[0].plain()),
-            Value::Adapter(w) if w.0 == 5 => format!("<classmethod({})>", w.1[0].plain()),
+            Value::Adapter(w) if w.0 == 4 => format!("<staticmethod({})>", if matches!(w.1[0],Value::Null){"None".to_owned()}else{w.1[0].plain()}),
+            Value::Adapter(w) if w.0 == 5 => format!("<classmethod({})>", if matches!(w.1[0],Value::Null){"None".to_owned()}else{w.1[0].plain()}),
+            Value::Adapter(parts) if parts.0 == 34 => format!("<coroutine_wrapper object at 0x{:x}>", Rc::as_ptr(parts) as usize),
             Value::Adapter(_) => "<member wrapper>".to_string(),
             Value::Object(o) => o.fields.borrow().iter().find(|(key, _)| key == "\0typing_repr")
                 .map(|(_, value)| value.plain()).unwrap_or_else(|| format!("<object {}>", o.class_now().name)),
@@ -2114,7 +2249,6 @@ pub fn decimal_string(p: &BigInt, q: &BigInt, places: usize) -> String {
 /// How far a member of a class may be reached from: from anywhere, from
 /// the class and those standing on it, or from the class alone.
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Reach {
     Open,
     Guarded,
@@ -2126,19 +2260,79 @@ pub enum Reach {
 /// No program can spell it.
 pub const MAKER_MEMBER: &str = "\0metaclass";
 
+thread_local! { static MEMBERS_REVISION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) }; }
+
+/// Ordered class storage with a lazily built index of names, never values.
+/// Every mutable borrow discards the index, including writes through a view.
+#[derive(Debug)]
+pub struct ClassMembers {
+    rows: RefCell<Vec<(String, Value)>>,
+    absent: RefCell<(u64, std::collections::HashSet<String, FxBuildHasher>)>,
+    offsets: RefCell<Option<std::collections::HashMap<String, usize, FxBuildHasher>>>,
+}
+
+impl ClassMembers {
+    pub fn new(rows: Vec<(String, Value)>) -> Self {
+        Self { rows: RefCell::new(rows), offsets: RefCell::new(None), absent: RefCell::new((u64::MAX, std::collections::HashSet::with_hasher(FxBuildHasher::default()))) }
+    }
+    pub fn borrow(&self) -> std::cell::Ref<'_, Vec<(String, Value)>> { self.rows.borrow() }
+    pub fn borrow_mut(&self) -> std::cell::RefMut<'_, Vec<(String, Value)>> {
+        MEMBERS_REVISION.with(|revision| revision.set(revision.get().wrapping_add(1)));
+        self.offsets.borrow_mut().take();
+        self.rows.borrow_mut()
+    }
+    pub fn try_borrow(&self) -> Result<std::cell::Ref<'_, Vec<(String, Value)>>, std::cell::BorrowError> { self.rows.try_borrow() }
+    pub fn try_borrow_mut(&self) -> Result<std::cell::RefMut<'_, Vec<(String, Value)>>, std::cell::BorrowMutError> {
+        let entries = self.rows.try_borrow_mut()?;
+        MEMBERS_REVISION.with(|revision| revision.set(revision.get().wrapping_add(1)));
+        self.offsets.borrow_mut().take();
+        Ok(entries)
+    }
+    pub(super) fn mro_misses(&self, name: &str) -> bool {
+        let version = MEMBERS_REVISION.with(|revision| revision.get());
+        let mut saved = self.absent.borrow_mut();
+        if saved.0 != version { saved.1.clear(); saved.0 = version; }
+        saved.1.contains(name)
+    }
+    pub(super) fn retain_mro_miss(&self, name: &str) {
+        let generation = MEMBERS_REVISION.with(|revision| revision.get());
+        let mut missing = self.absent.borrow_mut();
+        if missing.0 != generation || missing.1.len() == 128 {
+            missing.1.clear(); missing.0 = generation;
+        }
+        missing.1.insert(name.to_owned());
+    }
+    pub(super) fn read(&self, name: &str, indexed: bool) -> Option<Value> {
+        let rows = self.rows.borrow();
+        if !indexed || rows.len() < 12 {
+            return rows.iter().find(|(key, _)| key == name).map(|(_, value)| value.clone());
+        }
+        let mut offsets = self.offsets.borrow_mut();
+        let table = offsets.get_or_insert_with(|| {
+            let mut table = std::collections::HashMap::with_hasher(FxBuildHasher::default());
+            for (slot, (key, _)) in rows.iter().enumerate() { table.entry(key.clone()).or_insert(slot); }
+            table
+        });
+        table.get(name).map(|slot| rows[*slot].1.clone())
+    }
+}
+
 /// A class: what it is called, what it stands on, the properties an
 /// object of it begins with, the programs it answers to, its constants
 /// and the values it keeps for itself.
 #[derive(Debug)]
 pub struct Class {
+    pub mro_place: std::cell::RefCell<Vec<usize>>,
+    pub mro_ready: std::cell::Cell<bool>,
+    pub base_epoch: std::cell::Cell<u64>,
     /// Python heap-type names, the module label, and the original
     /// qualification used by the existing string-based lexical super lookup.
     pub python_names: RefCell<Option<(Value, Value, String, Value)>>,
     pub lineage: RefCell<Vec<Rc<Class>>>,
-    pub direct: Vec<Rc<Class>>,
+    pub direct: RefCell<Vec<Rc<Class>>>,
     pub outline: Option<String>,
     pub name: String,
-    pub base: Option<Rc<Class>>,
+    pub base: RefCell<Option<Rc<Class>>>,
     /// The classes of method names only that this one answers to.
     pub answers: Vec<Rc<Class>>,
     pub fields: Vec<(String, Value)>,
@@ -2146,7 +2340,7 @@ pub struct Class {
     pub reaches: Vec<Reach>,
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
-    pub shared: RefCell<Vec<(String, Value)>>,
+    pub shared: ClassMembers,
     /// The weak-reference layout fixed when a Python class is created.
     /// Namespace writes cannot change an already allocated layout.
     pub weak_storage: std::cell::Cell<Option<bool>>,
@@ -2167,6 +2361,15 @@ pub struct Class {
 }
 
 impl Class {
+    pub fn order(self: &Rc<Self>) -> Vec<Rc<Class>> {
+        let mut result=self.lineage();
+        for at in self.mro_place.borrow().iter() {result.insert((*at).min(result.len()),self.clone());}
+        result
+    }
+    pub fn lineage(&self) -> Vec<Rc<Class>> {self.lineage.borrow().clone()}
+    pub fn direct(&self) -> Vec<Rc<Class>> {self.direct.borrow().clone()}
+    pub fn base(&self) -> Option<Rc<Class>> {self.base.borrow().clone()}
+
     pub(super) fn python_title(&self) -> Option<String> {
         let names = self.python_names.borrow();
         let (short, qualified, module_key, _) = names.as_ref()?;
@@ -2185,27 +2388,27 @@ impl Class {
 
     /// The program of that name, in this class or the nearest one
     /// beneath it that has one.
-    pub fn method(&self, name: &str) -> Option<&Rc<Routine>> {
+    pub fn method(&self, name: &str) -> Option<Rc<Routine>> {
         match self.methods.iter().find(|(n, _)| n == name) {
-            Some((_, p)) => Some(p),
-            None => self.base.as_ref().and_then(|b| b.method(name)),
+            Some((_, p)) => Some(p.clone()),
+            None => self.base.borrow().as_ref().and_then(|b| b.method(name)),
         }
     }
 
     /// The constant of that name, looked for the same way.
-    pub fn constant(&self, name: &str) -> Option<&Value> {
+    pub fn constant(&self, name: &str) -> Option<Value> {
         match self.constants.iter().find(|(n, _)| n == name) {
-            Some((_, v)) => Some(v),
-            None => self.base.as_ref().and_then(|b| b.constant(name)),
+            Some((_, v)) => Some(v.clone()),
+            None => self.base.borrow().as_ref().and_then(|b| b.constant(name)),
         }
     }
 
     /// The class holding a value of that name for itself.
-    pub fn holder(&self, name: &str) -> Option<&Class> {
-        if self.shared.borrow().iter().any(|(n, _)| n == name) {
-            return Some(self);
+    pub fn holder(self: &Rc<Self>, name: &str) -> Option<Rc<Class>> {
+        if self.shared.read(name, self.python_names.borrow().is_some()).is_some() {
+            return Some(self.clone());
         }
-        self.base.as_ref().and_then(|b| b.holder(name))
+        self.base.borrow().as_ref().and_then(|b| b.holder(name))
     }
 
     /// Whether this class is that one, stands on it, or answers to it.
@@ -2216,7 +2419,7 @@ impl Class {
             false => self.name == name,
         };
         same
-            || self.base.as_ref().map_or(false, |b| b.named(name, loosely))
+            || self.base.borrow().as_ref().map_or(false, |b| b.named(name, loosely))
             || self.answers.iter().any(|a| a.named(name, loosely))
     }
 
@@ -2228,10 +2431,10 @@ impl Class {
 
     /// How far a member of that name may be reached from, and the class
     /// that says so: the nearest one declaring it, this class first.
-    pub fn reach_of(&self, name: &str) -> Option<(Reach, &str)> {
+    pub fn reach_of(&self, name: &str) -> Option<(Reach, String)> {
         match self.fields.iter().position(|(n, _)| n == name) {
-            Some(at) => Some((self.reaches.get(at).copied().unwrap_or(Reach::Open), self.name.as_str())),
-            None => self.base.as_ref().and_then(|b| b.reach_of(name)),
+            Some(at) => Some((self.reaches.get(at).copied().unwrap_or(Reach::Open), self.name.clone())),
+            None => self.base.borrow().as_ref().and_then(|b| b.reach_of(name)),
         }
     }
 
@@ -2243,17 +2446,12 @@ impl Class {
     /// Ask whether an inherited public field exists without constructing
     /// the complete instance layout or cloning its names and values.
     pub fn has_public_field(&self, name: &str) -> bool {
-        let mut current = Some(self);
-        while let Some(class) = current {
-            if class.fields.iter().enumerate().any(|(at, (key, _))|
-                key == name && class.reaches.get(at) != Some(&Reach::Hidden)) { return true; }
-            current = class.base.as_deref();
-        }
-        false
+        self.fields.iter().enumerate().any(|(at,(key,_))|key==name && self.reaches.get(at)!=Some(&Reach::Hidden))
+            || self.base().is_some_and(|parent|parent.has_public_field(name))
     }
 
     pub fn all_fields(&self) -> Vec<(String, Value)> {
-        let mut all = self.base.as_ref().map_or_else(Vec::new, |b| b.all_fields());
+        let mut all = self.base().as_ref().map_or_else(Vec::new, |b| b.all_fields());
         for (at, (name, value)) in self.fields.iter().enumerate() {
             let alone = self.reaches.get(at) == Some(&Reach::Hidden);
             let filed = match alone {
@@ -2794,13 +2992,13 @@ impl Drop for Generator {
 
 impl Drop for Members {
     fn drop(&mut self) {
-        crate::faint::plain_departing();
+        crate::faint::plain_departing(self as *const Self as usize);
     }
 }
 
 impl Drop for Class {
     fn drop(&mut self) {
-        crate::faint::plain_departing();
+        crate::faint::plain_departing(self as *const Self as usize);
     }
 }
 

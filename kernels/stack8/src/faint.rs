@@ -21,6 +21,24 @@ use std::rc::{Rc, Weak};
 use crate::code::Routine;
 use crate::value::{Class, CursorSource, Descriptor, Ending, Generator, Instance, Members, Phase, Value};
 
+thread_local! {
+    static INTERNED_FAMILIES: RefCell<Vec<Weak<Class>>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(super) fn register_family(class: &Rc<Class>) {
+    INTERNED_FAMILIES.with(|families| {
+        let mut known = families.borrow_mut();
+        known.retain(|family| family.strong_count() != 0);
+        if !known.iter().any(|family| family.as_ptr() == Rc::as_ptr(class)) {
+            known.push(Rc::downgrade(class));
+        }
+    });
+}
+
+pub(super) fn family_interns(class: &Rc<Class>) -> bool {
+    INTERNED_FAMILIES.with(|known| known.borrow().iter().any(|family|
+        family.as_ptr() == Rc::as_ptr(class) && family.strong_count() != 0))
+}
 /// A hasher for the graph's keys, which are addresses: one multiply
 /// spreads them, where the default hasher's rounds cost more than the
 /// walk they serve.
@@ -87,6 +105,37 @@ impl Hold {
     }
 }
 
+/// Collect only identities relevant to live callbacks, including the
+/// reference object whose loss cancels its callback. No strong hold is kept.
+fn observe(reference: &Faint, addresses: &mut HashSet<usize>) {
+    addresses.insert(reference.bearer.as_ptr() as usize);
+    match &reference.hold {
+        Hold::Object(target) => { addresses.insert(target.as_ptr() as usize); }
+        Hold::Class(target) => { addresses.insert(target.as_ptr() as usize); }
+        Hold::Routine(target) => { addresses.insert(target.as_ptr() as usize); }
+        Hold::Method(receiver, body, identity) => {
+            addresses.insert(receiver.as_ptr() as usize);
+            addresses.insert(body.as_ptr() as usize);
+            addresses.insert(identity.as_ptr() as usize);
+        }
+        Hold::Generator(target) => {
+            if let Some(live) = target.upgrade() { addresses.insert(live.as_ptr() as usize); }
+        }
+        Hold::Set(target) => {
+            if let Some(live) = target.upgrade() { addresses.insert(live.as_ptr() as usize); }
+        }
+        Hold::Native(..) | Hold::Octets(..) | Hold::Container(_) | Hold::Lasts(_) => {}
+    }
+}
+
+fn observe_remaining(references: &[Rc<Faint>]) {
+    let _ = OBSERVED.try_with(|addresses| {
+        let mut addresses = addresses.borrow_mut();
+        addresses.clear();
+        references.iter().for_each(|reference| observe(reference, &mut addresses));
+    });
+}
+
 /// A weak hold as the program sees it: what it points at, the program's
 /// own reference object that carries it, and the routine to call with
 /// that object once the value goes.
@@ -109,6 +158,20 @@ impl Faint {
 
 // Cyclic garbage loses its weak links before finalizers can resurrect it.
 
+#[derive(Eq, Hash, PartialEq)]
+enum WeakTargetKey {
+    Object(usize),
+    Type(usize),
+    Builtin(Rc<str>),
+}
+
+fn weak_target_key(value: &Value) -> Option<WeakTargetKey> {
+    if let Value::Native(_, word) = value { return Some(WeakTargetKey::Builtin(word.clone())); }
+    if let Value::Class(kind) = value { return Some(WeakTargetKey::Type(Rc::as_ptr(kind) as usize)); }
+    if let Value::Object(instance) = value { return Some(WeakTargetKey::Object(Rc::as_ptr(instance) as usize)); }
+    None
+}
+
 thread_local! {
     /// The name a class gives its last words, where the language has one.
     static LAST_WORD: RefCell<Option<String>> = const { RefCell::new(None) };
@@ -116,13 +179,17 @@ thread_local! {
     static WATCHING: Cell<usize> = const { Cell::new(0) };
     /// Those holds.
     static REFERENCES: RefCell<Vec<Weak<Faint>>> = const { RefCell::new(Vec::new()) };
-    /// How long REFERENCES may grow before the dead are swept out of it.
-    static REFERENCE_LIMIT: Cell<usize> = const { Cell::new(32) };
+    static REFERENCES_TRIM_AT: Cell<usize> = const { Cell::new(64) };
+    // Index the live inventory, never the referent or an ABC result.
+    static TARGET_REFERENCES: RefCell<HashMap<WeakTargetKey, Vec<Weak<Faint>>>> = RefCell::new(HashMap::new());
+    static TARGET_PRUNE_AT: Cell<usize> = const { Cell::new(64) };
     static WATCHED: RefCell<Vec<Rc<Faint>>> = const { RefCell::new(Vec::new()) };
+    static INSTANCE_WATCHES: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
     /// Whether anything at all is waiting for the engine's next step.
     // Bit zero is queued work; bit one marks a nonempty anchor list.
     static PENDING: Cell<u8> = const { Cell::new(0) };
     /// Whether a value somebody may be watching has gone since the last look.
+    static OBSERVED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
     static DIED: Cell<bool> = const { Cell::new(false) };
     /// Objects rebuilt for their last words, with the routine to say them.
     static LAST_WORDS: RefCell<Vec<(Rc<Instance>, Value)>> = const { RefCell::new(Vec::new()) };
@@ -178,6 +245,7 @@ pub fn clear_group(group: &[Value]) -> Vec<(Value, Value)> {
             }
         }
         let _ = WATCHING.try_with(|count| count.set(kept.len()));
+        observe_remaining(&kept);
         *watched = kept;
         notices
     }).unwrap_or_default();
@@ -244,7 +312,7 @@ fn note_death() {
 }
 
 /// The routine a class says its last words with, where it has one.
-pub fn last_word_of(class: &Class) -> Option<Value> {
+pub fn last_word_of(class: &Rc<Class>) -> Option<Value> {
     LAST_WORD.try_with(|w| {
         let name = w.borrow();
         let name = name.as_deref()?;
@@ -252,7 +320,8 @@ pub fn last_word_of(class: &Class) -> Option<Value> {
             return Some(Value::Routine(program.clone()));
         }
         let holder = class.holder(name)?;
-        holder.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.clone())
+        let answer=holder.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.clone());
+        answer
     }).ok().flatten()
 }
 
@@ -279,24 +348,25 @@ pub fn departing(dying: &mut Instance) {
             wake();
         }
     }
-    note_death();
+    plain_departing(here);
 }
 
 /// A walk is going. One asleep inside a try is rebuilt around its own
 /// frame and queued, so that its last parts run as the language asks.
 pub fn walk_departing(dying: &mut Generator) {
-    let asleep = dying.started && !dying.closed && !dying.finalized && dying.program.is_some();
+    let unawaited = !dying.started && dying.program.as_ref().is_some_and(|body| body.code_flags & 128 != 0);
+    let asleep = (dying.started || unawaited) && !dying.closed && !dying.finalized && dying.program.is_some();
     if asleep && LAST_WORD.try_with(|w| w.borrow().is_some()).unwrap_or(false) {
         // Build only while the queue is alive. A rejected try_with must
         // not drop a captured suspended body and recursively rebuild it.
         let _ = UNFINISHED.try_with(|q| {
             let again = Generator {
-                name: dying.name.clone(), qualified: dying.qualified.clone(), trace_frame: dying.trace_frame.take(), suspended_position: dying.suspended_position,
+                name: dying.name.clone(), qualified: dying.qualified.clone(), coroutine_identity: dying.coroutine_identity, coroutine_origin: dying.coroutine_origin.clone(), async_hooks_initialized: dying.async_hooks_initialized, async_finalizer: dying.async_finalizer.clone(), trace_frame: dying.trace_frame.take(), suspended_position: dying.suspended_position,
                 program: dying.program.clone(),
                 frame: std::mem::take(&mut dying.frame),
                 stack: std::mem::take(&mut dying.stack),
                 pc: dying.pc,
-                started: true,
+                started: dying.started,
                 closed: false,
                 finalized: false,
                 waiting: dying.waiting,
@@ -310,6 +380,7 @@ pub fn walk_departing(dying: &mut Generator) {
                 reversed_walk: dying.reversed_walk.take(),
                 resume: std::mem::take(&mut dying.resume),
                 resuming: dying.resuming,
+                running: false,
                 held: std::mem::take(&mut dying.held),
                 hurled: dying.hurled.take(),
                 walked: dying.walked.take(),
@@ -320,12 +391,14 @@ pub fn walk_departing(dying: &mut Generator) {
         });
         wake();
     }
-    note_death();
+    plain_departing(dying as *const Generator as usize);
 }
 
 /// A set, a class or a routine is going: only the watchers care.
-pub fn plain_departing() {
-    note_death();
+pub fn plain_departing(address: usize) {
+    if WATCHING.try_with(Cell::get).unwrap_or(0) == 0 { return; }
+    let interested = OBSERVED.try_with(|addresses| addresses.borrow().contains(&address)).unwrap_or(false);
+    if interested { note_death(); }
 }
 
 /// What the engine has to do now: the objects with last words to say,
@@ -364,7 +437,14 @@ pub fn settle() -> (Vec<(Rc<Instance>, Value)>, Vec<Rc<RefCell<Generator>>>, Vec
                 }
             }
             let _ = WATCHING.try_with(|n| n.set(kept.len()));
+            let mut observed = HashSet::new();
+            for reference in &kept {
+                observed.insert(reference.bearer.as_ptr() as usize);
+                if let Hold::Object(target) = &reference.hold { observed.insert(target.as_ptr() as usize); }
+            }
+            let _ = INSTANCE_WATCHES.try_with(|targets| *targets.borrow_mut() = observed);
             kept.reverse();
+            observe_remaining(&kept);
             *watched = kept;
         });
     }
@@ -392,19 +472,45 @@ pub fn hold_of(value: &Value) -> Option<Hold> {
 /// Make a weak hold the program can carry, remembering it where it
 /// asks for a word, and its value as one whose going may be noticed.
 pub fn make(hold: Hold, bearer: Weak<Instance>, told: Option<Value>) -> Value {
+    if told.is_some() {
+        INSTANCE_WATCHES.with(|targets| targets.borrow_mut().insert(bearer.as_ptr() as usize));
+        match &hold {
+            Hold::Object(target) => { INSTANCE_WATCHES.with(|targets| targets.borrow_mut().insert(target.as_ptr() as usize)); }
+            Hold::Method(_, _, identity) => { if let Some(identity) = identity.upgrade() { identity.callback_held.set(true); } }
+            _ => {},
+        }
+    }
     remember(hold.clone());
     let faint = Rc::new(Faint { hold, bearer, told: RefCell::new(told), cached_hash: RefCell::new(None), cleared: Cell::new(false) });
     REFERENCES.with(|all| {
         let mut all = all.borrow_mut();
-        // Sweeping the whole list for every new hold made a loop that
-        // holds n things cost n squared; it is swept when it has doubled.
-        if all.len() >= REFERENCE_LIMIT.with(Cell::get) {
-            all.retain(|r| r.strong_count() != 0);
-            REFERENCE_LIMIT.with(|limit| limit.set((all.len() * 2).max(32)));
-        }
+        REFERENCES_TRIM_AT.with(|limit| {
+            if all.len() >= limit.get() {
+                all.retain(|r| r.strong_count() != 0);
+                limit.set(all.len().saturating_mul(2).max(64));
+            }
+        });
         all.push(Rc::downgrade(&faint));
     });
+    if let Some(key) = faint.revive().and_then(|value| weak_target_key(&value)) {
+        TARGET_REFERENCES.with(|inventory| {
+            let mut inventory = inventory.borrow_mut();
+            TARGET_PRUNE_AT.with(|limit| {
+                if inventory.len() >= limit.get() {
+                    inventory.retain(|_, bucket| {
+                        bucket.retain(|handle| handle.strong_count() > 0);
+                        !bucket.is_empty()
+                    });
+                    limit.set(inventory.len().saturating_mul(2).max(64));
+                }
+            });
+            let bucket = inventory.entry(key).or_default();
+            bucket.retain(|handle| handle.strong_count() > 0);
+            bucket.push(Rc::downgrade(&faint));
+        });
+    }
     if faint.told.borrow().is_some() {
+        let _ = OBSERVED.try_with(|addresses| observe(&faint, &mut addresses.borrow_mut()));
         let _ = WATCHED.try_with(|w| w.borrow_mut().push(faint.clone()));
         let _ = WATCHING.try_with(|n| n.set(n.get() + 1));
     }
@@ -414,6 +520,8 @@ pub fn make(hold: Hold, bearer: Weak<Instance>, told: Option<Value>) -> Value {
 /// Remember a value whose going could be noticed. The list is pruned
 /// of the dead whenever it has doubled since it was last pruned.
 pub fn remember(hold: Hold) {
+    // A builtin kind lives for the run and has no edges in the cycle graph.
+    if matches!(&hold, Hold::Native(..)) { return; }
     let _ = CANDIDATES.try_with(|c| {
         let mut c = c.borrow_mut();
         if c.0.len() >= c.1 {
@@ -523,11 +631,13 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                 out.extend(shared.iter().map(|(_, v)| v.clone()));
             }
             out.extend(c.methods.iter().map(|(_, p)| Value::Routine(p.clone())));
-            out.extend(c.base.iter().map(|b| Value::Class(b.clone())));
-            out.extend(c.lineage.borrow().iter().chain(&c.direct).chain(&c.answers).map(|b| Value::Class(b.clone())));
+            out.extend(c.base().iter().map(|b| Value::Class(b.clone())));
+            out.extend(c.lineage().iter().chain(&c.direct()).chain(&c.answers).map(|b| Value::Class(b.clone())));
         }
         Value::Generator(g) => {
             if let Ok(g) = g.try_borrow() {
+                out.push(g.coroutine_origin.clone());
+                out.push(g.async_finalizer.clone());
                 out.extend(g.trace_frame.iter().map(|f| Value::Object(f.clone())));
                 out.extend(g.program.iter().map(|p| Value::Routine(p.clone())));
                 out.extend(g.frame.iter().cloned());
@@ -544,6 +654,10 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                     match &step.phase {
                         Phase::Arm(_, v) => out.push(v.clone()),
                         Phase::Last(Ending::Thrown(v), _) => out.push(v.clone()),
+                        Phase::ContextExit(left, walk, _) => {
+                            out.push(walk.clone());
+                            if let Ending::Thrown(value) = left { out.push(value.clone()); }
+                        }
                         _ => {}
                     }
                 }
@@ -658,6 +772,21 @@ fn external_places(value: Value, out: &mut Vec<Value>) {
 }
 
 impl Graph {
+    /// The actual owners in this collector snapshot, once per heap identity.
+    /// Returning clones retains their existing Python identities.
+    pub fn tracked_objects(&self) -> Vec<Value> {
+        self.order.iter().filter_map(|place|self.nodes.get(place)).filter_map(|node| {
+            match &node.held {
+                Value::Fields(object)=>Some(Value::Object(object.clone())),
+                Value::Tie(_) | Value::Hashed(_)=>None,
+                Value::Array(_) | Value::Map(_)=>None,
+                Value::Binding(cell)=>Some(Value::Adapter(Rc::new((31,vec![Value::Binding(cell.clone())])))),
+                Value::Bond(cell) if !matches!(&*cell.borrow(),Value::Array(_)|Value::Map(_)|Value::Set(_)|Value::Collection(..))=>None,
+                value=>Some(value.clone()),
+            }
+        }).collect()
+    }
+
     /// Everything reachable from the remembered candidates still alive.
     pub fn from_candidates(extra: Vec<Value>, live: Vec<Value>) -> Graph {
         let mut bookkeeping = Places::default();
@@ -804,6 +933,8 @@ impl Graph {
                 Value::Generator(g) => {
                     if let Ok(mut g) = g.try_borrow_mut() {
                         g.closed = true;
+                        grave.push(std::mem::replace(&mut g.coroutine_origin, Value::Null));
+                        grave.push(std::mem::replace(&mut g.async_finalizer, Value::Null));
                         grave.extend(g.frame.drain(..));
                         grave.extend(g.stack.drain(..));
                         grave.extend(g.items.drain(..));
@@ -839,7 +970,56 @@ impl Graph {
 /// Whether a walk in the graph is asleep inside a try, so that closing
 /// it is the finalisation the language asks for.
 pub fn asleep(walk: &Rc<RefCell<Generator>>) -> bool {
-    walk.try_borrow().map_or(false, |g| g.started && !g.closed && !g.finalized && g.program.is_some())
+    walk.try_borrow().map_or(false, |g| (g.started || g.program.as_ref().is_some_and(|code| code.code_flags & 128 != 0)) && !g.closed && !g.finalized && g.program.is_some())
+}
+
+/// Compare weak targets by identity, including classes and builtin types.
+fn same_target(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Class(a), Value::Class(b)) => Rc::ptr_eq(a, b),
+        (Value::Native(a, x), Value::Native(b, y)) => a == b && x == y,
+        (Value::Adapter(a), Value::Adapter(b)) => Rc::ptr_eq(a, b),
+        (Value::ByteKind(a, _), Value::ByteKind(b, _)) => a == b,
+        (Value::SortOf(a), Value::SortOf(b)) => a == b,
+        _ => left.same_place(right),
+    }
+}
+
+/// Find a callback-free reference without collecting unrelated references.
+pub fn reusable(object: &Value, class: &Rc<Class>) -> Option<Value> {
+    let object = object.contents();
+    if let Some(key) = weak_target_key(&object) {
+        return TARGET_REFERENCES.with(|inventory| {
+            let inventory = inventory.borrow();
+            inventory.get(&key)?.iter().rev().find_map(|handle| {
+                let reference = handle.upgrade()?;
+                if reference.cleared.get() || reference.told.borrow().is_some() { return None; }
+                if !same_target(&reference.revive()?, &object) { return None; }
+                let instance = reference.bearer.upgrade()?;
+                Rc::ptr_eq(&instance.class_now(), class).then_some(Value::Object(instance))
+            })
+        });
+    }
+    REFERENCES.with(|all| {
+        let found = all.borrow().iter().rev().find_map(|weak| {
+            let reference = weak.upgrade()?;
+            if reference.cleared.get() || reference.told.borrow().is_some() { return None; }
+            // Compare pointer-backed targets before upgrading unrelated bearers.
+            let matches = match &reference.hold {
+                Hold::Class(saved) => match &object { Value::Class(live) => saved.as_ptr() == Rc::as_ptr(live), _ => false },
+                Hold::Object(saved) => match &object { Value::Object(live) => saved.as_ptr() == Rc::as_ptr(live), _ => false },
+                Hold::Native(operation, spelling) => matches!(&object, Value::Native(op, word) if operation == op && spelling == word),
+                _ => same_target(&reference.revive()?, &object),
+            };
+            if !matches { return None; }
+            let bearer = reference.bearer.upgrade()?;
+            if !Rc::ptr_eq(&bearer.class_now(), class) { return None; }
+            Some(Value::Object(bearer))
+        });
+        // Dead registry entries cannot supply a reference on a later lookup.
+        if found.is_none() { all.borrow_mut().retain(|entry| entry.strong_count() != 0); }
+        found
+    })
 }
 
 /// References in CPython list order: the shared plain reference first,
@@ -850,7 +1030,7 @@ pub fn references(object: &Value) -> Vec<Value> {
         for weak in all.borrow().iter().rev() {
             let Some(reference) = weak.upgrade() else { continue };
             let Some(target) = reference.revive() else { continue };
-            if !target.same_place(object) { continue; }
+            if !same_target(&target, &object.contents()) { continue; }
             if let Some(bearer) = reference.bearer.upgrade() { result.push(Value::Object(bearer)); }
         }
         result.sort_by_key(|value| match value {

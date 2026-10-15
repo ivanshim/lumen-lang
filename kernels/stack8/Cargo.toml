@@ -7,11 +7,11 @@ description = "Stack kernel, third design: eight words, three of them fused for 
 [dependencies]
 lumen-lzma = { path = "../../native/lzma" }
 lumen-zlib = { path = "../../native/zlib" }
-num-bigint = { version = "0.4", features = ["serde"] }
+num-bigint = "0.4"
 num-traits = "0.2"
 num-integer = "0.1"
 serde_json = "1"
-serde = { version = "1", features = ["derive", "rc"] }
+serde = { version = "1", features = ["derive"] }
 libc = "0.2"
 lumen-room = { path = "../room" }
 

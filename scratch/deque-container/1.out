@@ -1,0 +1,259 @@
+remove ('clear',) False !! IndexError deque mutated during iteration
+remove ('clear',) True !! IndexError deque mutated during iteration
+index ('clear',) False !! RuntimeError deque mutated during iteration
+index ('clear',) True -> (1, [])
+count ('clear',) False !! RuntimeError deque mutated during iteration
+count ('clear',) True !! RuntimeError deque mutated during iteration
+__contains__ ('clear',) False !! RuntimeError deque mutated during iteration
+__contains__ ('clear',) True -> (True, [])
+remove ('append', 9) False !! IndexError deque mutated during iteration
+remove ('append', 9) True !! IndexError deque mutated during iteration
+index ('append', 9) False !! RuntimeError deque mutated during iteration
+index ('append', 9) True -> (1, [1, Mut, 3, 4, 9])
+count ('append', 9) False !! RuntimeError deque mutated during iteration
+count ('append', 9) True !! RuntimeError deque mutated during iteration
+__contains__ ('append', 9) False !! RuntimeError deque mutated during iteration
+__contains__ ('append', 9) True -> (True, [1, Mut, 3, 4, 9])
+remove ('pop',) False !! IndexError deque mutated during iteration
+remove ('pop',) True !! IndexError deque mutated during iteration
+index ('pop',) False !! RuntimeError deque mutated during iteration
+index ('pop',) True -> (1, [1, Mut, 3])
+count ('pop',) False !! RuntimeError deque mutated during iteration
+count ('pop',) True !! RuntimeError deque mutated during iteration
+__contains__ ('pop',) False !! RuntimeError deque mutated during iteration
+__contains__ ('pop',) True -> (True, [1, Mut, 3])
+remove ('rotate', 1) False !! IndexError deque mutated during iteration
+remove ('rotate', 1) True !! IndexError deque mutated during iteration
+index ('rotate', 1) False !! RuntimeError deque mutated during iteration
+index ('rotate', 1) True -> (1, [4, 1, Mut, 3])
+count ('rotate', 1) False !! RuntimeError deque mutated during iteration
+count ('rotate', 1) True !! RuntimeError deque mutated during iteration
+__contains__ ('rotate', 1) False !! RuntimeError deque mutated during iteration
+__contains__ ('rotate', 1) True -> (True, [4, 1, Mut, 3])
+remove ('popleft',) False !! IndexError deque mutated during iteration
+remove ('popleft',) True !! IndexError deque mutated during iteration
+index ('popleft',) False !! RuntimeError deque mutated during iteration
+index ('popleft',) True -> (1, [Mut, 3, 4])
+count ('popleft',) False !! RuntimeError deque mutated during iteration
+count ('popleft',) True !! RuntimeError deque mutated during iteration
+__contains__ ('popleft',) False !! RuntimeError deque mutated during iteration
+__contains__ ('popleft',) True -> (True, [Mut, 3, 4])
+remove ('appendleft', 4) False !! IndexError deque mutated during iteration
+remove ('appendleft', 4) True !! IndexError deque mutated during iteration
+index ('appendleft', 4) False !! RuntimeError deque mutated during iteration
+index ('appendleft', 4) True -> (1, [4, 1, Mut, 3, 4])
+count ('appendleft', 4) False !! RuntimeError deque mutated during iteration
+count ('appendleft', 4) True !! RuntimeError deque mutated during iteration
+__contains__ ('appendleft', 4) False !! RuntimeError deque mutated during iteration
+__contains__ ('appendleft', 4) True -> (True, [4, 1, Mut, 3, 4])
+extend [1, 2, 3] None -> (None, [0, 9, 1, 2, 3])
+extendleft [1, 2, 3] None -> (None, [3, 2, 1, 0, 9])
+append [1, 2, 3] None -> (None, 3)
+extend [1, 2, 3] 0 -> (None, [])
+extendleft [1, 2, 3] 0 -> (None, [])
+append [1, 2, 3] 0 -> (None, 0)
+extend [1, 2, 3] 1 -> (None, [3])
+extendleft [1, 2, 3] 1 -> (None, [3])
+append [1, 2, 3] 1 -> (None, 1)
+extend [1, 2, 3] 3 -> (None, [1, 2, 3])
+extendleft [1, 2, 3] 3 -> (None, [3, 2, 1])
+append [1, 2, 3] 3 -> (None, 3)
+extend [1, 2, 3] 10 -> (None, [0, 9, 1, 2, 3])
+extendleft [1, 2, 3] 10 -> (None, [3, 2, 1, 0, 9])
+append [1, 2, 3] 10 -> (None, 3)
+extend (4, 5) None -> (None, [0, 9, 4, 5])
+extendleft (4, 5) None -> (None, [5, 4, 0, 9])
+append (4, 5) None -> (None, 3)
+extend (4, 5) 0 -> (None, [])
+extendleft (4, 5) 0 -> (None, [])
+append (4, 5) 0 -> (None, 0)
+extend (4, 5) 1 -> (None, [5])
+extendleft (4, 5) 1 -> (None, [5])
+append (4, 5) 1 -> (None, 1)
+extend (4, 5) 3 -> (None, [9, 4, 5])
+extendleft (4, 5) 3 -> (None, [5, 4, 0])
+append (4, 5) 3 -> (None, 3)
+extend (4, 5) 10 -> (None, [0, 9, 4, 5])
+extendleft (4, 5) 10 -> (None, [5, 4, 0, 9])
+append (4, 5) 10 -> (None, 3)
+extend range(0, 3) None -> (None, [0, 9, 0, 1, 2])
+extendleft range(0, 3) None -> (None, [2, 1, 0, 0, 9])
+append range(0, 3) None -> (None, 3)
+extend range(0, 3) 0 -> (None, [])
+extendleft range(0, 3) 0 -> (None, [])
+append range(0, 3) 0 -> (None, 0)
+extend range(0, 3) 1 -> (None, [2])
+extendleft range(0, 3) 1 -> (None, [2])
+append range(0, 3) 1 -> (None, 1)
+extend range(0, 3) 3 -> (None, [0, 1, 2])
+extendleft range(0, 3) 3 -> (None, [2, 1, 0])
+append range(0, 3) 3 -> (None, 3)
+extend range(0, 3) 10 -> (None, [0, 9, 0, 1, 2])
+extendleft range(0, 3) 10 -> (None, [2, 1, 0, 0, 9])
+append range(0, 3) 10 -> (None, 3)
+extend 'xy' None -> (None, [0, 9, 'x', 'y'])
+extendleft 'xy' None -> (None, ['y', 'x', 0, 9])
+append 'xy' None -> (None, 3)
+extend 'xy' 0 -> (None, [])
+extendleft 'xy' 0 -> (None, [])
+append 'xy' 0 -> (None, 0)
+extend 'xy' 1 -> (None, ['y'])
+extendleft 'xy' 1 -> (None, ['y'])
+append 'xy' 1 -> (None, 1)
+extend 'xy' 3 -> (None, [9, 'x', 'y'])
+extendleft 'xy' 3 -> (None, ['y', 'x', 0])
+append 'xy' 3 -> (None, 3)
+extend 'xy' 10 -> (None, [0, 9, 'x', 'y'])
+extendleft 'xy' 10 -> (None, ['y', 'x', 0, 9])
+append 'xy' 10 -> (None, 3)
+extend b'ab' None -> (None, [0, 9, 97, 98])
+extendleft b'ab' None -> (None, [98, 97, 0, 9])
+append b'ab' None -> (None, 3)
+extend b'ab' 0 -> (None, [])
+extendleft b'ab' 0 -> (None, [])
+append b'ab' 0 -> (None, 0)
+extend b'ab' 1 -> (None, [98])
+extendleft b'ab' 1 -> (None, [98])
+append b'ab' 1 -> (None, 1)
+extend b'ab' 3 -> (None, [9, 97, 98])
+extendleft b'ab' 3 -> (None, [98, 97, 0])
+append b'ab' 3 -> (None, 3)
+extend b'ab' 10 -> (None, [0, 9, 97, 98])
+extendleft b'ab' 10 -> (None, [98, 97, 0, 9])
+append b'ab' 10 -> (None, 3)
+extend 'iter' None -> (None, [0, 9, 7, 8])
+extendleft 'iter' None -> (None, [0, 9])
+append 'iter' None -> (None, 3)
+extend 'iter' 0 -> (None, [])
+extendleft 'iter' 0 -> (None, [])
+append 'iter' 0 -> (None, 0)
+extend 'iter' 1 -> (None, [9])
+extendleft 'iter' 1 -> (None, [9])
+append 'iter' 1 -> (None, 1)
+extend 'iter' 3 -> (None, [0, 9])
+extendleft 'iter' 3 -> (None, [0, 9])
+append 'iter' 3 -> (None, 3)
+extend 'iter' 10 -> (None, [0, 9])
+extendleft 'iter' 10 -> (None, [0, 9])
+append 'iter' 10 -> (None, 3)
+extend deque([1, 2]) None -> (None, [0, 9, 1, 2])
+extendleft deque([1, 2]) None -> (None, [2, 1, 0, 9])
+append deque([1, 2]) None -> (None, 3)
+extend deque([1, 2]) 0 -> (None, [])
+extendleft deque([1, 2]) 0 -> (None, [])
+append deque([1, 2]) 0 -> (None, 0)
+extend deque([1, 2]) 1 -> (None, [2])
+extendleft deque([1, 2]) 1 -> (None, [2])
+append deque([1, 2]) 1 -> (None, 1)
+extend deque([1, 2]) 3 -> (None, [9, 1, 2])
+extendleft deque([1, 2]) 3 -> (None, [2, 1, 0])
+append deque([1, 2]) 3 -> (None, 3)
+extend deque([1, 2]) 10 -> (None, [0, 9, 1, 2])
+extendleft deque([1, 2]) 10 -> (None, [2, 1, 0, 9])
+append deque([1, 2]) 10 -> (None, 3)
+extend {1: 2} None -> (None, [0, 9, 1])
+extendleft {1: 2} None -> (None, [1, 0, 9])
+append {1: 2} None -> (None, 3)
+extend {1: 2} 0 -> (None, [])
+extendleft {1: 2} 0 -> (None, [])
+append {1: 2} 0 -> (None, 0)
+extend {1: 2} 1 -> (None, [1])
+extendleft {1: 2} 1 -> (None, [1])
+append {1: 2} 1 -> (None, 1)
+extend {1: 2} 3 -> (None, [0, 9, 1])
+extendleft {1: 2} 3 -> (None, [1, 0, 9])
+append {1: 2} 3 -> (None, 3)
+extend {1: 2} 10 -> (None, [0, 9, 1])
+extendleft {1: 2} 10 -> (None, [1, 0, 9])
+append {1: 2} 10 -> (None, 3)
+extend {5} None -> (None, [0, 9, 5])
+extendleft {5} None -> (None, [5, 0, 9])
+append {5} None -> (None, 3)
+extend {5} 0 -> (None, [])
+extendleft {5} 0 -> (None, [])
+append {5} 0 -> (None, 0)
+extend {5} 1 -> (None, [5])
+extendleft {5} 1 -> (None, [5])
+append {5} 1 -> (None, 1)
+extend {5} 3 -> (None, [0, 9, 5])
+extendleft {5} 3 -> (None, [5, 0, 9])
+append {5} 3 -> (None, 3)
+extend {5} 10 -> (None, [0, 9, 5])
+extendleft {5} 10 -> (None, [5, 0, 9])
+append {5} 10 -> (None, 3)
+self -> (None, None, [2, 1, 2, 1, 1, 2, 1, 2])
+selfm -> (None, [2, 1, 2])
+gen raise !! ValueError mid
+[5, 1]
+gen raise l !! ValueError mid
+[1, 5]
+gen mutate !! RuntimeError deque mutated during iteration
+cmp plain -> [True, True, True, True, False, False]
+cmp nan -> (True, True, 1, 0)
+cmp mixed !! TypeError '<' not supported between instances of 'int' and 'str'
+cmp user -> (True, [(1, 1), (2, 2)])
+cmp boom !! KeyError 'boom'
+contains boom -> True
+contains boom2 !! KeyError 'boom'
+rem boom !! KeyError 'boom'
+count boom !! KeyError 'boom'
+idx boom !! KeyError 'boom'
+index slices -> [1, 4, 4, 1]
+index err !! ValueError deque.index(x): x not in deque
+index idx !! ValueError deque.index(x): x not in deque
+index __index__ !! TypeError slice indices must be integers or have an __index__ method
+index mixed -> (0, 2, True, 3)
+rotate -> [(None, ['a', 'b', 'c', 'd', 'e']), (None, ['e', 'a', 'b', 'c', 'd']), (None, ['d', 'e', 'a', 'b', 'c']), (None, ['a', 'b', 'c', 'd', 'e']), (None, ['e', 'a', 'b', 'c', 'd']), (None, ['b', 'c', 'd', 'e', 'a']), (None, ['c', 'd', 'e', 'a', 'b']), (None, ['a', 'b', 'c', 'd', 'e'])]
+maxlen rotate -> (None, None, None, [8, 'b', 'c', 'a'])
+slice assign -> (None, None, ['a', 'z', 'y'])
+setitem idx !! TypeError 'slice' object cannot be interpreted as an integer
+getitem slice !! TypeError sequence index must be integer, not 'slice'
+getitem bool -> ('b', 'a')
+delitem -> (None, None, ['b'])
+iter len -> [0, 1, 2, 3]
+iter hint -> (3, ['b', 'c', 'd'], 0)
+riter hint -> (3, ['c', 'b', 'a'], 0)
+iter mutated !! RuntimeError deque mutated during iteration
+iter after !! RuntimeError deque mutated during iteration
+riter mutated !! RuntimeError deque mutated during iteration
+riter after -> 'end'
+riter exhausted then mutated -> 'end'
+iter exhausted then mutated !! RuntimeError deque mutated during iteration
+iter setitem -> (None, ['a', 'Z', 'c'])
+mul -> [[], [], ['a', 'b'], ['a', 'b', 'a', 'b'], ['a', 'b', 'a', 'b', 'a', 'b'], ['b', 'a', 'b'], ['a', 'a', 'a']]
+imul -> (deque(['b', 'a', 'b', 'a', 'b'], maxlen=5), ['b', 'a', 'b', 'a', 'b'])
+imul huge !! MemoryError 
+imul huge2 !! OverflowError cannot fit 'int' into an index-sized integer
+add max -> ['c', 'd', 'e']
+iadd -> (deque(['b', 'x', 'y', 'z'], maxlen=4), ['b', 'x', 'y', 'z'])
+copy -> (True, False, 4)
+sub copy -> (<class '__main__.Sub'>, <class '__main__.Sub'>, 1)
+bad new -> 5
+bool -> [False, True]
+init twice -> (None, ['x', 'y'], 3)
+init noarg -> (None, [], None)
+maxlen big -> 4611686018427387904
+maxlen huge !! OverflowError Python int too large to convert to C ssize_t
+maxlen None -> None
+maxlen bool -> deque([3], maxlen=1)
+maxlen index !! TypeError an integer is required
+insert idx !! TypeError 'str' object cannot be interpreted as an integer
+insert many -> [(None, 'Zabc'), (None, 'Zabc'), (None, 'abZc'), (None, 'Zabc'), (None, 'aZbc'), (None, 'abcZ'), (None, 'abcZ')]
+rotate idx !! TypeError 'str' object cannot be interpreted as an integer
+rotate big !! OverflowError Python int too large to convert to C ssize_t
+reverse -> (None, ['c', 'b', 'a'])
+pickle -> deque([1, [2], 'x'], maxlen=5)
+str -> ("deque(['a', 'b'])", 'deque([deque([])])')
+sorted -> [1, 2, 3]
+list() -> (['a', 'b', 'c'], ('a', 'b', 'c'), True, 'abc', 3)
+unpack -> ('a', 'b', 'c')
+eq other -> (False, False, True)
+lt other !! TypeError '<' not supported between instances of 'collections.deque' and 'list'
+del slice !! TypeError 'slice' object cannot be interpreted as an integer
+index 2args -> 1
+mul str !! TypeError can't multiply sequence by non-int of type 'str'
+mul float !! TypeError can't multiply sequence by non-int of type 'float'
+index None !! TypeError slice indices must be integers or have an __index__ method
+index obj !! TypeError slice indices must be integers or have an __index__ method
+index Ix -> 1
+mul Ix -> deque(['a', 'b'])

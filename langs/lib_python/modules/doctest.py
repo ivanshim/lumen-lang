@@ -499,10 +499,9 @@ def _wanted_detail(want):
     index = 0
     while index < len(rest):
         line = rest[index]
-        if line.strip() in ['', '...'] or line[:1] == ' ' or line[:1] == '\t':
-            index += 1
-            continue
-        break
+        if line[:1].isalnum() or line[:1] == '_':
+            break
+        index += 1
     kept = []
     while index < len(rest):
         if rest[index].strip() == '':
@@ -796,8 +795,9 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
         test_finder = DocTestFinder()
     if module is None and globs is None:
         names = __program_namespace()
-        path = names.get('__file__', '')
-        if '/tests/python/test_' in path and path.endswith('.py'):
+        path = '/' + names.get('__file__', '').lstrip('/')
+        directory = path.rsplit('/', 2)[-2]
+        if (directory == 'test' or '/tests/' in path and directory.split('-', 1)[0] == 'python') and path.rsplit('/', 1)[-1].startswith('test_') and path.endswith('.py'):
             globs = _copy_dict(names)
             globs['__name__'] = 'test.' + path.rsplit('/', 1)[-1][:-3]
     tests = test_finder.find(module, None, None, globs, extraglobs)

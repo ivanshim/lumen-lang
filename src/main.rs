@@ -20,9 +20,10 @@
 // stop. Whatever the settings name for the run to load beside itself is
 // reached for before any of this, and what came of the reaching is said.
 
+include!("python_encodings.rs");
+
 use std::collections::HashSet;
 use std::env;
-use std::io::Read;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
@@ -31,7 +32,7 @@ use std::process;
 
 mod web;
 mod python_versions;
-mod python_sources;
+mod prepared_libraries { include!(concat!(env!("OUT_DIR"), "/prepared_libraries.rs")); }
 
 mod embedded_modules {
     include!("../langs/lib_python/modules/manifest.rs");
@@ -134,10 +135,17 @@ fn with_library(kernel: &str, language: &str, source: String) -> String {
     // Keep the ported routine for the earlier kernels, while the full
     // Python kernels retain their builtin's optional places argument.
     let library = if full && language == "python" {
-        format!("__native_round = round\n{}\nround = __native_round\ndel __native_round\nimport sys", library)
+        format!("__native_round = round\n{}\nround = __native_round\ndel __native_round\nimport sys{}", library,
+            format!("{}{}",
+                if env::var("LUMEN_COMMAND_SOURCE").is_ok() { "\nimport os, linecache\nlinecache._register_code(sys._getframe().f_code, os.environ['LUMEN_COMMAND_SOURCE'], '<string>')\nimport importlib._bootstrap\n__loader__ = importlib._bootstrap.BuiltinImporter\n__spec__ = None\ndel __file__" } else { "" },
+                if env::var("LUMEN_WARNOPTIONS").is_ok_and(|options| !options.is_empty()) { "\nimport warnings" } else { "" }))
     } else { library };
     let lead = source.len() - source.trim_start().len();
-    if !prologue.is_empty() && !source[..lead].contains('\n') && source[lead..].starts_with(prologue) {
+    let standalone = language != "python" || source.get(lead + prologue.len()..).is_some_and(|tail| {
+        let tail = tail.trim_start_matches([' ', '\t']);
+        tail.is_empty() || tail.starts_with(['\n', '\r', '#'])
+    });
+    if !prologue.is_empty() && standalone && !source[..lead].contains('\n') && source[lead..].starts_with(prologue) {
         let cut = lead + prologue.len();
         return format!("{}\n{}\n{}", &source[..cut], library, &source[cut..]);
     }
@@ -185,11 +193,12 @@ struct Invocation {
     /// A language to write the program in instead of running it (microcode11 only).
     emit: Option<Language>,
     program_args: Vec<String>,
+    warning_options: Vec<String>,
     python: Option<&'static python_versions::PythonVersion>,
     module_source: Option<String>,
     module_name: Option<String>,
     python_development: bool,
-    python_ignore_environment: bool,
+    program_name: Option<String>,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -221,6 +230,10 @@ fn honours_extensions(kernel: &str) -> bool {
 const CP437_UPPER: &str = "\u{c7}\u{fc}\u{e9}\u{e2}\u{e4}\u{e0}\u{e5}\u{e7}\u{ea}\u{eb}\u{e8}\u{ef}\u{ee}\u{ec}\u{c4}\u{c5}\u{c9}\u{e6}\u{c6}\u{f4}\u{f6}\u{f2}\u{fb}\u{f9}\u{ff}\u{d6}\u{dc}\u{a2}\u{a3}\u{a5}\u{20a7}\u{192}\u{e1}\u{ed}\u{f3}\u{fa}\u{f1}\u{d1}\u{aa}\u{ba}\u{bf}\u{2310}\u{ac}\u{bd}\u{bc}\u{a1}\u{ab}\u{bb}\u{2591}\u{2592}\u{2593}\u{2502}\u{2524}\u{2561}\u{2562}\u{2556}\u{2555}\u{2563}\u{2551}\u{2557}\u{255d}\u{255c}\u{255b}\u{2510}\u{2514}\u{2534}\u{252c}\u{251c}\u{2500}\u{253c}\u{255e}\u{255f}\u{255a}\u{2554}\u{2569}\u{2566}\u{2560}\u{2550}\u{256c}\u{2567}\u{2568}\u{2564}\u{2565}\u{2559}\u{2558}\u{2552}\u{2553}\u{256b}\u{256a}\u{2518}\u{250c}\u{2588}\u{2584}\u{258c}\u{2590}\u{2580}\u{3b1}\u{df}\u{393}\u{3c0}\u{3a3}\u{3c3}\u{b5}\u{3c4}\u{3a6}\u{398}\u{3a9}\u{3b4}\u{221e}\u{3c6}\u{3b5}\u{2229}\u{2261}\u{b1}\u{2265}\u{2264}\u{2320}\u{2321}\u{f7}\u{2248}\u{b0}\u{2219}\u{b7}\u{221a}\u{207f}\u{b2}\u{25a0}\u{a0}";
 const CP1251_UPPER: &str = "\u{402}\u{403}\u{201a}\u{453}\u{201e}\u{2026}\u{2020}\u{2021}\u{20ac}\u{2030}\u{409}\u{2039}\u{40a}\u{40c}\u{40b}\u{40f}\u{452}\u{2018}\u{2019}\u{201c}\u{201d}\u{2022}\u{2013}\u{2014}\u{fffd}\u{2122}\u{459}\u{203a}\u{45a}\u{45c}\u{45b}\u{45f}\u{a0}\u{40e}\u{45e}\u{408}\u{a4}\u{490}\u{a6}\u{a7}\u{401}\u{a9}\u{404}\u{ab}\u{ac}\u{ad}\u{ae}\u{407}\u{b0}\u{b1}\u{406}\u{456}\u{491}\u{b5}\u{b6}\u{b7}\u{451}\u{2116}\u{454}\u{bb}\u{458}\u{405}\u{455}\u{457}\u{410}\u{411}\u{412}\u{413}\u{414}\u{415}\u{416}\u{417}\u{418}\u{419}\u{41a}\u{41b}\u{41c}\u{41d}\u{41e}\u{41f}\u{420}\u{421}\u{422}\u{423}\u{424}\u{425}\u{426}\u{427}\u{428}\u{429}\u{42a}\u{42b}\u{42c}\u{42d}\u{42e}\u{42f}\u{430}\u{431}\u{432}\u{433}\u{434}\u{435}\u{436}\u{437}\u{438}\u{439}\u{43a}\u{43b}\u{43c}\u{43d}\u{43e}\u{43f}\u{440}\u{441}\u{442}\u{443}\u{444}\u{445}\u{446}\u{447}\u{448}\u{449}\u{44a}\u{44b}\u{44c}\u{44d}\u{44e}\u{44f}";
 const ISO88597_UPPER: &str = "\u{80}\u{81}\u{82}\u{83}\u{84}\u{a}\u{86}\u{87}\u{88}\u{89}\u{8a}\u{8b}\u{8c}\u{8d}\u{8e}\u{8f}\u{90}\u{91}\u{92}\u{93}\u{94}\u{95}\u{96}\u{97}\u{98}\u{99}\u{9a}\u{9b}\u{9c}\u{9d}\u{9e}\u{9f}\u{a0}\u{2018}\u{2019}\u{a3}\u{20ac}\u{20af}\u{a6}\u{a7}\u{a8}\u{a9}\u{37a}\u{ab}\u{ac}\u{ad}\u{fffd}\u{2015}\u{b0}\u{b1}\u{b2}\u{b3}\u{384}\u{385}\u{386}\u{b7}\u{388}\u{389}\u{38a}\u{bb}\u{38c}\u{bd}\u{38e}\u{38f}\u{390}\u{391}\u{392}\u{393}\u{394}\u{395}\u{396}\u{397}\u{398}\u{399}\u{39a}\u{39b}\u{39c}\u{39d}\u{39e}\u{39f}\u{3a0}\u{3a1}\u{fffd}\u{3a3}\u{3a4}\u{3a5}\u{3a6}\u{3a7}\u{3a8}\u{3a9}\u{3aa}\u{3ab}\u{3ac}\u{3ad}\u{3ae}\u{3af}\u{3b0}\u{3b1}\u{3b2}\u{3b3}\u{3b4}\u{3b5}\u{3b6}\u{3b7}\u{3b8}\u{3b9}\u{3ba}\u{3bb}\u{3bc}\u{3bd}\u{3be}\u{3bf}\u{3c0}\u{3c1}\u{3c2}\u{3c3}\u{3c4}\u{3c5}\u{3c6}\u{3c7}\u{3c8}\u{3c9}\u{3ca}\u{3cb}\u{3cc}\u{3cd}\u{3ce}\u{fffd}";
+
+const KOI8R_UPPER: &str = "\u{2500}\u{2502}\u{250c}\u{2510}\u{2514}\u{2518}\u{251c}\u{2524}\u{252c}\u{2534}\u{253c}\u{2580}\u{2584}\u{2588}\u{258c}\u{2590}\u{2591}\u{2592}\u{2593}\u{2320}\u{25a0}\u{2219}\u{221a}\u{2248}\u{2264}\u{2265}\u{a0}\u{2321}\u{b0}\u{b2}\u{b7}\u{f7}\u{2550}\u{2551}\u{2552}\u{451}\u{2553}\u{2554}\u{2555}\u{2556}\u{2557}\u{2558}\u{2559}\u{255a}\u{255b}\u{255c}\u{255d}\u{255e}\u{255f}\u{2560}\u{2561}\u{401}\u{2562}\u{2563}\u{2564}\u{2565}\u{2566}\u{2567}\u{2568}\u{2569}\u{256a}\u{256b}\u{256c}\u{a9}\u{44e}\u{430}\u{431}\u{446}\u{434}\u{435}\u{444}\u{433}\u{445}\u{438}\u{439}\u{43a}\u{43b}\u{43c}\u{43d}\u{43e}\u{43f}\u{44f}\u{440}\u{441}\u{442}\u{443}\u{436}\u{432}\u{44c}\u{44b}\u{437}\u{448}\u{44d}\u{449}\u{447}\u{44a}\u{42e}\u{410}\u{411}\u{426}\u{414}\u{415}\u{424}\u{413}\u{425}\u{418}\u{419}\u{41a}\u{41b}\u{41c}\u{41d}\u{41e}\u{41f}\u{42f}\u{420}\u{421}\u{422}\u{423}\u{416}\u{412}\u{42c}\u{42b}\u{417}\u{428}\u{42d}\u{429}\u{427}\u{42a}";
+const CP1252_UPPER: &str = "\u{20ac}\u{81}\u{201a}\u{192}\u{201e}\u{2026}\u{2020}\u{2021}\u{2c6}\u{2030}\u{160}\u{2039}\u{152}\u{8d}\u{17d}\u{8f}\u{90}\u{2018}\u{2019}\u{201c}\u{201d}\u{2022}\u{2013}\u{2014}\u{2dc}\u{2122}\u{161}\u{203a}\u{153}\u{9d}\u{17e}\u{178}\u{a0}\u{a1}\u{a2}\u{a3}\u{a4}\u{a5}\u{a6}\u{a7}\u{a8}\u{a9}\u{aa}\u{ab}\u{ac}\u{ad}\u{ae}\u{af}\u{b0}\u{b1}\u{b2}\u{b3}\u{b4}\u{b5}\u{b6}\u{b7}\u{b8}\u{b9}\u{ba}\u{bb}\u{bc}\u{bd}\u{be}\u{bf}\u{c0}\u{c1}\u{c2}\u{c3}\u{c4}\u{c5}\u{c6}\u{c7}\u{c8}\u{c9}\u{ca}\u{cb}\u{cc}\u{cd}\u{ce}\u{cf}\u{d0}\u{d1}\u{d2}\u{d3}\u{d4}\u{d5}\u{d6}\u{d7}\u{d8}\u{d9}\u{da}\u{db}\u{dc}\u{dd}\u{de}\u{df}\u{e0}\u{e1}\u{e2}\u{e3}\u{e4}\u{e5}\u{e6}\u{e7}\u{e8}\u{e9}\u{ea}\u{eb}\u{ec}\u{ed}\u{ee}\u{ef}\u{f0}\u{f1}\u{f2}\u{f3}\u{f4}\u{f5}\u{f6}\u{f7}\u{f8}\u{f9}\u{fa}\u{fb}\u{fc}\u{fd}\u{fe}\u{ff}";
+const ISO885915_UPPER: &str = "\u{80}\u{81}\u{82}\u{83}\u{84}\u{85}\u{86}\u{87}\u{88}\u{89}\u{8a}\u{8b}\u{8c}\u{8d}\u{8e}\u{8f}\u{90}\u{91}\u{92}\u{93}\u{94}\u{95}\u{96}\u{97}\u{98}\u{99}\u{9a}\u{9b}\u{9c}\u{9d}\u{9e}\u{9f}\u{a0}\u{a1}\u{a2}\u{a3}\u{20ac}\u{a5}\u{160}\u{a7}\u{161}\u{a9}\u{aa}\u{ab}\u{ac}\u{ad}\u{ae}\u{af}\u{b0}\u{b1}\u{b2}\u{b3}\u{17d}\u{b5}\u{b6}\u{b7}\u{17e}\u{b9}\u{ba}\u{bb}\u{152}\u{153}\u{178}\u{bf}\u{c0}\u{c1}\u{c2}\u{c3}\u{c4}\u{c5}\u{c6}\u{c7}\u{c8}\u{c9}\u{ca}\u{cb}\u{cc}\u{cd}\u{ce}\u{cf}\u{d0}\u{d1}\u{d2}\u{d3}\u{d4}\u{d5}\u{d6}\u{d7}\u{d8}\u{d9}\u{da}\u{db}\u{dc}\u{dd}\u{de}\u{df}\u{e0}\u{e1}\u{e2}\u{e3}\u{e4}\u{e5}\u{e6}\u{e7}\u{e8}\u{e9}\u{ea}\u{eb}\u{ec}\u{ed}\u{ee}\u{ef}\u{f0}\u{f1}\u{f2}\u{f3}\u{f4}\u{f5}\u{f6}\u{f7}\u{f8}\u{f9}\u{fa}\u{fb}\u{fc}\u{fd}\u{fe}\u{ff}";
 
 /// A single-byte page read against its upper half: a byte below 128
 /// stands for itself, any other for the character the table gives it.
@@ -279,101 +292,38 @@ fn normal_encoding_name(written: &str) -> &str {
     }
 }
 
-/// A string's contents as the reference's reader bounds them: from
-/// past the opening quote to the closing one. A backslash skips a
-/// byte, a raw mark changes nothing in the reading, and a string a
-/// line's end or the file's end cuts off has no contents the codec
-/// sees -- the reader faults on it on its own. The answers are the
-/// contents' bounds, whether they are decoded (a bytes literal's are
-/// not), and where the reading resumes; a reading that resumes where
-/// the contents ended means no closing quote was found.
-fn string_contents(bytes: &[u8], at: usize, prefix: &[u8]) -> (usize, usize, bool, usize) {
-    let n = bytes.len();
-    let quote = bytes[at];
-    let triple = bytes.get(at + 1) == Some(&quote) && bytes.get(at + 2) == Some(&quote);
-    let content_start = at + if triple { 3 } else { 1 };
-    let decodes = !prefix.iter().any(|b| matches!(b, b'b' | b'B'));
-    let mut i = content_start;
-    while i < n {
-        let c = bytes[i];
-        if c == b'\\' {
-            i += 2;
-            continue;
-        }
-        if !triple && (c == b'\n' || c == b'\r') {
-            return (content_start, i, false, i);
-        }
-        if c == quote {
-            if triple && !(bytes.get(i + 1) == Some(&quote) && bytes.get(i + 2) == Some(&quote)) {
-                i += 1;
-                continue;
-            }
-            return (content_start, i, decodes, i + if triple { 3 } else { 1 });
-        }
-        i += 1;
-    }
-    (content_start, n, false, n)
+
+/// The first place a file the reader decodes whole is not UTF-8: a
+/// signed file and a file naming a coding word have every byte, a
+/// comment's and a literal's among them, read by the codec, so the byte
+/// that first breaks UTF-8 is where the reader stops.
+fn utf8_fault_piece(bytes: &[u8]) -> Option<(usize, usize)> {
+    std::str::from_utf8(bytes).err().map(|bad| (bad.valid_up_to(), bytes.len()))
 }
 
-/// The first piece of a Python file the reference would decode as
-/// UTF-8 and could not: a string's contents between its quotes, or a
-/// run of letters, digits and bytes above 127 standing as a name. A
-/// byte in a comment, in a bytes literal, or in a string cut off is
-/// never decoded by the reference, so it is never faulted here; and
-/// past a string cut off the reader faults on its own, so nothing
-/// later is looked at. Answers the piece's bounds, or None when every
-/// piece decodes.
-fn utf8_fault_piece(bytes: &[u8]) -> Option<(usize, usize)> {
-    let n = bytes.len();
-    let mut i = 0;
-    while i < n {
-        let byte = bytes[i];
-        if byte == b'#' {
-            while i < n && bytes[i] != b'\n' { i += 1; }
-        } else if byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 128 {
-            let start = i;
-            while i < n && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] >= 128) { i += 1; }
-            let run = &bytes[start..i];
-            if i < n && (bytes[i] == b'\'' || bytes[i] == b'"')
-                && run.iter().all(|b| matches!(b, b'r' | b'R' | b'b' | b'B' | b'f' | b'F'))
-            {
-                let (from, unto, decodes, resume) = string_contents(bytes, i, run);
-                if decodes && std::str::from_utf8(&bytes[from..unto]).is_err() {
-                    return Some((from, unto));
-                }
-                if resume == unto {
-                    return None;
-                }
-                i = resume;
-            } else if std::str::from_utf8(run).is_err() {
-                return Some((start, i));
-            }
-        } else if byte == b'\'' || byte == b'"' {
-            let (from, unto, decodes, resume) = string_contents(bytes, i, &[]);
-            if decodes && std::str::from_utf8(&bytes[from..unto]).is_err() {
-                return Some((from, unto));
-            }
-            if resume == unto {
-                return None;
-            }
-            i = resume;
-        } else {
-            i += 1;
+/// The reference's report for a file it will not read: the file and the
+/// line it stopped on, the line itself where one is shown, a mark under
+/// the place the reference marks, and the complaint. The run ends here,
+/// before a program begins.
+fn source_fault(given: &str, row: usize, line: Option<&str>, caret: Option<usize>, message: &str) -> ! {
+    eprintln!("  File \"{}\", line {}", given, row);
+    if let Some(text) = line {
+        eprintln!("    {}", text);
+        if let Some(column) = caret {
+            eprintln!("    {}^", " ".repeat(column));
         }
     }
-    None
+    eprintln!("SyntaxError: {}", message);
+    process::exit(1)
 }
 
 /// A Python file read as UTF-8, as PEP 263 has it. With neither a
 /// coding word nor a signature, every line is looked at raw, and a
 /// byte that is not UTF-8 is named on its own, with the file and the
-/// line it stands on. With either, the pieces the reader decodes --
-/// string contents and names -- are looked at, and the codec's own
-/// complaint is told with the file, the line and a mark under the
-/// place, as the reference tells it; a file whose undecodable bytes
-/// stand only where nothing decodes them is read as far as it goes,
-/// for the reader to fault on.
-fn utf8_file_source(written: &[u8], bytes: &[u8], signed: bool, declared: bool, given: &str) -> String {
+/// line it stands on. With either, the whole file is decoded, and
+/// the codec's complaint is told with the file, the line and a mark
+/// under the place, as the reference tells it.
+fn utf8_file_source(written: &[u8], bytes: &[u8], signed: bool, declared: bool, strict_utf8: bool, given: &str) -> String {
     if let Ok(text) = std::str::from_utf8(bytes) {
         return text.to_owned();
     }
@@ -381,8 +331,11 @@ fn utf8_file_source(written: &[u8], bytes: &[u8], signed: bool, declared: bool, 
         let error = std::str::from_utf8(bytes).unwrap_err();
         let upto = error.valid_up_to();
         let row = bytes[..upto].iter().filter(|byte| **byte == b'\n').count() + 1;
-        eprintln!("SyntaxError: Non-UTF-8 code starting with '\\x{:02x}' in file {} on line {}, but no encoding declared; see https://peps.python.org/pep-0263/ for details", bytes[upto], given, row);
-        process::exit(1);
+        let line_start = bytes[..upto].iter().rposition(|byte| *byte == b'\n').map_or(0, |p| p + 1);
+        let lossy = String::from_utf8_lossy(&bytes[line_start..]);
+        let line = lossy.split('\n').next().unwrap_or("");
+        let column = String::from_utf8_lossy(&bytes[line_start..upto]).chars().count();
+        source_fault(given, row, Some(line), Some(column), &format!("Non-UTF-8 code starting with '\\x{:02x}' in file {} on line {}, but no encoding declared; see https://peps.python.org/pep-0263/ for details", bytes[upto], given, row));
     }
     let Some((from, unto)) = utf8_fault_piece(bytes) else {
         return String::from_utf8_lossy(bytes).into_owned();
@@ -406,6 +359,12 @@ fn utf8_file_source(written: &[u8], bytes: &[u8], signed: bool, declared: bool, 
     };
     let line_start = bytes[..at].iter().rposition(|byte| *byte == b'\n').map_or(0, |p| p + 1);
     let col = String::from_utf8_lossy(&bytes[line_start..at]).chars().count() + 1 + past;
+    // A name the reference folds to plain UTF-8 is read by the reader's
+    // own validator, which names the line and the place; any other
+    // spelling is read by the codec, whose complaint stands alone.
+    if !strict_utf8 {
+        source_fault(given, 0, None, None, &format!("{}: {}", complaint, why));
+    }
     let whole = String::from_utf8_lossy(written);
     let line = whole.split('\n').nth(row - 1).unwrap_or("");
     let shown = line.trim_start();
@@ -417,6 +376,36 @@ fn utf8_file_source(written: &[u8], bytes: &[u8], signed: bool, declared: bool, 
     process::exit(1);
 }
 
+/// Decode source with the same CPython-derived legacy mapping data as codecs.
+fn legacy_source(bytes: &[u8], encoding: &str, given: &str) -> String {
+    static TABLES: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+    let tables = TABLES.get_or_init(|| serde_json::from_str(include_str!("../langs/lib_python/modules/_legacy_charmaps.json")).expect("valid codec mapping data"));
+    let rows = tables[encoding].as_array().expect("a registered mapping family");
+    let first = if encoding == "gbk" { 0x81 } else { 0xa1 };
+    let mut text = String::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        let lead = bytes[at];
+        if lead < 128 { text.push(char::from(lead)); at += 1; continue; }
+        let mapped = if lead >= first && lead <= 0xfe && at + 1 < bytes.len() {
+            let trail = bytes[at + 1];
+            let column = if encoding == "gbk" && (0x40..=0xfe).contains(&trail) && trail != 0x7f {
+                Some(usize::from(trail - 0x40 - u8::from(trail > 0x7f)))
+            } else if encoding == "gb2312" && (0xa1..=0xfe).contains(&trail) { Some(usize::from(trail - 0xa1)) } else { None };
+            column.and_then(|column| rows[usize::from(lead - first)].as_str()?.chars().nth(column)).filter(|character| *character != '\0')
+        } else { None };
+        if let Some(character) = mapped { text.push(character); at += 2; }
+        else {
+            eprintln!("SyntaxError: encoding problem: {encoding} ({given})");
+            process::exit(1);
+        }
+    }
+    text
+}
+/// The reference's byte-to-byte codecs, known but not text encodings: a
+/// coding word naming one is refused as the reference refuses it.
+const NON_TEXT_CODECS: [&str; 7] = ["base64codec", "bz2codec", "hexcodec", "quopricodec", "rot13", "uucodec", "zlibcodec"];
+
 /// Read a Python file according to PEP 263: a UTF-8 signature is
 /// discarded before it reaches the lexer, and a coding word in a
 /// comment among the first two lines names how the rest decodes. The
@@ -425,11 +414,20 @@ fn utf8_file_source(written: &[u8], bytes: &[u8], signed: bool, declared: bool, 
 /// conflicting with the signature, or one the interpreter does not
 /// know, is told the way the reference tells it, and the run ends
 /// before it begins.
+/// Where a byte stands in its line, one past the line's start, as the
+/// reference counts it when it decodes a file line by line.
+fn fault_position(bytes: &[u8], at: usize) -> usize {
+    let start = bytes[..at].iter().rposition(|byte| *byte == b'\n').map_or(0, |place| place + 1);
+    at - start + 1
+}
+
 fn python_file_source(written: Vec<u8>, given: &str) -> String {
     let signed = written.starts_with(&[0xef, 0xbb, 0xbf]);
     let bytes = written.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&written);
     let mut cookie: Option<String> = None;
-    for line in bytes.split(|byte| *byte == b'\n').take(2) {
+    let mut cookie_row = 1usize;
+    for (at, line) in bytes.split(|byte| *byte == b'\n').take(2).enumerate() {
+        cookie_row = at + 1;
         match coding_line(line) {
             CodingLine::Comment(Some(name)) => {
                 cookie = Some(name);
@@ -441,27 +439,52 @@ fn python_file_source(written: Vec<u8>, given: &str) -> String {
     }
     let named = cookie.clone().unwrap_or_else(|| "utf-8".to_string());
     let normal = normal_encoding_name(&named);
+    let shown = String::from_utf8_lossy(bytes);
+    let row_line = |row: usize| shown.split('\n').nth(row - 1).unwrap_or("").to_string();
     if signed && normal != "utf-8" {
-        eprintln!("SyntaxError: encoding problem: {} with BOM", normal);
-        process::exit(1);
+        let line = row_line(cookie_row);
+        source_fault(given, cookie_row, Some(&line), None, &format!("encoding problem: {} with BOM", normal));
     }
-    match named.to_ascii_lowercase().replace(['-', '_'], "").as_str() {
-        "utf8" | "utf8sig" => utf8_file_source(&written, bytes, signed, cookie.is_some(), given),
+    let stripped = normal.to_ascii_lowercase().replace(['-', '_'], "");
+    match stripped.as_str() {
+        "utf8" | "utf8sig" => utf8_file_source(&written, bytes, signed, cookie.is_some(), normal == "utf-8", given),
         "ascii" | "usascii" => {
-            if bytes.iter().any(|byte| *byte > 127) {
-                eprintln!("SyntaxError: encoding problem: {}", normal);
-                process::exit(1);
+            if let Some(at) = bytes.iter().position(|byte| *byte > 127) {
+                let row = bytes[..at].iter().filter(|byte| **byte == b'\n').count() + 1;
+                let line = row_line(row);
+                let message = format!("(unicode error) 'ascii' codec can't decode byte 0x{:02x} in position {}: ordinal not in range(128)", bytes[at], at);
+                source_fault(given, row, Some(&line), None, &message);
             }
             bytes.iter().copied().map(char::from).collect()
         }
         "latin1" | "latin" | "iso88591" | "isolatin1" => bytes.iter().copied().map(char::from).collect(),
+        "gbk" | "cp936" | "ms936" | "936" => legacy_source(bytes, "gbk", given),
+        "gb2312" | "gb231280" | "euccn" | "chinese" | "csiso58gb231280" => legacy_source(bytes, "gb2312", given),
+        "latin9" | "iso885915" => decode_with_upper(bytes, ISO885915_UPPER),
         "cp437" | "437" | "ibm437" => decode_with_upper(bytes, CP437_UPPER),
         "cp1251" => decode_with_upper(bytes, CP1251_UPPER),
         "iso88597" => decode_with_upper(bytes, ISO88597_UPPER),
-        _ => {
-            eprintln!("SyntaxError: encoding problem: {}", normal);
-            process::exit(1);
+        "koi8r" => decode_with_upper(bytes, KOI8R_UPPER),
+        "cp1252" | "1252" | "windows1252" => {
+            if let Some(at) = bytes.iter().position(|byte| matches!(*byte, 0x81 | 0x8D | 0x8F | 0x90 | 0x9D)) {
+                source_fault(given, 0, None, None, &format!("'charmap' codec can't decode byte 0x{:02x} in position {}: character maps to <undefined>", bytes[at], fault_position(bytes, at)));
+            }
+            decode_with_upper(bytes, CP1252_UPPER)
         }
+        "cp949" => match decode_cp949(bytes) {
+            Ok(text) => text,
+            Err(fault) => source_fault(given, 0, None, None, &format!("'cp949' codec can't decode byte 0x{:02x} in position {}: {}", fault.byte, fault_position(bytes, fault.at), fault.reason)),
+        },
+        "cp932" => match decode_cp932(bytes) {
+            Ok(text) => text,
+            Err(fault) => source_fault(given, 0, None, None, &format!("'cp932' codec can't decode byte 0x{:02x} in position {}: {}", fault.byte, fault_position(bytes, fault.at), fault.reason)),
+        },
+        "shiftjis" | "sjis" => match decode_shift_jis(bytes) {
+            Ok(text) => text,
+            Err(fault) => source_fault(given, 0, None, None, &format!("'shift_jis' codec can't decode byte 0x{:02x} in position {}: {}", fault.byte, fault_position(bytes, fault.at), fault.reason)),
+        },
+        _ if NON_TEXT_CODECS.contains(&stripped.as_str()) => source_fault(given, 0, None, None, &format!("'{}' is not a text encoding", named)),
+        _ => source_fault(given, 0, None, None, &format!("unknown encoding: {}", named)),
     }
 }
 
@@ -474,13 +497,14 @@ fn source_of(written: Vec<u8>, as_bytes: bool) -> String {
     }
 }
 
-/// Native cache markers written by the two full Python kernels.
-const PYC_MAGICS: [[u8; 4]; 2] = [*b"L8C\x04", *b"L7C\x04"];
+/// The first four bytes of a pyc this host writes: the pinned CPython
+/// bytecode marker `_imp.pyc_magic_number_token` in little endian.
+const PYC_MAGIC: [u8; 4] = [0x79, 0x0e, 0x0d, 0x0a];
 
 /// Whether bytes open with the bytecode marker, and so are a compiled
 /// module rather than source.
 fn is_pyc(bytes: &[u8]) -> bool {
-    bytes.len() >= 4 && PYC_MAGICS.iter().any(|magic| bytes[..4] == *magic)
+    bytes.len() >= 4 && bytes[0..4] == PYC_MAGIC
 }
 
 /// A Python double-quoted literal for a path handed to a bootstrap.
@@ -689,8 +713,6 @@ fn run_all() {
     if inv.language.name() == "python" {
         if inv.python_development { std::env::set_var("LUMEN_PYTHON_DEV_MODE", "1"); }
         else { std::env::remove_var("LUMEN_PYTHON_DEV_MODE"); }
-        if inv.python_ignore_environment { std::env::set_var("LUMEN_PYTHON_IGNORE_ENV", "1"); }
-        else { std::env::remove_var("LUMEN_PYTHON_IGNORE_ENV"); }
     }
     // Only an actual -m invocation carries module execution metadata;
     // a script child must not inherit its parent's module identity.
@@ -698,10 +720,30 @@ fn run_all() {
     else { std::env::remove_var("LUMEN_RUN_MODULE"); }
     if let Some(version) = inv.python { std::env::set_var("LUMEN_PYTHON", version.release); }
 
-    let written = inv.module_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| (if inv.file == "-" {
-        let mut input = Vec::new();
-        std::io::stdin().read_to_end(&mut input).map(|_| input)
-    } else { fs::read(&inv.file) }).unwrap_or_else(|e| {
+    // Carry Python startup warning options without confusing script arguments
+    // or splitting a message that itself contains a separator character.
+    if inv.language.name() == "python" {
+        let mut options = Vec::new();
+        if let Ok(environment) = env::var("PYTHONWARNINGS") {
+            options.extend(environment.split(',').filter(|part| !part.is_empty()).map(str::to_owned));
+        }
+        options.extend(inv.warning_options.iter().cloned());
+        let mut ordered = Vec::new();
+        for option in options {
+            ordered.retain(|previous| previous != &option);
+            ordered.push(option);
+        }
+        let encoded = ordered.iter().map(|option| format!("{}:{option}", option.chars().count())).collect::<String>();
+        env::set_var("LUMEN_WARNOPTIONS", encoded);
+    } else {
+        if !inv.warning_options.is_empty() {
+            eprintln!("Error: -W requires the Python language");
+            process::exit(2);
+        }
+        env::remove_var("LUMEN_WARNOPTIONS");
+    }
+
+    let written = inv.module_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| fs::read(&inv.file).unwrap_or_else(|e| {
         eprintln!("Error: Failed to read {}: {}", inv.file, e);
         process::exit(1);
     }));
@@ -720,10 +762,19 @@ fn run_all() {
         source_of(written, text_is_bytes(&inv.language) && honours_extensions(&inv.kernel))
     };
     let source = without_shebang(source);
+    if inv.language.name() == "python" && inv.file == "<string>" { env::set_var("LUMEN_COMMAND_SOURCE", &source); }
+    else { env::remove_var("LUMEN_COMMAND_SOURCE"); }
 
     // Every program runs on top of its language's library.
     let given_lines = source.lines().count();
-    let source = with_library(&inv.kernel, inv.language.name(), source);
+    let command_source = (inv.language.name() == "python" && inv.file == "<string>" && inv.module_source.is_some()).then(|| source.clone());
+    // Initialize the language library before registering a command's code.
+    // Command strings have no filesystem source and share the interactive cache.
+    let source = if let Some(text) = command_source {
+        let literal = serde_json::to_string(&text).expect("a source string can be quoted");
+        let registered = format!("__import__('linecache')._register_code(compile({literal}, '<string>', 'exec'), {literal}, '<string>')\n{source}");
+        with_library(&inv.kernel, inv.language.name(), registered)
+    } else { with_library(&inv.kernel, inv.language.name(), source) };
     // How many lines the library put before the program's own text, so
     // that a kernel can name the line a program was written on rather
     // than the line of the two run together.
@@ -758,18 +809,19 @@ fn run_all() {
     // read the labels that name it.
     let mut request = web::gathered(text_is_bytes(&inv.language) && honours_extensions(&inv.kernel));
     // Resolve the optional library location before the program can change directory.
+    if let Some(root) = std::env::var_os("LUMEN_ROOT") {
+        let root = std::path::PathBuf::from(root);
+        let root = std::fs::canonicalize(&root).unwrap_or_else(|_| {
+            std::env::current_dir().unwrap_or_default().join(root)
+        });
+        let modules = root.join("langs/lib_python/modules");
+        request.push(("SELF".to_string(), "library_root".to_string(), modules.to_string_lossy().into_owned(), false));
+    }
     let overlay = inv.python.map_or(&[][..], |v| v.modules);
     for (name, source, file) in overlay.iter().chain(embedded_modules::MODULES.iter().filter(|(name, ..)| !overlay.iter().any(|(overlaid, ..)| overlaid == name))) {
         let source = inv.python.map_or_else(|| source.to_string(), |v| v.module_source(name, source));
         request.push(("MODULE".to_string(), name.to_string(), source, false));
         request.push(("MODULE_FILE".to_string(), name.to_string(), file.to_string(), false));
-    }
-    if inv.language.name() == "python" && FULL_KERNELS.contains(&inv.kernel.as_str()) {
-        let root = python_library_sources(&request).unwrap_or_else(|error| {
-            eprintln!("Error: cannot provide Python library sources: {error}");
-            process::exit(1);
-        });
-        request.push(("SELF".to_string(), "library_root".to_string(), root.to_string_lossy().into_owned(), false));
     }
     let aliases = inv.python.map_or(&[][..], |v| v.aliases);
     for (name, member) in aliases.iter().chain(embedded_modules::MODULE_ALIASES.iter().filter(|(name, ..)| !aliases.iter().any(|(overlaid, ..)| overlaid == name))) {
@@ -777,18 +829,18 @@ fn run_all() {
     }
     // Where the program itself lies. A definition may give names to
     // these, and only the full kernels read those labels.
-    let whole = if inv.file == "-" { std::path::PathBuf::from("<stdin>") } else {
-        std::fs::canonicalize(&inv.file).unwrap_or_else(|_| std::path::PathBuf::from(&inv.file))
-    };
+    let whole = std::fs::canonicalize(&inv.file).unwrap_or_else(|_| std::path::PathBuf::from(&inv.file));
     let held = whole.parent().map_or_else(|| ".".to_string(), |p| p.to_string_lossy().into_owned());
     request.push(("SELF".to_string(), "file".to_string(), whole.to_string_lossy().into_owned(), false));
     request.push(("SELF".to_string(), "directory".to_string(), held, false));
     // The path as the run was started with it, links and all: a
     // complaint about reading the program names it the way its reader
     // named it, which is how the reference names it too.
-    request.push(("SELF".to_string(), "given".to_string(), inv.file.clone(), false));
-    if inv.file == "-" {
-        request.push(("SELF".to_string(), "argv0".to_string(), "-".to_string(), false));
+    request.push(("SELF".to_string(), "given".to_string(), if inv.file == "<string>" { "-c".to_owned() } else { inv.file.clone() }, false));
+    // The command that named the program, where it is not the source
+    // file itself; a program reads it as its own first argument.
+    if let Some(name) = &inv.program_name {
+        request.push(("SELF".to_string(), "argv0".to_string(), name.clone(), false));
     }
     // The program running this one, as the system knows it, which a
     // language may name for a program that wants to find itself again.
@@ -857,6 +909,7 @@ fn run_all() {
     // widest mark, and the only one for a kernel that sets none.
     lumen_room::mark();
 
+    prepared_libraries::install(&inv.kernel);
     let result = match (inv.kernel.as_str(), &inv.language) {
         ("stream35", Language::Named(name)) => lumen_stream35::run(name, &source, &inv.program_args),
         ("stream35", Language::File { text, .. }) => lumen_stream35::run_definition(text, &source, &inv.program_args),
@@ -1017,6 +1070,15 @@ fn plainly(e: &std::io::Error) -> String {
     }
 }
 
+/// Where this build keeps the Python library, which is the first
+/// directory a name is looked for in.
+fn python_library_root() -> String {
+    match env::var_os("LUMEN_ROOT") {
+        Some(root) => std::path::PathBuf::from(root).join("langs/lib_python/modules").to_string_lossy().into_owned(),
+        None => concat!(env!("CARGO_MANIFEST_DIR"), "/langs/lib_python/modules").to_string(),
+    }
+}
+
 fn parse_args(args: &[OsString]) -> Invocation {
     let held = args.first().map(|a| a.to_string_lossy().into_owned()).unwrap_or_else(|| "lumen-lang".to_string());
     let program = held.as_str();
@@ -1029,11 +1091,24 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut python: Option<String> = None;
     let mut file: Option<String> = None;
     let mut module_source = None;
+    let mut python_bytes_warning = 0usize;
+    // Startup transfers belong to one invocation; child processes parse their
+    // own flags rather than inheriting these internal option records.
+    for option in ["LUMEN_PYTHON_BYTES_WARNING", "LUMEN_PYTHON_WARNOPTIONS", "LUMEN_PYTHON_XOPTIONS", "LUMEN_PYTHON_NO_SITE", "LUMEN_PYTHON_UNBUFFERED"] {
+        env::remove_var(option);
+    }
+
     let mut module_name = None;
     let mut python_development = false;
-    let mut python_ignore_environment = false;
+    let mut warning_options = Vec::new();
+    let mut tracing_limit = None;
+    let mut extended_options = Vec::new();
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
+    // The name a Python program sees as its own first argument. It is
+    // the source name for an ordinary run; `-c` names the code as the
+    // source and stands in argv[0] itself.
+    let mut program_name = None;
 
     // An argument as text, for the switches that take one. Bytes
     // spelling no letter stand for the letter of doubt, since a name
@@ -1043,19 +1118,6 @@ fn parse_args(args: &[OsString]) -> Invocation {
     // Options may precede the file; `--lang` may also follow it directly.
     loop {
         match rest.first().and_then(|a| a.to_str()) {
-            Some("-X") if file.is_none() => {
-                if rest.len() < 2 { usage(program); }
-                if said(&rest[1]) != "dev" {
-                    eprintln!("Error: unsupported Python -X option '{}'", said(&rest[1]));
-                    process::exit(2);
-                }
-                python_development = true;
-                rest = &rest[2..];
-            }
-            Some("-Xdev") if file.is_none() => {
-                python_development = true;
-                rest = &rest[1..];
-            }
             Some("--kernel") if file.is_none() => {
                 if rest.len() < 2 {
                     usage(program);
@@ -1094,6 +1156,22 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 python = Some(said(&rest[1]));
                 rest = &rest[2..];
             }
+            Some(flag) if file.is_none() && (flag == "-W" || flag.starts_with("-W") && flag.len() > 2) => {
+                let option = if flag == "-W" {
+                    if rest.len() < 2 {
+                        eprintln!("Error: -W requires an argument");
+                        process::exit(2);
+                    }
+                    let option = said(&rest[1]);
+                    rest = &rest[2..];
+                    option
+                } else {
+                    let option = flag[2..].to_string();
+                    rest = &rest[1..];
+                    option
+                };
+                warning_options.push(option);
+            }
             Some("--serve") => {
                 if rest.len() < 2 {
                     eprintln!("Error: --serve requires an address or a port");
@@ -1123,13 +1201,25 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 }
                 let path = module.replace('.', "/");
                 let mut found = None;
-                for (at, candidate) in [format!("{path}.py"), format!("{path}.pyc"), format!("{path}/__main__.py"), format!("{path}/__main__.pyc")].into_iter().enumerate() {
-                    let source = if candidate.ends_with(".pyc") {
-                        fs::metadata(&candidate).ok().map(|_| compiled_source(&candidate))
-                    } else {
-                        fs::read_to_string(&candidate).ok()
-                    };
-                    if let Some(source) = source { found = Some((candidate, source, at >= 2)); break; }
+                let mut directories = vec![std::path::PathBuf::from(".")];
+                if let Some(search) = env::var_os("PYTHONPATH") { directories.extend(env::split_paths(&search)); }
+                for directory in directories {
+                    for (at, relative) in [format!("{path}.py"), format!("{path}.pyc"), format!("{path}/__main__.py"), format!("{path}/__main__.pyc")].into_iter().enumerate() {
+                        let candidate = directory.join(relative).to_string_lossy().into_owned();
+                        let source = if candidate.ends_with(".pyc") {
+                            fs::metadata(&candidate).ok().map(|_| compiled_source(&candidate))
+                        } else { fs::read_to_string(&candidate).ok() };
+                        if let Some(source) = source { found = Some((candidate, source, at >= 2)); break; }
+                    }
+                    if found.is_some() { break; }
+                }
+                if found.is_none() {
+                    // A name the library keeps is found where the library
+                    // keeps it, as the reference finds one walking sys.path.
+                    let root = python_library_root();
+                    for candidate in [format!("{root}/{path}.py"), format!("{root}/{path}/__main__.py")] {
+                        if let Ok(source) = fs::read_to_string(&candidate) { let via_main = candidate.ends_with("/__main__.py"); found = Some((candidate, source, via_main)); break; }
+                    }
                 }
                 if found.is_none() {
                     let executable_module = format!("{module}.__main__");
@@ -1153,29 +1243,68 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 rest = &rest[used..];
                 break;
             }
-            // Code given on the command line, as the reference takes it:
-            // it runs as a program named "<string>", and what stands
-            // after it belongs to the program.
-            Some("-c") if file.is_none() && (python.is_some() || language.as_ref().is_some_and(|held| held.name() == "python") || env::var("LUMEN_LANG").is_ok_and(|held| held == "python")) => {
-                if rest.len() < 2 {
-                    eprintln!("Error: -c requires code");
-                    process::exit(1);
-                }
-                file = Some("<string>".to_string());
+            // Python command strings retain their conventional virtual filename.
+            Some("-c") if file.is_none() && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                if rest.len() < 2 { usage(program); }
                 module_source = Some(said(&rest[1]));
-                language = Some(Language::Named("python".to_string()));
+                file = Some("<string>".to_owned());
+                program_name = Some("-c".to_owned());
+                language = Some(Language::Named("python".to_owned()));
                 rest = &rest[2..];
-            }
-            Some("-E") if file.is_none() => {
-                python_ignore_environment = true;
-                language = Some(Language::Named("python".to_string()));
-                rest = &rest[1..];
-            }
-            Some("-") if file.is_none() => {
-                file = Some("-".to_string());
-                language = Some(Language::Named("python".to_string()));
-                rest = &rest[1..];
                 break;
+            }
+            // These Python startup switches describe services already isolated
+            // from site imports and configure byte diagnostics before execution.
+            Some(flag) if file.is_none() && (flag == "-S" || flag == "-u"
+                || flag.len() > 1 && flag.starts_with('-') && flag[1..].chars().all(|letter| letter == 'b'))
+                && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                if flag == "-S" { env::set_var("LUMEN_PYTHON_NO_SITE", "1"); }
+                else if flag == "-u" { env::set_var("LUMEN_PYTHON_UNBUFFERED", "1"); }
+                else {
+                    let previous = python_bytes_warning;
+                    python_bytes_warning = previous + flag.len() - 1;
+                    env::set_var("LUMEN_PYTHON_BYTES_WARNING", python_bytes_warning.to_string());
+                }
+                language = Some(Language::Named("python".to_owned()));
+                rest = &rest[1..];
+            }
+            // Preserve Python warning options in command-line order.
+            Some(flag) if file.is_none() && (flag == "-W" || flag.starts_with("-W"))
+                && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                let (option, used) = if flag == "-W" {
+                    if rest.len() < 2 { usage(program); }
+                    (said(&rest[1]), 2)
+                } else { (flag[2..].to_owned(), 1) };
+                let mut options: Vec<String> = env::var("LUMEN_PYTHON_WARNOPTIONS").ok()
+                    .and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+                options.push(option);
+                env::set_var("LUMEN_PYTHON_WARNOPTIONS", serde_json::to_string(&options).unwrap());
+                language = Some(Language::Named("python".to_owned()));
+                rest = &rest[used..];
+            }
+            // Apply Python's debug-range switch before compiling any code.
+            Some(flag) if file.is_none() && (flag == "-X" || flag.starts_with("-X"))
+                && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                let (option, used) = if flag == "-X" {
+                    if rest.len() < 2 { usage(program); }
+                    (said(&rest[1]), 2)
+                } else { (flag[2..].to_owned(), 1) };
+                extended_options.push(option.clone());
+                if option == "tracemalloc" { tracing_limit = Some(1); }
+                else if let Some(limit) = option.strip_prefix("tracemalloc=") {
+                    tracing_limit = Some(limit.parse::<usize>().ok().filter(|n| *n > 0 && *n <= 65535).unwrap_or_else(|| {
+                        eprintln!("invalid number of frames for tracemalloc"); process::exit(1);
+                    }));
+                }
+                let (key, value) = option.split_once('=').unwrap_or((&option, "True"));
+                let mut options: std::collections::BTreeMap<String, String> = env::var("LUMEN_PYTHON_XOPTIONS").ok()
+                    .and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+                options.insert(key.to_owned(), value.to_owned());
+                env::set_var("LUMEN_PYTHON_XOPTIONS", serde_json::to_string(&options).unwrap());
+                if key == "no_debug_ranges" { env::set_var("PYTHONNODEBUGRANGES", "1"); }
+                if key == "dev" { python_development = true; }
+                language = Some(Language::Named("python".to_owned()));
+                rest = &rest[used..];
             }
             Some("-d") if file.is_none() => {
                 if rest.len() < 2 {
@@ -1216,6 +1345,16 @@ fn parse_args(args: &[OsString]) -> Invocation {
         }
     }
 
+    if let Ok(setting) = env::var("LUMEN_PYTHON_BYTES_WARNING") {
+        let level = setting.parse::<usize>().unwrap_or(0);
+        if level != 0 {
+            let mut options: Vec<String> = env::var("LUMEN_PYTHON_WARNOPTIONS").ok()
+                .and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+            options.push(format!("{}::BytesWarning", if level > 1 { "error" } else { "default" }));
+            env::set_var("LUMEN_PYTHON_WARNOPTIONS", serde_json::to_string(&options).unwrap());
+        }
+    }
+
     // A kernel not named on the command line may be carried in the
     // environment, by a host that started this binary again without
     // naming it; a flag always wins over either. Where neither names
@@ -1241,6 +1380,8 @@ fn parse_args(args: &[OsString]) -> Invocation {
         process::exit(0);
     }
 
+    if let Some(limit) = tracing_limit { env::set_var("LUMEN_TRACE_FRAMES", limit.to_string()); }
+    else { env::remove_var("LUMEN_TRACE_FRAMES"); }
     let file = file.unwrap_or_else(|| usage(program));
     let language = language.unwrap_or_else(|| {
         // A language not named on the command line may be carried in
@@ -1286,7 +1427,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 module_source = Some(String::from_utf8_lossy(&source).into_owned());
                 module_name = Some("__main__".to_string());
             } else if let Some(pyc) = zip_read(&zip_path, &format!("{target}__main__.pyc")) {
-                if pyc.len() >= 16 && is_pyc(&pyc) {
+                if pyc.len() >= 16 && pyc[0..4] == PYC_MAGIC {
                     module_source = Some(compiled_bytes_source(&pyc[16..]));
                     module_name = Some("__main__".to_string());
                 }
@@ -1310,7 +1451,11 @@ fn parse_args(args: &[OsString]) -> Invocation {
         language = Language::File { name: "python".to_string(), path, text };
         Some(version)
     } else { None };
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, python_development, python_ignore_environment, program_args: rest.iter().map(said).collect() }
+    if language.name() == "python" {
+        let encoded = extended_options.iter().map(|option| format!("{}:{option}", option.chars().count())).collect::<String>();
+        env::set_var("LUMEN_XOPTIONS", encoded);
+    } else { env::remove_var("LUMEN_XOPTIONS"); }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_development, warning_options, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.
@@ -1352,13 +1497,4 @@ fn expand_includes(source: &str) -> Result<String, String> {
     let mut out = String::new();
     walk(source, &mut HashSet::new(), &mut out)?;
     Ok(out)
-}
-
-
-// Installed binaries expose the same source that their embedded loader runs.
-fn python_library_sources(request: &[(String, String, String, bool)]) -> std::io::Result<std::path::PathBuf> {
-    let original = env::var_os("LUMEN_ROOT").map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
-        .join("langs/lib_python/modules");
-    python_sources::library(request, &original)
 }

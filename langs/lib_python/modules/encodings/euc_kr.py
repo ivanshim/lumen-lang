@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/euc_kr.py; PSF License.
 #
 # euc_kr.py: Python Unicode Codec for EUC_KR
 #

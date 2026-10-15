@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/pathlib/types.py; PSF License.
 """
 Protocols for supporting classes in pathlib.
 """

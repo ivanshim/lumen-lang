@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/zipfile/_path/glob.py; PSF License.
 import os
 import re
 

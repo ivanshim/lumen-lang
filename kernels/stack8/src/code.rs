@@ -18,7 +18,6 @@ use crate::value::Value;
 /// A watched body and its arms, as spans in the same routine. Keeping
 /// them in that routine leaves their bindings and outward leaps whole.
 #[derive(Debug, Clone)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Attempt {
     pub context: Option<Cell>,
     pub async_context: bool,
@@ -30,9 +29,9 @@ pub struct Attempt {
 }
 
 #[derive(Debug, Clone)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Taking {
     pub line: u32,
+    pub reraise_position: Option<usize>,
     pub kinds: Vec<(usize, usize)>,
     pub held: Option<Cell>,
     pub body: (usize, usize),
@@ -48,6 +47,7 @@ impl Attempt {
         };
         span(&mut self.body, &mut at);
         for clause in &mut self.clauses {
+            if let Some(position) = &mut clause.reraise_position { *position = at(*position); }
             for kind in &mut clause.kinds { span(kind, &mut at); }
             span(&mut clause.body, &mut at);
         }
@@ -58,16 +58,58 @@ impl Attempt {
     }
 }
 
+/// Local lookup slots usually contain just one index.
+#[derive(Clone, PartialEq, Eq)]
+pub enum LocalSlots {
+    Single(usize),
+    Several(Vec<usize>),
+}
+
+impl std::fmt::Debug for LocalSlots {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_list().entries(self.iter()).finish()
+    }
+}
+
+impl Default for LocalSlots {
+    fn default() -> Self { Self::Several(Vec::new()) }
+}
+
+impl std::ops::Deref for LocalSlots {
+    type Target = [usize];
+    fn deref(&self) -> &[usize] {
+        match self { Self::Single(slot) => std::slice::from_ref(slot), Self::Several(slots) => slots }
+    }
+}
+
+impl LocalSlots {
+    pub fn clear(&mut self) { *self = Self::default(); }
+    pub fn extend(&mut self, slots: impl IntoIterator<Item = usize>) {
+        for slot in slots {
+            match self {
+                Self::Several(existing) if existing.is_empty() => *self = Self::Single(slot),
+                Self::Single(first) => *self = Self::Several(vec![*first, slot]),
+                Self::Several(existing) => existing.push(slot),
+            }
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a LocalSlots {
+    type Item = &'a usize;
+    type IntoIter = std::slice::Iter<'a, usize>;
+    fn into_iter(self) -> Self::IntoIter { self.iter() }
+}
+
 /// A binding's address: candidate local slots (innermost first) and the
 /// global slot of the same name. A load reads the first local that holds
 /// a value and falls through to the global; a store writes the first
 /// local, or the global when there is none.
 #[derive(Debug, Clone)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Cell {
     pub free: bool,
     pub ident: Rc<str>,
-    pub near: Vec<usize>,
+    pub near: LocalSlots,
     pub far: usize,
     /// A load that moves the value out and leaves a hole, so the value
     /// is unshared while an operation rewrites it; the next store to the
@@ -77,7 +119,6 @@ pub struct Cell {
 
 /// A case's test, with bindings gathered only after the whole fits.
 #[derive(Debug, Clone)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Pattern {
     Any,
     Literal(Value),
@@ -157,7 +198,6 @@ pub const ANNOTATE_WORD: &str = "\0annotate";
 /// for a plain or aliased import, the star for `from m import *`, or
 /// the names a from-import takes out together.
 #[derive(Debug, Clone)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub enum ImportStyle {
     Plain,
     Star,
@@ -166,7 +206,6 @@ pub enum ImportStyle {
 
 /// Kernel operations a language can spell. `Apply` names one of these.
 #[derive(Debug, Clone)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Action {
     ByteAssign(bool),
     /// A pattern and its binding order; the flag marks a tuple subject,
@@ -184,6 +223,7 @@ pub enum Action {
     Delegate,
     MakeTuple,
     Adorn(u8),
+    ContextExit,
     ContextEnter,
     AsyncContextEnter,
     SettleObjects,
@@ -471,7 +511,6 @@ pub enum Action {
 
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Builtin {
     /// Ask the reader the definition routes to for a line of input.
     Ask,
@@ -525,6 +564,7 @@ pub enum Builtin {
     MemberGet,
     ProgramNamespace,
     ProductStep,
+    ReferenceCount,
     FrameModule,
     ClassSeal,
     Bytes(u8),
@@ -592,7 +632,6 @@ pub enum Builtin {
     /// Text read ahead of time and kept as a code value for a later
     /// reading to run (ext.builtin.compile).
     ReadyText,
-    CodeCache,
     /// A module fetched by its name, as the import statement would
     /// fetch it (ext.builtin.import).
     Summon,
@@ -645,6 +684,7 @@ pub enum Builtin {
     /// Find and break the rounds of values nothing reaches any more
     /// (ext.builtin.gc.collect).
     Collect,
+    TrackedObjects,
     /// Whether a path names a file, a directory, or nothing.
     FileKind,
     // The source of the file the run was started with.
@@ -780,14 +820,18 @@ pub enum Builtin {
     /// built-in writing for out to bytes and read it back: `None`
     /// where the value keeps none, else the pieces marshal writes and
     /// its opposite number reads back into the very value again.
+    LzmaEncode,
     LzmaDecode,
     ZlibNative,
     StructNative,
     BinAscii,
     StaticNamespace,
     TraceNative,
+    NativeFrame,
     HeapNative,
     ContextNative,
+    AllocationTrace,
+    WarningBackend(u8),
     ReduceNative,
     RebuildNative,
     CharAtIndex,
@@ -813,7 +857,6 @@ pub enum Builtin {
 
 /// An operand a fused word reads without the stack: a binding or a constant.
 #[derive(Debug, Clone)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Operand {
     Cell(Cell),
     Const(Value),
@@ -822,7 +865,6 @@ pub enum Operand {
 }
 
 #[derive(Debug, Clone)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Instr {
     /// Push a constant.
     Const(Value),
@@ -936,20 +978,19 @@ impl Builtin {
 
 /// A compiled program.
 #[derive(Clone, Debug)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Routine {
     pub postponed_annotation: bool,
+    pub annotation_source: Option<String>,
     pub checks_annotation_format: bool,
     /// Whether the routine is one whose own name reads, while annotations are
     /// being read in the forward-reference format, may stand for a reference.
     pub reads_annotation: bool,
     /// The live class namespace slot and, when used by methods, its class cell.
     pub class_namespace: Option<(String, Option<String>, bool)>,
-    #[serde(serialize_with = "crate::cache::save_optional", deserialize_with = "crate::cache::load_optional")]
     pub annotation: Option<Rc<Routine>>,
     pub code_constants: Vec<Value>,
-    #[serde(serialize_with = "crate::cache::write_origin", deserialize_with = "crate::cache::read_origin")]
-    pub source_tokens: Rc<str>,
+    pub source_tokens: Rc<[crate::lex::Token]>,
+    pub source_content: Rc<std::cell::OnceCell<Rc<str>>>,
     pub source_end: usize,
     pub embedded_integers: Option<Vec<bool>>,
     pub code_names: Vec<String>,
@@ -999,18 +1040,15 @@ pub struct Routine {
     /// The dictionary of outermost names a routine built by hand was
     /// handed, where one was. Nothing for every routine the program
     /// wrote out under a name, whose names stand where it was read.
-    #[serde(skip, default = "crate::cache::globals")]
     pub globe: Option<Value>,
     /// The builtins in force where such a routine was built, kept for
     /// the case that its own dictionary names none of its own.
-    #[serde(skip, default = "crate::cache::builtins")]
     pub born: Option<Value>,
     /// The name of the namespace a routine read from text handed a
     /// dictionary was made in, caught when it was made: its module, as
     /// the reference takes a function's module from the globals it was
     /// made with. The inner Nothing where that namespace named nothing;
     /// the outer for every routine a file or the run itself wrote.
-    #[serde(skip, default = "crate::cache::home")]
     pub home: Option<Option<Rc<str>>>,
     /// The line the program was written on, which a fault raised on the
     /// way into it names: such a fault belongs where the program is
@@ -1030,14 +1068,12 @@ pub struct Routine {
     /// What a call of this very routine runs instead, once the program
     /// has written its spare arguments or its code over: nothing until
     /// then. A copy of the routine starts out with nothing here again.
-    #[serde(skip)]
     pub revised: RefCell<Option<Rc<Routine>>>,
 }
 
 /// What a class declaration comes to: everything about the class that is
 /// known while compiling. What it stands on is looked up when it runs.
 #[derive(Debug)]
-#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Plan {
     pub name: String,
     /// How many classes of method names only stand after the one this
@@ -1051,7 +1087,6 @@ pub struct Plan {
     pub field_reach: Vec<crate::value::Reach>,
     pub shared_names: Vec<String>,
     pub constant_names: Vec<String>,
-    #[serde(serialize_with = "crate::cache::save_methods", deserialize_with = "crate::cache::load_methods")]
     pub methods: Vec<(String, Rc<Routine>)>,
     /// Whether a class to stand on is given first.
     pub extends: bool,
@@ -1072,7 +1107,7 @@ pub struct Plan {
 
 impl Drop for Routine {
     fn drop(&mut self) {
-        crate::faint::plain_departing();
+        crate::faint::plain_departing(self as *const Self as usize);
     }
 }
 

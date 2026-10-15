@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/palmos.py; PSF License.
 """ Python Character Mapping Codec for PalmOS 3.5.
 
 Written by Sjoerd Mullender (sjoerd@acm.org); based on iso8859_15.py.

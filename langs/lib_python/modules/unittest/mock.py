@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 / 8e6e75d9102e, Lib/unittest/mock.py; PSF License.
 # mock.py
 # Test tools for mocking and patching.
 # Maintained by Michael Foord

@@ -2,8 +2,25 @@
 // Character Database: https://www.unicode.org/Public/16.0.0/ucd/ .
 // Terms of use: https://www.unicode.org/license.txt .
 
+// Resolve the plain character prefix at compile time from the full property ranges.
+const ASCII_BITS: [u16; 128] = {
+    let mut result = [0; 128];
+    let mut range = 0;
+    while range < PROPERTIES.len() && PROPERTIES[range].0 < 128 {
+        let (first, last, mask) = PROPERTIES[range];
+        let mut code = first;
+        while code <= last && code < 128 {
+            result[code as usize] = mask;
+            code += 1;
+        }
+        range += 1;
+    }
+    result
+};
+
 pub fn bits(letter: char) -> u16 {
     let n = letter as u32;
+    if n < 128 { return ASCII_BITS[n as usize]; }
     let at = PROPERTIES.partition_point(|r| r.1 < n);
     PROPERTIES.get(at).filter(|r| r.0 <= n).map_or(0, |r| r.2)
 }
@@ -6392,13 +6409,17 @@ pub fn named_text(name: &str) -> Option<String> {
     names.get(&name.to_ascii_uppercase()).cloned()
 }
 
-/// NFKC, the normalization Python gives every identifier: each point
-/// is broken into its decomposition (compatibility mappings included),
-/// the marks are put in canonical order, and the result is joined back
-/// by canonical composition. The tables are built once from the same
-/// Unicode Character Database file the names above read.
-pub fn normalized(text: &str) -> String {
+/// One of the four normalization forms, named by a code: 0 NFC,
+/// 1 NFD, 2 NFKC, 3 NFKD. Each point is broken into its decomposition
+/// (compatibility mappings included only for the K forms), the marks
+/// are put in canonical order, and the C forms join the pieces back
+/// by canonical composition. NFKC is the form Python gives every
+/// identifier. The tables are built once from the same Unicode
+/// Character Database file the names above read.
+pub fn normalized(text: &str, form: u8) -> String {
     if text.is_ascii() { return text.to_owned(); }
+    let wholesale = form >= 2;
+    let recompose = form % 2 == 0;
     use std::collections::HashMap;
     use std::sync::OnceLock;
     struct Norm {
@@ -6442,7 +6463,7 @@ pub fn normalized(text: &str) -> String {
     const S_COUNT: u32 = L_COUNT * V_COUNT * T_COUNT;
     // A Hangul syllable is an arithmetic bundle of jamo, not a listed
     // decomposition, so it comes apart and rejoins by the same rule.
-    fn unfold(point: u32, norm: &Norm, out: &mut Vec<u32>) {
+    fn unfold(point: u32, norm: &Norm, wholesale: bool, out: &mut Vec<u32>) {
         const S_BASE: u32 = 0xAC00;
         const L_BASE: u32 = 0x1100;
         const V_BASE: u32 = 0x1161;
@@ -6455,14 +6476,15 @@ pub fn normalized(text: &str) -> String {
             out.push(V_BASE + index % step / 28);
             let tail = T_BASE + index % 28;
             if tail != T_BASE { out.push(tail); }
-        } else if let Some((_, list)) = norm.parts.get(&point) {
-            for &piece in list { unfold(piece, norm, out); }
+        } else if let Some((compat, list)) = norm.parts.get(&point) {
+            if *compat && !wholesale { out.push(point); }
+            else { for &piece in list { unfold(piece, norm, wholesale, out); } }
         } else {
             out.push(point);
         }
     }
     let mut points: Vec<u32> = Vec::new();
-    for c in text.chars() { unfold(u32::from(c), norm, &mut points); }
+    for c in text.chars() { unfold(u32::from(c), norm, wholesale, &mut points); }
     for at in 1..points.len() {
         let class = norm.marks.get(&points[at]).copied().unwrap_or(0);
         let mut to = at;
@@ -6472,6 +6494,9 @@ pub fn normalized(text: &str) -> String {
             points.swap(to, to - 1);
             to -= 1;
         }
+    }
+    if !recompose {
+        return points.into_iter().map(|point| char::from_u32(point).unwrap_or('\u{FFFD}')).collect();
     }
     let mut out: Vec<u32> = Vec::with_capacity(points.len());
     let mut head: Option<usize> = None;
@@ -6522,4 +6547,18 @@ pub fn decomposition(point: u32) -> String {
         table
     });
     mappings.get(&point).cloned().unwrap_or_default()
+}
+
+// Derived from PROPERTIES; avoid a Unicode range search for ASCII.
+
+
+#[cfg(test)]
+mod ascii_properties_tests {
+    #[test]
+    fn matches_unicode_database() {
+        for number in 0..128 {
+            let expected = super::PROPERTIES.iter().find(|row| row.0 <= number && number <= row.1).map_or(0, |row| row.2);
+            assert_eq!(super::bits(char::from_u32(number).unwrap()), expected);
+        }
+    }
 }

@@ -54,16 +54,6 @@ fn record(s: &libc::stat) -> Value {
     fields.push(Value::from_big(BigInt::from(s.st_rdev)));
     Value::tuple(fields)
 }
-// Copy an account record out of the host database's reusable storage.
-fn account_record(user: &libc::passwd) -> Value {
-    let strings = [user.pw_name, user.pw_passwd, user.pw_gecos, user.pw_dir, user.pw_shell];
-    let mut row: Vec<Value> = strings.into_iter().map(|p| match unsafe {p.as_ref()} {
-        Some(_) => octets(unsafe {CStr::from_ptr(p)}.to_bytes()), None => Value::Nil
-    }).collect();
-    row.insert(2, Value::Small(user.pw_uid.into()));
-    row.insert(3, Value::Small(user.pw_gid.into()));
-    Value::tuple(row)
-}
 pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), String>) -> Result<Value, String> {
     let operation = match given.first().map(Value::settled) {
         Some(Value::Text(name)) => name,
@@ -82,69 +72,6 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
     };
     let answer = unsafe {
         match operation.as_ref() {
-            "group" => {
-                let found = match int(0)? {0 => libc::getgrnam(path(1)?.as_ptr()), _ => libc::getgrgid(int(1)? as _)};
-                match found.as_ref() {
-                    None => Ok(Value::Nil),
-                    Some(group) => {
-                        let mut names = Vec::new();
-                        if !group.gr_mem.is_null() {
-                            let mut index = 0;
-                            loop {
-                                let member = *group.gr_mem.add(index);
-                                if member.is_null() {break;}
-                                names.push(octets(CStr::from_ptr(member).to_bytes()));
-                                index += 1;
-                            }
-                        }
-                        Ok(Value::tuple(vec![match group.gr_name.as_ref() {None => Value::Nil, Some(_) => octets(CStr::from_ptr(group.gr_name).to_bytes())},
-                            match group.gr_passwd.as_ref() {None => Value::Nil, Some(_) => octets(CStr::from_ptr(group.gr_passwd).to_bytes())}, Value::Small(group.gr_gid.into()),
-                            Value::Vector(crate::tuples::Sequence::plain(names))]))
-                    }
-                }
-            }
-            "passwd" => {
-                if int(0)? == 2 {
-                    let mut users = Vec::new();
-                    libc::setpwent();
-                    while let Some(user) = libc::getpwent().as_ref() {
-                        users.push(account_record(user));
-                    }
-                    libc::endpwent();
-                    let payload = Value::Vector(crate::tuples::Sequence::plain(users));
-                    return Ok(Value::tuple(vec![Value::Small(0), payload]));
-                }
-                let found = match int(0)? {0 => libc::getpwnam(path(1)?.as_ptr()), _ => libc::getpwuid(int(1)? as _)};
-                match found.as_ref() {
-                    None => Ok(Value::Nil),
-                    Some(user) => {
-                        Ok(account_record(user))
-                    }
-                }
-            }
-            "fchown" => {
-                let (descriptor, owner, group) = (int(0)?, int(1)?, int(2)?);
-                checked(libc::fchown(descriptor as _, owner as _, group as _) as i64)
-            }
-            "chown" => {
-                let name = path(0)?;
-                let link_flag = match int(4)? {0 => libc::AT_SYMLINK_NOFOLLOW, _ => 0};
-                checked(libc::fchownat(int(3)? as _, name.as_ptr(), int(1)? as _, int(2)? as _, link_flag).into())
-            }
-            "fstatvfs" | "statvfs" => {
-                let mut capacity = std::mem::zeroed::<libc::statvfs>();
-                let code = match operation.as_ref() {
-                    "statvfs" => libc::statvfs(path(0)?.as_ptr(), &mut capacity),
-                    _ => libc::fstatvfs(int(0)? as _, &mut capacity),
-                };
-                if code != 0 {Err(errno())} else {
-                    let amounts = vec![capacity.f_bsize, capacity.f_frsize, capacity.f_blocks,
-                        capacity.f_bfree, capacity.f_bavail, capacity.f_files, capacity.f_ffree,
-                        capacity.f_favail, capacity.f_flag, capacity.f_namemax, capacity.f_fsid];
-                    let values = amounts.into_iter().map(|amount| Value::from_big(BigInt::from(amount))).collect();
-                    Ok(Value::tuple(values))
-                }
-            }
             "stat_mode" => {
                 let whole = params[0].as_big()?;
                 if whole.sign() == num_bigint::Sign::Minus {return Err(String::from("OverflowError: can't convert negative value to unsigned int"));}
@@ -361,6 +288,25 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                 let message = CStr::from_ptr(libc::strerror(int(0)? as _)).to_string_lossy();
                 Ok(Value::text(&message))
             }
+            "confstr" => {
+                let which = int(0)? as libc::c_int;
+                let extent = libc::confstr(which, std::ptr::null_mut(), 0);
+                if extent == 0 {
+                    // A selector the library does not know has left an
+                    // errno behind; a value that is merely empty would
+                    // have asked for room for its terminating zero.
+                    match std::io::Error::last_os_error().raw_os_error() {
+                        Some(code) if code != 0 => Err(code),
+                        _ => Err(libc::EINVAL),
+                    }
+                }
+                else {
+                    let mut landing = vec![0u8; extent];
+                    libc::confstr(which, landing.as_mut_ptr().cast(), extent);
+                    landing.truncate(extent - 1);
+                    Ok(Value::text(&String::from_utf8_lossy(&landing)))
+                }
+            }
             "get_inheritable" | "set_inheritable" => {
             let fd = int(0)? as i32;
             let flags = libc::fcntl(fd, libc::F_GETFD);
@@ -398,6 +344,26 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                     let words = [&names.sysname, &names.nodename, &names.release, &names.version, &names.machine];
                     Ok(Value::tuple(words.iter().map(|name| Value::text(&CStr::from_ptr(name.as_ptr()).to_string_lossy())).collect()))
                 }
+            }
+            "poll" => {
+                let rows = match params[0].settled() { Value::Tuple(rows) => rows, _ => return Err(String::from("TypeError: poll requests must be tuple")) };
+                let mut descriptors: Vec<libc::pollfd> = Vec::with_capacity(rows.len());
+                for row in rows.iter() {
+                    let Value::Tuple(parts) = row.settled() else { return Err(String::from("TypeError: poll entry must be tuple")) };
+                    descriptors.push(libc::pollfd { fd: parts[0].as_big()?.to_i32().ok_or("OverflowError: file descriptor out of range")?,
+                        events: parts[1].as_big()?.to_i16().ok_or("OverflowError: poll event out of range")?, revents: 0 });
+                }
+                match libc::poll(descriptors.as_mut_ptr(), descriptors.len() as libc::nfds_t, int(1)? as i32) {
+                    -1 => Err(errno()),
+                    _ => Ok(Value::tuple(descriptors.into_iter().filter_map(|descriptor| (descriptor.revents != 0).then(||
+                        Value::tuple(vec![Value::Small(i64::from(descriptor.fd)), Value::Small(i64::from(descriptor.revents))]))).collect())),
+                }
+            }
+            "socket_shutdown" => checked(libc::shutdown(int(0)? as i32, int(1)? as i32) as i64),
+            "socketpair" => {
+                let mut pair = [0 as libc::c_int; 2];
+                let result = libc::socketpair(int(0)? as i32, int(1)? as i32 | libc::SOCK_CLOEXEC, int(2)? as i32, pair.as_mut_ptr());
+                if result == -1 { Err(errno()) } else { Ok(Value::tuple(vec![Value::Small(pair[0] as i64), Value::Small(pair[1] as i64)])) }
             }
             "socket" => checked(libc::socket(int(0)? as _, (int(1)? as i32) | libc::SOCK_CLOEXEC, int(2)? as _) as i64),
             "bind_unix" => {

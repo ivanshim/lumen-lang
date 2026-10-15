@@ -39,10 +39,13 @@ def forget(modname):
         cache_from_source = importlib.util.cache_from_source
     for dirname in sys.path:
         source = os.path.join(dirname, modname + '.py')
-        unlink(source + 'c')
+        if os.path.lexists(source + 'c'):
+            unlink(source + 'c')
         if cache_from_source is not None:
             for opt in ('', 1, 2):
-                unlink(cache_from_source(source, optimization=opt))
+                cached = cache_from_source(source, optimization=opt)
+                if os.path.lexists(cached):
+                    unlink(cached)
 
 @contextlib.contextmanager
 def _ignore_deprecated_imports(ignore=True):

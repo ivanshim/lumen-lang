@@ -78,6 +78,27 @@ def strerror(code, /):
     return _call('strerror', _cint(code))
 
 
+# The configuration strings the host library answers for. The list
+# follows the names glibc gives them; an integer is passed through.
+_confstr_names = {
+    'CS_PATH': 0,
+    'CS_V6_WIDTH_RESTRICTED_ENVS': 1,
+    'CS_GNU_LIBC_VERSION': 2,
+    'CS_GNU_LIBPTHREAD_VERSION': 3,
+    'CS_V5_WIDTH_RESTRICTED_ENVS': 4,
+    'CS_V7_WIDTH_RESTRICTED_ENVS': 5,
+}
+
+
+def confstr(name, /):
+    if isinstance(name, str):
+        try:
+            name = _confstr_names[name]
+        except KeyError:
+            raise ValueError('unrecognized configuration name') from None
+    return _call('confstr', _cint(name))
+
+
 (O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_CREAT, O_EXCL, O_TRUNC,
  O_NONBLOCK, O_CLOEXEC, O_DIRECTORY, O_NOFOLLOW, SEEK_SET, SEEK_CUR,
  SEEK_END, F_OK, R_OK, W_OK, X_OK, O_TMPFILE) = _call('constants')
@@ -87,8 +108,7 @@ _have_functions = ['HAVE_FACCESSAT', 'HAVE_FCHMODAT', 'HAVE_FSTATAT', 'HAVE_LSTA
                    'HAVE_MKDIRAT', 'HAVE_MKFIFOAT', 'HAVE_OPENAT', 'HAVE_READLINKAT',
                    'HAVE_RENAMEAT', 'HAVE_SYMLINKAT', 'HAVE_UNLINKAT', 'HAVE_UTIMENSAT',
                    'HAVE_FCHDIR', 'HAVE_FCHMOD', 'HAVE_FTRUNCATE', 'HAVE_LINKAT',
-                   'HAVE_FDOPENDIR', 'HAVE_FUTIMENS', 'HAVE_FCHOWNAT', 'HAVE_FCHOWN',
-                   'HAVE_LCHOWN', 'HAVE_FSTATVFS']
+                   'HAVE_FDOPENDIR', 'HAVE_FUTIMENS']
 environ = _call('environ')
 
 
@@ -488,31 +508,12 @@ def uname():
 
 
 class terminal_size(tuple):
-    __slots__ = ()
-    n_sequence_fields = 2
-    n_fields = 2
-    n_unnamed_fields = 0
-
-    # Construct the native terminal record with its fixed sequence size.
-    def __new__(cls, sequence, dict=_stat_dict_missing):
-        if dict is not _stat_dict_missing and not isinstance(dict, type({})):
-            raise TypeError('os.terminal_size() takes a dict as second arg, if any')
-        values = tuple(sequence)
-        if len(values) != 2:
-            raise TypeError('os.terminal_size() takes a 2-sequence (' + str(len(values)) + '-sequence given)')
-        return tuple.__new__(cls, values)
+    def __new__(cls, sequence):
+        if len(sequence) != 2:
+            raise TypeError('os.terminal_size() takes a 2-sequence')
+        return tuple.__new__(cls, sequence)
     columns = property(lambda self: self[0])
     lines = property(lambda self: self[1])
-
-    # Render the public dimensions as CPython's native record does.
-    def __repr__(self):
-        return 'os.terminal_size(columns=' + repr(self.columns) + ', lines=' + repr(self.lines) + ')'
-
-    # Refuse subclassing of the native result type.
-    def __init_subclass__(cls, **kwargs):
-        raise TypeError("type 'os.terminal_size' is not an acceptable base type")
-
-terminal_size.__module__ = 'os'
 
 
 def get_terminal_size(fd=1):
@@ -653,115 +654,13 @@ def pipe():
     return _call('pipe')
 
 
-# Convert the Linux uid_t/gid_t argument using CPython's signed-long rules.
-def _owner_id(value, kind):
-    try:
-        number = _operator.index(value)
-    except BaseException:
-        raise TypeError(kind + ' should be integer, not ' + type(value).__name__) from None
-    if number < -1 or 4294967295 < number <= 9223372036854775807:
-        raise OverflowError(kind + ' is less than minimum')
-    if number > 4294967295:
-        raise OverflowError(kind + ' is greater than maximum')
-    return number
-
-
-# Change ownership relative to a directory, optionally preserving the final link.
-def chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True):
-    if _is_fd_path(path):
-        if dir_fd is not None:
-            raise ValueError("chown: can't specify both dir_fd and fd")
-        if not follow_symlinks:
-            raise ValueError('chown: cannot use fd and follow_symlinks together')
-        return fchown(path, uid, gid)
-    original = _path(path)
-    _call('chown', original, _owner_id(uid, 'uid'), _owner_id(gid, 'gid'),
-          _dir(dir_fd), int(bool(follow_symlinks)), filename=original)
-
-
-# Change the ownership of an open descriptor.
-def fchown(fd, uid, gid):
-    _call('fchown', _cint(fd), _owner_id(uid, 'uid'), _owner_id(gid, 'gid'))
-
-
-# Change a symbolic link's ownership without following it.
-def lchown(path, uid, gid):
-    return chown(path, uid, gid, follow_symlinks=False)
-
-
-class statvfs_result(tuple):
-    __slots__ = ()
-    n_sequence_fields = 10
-    n_fields = 11
-    n_unnamed_fields = 0
-
-    # Preserve the ten sequence fields and the attribute-only filesystem id.
-    def __new__(cls, sequence, dict=_stat_dict_missing):
-        if dict is not _stat_dict_missing and not isinstance(dict, type({})):
-            raise TypeError('os.statvfs_result() takes a dict as second arg, if any')
-        values = tuple(sequence)
-        if len(values) < 10:
-            raise TypeError('os.statvfs_result() takes an at least 10-sequence (' + str(len(values)) + '-sequence given)')
-        if len(values) > 11:
-            raise TypeError('os.statvfs_result() takes an at most 11-sequence (' + str(len(values)) + '-sequence given)')
-        fsid = values[10] if len(values) > 10 else (None if dict is _stat_dict_missing else dict.get('f_fsid'))
-        return _host('structseq_new', cls, values[:10], (fsid,))
-
-    f_bsize = property(lambda self: self[0])
-    f_frsize = property(lambda self: self[1])
-    f_blocks = property(lambda self: self[2])
-    f_bfree = property(lambda self: self[3])
-    f_bavail = property(lambda self: self[4])
-    f_files = property(lambda self: self[5])
-    f_ffree = property(lambda self: self[6])
-    f_favail = property(lambda self: self[7])
-    f_flag = property(lambda self: self[8])
-    f_namemax = property(lambda self: self[9])
-    f_fsid = property(lambda self: _host('structseq_get', self, 0))
-
-    # Render the public fields in the struct-sequence representation.
-    def __repr__(self):
-        names = ('f_bsize', 'f_frsize', 'f_blocks', 'f_bfree', 'f_bavail', 'f_files', 'f_ffree', 'f_favail', 'f_flag', 'f_namemax')
-        return 'os.statvfs_result(' + ', '.join(name + '=' + repr(value) for name, value in zip(names, self)) + ')'
-
-    # Retain the attribute-only field when reducing the result.
-    def __reduce__(self):
-        return (type(self), (tuple(self), {'f_fsid': self.f_fsid}))
-
-    # Refuse subclassing as CPython's native result does.
-    def __init_subclass__(cls, **kwargs):
-        raise TypeError("type 'os.statvfs_result' is not an acceptable base type")
-
-statvfs_result.__module__ = 'os'
-
-
-# Read filesystem capacity from a path or an open descriptor.
-def statvfs(path):
-    if _is_fd_path(path):
-        return fstatvfs(_descriptor(path))
-    original = _path(path)
-    return statvfs_result(_call('statvfs', original, filename=original))
-
-
-# Read filesystem capacity from an open descriptor.
-def fstatvfs(fd):
-    return statvfs_result(_call('fstatvfs', _cint(fd)))
-
 # Keep native module functions callable without Python function binding.
-class _BuiltinFunction:
-    # Preserve the wrapped entry point's public metadata.
-    def __init__(self, function):
-        self._function = function
-        self.__name__ = function.__name__
-        self.__qualname__ = function.__name__
-        self.__doc__ = function.__doc__
-        self.__module__ = __name__
+class _BuiltinFunction(staticmethod):
+    __hash__ = object.__hash__
+    # Native forwarding avoids another Python call frame; class access keeps identity.
+    def __get__(self, instance, owner=None):
+        return self
 
-    # Forward arguments without supplying an instance receiver.
-    def __call__(self, *args, **kwargs):
-        return self._function(*args, **kwargs)
-
-    # Render the native entry point's name.
     def __repr__(self):
         return '<built-in function ' + self.__name__ + '>'
 

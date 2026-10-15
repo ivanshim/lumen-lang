@@ -29,6 +29,75 @@ fn modules(root: &Path, here: &Path, layout: &Value, out: &mut String) {
     }
 }
 
+#[path = "langs/lib_python/modules/manifest.rs"]
+mod library_sources;
+
+fn prepared_libraries(versions: &serde_json::Map<String, Value>) {
+    let base: Value = serde_json::from_str(&fs::read_to_string("langs/python.json").unwrap()).unwrap();
+    let mut definitions = vec![base.clone()];
+    for item in versions.values() {
+        let labels: Value = serde_json::from_str(&fs::read_to_string(item["label_overlay"].as_str().unwrap()).unwrap()).unwrap();
+        let mut definition = base.clone();
+        for (label, setting) in labels.as_object().unwrap() {
+            definition.as_object_mut().unwrap().insert(label.clone(), setting.clone());
+        }
+        if !definitions.contains(&definition) { definitions.push(definition); }
+    }
+    let mut inventory = format!("{} sources, {} aliases\n", library_sources::MODULES.len(), library_sources::MODULE_ALIASES.len());
+    let mut output = String::from("pub fn install(kernel: &str) {\n");
+    for definition in definitions {
+        let definition = definition.to_string();
+        for kernel in ["stack8", "microcode7"] {
+            let mut records = String::new();
+            let mut source_rows = String::new();
+            let mut count = 0;
+            for (name, source, _) in library_sources::MODULES {
+                // Reference modules are inputs, not reusable startup libraries.
+                if name.starts_with("test.") && !name.starts_with("test.support") { continue; }
+                // shortcut: bound prepared library data to fit Lambda; include large IO/archive startup modules.
+                if source.len() > 16_384 && !name.starts_with("pathlib.") && !["__main__", "unittest", "_pyio", "tarfile", "pathlib", "_abc", "_codec_runtime", "_codecs", "_collections", "_collections_abc", "_colorize", "_io", "_json", "_operator", "_py_abc", "_pydatetime", "_runtime_import", "_sre", "_sre_validation", "_stat", "_thread", "_types", "_typing_runtime", "_weakref", "_weakrefset", "abc", "annotationlib", "argparse", "ast", "builtins", "codecs", "collections", "collections.abc", "copy", "copyreg", "dataclasses", "enum", "errno", "functools", "genericpath", "gettext", "inspect", "itertools", "json", "json.decoder", "json.encoder", "json.scanner", "json.tool", "keyword", "operator", "os", "os.path", "posix", "posixpath", "re", "re._casefix", "re._compiler", "re._constants", "re._parser", "reprlib", "runtime_adapters.native_test_support", "stat", "sys", "test.support", "test.support.script_helper", "threading", "types", "weakref", "tempfile", "shutil", "random", "logging", "contextlib", "textwrap", "sysconfig", "py_compile", "zipfile", "gzip", "bz2", "lzma", "ntpath", "test.support.os_helper", "test.support.import_helper", "locale"].contains(&name) { continue; }
+                let prepared = std::panic::catch_unwind(|| match kernel {
+                    "stack8" => lumen_stack8::compile::prepare_library(&definition, source),
+                    _ => lumen_microcode7::build::prepare_library(&definition, source),
+                }).ok().flatten();
+                if let Some((key, proof, encoded)) = prepared {
+                    let codec = lumen_zlib::call(1, 0, &[], [9, 8, 15, 8, 0]);
+                    assert_eq!(codec.status, 0);
+                    let packed = lumen_zlib::call(3, codec.number, &proof, [4, 0, 0, 0, 0]);
+                    lumen_zlib::call(6, codec.number, &[], [0; 5]);
+                    assert!(packed.status == 0 && packed.ended);
+                    let octets = packed.output.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
+                    let metadata_writer = lumen_zlib::call(1, 0, &[], [9, 8, 15, 8, 0]);
+                    assert_eq!(metadata_writer.status, 0);
+                    let metadata = lumen_zlib::call(3, metadata_writer.number, encoded.as_bytes(), [4, 0, 0, 0, 0]);
+                    lumen_zlib::call(6, metadata_writer.number, &[], [0; 5]);
+                    assert!(metadata.status == 0 && metadata.ended);
+                    let metadata_bytes = metadata.output.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
+                    records.push_str(&format!("({key}, b\"{octets}\", b\"{metadata_bytes}\"),\n"));
+                    source_rows.push_str(&format!("({source:?}, {count}),\n"));
+                    count += 1;
+                }
+            }
+            inventory.push_str(&format!("prepared {count} bundled library surveys for {kernel}\n"));
+            let module = if kernel == "stack8" { "lumen_stack8::compile" } else { "lumen_microcode7::build" };
+            output.push_str(&format!("if kernel == {kernel:?} {{ {module}::register_prepared({definition:?}, &[{records}], &[{source_rows}]); }}\n"));
+        }
+    }
+    output.push_str("}\n");
+    fs::write(PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("prepared_libraries.rs"), output).unwrap();
+    fs::write(PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("prepared_inventory.txt"), inventory).unwrap();
+    watch(Path::new("langs/python.json"));
+    fn watch_sources(directory: &Path) {
+        watch(directory);
+        for entry in fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() { watch_sources(&path); }
+            else if path.extension().is_some_and(|suffix| suffix == "py" || suffix == "rs") { watch(&path); }
+        }
+    }
+    watch_sources(Path::new("langs/lib_python/modules"));
+}
+
 fn main() {
     let table = Path::new("langs/python/versions.json");
     watch(table);
@@ -64,4 +133,5 @@ fn main() {
     }
     generated.push_str("];\n");
     fs::write(PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("python_versions.rs"), generated).unwrap();
+    prepared_libraries(versions);
 }

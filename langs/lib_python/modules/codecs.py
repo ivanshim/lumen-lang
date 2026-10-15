@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/codecs.py; PSF License.
 """ codecs -- Python Codec Registry, API and helpers.
 
 

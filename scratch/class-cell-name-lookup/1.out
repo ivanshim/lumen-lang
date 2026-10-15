@@ -1,0 +1,1 @@
+class-cell lookup preserves enclosing and shadowed bindings

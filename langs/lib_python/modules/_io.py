@@ -30,22 +30,22 @@ def _index(value):
     return operator.index(value)
 
 def _size(value):
-    if type(value) is int and -sys.maxsize - 1 <= value <= sys.maxsize:
+    if type(value) is int and _MINSIZE <= value <= _MAXSIZE:
         return value
     if value is None:
         return -1
     if not hasattr(type(value), '__index__'):
         raise TypeError("argument should be integer or None, not '" + type(value).__name__ + "'")
     result = _index(value)
-    if result > sys.maxsize or result < -sys.maxsize - 1:
+    if result > _MAXSIZE or result < _MINSIZE:
         raise OverflowError("cannot fit '" + type(value).__name__ + "' into an index-sized integer")
     return result
 
 def _ssize(value):
-    if type(value) is int and -sys.maxsize - 1 <= value <= sys.maxsize:
+    if type(value) is int and _MINSIZE <= value <= _MAXSIZE:
         return value
     value = _index(value)
-    if value > sys.maxsize or value < -sys.maxsize - 1:
+    if value > _MAXSIZE or value < _MINSIZE:
         raise OverflowError('Python int too large to convert to C ssize_t')
     return value
 
@@ -85,8 +85,14 @@ class _IOBase:
         except (AttributeError, ValueError):
             return
         if not closed:
-            self._finalizing = True
-            self.close()
+            try:
+                dealloc_warn = getattr(self, '_dealloc_warn', None)
+                if dealloc_warn is not None:
+                    dealloc_warn(self)
+            finally:
+                self.close()
+    def _dealloc_warn(self, source):
+        return None
     def _checkClosed(self):
         if self.closed:
             raise ValueError('I/O operation on closed file.')
@@ -101,6 +107,7 @@ class _IOBase:
             raise UnsupportedOperation('File or stream is not seekable.')
     @property
     def closed(self):
+        """True if the file is closed"""
         return self._closed
     def flush(self):
         self._checkClosed()
@@ -592,10 +599,19 @@ class StringIO(_TextIOBase):
 # state. Import is delayed because io declares the ABCs that _pyio registers.
 _methods = {}
 
+_pyio_module = None
+
+def _text_runtime():
+    global _pyio_module
+    if _pyio_module is None:
+        import _pyio as module
+        _pyio_module = module
+    return _pyio_module
+
 def _method(instance, kind, name):
     member = _methods.get((kind, name))
     if member is None:
-        import _pyio
+        _pyio = _text_runtime()
         member = _methods[(kind, name)] = getattr(getattr(_pyio, kind), name)
     return member.__get__(instance, type(instance))
 
@@ -614,7 +630,7 @@ def _install_text_helpers():
     # itself (the decoded-chars pair, the chunk reader, the cookie
     # packers). Left to __getattr__ each call cost three; standing in the
     # class they are found as any method is.
-    import _pyio
+    _pyio = _text_runtime()
     _TEXT_HELPERS.append(True)
     own = vars(TextIOWrapper)
     for name, value in list(vars(_pyio.TextIOWrapper).items()):
@@ -624,7 +640,7 @@ def _install_text_helpers():
             setattr(TextIOWrapper, name, value)
 
 def _text_function(name):
-    import _pyio
+    _pyio = _text_runtime()
     function = _TEXT[name] = getattr(_pyio.TextIOWrapper, name)
     return function
 
@@ -641,6 +657,11 @@ class TextIOWrapper(_TextIOBase):
     _pending = None
     _pending_count = 0
     _chunk_size = 8192
+    def _dealloc_warn(self, source):
+        try:
+            self.buffer._dealloc_warn(source)
+        except Exception:
+            pass
     @property
     def _CHUNK_SIZE(self):
         return self._chunk_size
@@ -660,7 +681,7 @@ class TextIOWrapper(_TextIOBase):
             self.flush()
         self._pending = []
         self._pending_count = 0
-        import _pyio
+        _pyio = _text_runtime()
         if not _TEXT_HELPERS:
             _install_text_helpers()
         self._initialized = False
@@ -713,7 +734,7 @@ class TextIOWrapper(_TextIOBase):
         encoding = _text_option(encoding, 'encoding')
         errors = _text_option(errors, 'errors')
         if encoding is not None and encoding != 'locale':
-            import codecs
+            codecs = _text_runtime().codecs
             codecs.lookup(encoding.split('\0', 1)[0])
         if line_buffering is not None:
             line_buffering = bool(_whence(line_buffering))
@@ -721,12 +742,12 @@ class TextIOWrapper(_TextIOBase):
             write_through = bool(_whence(write_through))
         return _method(self, 'TextIOWrapper', 'reconfigure')(encoding=encoding, errors=errors, newline=newline, line_buffering=line_buffering, write_through=write_through)
     def _get_encoder(self):
-        import codecs
+        codecs = _text_runtime().codecs
         factory = codecs.getincrementalencoder(self._encoding.split('\0', 1)[0])
         self._encoder = factory(self._errors.split('\0', 1)[0])
         return self._encoder
     def _get_decoder(self):
-        import codecs
+        codecs = _text_runtime().codecs
         create = codecs.getincrementaldecoder(self._encoding.split('\0', 1)[0])
         decoded = create(self._errors.split('\0', 1)[0])
         if self._readuniversal:
@@ -917,7 +938,7 @@ class TextIOWrapper(_TextIOBase):
 
 class IncrementalNewlineDecoder:
     def __init__(self, decoder, translate, errors='strict'):
-        import _pyio
+        _pyio = _text_runtime()
         self._impl = _pyio.IncrementalNewlineDecoder(decoder, translate, errors)
     def decode(self, input, final=False):
         return self._impl.decode(input, final)
@@ -933,6 +954,10 @@ class IncrementalNewlineDecoder:
 
 _PLAIN_MODES = frozenset(['r', 'rb', 'w', 'wb', 'a', 'ab', 'x', 'xb', 'r+', 'rb+', 'r+b', 'w+', 'wb+', 'w+b', 'a+', 'ab+', 'a+b', 'x+', 'xb+', 'x+b'])
 
+_finalizer_warnings = None
+_finalizer_collector = None
+_finalizer_os = None
+
 class FileIO(_RawIOBase):
     # What a stream whose __init__ never finished stands as, the way the C
     # stream stands with no descriptor: closed, and owing nothing.
@@ -947,27 +972,17 @@ class FileIO(_RawIOBase):
         self._closed = True
         if not isinstance(mode, str):
             raise TypeError('mode must be a string')
-        if mode in _PLAIN_MODES:
-            base = mode[0]
-        else:
-            base = [letter for letter in mode if letter in 'rwax']
-            if len(base) != 1 or any(letter not in 'rwax+b' for letter in mode) or mode.count('+') > 1 or mode.count('b') > 1:
-                raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
+        if any(letter not in 'rwax+b' for letter in mode):
+            raise ValueError('invalid mode: ' + mode)
+        base = [letter for letter in mode if letter in 'rwax']
+        if len(base) != 1 or mode.count('+') > 1:
+            raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
         self._readable = base[0] == 'r' or '+' in mode
         self._writable = base[0] != 'r' or '+' in mode
         self._closefd = bool(closefd)
         self._fd = -1
         self._closed = True
-        # The mode as the C stream names it: created and appended streams
-        # keep their letter, and any other readable one is read-first.
-        if base[0] == 'x':
-            self.mode = 'xb+' if self._readable else 'xb'
-        elif base[0] == 'a':
-            self.mode = 'ab+' if self._readable else 'ab'
-        elif self._readable:
-            self.mode = 'rb+' if self._writable else 'rb'
-        else:
-            self.mode = 'wb'
+        self.mode = ('ab+' if base[0] == 'a' else 'xb+' if base[0] == 'x' else 'rb+') if '+' in mode else ('ab' if base[0] == 'a' else 'xb' if base[0] == 'x' else 'rb' if base[0] == 'r' else 'wb')
         if isinstance(file, float):
             raise TypeError('integer argument expected, got float')
         owned = False
@@ -1002,8 +1017,7 @@ class FileIO(_RawIOBase):
                     if fd < 0:
                         raise ValueError('opener returned ' + str(fd))
                 owned = True
-                if opener is not None:
-                    os.set_inheritable(fd, False)
+                os.set_inheritable(fd, False)
             try:
                 file_mode = os.fstat(fd).st_mode
             except OSError as exc:
@@ -1015,6 +1029,10 @@ class FileIO(_RawIOBase):
             self.name = file
             self._fd = fd
             self._closed = False
+            global _finalizer_warnings, _finalizer_collector, _finalizer_os
+            if _finalizer_warnings is None:
+                import warnings, gc
+                _finalizer_warnings, _finalizer_collector, _finalizer_os = warnings, gc, os
             if base[0] == 'a':
                 try:
                     self.seek(0, 2)
@@ -1030,56 +1048,69 @@ class FileIO(_RawIOBase):
                 except OSError:
                     pass
             raise
+    def _dealloc_warn(self, source):
+        if getattr(self, '_fd', -1) >= 0 and getattr(self, '_closefd', False):
+            if sys.is_finalizing() and _finalizer_warnings is not None:
+                warnings, gc = _finalizer_warnings, _finalizer_collector
+            else:
+                import warnings
+                import gc
+            prefixes = (__file__,)
+            collector_source = getattr(gc, '__file__', None)
+            if collector_source is not None:
+                prefixes += (collector_source,)
+            try:
+                warnings.warn('unclosed file %r' % (source,), ResourceWarning,
+                              stacklevel=2, source=source, skip_file_prefixes=prefixes)
+            except Warning as error:
+                sys._report_unraisable(error, error.__traceback__, self, 'file')
+            except Exception:
+                pass
     def __getstate__(self):
         raise TypeError("cannot pickle 'FileIO' instances")
     def __repr__(self):
-        kind = '_io.FileIO' if type(self) is FileIO else type(self).__name__
-        if self._fd < 0:
-            return '<' + kind + ' [closed]>'
+        title = type(self).__module__ + '.' + type(self).__qualname__
+        if getattr(self, '_fd', -1) < 0:
+            return '<%s [closed]>' % title
+        if getattr(self, '_repr_running', False):
+            raise RuntimeError('reentrant call inside ' + title + '.__repr__')
         try:
             name = self.name
         except AttributeError:
-            return '<%s fd=%d mode=%r closefd=%s>' % (kind, self._fd, self.mode, self._closefd)
-        return '<%s name=%r mode=%r closefd=%s>' % (kind, name, self.mode, self._closefd)
+            return '<%s fd=%d mode=%r closefd=%r>' % (
+                title, self._fd, self.mode, self._closefd)
+        self._repr_running = True
+        try:
+            return '<%s name=%r mode=%r closefd=%r>' % (
+                title, name, self.mode, self._closefd)
+        finally:
+            self._repr_running = False
     @property
     def closefd(self):
         return self._closefd
     def fileno(self):
-        if self._closed:
-            raise ValueError('I/O operation on closed file.')
+        self._checkClosed()
         return self._fd
-    def _dealloc_warn(self, source):
-        if self._fd >= 0 and self._closefd:
-            import warnings
-            warnings.warn('unclosed file %r' % (source,), ResourceWarning, stacklevel=2, source=source)
     def close(self):
-        if not self._closed:
-            import os
+        if not self.closed:
+            if _finalizer_os is not None:
+                os = _finalizer_os
+            else:
+                import os
             try:
-                try:
-                    if self._finalizing:
-                        self._dealloc_warn(self)
-                finally:
-                    # Finalization warnings cannot prevent flushing or closure.
-                    self.flush()
+                if self._closefd:
+                    os.close(self._fd)
             finally:
-                try:
-                    if self._closefd:
-                        os.close(self._fd)
-                finally:
-                    self._fd = -1
-                    self._closed = True
+                self._fd = -1
+                self._closed = True
     def readable(self):
-        if self._closed:
-            raise ValueError('I/O operation on closed file.')
+        self._checkClosed()
         return self._readable
     def writable(self):
-        if self._closed:
-            raise ValueError('I/O operation on closed file.')
+        self._checkClosed()
         return self._writable
     def seekable(self):
-        if self._closed:
-            raise ValueError('I/O operation on closed file.')
+        self._checkClosed()
         try:
             self.seek(0, 1)
         except OSError:
@@ -1089,10 +1120,8 @@ class FileIO(_RawIOBase):
         import os
         return os.isatty(self.fileno())
     def read(self, size=-1):
-        if self._closed:
-            raise ValueError('I/O operation on closed file.')
-        if not self._readable:
-            raise UnsupportedOperation('File or stream is not readable.')
+        self._checkClosed()
+        self._checkReadable()
         size = _size(size)
         if size < 0:
             return self.readall()
@@ -1102,10 +1131,8 @@ class FileIO(_RawIOBase):
         except BlockingIOError:
             return None
     def readall(self):
-        if self._closed:
-            raise ValueError('I/O operation on closed file.')
-        if not self._readable:
-            raise UnsupportedOperation('File or stream is not readable.')
+        self._checkClosed()
+        self._checkReadable()
         chunks = []
         while True:
             chunk = self.read(DEFAULT_BUFFER_SIZE)
@@ -1115,12 +1142,6 @@ class FileIO(_RawIOBase):
                 return b''.join(chunks)
             chunks.append(chunk)
     def readinto(self, buffer):
-        if type(buffer) is bytearray:
-            data = self.read(len(buffer))
-            if data is None:
-                return None
-            buffer[:len(data)] = data
-            return len(data)
         with _get_buffer(buffer) as view:
             if view.readonly:
                 raise TypeError('readinto() argument must be read-write bytes-like object, not ' + type(buffer).__name__)
@@ -1130,35 +1151,45 @@ class FileIO(_RawIOBase):
             view.cast('B')[:len(data)] = data
             return len(data)
     def write(self, buffer):
-        if self._closed:
-            raise ValueError('I/O operation on closed file.')
-        if not self._writable:
-            raise UnsupportedOperation('File or stream is not writable.')
-        import os
+        self._checkClosed()
+        self._checkWritable()
+        if _finalizer_os is not None:
+            os = _finalizer_os
+        else:
+            import os
         try:
             return os.write(self._fd, _buffer(buffer))
         except BlockingIOError:
             return None
     def seek(self, offset, whence=0):
-        if self._closed:
-            raise ValueError('I/O operation on closed file.')
-        import os
+        self._checkClosed()
+        if _finalizer_os is not None:
+            os = _finalizer_os
+        else:
+            import os
         return os.lseek(self._fd, _ssize(offset), _whence(whence))
     def truncate(self, size=None):
-        if self._closed:
-            raise ValueError('I/O operation on closed file.')
-        if not self._writable:
-            raise UnsupportedOperation('File or stream is not writable.')
+        self._checkClosed()
+        self._checkWritable()
         if size is None:
             size = self.tell()
         size = _ssize(size)
-        import os
+        if _finalizer_os is not None:
+            os = _finalizer_os
+        else:
+            import os
         os.ftruncate(self._fd, size)
         return size
 
+_FILEIO_READINTO = FileIO.readinto
+
 class _CheckedRaw:
-    # Buffered C streams use raw.readinto(), even when raw also has read().
-    # Keep validation here so all refill paths share the same contract.
+    # Buffered streams refill through readinto() so that every raw object's
+    # length contract is checked in one place.  A file descriptor whose
+    # readinto is still the FileIO one is the exception: read() there is a
+    # single bounded system call, so the file road below reaches it
+    # directly, while a subclass, class or instance that replaced readinto
+    # keeps the validation road untouched.
     def __init__(self, raw):
         self.raw = raw
         self._owned = True
@@ -1195,7 +1226,7 @@ class _CheckedRaw:
             return None
         try:
             count = _index(count)
-            if count > sys.maxsize or count < -sys.maxsize - 1:
+            if count > _MAXSIZE or count < _MINSIZE:
                 raise ValueError('cannot fit int into an index-sized integer')
         except Exception as error:
             raise OSError('raw readinto() failed') from error
@@ -1212,6 +1243,17 @@ class _CheckedRaw:
             if chunk is not None and not isinstance(chunk, bytes):
                 raise TypeError('read() should return bytes')
             return chunk
+        raw = self.raw
+        if (type(raw) is FileIO and type(raw).readinto is _FILEIO_READINTO
+                and 'readinto' not in getattr(raw, '__dict__', ())):
+            data = raw.read(size)
+            if data is None:
+                return None
+            if not isinstance(data, bytes):
+                raise TypeError('read() should return bytes')
+            if len(data) > size:
+                raise OSError('read() should return at most %d bytes' % size)
+            return data
         data = bytearray(size)
         count = self.readinto(data)
         return None if count is None else bytes(data[:count])
@@ -1263,7 +1305,7 @@ def _buffered_impl(kind):
     # at every step.
     impl = _IMPLS.get(kind)
     if impl is None:
-        import _pyio
+        _pyio = _text_runtime()
         base = getattr(_pyio, kind)
         class _Impl(base):
             raw = None
@@ -1285,6 +1327,11 @@ def _buffered_impl(kind):
     return impl
 
 class BufferedReader(_BufferedIOBase):
+    def _dealloc_warn(self, source):
+        try:
+            self.raw._dealloc_warn(source)
+        except Exception:
+            pass
     # The implementation while it is usable, read without a property call;
     # None whenever _impl has to say why not.
     _live = None
@@ -1322,6 +1369,12 @@ class BufferedReader(_BufferedIOBase):
         if name in ('_implementation', '_raw', '_repr_running', '_detached'):
             raise AttributeError(name)
         return getattr(self._impl, name)
+    def _dealloc_warn(self, source):
+        raw = self.raw
+        if raw is not None:
+            notify = getattr(raw, '_dealloc_warn', None)
+            if notify is not None:
+                notify(source)
     def __repr__(self):
         title = type(self).__module__ + '.' + type(self).__qualname__
         if getattr(self, '_repr_running', False):
@@ -1456,7 +1509,7 @@ class BufferedRandom(BufferedReader):
 
 class BufferedRWPair(BufferedReader):
     def __init__(self, reader, writer, buffer_size=DEFAULT_BUFFER_SIZE):
-        import _pyio
+        _pyio = _text_runtime()
         self._implementation = _pyio.BufferedRWPair(reader, writer, buffer_size)
         self._live = self._implementation
     # Forward resource warnings to each actual raw stream of the pair.
@@ -1474,24 +1527,20 @@ class BufferedRWPair(BufferedReader):
 class _Open:
     __name__ = 'open'
     def __call__(self, file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
+        if not isinstance(mode, str):
+            raise TypeError('open() argument 2 must be str, not ' + type(mode).__name__)
+        letters = set(mode)
+        if not letters <= set('axrwb+t') or len(mode) != len(letters):
+            raise ValueError('invalid mode: ' + repr(mode))
+        if 't' in letters and 'b' in letters:
+            raise ValueError("can't have text and binary mode at once")
+        if len(letters & set('axrw')) != 1:
+            raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
         if encoding is None and sys.flags.warn_default_encoding and isinstance(mode, str) and 'b' not in mode:
             # The warning is aimed at the line that called open().
             encoding = text_encoding(None)
             if encoding == 'locale' and type(file) is str and opener is None and 'r' not in mode:
                 encoding = None
-        if isinstance(mode, str):
-            # The mode is checked before anything is opened, as the
-            # reference checks it: only its own letters, each once, one of
-            # create/read/write/append, and not both text and binary.
-            if len(mode) > len(set(mode)) or set(mode) - set('axrwb+t'):
-                raise ValueError('invalid mode: %r' % mode)
-            if 't' in mode and 'b' in mode:
-                raise ValueError("can't have text and binary mode at once")
-            kinds = len([letter for letter in mode if letter in 'axrw'])
-            if kinds > 1:
-                raise ValueError('must have exactly one of create/read/write/append mode')
-            if kinds == 0:
-                raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
         if type(file) is not str or opener is not None or encoding is not None or errors is not None or newline is not None or 'b' in mode or 'r' in mode:
             if not isinstance(file, int) and not hasattr(type(file), '__index__') and not isinstance(file, float):
                 import os

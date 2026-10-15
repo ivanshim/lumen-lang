@@ -2,7 +2,7 @@ import os, sys, shutil, subprocess, pathlib, tempfile, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from python_versions import select, option
-from python_tests import python_tests, python_test_name
+from python_tests import python_tests, python_test_name, python_test_module
 from results_metadata import bind_for_run
 REQUESTED = option(sys.argv)
 # usage: count_run.py <rawdir> [cap] [binary]   one process per core (SUITE_JOBS to change), each
@@ -21,9 +21,17 @@ def run(p, k):
     dest = RAW/f"{python_test_name(p)}.{k}.txt"
     here = pathlib.Path(tempfile.mkdtemp(prefix="count-run-"))
     t0 = time.time()
+    def go(argv):
+        return subprocess.run([str(BIN),"--kernel",k,"--python",VERSION["release"]]+argv, capture_output=True,
+                              text=True, timeout=CAP, stdin=subprocess.DEVNULL, cwd=here)
     try:
-        r = subprocess.run([str(BIN),"--kernel",k,"--python",VERSION["release"],str(p)], capture_output=True,
-                           text=True, timeout=CAP, stdin=subprocess.DEVNULL, cwd=here)
+        r = go([str(p)])
+        module = python_test_module(p)
+        # An executable test package whose entry imports its siblings relatively
+        # cannot stand as a plain file; it is then run by its own name, the way a
+        # `-m` run of it does, which is what its reference entry expects.
+        if module and r.returncode and "relative imports require a package context" in r.stderr:
+            r = go(["-m", module])
         dest.write_text("###EXIT %d\n###SECONDS %.1f\n" % (r.returncode, time.time()-t0)
                         + r.stdout + "\n###STDERR\n" + r.stderr)
     except subprocess.TimeoutExpired:

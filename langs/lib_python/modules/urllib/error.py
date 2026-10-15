@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/urllib/error.py; PSF License.
 """Exception classes raised by urllib.
 
 The base exception class is URLError, which inherits from OSError.  It

@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/mbcs.py; PSF License.
 """ Python 'mbcs' Codec for Windows
 
 

@@ -1,4 +1,3 @@
-# Source: CPython v3.14.8 (8e6e75d9102e), Lib/encodings/rot_13.py; PSF License.
 #!/usr/bin/env python
 """ Python Character Mapping Codec for ROT13.
 

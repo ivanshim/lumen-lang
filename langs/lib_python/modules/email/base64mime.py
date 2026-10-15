@@ -1,4 +1,3 @@
-# From CPython v3.14.8 (8e6e75d9102e), Lib/email/base64mime.py; PSF License.
 # Copyright (C) 2002 Python Software Foundation
 # Author: Ben Gertzfield
 # Contact: email-sig@python.org

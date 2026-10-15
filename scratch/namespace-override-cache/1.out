@@ -1,0 +1,1 @@
+namespace and builtin replacements remain live across cache reads

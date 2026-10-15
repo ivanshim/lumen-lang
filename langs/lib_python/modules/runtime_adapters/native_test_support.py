@@ -92,6 +92,8 @@ def requires_resource(resource):
 # A note for a runner that would put tests in threads at once. Nothing
 # here does, so the note is kept and the test runs.
 def thread_unsafe(reason=''):
+    if callable(reason):
+        return reason
     return _identity
 
 def bigmemtest(size, memuse, dry_run=True):
@@ -1647,34 +1649,9 @@ def open_urlresource(url, *args, **kwargs):
 # Return the complete C0 control-character set used by protocol parsers.
 def control_characters_c0():
     return [chr(value) for value in range(32)] + ["\x7f"]
-# From CPython v3.14.8; PSF License.
-def requires_bz2(reason='requires bz2'):
-    try:
-        import bz2
-    except ImportError:
-        bz2 = None
-    return unittest.skipUnless(bz2, reason)
 
 
-# From CPython v3.14.8; PSF License.
-def requires_lzma(reason='requires lzma'):
-    try:
-        import lzma
-    except ImportError:
-        lzma = None
-    return unittest.skipUnless(lzma, reason)
 
-
-# From CPython v3.14.8; PSF License.
-def requires_zstd(reason='requires zstd'):
-    try:
-        from compression import zstd
-    except ImportError:
-        zstd = None
-    return unittest.skipUnless(zstd, reason)
-
-
-# From CPython v3.14.8; PSF License.
 # From CPython v3.14.8 (8e6e75d9102e), Lib/test/support/__init__.py; PSF License.
 def patch(test_instance, object_to_patch, attr_name, new_value):
     """Override 'object_to_patch'.'attr_name' with 'new_value'.
@@ -1731,8 +1708,55 @@ def skip_if_buggy_ucrt_strfptime(test):
             _buggy_ucrt = False
     return unittest.skip("buggy MSVC UCRT strptime/strftime")(test) if _buggy_ucrt else test
 
+
+
+# Render dictionary entries in the order used by CPython test.support.
+def sortdict(dict):
+    items = sorted(dict.items())
+    reprpairs = ["%r: %r" % pair for pair in items]
+    return "{%s}" % ", ".join(reprpairs)
+
 # CPython v3.14.8 Lib/test/support/__init__.py; PSF License.
 import stat
+# Select compression tests by importing the requested runtime module.
+def requires_gzip(reason='requires gzip'):
+    try:
+        import gzip
+    except ImportError:
+        gzip = None
+    return unittest.skipUnless(gzip, reason)
+
+
+# Select compression tests by importing the requested runtime module.
+def requires_bz2(reason='requires bz2'):
+    try:
+        import bz2
+    except ImportError:
+        bz2 = None
+    return unittest.skipUnless(bz2, reason)
+
+
+# Select compression tests by importing the requested runtime module.
+def requires_lzma(reason='requires lzma'):
+    try:
+        import lzma
+    except ImportError:
+        lzma = None
+    return unittest.skipUnless(lzma, reason)
+
+
+# Select compression tests by importing the requested runtime module.
+def requires_zstd(reason='requires zstd'):
+    try:
+        from compression import zstd
+    except ImportError:
+        zstd = None
+    return unittest.skipUnless(zstd, reason)
+
+
+import stat
+
+# Retry filesystem operations after restoring owner permissions.
 def _force_run(path, func, *args):
     try:
         return func(*args)
@@ -1748,13 +1772,101 @@ def _force_run(path, func, *args):
         os.chmod(path, stat.S_IRWXU)
         return func(*args)
 
+# Provide the general regression-support exception base.
+class Error(Exception):
+    pass
 
-def get_attribute(obj, name):
-    """Get an attribute, raising SkipTest if AttributeError is raised."""
+def has_no_debug_ranges():
     try:
-        attribute = getattr(obj, name)
-    except AttributeError:
-        raise unittest.SkipTest("object %r has no attribute %r" % (obj, name))
-    else:
-        return attribute
+        import _testcapi
+    except ImportError:
+        raise unittest.SkipTest("_testinternalcapi required")
+    return not _testcapi.config_get('code_debug_ranges')
 
+def requires_debug_ranges(reason='requires co_positions / debug_ranges'):
+    try:
+        skip = has_no_debug_ranges()
+    except unittest.SkipTest as e:
+        skip = True
+        reason = e.args[0] if e.args else reason
+    return unittest.skipIf(skip, reason)
+# A symlink to this run's own program, so a test can start a second
+# interpreter through it and see that both answers agree. The portable
+# shape is the reference's; the Windows branch shares a runtime beside
+# the copied executable and never runs on this host.
+class PythonSymlink:
+    """Creates a symlink for the current Python executable"""
+    def __init__(self, link=None):
+        from .os_helper import TESTFN
+
+        self.link = link or os.path.abspath(TESTFN)
+        self._linked = []
+        self.real = os.path.realpath(sys.executable)
+        self._also_link = []
+
+        self._env = None
+
+        self._platform_specific()
+
+    if sys.platform == "win32":
+        def _platform_specific(self):
+            import glob
+            import _winapi
+
+            if os.path.lexists(self.real) and not os.path.exists(self.real):
+                self.real = _winapi.GetModuleFileName(0)
+
+            dll = _winapi.GetModuleFileName(sys.dllhandle)
+            src_dir = os.path.dirname(dll)
+            dest_dir = os.path.dirname(self.link)
+            self._also_link.append((
+                dll,
+                os.path.join(dest_dir, os.path.basename(dll))
+            ))
+            for runtime in glob.glob(os.path.join(glob.escape(src_dir), "vcruntime*.dll")):
+                self._also_link.append((
+                    runtime,
+                    os.path.join(dest_dir, os.path.basename(runtime))
+                ))
+
+            self._env = {k.upper(): os.getenv(k) for k in os.environ}
+            self._env["PYTHONHOME"] = os.path.dirname(self.real)
+    else:
+        def _platform_specific(self):
+            pass
+
+    def __enter__(self):
+        os.symlink(self.real, self.link)
+        self._linked.append(self.link)
+        for real, link in self._also_link:
+            os.symlink(real, link)
+            self._linked.append(link)
+        return self
+
+    def __exit__(self, exc_type, exc_value, exc_tb):
+        for link in self._linked:
+            try:
+                os.remove(link)
+            except IOError as ex:
+                if verbose:
+                    print("failed to clean up {}: {}".format(link, ex))
+
+    def _call(self, python, args, env, returncode):
+        import subprocess
+        cmd = [python, *args]
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, env=env)
+        r = p.communicate()
+        if p.returncode != returncode:
+            if verbose:
+                print(repr(r[0]))
+                print(repr(r[1]), file=sys.stderr)
+            raise RuntimeError(
+                'unexpected return code: {0} (0x{0:08X})'.format(p.returncode))
+        return r
+
+    def call_real(self, *args, returncode=0):
+        return self._call(self.real, args, None, returncode)
+
+    def call_link(self, *args, returncode=0):
+        return self._call(self.link, args, self._env, returncode)
