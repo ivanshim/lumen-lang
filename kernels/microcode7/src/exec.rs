@@ -30505,8 +30505,19 @@ impl<'a> Machine<'a> {
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
             (None, None) if mode != 2 && within.is_some() && self.frames_named.last().is_some_and(|code| code.globe.is_some()) => {
-                let frame = within.as_ref().expect("the active frame").1.clone();
-                let local_names = self.names_here(&frame, Prim::HereBook)?;
+                let (names, frame) = within.as_ref().expect("the active frame");
+                let local_names = if self.frames_named.last().is_some_and(|code| code.class_namespace.is_some()) {
+                    self.names_here(frame, Prim::HereBook)?
+                } else {
+                    // The saved frame already flattens captured bindings beside
+                    // its locals; its parent is no longer the caller's closure.
+                    let values = frame.cells.borrow();
+                    let entries = names.iter().zip(values.iter()).filter_map(|(name, value)| {
+                        (Self::visible_name(name) && !matches!(value.settled(), Value::Unset))
+                            .then(|| (Value::text(name), value.clone()))
+                    }).collect::<Vec<_>>();
+                    Value::Dict(Rc::new(entries.into()))
+                };
                 let locals = match local_names {
                     Value::Shared(cell) | Value::Mutable(cell, _) => cell,
                     names => Rc::new(RefCell::new(names)),
