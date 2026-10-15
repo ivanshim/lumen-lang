@@ -4975,13 +4975,15 @@ impl<'a> Machine<'a> {
         // A body on the stack may not be entered again: it is marked for
         // as long as the step lasts, so a reentrant call is refused, and
         // the reference's reading of the running member is answered too.
-        let complaint = match self.coroutine_bodies.get(&(Rc::as_ptr(generator) as usize)) {
-            Some(_) => self.table.strings("ext.stmt.async.coroutine.errors")[2].clone(),
-            None => self.generator_words("busy"),
+        // The complaint is worded only when the body turns out to be
+        // running already; an ordinary step never needs it.
+        let complaint = |machine: &Self| match machine.coroutine_bodies.get(&(Rc::as_ptr(generator) as usize)) {
+            Some(_) => machine.table.strings("ext.stmt.async.coroutine.errors")[2].clone(),
+            None => machine.generator_words("busy"),
         };
         {
-            let mut state = generator.try_borrow_mut().map_err(|_| complaint.clone())?;
-            if state.running { return Err(complaint.into()); }
+            let mut state = generator.try_borrow_mut().map_err(|_| complaint(self))?;
+            if state.running { return Err(complaint(self).into()); }
             state.running = true;
         }
         let outcome = self.step_into_mode(generator, sent, hurled, given, true);

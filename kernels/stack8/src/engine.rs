@@ -5781,12 +5781,12 @@ impl<'a> Engine<'a> {
         // A body on the stack may not be entered again: it is marked for
         // as long as the step lasts, so a reentrant call is refused, and
         // the reference's reading of the running member is answered too.
-        let busy = if self.coroutines.contains_key(&(Rc::as_ptr(held) as usize)) {
-            self.lang.coroutine_errors[2].clone()
-        } else { self.lang.yield_busy[0].clone() };
+        let busy = |engine: &Self| if engine.coroutines.contains_key(&(Rc::as_ptr(held) as usize)) {
+            engine.lang.coroutine_errors[2].clone()
+        } else { engine.lang.yield_busy[0].clone() };
         {
-            let mut state = held.try_borrow_mut().map_err(|_| busy.clone())?;
-            if state.running { return Err(busy.into()); }
+            let mut state = held.try_borrow_mut().map_err(|_| busy(self))?;
+            if state.running { return Err(busy(self).into()); }
             state.running = true;
         }
         let outcome = self.step_generator_mode(held, sent, hurled, given, true);
