@@ -31,7 +31,9 @@ def fspath(path):
 
 
 def _path(path):
-    path = fspath(path)
+    # An exact str or bytes is its own path; anything else is asked.
+    if type(path) is not str and type(path) is not bytes:
+        path = _host('fspath', path)
     if isinstance(path, str):
         path.encode('utf-8', 'surrogateescape')
         if '\0' in path:
@@ -242,14 +244,14 @@ def _stat(data):
 
 
 def stat(path, *, dir_fd=None, follow_symlinks=True):
-    if _is_fd_path(path):
+    if type(path) is not str and _is_fd_path(path):
         if dir_fd is not None:
             raise ValueError("stat: can't specify dir_fd without matching path")
         if not follow_symlinks:
             raise ValueError('stat: cannot use fd and follow_symlinks together')
         return fstat(_descriptor(path))
     original = _path(path)
-    error, data = _host('stat', original, _dir(dir_fd), int(bool(follow_symlinks)))
+    error, data = _host('stat', original, -100 if dir_fd is None else _descriptor(dir_fd), 1 if follow_symlinks else 0)
     if error:
         _refuse(error, original)
     return _stat(data)
@@ -257,14 +259,14 @@ def stat(path, *, dir_fd=None, follow_symlinks=True):
 
 def lstat(path, *, dir_fd=None):
     original = _path(path)
-    error, data = _host('lstat', original, _dir(dir_fd), 0)
+    error, data = _host('lstat', original, -100 if dir_fd is None else _descriptor(dir_fd), 0)
     if error:
         _refuse(error, original)
     return _stat(data)
 
 
 def fstat(fd):
-    error, data = _host('fstat', _cint(fd))
+    error, data = _host('fstat', fd if type(fd) is int and -2147483648 <= fd <= 2147483647 else _cint(fd))
     if error:
         _refuse(error)
     return _stat(data)
@@ -338,7 +340,7 @@ def open(path, flags, mode=0o777, *, dir_fd=None):
 
 
 def close(fd):
-    error, _ = _host('close', _cint(fd))
+    error, _ = _host('close', fd if type(fd) is int and -2147483648 <= fd <= 2147483647 else _cint(fd))
     if error:
         _refuse(error)
 
@@ -348,7 +350,10 @@ def dup(fd):
 
 
 def read(fd, length, /):
-    error, data = _host('read', _cint(fd), _fd(length))
+    if type(fd) is int and type(length) is int and -2147483648 <= fd <= 2147483647:
+        error, data = _host('read', fd, length)
+    else:
+        error, data = _host('read', _cint(fd), _fd(length))
     if error:
         _refuse(error)
     return data
@@ -384,7 +389,10 @@ def write(fd, data, /):
 
 
 def lseek(fd, position, whence, /):
-    error, offset = _host('lseek', _cint(fd), _fd(position), _cint(whence))
+    if type(fd) is int and type(position) is int and type(whence) is int and -2147483648 <= fd <= 2147483647 and -2147483648 <= whence <= 2147483647:
+        error, offset = _host('lseek', fd, position, whence)
+    else:
+        error, offset = _host('lseek', _cint(fd), _fd(position), _cint(whence))
     if error:
         _refuse(error)
     return offset
@@ -562,10 +570,18 @@ def waitstatus_to_exitcode(status):
 class DirEntry:
     __slots__ = ('_name', '_path', '_inode', '_type', '_dir_fd', '_stat', '_lstat')
     def __init__(self, directory, name, inode, kind):
-        import posixpath
         self._name = name
-        self._dir_fd = directory if isinstance(directory, int) else None
-        self._path = name if self._dir_fd is not None else posixpath.join(directory, name)
+        if isinstance(directory, int):
+            self._dir_fd = directory
+            self._path = name
+        else:
+            # What posixpath.join gives, for a name that holds no separator.
+            self._dir_fd = None
+            sep = '/' if isinstance(directory, str) else b'/'
+            if not directory or directory.endswith(sep):
+                self._path = directory + name
+            else:
+                self._path = directory + (sep + name)
         self._inode = inode
         self._type = kind
         self._stat = None
@@ -625,24 +641,26 @@ class _ScandirIterator:
     def __init__(self, path):
         self._closed = True
         self._path = path
-        self._handle = _call('scandir', path, filename=None if _is_fd_path(path) else path)
+        error, handle = _host('scandir', path)
+        if error:
+            _refuse(error, None if _is_fd_path(path) else path)
+        self._handle = handle
         self._closed = False
     def __iter__(self):
         return self
     def __next__(self):
         if self._closed:
             raise StopIteration
-        try:
-            record = _call('scandir_next', self._handle)
-        except OSError:
+        error, record = _host('scandir_next', self._handle)
+        if error:
             self.close()
-            raise
+            _refuse(error)
         if record is None:
             self.close()
             raise StopIteration
         name, inode, kind = record
         if not isinstance(self._path, bytes):
-            name = _decode(name)
+            name = name.decode('utf-8', 'surrogateescape')
         return DirEntry(self._path, name, inode, kind)
     def close(self):
         if not self._closed:
@@ -651,13 +669,17 @@ class _ScandirIterator:
     def __enter__(self):
         return self
     def __exit__(self, *args):
-        self.close()
+        if not self._closed:
+            self.close()
     def __del__(self):
-        self.close()
+        if not self._closed:
+            self.close()
 
 def scandir(path=None):
     if path is None:
         path = '.'
+    if type(path) is str or type(path) is bytes:
+        return _ScandirIterator(_path(path))
     return _ScandirIterator(_descriptor(path) if _is_fd_path(path) else _path(path))
 
 

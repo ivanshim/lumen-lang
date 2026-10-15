@@ -59,6 +59,7 @@ class Struct:
         self._fields = ()
         self._codes = ()
         self._count = 0
+        self._complex = False
         return self
 
     def _ready(self):
@@ -73,6 +74,7 @@ class Struct:
         format = _format(format)
         size, fields = _call(0, format)
         self._format = format
+        self._complex = 'F' in format or 'D' in format
         self._size = size
         self._fields = fields
         self._count = sum(0 if code == 'x' else 1 if code in 'sp' else repeat for code, repeat in fields)
@@ -128,8 +130,9 @@ class Struct:
         return _call(1, self._format, self._arguments(values))
 
     def unpack(self, buffer):
-        self._ready()
         format = self._format
+        if format is None:
+            raise RuntimeError('Struct object is uninitialized')
         if isinstance(buffer, (bytes, bytearray)):
             raw = buffer
         else:
@@ -138,8 +141,11 @@ class Struct:
                 if not view.c_contiguous:
                     raise BufferError('memoryview: underlying buffer is not C-contiguous')
                 raw = view.tobytes()
-        result = _call(2, format, raw)
-        if 'F' not in format and 'D' not in format:
+        try:
+            result = _native(2, format, raw)
+        except ValueError as exc:
+            raise error(exc.args[0])
+        if not self._complex:
             return result
         converted = []
         i = 0
@@ -159,16 +165,17 @@ class Struct:
                 raise IndexError("cannot fit 'int' into an index-sized integer")
             raise OverflowError('Python int too large to convert to C ssize_t')
         original = offset
+        size = self._size
         if offset < 0:
-            if offset + self.size > 0:
-                raise error(('no space to pack ' if packing else 'not enough data to unpack ') + str(self.size) + ' bytes at offset ' + str(offset))
+            if offset + size > 0:
+                raise error(('no space to pack ' if packing else 'not enough data to unpack ') + str(size) + ' bytes at offset ' + str(offset))
             offset += length
             if offset < 0:
                 raise error('offset ' + str(original) + ' out of range for ' + str(length) + '-byte buffer')
-        if offset > length - self.size:
+        if offset > length - size:
             action = 'packing' if packing else 'unpacking'
             function = 'pack_into' if packing else 'unpack_from'
-            raise error(function + ' requires a buffer of at least ' + str(offset + self.size) + ' bytes for ' + action + ' ' + str(self.size) + ' bytes at offset ' + str(original) + ' (actual buffer size is ' + str(length) + ')')
+            raise error(function + ' requires a buffer of at least ' + str(offset + size) + ' bytes for ' + action + ' ' + str(size) + ' bytes at offset ' + str(original) + ' (actual buffer size is ' + str(length) + ')')
         return offset
 
     def pack_into(self, buffer, offset, *values):
@@ -185,11 +192,16 @@ class Struct:
         byteview[at:at + self.size] = raw
 
     def unpack_from(self, buffer, offset=0):
-        self._ready()
+        if self._format is None:
+            raise RuntimeError('Struct object is uninitialized')
         # Exact bytes cannot resize or override slicing during offset conversion.
         if type(buffer) is bytes:
+            size = self._size
+            # An int offset inside the buffer is its own converted offset.
+            if type(offset) is int and 0 <= offset <= len(buffer) - size:
+                return self.unpack(buffer[offset:offset + size])
             at = self._offset(len(buffer), offset, False)
-            return self.unpack(buffer[at:at + self.size])
+            return self.unpack(buffer[at:at + size])
         view = _read_view(buffer)
         at = self._offset(view.nbytes, offset, False)
         return self.unpack(view.cast('B')[at:at + self.size])
@@ -226,12 +238,20 @@ def pack(format, *values):
     return _get(format).pack(*values)
 
 def unpack(format, buffer):
+    if type(format) is str:
+        cached = _cache.get(format)
+        if cached is not None:
+            return cached.unpack(buffer)
     return _get(format).unpack(buffer)
 
 def pack_into(format, buffer, offset, *values):
     return _get(format).pack_into(buffer, offset, *values)
 
 def unpack_from(format, buffer, offset=0):
+    if type(format) is str:
+        cached = _cache.get(format)
+        if cached is not None:
+            return cached.unpack_from(buffer, offset)
     return _get(format).unpack_from(buffer, offset)
 
 def iter_unpack(format, buffer):
