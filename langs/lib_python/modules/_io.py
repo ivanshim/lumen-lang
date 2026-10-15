@@ -828,10 +828,9 @@ class TextIOWrapper(_TextIOBase):
         # piece and cut there, which is what asking for each line in turn
         # amounts to, at a small part of the cost.
         if (hint <= 0 and self._initialized and (self._readtranslate or self._readnl == '\n')
-                and type(self).readline is TextIOWrapper.readline
-                and type(self).__next__ is TextIOWrapper.__next__
-                and type(self).read is TextIOWrapper.read
-                and type(self).__iter__ is TextIOWrapper.__iter__
+                # Subclasses may route method lookup dynamically as well as
+                # replacing iterator methods; preserve their normal dispatch.
+                and type(self) is TextIOWrapper
                 # Iteration that has switched telling off ends by switching it
                 # on again; a stream that was replaced piecemeal is iterated.
                 and self._telling is not False
