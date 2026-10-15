@@ -30688,8 +30688,8 @@ fn civil_picture(args: &[Value]) -> Result<Value, String> {
     extern "C" {
         fn strftime(out: *mut std::ffi::c_char, max: usize, fmt: *const std::ffi::c_char, when: *const CivilStamp) -> usize;
     }
-    let scaled = format.len().saturating_mul(256);
-    let allowance = if scaled > 4096 { scaled } else { 4096 };
+    // Same ceiling for any width the format asks for: padded fields can be megabytes.
+    let allowance = 1usize << 22;
     let mut room = 256usize;
     let mut buffer = vec![0u8; room];
     let written = loop {

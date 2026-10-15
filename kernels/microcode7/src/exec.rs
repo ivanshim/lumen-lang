@@ -33410,9 +33410,8 @@ fn paint_host_picture(given: &[Value]) -> Result<Value, String> {
     extern "C" {
         fn strftime(out: *mut std::ffi::c_char, max: usize, fmt: *const std::ffi::c_char, when: *const Painted) -> usize;
     }
-    let mut room = 192usize;
-    let scaled = format.len().saturating_mul(256);
-    let allowance = if scaled > 4096 { scaled } else { 4096 };
+    let mut room = 256usize;
+    let allowance = 1usize << 22; // widths in the format may ask for megabytes
     loop {
         let mut buffer = vec![0u8; room];
         let count = unsafe { strftime(buffer.as_mut_ptr() as *mut std::ffi::c_char, buffer.len(), pattern.as_ptr(), &painted) };

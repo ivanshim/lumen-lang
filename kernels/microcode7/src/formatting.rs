@@ -355,7 +355,7 @@ impl Layout<'_> {
             }
             if shape.zero && shape.justify.is_none() { shape.justify = Some('='); }
             digits = shape.grouped(digits, front.len(), if radix == 10 { 3 } else { 4 });
-            if locale_number { digits = spell_with_locale(&digits); }
+            if locale_number { digits = spell_with_locale(&digits, shape.zero_fit(front.len())); }
             return Ok(shape.padded(front, digits, '>'));
         }
         if shape.letter.map_or(false, |c| !"eEfFgG%".contains(c)) { return Err(unknown()); }
@@ -367,7 +367,7 @@ impl Layout<'_> {
         let nought = shape.no_minus_zero && body.trim_end_matches('%').parse::<f64>().ok() == Some(0.0);
         let prefix = shape.front(number.is_sign_negative() && !number.is_nan() && !nought);
         let mut body = if number.is_finite() { shape.grouped(body, prefix.len(), 3) } else { body };
-        if locale_number { body = spell_with_locale(&body); }
+        if locale_number { body = spell_with_locale(&body, shape.zero_fit(prefix.len())); }
         Ok(shape.padded(prefix, body, '>'))
     }
 
@@ -779,6 +779,10 @@ impl Presentation {
             extent: 0, digits: None, separator: None, fraction_separator: None, letter: None }
     }
 
+    fn zero_fit(&self, front: usize) -> Option<(usize, usize)> {
+        if self.justify == Some('=') && self.padding == '0' { Some((front, self.extent)) } else { None }
+    }
+
     fn front(&self, below: bool) -> String {
         match (below, self.polarity) {
             (true, _) => String::from("-"),
@@ -892,7 +896,7 @@ fn long_real_digits(value: f64, wanted: usize, exponent: bool) -> String {
 /// The two real parts of a worth that keeps them, and nothing at all
 /// for a worth that does not.
 
-fn spell_with_locale(body: &str) -> String {
+fn spell_with_locale(body: &str, fit: Option<(usize, usize)>) -> String {
     let (mark, gap, pattern) = crate::exec::numeric_marks();
     fn bunch(digits: &str, gap: &str, pattern: &[i64]) -> String {
         if pattern.is_empty() || digits.is_empty() { return digits.to_string(); }
@@ -935,14 +939,27 @@ fn spell_with_locale(body: &str) -> String {
         chunks.join(gap)
     }
     let (mantissa, power) = detach_exponent(body);
-    let mut written = if let Some((whole, tail)) = mantissa.split_once('.') {
-        let mut grouped = bunch(whole, &gap, &pattern);
-        grouped.push_str(&mark);
-        grouped.push_str(tail);
-        grouped
-    } else {
-        bunch(mantissa, &gap, &pattern)
+    let mut written;
+    let (whole, fraction) = match mantissa.split_once('.') {
+        Some((a, b)) => (a, Some(b)),
+        None => (mantissa, None),
     };
+    written = bunch(whole, &gap, &pattern);
+    if let Some((front, extent)) = fit {
+        if !whole.is_empty() && whole.bytes().all(|item| item.is_ascii_digit()) {
+            // The zero fill belongs to the digits, so the groups run over it.
+            let after = fraction.map_or(0, |b| mark.chars().count() + b.chars().count()) + power.chars().count();
+            let mut padded = whole.to_owned();
+            while front + written.chars().count() + after < extent {
+                padded.insert(0, '0');
+                written = bunch(&padded, &gap, &pattern);
+            }
+        }
+    }
+    if let Some(b) = fraction {
+        written.push_str(&mark);
+        written.push_str(b);
+    }
     written.push_str(power);
     written
 }

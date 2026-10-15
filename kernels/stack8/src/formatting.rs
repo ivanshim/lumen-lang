@@ -319,7 +319,7 @@ impl Writer<'_> {
             let mut head = rule.sign_for(number.is_negative());
             if rule.alternate { head.push_str(match kind { 'b' => "0b", 'o' => "0o", 'x' => "0x", 'X' => "0X", _ => "" }); }
             rule.group_digits(&mut figures, head.len(), if base == 10 { 3 } else { 4 });
-            if locale_number { figures = present_locale_number(&figures); }
+            if locale_number { figures = present_locale_number(&figures, rule.fit_zeros(head.len())); }
             return Ok(rule.pad(&head, &figures, '>'));
         }
         if !matches!(kind, '\0' | 'f' | 'F' | 'e' | 'E' | 'g' | 'G' | '%') { return Err(self.unknown(value, kind)); }
@@ -340,7 +340,7 @@ impl Writer<'_> {
         let head = rule.sign_for(number.is_sign_negative() && !number.is_nan() && !suppress);
         if kind == '%' { body.push('%'); }
         if magnitude.is_finite() { rule.group_digits(&mut body, head.len(), 3); }
-        if locale_number { body = present_locale_number(&body); }
+        if locale_number { body = present_locale_number(&body, rule.fit_zeros(head.len())); }
         Ok(rule.pad(&head, &body, '>'))
     }
 
@@ -848,6 +848,11 @@ impl Rule {
         format!("{}{}{}{}{}", self.fill.to_string().repeat(before), head, self.fill.to_string().repeat(middle), body, self.fill.to_string().repeat(extra - before - middle))
     }
 
+    /// Head width and total width when a zero fill is to be grouped with the digits.
+    fn fit_zeros(&self, head: usize) -> Option<(usize, usize)> {
+        if self.align == '=' && self.fill == '0' { Some((head, self.width)) } else { None }
+    }
+
     fn group_digits(&mut self, body: &mut String, head: usize, span: usize) {
         let point = if matches!(self.code, 'b' | 'o' | 'x' | 'X' | 'd') { body.len() }
             else { body.find(['.', 'e', 'E', '%']).unwrap_or(body.len()) };
@@ -883,7 +888,7 @@ impl Rule {
 /// The two real parts of a value that keeps them, and nothing at all
 /// for one that does not.
 
-fn present_locale_number(body: &str) -> String {
+fn present_locale_number(body: &str, fit: Option<(usize, usize)>) -> String {
     let (point, separator, grouping) = crate::engine::locale_number_marks();
     let place = |digits: &str| -> String {
         if grouping.is_empty() || digits.is_empty() { return digits.to_string(); }
@@ -929,17 +934,24 @@ fn present_locale_number(body: &str) -> String {
         pieces.join(&separator)
     };
     let (mantissa, power) = peel_locale_exponent(body);
-    let mut written = match mantissa.split_once('.') {
-        Some((whole, tail)) => {
-            let mut grouped = place(whole);
-            grouped.push_str(&point);
-            grouped.push_str(tail);
-            grouped
+    let (whole, tail) = mantissa.split_once('.').map_or((mantissa, None), |(w, t)| (w, Some(t)));
+    let mut grouped = place(whole);
+    let digits_only = !whole.is_empty() && whole.bytes().all(|byte| byte.is_ascii_digit());
+    if let (Some((head, width)), true) = (fit, digits_only) {
+        // Zero padding is part of the number, so the groups cover it.
+        let rest = tail.map_or(0, |t| point.chars().count() + t.chars().count()) + power.chars().count();
+        let mut filled = whole.to_string();
+        while head + grouped.chars().count() + rest < width {
+            filled.insert(0, '0');
+            grouped = place(&filled);
         }
-        None => place(mantissa),
-    };
-    written.push_str(power);
-    written
+    }
+    if let Some(t) = tail {
+        grouped.push_str(&point);
+        grouped.push_str(t);
+    }
+    grouped.push_str(power);
+    grouped
 }
 
 /// Split a trailing scientific exponent off a rendered number.
