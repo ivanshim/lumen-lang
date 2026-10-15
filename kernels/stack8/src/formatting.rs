@@ -823,7 +823,17 @@ impl Writer<'_> {
         let v = args[*used];
         *used += 1;
         if !matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.fault("ext.op.rem.format.star", &[&used.to_string(), self.kind(v)])); }
-        v.as_big()?.to_i64().filter(|n| measure != "width" || n.unsigned_abs() <= 1_000_000)
+        let number = v.as_big()?.to_i64()
+            .ok_or_else(|| self.fault("ext.op.rem.format.star.big", &[&used.to_string(), measure]))?;
+        // Preserve C signed-width negation: its wrapped minimum leaves the field unpadded.
+        if self.lang.python_numbers && measure == "width" && number < 0 && number.wrapping_neg() < 0 {
+            return Ok(0);
+        }
+        // The formatted allocation must also hold its terminating byte.
+        if self.lang.python_numbers && measure == "width" && number.unsigned_abs() >= isize::MAX as u64 {
+            return Err("MemoryError: ".to_string());
+        }
+        Some(number).filter(|n| measure != "width" || n.unsigned_abs() <= 1_000_000)
             .ok_or_else(|| self.fault("ext.op.rem.format.star.big", &[&used.to_string(), measure]))
     }
 }

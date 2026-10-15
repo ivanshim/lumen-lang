@@ -1,5 +1,9 @@
 # Runtime bridges for the supported interpreter configuration and display APIs.
 import os
+import sys
+
+# Expose the signed size limit used by native sequence lengths.
+PY_SSIZE_T_MAX = sys.maxsize
 
 # Read the debug-range setting that the kernels use for position records.
 def config_get(name):
