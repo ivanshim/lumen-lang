@@ -7,11 +7,11 @@ def time():
 
 # Wait on the host and allow signal handlers to interrupt the wait.
 def sleep(seconds):
+    if not isinstance(seconds, (int, float)):
+        raise TypeError("'" + type(seconds).__name__ + "' object cannot be interpreted as an integer or float")
     if seconds < 0:
-        raise 'ValueError: sleep length must be non-negative'
-    if type(seconds) != type(0) and type(seconds) != type(0.0):
-        raise 'TypeError: a number is required'
-    return __wait(int(seconds * 1000000))
+        raise ValueError('sleep length must be non-negative')
+    return __wait(int(seconds * 1000000 + 0.5))
 
 # A steady clock counts elapsed seconds from a fixed origin.
 def perf_counter():
@@ -21,17 +21,27 @@ def monotonic():
     return __clock(True)
 
 class _ClockInfo:
-    def __init__(self, steady):
-        self.implementation = 'clock_gettime(CLOCK_MONOTONIC)' if steady else 'clock_gettime(CLOCK_REALTIME)'
+    def __init__(self, name, steady):
+        self.name = name
+        if name == 'process_time':
+            self.implementation = 'clock_gettime(CLOCK_PROCESS_CPUTIME_ID)'
+            self.resolution = _host_clock('process_time', True)
+        elif name == 'thread_time':
+            self.implementation = 'clock_gettime(CLOCK_THREAD_CPUTIME_ID)'
+            self.resolution = _host_clock('thread_time', True)
+        else:
+            self.implementation = 'clock_gettime(CLOCK_MONOTONIC)' if steady else 'clock_gettime(CLOCK_REALTIME)'
+            self.resolution = _host_clock(steady, True)
         self.monotonic = steady
         self.adjustable = not steady
-        self.resolution = _host_clock(steady, True)
 
 def get_clock_info(name):
     if name in ('monotonic', 'perf_counter'):
-        return _ClockInfo(True)
+        return _ClockInfo(name, True)
     if name == 'time':
-        return _ClockInfo(False)
+        return _ClockInfo(name, False)
+    if name in ('process_time', 'thread_time'):
+        return _ClockInfo(name, True)
     raise ValueError('unknown clock')
 
 # Integer nanoseconds from the same host clocks, without a float round trip.
@@ -44,7 +54,24 @@ def monotonic_ns():
 def perf_counter_ns():
     return __clock(True, False)
 
+# Processor time spent by the whole run, and by this thread alone, in
+# seconds and in whole nanoseconds. Neither counts time spent waiting.
+def process_time():
+    return __clock('process_time')
+
+def process_time_ns():
+    return __clock('process_time', False)
+
+def thread_time():
+    return __clock('thread_time')
+
+def thread_time_ns():
+    return __clock('thread_time', False)
+
+# The count of fields a struct_time carries in this build, zone and
+# offset included.
 _STRUCT_TM_ITEMS = 11
+
 struct_time = _host_clock('struct_time')
 
 def localtime(seconds=None):
@@ -166,10 +193,57 @@ def _iso(year, weekday, day_of_year):
         return (year + 1, 1, weekday + 1)
     return (year, week, weekday + 1)
 
+def _c_rem(value, base):
+    # The C library's remainder keeps the sign of what it divides, while
+    # this language's own always lands a step forward.
+    rest = abs(value) % base
+    return rest if value >= 0 else -rest
+
+def _tm_checked(fields):
+    # The year and the fields of a time tuple, held to the ranges the
+    # reference's C library holds them to; zero stands for the lowest
+    # useable figure in the same places it does there. The weekday comes
+    # back counted from Monday, as the naming tables here expect.
+    parts = list(fields)
+    if len(parts) != 9:
+        raise TypeError('a 9-sequence is required, not a ' + str(len(parts)) + '-sequence')
+    year = parts[0]
+    if year > 2147483647 or year < -2147483648 + 1900:
+        raise OverflowError('year out of range')
+    month = parts[1]
+    if month == 0:
+        month = 1
+    elif month < 0 or month > 12:
+        raise ValueError('month out of range')
+    day = parts[2]
+    if day == 0:
+        day = 1
+    elif day < 0 or day > 31:
+        raise ValueError('day of month out of range')
+    hour = parts[3]
+    if hour < 0 or hour > 23:
+        raise ValueError('hour out of range')
+    minute = parts[4]
+    if minute < 0 or minute > 59:
+        raise ValueError('minute out of range')
+    second = parts[5]
+    if second < 0 or second > 61:
+        raise ValueError('seconds out of range')
+    counted = _c_rem(parts[6] + 1, 7)
+    if counted < 0:
+        raise ValueError('day of week out of range')
+    weekday = (counted + 6) % 7
+    day_of_year = parts[7]
+    if day_of_year == 0:
+        day_of_year = 1
+    elif day_of_year < 0 or day_of_year > 366:
+        raise ValueError('day of year out of range')
+    return (year, month, day, hour, minute, second, weekday, day_of_year, parts[8])
+
 def asctime(fields=None):
     if fields is None:
         fields = localtime()
-    parts = list(fields)
+    parts = _tm_checked(fields)
     return (_DAY_SHORT[parts[6]] + ' ' + _MONTH_SHORT[parts[1]] + ' ' +
             _spread(parts[2]) + ' ' + _pair(parts[3]) + ':' + _pair(parts[4]) +
             ':' + _pair(parts[5]) + ' ' + str(parts[0]))
@@ -243,9 +317,7 @@ def strftime(format, fields=None):
     # would not know left as written.
     if fields is None:
         fields = localtime()
-    parts = list(fields)
-    if len(parts) != 9:
-        raise TypeError('strftime() argument must be a 9-sequence, not ' + str(len(parts)) + '-sequence')
+    parts = _tm_checked(fields)
     year, month, day, hour, minute, second, weekday, day_of_year, isdst = parts
     zone = getattr(fields, 'tm_zone', None)
     offset = getattr(fields, 'tm_gmtoff', None)
@@ -276,6 +348,20 @@ def strftime(format, fields=None):
         if at >= span:
             out += _field('', '%' + format[spec:], flags, digits, 0, ' ')
             break
+        # A width written before the conversion, as the C library reads
+        # it: the year spread to that many figures with leading zeros.
+        ahead = at
+        while ahead < len(format) and '0' <= format[ahead] <= '9':
+            ahead += 1
+        if ahead > at and ahead < len(format) and format[ahead] == 'Y':
+            width = int(format[at:ahead])
+            at = ahead + 1
+            word = str(year)
+            if len(word) < width:
+                filling = '0' * (width - len(word))
+                word = ('-' + filling + word[1:]) if word[0] == '-' else (filling + word)
+            out += word
+            continue
         ch = format[at]
         at += 1
         if modifier and not _modifier_fits(modifier, ch):
@@ -378,8 +464,9 @@ def strftime(format, fields=None):
             out += _field('', '%' + format[spec:at], flags, digits, 0, ' ')
     return out
 
-def strptime(data_string, format="%a %b %d %H:%M:%S %Y"):
-    # The parsing itself is the reference's pure-Python _strptime; it
-    # imports this module, so it is fetched on the first call.
+# The native struct_time keeps its two named non-sequence fields.
+_STRUCT_TM_ITEMS = struct_time.n_fields
+
+def strptime(string, format='%a %b %d %H:%M:%S %Y'):
     import _strptime
-    return _strptime._strptime_time(data_string, format)
+    return _strptime._strptime_time(string, format)

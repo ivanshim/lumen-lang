@@ -18,6 +18,7 @@ use crate::value::Value;
 /// A watched body and its arms, as spans in the same routine. Keeping
 /// them in that routine leaves their bindings and outward leaps whole.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Attempt {
     pub context: Option<Cell>,
     pub async_context: bool,
@@ -29,6 +30,7 @@ pub struct Attempt {
 }
 
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Taking {
     pub line: u32,
     pub reraise_position: Option<usize>,
@@ -60,6 +62,7 @@ impl Attempt {
 
 /// Local lookup slots usually contain just one index.
 #[derive(Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum LocalSlots {
     Single(usize),
     Several(Vec<usize>),
@@ -106,6 +109,7 @@ impl<'a> IntoIterator for &'a LocalSlots {
 /// a value and falls through to the global; a store writes the first
 /// local, or the global when there is none.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Cell {
     pub free: bool,
     pub ident: Rc<str>,
@@ -119,6 +123,7 @@ pub struct Cell {
 
 /// A case's test, with bindings gathered only after the whole fits.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Pattern {
     Any,
     Literal(Value),
@@ -198,6 +203,7 @@ pub const ANNOTATE_WORD: &str = "\0annotate";
 /// for a plain or aliased import, the star for `from m import *`, or
 /// the names a from-import takes out together.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum ImportStyle {
     Plain,
     Star,
@@ -206,6 +212,7 @@ pub enum ImportStyle {
 
 /// Kernel operations a language can spell. `Apply` names one of these.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Action {
     ByteAssign(bool),
     /// A pattern and its binding order; the flag marks a tuple subject,
@@ -511,6 +518,7 @@ pub enum Action {
 
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Builtin {
     /// Ask the reader the definition routes to for a line of input.
     Ask,
@@ -559,6 +567,7 @@ pub enum Builtin {
     Multibyte,
     Sre,
     UnicodeDecomposition,
+    UnicodeQuery(u8, bool),
     ModuleLoad,
     MemberSet,
     MemberGet,
@@ -632,6 +641,7 @@ pub enum Builtin {
     /// Text read ahead of time and kept as a code value for a later
     /// reading to run (ext.builtin.compile).
     ReadyText,
+    CodeCache,
     /// A module fetched by its name, as the import statement would
     /// fetch it (ext.builtin.import).
     Summon,
@@ -799,6 +809,11 @@ pub enum Builtin {
     /// telling it in its own words (ext.builtin.uncaught). Giving
     /// nothing takes the routine away again.
     Untaken,
+    /// A routine to be told of each call and return of the routines the
+    /// program writes, with the frame, a word for the event and the
+    /// value returned (ext.builtin.profile). Giving nothing takes it
+    /// away again.
+    Profile,
     /// The calls under way, innermost first, each an array telling the
     /// name called, the class it was written in where it was written in
     /// one, the file and line the call itself stands on, and what it was
@@ -857,6 +872,7 @@ pub enum Builtin {
 
 /// An operand a fused word reads without the stack: a binding or a constant.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Operand {
     Cell(Cell),
     Const(Value),
@@ -865,6 +881,7 @@ pub enum Operand {
 }
 
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Instr {
     /// Push a constant.
     Const(Value),
@@ -978,6 +995,7 @@ impl Builtin {
 
 /// A compiled program.
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Routine {
     pub postponed_annotation: bool,
     pub annotation_source: Option<String>,
@@ -987,9 +1005,12 @@ pub struct Routine {
     pub reads_annotation: bool,
     /// The live class namespace slot and, when used by methods, its class cell.
     pub class_namespace: Option<(String, Option<String>, bool)>,
+    #[serde(serialize_with = "crate::cache::save_optional", deserialize_with = "crate::cache::load_optional")]
     pub annotation: Option<Rc<Routine>>,
     pub code_constants: Vec<Value>,
+    #[serde(serialize_with = "crate::cache::write_origin", deserialize_with = "crate::cache::read_origin")]
     pub source_tokens: Rc<[crate::lex::Token]>,
+    #[serde(skip)]
     pub source_content: Rc<std::cell::OnceCell<Rc<str>>>,
     pub source_end: usize,
     pub embedded_integers: Option<Vec<bool>>,
@@ -1040,15 +1061,18 @@ pub struct Routine {
     /// The dictionary of outermost names a routine built by hand was
     /// handed, where one was. Nothing for every routine the program
     /// wrote out under a name, whose names stand where it was read.
+    #[serde(skip, default = "crate::cache::globals")]
     pub globe: Option<Value>,
     /// The builtins in force where such a routine was built, kept for
     /// the case that its own dictionary names none of its own.
+    #[serde(skip, default = "crate::cache::builtins")]
     pub born: Option<Value>,
     /// The name of the namespace a routine read from text handed a
     /// dictionary was made in, caught when it was made: its module, as
     /// the reference takes a function's module from the globals it was
     /// made with. The inner Nothing where that namespace named nothing;
     /// the outer for every routine a file or the run itself wrote.
+    #[serde(skip, default = "crate::cache::home")]
     pub home: Option<Option<Rc<str>>>,
     /// The line the program was written on, which a fault raised on the
     /// way into it names: such a fault belongs where the program is
@@ -1068,12 +1092,14 @@ pub struct Routine {
     /// What a call of this very routine runs instead, once the program
     /// has written its spare arguments or its code over: nothing until
     /// then. A copy of the routine starts out with nothing here again.
+    #[serde(skip)]
     pub revised: RefCell<Option<Rc<Routine>>>,
 }
 
 /// What a class declaration comes to: everything about the class that is
 /// known while compiling. What it stands on is looked up when it runs.
 #[derive(Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Plan {
     pub name: String,
     /// How many classes of method names only stand after the one this
@@ -1087,6 +1113,7 @@ pub struct Plan {
     pub field_reach: Vec<crate::value::Reach>,
     pub shared_names: Vec<String>,
     pub constant_names: Vec<String>,
+    #[serde(serialize_with = "crate::cache::save_methods", deserialize_with = "crate::cache::load_methods")]
     pub methods: Vec<(String, Rc<Routine>)>,
     /// Whether a class to stand on is given first.
     pub extends: bool,

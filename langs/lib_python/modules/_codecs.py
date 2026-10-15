@@ -276,3 +276,19 @@ def escape_decode(input, errors='strict'):
         import warnings
         warnings.warn(warning, DeprecationWarning, stacklevel=2)
     return bytes(output), len(data)
+
+
+_BUILTIN_ERROR_HANDLERS = (
+    'strict', 'ignore', 'replace', 'xmlcharrefreplace',
+    'backslashreplace', 'namereplace', 'surrogatepass', 'surrogateescape',
+)
+
+def _unregister_error(name):
+    if not isinstance(name, str):
+        raise TypeError('errors must be str')
+    if name in _BUILTIN_ERROR_HANDLERS:
+        raise ValueError("cannot un-register built-in error handler '%s'" % name)
+    if name not in _runtime._errors:
+        return False
+    del _runtime._errors[name]
+    return True

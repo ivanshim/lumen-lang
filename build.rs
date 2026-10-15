@@ -61,20 +61,18 @@ fn prepared_libraries(versions: &serde_json::Map<String, Value>) {
                     _ => lumen_microcode7::build::prepare_library(&definition, source),
                 }).ok().flatten();
                 if let Some((key, proof, encoded)) = prepared {
-                    let codec = lumen_zlib::call(1, 0, &[], [9, 8, 15, 8, 0]);
-                    assert_eq!(codec.status, 0);
-                    let packed = lumen_zlib::call(3, codec.number, &proof, [4, 0, 0, 0, 0]);
-                    lumen_zlib::call(6, codec.number, &[], [0; 5]);
-                    assert!(packed.status == 0 && packed.ended);
-                    let octets = packed.output.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
-                    let metadata_writer = lumen_zlib::call(1, 0, &[], [9, 8, 15, 8, 0]);
-                    assert_eq!(metadata_writer.status, 0);
-                    let metadata = lumen_zlib::call(3, metadata_writer.number, encoded.as_bytes(), [4, 0, 0, 0, 0]);
-                    lumen_zlib::call(6, metadata_writer.number, &[], [0; 5]);
-                    assert!(metadata.status == 0 && metadata.ended);
-                    let metadata_bytes = metadata.output.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
+                    let packed = lumen_lzma::encode(&proof, 6, 4).expect("bundled token proof compression");
+                    let octets = packed.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
+                    let metadata = lumen_lzma::encode(encoded.as_bytes(), 6, 4).expect("bundled scope compression");
+                    let metadata_bytes = metadata.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
                     records.push_str(&format!("({key}, b\"{octets}\", b\"{metadata_bytes}\"),\n"));
-                    source_rows.push_str(&format!("({source:?}, {count}),\n"));
+                    let source_key = match kernel {
+                        "stack8" => lumen_stack8::compile::source_stamp(source),
+                        _ => lumen_microcode7::build::source_key(source),
+                    };
+                    let compressed_source = lumen_lzma::encode(source.as_bytes(), 6, 4).expect("bundled source compression");
+                    let source_bytes = compressed_source.iter().map(|byte| format!("\\x{byte:02x}")).collect::<String>();
+                    source_rows.push_str(&format!("({source_key}, b\"{source_bytes}\", {count}),\n"));
                     count += 1;
                 }
             }

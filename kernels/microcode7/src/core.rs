@@ -181,7 +181,7 @@ impl Value {
             Self::Wrapped(122, _) => "function",
             Self::Wrapped(31, held) => match held.is_empty() { true => "wrapper_descriptor", false => "method-wrapper" },
             Self::Wrapped(78, _) => "wrapper_descriptor",
-            Self::Wrapped(1 | 2 | 10..=12 | 36 | 59 | 120, _) => "wrapper_descriptor",
+            Self::Wrapped(1 | 2 | 10..=12 | 36 | 59 | 120 | 200 | 202, _) => "wrapper_descriptor",
             Self::Wrapped(133, _) => "method_descriptor",
             Self::Wrapped(134, _) => "builtin_function_or_method",
             Self::Wrapped(3, kept) if matches!(kept.first(), Some(Self::Wrapped(133, _) | Self::Intrinsic(..))) => "builtin_function_or_method",
@@ -337,6 +337,9 @@ impl Value {
                     _ => (std::rc::Rc::as_ptr(contents) as usize / 16) as i64,
                 }
             }
+            // A binding's cell is no thing of its own: what is kept in
+            // it hashes as the kept value hashes.
+            Self::Shared(cell) | Self::Mutable(cell, _) => return cell.borrow().hash_number(),
             Self::Complex(pair) => {
                 if pair.0.is_nan() || pair.1.is_nan() { return Some((std::rc::Rc::as_ptr(pair) as usize / 16) as i64); }
                 let real = crate::complex::decimal_value(pair.0).hash_number()?;

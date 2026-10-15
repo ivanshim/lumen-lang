@@ -248,7 +248,11 @@
   ],
   "ext.stmt.fn.defaults.enclosing": true,
   "ext.stmt.class.annotations": [
-    "__annotations__", "annotationlib", "ForwardRef", "__owner__", "__forward_is_class__"
+    "__annotations__",
+    "annotationlib",
+    "ForwardRef",
+    "__owner__",
+    "__forward_is_class__"
   ],
   "ext.stmt.class.called": [
     "__class_call__"
@@ -642,10 +646,12 @@
     "bytes"
   ],
   "ext.builtin.bytes.decode": [
-    "decode", "__codec_decode"
+    "decode",
+    "__codec_decode"
   ],
   "ext.builtin.bytes.encode": [
-    "encode", "__codec_encode"
+    "encode",
+    "__codec_encode"
   ],
   "ext.builtin.bytes.find": [
     "find"
@@ -727,8 +733,13 @@
     "__clock"
   ],
   "ext.builtin.clock.parts": true,
-  "ext.builtin.unicodedata.decomposition": ["__unicode_decomposition"],
-  "ext.builtin.unicodedata.decomposition.metadata": ["decomposition", "unicodedata"],
+  "ext.builtin.unicodedata.decomposition": [
+    "__unicode_decomposition"
+  ],
+  "ext.builtin.unicodedata.decomposition.metadata": [
+    "decomposition",
+    "unicodedata"
+  ],
   "ext.builtin.sre": [
     "__sre_native"
   ],
@@ -912,13 +923,21 @@
   "ext.builtin.binascii_native": [
     "__binascii_native__"
   ],
-  "ext.builtin.lzma_decode": ["__lzma_decode__"],
+  "ext.builtin.lzma_decode": [
+    "__lzma_decode__"
+  ],
   "ext.builtin.zlib_native": [
     "__zlib_native__"
   ],
-  "ext.builtin.static_namespace": ["__static_namespace__"],
-  "ext.builtin.trace_native": ["__trace_native__"],
-  "ext.builtin.function.native_frame": ["__native_frame__"],
+  "ext.builtin.static_namespace": [
+    "__static_namespace__"
+  ],
+  "ext.builtin.trace_native": [
+    "__trace_native__"
+  ],
+  "ext.builtin.function.native_frame": [
+    "__native_frame__"
+  ],
   "ext.builtin.heap_native": [
     "__heap_native__"
   ],
@@ -1796,6 +1815,9 @@
   "ext.builtin.uncaught": [
     "__uncaught"
   ],
+  "ext.builtin.profile": [
+    "__profile"
+  ],
   "ext.builtin.text.complaint": [
     "TypeError:",
     "ValueError:",
@@ -2335,11 +2357,20 @@
   "ext.lexical.string.prefix.format.unterminated.triple": [
     "SyntaxError: unterminated triple-quoted f-string literal"
   ],
+  "ext.lexical.string.prefix.template.unterminated": [
+    "SyntaxError: unterminated t-string literal"
+  ],
+  "ext.lexical.string.prefix.template.unterminated.triple": [
+    "SyntaxError: unterminated triple-quoted t-string literal"
+  ],
   "ext.lexical.string.bytes.ascii": [
     "SyntaxError: bytes can only contain ASCII literal characters"
   ],
   "ext.lexical.string.bytes.mixed": [
     "SyntaxError: cannot mix bytes and nonbytes literals"
+  ],
+  "ext.lexical.string.template.mixed": [
+    "SyntaxError: cannot mix t-string literals with string or bytes literals"
   ],
   "ext.lexical.string.bytes.unavailable": [
     "bytes literals are not supported"
@@ -2366,7 +2397,30 @@
     "SyntaxError: invalid non-printable character U+00A0",
     "SyntaxError: can't use starred expression here",
     "SyntaxError: f-string: newlines are not allowed in format specifiers",
-    "SyntaxError: f-string: expressions nested too deeply"
+    "SyntaxError: f-string: expressions nested too deeply",
+    "SyntaxError: f-string: expecting '}', or format specs"
+  ],
+  "ext.lexical.string.template.errors": [
+    "SyntaxError: t-string: expecting '}'",
+    "SyntaxError: t-string: single '}' is not allowed",
+    "SyntaxError: t-string: valid expression required before '{}'",
+    "SyntaxError: t-string: expecting a valid expression after '{'",
+    "SyntaxError: t-string: lambda expressions are not allowed without parentheses",
+    "SyntaxError: t-string: missing conversion character",
+    "SyntaxError: t-string: invalid conversion character",
+    "SyntaxError: t-string: conversion type must come right after the exclamation mark",
+    "SyntaxError: t-string: expecting '=', or '!', or ':', or '}'",
+    "SyntaxError: t-string: expecting '!', or ':', or '}'",
+    "SyntaxError: t-string: expecting ':' or '}'",
+    "SyntaxError: t-string: invalid conversion character '{}': expected 's', 'r', or 'a'",
+    "SyntaxError: t-string: unmatched '{}'",
+    "SyntaxError: closing parenthesis '{}' does not match opening parenthesis '{}'",
+    "SyntaxError: '{' was never closed",
+    "SyntaxError: invalid non-printable character U+00A0",
+    "SyntaxError: can't use starred expression here",
+    "SyntaxError: t-string: newlines are not allowed in format specifiers",
+    "SyntaxError: t-string: expressions nested too deeply",
+    "SyntaxError: t-string: expecting '}', or format specs"
   ],
   "ext.lexical.string.format.unavailable": [
     "this formatted value is not supported"
@@ -2803,8 +2857,28 @@
     "' was never awaited",
     "_warn_unawaited_coroutine"
   ],
-  "ext.stmt.async.coroutine.fields": ["cr_code", "cr_frame", "cr_running", "cr_await", "cr_origin", "cr_suspended"],
-  "ext.stmt.async.coroutine.errors": ["RuntimeError: coroutine raised StopIteration", "TypeError: can't send non-None value to a just-started coroutine", "ValueError: coroutine already executing", "RuntimeError: coroutine ignored GeneratorExit", "RuntimeError: cannot reuse already awaited coroutine", "TypeError: '", "' object can't be awaited", "RuntimeError: coroutine is being awaited already", "TypeError: 'async with' received an object from ", " that does not implement __await__: ", "TypeError: 'async for' received an invalid object from __anext__: ", "TypeError: 'async for' received an object from __aiter__ that does not implement __anext__: "],
+  "ext.stmt.async.coroutine.fields": [
+    "cr_code",
+    "cr_frame",
+    "cr_running",
+    "cr_await",
+    "cr_origin",
+    "cr_suspended"
+  ],
+  "ext.stmt.async.coroutine.errors": [
+    "RuntimeError: coroutine raised StopIteration",
+    "TypeError: can't send non-None value to a just-started coroutine",
+    "ValueError: coroutine already executing",
+    "RuntimeError: coroutine ignored GeneratorExit",
+    "RuntimeError: cannot reuse already awaited coroutine",
+    "TypeError: '",
+    "' object can't be awaited",
+    "RuntimeError: coroutine is being awaited already",
+    "TypeError: 'async with' received an object from ",
+    " that does not implement __await__: ",
+    "TypeError: 'async for' received an invalid object from __anext__: ",
+    "TypeError: 'async for' received an object from __aiter__ that does not implement __anext__: "
+  ],
   "ext.stmt.async.generator.fields": [
     "ag_code",
     "ag_frame",
@@ -3135,8 +3209,12 @@
   "ext.builtin.abc.instancecheck": [
     "__abc_instancecheck"
   ],
-  "ext.builtin.annotation_call": ["__annotation_call__"],
-  "ext.builtin.partial_repr": ["__partial_repr__"],
+  "ext.builtin.annotation_call": [
+    "__annotation_call__"
+  ],
+  "ext.builtin.partial_repr": [
+    "__partial_repr__"
+  ],
   "ext.builtin.namespace_type": [
     "__namespace_type"
   ],
@@ -4170,8 +4248,12 @@
   ],
   "ext.builtin.iter.stop_value": [],
   "ext.builtin.iter.stop_exception": [],
-  "ext.builtin.partial.call": ["__partial_call"],
-  "ext.builtin.system.refcount": ["__reference_count"],
+  "ext.builtin.partial.call": [
+    "__partial_call"
+  ],
+  "ext.builtin.system.refcount": [
+    "__reference_count"
+  ],
   "ext.stmt.class.detail.native.docs": [
     "object.__class__",
     "the object's class",
@@ -5618,5 +5700,13 @@
   "ext.builtin.allocation.trace": [
     "__allocation_trace"
   ],
-  "ext.builtin.lzma_encode": ["__lzma_encode__"]
+  "ext.builtin.lzma_encode": [
+    "__lzma_encode__"
+  ],
+  "ext.builtin.code.cache": [
+    "_code_pack",
+    "_code_unpack",
+    "_code_abi",
+    "_code_filename"
+  ]
 }

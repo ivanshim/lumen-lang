@@ -26,8 +26,8 @@ def exec_builtin(module):
 def extension_suffixes():
     return []
 
-# Bytecode marker from the pinned CPython pycore_magic_number.h.
-pyc_magic_number_token = 168627833
+# Marker of the active kernel compiled-code cache ABI.
+pyc_magic_number_token = _code_abi()[1]
 check_hash_based_pycs = 'default'
 
 _import_lock_depth = 0
@@ -68,3 +68,7 @@ class _NativeLoader:
     @staticmethod
     def get_source(fullname):
         return __loader_source(fullname)
+
+# Cached code carries the source location through its nested definitions.
+def _fix_co_filename(code, path):
+    return _code_filename(code, path)

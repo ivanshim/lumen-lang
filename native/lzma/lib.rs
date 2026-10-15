@@ -10,6 +10,11 @@ impl Drop for Stream {
 
 // Decode one stream and retain its consumed length for concatenated input.
 pub fn decode(input: &[u8], format: i64, limit: u64) -> Result<(Vec<u8>, usize), i32> {
+    decode_limited(input, format, limit, usize::MAX)
+}
+
+// Bound decoded build-owned data independently of the codec's memory limit.
+pub fn decode_limited(input: &[u8], format: i64, limit: u64, output_limit: usize) -> Result<(Vec<u8>, usize), i32> {
     let mut state = Stream(unsafe { std::mem::zeroed() });
     let status = unsafe {
         match format {
@@ -29,6 +34,7 @@ pub fn decode(input: &[u8], format: i64, limit: u64) -> Result<(Vec<u8>, usize),
         state.0.avail_out = chunk.len();
         let status = unsafe { lzma_code(&mut state.0, 3) };
         let count = chunk.len() - state.0.avail_out;
+        if count > output_limit.saturating_sub(output.len()) { return Err(5); }
         output.try_reserve(count).map_err(|_| 5)?;
         output.extend_from_slice(&chunk[..count]);
         match status {
@@ -63,5 +69,27 @@ mod tests {
         let (decoded, used) = super::decode(&encoded, 1, u64::MAX).unwrap();
         assert_eq!(decoded, raw);
         assert_eq!(used, encoded.len());
+    }
+}
+
+// The ALONE container exposes genuine LZMA1 streams and their five-byte properties.
+pub fn encode_alone(input: &[u8], preset: u32, properties: [u32; 4]) -> Result<Vec<u8>, i32> {
+    let mut options: lzma_options_lzma = unsafe { std::mem::zeroed() };
+    if unsafe { lzma_lzma_preset(&mut options, preset) } != 0 { return Err(8); }
+    options.dict_size = properties[0];
+    options.lc = properties[1]; options.lp = properties[2]; options.pb = properties[3];
+    let mut state = Stream(unsafe { std::mem::zeroed() });
+    let status = unsafe { lzma_alone_encoder(&mut state.0, &options) };
+    if status != 0 { return Err(status as i32); }
+    state.0.next_in = input.as_ptr(); state.0.avail_in = input.len();
+    let mut output = Vec::new();
+    loop {
+        let mut chunk = [0u8; 16384];
+        state.0.next_out = chunk.as_mut_ptr(); state.0.avail_out = chunk.len();
+        let status = unsafe { lzma_code(&mut state.0, 3) };
+        let count = chunk.len() - state.0.avail_out;
+        output.try_reserve(count).map_err(|_| 5)?;
+        output.extend_from_slice(&chunk[..count]);
+        match status { 0 => (), 1 => return Ok(output), fault => return Err(fault as i32) }
     }
 }

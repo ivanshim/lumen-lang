@@ -17,15 +17,19 @@ use crate::data::Value;
 /// Where a binding lives: `depth` frames up, at `index`. A name that has
 /// no binding there yet is read from the global slot instead.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Address {
     pub ident: Rc<str>,
     pub up: usize,
     pub at: usize,
     pub fallback: Option<usize>,
+    /// Identifies global slots for relocation when loading compiled forms.
+    pub cache_global: bool,
 }
 
 /// What a call reaches: a kernel operation, or a program value.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Callee {
     Prim(Prim, Rc<str>),
     Code(Box<Form>),
@@ -35,6 +39,7 @@ pub enum Callee {
 /// first group; the second group carries the control the tree lacks
 /// forms for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Prim {
     /// A line asked of the reader the table routes input through.
     Inquire,
@@ -75,6 +80,7 @@ pub enum Prim {
     CodecMapping,
     Regex,
     UnicodeDecomposition,
+    UnicodeField { query: u8, historic: bool },
     LoadModule,
     IsInstance,
     WriteMember,
@@ -190,6 +196,7 @@ pub enum Prim {
     Perform,
     /// Text checked and kept as a code value (ext.builtin.compile).
     Prepare,
+    CodeArchive,
     /// A namespace fetched by name (ext.builtin.import).
     Summon,
     Bring,
@@ -355,6 +362,11 @@ pub enum Prim {
     /// telling it in its own words (ext.builtin.uncaught). Giving
     /// nothing takes the routine away again.
     Untaken,
+    /// A routine to be told of each call and return of the routines the
+    /// program writes, handed the frame, a word for the event and the
+    /// value given back (ext.builtin.profile). Giving nothing takes it
+    /// away again.
+    Profile,
     /// The calls under way, innermost first, each a table telling what
     /// was called, the class it was written in where it was written in
     /// one, the file and line the call itself stands on, and what it was
@@ -584,6 +596,7 @@ impl Prim {
 
 /// The shape a case asks for; names are kept apart from their addresses.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum CaseTest {
     Ignore,
     Keep(String),
@@ -639,6 +652,7 @@ impl CaseTest {
 }
 
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Form {
     /// A case test which writes its names only upon success. A tuple
     /// may give up its members, but cannot yet be kept whole.
@@ -746,23 +760,24 @@ pub enum Form {
     /// where the shape is reached and nowhere else, under the language's
     /// own word for that kind of remark. The line is the one the shape
     /// was written on, so that a call along the way does not move it.
-    Remark(&'static str, Rc<str>, u32),
+    Remark(Rc<str>, Rc<str>, u32),
     /// The value the form within comes to, where a cell was asked for.
     /// Where it is a cell it goes on as it is; where it is not, these
     /// words are said on the line given and it goes on all the same, or,
     /// where nothing is said, the run is stopped with them.
-    CellOrSaid(Option<&'static str>, Rc<str>, u32, Box<Form>),
+    CellOrSaid(Option<Rc<str>>, Rc<str>, u32, Box<Form>),
     /// A cell for what the form within comes to, whatever that is: the
     /// cell itself where it is one already, and otherwise these words,
     /// on the line given, and a fresh cell holding the value. A routine
     /// written to give back a cell gives one however it ends, and only
     /// the run can say whether what it named had one of its own.
-    HeldEither(&'static str, Rc<str>, u32, Box<Form>),
+    HeldEither(Rc<str>, Rc<str>, u32, Box<Form>),
 }
 
 /// One catch: the classes it takes, where it holds what it caught, and
 /// what it does with it.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Clause {
     pub source_line: u32,
     pub reraise_position: Option<Box<Form>>,
@@ -777,6 +792,7 @@ pub struct Clause {
 /// A class as the builder knows it. What it is built on, and the value
 /// of every member, are worked out when the declaration runs.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Plan {
     pub name: String,
     /// How many classes of method names only follow the one this class
@@ -787,6 +803,7 @@ pub struct Plan {
     pub field_reach: Vec<crate::data::Reach>,
     pub shared_names: Vec<String>,
     pub constant_names: Vec<String>,
+    #[serde(serialize_with = "crate::cache::write_members", deserialize_with = "crate::cache::read_members")]
     pub methods: Vec<(String, Rc<Routine>)>,
     pub extends: bool,
     /// Every member's name, standing where the body bound it, methods
@@ -807,6 +824,7 @@ pub struct Plan {
 /// An operand of a dyad that is a binding or a
 /// constant is read directly, without a visit to a node.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Input {
     Form(Box<Form>),
     Address(Address),
@@ -827,6 +845,7 @@ impl Input {
 /// return, the program a loop is made of stops a break, a loop's body
 /// stops a continue, and a branch arm stops nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Traps {
     Naught,
     Yields,
@@ -835,9 +854,11 @@ pub enum Traps {
 }
 
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Routine {
     pub display_names: std::cell::RefCell<Option<(Rc<str>, Rc<str>)>>,
     /// The compiled definition shared by independently created functions.
+    #[serde(serialize_with = "crate::cache::write_maybe", deserialize_with = "crate::cache::read_maybe")]
     pub definition: Option<Rc<Routine>>,
     pub annotation_is_text: bool,
     pub annotation_spelling: Option<String>,
@@ -847,9 +868,12 @@ pub struct Routine {
     pub reads_annotation: bool,
     /// The live class namespace slot and, when used by methods, its class cell.
     pub class_namespace: Option<(String, Option<String>, bool)>,
+    #[serde(serialize_with = "crate::cache::write_maybe", deserialize_with = "crate::cache::read_maybe")]
     pub annotator: Option<Rc<Routine>>,
     pub literals: Vec<Value>,
+    #[serde(serialize_with = "crate::cache::save_spelling", deserialize_with = "crate::cache::recover_spelling")]
     pub lexical_origin: Rc<Vec<crate::scan::Token>>,
+    #[serde(skip)]
     pub origin_content: Rc<std::cell::OnceCell<Rc<str>>>,
     pub body_boundary: usize,
     pub immediate_slots: Option<Vec<bool>>,
@@ -897,15 +921,18 @@ pub struct Routine {
     pub type_params: Vec<String>,
     /// The dictionary of outermost names a routine framed by hand was
     /// given, where one was: nothing for a routine the program wrote.
+    #[serde(skip, default = "crate::cache::outer_dictionary")]
     pub globe: Option<Value>,
     /// The builtins in force where such a routine was made, kept for
     /// the case that its own dictionary names none of its own.
+    #[serde(skip, default = "crate::cache::native_dictionary")]
     pub born: Option<Value>,
     /// The name the dictionary a routine framed by hand was made in
     /// gave itself, read off the dictionary when the text was built:
     /// the module the function answers to, as the reference answers it
     /// of the globals at the run's start. Nothing where the dictionary
     /// named none, or where the routine is one the program wrote.
+    #[serde(skip, default = "crate::cache::namespace_name")]
     pub framed_in: Option<Rc<str>>,
     /// The line this program was written on, which a fault raised on
     /// the way into it names: such a fault belongs where the program

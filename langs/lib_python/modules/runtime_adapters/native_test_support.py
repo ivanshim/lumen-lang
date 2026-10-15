@@ -283,6 +283,13 @@ def skip_if_sanitizer(reason=None, **sanitizers):
 import os
 import time
 import re
+# Does strftime() accept glibc extension widths such as '%4Y'?
+has_strftime_extensions = False
+if sys.platform != 'win32':
+    try:
+        has_strftime_extensions = time.strftime('%4Y') != '%4Y'
+    except ValueError:
+        pass
 TEST_HOME_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))), 'tests', 'python-3.14.8')
 REPO_ROOT = os.path.dirname(os.path.dirname(TEST_HOME_DIR))
 _header = 'nP'
@@ -927,7 +934,16 @@ def load_package_tests(pkg_dir, loader, standard_tests, pattern):
     top_dir = STDLIB_DIR
     # Reference packages live in the interpreter's versioned test directory.
     if not os.path.abspath(pkg_dir).startswith(os.path.abspath(top_dir).rstrip('/') + '/'):
-        top_dir = os.path.dirname(pkg_dir)
+        parent = os.path.dirname(pkg_dir)
+        top_dir = os.path.dirname(parent) if os.path.basename(parent) == 'test' else parent
+        import test
+        for root in test.__path__:
+            candidate = os.path.join(root, os.path.basename(pkg_dir))
+            if (os.path.basename(root) == 'test'
+                    and os.path.realpath(candidate) == os.path.realpath(pkg_dir)):
+                pkg_dir = candidate
+                top_dir = os.path.dirname(root)
+                break
     try:
         package_tests = loader.discover(start_dir=pkg_dir,
                                         top_level_dir=top_dir,
@@ -975,6 +991,14 @@ def run_code(code: str, extra_names: dict[str, object] | None = None) -> dict[st
         ns.update(extra_names)
     exec(textwrap.dedent(code), ns)
     return ns
+
+
+def sortdict(dict):
+    "Like repr(dict), but in sorted order."
+    items = sorted(dict.items())
+    reprpairs = ["%r: %r" % pair for pair in items]
+    withcommas = ", ".join(reprpairs)
+    return "{%s}" % withcommas
 
 
 def captured_stdin():
@@ -1548,6 +1572,23 @@ class _LocaleContextDecorator:
         return inner
 
 
+_buggy_ucrt = None
+
+
+def skip_if_buggy_ucrt_strfptime(test):
+    """Skip tests using buggy MSVC UCRT strptime/strftime."""
+    import locale
+    global _buggy_ucrt
+    if _buggy_ucrt is None:
+        if (sys.platform == 'win32' and
+                locale.getencoding() == 'cp65001' and
+                time.localtime().tm_zone == ''):
+            _buggy_ucrt = True
+        else:
+            _buggy_ucrt = False
+    return unittest.skip('buggy MSVC UCRT strptime/strftime')(test) if _buggy_ucrt else test
+
+
 def run_with_locale(catstr, *locales):
     return _LocaleContextDecorator(catstr, locales)
 
@@ -1652,6 +1693,50 @@ def control_characters_c0():
 
 
 
+# From CPython v3.14.8; PSF License.
+def requires_bz2(reason='requires bz2'):
+    try:
+        import bz2
+    except ImportError:
+        bz2 = None
+    return unittest.skipUnless(bz2, reason)
+
+
+# From CPython v3.14.8; PSF License.
+def requires_lzma(reason='requires lzma'):
+    try:
+        import lzma
+    except ImportError:
+        lzma = None
+    return unittest.skipUnless(lzma, reason)
+
+
+# From CPython v3.14.8; PSF License.
+def requires_zstd(reason='requires zstd'):
+    try:
+        from compression import zstd
+    except ImportError:
+        zstd = None
+    return unittest.skipUnless(zstd, reason)
+def get_attribute(obj, name):
+    """Get an attribute, raising SkipTest if AttributeError is raised."""
+    try:
+        attribute = getattr(obj, name)
+    except AttributeError:
+        raise unittest.SkipTest("object %r has no attribute %r" % (obj, name))
+    else:
+        return attribute
+
+# From CPython v3.14.8; PSF License.
+
+
+# From CPython v3.14.8; PSF License.
+
+
+# From CPython v3.14.8; PSF License.
+
+
+# From CPython v3.14.8; PSF License.
 # From CPython v3.14.8 (8e6e75d9102e), Lib/test/support/__init__.py; PSF License.
 def patch(test_instance, object_to_patch, attr_name, new_value):
     """Override 'object_to_patch'.'attr_name' with 'new_value'.

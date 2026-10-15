@@ -54,6 +54,16 @@ fn record(s: &libc::stat) -> Value {
     fields.push(Value::from_big(BigInt::from(s.st_rdev)));
     Value::tuple(fields)
 }
+// Copy an account record out of the host database's reusable storage.
+fn account_record(user: &libc::passwd) -> Value {
+    let strings = [user.pw_name, user.pw_passwd, user.pw_gecos, user.pw_dir, user.pw_shell];
+    let mut row: Vec<Value> = strings.into_iter().map(|p| match unsafe {p.as_ref()} {
+        Some(_) => octets(unsafe {CStr::from_ptr(p)}.to_bytes()), None => Value::Nil
+    }).collect();
+    row.insert(2, Value::Small(user.pw_uid.into()));
+    row.insert(3, Value::Small(user.pw_gid.into()));
+    Value::tuple(row)
+}
 pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), String>) -> Result<Value, String> {
     let operation = match given.first().map(Value::settled) {
         Some(Value::Text(name)) => name,
@@ -72,6 +82,69 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
     };
     let answer = unsafe {
         match operation.as_ref() {
+            "group" => {
+                let found = match int(0)? {0 => libc::getgrnam(path(1)?.as_ptr()), _ => libc::getgrgid(int(1)? as _)};
+                match found.as_ref() {
+                    None => Ok(Value::Nil),
+                    Some(group) => {
+                        let mut names = Vec::new();
+                        if !group.gr_mem.is_null() {
+                            let mut index = 0;
+                            loop {
+                                let member = *group.gr_mem.add(index);
+                                if member.is_null() {break;}
+                                names.push(octets(CStr::from_ptr(member).to_bytes()));
+                                index += 1;
+                            }
+                        }
+                        Ok(Value::tuple(vec![match group.gr_name.as_ref() {None => Value::Nil, Some(_) => octets(CStr::from_ptr(group.gr_name).to_bytes())},
+                            match group.gr_passwd.as_ref() {None => Value::Nil, Some(_) => octets(CStr::from_ptr(group.gr_passwd).to_bytes())}, Value::Small(group.gr_gid.into()),
+                            Value::Vector(crate::tuples::Sequence::plain(names))]))
+                    }
+                }
+            }
+            "passwd" => {
+                if int(0)? == 2 {
+                    let mut users = Vec::new();
+                    libc::setpwent();
+                    while let Some(user) = libc::getpwent().as_ref() {
+                        users.push(account_record(user));
+                    }
+                    libc::endpwent();
+                    let payload = Value::Vector(crate::tuples::Sequence::plain(users));
+                    return Ok(Value::tuple(vec![Value::Small(0), payload]));
+                }
+                let found = match int(0)? {0 => libc::getpwnam(path(1)?.as_ptr()), _ => libc::getpwuid(int(1)? as _)};
+                match found.as_ref() {
+                    None => Ok(Value::Nil),
+                    Some(user) => {
+                        Ok(account_record(user))
+                    }
+                }
+            }
+            "fchown" => {
+                let (descriptor, owner, group) = (int(0)?, int(1)?, int(2)?);
+                checked(libc::fchown(descriptor as _, owner as _, group as _) as i64)
+            }
+            "chown" => {
+                let name = path(0)?;
+                let link_flag = match int(4)? {0 => libc::AT_SYMLINK_NOFOLLOW, _ => 0};
+                checked(libc::fchownat(int(3)? as _, name.as_ptr(), int(1)? as _, int(2)? as _, link_flag).into())
+            }
+            "fstatvfs" | "statvfs" => {
+                let mut capacity = std::mem::zeroed::<libc::statvfs>();
+                let code = match operation.as_ref() {
+                    "statvfs" => libc::statvfs(path(0)?.as_ptr(), &mut capacity),
+                    _ => libc::fstatvfs(int(0)? as _, &mut capacity),
+                };
+                if code != 0 {Err(errno())} else {
+                    let amounts = vec![capacity.f_bsize, capacity.f_frsize, capacity.f_blocks,
+                        capacity.f_bfree, capacity.f_bavail, capacity.f_files, capacity.f_ffree,
+                        capacity.f_favail, capacity.f_flag, capacity.f_namemax, capacity.f_fsid];
+                    let values = amounts.into_iter().map(|amount| Value::from_big(BigInt::from(amount))).collect();
+                    Ok(Value::tuple(values))
+                }
+            }
             "stat_mode" => {
                 let whole = params[0].as_big()?;
                 if whole.sign() == num_bigint::Sign::Minus {return Err(String::from("OverflowError: can't convert negative value to unsigned int"));}

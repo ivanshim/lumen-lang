@@ -17,6 +17,7 @@ use crate::data::{Reach, Value};
 
 type Res<T> = Result<T, String>;
 
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Holds {
     /// A function: names assigned inside are its own; nothing outside is written.
@@ -29,6 +30,49 @@ enum Holds {
 
 thread_local! {
     static PARENT_PAYLOAD: Rc<Vec<Value>> = Rc::new(Vec::new());
+}
+
+// Keep syntax coordinates separate from the positions attached to a supplied tree.
+thread_local! {
+    static TREE_SITES: std::cell::RefCell<Vec<[u32; 8]>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+pub fn using_tree_sites<R>(sites: &[[u32; 8]], build: impl FnOnce() -> R) -> R {
+    let previous = TREE_SITES.with(|slot| slot.replace(sites.to_owned()));
+    let built = build();
+    TREE_SITES.with(|slot| { slot.replace(previous); });
+    built
+}
+
+fn tree_bounds(written: (u32, u32, u32, u32)) -> (u32, u32, u32, u32) {
+    TREE_SITES.with(|slot| {
+        let sites = slot.borrow();
+        let first = (written.0, written.1);
+        let last = (written.2, written.3);
+        let mut selected = None;
+        let mut rank = (0u8, 0u64);
+        for site in sites.iter() {
+            let a = (site[0], site[1]);
+            let z = (site[2], site[3]);
+            let width = ((z.0 as u64) << 32 | z.1 as u64).saturating_sub((a.0 as u64) << 32 | a.1 as u64);
+            let priority = if a == first && z == last { (3, 0) }
+                else if first <= a && z <= last { (2, width) }
+                else if a <= first && last <= z { (1, u64::MAX - width) }
+                else { continue };
+            if priority >= rank { selected = Some(site); rank = priority; }
+        }
+        match selected { Some(site) => (site[4], site[5], site[6], site[7]), None => written }
+    })
+}
+
+fn tree_row(line: u32, offset: usize) -> u32 {
+    TREE_SITES.with(|slot| {
+        let sites = slot.borrow();
+        let col = offset.saturating_sub(1) as u32;
+        if let Some(site) = sites.iter().find(|site| site[0] == line && site[1] == col) { return site[4]; }
+        let nearest = sites.iter().filter(|site| site[0] == line && site[1] <= col).max_by_key(|site| site[1]);
+        nearest.map_or(line, |site| site[4])
+    })
 }
 
 /// What reading a class body gathers. `arms` counts the arms of
@@ -94,7 +138,7 @@ struct LibrarySurvey {
 }
 
 pub type SurveyRows = &'static [(u64, &'static [u8], &'static [u8])];
-pub type SourceRows = &'static [(&'static str, usize)];
+pub type SourceRows = &'static [(u64, &'static [u8], usize)];
 thread_local! {
     static LIBRARY_SURVEYS: std::cell::RefCell<std::collections::BTreeMap<String, (SurveyRows, SourceRows)>> = std::cell::RefCell::new(std::collections::BTreeMap::new());
 }
@@ -177,13 +221,17 @@ fn read_token_proof(mut remaining: &[u8]) -> Option<Vec<Token>> {
 
 pub(crate) fn library_tokens(source: &str, table: &Table) -> Option<Vec<Token>> {
     if table.single("ext.lexical.prologue.brief.setting").is_some() { return None; }
-    for &(text, row) in table.library_token_sources? {
-        if text != source { continue; }
+    let requested = source_key(source);
+    for &(key, encoded_source, row) in table.library_token_sources? {
+        if key != requested { continue; }
+        if unpack_library_proof(encoded_source)?.as_slice() != source.as_bytes() { continue; }
         let (_, proof, _) = table.library_surveys?.get(row)?;
         return read_token_proof(&unpack_library_proof(proof)?);
     }
     None
 }
+
+pub fn source_key(source: &str) -> u64 { input_key(source.as_bytes()) }
 
 fn input_key(proof: &[u8]) -> u64 {
     use std::hash::Hash;
@@ -201,6 +249,13 @@ fn unpack_library_proof(packed: &'static [u8]) -> Option<Rc<Vec<u8>>> {
     if let Some(found) = LAST.with(|last| last.borrow().as_ref()
         .filter(|(bytes, _)| std::ptr::eq(*bytes, packed)).map(|(_, decoded)| decoded.clone())) {
         return Some(found);
+    }
+    if packed.starts_with(b"\xfd7zXZ\0") {
+        let (output, used) = lumen_lzma::decode_limited(packed, 1, 64 * 1024 * 1024, 64 * 1024 * 1024).ok()?;
+        if used != packed.len() { return None; }
+        let shared = Rc::new(output);
+        LAST.with(|last| *last.borrow_mut() = Some((packed, shared.clone())));
+        return Some(shared);
     }
     let reader = lumen_zlib::call(2, 0, &[], [15, 0, 0, 0, 0]);
     if reader.status != 0 { return None; }
@@ -282,6 +337,7 @@ impl Layer {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Signature {
     pub arity: usize,
     pub yields: bool,
@@ -548,6 +604,7 @@ pub struct Builder<'a> {
     kind_mark: Option<usize>,
     syntax_try_nesting: usize,
     finally_nesting: usize,
+    finally_loop_bases: Vec<usize>,
     in_lazy_from: bool,
     /// The class being read and what it is built on: what `self` and
     /// `parent` mean inside a method.
@@ -598,6 +655,7 @@ pub struct Builder<'a> {
     /// The line the routine now being read was written on, which a
     /// fault raised on the way into it names.
     declared_at: u32,
+    first_adornment: Option<u32>,
     /// The slots the routine being built fills from what it carried
     /// away with it, gathered while its names are read.
     carrying: Vec<usize>,
@@ -1119,7 +1177,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         }
     }
     let grammar = CompileWords::of(table);
-    let mut r = Builder { grammar: &grammar, origin_content: Rc::new(std::cell::OnceCell::new()), indexes_globals, global_positions, globals_indexed, lexical_origin: Rc::new(if survey { Vec::new() } else { tokens.to_vec() }), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, member_temps: Vec::new(), gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { grammar: &grammar, origin_content: Rc::new(std::cell::OnceCell::new()), indexes_globals, global_positions, globals_indexed, lexical_origin: Rc::new(if survey { Vec::new() } else { tokens.to_vec() }), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, finally_loop_bases: Vec::new(), in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, first_adornment: None, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, member_temps: Vec::new(), gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -1211,7 +1269,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             // is the program's own documentation, kept under the name
             // the language gives it (ext.system.module.doc).
             let mut opening_text = false;
-            if opening && own_line && within.is_none() {
+            if opening && own_line && within.is_none() && r.optimize < 2 {
                 let first = match &stmt { Form::OnLine(_, _, inner) => inner.as_ref(), other => other };
                 if let Form::Const(Value::Text(said)) = first {
                     opening_text = true;
@@ -1281,7 +1339,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     let mut root_names = Vec::new();
     let mut suspended = false;
     inspect_form(&body, &[], &mut root_literals, &mut root_names, &mut suspended);
-    let program = Routine { display_names: Default::default(), definition: None, immediate_slots: None, body_boundary: r.pos, origin_content: r.origin_content.clone(), lexical_origin: r.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_spelling: None, annotation_protocol: false, reads_annotation: false, annotator: None, literals: root_literals, referenced: root_names, locals: Vec::new(), flags: 0, future_bits: r.future_bits, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
+    let program = Routine { display_names: Default::default(), definition: None, immediate_slots: None, body_boundary: r.pos, origin_content: r.origin_content.clone(), lexical_origin: r.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_spelling: None, annotation_protocol: false, reads_annotation: false, annotator: None, literals: root_literals, referenced: root_names, locals: Vec::new(), flags: r.future_bits | if r.top_coroutine { 128 } else { 0 }, future_bits: r.future_bits, lineless: false, qualification: String::new(), doc: None, generator: r.top_coroutine, local_defaults: Vec::new(), gather_from: None, ident: "<program>".into(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: top.idents, reaching: top.reaching, frameless: r.top_coroutine, written_in: r.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: r.globe.clone(), born: r.born.clone(), framed_in: r.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
     Ok(Built { program: Rc::new(program), warnings: r.warnings, future_bits: r.future_bits, globals, outer_aliases, seen: r.seen, shared_args: r.shared_args, arg_names: r.arg_names, gives_back: r.gives_back, bound_globally: r.named_in_program, native_exports: r.native_exports })
 }
 
@@ -1741,7 +1799,7 @@ impl<'a> Builder<'a> {
     fn global_address(&mut self, name: &str) -> Address {
         let up = self.layers[1..].iter().filter(|s| s.holds != Holds::Nothing).count();
         let at = self.global_at(name);
-        Address { ident: Rc::from(name), up, at, fallback: None }
+        Address { cache_global: true, ident: Rc::from(name), up, at, fallback: None }
     }
 
     /// The global a name stands for in the function around, if a
@@ -1790,7 +1848,7 @@ impl<'a> Builder<'a> {
             if !set_aside && !(borrowed && index == owner) {
                 if layer.aliases.iter().any(|pair| pair.0 == name) { return None; }
                 if let Some(at) = layer.named_position(name) {
-                    let slot = Address { ident: Rc::from(name), up: distance, at, fallback: None };
+                    let slot = Address { cache_global: false, ident: Rc::from(name), up: distance, at, fallback: None };
                     for (which, stood) in through {
                         let layer = &mut self.layers[which];
                         if layer.reaching.iter().any(|held| held.ident.as_ref() == name) { continue; }
@@ -1863,15 +1921,15 @@ impl<'a> Builder<'a> {
             if wears_mark && self.grammar.flag_ext_stmt_function_own_names {
                 let own = &mut self.layers[i].idents;
                 own.push(name.to_string());
-                return Address { ident: Rc::from(name), up, at: own.len() - 1, fallback: Some(global) };
+                return Address { cache_global: false, ident: Rc::from(name), up, at: own.len() - 1, fallback: Some(global) };
             }
         }
         match found {
-            Some((i, depth, index)) if i != 0 => Address { ident: Rc::from(name), up: depth, at: index, fallback: Some(global) },
-            Some((_, depth, index)) => Address { ident: Rc::from(name), up: depth, at: index, fallback: None },
+            Some((i, depth, index)) if i != 0 => Address { cache_global: false, ident: Rc::from(name), up: depth, at: index, fallback: Some(global) },
+            Some((_, depth, index)) => Address { cache_global: true, ident: Rc::from(name), up: depth, at: index, fallback: None },
             None => {
                 let depth = self.layers[1..].iter().filter(|s| !frameless(s.holds)).count();
-                Address { ident: Rc::from(name), up: depth, at: global, fallback: None }
+                Address { cache_global: true, ident: Rc::from(name), up: depth, at: global, fallback: None }
             }
         }
     }
@@ -1945,7 +2003,7 @@ impl<'a> Builder<'a> {
                     if i == 0 && self.past_library && !self.named_in_program.iter().any(|word| word == name) {
                         self.named_in_program.push(name.to_string());
                     }
-                    return Address { ident: Rc::from(name), up: depth, at: index, fallback: None };
+                    return Address { cache_global: i == 0, ident: Rc::from(name), up: depth, at: index, fallback: None };
                 }
             }
         }
@@ -2246,7 +2304,7 @@ impl<'a> Builder<'a> {
                         Some(at) => at, None => { b.layers[0].idents.push(name.to_owned()); b.layers[0].idents.len() - 1 },
                     };
                     let up = b.layers[1..].iter().filter(|layer| layer.holds != Holds::Nothing).count();
-                    Ok(Form::Read(Address { ident: Rc::from(name), up, at, fallback: None }))
+                    Ok(Form::Read(Address { cache_global: true, ident: Rc::from(name), up, at, fallback: None }))
                 }).expect("fallback name lookup is syntactically complete");
                 let helper = constant(Value::Wrapped(74, Rc::new(Vec::new()).into()));
                 return Form::Apply(Callee::Code(Box::new(helper)), vec![receiver, constant(Value::text(name)), outside]);
@@ -2467,6 +2525,7 @@ impl<'a> Builder<'a> {
         let outer_declarations = std::mem::take(&mut self.declarations);
         let previous_loops = self.loop_depth;
         let previous_finally = self.finally_nesting;
+        let previous_finally_loops = if holds == Holds::Every { Some(std::mem::take(&mut self.finally_loop_bases)) } else { None };
         let previous_stars = std::mem::take(&mut self.except_star_bases);
         if holds == Holds::Every { self.loop_depth = 0; self.finally_nesting = 0; }
         let saved_documentation = self.documentation_statement.take();
@@ -2476,6 +2535,7 @@ impl<'a> Builder<'a> {
         let mut body = built_body?;
         self.loop_depth = previous_loops;
         self.finally_nesting = previous_finally;
+        if let Some(bases) = previous_finally_loops { self.finally_loop_bases = bases; }
         self.except_star_bases = previous_stars;
         self.declarations = outer_declarations;
         self.gather_names = earlier_gathering;
@@ -3579,6 +3639,7 @@ impl<'a> Builder<'a> {
     /// whoever compiled the text.
     fn note_finally_word(&mut self, word: &str) {
         if self.finally_nesting == 0 { return; }
+        if word != "return" && !self.finally_loop_bases.iter().any(|base| self.loop_depth <= *base) { return; }
         let at = self.look();
         let noted = (format!("'{word}' in a 'finally' block"), at.row, at.column);
         if !self.warnings.contains(&noted) { self.warnings.push(noted); }
@@ -3628,7 +3689,7 @@ impl<'a> Builder<'a> {
             self.past_library = true;
         }
         if self.tells_place && self.look().row > self.before {
-            let row = self.look().row - self.before;
+            let row = tree_row(self.look().row - self.before, self.look().column);
             let while_loop = self.grammar.has_any_ext_builtin_trace_native && self.key("stmt.while");
             let made = self.plain_or_kind()?;
             return Ok(if while_loop { made } else { Form::OnLine(row, 0, Box::new(made)) });
@@ -3963,7 +4024,7 @@ impl<'a> Builder<'a> {
                 return Ok(Form::Cycle { test: Box::new(stops), body: Box::new(body), step: None, after: true, otherwise: None });
             }
             if self.key("stmt.while") {
-                let loop_row = self.look().row.saturating_sub(self.before);
+                let loop_row = tree_row(self.look().row.saturating_sub(self.before), self.look().column);
                 self.move_past();
                 let test_at = self.pos;
                 return self.cycle(
@@ -4428,10 +4489,12 @@ impl<'a> Builder<'a> {
     /// after it rebind the name, taking the gathered values backwards.
     fn decorate(&mut self) -> Res<Form> {
         let mut forms = Vec::new();
+        let mut first_site = None;
         let mut decorators = Vec::new();
         let adorned_from = self.pos;
         loop {
             let mark = self.advance().lexeme;
+            first_site.get_or_insert_with(|| tree_row(self.look().row.saturating_sub(self.before), self.look().column));
             if !self.adornment_head_ok() {
                 return Err(self.grammar.single_ext_stmt_decorator_amiss.unwrap_or_default().to_string());
             }
@@ -4473,6 +4536,7 @@ impl<'a> Builder<'a> {
             let shared = self.skip_reference();
             named = self.need_word("after the function keyword")?;
             self.giving_cells.push(shared);
+            self.first_adornment = TREE_SITES.with(|sites| if sites.borrow().is_empty() { None } else { first_site });
             let definition = self.func(named.clone(), true);
             self.giving_cells.pop();
             forms.push(definition?);
@@ -5227,9 +5291,11 @@ impl<'a> Builder<'a> {
         let last = match self.key("ext.stmt.finally") {
             true => {
                 self.move_past();
+                self.finally_loop_bases.push(self.loop_depth);
                 self.finally_nesting += 1;
                 let body = self.guarded_attempt_body(bare_clauses)?;
                 self.finally_nesting -= 1;
+                self.finally_loop_bases.pop();
                 Some(Box::new(body))
             }
             false => None,
@@ -5555,9 +5621,11 @@ impl<'a> Builder<'a> {
             return Ok(false);
         }
         let adorned_from = self.pos;
+        let mut first_site = None;
         let mut wrappers=Vec::new();
         while table.has_any("ext.stmt.class.detail.root") && self.on_any("ext.stmt.decorator") {
             self.move_past();
+            first_site.get_or_insert_with(|| tree_row(self.look().row.saturating_sub(self.before), self.look().column));
             if !self.adornment_head_ok() { return Err(table.single("ext.stmt.decorator.amiss").unwrap_or_default().to_string()); }
             let expression=self.expr_at(0,false)?;let address=self.gensym("member_wrapper");
             setup.push(Form::Write(address.clone(),Box::new(expression)));wrappers.push(address);
@@ -5566,6 +5634,7 @@ impl<'a> Builder<'a> {
         if self.key("ext.stmt.async") && table.spells("stmt.function", &self.glance(1).spelling()) { self.advance(); self.coroutine_next = true; }
         if !wrappers.is_empty() && !self.key("stmt.function") && !self.key("ext.stmt.class") {self.parts().cannot=true;}
         if self.key("stmt.function") {
+            self.first_adornment = TREE_SITES.with(|sites| if sites.borrow().is_empty() { None } else { first_site });
             self.move_past();
             let method_name = self.need_word("as the method name")?;
             let title = self.original_words[self.pos - 1].lexeme.clone();
@@ -5865,7 +5934,7 @@ impl<'a> Builder<'a> {
                 // class into the scope around it.
                 let Some(book) = self.parts().book.clone() else {
                     let blank = self.gensym("delete");
-                    steps.push(Form::Read(Address { ident: Rc::from(word.as_str()), up: blank.up, at: blank.at, fallback: None }));
+                    steps.push(Form::Read(Address { cache_global: blank.cache_global, ident: Rc::from(word.as_str()), up: blank.up, at: blank.at, fallback: None }));
                     continue;
                 };
                 let target = self.read_to_write(&book.ident.to_string());
@@ -6017,8 +6086,10 @@ impl<'a> Builder<'a> {
     fn member_adornments(&mut self, setup: &mut Vec<Form>) -> Res<(String, Address)> {
         let adorned_from = self.pos;
         let mut waiting = Vec::new();
+        let mut first_site = None;
         while self.on_any("ext.stmt.decorator") {
             self.move_past();
+            first_site.get_or_insert_with(|| tree_row(self.look().row.saturating_sub(self.before), self.look().column));
             let mut manner = 'd';
             // With the descriptor protocol in the table, every decorator
             // is an expression applied to the member, the three wrapping
@@ -6066,6 +6137,7 @@ impl<'a> Builder<'a> {
             }
             self.move_past();
             word = self.need_word("as the method name")?;
+            self.first_adornment = TREE_SITES.with(|sites| if sites.borrow().is_empty() { None } else { first_site });
             let (routine, spares) = self.method(&word)?;
             let resume = self.pos;
             let mut default_values = Vec::new();
@@ -6772,7 +6844,7 @@ impl<'a> Builder<'a> {
             .map_or(false, |word| self.table.spells("ext.stmt.async", &word.spelling()));
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         let table = self.table;
-        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        self.declared_at = self.first_adornment.take().unwrap_or_else(|| tree_row((self.look().row as u32).saturating_sub(self.before), self.look().column));
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after method name")?;
         let explicit = table.flag("ext.stmt.class.this.explicit");
@@ -7261,7 +7333,7 @@ impl<'a> Builder<'a> {
             // A case whose test fits everything leaves no subject for a
             // later case, which the reference refuses to read.
             if unreachable { return Err(self.bad_case()); }
-            let case_row = (self.look().row as u32).saturating_sub(self.before);
+            let case_row = tree_row(self.look().row.saturating_sub(self.before), self.look().column);
             self.move_past();
             self.pattern_kinds.clear();
             let starts_wide = self.on_any("op.mul");
@@ -7712,7 +7784,7 @@ impl<'a> Builder<'a> {
             if !self.on_any("ext.stmt.case.mark") {
                 if let Some(instead) = table.single("ext.stmt.case.mark.instead") {
                     let row = (self.look().row as u32).saturating_sub(self.before);
-                    let told = Form::Remark("deprecated", Rc::from(instead), row);
+                    let told = Form::Remark(Rc::from("deprecated"), Rc::from(instead), row);
                     self.noted_when_read.push(told);
                 }
             }
@@ -7987,7 +8059,7 @@ impl<'a> Builder<'a> {
     }
 
     fn located(&self, bounds: (u32, u32, u32, u32), expression: Form) -> Form {
-        if self.grammar.has_any_ext_builtin_exceptions_traceback { Form::Located(bounds, 0, Box::new(expression)) }
+        if self.grammar.has_any_ext_builtin_exceptions_traceback { Form::Located(tree_bounds(bounds), 0, Box::new(expression)) }
         else { expression }
     }
 
@@ -8341,7 +8413,7 @@ impl<'a> Builder<'a> {
                         whose,
                         params.last().map_or("", String::as_str)
                     );
-                    said.push(Form::Remark("deprecated", Rc::from(told.as_str()), row));
+                    said.push(Form::Remark(Rc::from("deprecated"), Rc::from(told.as_str()), row));
                 }
             }
             if let Some(sep) = table.single("syntax.call.separator") {
@@ -8619,7 +8691,7 @@ impl<'a> Builder<'a> {
             self.arg_names.entry(name.to_owned()).or_insert_with(Vec::new);
         }
         let table = self.table;
-        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        self.declared_at = self.first_adornment.take().unwrap_or_else(|| tree_row((self.look().row as u32).saturating_sub(self.before), self.look().column));
         let open = table.single("syntax.call.open").ok_or_else(|| "This language has no call syntax".to_string())?;
         self.need_sign(open, "after function name")?;
         let typed = table.flag("stmt.let.type_first");
@@ -8834,7 +8906,7 @@ impl<'a> Builder<'a> {
         let mut unavailable = self.outside_lambda.clone();
         unavailable.extend(enclosing);
         let prior = std::mem::replace(&mut self.outside_lambda, unavailable);
-        self.declared_at = (self.tokens[keyword_at].row as u32).saturating_sub(self.before);
+        self.declared_at = tree_row((self.tokens[keyword_at].row as u32).saturating_sub(self.before), self.tokens[keyword_at].column);
         let lambda_ident = table.strings("ext.stmt.function.anonymous").first().map(String::as_str).unwrap_or(ANONYMOUS);
         let mut function = self.routine(lambda_ident, Holds::Every, Traps::Yields, names, required, |b| {
             let mut steps = Vec::new();
@@ -8892,7 +8964,7 @@ impl<'a> Builder<'a> {
     /// nowhere to say which of them it wants.
     fn short_func(&mut self) -> Res<Form> {
         let table = self.table;
-        self.declared_at = (self.look().row as u32).saturating_sub(self.before);
+        self.declared_at = self.first_adornment.take().unwrap_or_else(|| tree_row((self.look().row as u32).saturating_sub(self.before), self.look().column));
         if table.flag("ext.syntax.call.bind_names") {
             let (params, spares, _, _) = self.parameters(ANONYMOUS, true)?;
             let manners = self.taking.take();
@@ -8973,7 +9045,7 @@ impl<'a> Builder<'a> {
             // The one expression stands where it is written, so whatever
             // is said while it runs names that line and not the line the
             // call was made from.
-            let row = (r.look().row as u32).saturating_sub(r.before);
+            let row = tree_row((r.look().row as u32).saturating_sub(r.before), r.look().column);
             let body = r.expr(0)?;
             items.push(Form::OnLine(row, 0, Box::new(body)));
             Ok(sequence(items))
@@ -10333,6 +10405,13 @@ impl<'a> Builder<'a> {
     /// what was written — but not where the write is the whole
     /// statement, which is read as a statement.
     fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<Form> {
+        let first = self.pos;
+        let form = self.expr_read(floor, may_write)?;
+        if self.on_writing() || self.on_any("ext.op.assign.expression") || TREE_SITES.with(|sites| sites.borrow().is_empty()) { Ok(form) }
+        else { Ok(self.located(self.span_since(first), form)) }
+    }
+
+    fn expr_read(&mut self, floor: u32, may_write: bool) -> Res<Form> {
         let opening = self.pos;
         let quote_end = (opening..self.tokens.len()).find(|at| self.tokens[*at].shape != Shape::Quote).unwrap_or(opening);
         let recovery_tail = quote_end != opening && ["+", "-", "~", "(", "["].contains(&self.tokens[quote_end].lexeme.as_str());
@@ -10661,7 +10740,7 @@ impl<'a> Builder<'a> {
         let Some(binary) = t.dyadic.get(&first) else { return Ok(None); };
         // Barry turns the two-character spelling into the mistake and
         // keeps the old diamond for the operator.
-        if self.barry_as_flufl && first != "<>" && matches!(binary.prim, Prim::Ne) {
+        if self.barry_as_flufl && first != "<>" && matches!(binary.prim, Prim::Ne) && TREE_SITES.with(|sites| sites.borrow().is_empty()) {
             let here = self.look().clone();
             self.range_end = Some((here.column + here.lexeme.chars().count(), here.row));
             return Err(String::from("SyntaxError: with Barry as BDFL, use '<>' instead of '!='"));
@@ -10717,6 +10796,15 @@ impl<'a> Builder<'a> {
     /// A piece of an expression, with a step written before or after it
     /// where the language spells one.
     fn monadic_expr(&mut self) -> Res<Form> {
+        let began = self.pos;
+        let node = self.monadic_read()?;
+        let mapping = TREE_SITES.with(|sites| !sites.borrow().is_empty());
+        if mapping && !self.on_writing() && !self.on_any("ext.op.assign.expression") {
+            Ok(self.located(self.span_since(began), node))
+        } else { Ok(node) }
+    }
+
+    fn monadic_read(&mut self) -> Res<Form> {
         if let Some(by) = self.step_by(&self.look().clone()) {
             self.move_past();
             let target = self.monadic_expr()?;
@@ -11003,13 +11091,18 @@ impl<'a> Builder<'a> {
                 constant(numeral(&t.lexeme, table)?)
             }
             Shape::ByteQuote | Shape::Quote | Shape::CharacterRow | Shape::Woven | Shape::Unheld => {
+                let template = t.shape == Shape::Woven && t.lexeme.chars().next().map_or(false, |c| table.spells("ext.lexical.string.prefix.template", &c.to_string()));
                 let mut text = self.quotation()?;
                 if table.flag("ext.lexical.string.adjacent") {
                     while matches!(self.look().shape, Shape::ByteQuote | Shape::Quote | Shape::CharacterRow | Shape::Woven | Shape::Unheld) {
+                        let also_template = self.look().shape == Shape::Woven && self.look().lexeme.chars().next().map_or(false, |c| table.spells("ext.lexical.string.prefix.template", &c.to_string()));
+                        if template != also_template {
+                            return Err(table.single("ext.lexical.string.template.mixed").unwrap_or("").to_owned());
+                        }
                         if (t.shape == Shape::ByteQuote) != (self.look().shape == Shape::ByteQuote) {
                             return Err(table.single("ext.lexical.string.bytes.mixed").unwrap_or("").to_owned());
                         }
-                        text = prim_call(if t.shape == Shape::ByteQuote { Prim::Plus } else { Prim::Join }, vec![text, self.quotation()?]);
+                        text = prim_call(if t.shape == Shape::ByteQuote || template { Prim::Plus } else { Prim::Join }, vec![text, self.quotation()?]);
                     }
                 }
                 text
@@ -11772,7 +11865,7 @@ impl<'a> Builder<'a> {
                         _ => false,
                     };
                     return Ok(match (calls, unshared.first()) {
-                        (true, Some(said)) => Form::CellOrSaid(Some("notice"), Rc::from(said.as_str()), row, Box::new(found)),
+                        (true, Some(said)) => Form::CellOrSaid(Some(Rc::from("notice")), Rc::from(said.as_str()), row, Box::new(found)),
                         (true, None) => found,
                         (false, _) => {
                             let told = format!("{}(): Argument #{} ({}) could not be passed by reference", called, which + 1, spelt);
@@ -11786,12 +11879,12 @@ impl<'a> Builder<'a> {
                 // was given one to give is settled by the run, the value
                 // itself saying whether it is a cell.
                 match (unshared.first(), as_it_runs, shares) {
-                    (Some(said), true, _) => Form::HeldEither("notice", Rc::from(said.as_str()), row, Box::new(found)),
+                    (Some(said), true, _) => Form::HeldEither(Rc::from("notice"), Rc::from(said.as_str()), row, Box::new(found)),
                     (Some(said), false, false) => {
                         self.gensyms += 1;
                         let held = format!("#shared{}", self.gensyms);
                         let kept = self.write(&held, found);
-                        let told = Form::Remark("notice", Rc::from(said.as_str()), row);
+                        let told = Form::Remark(Rc::from("notice"), Rc::from(said.as_str()), row);
                         sequence(vec![kept, told, self.read(&held)])
                     }
                     _ => found,
@@ -13930,6 +14023,24 @@ fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, name
         _ => {}
     }
     for child in children { inspect_form(child, locals, constants, names, suspension); }
+}
+
+
+pub(crate) fn cached_forms(program: Rc<Routine>, globals: Vec<String>, mut metadata: serde_json::Value) -> Result<Built, String> {
+    macro_rules! take { ($key:literal) => { serde_json::from_value(metadata[$key].take()).map_err(|e| format!("ValueError: {e}"))? }; }
+    Ok(Built {
+        program, globals, warnings: Vec::new(), future_bits: metadata["future_bits"].as_i64().unwrap_or(0),
+        outer_aliases: take!("outer_aliases"), seen: take!("seen"),
+        shared_args: take!("shared_args"), arg_names: take!("arg_names"),
+        gives_back: take!("gives_back"), bound_globally: take!("bound_globally"),
+        native_exports: take!("native_exports"),
+    })
+}
+pub(crate) fn cache_metadata(built: &Built) -> serde_json::Value {
+    serde_json::json!({ "globals": built.globals, "future_bits": built.future_bits, "outer_aliases": built.outer_aliases,
+        "seen": built.seen, "shared_args": built.shared_args, "arg_names": built.arg_names,
+        "gives_back": built.gives_back, "bound_globally": built.bound_globally,
+        "native_exports": built.native_exports })
 }
 
 // Preserve blank lines when settling the indentation of Python documentation.

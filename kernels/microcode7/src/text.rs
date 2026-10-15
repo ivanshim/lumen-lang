@@ -8,6 +8,7 @@ use std::rc::Rc;
 use num_traits::ToPrimitive;
 
 #[derive(Hash, Eq, PartialEq, Copy, Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Work {
     NEWARGS, SPLITLINES, PARTITION, RPARTITION, EXPANDTABS, SWAPCASE, CASEFOLD,
     CAPITALIZE, TITLE, ISTITLE, ISIDENTIFIER, ISPRINTABLE, ISDECIMAL,
@@ -287,7 +288,7 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
 
     use Work::*;
     // A descriptor search keeps the original Python character sequence.
-    let code_work = match work { FIND => "find", RFIND => "rfind", INDEX => "index", RINDEX => "rindex", COUNT => "count", REPLACE => "replace", LOWER => "lower", UPPER => "upper", _ => "" };
+    let code_work = match work { FIND => "find", RFIND => "rfind", INDEX => "index", RINDEX => "rindex", REPLACE => "replace", LOWER => "lower", UPPER => "upper", _ => "" };
     if code_work != "" && matches!(input.first(), Some(Value::Text(_) | Value::Unpaired(_)))
         && input.iter().take(3).any(|v| matches!(v, Value::Unpaired(_))) {
         let failure = |reason: &str| complaint(table, reason);
@@ -310,6 +311,37 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
     }
     if work==REPR {
         return if input.len()==1 {Ok(Value::text(&expression(&input[0],names)))} else {Err(complaint(table,"arguments"))};
+    }
+    if work == COUNT && input.iter().take(2).any(|item| matches!(item, Value::Unpaired(_))) {
+        match input.len() {
+            0 | 1 => return Err(String::from("TypeError: count expected at least 1 argument, got 0")),
+            amount if amount > 4 => return Err(format!("TypeError: count expected at most 3 arguments, got {}", amount - 1)),
+            _ => {}
+        }
+        let units = |item: &Value| match item {
+            Value::Text(word) => Some(word.chars().map(u32::from).collect::<Vec<_>>()),
+            Value::Unpaired(row) => Some(row.to_vec()),
+            _ => None,
+        };
+        let haystack = units(&input[0]).ok_or_else(|| complaint(table, "receiver"))?;
+        let sought = units(&input[1]).ok_or_else(|| format!("TypeError: count() argument 1 must be str, not {}", input[1].kind_word()))?;
+        let size = haystack.len();
+        let endpoint = |slot: usize, usual: i64| -> Result<usize, String> {
+            let supplied = match input.get(slot) { None | Some(Value::Nil) => usual, Some(value) => count(value, table).map_err(|_| String::from("TypeError: slice indices must be integers or None or have an __index__ method"))? };
+            let adjusted = if supplied.is_negative() { (size as i64).saturating_add(supplied).max(0) } else { supplied };
+            Ok((adjusted as usize).min(size.saturating_add(1)))
+        };
+        let begin = endpoint(2, 0)?;
+        let end = endpoint(3, size as i64)?.min(size);
+        let answer = if begin > end { 0 } else if sought.is_empty() { end - begin + 1 } else {
+            let mut next = 0;
+            haystack[begin..end].windows(sought.len()).enumerate().filter(|(at, window)| {
+                if *at < next || *window != sought.as_slice() { return false; }
+                next = *at + sought.len();
+                true
+            }).count()
+        };
+        return Ok(Value::Small(answer as i64));
     }
     if input.iter().any(|operand| match operand { Value::Unpaired(_) => true, Value::Tuple(parts) => parts.to_vec().iter().any(|part| matches!(part, Value::Unpaired(_))), _ => false }) {
         let numbers=match input.first(){Some(Value::Unpaired(row))=>row.clone(),Some(Value::Text(word))=>Rc::from(word.chars().map(u32::from).collect::<Vec<_>>()),_=>return Err(complaint(table,"receiver"))};
@@ -460,6 +492,40 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             let position = if work == RINDEX || work == RFIND { offsets.rev().find(|at| matches(*at)) } else { offsets.into_iter().find(|at| matches(*at)) };
             if let Some(position) = position { return Ok(Value::Small((bounds[0] + position) as i64)); }
             return if work == INDEX || work == RINDEX { Err(complaint(table, "missing")) } else { Ok(Value::Small(-1)) };
+        }
+        if work == SPLITLINES {
+            if input.len() >= 3 { return Err(complaint(table, "arguments")); }
+            let keepends = input.get(1).map_or(Ok(0), count)? != 0;
+            let mut lines = Vec::new();
+            let mut offset = 0;
+            let mut start = 0;
+            while let Some(&number) = numbers.get(offset) {
+                offset += 1;
+                if ![10, 11, 12, 13, 28, 29, 30, 133, 0x2028, 0x2029].contains(&number) { continue; }
+                let cut = offset - 1;
+                if number == 13 && numbers.get(offset) == Some(&10) { offset += 1; }
+                let limit = if keepends { offset } else { cut };
+                lines.push(Value::characters(numbers[start..limit].to_vec()));
+                start = offset;
+            }
+            if start != numbers.len() { lines.push(Value::characters(numbers[start..].to_vec())); }
+            return Ok(Value::Vector(crate::tuples::Sequence::plain(lines)));
+        }
+        if matches!(work, UPPER | LOWER | TITLE | CASEFOLD | CAPITALIZE | SWAPCASE) {
+            if input.len() > 1 { return Err(complaint(table, "arguments")); }
+            // Surrogates break casing context while remaining unchanged in the output.
+            let mut result = Vec::new();
+            let mut beginning = 0;
+            for position in 0..=numbers.len() {
+                if position == numbers.len() || char::from_u32(numbers[position]).is_none() {
+                    let text: String = numbers[beginning..position].iter().map(|&n| char::from_u32(n).unwrap()).collect();
+                    let shaping = if work == CAPITALIZE && beginning > 0 { LOWER } else { work };
+                    result.extend(case_changed(&text, shaping).chars().map(u32::from));
+                    if position < numbers.len() { result.push(numbers[position]); }
+                    beginning = position + 1;
+                }
+            }
+            return Ok(Value::characters(result));
         }
         if work==LENGTH && input.len()==1 {return Ok(Value::Small(numbers.len() as i64))}
         if work==REPLACE {

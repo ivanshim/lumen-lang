@@ -21,8 +21,8 @@ def staged_reference(root, prog, versions):
     staged_suite = os.path.join(libroot, os.path.basename(tests))
     shutil.copytree(suite, staged_suite)
     path = os.path.join(staged_suite, relative)
-    if relative in ('test_patma.py', 'test_tabnanny.py', 'test_type_aliases.py'):
+    if relative in ('test_patma.py', 'test_tabnanny.py', 'test_type_aliases.py', 'test_extcall.py'):
         return [os.path.join(root, 'scripts', 'suite', 'reference_entry.py'), path], stage
     if relative.endswith('/__main__.py'):
-        return ['-m', 'test.' + relative.split('/')[0]], stage
+        return [os.path.join(root, 'scripts', 'suite', 'reference_entry.py'), path], stage
     return [path], stage

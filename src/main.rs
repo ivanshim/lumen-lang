@@ -24,6 +24,7 @@ include!("python_encodings.rs");
 
 use std::collections::HashSet;
 use std::env;
+use std::io::Read;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
@@ -33,6 +34,7 @@ use std::process;
 mod web;
 mod python_versions;
 mod prepared_libraries { include!(concat!(env!("OUT_DIR"), "/prepared_libraries.rs")); }
+mod python_sources;
 
 mod embedded_modules {
     include!("../langs/lib_python/modules/manifest.rs");
@@ -199,6 +201,8 @@ struct Invocation {
     module_name: Option<String>,
     python_development: bool,
     program_name: Option<String>,
+    python_ignore_environment: bool,
+    python_interactive: bool,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -497,14 +501,13 @@ fn source_of(written: Vec<u8>, as_bytes: bool) -> String {
     }
 }
 
-/// The first four bytes of a pyc this host writes: the pinned CPython
-/// bytecode marker `_imp.pyc_magic_number_token` in little endian.
-const PYC_MAGIC: [u8; 4] = [0x79, 0x0e, 0x0d, 0x0a];
+/// Native cache markers written by the two full Python kernels.
+const PYC_MAGICS: [[u8; 4]; 2] = [*b"L8C\x04", *b"L7C\x04"];
 
 /// Whether bytes open with the bytecode marker, and so are a compiled
 /// module rather than source.
 fn is_pyc(bytes: &[u8]) -> bool {
-    bytes.len() >= 4 && bytes[0..4] == PYC_MAGIC
+    bytes.len() >= 4 && PYC_MAGICS.iter().any(|magic| bytes[..4] == *magic)
 }
 
 /// A Python double-quoted literal for a path handed to a bootstrap.
@@ -713,6 +716,8 @@ fn run_all() {
     if inv.language.name() == "python" {
         if inv.python_development { std::env::set_var("LUMEN_PYTHON_DEV_MODE", "1"); }
         else { std::env::remove_var("LUMEN_PYTHON_DEV_MODE"); }
+        if inv.python_ignore_environment { std::env::set_var("LUMEN_PYTHON_IGNORE_ENV", "1"); }
+        else { std::env::remove_var("LUMEN_PYTHON_IGNORE_ENV"); }
     }
     // Only an actual -m invocation carries module execution metadata;
     // a script child must not inherit its parent's module identity.
@@ -724,7 +729,7 @@ fn run_all() {
     // or splitting a message that itself contains a separator character.
     if inv.language.name() == "python" {
         let mut options = Vec::new();
-        if let Ok(environment) = env::var("PYTHONWARNINGS") {
+        if let Some(environment) = env::var("PYTHONWARNINGS").ok().filter(|_| !inv.python_ignore_environment) {
             options.extend(environment.split(',').filter(|part| !part.is_empty()).map(str::to_owned));
         }
         options.extend(inv.warning_options.iter().cloned());
@@ -743,7 +748,10 @@ fn run_all() {
         env::remove_var("LUMEN_WARNOPTIONS");
     }
 
-    let written = inv.module_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| fs::read(&inv.file).unwrap_or_else(|e| {
+    let written = inv.module_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| (if inv.file == "-" {
+        let mut input = Vec::new();
+        std::io::stdin().read_to_end(&mut input).map(|_| input)
+    } else { fs::read(&inv.file) }).unwrap_or_else(|e| {
         eprintln!("Error: Failed to read {}: {}", inv.file, e);
         process::exit(1);
     }));
@@ -762,6 +770,11 @@ fn run_all() {
         source_of(written, text_is_bytes(&inv.language) && honours_extensions(&inv.kernel))
     };
     let source = without_shebang(source);
+    let source = if inv.python_interactive {
+        let initial = serde_json::to_string(&source).expect("interactive initial source");
+        let filename = serde_json::to_string(&inv.file).expect("interactive source filename");
+        format!("{}\n_lumen_interact({initial}, {filename}, globals())\n", include_str!("python_interactive.py"))
+    } else { source };
     if inv.language.name() == "python" && inv.file == "<string>" { env::set_var("LUMEN_COMMAND_SOURCE", &source); }
     else { env::remove_var("LUMEN_COMMAND_SOURCE"); }
 
@@ -809,19 +822,18 @@ fn run_all() {
     // read the labels that name it.
     let mut request = web::gathered(text_is_bytes(&inv.language) && honours_extensions(&inv.kernel));
     // Resolve the optional library location before the program can change directory.
-    if let Some(root) = std::env::var_os("LUMEN_ROOT") {
-        let root = std::path::PathBuf::from(root);
-        let root = std::fs::canonicalize(&root).unwrap_or_else(|_| {
-            std::env::current_dir().unwrap_or_default().join(root)
-        });
-        let modules = root.join("langs/lib_python/modules");
-        request.push(("SELF".to_string(), "library_root".to_string(), modules.to_string_lossy().into_owned(), false));
-    }
     let overlay = inv.python.map_or(&[][..], |v| v.modules);
     for (name, source, file) in overlay.iter().chain(embedded_modules::MODULES.iter().filter(|(name, ..)| !overlay.iter().any(|(overlaid, ..)| overlaid == name))) {
         let source = inv.python.map_or_else(|| source.to_string(), |v| v.module_source(name, source));
         request.push(("MODULE".to_string(), name.to_string(), source, false));
         request.push(("MODULE_FILE".to_string(), name.to_string(), file.to_string(), false));
+    }
+    if inv.language.name() == "python" && FULL_KERNELS.contains(&inv.kernel.as_str()) {
+        let root = python_library_sources(&request).unwrap_or_else(|error| {
+            eprintln!("Error: cannot provide Python library sources: {error}");
+            process::exit(1);
+        });
+        request.push(("SELF".to_string(), "library_root".to_string(), root.to_string_lossy().into_owned(), false));
     }
     let aliases = inv.python.map_or(&[][..], |v| v.aliases);
     for (name, member) in aliases.iter().chain(embedded_modules::MODULE_ALIASES.iter().filter(|(name, ..)| !aliases.iter().any(|(overlaid, ..)| overlaid == name))) {
@@ -829,7 +841,9 @@ fn run_all() {
     }
     // Where the program itself lies. A definition may give names to
     // these, and only the full kernels read those labels.
-    let whole = std::fs::canonicalize(&inv.file).unwrap_or_else(|_| std::path::PathBuf::from(&inv.file));
+    let whole = if inv.file == "-" { std::path::PathBuf::from("<stdin>") } else {
+        std::fs::canonicalize(&inv.file).unwrap_or_else(|_| std::path::PathBuf::from(&inv.file))
+    };
     let held = whole.parent().map_or_else(|| ".".to_string(), |p| p.to_string_lossy().into_owned());
     request.push(("SELF".to_string(), "file".to_string(), whole.to_string_lossy().into_owned(), false));
     request.push(("SELF".to_string(), "directory".to_string(), held, false));
@@ -841,6 +855,9 @@ fn run_all() {
     // file itself; a program reads it as its own first argument.
     if let Some(name) = &inv.program_name {
         request.push(("SELF".to_string(), "argv0".to_string(), name.clone(), false));
+    }
+    if inv.file == "-" {
+        request.push(("SELF".to_string(), "argv0".to_string(), "-".to_string(), false));
     }
     // The program running this one, as the system knows it, which a
     // language may name for a program that wants to find itself again.
@@ -1103,6 +1120,8 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut warning_options = Vec::new();
     let mut tracing_limit = None;
     let mut extended_options = Vec::new();
+    let mut python_ignore_environment = false;
+    let mut python_interactive = false;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
     // The name a Python program sees as its own first argument. It is
@@ -1202,14 +1221,16 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 let path = module.replace('.', "/");
                 let mut found = None;
                 let mut directories = vec![std::path::PathBuf::from(".")];
-                if let Some(search) = env::var_os("PYTHONPATH") { directories.extend(env::split_paths(&search)); }
+                if !python_ignore_environment {
+                    if let Some(search) = env::var_os("PYTHONPATH") { directories.extend(env::split_paths(&search)); }
+                }
                 for directory in directories {
-                    for (at, relative) in [format!("{path}.py"), format!("{path}.pyc"), format!("{path}/__main__.py"), format!("{path}/__main__.pyc")].into_iter().enumerate() {
+                    for (at, relative) in [format!("{path}/__main__.py"), format!("{path}/__main__.pyc"), format!("{path}.py"), format!("{path}.pyc")].into_iter().enumerate() {
                         let candidate = directory.join(relative).to_string_lossy().into_owned();
                         let source = if candidate.ends_with(".pyc") {
                             fs::metadata(&candidate).ok().map(|_| compiled_source(&candidate))
                         } else { fs::read_to_string(&candidate).ok() };
-                        if let Some(source) = source { found = Some((candidate, source, at >= 2)); break; }
+                        if let Some(source) = source { found = Some((candidate, source, at < 2)); break; }
                     }
                     if found.is_some() { break; }
                 }
@@ -1217,7 +1238,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
                     // A name the library keeps is found where the library
                     // keeps it, as the reference finds one walking sys.path.
                     let root = python_library_root();
-                    for candidate in [format!("{root}/{path}.py"), format!("{root}/{path}/__main__.py")] {
+                    for candidate in [format!("{root}/{path}/__main__.py"), format!("{root}/{path}.py")] {
                         if let Ok(source) = fs::read_to_string(&candidate) { let via_main = candidate.ends_with("/__main__.py"); found = Some((candidate, source, via_main)); break; }
                     }
                 }
@@ -1252,6 +1273,16 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 language = Some(Language::Named("python".to_owned()));
                 rest = &rest[2..];
                 break;
+            }
+            Some("-q") if file.is_none() && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                // The interactive driver has no startup banner to suppress.
+                language = Some(Language::Named("python".to_owned()));
+                rest = &rest[1..];
+            }
+            Some("-i") if file.is_none() && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                python_interactive = true;
+                language = Some(Language::Named("python".to_owned()));
+                rest = &rest[1..];
             }
             // These Python startup switches describe services already isolated
             // from site imports and configure byte diagnostics before execution.
@@ -1305,6 +1336,17 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 if key == "dev" { python_development = true; }
                 language = Some(Language::Named("python".to_owned()));
                 rest = &rest[used..];
+            }
+            Some("-E") if file.is_none() => {
+                python_ignore_environment = true;
+                language = Some(Language::Named("python".to_string()));
+                rest = &rest[1..];
+            }
+            Some("-") if file.is_none() => {
+                file = Some("-".to_string());
+                language = Some(Language::Named("python".to_string()));
+                rest = &rest[1..];
+                break;
             }
             Some("-d") if file.is_none() => {
                 if rest.len() < 2 {
@@ -1382,6 +1424,11 @@ fn parse_args(args: &[OsString]) -> Invocation {
 
     if let Some(limit) = tracing_limit { env::set_var("LUMEN_TRACE_FRAMES", limit.to_string()); }
     else { env::remove_var("LUMEN_TRACE_FRAMES"); }
+    if python_interactive && file.is_none() {
+        file = Some("<stdin>".to_owned());
+        module_source = Some(String::new());
+        program_name = Some(String::new());
+    }
     let file = file.unwrap_or_else(|| usage(program));
     let language = language.unwrap_or_else(|| {
         // A language not named on the command line may be carried in
@@ -1427,7 +1474,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 module_source = Some(String::from_utf8_lossy(&source).into_owned());
                 module_name = Some("__main__".to_string());
             } else if let Some(pyc) = zip_read(&zip_path, &format!("{target}__main__.pyc")) {
-                if pyc.len() >= 16 && pyc[0..4] == PYC_MAGIC {
+                if pyc.len() >= 16 && is_pyc(&pyc) {
                     module_source = Some(compiled_bytes_source(&pyc[16..]));
                     module_name = Some("__main__".to_string());
                 }
@@ -1455,7 +1502,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         let encoded = extended_options.iter().map(|option| format!("{}:{option}", option.chars().count())).collect::<String>();
         env::set_var("LUMEN_XOPTIONS", encoded);
     } else { env::remove_var("LUMEN_XOPTIONS"); }
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_development, warning_options, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_ignore_environment, python_interactive, python_development, warning_options, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.
@@ -1497,4 +1544,13 @@ fn expand_includes(source: &str) -> Result<String, String> {
     let mut out = String::new();
     walk(source, &mut HashSet::new(), &mut out)?;
     Ok(out)
+}
+
+
+// Installed binaries expose the same source that their embedded loader runs.
+fn python_library_sources(request: &[(String, String, String, bool)]) -> std::io::Result<std::path::PathBuf> {
+    let original = env::var_os("LUMEN_ROOT").map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .join("langs/lib_python/modules");
+    python_sources::library(request, &original)
 }
