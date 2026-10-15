@@ -1,217 +1,170 @@
-# OpenSSL-shaped hashlib backend. The digest algorithms are the builtin
-# modules; this module publishes the names CPython's _hashlib module does.
+# Interface for CPython v3.14.8 Modules/_hashopenssl.c.
 import operator
-
-_native = __crypto
+from _digest import (_buffer, _arguments, _parameter_buffer, _SIZES, _XOF_BLOCKS,
+                     one_shot, hmac_class, BuiltinFunction)
+from _operator import _compare_digest as _compare
 
 _GIL_MINSIZE = 2048
+_native_digest = __crypto
 
 
 class UnsupportedDigestmodError(ValueError):
-    """A digest constructor this backend does not know."""
+    pass
 
 
-def _minted(cls):
-    def create(cls, *args, **kwargs):
-        if not args or args[0] is not _mint:
-            raise TypeError("cannot create '" + cls.__module__ + "." + cls.__name__ + "' instances")
-        return object.__new__(cls)
-    cls.__new__ = create
-    return cls
+def _canonical(name):
+    key = name.lower()
+    if key.startswith('sha-'):
+        key = 'sha' + key[4:]
+    elif key.startswith(('sha3-', 'shake-')):
+        key = key.replace('-', '_')
+    return key if key in _SIZES or key in _XOF_BLOCKS else None
 
 
-_mint = object()
+class HASH:
+    __slots__ = ('_name', '_data')
 
+    def __new__(cls, *args, **kwargs):
+        raise TypeError("cannot create '" + cls.__module__ + '.' + cls.__name__ + "' instances")
 
-@_minted
-class HMAC:
-    """Keyed hash. Constructed only by hmac_new."""
+    @property
+    def name(self):
+        return self._name
 
-    def __init__(self, token, hash_name, block_size, inner, outer):
-        self.name = "hmac-" + hash_name
-        self._hash_name = hash_name
-        self.block_size = block_size
-        self.digest_size = inner.digest_size
-        self._inner = inner
-        self._outer = outer
+    @property
+    def digest_size(self):
+        return _SIZES[self._name][0] if self._name in _SIZES else 0
 
-    def update(self, msg):
-        self._inner.update(_payload(msg))
-        return None
+    @property
+    def block_size(self):
+        return _SIZES[self._name][1] if self._name in _SIZES else _XOF_BLOCKS[self._name]
+
+    def update(self, obj, /):
+        self._data += _buffer(obj)
 
     def copy(self):
-        twin = HMAC(_mint, self._hash_name, self.block_size, self._inner.copy(), self._outer.copy())
-        return twin
+        other = object.__new__(type(self))
+        other._name, other._data = self._name, self._data
+        return other
 
     def digest(self):
-        outer = self._outer.copy()
-        outer.update(self._inner.digest())
-        return outer.digest()
+        return one_shot(self._name, self._data, self.digest_size)
 
     def hexdigest(self):
         return self.digest().hex()
 
     def __repr__(self):
-        return "<" + self._hash_name + " HMAC object @" + hex(id(self)) + ">"
+        return '<' + self._name + ' ' + type(self).__module__ + '.' + type(self).__name__ + ' object @ ' + hex(id(self)) + '>'
 
 
-def _payload(data):
-    if isinstance(data, str):
-        raise TypeError("a bytes-like object is required, not 'str'")
-    if isinstance(data, (bytes, bytearray)):
-        return bytes(data)
-    if isinstance(data, memoryview):
-        return data.tobytes()
-    try:
-        view = memoryview(data)
-    except TypeError:
-        raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'") from None
-    return view.tobytes()
+class HASHXOF(HASH):
+    def digest(self, length):
+        length = operator.index(length)
+        if length < 0:
+            raise SystemError('Negative size passed to PyBytes_FromStringAndSize')
+        if length >= 536870912:
+            raise ValueError('length is too large')
+        return one_shot(self._name, self._data, length)
+
+    def hexdigest(self, length):
+        return self.digest(length).hex()
 
 
-def _prepare_compare(value):
-    if isinstance(value, str):
-        try:
-            return value.encode("ascii"), "text"
-        except UnicodeEncodeError:
-            raise TypeError("comparing strings with non-ASCII characters is not supported") from None
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        return _payload(value), "bytes"
-    raise TypeError("a bytes-like object is required, not '" + type(value).__name__ + "'")
-
-
-class _CompareDigest:
-    """Callable that does not bind when stored on a class, matching a builtin."""
-
-    def __call__(self, a, b):
-        left, left_kind = _prepare_compare(a)
-        try:
-            right, right_kind = _prepare_compare(b)
-        except TypeError:
-            if left_kind == "text" and not isinstance(b, str):
-                raise TypeError("a bytes-like object is required, not 'str'") from None
-            raise
-        if left_kind != right_kind:
-            if left_kind == "text":
-                raise TypeError("a bytes-like object is required, not 'str'")
-            raise TypeError("a bytes-like object is required, not '" + type(b).__name__ + "'")
-        if len(left) != len(right):
-            return False
-        return _native(2, left, right)
-
-
-compare_digest = _CompareDigest()
-
-
-def _known():
-    from _md5 import md5
-    from _sha1 import sha1
-    from _sha2 import sha224, sha256, sha384, sha512
-    from _sha3 import sha3_224, sha3_256, sha3_384, sha3_512, shake_128, shake_256
-    return (
-        ("md5", md5),
-        ("sha1", sha1),
-        ("sha224", sha224),
-        ("sha256", sha256),
-        ("sha384", sha384),
-        ("sha512", sha512),
-        ("sha3_224", sha3_224),
-        ("sha3_256", sha3_256),
-        ("sha3_384", sha3_384),
-        ("sha3_512", sha3_512),
-        ("shake_128", shake_128),
-        ("shake_256", shake_256),
-    )
-
-
-def _tables():
-    by_name = {}
-    by_ctor = {}
-    for name, constructor in _known():
-        by_name[name] = constructor
-        by_ctor[constructor] = name
-    return by_name, by_ctor
-
-
-def _resolve(digestmod):
-    by_name, by_ctor = _tables()
-    if isinstance(digestmod, str):
-        constructor = by_name.get(digestmod.lower())
-        if constructor is None:
-            raise UnsupportedDigestmodError("unsupported hash type " + digestmod)
-        return digestmod.lower(), constructor
-    name = by_ctor.get(digestmod)
-    if name is None:
-        raise UnsupportedDigestmodError("unsupported hash type")
-    return name, digestmod
-
-
-def _hmac_parts(key, digestmod):
-    name, constructor = _resolve(digestmod)
-    key = _payload(key)
-    probe = constructor()
-    block = probe.block_size
-    if len(key) > block:
-        key = constructor(key).digest()
-    if len(key) < block:
-        key = key + b"\x00" * (block - len(key))
-    inner_pad = bytes(byte ^ 0x36 for byte in key)
-    outer_pad = bytes(byte ^ 0x5C for byte in key)
-    inner = constructor(inner_pad)
-    outer = constructor(outer_pad)
-    return name, block, inner, outer
-
-
-def hmac_new(key, msg=None, *, digestmod):
-    name, block, inner, outer = _hmac_parts(key, digestmod)
-    obj = HMAC(_mint, name, block, inner, outer)
-    if msg is not None:
-        obj.update(msg)
-    return obj
-
-
-def hmac_digest(key, msg, digest):
-    obj = hmac_new(key, msg, digestmod=digest)
-    return obj.digest()
+def _construct(name, label, args, kwargs):
+    data, options = _arguments(label, args, kwargs, {'usedforsecurity': True})
+    bool(options['usedforsecurity'])
+    canonical = _canonical(name)
+    if canonical is None:
+        raise UnsupportedDigestmodError('[digital envelope routines] unsupported')
+    self = object.__new__(HASHXOF if canonical in _XOF_BLOCKS else HASH)
+    self._name = canonical
+    self._data = _buffer(data)
+    return self
 
 
 def new(name, *args, **kwargs):
     if not isinstance(name, str):
         raise TypeError("new() argument 'name' must be str, not " + type(name).__name__)
-    by_name, _by_ctor = _tables()
-    constructor = by_name.get(name.lower())
-    if constructor is None:
-        raise ValueError("unsupported hash type " + name)
-    return constructor(*args, **kwargs)
+    return _construct(name, 'new', args, kwargs)
+
+
+def _constructor(algorithm):
+    label = 'openssl_' + algorithm
+    return BuiltinFunction('_hashlib', label,
+                           lambda *args, **kwargs: _construct(algorithm, label, args, kwargs),
+                           'Returns a ' + algorithm + ' hash object; optionally initialized with a string')
+
+
+_constructors = {}
+for _algorithm in ('md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha3_224',
+                   'sha3_256', 'sha3_384', 'sha3_512', 'shake_128', 'shake_256'):
+    _function = _constructor(_algorithm)
+    globals()['openssl_' + _algorithm] = _function
+    _constructors[_function] = _algorithm
+del _algorithm, _function
+
+openssl_md_meth_names = frozenset(_SIZES) | frozenset(_XOF_BLOCKS)
+
+HMAC = hmac_class('_hashlib')
+_missing = object()
+
+
+def _digestmod_name(digestmod):
+    if isinstance(digestmod, str):
+        name = _canonical(digestmod)
+        if name is None:
+            raise UnsupportedDigestmodError('[digital envelope routines] unsupported')
+    else:
+        name = _constructors.get(digestmod)
+        if name is None:
+            raise UnsupportedDigestmodError('Unsupported digestmod ' + repr(digestmod))
+    if name in _XOF_BLOCKS:
+        raise ValueError('no reason supplied')
+    return name
+
+
+def hmac_new(key, msg=b'', digestmod=_missing):
+    key = _parameter_buffer(key)
+    msg = b'' if msg is None else _buffer(msg)
+    if digestmod is _missing:
+        raise TypeError("Missing required parameter 'digestmod'.")
+    return HMAC._make(_digestmod_name(digestmod), key, msg)
+
+
+def hmac_digest(key, msg, digest):
+    key = _parameter_buffer(key)
+    msg = _buffer(msg)
+    return HMAC._make(_digestmod_name(digest), key, msg).digest()
+
+
+compare_digest = BuiltinFunction('_hashlib', 'compare_digest', lambda a, b, /: _compare(a, b))
 
 
 def pbkdf2_hmac(hash_name, password, salt, iterations, dklen=None):
     if not isinstance(hash_name, str):
         raise TypeError("pbkdf2_hmac() argument 'hash_name' must be str, not " + type(hash_name).__name__)
-    password = _payload(password)
-    salt = _payload(salt)
+    name = _digestmod_name(hash_name)
+    password, salt = _parameter_buffer(password), _parameter_buffer(salt)
     iterations = operator.index(iterations)
+    if iterations > 2147483647:
+        raise OverflowError('iteration value is too great.')
     if iterations < 1:
-        raise ValueError("iteration value must be greater than 0")
-    try:
-        probe = new(hash_name)
-    except ValueError:
-        raise UnsupportedDigestmodError("unsupported hash type " + hash_name) from None
-    block = probe.digest_size
-    if block < 1:
-        raise ValueError("unsupported hash type " + hash_name)
+        raise ValueError('iteration value must be greater than 0.')
+    size = _SIZES[name][0]
     if dklen is None:
-        dklen = block
-    else:
-        dklen = operator.index(dklen)
-        if dklen < 1:
-            raise ValueError("key length must be greater than 0")
-    return _native(6, hash_name.lower(), password, salt, iterations, dklen)
+        dklen = size
+    dklen = operator.index(dklen)
+    if dklen > 2147483647:
+        raise OverflowError('key length is too great.')
+    if dklen < 1:
+        raise ValueError('key length must be greater than 0.')
+    return _native_digest(6, name, password, salt, iterations, dklen)
 
 
+# Validate scrypt parameters and bound the complete native workspace.
 def scrypt(password, *, salt, n, r, p, maxmem=0, dklen=64):
-    password = _payload(password)
-    salt = _payload(salt)
+    password = _parameter_buffer(password)
+    salt = _parameter_buffer(salt)
     if n is None or r is None or p is None or dklen is None or maxmem is None:
         raise TypeError("an integer is required")
     n = operator.index(n)
@@ -225,36 +178,21 @@ def scrypt(password, *, salt, n, r, p, maxmem=0, dklen=64):
         raise ValueError("Invalid parameter combination for n, r, p, maxmem.")
     if dklen < 1 or dklen >= 2147483647:
         raise ValueError("dklen must be greater than 0 and smaller than 2147483647")
-    if maxmem < 0:
-        raise ValueError("maxmem must be positive")
+    if maxmem < 0 or maxmem > 2147483647:
+        raise ValueError("maxmem must be positive and smaller than 2147483647")
     if maxmem == 0:
         maxmem = 32 * 1024 * 1024
     # Budget the parallel input, ROMix table, and two block workspaces.
     needed = 128 * r * (n + p + 2)
     if needed > maxmem:
         raise ValueError("memory limit exceeded")
-    return _native(5, password, salt, n, r, p, dklen, maxmem)
+    return _native_digest(5, password, salt, n, r, p, dklen, maxmem)
 
 
 def get_fips_mode():
     return 0
 
 
-_by_name, _by_ctor = _tables()
-openssl_md5 = _by_name["md5"]
-openssl_sha1 = _by_name["sha1"]
-openssl_sha224 = _by_name["sha224"]
-openssl_sha256 = _by_name["sha256"]
-openssl_sha384 = _by_name["sha384"]
-openssl_sha512 = _by_name["sha512"]
-openssl_sha3_224 = _by_name["sha3_224"]
-openssl_sha3_256 = _by_name["sha3_256"]
-openssl_sha3_384 = _by_name["sha3_384"]
-openssl_sha3_512 = _by_name["sha3_512"]
-openssl_shake_128 = _by_name["shake_128"]
-openssl_shake_256 = _by_name["shake_256"]
-openssl_md_meth_names = frozenset(_by_name)
-_constructors = {constructor: name for name, constructor in _by_name.items()}
-
-HMAC.__module__ = "_hashlib"
-_native(4, HMAC)
+__crypto(4, HASH)
+__crypto(4, HASHXOF)
+__crypto(4, HMAC)

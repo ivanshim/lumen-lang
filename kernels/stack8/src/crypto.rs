@@ -77,6 +77,11 @@ fn sum_sha3_256(data: &[u8]) -> Vec<u8> { sha3::Sha3_256::digest(data).to_vec() 
 fn sum_sha3_384(data: &[u8]) -> Vec<u8> { sha3::Sha3_384::digest(data).to_vec() }
 fn sum_sha3_512(data: &[u8]) -> Vec<u8> { sha3::Sha3_512::digest(data).to_vec() }
 
+// Hash fixed-size BLAKE2 inputs for the PBKDF2 HMAC rounds.
+fn sum_blake2b(data: &[u8]) -> Vec<u8> { blake2b_simd::Params::new().hash(data).as_bytes().to_vec() }
+// Hash a BLAKE2s block for fixed-size keyed derivation.
+fn sum_blake2s(data: &[u8]) -> Vec<u8> { blake2s_simd::Params::new().hash(data).as_bytes().to_vec() }
+
 fn identify(name: &str) -> Result<(usize, usize, fn(&[u8]) -> Vec<u8>), String> {
     Ok(match name {
         "md5" => (64, 16, sum_md5 as fn(&[u8]) -> Vec<u8>),
@@ -89,6 +94,8 @@ fn identify(name: &str) -> Result<(usize, usize, fn(&[u8]) -> Vec<u8>), String> 
         "sha3_256" => (136, 32, sum_sha3_256),
         "sha3_384" => (104, 48, sum_sha3_384),
         "sha3_512" => (72, 64, sum_sha3_512),
+        "blake2b" => (128, 64, sum_blake2b),
+        "blake2s" => (64, 32, sum_blake2s),
         other => return Err(format!("ValueError: unsupported hash type {other}")),
     })
 }

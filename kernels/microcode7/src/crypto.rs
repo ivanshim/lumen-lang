@@ -82,6 +82,12 @@ fn digest_of(algorithm: &str, input: &[u8]) -> Result<Vec<u8>, String> {
     if algorithm == "sha3_256" { return Ok(sha3::Sha3_256::digest(input).to_vec()); }
     if algorithm == "sha3_384" { return Ok(sha3::Sha3_384::digest(input).to_vec()); }
     if algorithm == "sha3_512" { return Ok(sha3::Sha3_512::digest(input).to_vec()); }
+    if algorithm == "blake2b" {
+        return Ok(blake2b_simd::Params::new().hash(input).as_bytes().into());
+    }
+    if algorithm == "blake2s" {
+        return Ok(blake2s_simd::Params::new().hash(input).as_bytes().into());
+    }
     Err(format!("ValueError: unsupported hash type {algorithm}"))
 }
 
@@ -97,6 +103,8 @@ fn shape_of(algorithm: &str) -> Result<(usize, usize), String> {
         "sha3_256" => (136, 32),
         "sha3_384" => (104, 48),
         "sha3_512" => (72, 64),
+        "blake2b" => (128, 64),
+        "blake2s" => (64, 32),
         _ => return Err(format!("ValueError: unsupported hash type {algorithm}")),
     };
     Ok(pair)

@@ -168,3 +168,82 @@ class Blake(Hash):
         self._size = digest_size
         self._key, self._salt, self._person = key, salt, person
         self._tree = (fanout, depth, leaf_size, node_offset, node_depth, inner_size, int(bool(last_node)))
+
+
+# Sizes shared by the OpenSSL-style (_hashlib) and HACL*-style (_hmac) modules.
+_SIZES = {
+    'md5': (16, 64), 'sha1': (20, 64), 'sha224': (28, 64), 'sha256': (32, 64),
+    'sha384': (48, 128), 'sha512': (64, 128), 'sha3_224': (28, 144),
+    'sha3_256': (32, 136), 'sha3_384': (48, 104), 'sha3_512': (64, 72),
+    'blake2b': (64, 128), 'blake2s': (32, 64)}
+_XOF_BLOCKS = {'shake_128': 168, 'shake_256': 136}
+
+
+def one_shot(name, data, size):
+    return _native_digest(0, name, data, size, b'', b'', b'', 1, 1, 0, 0, 0, 0, 0)
+
+
+_TRANS_36 = bytes((x ^ 0x36) for x in range(256))
+_TRANS_5C = bytes((x ^ 0x5C) for x in range(256))
+
+
+class BuiltinFunction:
+    """Callable with the non-binding behavior of a C builtin function."""
+    def __init__(self, module, name, call, doc=None):
+        self.__module__ = module
+        self.__name__ = self.__qualname__ = name
+        self.__doc__ = doc
+        self._call = call
+
+    def __call__(self, *args, **kwargs):
+        return self._call(*args, **kwargs)
+
+    def __repr__(self):
+        return '<built-in function ' + self.__name__ + '>'
+
+
+def hmac_class(module):
+    """Build the sealed keyed-hash type shared by both HMAC front ends."""
+    def make(cls, name, key, data):
+        self = object.__new__(cls)
+        size, block = _SIZES[name]
+        if len(key) > block:
+            key = one_shot(name, key, size)
+        key = key.ljust(block, b'\0')
+        self._name = name
+        self._pads = (key.translate(_TRANS_36), key.translate(_TRANS_5C))
+        self._data = data
+        return self
+
+    def new(cls, *args, **kwargs):
+        raise TypeError("cannot create '" + module + ".HMAC' instances")
+
+    def update(self, msg):
+        self._data += _buffer(msg)
+
+    def copy(self):
+        other = object.__new__(type(self))
+        other._name, other._pads, other._data = self._name, self._pads, self._data
+        return other
+
+    def digest(self):
+        size = _SIZES[self._name][0]
+        inner = one_shot(self._name, self._pads[0] + self._data, size)
+        return one_shot(self._name, self._pads[1] + inner, size)
+
+    def hexdigest(self):
+        return self.digest().hex()
+
+    def repr_(self):
+        return '<' + self._name + ' HMAC object @ ' + hex(id(self)) + '>'
+
+    space = {
+        '__module__': module, '__slots__': ('_name', '_pads', '_data'),
+        '__new__': new, '__repr__': repr_, 'update': update, 'copy': copy,
+        'digest': digest, 'hexdigest': hexdigest,
+        'name': property(lambda self: 'hmac-' + self._name),
+        'digest_size': property(lambda self: _SIZES[self._name][0]),
+        'block_size': property(lambda self: _SIZES[self._name][1])}
+    cls = type('HMAC', (), space)
+    cls._make = staticmethod(lambda name, key, data: make(cls, name, key, data))
+    return cls

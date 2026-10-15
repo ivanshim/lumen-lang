@@ -29,6 +29,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_frozen_importlib_external", include_str!("_frozen_importlib_external.py"), "_frozen_importlib_external.py"),
     ("_hashlib", include_str!("_hashlib.py"), "_hashlib.py"),
     ("_heapq", include_str!("_heapq.py"), "_heapq.py"),
+    ("_hmac", include_str!("_hmac.py"), "_hmac.py"),
     ("_imp", include_str!("_imp.py"), "_imp.py"),
     ("_io", include_str!("_io.py"), "_io.py"),
     ("_json", include_str!("_json.py"), "_json.py"),
