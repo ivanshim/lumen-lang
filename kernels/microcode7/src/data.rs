@@ -1424,14 +1424,18 @@ impl Value {
     fn program_worth(program: &crate::form::Routine) -> Value {
         let names = |words: &[String]| Value::tuple(words.iter().map(|word| Value::text(word)).collect());
         let kinds = program.taking.as_deref().unwrap_or(&[]).iter().map(|kind| Value::Small(*kind as i64)).collect();
-        let mut attributes = vec![Value::Text(program.origin_content.get_or_init(|| Rc::from(format!("{:?}", program.lexical_origin))).clone()), Value::Small(program.body_boundary as i64)];
+        let mut attributes = vec![Value::Text(program.origin_content.get_or_init(|| Rc::from(crate::scan::save_tokens(&program.lexical_origin))).clone()), Value::Small(program.body_boundary as i64)];
         attributes.extend([
             Value::text(&program.ident), Value::Small(program.declared_on.into()),
-            Value::Small(program.flags), Value::Small(program.future_bits),
-            Value::Flag(program.lineless), Value::Flag(program.generator),
+            Value::Small(program.flags | program.future_bits), Value::Flag(program.lineless),
+            program.locations.clone().unwrap_or(Value::Nil),
+            Value::Octets { cell: Rc::new(RefCell::new(program.body_image())), changeable: false, lead: Rc::from("bytes") },
+            program.encoded_handlers.clone().unwrap_or(Value::Nil),
             names(&program.formals), Value::tuple(kinds),
             program.gather_from.map_or(Value::Nil, |index| Value::Small(index as i64)),
             names(&program.referenced), names(&program.locals), names(&program.idents),
+            names(&program.cells.iter().filter(|word| !program.locals.contains(word)).cloned().collect::<Vec<_>>()),
+            names(&program.reaching.iter().map(|place| place.ident.to_string()).collect::<Vec<_>>()),
             Value::tuple(program.literals.clone()),
         ]);
         Value::tuple(attributes)
@@ -1981,6 +1985,12 @@ impl Value {
             Value::Wrapped(4, parts) => format!("<staticmethod({})>", match parts[0] {Value::Nil=>String::from("None"),_=>parts[0].bare()}),
             Value::Wrapped(5, parts) => format!("<classmethod({})>", match parts[0] {Value::Nil=>String::from("None"),_=>parts[0].bare()}),
             Value::Wrapped(64, fields) => format!("<coroutine_wrapper object at 0x{:x}>", Rc::as_ptr(fields) as usize),
+            Value::Wrapped(7, payload) => {
+                if let Some(Value::Routine(program) | Value::Bound(program, _)) = payload.first() {
+                    let filename = program.written_in.as_deref().unwrap_or("<string>");
+                    format!("<code object {} at {:p}, file {filename:?}, line {}>", program.ident, Rc::as_ptr(payload), program.declared_on)
+                } else { String::from("<code object>") }
+            },
             Value::Wrapped(..) => "<member wrapper>".into(),
             Value::Tuple(items) => {
                 let among = Among::members(self);

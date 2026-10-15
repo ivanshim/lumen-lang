@@ -494,6 +494,7 @@ struct Piece {
 pub struct Compiler<'a> {
     source_tokens: Rc<[Token]>,
     source_content: Rc<std::cell::OnceCell<Rc<str>>>,
+    image_modes: i64,
     plans: HashMap<usize, BindingPlan>,
     discovering: bool,
     annotation_target: Option<usize>,
@@ -996,7 +997,7 @@ fn compile_pass(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let future_bits = table.future_bits;
-    let mut a = Compiler { source_content: Rc::new(std::cell::OnceCell::new()), source_tokens: if discovering { Rc::from([]) } else { Rc::from(tokens) }, reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, finally_loop_bases: Vec::new(), except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, ast_expression_starts: AST_POSITIONS.with(|entries| (!entries.borrow().is_empty()).then(Vec::new)), spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decorated_at: None, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { image_modes: i64::from(wants_value) | (i64::from(interactive) << 1) | (i64::from(table.allow_top_level_await) << 2) | (table.optimize.clamp(0, 2) << 8), source_content: Rc::new(std::cell::OnceCell::new()), source_tokens: if discovering { Rc::from([]) } else { Rc::from(tokens) }, reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, finally_loop_bases: Vec::new(), except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, ast_expression_starts: AST_POSITIONS.with(|entries| (!entries.borrow().is_empty()).then(Vec::new)), spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decorated_at: None, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1162,7 +1163,7 @@ fn compile_pass(
     a.registry.top_level_coroutine = unit.generator;
     let (root_constants, root_names) = code_metadata(&unit.instrs, &None, &[], !lang.class_builder.is_empty());
     a.registry.future_bits = a.future_bits;
-    Ok(Rc::new(Routine { embedded_integers: None, source_end: a.pos, source_content: a.source_content.clone(), source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
+    Ok(Rc::new(Routine { image_origin: (0, a.before, a.future_bits | a.image_modes), instruction_image: None, exception_image: None, code_identity: Rc::new(()), embedded_integers: None, source_end: a.pos, source_content: a.source_content.clone(), source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), cell_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, location_bytes: None, declared_stack: None, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -2352,15 +2353,32 @@ impl<'a> Compiler<'a> {
         local_names.sort_by_key(|n| formals.iter().position(|f| f == n).map_or((3, 0), |i| (parameter_rules.as_ref().map_or(0, |r| if r[i] < 2 { 0 } else if r[i] == 2 { 1 } else { 2 }), i)));
         let mut code_flags = 3;
         if doc.is_some() && !self.lang.class_builder.is_empty() { code_flags |= 0x4000000; }
-        if self.pieces.iter().any(|p| !p.outermost && !p.ident.starts_with('#')) { code_flags |= 16; }
+        if self.pieces.iter().enumerate().any(|(at, piece)| !piece.outermost && !piece.ident.starts_with('#') && !self.class_names.iter().any(|(depth, _)| *depth == at + 1)) { code_flags |= 16; }
         if let Some(rules) = &parameter_rules {
             if rules.contains(&3) { code_flags |= 4; }
             if rules.contains(&4) { code_flags |= 8; }
         }
         let native_async = if name == "<genexpr>" { unit.asynchronous_walk } else { unit.asynchronous };
         code_flags |= if native_async { if instrs.iter().any(|i| matches!(i, Instr::Act(Action::Suspend, _))) { 512 } else { 128 } } else if unit.generator { 32 } else { 0 };
-        let (code_constants, code_names) = code_metadata(&instrs, &doc, &local_names, !self.lang.class_builder.is_empty());
-        Ok(Rc::new(Routine { embedded_integers: None, source_end: self.pos, source_content: self.source_content.clone(), source_tokens: self.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation, code_constants, code_names, local_names, code_flags, future_bits: self.future_bits, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
+        let (mut code_constants, mut code_names) = code_metadata(&instrs, &doc, &local_names, !self.lang.class_builder.is_empty());
+        code_names.sort_by_key(|name| self.tokens[source..self.pos].iter().position(|token| token.shape == Shape::Instr && token.lexeme == *name).unwrap_or(usize::MAX));
+        if doc.is_some() && code_constants.len() == 1 { code_constants.push(Value::Null); }
+        let mut cell_names = Vec::new();
+        for constant in &code_constants {
+            if let Value::Routine(child) = constant {
+                for (_, cell) in &child.enclosing {
+                    let name = if cell.ident.starts_with("#class_cell") { "__class__" } else { &cell.ident };
+                    if local_names.iter().any(|local| local == name) && !cell_names.iter().any(|old| old == name) {
+                        cell_names.push(name.to_string());
+                    }
+                }
+            }
+        }
+        cell_names.sort_by_key(|name| (formals.iter().position(|word| word == name).unwrap_or(usize::MAX), name.clone()));
+        local_names.retain(|name| formals.contains(name) || !cell_names.contains(name));
+        if doc.is_some() { code_flags |= 0x4000000; }
+        if within.as_ref().is_some_and(|class| qualified == format!("{class}.{name}")) { code_flags |= 0x8000000; }
+        Ok(Rc::new(Routine { image_origin: (source, self.before, self.future_bits | self.image_modes), instruction_image: None, exception_image: None, code_identity: Rc::new(()), embedded_integers: None, source_end: self.pos, source_content: self.source_content.clone(), source_tokens: self.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation, code_constants, code_names, local_names, cell_names, code_flags, future_bits: self.future_bits, lineless: false, location_bytes: None, declared_stack: None, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
     }
 
     /// The words an annotation was written with, read back out of the text
@@ -7500,7 +7518,7 @@ impl<'a> Compiler<'a> {
             let (book, cell, protocol, declined) = c.python_class_body(original_name.clone(), qualification.clone(), &parameters, first_row)?;
             namespace = Some((book, cell, protocol)); unready = declined; Ok(())
         })?;
-        let mut body = (*body).clone(); body.class_namespace = namespace; body.code_flags &= !3;
+        let mut body = (*body).clone(); body.class_namespace = namespace; body.code_flags &= !(3 | 0x8000000);
         self.read(&builder); self.constant(Value::Routine(Rc::new(body)));
         self.constant(Value::text(&original_name)); self.read(&header);
         if !lang.trace_fields.is_empty() { self.put(self.expression_location(declaration_start)); }
@@ -14706,15 +14724,48 @@ fn clean_python_documentation(text: &str) -> String {
 fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String], python_documentation: bool) -> (Vec<Value>, Vec<String>) {
     let mut constants = if python_documentation && doc.is_none() { Vec::new() } else { vec![doc.as_ref().map_or(Value::Null, |text| Value::text(text))] };
     let mut names = Vec::new();
+    let mut live = vec![false; words.len()];
+    let mut pending = vec![0];
+    while let Some(at) = pending.pop() {
+        if at >= words.len() || live[at] { continue; }
+        live[at] = true;
+        match &words[at] {
+            Instr::Depart { to, .. } => pending.push(*to),
+            Instr::Act(Action::Builtin(Builtin::Raise, _), _) => {},
+            other => {
+                pending.push(at + 1);
+                match other {
+                    Instr::Skip(to) | Instr::Guard(to) | Instr::SkipCmp { to, .. } => pending.push(*to),
+                    Instr::Attempt(plan) => {
+                        pending.extend([plan.body.0, plan.after]);
+                        pending.extend(plan.otherwise.map(|part| part.0));
+                        pending.extend(plan.last.map(|part| part.0));
+                        pending.extend(plan.clauses.iter().map(|clause| clause.body.0));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
     for (at, word) in words.iter().enumerate() {
+        if !live[at] { continue; }
         if at == 0 && matches!(word, Instr::Const(Value::Null)) && matches!(words.get(1), Some(Instr::Write(cell)) if cell.ident.as_ref() == RESULT_CELL) { continue; }
         match word {
             Instr::Const(Value::Blank | Value::Gap) => {},
             Instr::Const(value) => {
+                if matches!(value, Value::Flag(false)) && matches!(words.get(at + 1), Some(Instr::Skip(_))) { continue; }
+                let discarded = matches!(words.get(at + 1), Some(Instr::Write(cell)) if cell.ident.as_ref() == RESULT_CELL)
+                    && !(matches!(words.get(at + 2), Some(Instr::Depart { .. })) || matches!(words.get(at + 2), Some(Instr::Read(cell)) if cell.ident.as_ref() == RESULT_CELL));
+                if discarded { continue; }
                 if let Value::Routine(r) = value {
                     if let Some(a) = &r.annotation { constants.push(Value::Routine(a.clone())); }
                 }
-                if !constants.iter().any(|old| std::mem::discriminant(old) == std::mem::discriminant(value) && old.equals(value)) { constants.push(value.clone()); }
+                // Small integers use immediate instructions in Python 3.14.
+                let immediate = matches!(value, Value::Small(0..=255));
+                if (constants.is_empty() || !immediate) && !constants.iter().any(|old| std::mem::discriminant(old) == std::mem::discriminant(value) && old.equals(value)) { constants.push(value.clone()); }
+            }
+            Instr::Act(Action::Import(module, _) | Action::ImportFrom(module, _), _) => {
+                if !names.contains(module) { names.push(module.clone()); }
             }
             Instr::Read(cell) | Instr::Write(cell) if cell.near.is_empty() && !cell.free => {
                 let name = cell.ident.to_string();
@@ -14726,6 +14777,7 @@ fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String], pytho
             _ => {}
         }
     }
+    if constants.is_empty() { constants.push(Value::Null); }
     (constants, names)
 }
 

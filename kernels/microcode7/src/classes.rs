@@ -1984,7 +1984,7 @@ impl<'a> Machine<'a> {
         if self.names_in_calls && result.is_none() { b.shared.note_absence(key); }
         result
     }
-    fn capture_title(word: &str) -> &str {
+    pub(super) fn capture_title(word: &str) -> &str {
         match word.strip_prefix("#completed_class") { Some(_) => "__class__", None => word }
     }
     fn wrap(tag:u8,mut items:Vec<Value>)->Value {
@@ -3380,6 +3380,11 @@ impl<'a> Machine<'a> {
             return self.make_type_parameter(class, given, false);
         }
 
+        if Self::native_word(&class).as_deref() == Some("code") {
+            let (inputs, options) = self.open_arguments(given)?;
+            if !options.is_empty() { return Err(String::from("TypeError: code() takes no keyword arguments").into()); }
+            return self.code_metadata_call("construct", inputs);
+        }
         if Self::native_word(&class).as_deref() == Some("function") && !self.rules.trace_words.is_empty() {
             let (positional, keywords) = self.open_arguments(given)?;
             let mut options = vec![None; 6];
@@ -3428,6 +3433,8 @@ impl<'a> Machine<'a> {
             let Some(globals) = options[1].clone() else { return Err(String::from("TypeError: function() missing required argument 'globals'").into()); };
             if !matches!(globals.settled(), Value::Dict(_)) { return Err(String::from("TypeError: function() argument 'globals' must be dict").into()); }
             let mut fresh = (**origin).clone();
+            fresh.doc = fresh.literals.first().filter(|_| fresh.flags & (1 << 26) != 0)
+                .and_then(|entry| if let Value::Text(label) = entry { Some(label.to_string()) } else { None });
             fresh.globe = Some(globals.clone());
             fresh.born = Some(self.builtins_here());
             fresh.framed_in = match globals.settled() {
@@ -3456,11 +3463,13 @@ impl<'a> Machine<'a> {
                 let Value::Wrapped(35, items) = cell.settled() else { return Err(String::from("TypeError: arg 5 (closure) must contain cells").into()); };
                 let held = match self.cell_place(&items) {
                     Some((frame, slot)) => frame.cells.borrow().get(slot).cloned().unwrap_or(Value::Unset),
-                    None if matches!(items.as_slice(), [Value::Shared(_)]) => self.cell_contents(&items).unwrap_or(Value::Unset),
+                    None if matches!(items.as_slice(), [Value::Shared(_)]) => items[0].clone(),
                     None => return Err(String::from("TypeError: arg 5 (closure) must contain cells").into()),
                 };
                 if address.up > 0 {
+                    let shared = matches!(held, Value::Shared(_));
                     layers[address.up - 1].cells.borrow_mut()[address.at] = held;
+                    if shared { layers[address.up - 1].capture_slots.borrow_mut().insert(address.at); }
                     if let Some((frame, slot)) = self.cell_place(&items) {
                         if frame.capture_slots.borrow().contains(&slot) { layers[address.up - 1].capture_slots.borrow_mut().insert(address.at); }
                     }
@@ -3497,7 +3506,10 @@ impl<'a> Machine<'a> {
             };
             let (adjusted, room) = self.respared(&source, &base, base.clone(), Some(placed), Some(named));
             let source = Rc::new(adjusted);
+            self.code_handles.insert(Rc::as_ptr(&source) as usize, Rc::downgrade(&body));
             let callable = Value::Bound(source, room);
+            let attribute = self.detail("code").to_owned();
+            self.routine_kept(&callable, &attribute, Value::Wrapped(7, body.clone()));
 
             if matches!(origin.ident.as_str(), "<generator>" | "<genexpr>") { return Ok(Value::Wrapped(43, Rc::new(vec![callable]).into())); }
             return Ok(callable);
@@ -4146,7 +4158,7 @@ impl<'a> Machine<'a> {
                 self.written_over.remove(&Self::written_key(subject,&self.outermost));
                 return Ok(());
             }
-            if source_code.flags!=code.flags {
+            if (source_code.flags ^ code.flags) & (32 | 128 | 512) != 0 {
                 let told=self.table.strings("ext.stmt.class.detail.code.mismatch").first().cloned().unwrap_or_default();
                 self.warn_like(26,&told)?;
             }
@@ -4158,6 +4170,9 @@ impl<'a> Machine<'a> {
             runs=self.code_run_by(source);
             let mut taken=(*source_code).clone();
             taken.annotator=code.annotator.clone();
+            taken.globe = code.globe.clone();
+            taken.born = code.born.clone();
+            taken.framed_in = code.framed_in.clone();
             taken.ident=code.ident.clone();
             taken.qualification=code.qualification.clone();
             taken.doc=code.doc.clone();
@@ -4221,6 +4236,15 @@ impl<'a> Machine<'a> {
         };
         let place=Self::written_key(subject,&self.outermost);
         self.written_over.insert(place,(was,was_room,Rc::new(made),bound,runs));
+        if key == self.detail("code") {
+            if let Some(Value::Wrapped(7, payload)) = replacement.as_ref().map(Value::settled) {
+                let running = self.code_run_by(subject);
+                self.code_handles.insert(Rc::as_ptr(&running) as usize, Rc::downgrade(&payload));
+            }
+            let slot = self.routine_storage(subject);
+            let mut entries = self.routine_members[slot].1.holds.borrow_mut();
+            Self::change_entry(&mut entries, &format!("{key}\0"), replacement);
+        }
         Ok(())
     }
     /// The frame a cell stands in and its place there: the name a
@@ -4919,6 +4943,14 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if key.starts_with("co_") && key != "co_optimize" {
+            if let Value::Thing(instance) = &value {
+                if self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &instance.blueprint())) {
+                    let retained = instance.holds.borrow().iter().find_map(|(name, item)| (name == "\0native_code").then(|| item.clone()));
+                    if let Some(retained) = retained { return self.read_class_member(retained, key, direct); }
+                }
+            }
+        }
         if (matches!(&value, Value::Intrinsic(Prim::ClassWork(11), _)) || matches!(&value, Value::Wrapped(8, _))) && self.spells_property_kind(&value.settled()) {
             let owner = self.property_blueprint();
             return self.read_class_member(Value::Blueprint(owner), key, direct);
@@ -5095,6 +5127,14 @@ impl<'a> Machine<'a> {
             };
             if let Some(Value::Wrapped(32, layout)) = slot {
                 if let Ok(stored) = self.slot_value(&value, &layout) { return Ok(stored); }
+            }
+        }
+        if key == "__replace__" {
+            if let Value::Blueprint(kind) = &value {
+                if Self::native_word(kind).as_deref() == Some("code") {
+                    let module = self.load_namespace("_code_metadata")?;
+                    return self.read_class_member(module, "replace", false);
+                }
             }
         }
         if let Value::Thing(item) = &value {
@@ -6568,7 +6608,13 @@ impl<'a> Machine<'a> {
                 return Ok(self.routine_kept(&value,key,Value::text(doc)));
             }
             if key==self.detail("module"){let place=self.routine_module(&code);return Ok(self.routine_kept(&value,key,place));}
-            if key==self.detail("code"){let ran=self.code_run_by(&value);return Ok(self.code_handle(&ran));}
+            if key==self.detail("code") {
+                let ran = self.code_run_by(&value);
+                let handle = self.code_handle(&ran);
+                let index = self.routine_storage(&value);
+                self.routine_members[index].1.holds.borrow_mut().push((format!("{key}\0"), handle.clone()));
+                return Ok(handle);
+            }
             if key==self.detail("namespace"){let index=self.routine_storage(&value);return Ok(Value::Attributes(self.routine_members[index].1.clone()));}
             if key==self.detail("defaults"){
                 let defaults:Vec<Value>=if matches!(value,Value::Bound(..))||self.written_over.contains_key(&Self::written_key(&value,&self.outermost)) {self.spare_worths(&code,&room,'p').into_iter().map(|(_,v)|v).collect()} else {Vec::new()};
@@ -6646,8 +6692,23 @@ impl<'a> Machine<'a> {
                     if self.table.strings("ext.stmt.class.detail.code.replace").get(2).is_some_and(|word| word == key) {
                         return Ok(Value::Member(Rc::new(value.clone()), String::from("code_position_rows")));
                     }
-                    if self.table.strings("ext.stmt.class.detail.code.replace").first().map_or(false, |word| word == key) {
+                    if key == "__replace__" || self.table.strings("ext.stmt.class.detail.code.replace").first().map_or(false, |word| word == key) {
                         return Ok(Value::Member(Rc::new(value.clone()), String::from("code_replace")));
+                    }
+                    match key {
+                        "co_lines" | "co_positions" => {
+                            let operation = if key == "co_positions" { "code_positions" } else { "code_lines" };
+                            return Ok(Value::Member(Rc::new(value.clone()), operation.to_owned()));
+                        }
+                        "co_linetable" => return match &p.locations {
+                            Some(bytes) => Ok(bytes.clone()),
+                            None => self.code_metadata_call("location_table", vec![value.clone()]),
+                        },
+                        "co_lnotab" => return self.code_metadata_call("lnotab", vec![value.clone()]),
+                        "co_stacksize" => return Ok(Value::Small(self.native_stack_bound(p))),
+                        "co_code" => return Ok(self.octets(p.body_image(), false)),
+                        "co_exceptiontable" => return Ok(self.octets(self.code_handler_image(p), false)),
+                        _ => {}
                     }
                     let fields = self.rules.words_ext_stmt_class_detail_code_fields;
                     if let Some(index) = fields.iter().position(|word| word == key) {
@@ -6662,9 +6723,9 @@ impl<'a> Machine<'a> {
                                 for v in &p.literals { members.push(match v { Value::Routine(r) => self.code_handle(r), _ => v.clone() }); }
                                 Value::tuple(members)
                             }
-                            7 => Value::Small(p.flags),
+                            7 => Value::Small(p.flags | p.future_bits),
                             8 => Value::Text(p.written_in.clone().unwrap_or_else(|| self.entry_file.clone())),
-                            9 => Value::Small(i64::from(p.declared_on.max(1))),
+                            9 => Value::Small(if p.ident == "<program>" { 1 } else { p.declared_on.into() }),
                             11 => {
                                 let mut captured: Vec<&str> = p.reaching.iter().map(|address| Self::capture_title(&address.ident)).collect();
                                 captured.sort_unstable();
@@ -6674,7 +6735,7 @@ impl<'a> Machine<'a> {
                             12 => {
                                 // The cells this routine provides are the
                                 // free names its nested routines reach for.
-                                let mut cells: Vec<&str> = Vec::new();
+                                let mut cells: Vec<&str> = p.cells.iter().map(String::as_str).collect();
                                 for literal in &p.literals {
                                     if let Value::Routine(child) = literal {
                                         // A name one frame up is bound here; further

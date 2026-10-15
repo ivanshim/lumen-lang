@@ -89,6 +89,9 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `python-3.14.8/test_zipapp.py` | `Lib/test/test_zipapp.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/zipapp.py` | `Lib/zipapp.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/zipfile/{__init__,_path/__init__,_path/glob}.py` | `Lib/zipfile/{__init__,_path/__init__,_path/glob}.py`, unchanged beneath a provenance/PSF header | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_code.py`, `test/_code_definitions.py`, `test/support/bytecode_helper.py` | `Lib/test/test_code.py`, `Lib/test/_code_definitions.py`, `Lib/test/support/bytecode_helper.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/{opcode,_opcode_metadata}.py` | `Lib/opcode.py`, `Lib/_opcode_metadata.py`, copied byte for byte; `_opcode.py` supplies release catalogue data and refuses bytecode implementation operations | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/test/{_code_definitions,support/bytecode_helper}.py` | `Lib/test/_code_definitions.py`, `Lib/test/support/bytecode_helper.py`, copied byte for byte for embedded imports; `runtime_adapters/code_test_support.py` retains the upstream debug-range decorators and late-deletion helper | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_mimetypes.py` | `Lib/test/test_mimetypes.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/mime.types`, `mime.types2` | `Lib/test/mime.types`, `Lib/test/mime.types2`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_genericclass.py` | `Lib/test/test_genericclass.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -789,3 +792,30 @@ The runtime `_ast_unparse.py` is preserved byte for byte from CPython
 `v3.14.8` (`Lib/_ast_unparse.py`); `_ast.py` shares the runtime node classes.
 The AST field schema follows CPython 3.14 and its ASDL definitions. Tree helper
 algorithms are taken from `Lib/ast.py`, with the runtime parser kept separate.
+
+Code-object coverage uses the unchanged `test_code.py` language test (profile
+1.0, not yet included in the published score). Native code exposes retained
+argument layouts, local and closure names, constants, flags and source
+locations. Location offsets count native instructions in two-byte units;
+missing line or column coordinates remain `None`. The location table uses
+Python's documented encoding, including replacement tables and deprecated
+`co_lnotab` warnings.
+
+The opcode catalogue supplies release names and predicates for imports.
+`co_code` is a native compiler image: reconstruction opcode 1 followed by the
+retained scanner records, body boundary and original scope identity. The constructor and
+replacement paths rebuild actual native instructions without evaluating the
+source's top level. Unknown image operations raise `SystemError` when called.
+This format does not claim CPython bytecode compatibility. `co_stacksize` is a
+conservative native operand-storage bound; an explicit replacement is retained.
+`co_exceptiontable` exposes retained native handler layouts. An unchanged table
+can be reconstructed, and an empty replacement removes exception handlers;
+arbitrary new handler layouts remain unsupported.
+
+The four code-analysis hooks in `_testinternalcapi` derive return behavior,
+local kinds, variable counts and statelessness from native instructions,
+calling layouts, closures and the supplied namespaces. Native closure/local
+slot removal and global-operand renaming remain unavailable. Code comparison
+keeps native compilation provenance, so independent compilations are not yet
+compared by canonical instruction content. Upstream decorators determine the
+remaining CPython-specific skips.

@@ -21,6 +21,8 @@ CO_NOFREE = 64
 CO_COROUTINE = 128
 CO_ITERABLE_COROUTINE = 256
 CO_ASYNC_GENERATOR = 512
+CO_HAS_DOCSTRING = 1 << 26
+CO_METHOD = 1 << 27
 
 # The four words a generator's state is named by, and the same four for
 # a coroutine.

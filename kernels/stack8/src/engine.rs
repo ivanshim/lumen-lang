@@ -692,6 +692,8 @@ enum Chooser {
     Leaves(Vec<Value>),
 }
 
+include!("native_code.rs");
+
 impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String], root: &Rc<Class>) -> HashMap<String, Value> {
@@ -4713,6 +4715,10 @@ impl<'a> Engine<'a> {
         if self.data.len() < n {
             return Err("Stack underflow".to_string().into());
         }
+        if let Some(opcode) = program.invalid_native_opcode() {
+            self.data.truncate(self.data.len().saturating_sub(n));
+            return Err(format!("SystemError: unknown opcode {opcode}").into());
+        }
         let at = self.data.len() - n;
         let memoized = program.returns_value && self.memo_cell.map_or(false, |s| matches!(self.world[s], Value::Flag(true)));
         let key = memoized.then(|| {
@@ -6260,21 +6266,27 @@ impl<'a> Engine<'a> {
         Ok(kept.handed.take())
     }
 
+    /// Call the Python metadata implementation without leaving the exception road.
+    pub(super) fn code_metadata_call(&mut self, entry: &str, inputs: Vec<Value>) -> Flow<Value> {
+        let module = self.import_module("_code_metadata")?;
+        let function = self.class_get(module, entry, false)?.contents();
+        self.class_apply(function, inputs)
+    }
+
     pub(super) fn routine_code(&mut self, program: &Rc<Routine>) -> Value {
-        let key = Rc::as_ptr(&program.instrs) as usize;
+        let key = Rc::as_ptr(&program.code_identity) as usize;
         if let Some(handle) = self.frame_codes.get(&key).and_then(Weak::upgrade) {
             return Value::Adapter(handle);
-        }
-        if !program.enclosed.is_empty() {
-            let mut body = (**program).clone();
-            body.held.clear();
-            body.enclosed.clear();
-            return Self::adapter(7, vec![Value::Routine(Rc::new(body)), Value::Routine(program.clone())]);
         }
         let mut body = (**program).clone();
         body.held.clear();
         body.enclosed.clear();
-        let handle = Rc::new((7, vec![Value::Routine(Rc::new(body)), Value::Routine(program.clone())]));
+        // Code retains instructions and metadata, not the function's live globals.
+        body.globe = None;
+        body.born = None;
+        body.home = None;
+        body.annotation = None;
+        let handle = Rc::new((7, vec![Value::Routine(Rc::new(body))]));
         self.frame_codes.insert(key, Rc::downgrade(&handle));
         Value::Adapter(handle)
     }
@@ -6433,8 +6445,14 @@ impl<'a> Engine<'a> {
             };
             return Some(Value::Bond(self.routine_outer(&routine)));
         }
-        if index == 4 && matches!(&object.fields.borrow()[6].1, Value::Routine(body) if body.lineless) {
-            return Some(Value::Null);
+        if index == 4 {
+            let fields = object.fields.borrow();
+            if let Value::Routine(body) = &fields[6].1 {
+                if let Some(line) = body.mapped_line(Self::frame_instruction(object)) {
+                    return Some(line.map_or(Value::Null, Value::Small));
+                }
+                if body.lineless { return Some(Value::Null); }
+            }
         }
         if index != 12 { return None; }
         self.refresh_frame(object);
@@ -6958,6 +6976,16 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Instr::Attempt(plan) => {
+                    if matches!(&program.exception_image, Some(Value::Bytes(bytes, ..)) if bytes.borrow().is_empty()) {
+                        let progress = self.run_portion(program, frame, instrs, plan.body, suspended.as_deref_mut())?;
+                        if !matches!(progress, Passage::Along(_)) { return Ok(progress); }
+                        for part in [plan.otherwise, plan.last].into_iter().flatten() {
+                            let progress = self.run_portion(program, frame, instrs, part, suspended.as_deref_mut())?;
+                            if !matches!(progress, Passage::Along(_)) { return Ok(progress); }
+                        }
+                        pc = plan.after;
+                        continue;
+                    }
                     // A gathered clause cannot yet keep the pieces of a
                     // group it has parted while a body sleeps.
                     if suspended.is_some() && plan.clauses.iter().any(|arm| arm.grouped)
@@ -18696,6 +18724,13 @@ impl<'a> Engine<'a> {
             if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
             let Value::Adapter(handle) = receiver.contents() else { return Err(self.special_fault()) };
             let Some(Value::Routine(body)) = handle.1.first() else { return Err(self.special_fault()) };
+            if body.location_bytes.is_some() {
+                return match self.code_metadata_call("positions", vec![receiver.clone()]) {
+                    Ok(value) => Ok(value),
+                    Err(Fault::Note(message)) => Err(message),
+                    Err(fault) => { self.carried = Some(fault); Err(String::new()) }
+                };
+            }
             let mut row = body.declared_on;
             let mut extent = None;
             let suppress_columns = std::env::var("PYTHONNODEBUGRANGES").is_ok_and(|flag| flag.parse::<i32>().is_ok_and(|n| n != 0));
@@ -18720,11 +18755,28 @@ impl<'a> Engine<'a> {
             }
             return self.iterator(Value::tuple(positions)).map_err(|fault| { self.carried = Some(fault); self.special_fault() });
         }
+        if operation == "code_lines" {
+            if !args.is_empty() || !named.is_empty() { return Err("TypeError: code location iterator takes no arguments".into()); }
+            let entry = if operation == "code_lines" { "lines" } else { "positions" };
+            return match self.code_metadata_call(entry, vec![receiver.clone()]) {
+                Ok(value) => Ok(value),
+                Err(Fault::Note(message)) => Err(message),
+                Err(fault) => { self.carried = Some(fault); Err(String::new()) }
+            };
+        }
         if operation == "code_replace" {
             if let Value::Object(object) = receiver.contents() {
                 if self.code_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &object.class_now())) {
                     if !args.is_empty() { return Err("TypeError: code.replace() takes no positional arguments".into()); }
                     let mut fields = object.fields.borrow().clone();
+                    let cached = fields.iter().find(|(name, _)| name == "\0native_code").map(|(_, value)| value.clone());
+                    if named.iter().any(|(key, _)| key != "co_consts") {
+                        if let Some(cached) = cached.as_ref() { return self.value_method(cached, operation, args, named); }
+                    }
+                    if let Some(cached) = cached {
+                        let revised = self.value_method(&cached, operation, Vec::new(), named.clone())?;
+                        fields.iter_mut().find(|(name, _)| name == "\0native_code").expect("cached code").1 = revised;
+                    }
                     for (key, value) in named {
                         if key != "co_consts" { return Err(format!("NotImplementedError: compiled source replacement of {key} is unavailable")); }
                         let Value::Tuple(constants) = value.contents() else { return Err("TypeError: co_consts must be tuple".into()); };
@@ -18740,25 +18792,125 @@ impl<'a> Engine<'a> {
             let Value::Adapter(handle) = receiver.contents() else { return Err(self.special_fault()) };
             let Some(Value::Routine(original)) = handle.1.first() else { return Err(self.special_fault()) };
             if !args.is_empty() { return Err("TypeError: code.replace() takes no positional arguments".into()); }
-            let line_key = self.lang.class_details.get("code.replace").and_then(|parts| parts.get(1)).map(String::as_str).unwrap_or("");
+            let dictionary = Value::Map(Rc::new(named.into_iter().map(|(key, value)| (Value::text(&key), value)).collect()));
+            let checked = match self.code_metadata_call("validate_replace", vec![receiver.clone(), dictionary]) {
+                Ok(value) => match value.contents() { Value::Map(values) => values, _ => return Err(self.special_fault()) },
+                Err(Fault::Note(message)) => return Err(message),
+                Err(fault) => { self.carried = Some(fault); return Err(String::new()); }
+            };
             let mut changed = (**original).clone();
-            for (key, value) in named {
-                if key == line_key {
-                    if !matches!(value.contents(), Value::Bytes(..)) { return Err("TypeError: co_linetable must be bytes".into()); }
-                    changed.lineless = true;
-                } else {
-                    match (key.as_str(), value.contents()) {
-                        ("co_consts", Value::Tuple(values)) => changed = changed.replacing_constants(&values)?,
-                        ("co_name", Value::Text(text)) => changed.ident = text.to_string(),
-                        ("co_qualname", Value::Text(text)) => changed.qualified = text.to_string(),
-                        ("co_filename", Value::Text(text)) => changed.written_in = Some(text),
-                        ("co_firstlineno", Value::Small(line)) if line > 0 => changed.declared_on = line as u32,
-                        ("co_flags", Value::Small(flags)) => changed.code_flags = flags,
-                        _ => return Err(format!("TypeError: code.replace() got an unexpected keyword argument '{key}'")),
+            let mut positional = original.parameter_rules.as_ref().map_or(original.formals.len(), |r| r.iter().filter(|kind| **kind < 2).count());
+            let mut posonly = original.parameter_rules.as_ref().map_or(0, |r| r.iter().filter(|kind| **kind == 1).count());
+            let mut keywords = original.parameter_rules.as_ref().map_or(0, |r| r.iter().filter(|kind| **kind == 2).count());
+            let layout_changed = checked.iter().any(|(key, _)| matches!(key.plain().as_str(), "co_argcount" | "co_posonlyargcount" | "co_kwonlyargcount" | "co_flags" | "co_varnames"));
+            for (key, value) in checked.iter() {
+                let key = key.plain();
+                match (key.as_str(), value.contents()) {
+                    ("co_argcount", Value::Small(count)) => positional = count as usize,
+                    ("co_posonlyargcount", Value::Small(count)) => posonly = count as usize,
+                    ("co_kwonlyargcount", Value::Small(count)) => keywords = count as usize,
+                    ("co_nlocals", _) => {},
+                    ("co_stacksize", Value::Small(size)) => changed.declared_stack = Some(size),
+                    ("co_consts", Value::Tuple(values)) => changed = changed.replacing_constants(&values)?,
+                    ("co_name", Value::Text(text)) => changed.ident = text.to_string(),
+                    ("co_qualname", Value::Text(text)) => changed.qualified = text.to_string(),
+                    ("co_filename", Value::Text(text)) => changed.written_in = Some(text),
+                    ("co_linetable", table @ Value::Bytes(..)) => {
+                        changed.lineless = matches!(&table, Value::Bytes(data, ..) if data.borrow().is_empty());
+                        let current = match self.class_get(receiver.clone(), "co_linetable", false) {
+                            Ok(value) => value,
+                            Err(Fault::Note(message)) => return Err(message),
+                            Err(fault) => { self.carried = Some(fault); return Err(String::new()); }
+                        };
+                        if !current.equals(&table) { changed.location_bytes = Some(table); }
                     }
+                    ("co_firstlineno", Value::Small(line)) => {
+                        if line as u32 == changed.declared_on { continue; }
+                        if changed.location_bytes.is_none() {
+                            changed.location_bytes = Some(match self.class_get(receiver.clone(), "co_linetable", false) {
+                                Ok(value) => value,
+                                Err(Fault::Note(message)) => return Err(message),
+                                Err(fault) => { self.carried = Some(fault); return Err(String::new()); }
+                            });
+                        }
+                        changed.declared_on = line as u32;
+                    }
+                    ("co_flags", Value::Small(flags)) => { changed.code_flags = flags; changed.future_bits = 0; changed.generator = flags & (32 | 128 | 512) != 0; }
+                    ("co_varnames", Value::Tuple(names)) => {
+                        let labels: Vec<String> = names.iter().map(Value::plain).collect();
+                        if labels.len() < original.local_names.len() { return Err("NotImplementedError: removing native local slots is unavailable".into()); }
+                        let renamed = |name: &mut String| {
+                            if let Some(slot) = original.local_names.iter().position(|before| before == name) {
+                                *name = labels[slot].clone();
+                            }
+                        };
+                        changed.formals.iter_mut().for_each(&renamed);
+                        changed.idents.iter_mut().for_each(renamed);
+                        changed.idents.extend(labels.iter().skip(original.local_names.len()).cloned());
+                        changed.local_names = labels;
+                    }
+                    ("co_cellvars", Value::Tuple(names)) => changed.cell_names = names.iter().map(Value::plain).collect(),
+                    ("co_freevars", Value::Tuple(names)) => {
+                        let labels: Vec<String> = names.iter().map(Value::plain).collect();
+                        if labels.windows(2).any(|pair| pair[0] >= pair[1]) { return Err("NotImplementedError: unordered or duplicate native closure names are unavailable".into()); }
+                        if labels.len() < changed.enclosing.len() { return Err("NotImplementedError: removing native closure slots is unavailable".into()); }
+                        changed.enclosing.sort_by_key(|(index, _)| Self::closure_title(&changed.idents[*index]).to_string());
+                        for (name, (index, cell)) in labels.iter().zip(&mut changed.enclosing) {
+                            changed.idents[*index] = name.clone();
+                            cell.ident = Rc::from(name.as_str());
+                        }
+                        for name in labels.iter().skip(changed.enclosing.len()) {
+                            let slot = changed.idents.len();
+                            changed.idents.push(name.clone());
+                            changed.enclosing.push((slot, crate::code::Cell { free: true, ident: Rc::from(name.as_str()), near: crate::code::LocalSlots::default(), far: 0, moving: false }));
+                        }
+                    }
+                    ("co_names", Value::Tuple(names)) => {
+                        let labels: Vec<String> = names.iter().map(Value::plain).collect();
+                        if !labels.starts_with(&original.code_names) { return Err("NotImplementedError: renaming native global and attribute operands is unavailable".into()); }
+                        changed.code_names = labels;
+                    }
+                    ("co_code", image @ Value::Bytes(..)) => {
+                        if image.equals(&self.byte_make(changed.native_image(), false)) { continue; }
+                        let loaded = self.native_code_load(&image)?;
+                        let body = Self::native_code_subject(&loaded)?;
+                        let adopted = body.replacing_constants(&changed.code_constants)?;
+                        changed.instrs = adopted.instrs.clone();
+                        changed.source_tokens = body.source_tokens.clone();
+                        changed.source_end = body.source_end;
+                        changed.image_origin = body.image_origin.clone();
+                        changed.instruction_image = body.instruction_image.clone();
+                    }
+                    ("co_exceptiontable", table @ Value::Bytes(..)) => {
+                        let Value::Bytes(bytes, ..) = &table else { unreachable!() };
+                        if *bytes.borrow() == changed.handler_image() { continue; }
+                        if !bytes.borrow().is_empty() {
+                            return Err("ValueError: unsupported native exception table layout".into());
+                        }
+                        changed.exception_image = Some(table);
+                    }
+                    _ => return Err(self.special_fault()),
                 }
             }
+            if layout_changed {
+                let total = positional + keywords + usize::from(changed.code_flags & 4 != 0) + usize::from(changed.code_flags & 8 != 0);
+                let mut ordered = Vec::new();
+                ordered.extend((0..positional).map(|index| if index < posonly { 1 } else { 0 }));
+                ordered.extend(std::iter::repeat_n(2, keywords));
+                if changed.code_flags & 4 != 0 { ordered.push(3); }
+                if changed.code_flags & 8 != 0 { ordered.push(4); }
+                if total != original.formals.len() {
+                    let wanted = &changed.local_names[..total];
+                    if !changed.idents.starts_with(wanted) { return Err("NotImplementedError: rearranging native parameter slots is unavailable".into()); }
+                    changed.formals = wanted.to_vec();
+                }
+                let rules = changed.formals.iter().map(|name| ordered[changed.local_names.iter().position(|local| local == name).unwrap()]).collect();
+                changed.parameter_rules = Some(rules);
+                changed.formal_kinds.resize(total, None);
+                changed.least = changed.least.min(total);
+            }
             changed.revised = RefCell::new(None);
+            changed.code_identity = Rc::new(());
             return Ok(Self::adapter(7, vec![Value::Routine(Rc::new(changed))]));
         }
         if operation == "clear" {
@@ -26688,6 +26840,8 @@ impl Engine<'_> {
                         Value::Flag(true)
                     }
                     Value::Small(5) if args.len() == 2 => Value::Small(args[1].retained_count().ok_or("NotImplementedError: this value has no ownership identity")?.python_count()),
+                    Value::Small(11) if args.len() == 2 => self.native_code_analysis(&args[1])?,
+                    Value::Small(12) if args.len() == 2 => self.native_code_load(&args[1])?,
                     _ => return Err("TypeError: invalid tracing operation".into()),
                 }
             }
@@ -30215,7 +30369,12 @@ impl Engine<'_> {
         }).collect());
         let module_name = self.lang.trace_fields.get(10).map_or("<module>", String::as_str);
         let binding_cache = serde_json::to_string(&trial).map_err(|e| format!("ValueError: {e}"))?;
-        let fields = vec![("co_consts".to_string(), constants), ("co_name".into(), Value::text(module_name)), ("co_qualname".into(), Value::text(module_name)),
+        let mut metadata = (*checked).clone();
+        metadata.ident = "<module>".into();
+        metadata.qualified = "<module>".into();
+        metadata.declared_on = 1;
+        metadata.code_flags = bits;
+        let fields = vec![("co_consts".to_string(), constants), ("\0native_code".to_string(), self.routine_code(&Rc::new(metadata))), ("co_name".into(), Value::text(module_name)), ("co_qualname".into(), Value::text(module_name)),
             ("co_filename".into(), Value::Text(file.clone())),
             ("\0optimization".into(), Value::Small(optimization as i64)),
             ("\0compiled_program".into(), Value::Routine(checked)),
@@ -30337,11 +30496,11 @@ impl Engine<'_> {
             if let Some(Value::Adapter(code)) = args.first().map(Value::contents) {
                 if code.0 == 7 {
                     if args.len() > 4 { return Err(self.core_fault("core.arity", name)); }
-                    if let Some(Value::Routine(original)) = code.1.get(1) {
-                        let mut ordered: Vec<usize> = (0..original.enclosed.len()).collect();
+                    if let Some(Value::Routine(original)) = code.1.first() {
+                        let mut ordered: Vec<usize> = (0..original.enclosing.len()).collect();
                         ordered.sort_by(|a, b| {
-                            let left = original.idents.get(original.enclosed[*a].0).map(String::as_str).unwrap_or("");
-                            let right = original.idents.get(original.enclosed[*b].0).map(String::as_str).unwrap_or("");
+                            let left = original.idents.get(original.enclosing[*a].0).map(String::as_str).unwrap_or("");
+                            let right = original.idents.get(original.enclosing[*b].0).map(String::as_str).unwrap_or("");
                             left.cmp(right)
                         });
                         let supplied = args.get(3).map(Value::contents);
@@ -30355,6 +30514,7 @@ impl Engine<'_> {
                             };
                             if cells.len() != ordered.len() { return Err(format!("TypeError: code object requires a closure of exactly length {}", ordered.len())); }
                             let mut working = (**original).clone();
+                            working.globe = args.get(1).filter(|value| !matches!(value.contents(), Value::Null)).cloned();
                             for (position, item) in cells.iter().enumerate() {
                                 let cell = match item.contents() {
                                     Value::Adapter(wrapper) if wrapper.0 == 31 => wrapper.1.first().cloned(),
@@ -30363,12 +30523,18 @@ impl Engine<'_> {
                                     _ => None,
                                 };
                                 let Some(cell) = cell else { return Err(format!("TypeError: code object requires a closure of exactly length {}", ordered.len())); };
-                                working.enclosed[ordered[position]].1 = cell;
+                                working.enclosed.push((original.enclosing[ordered[position]].0, cell));
                             }
                             self.call_held(Value::Routine(Rc::new(working)), Vec::new())?;
                             return Ok(Value::Null);
                         }
-                        self.call_held(Value::Routine(original.clone()), Vec::new())?;
+                        if original.image_origin.0 == 0 {
+                            self.native_root_run(original, &args)?;
+                            return Ok(Value::Null);
+                        }
+                        let mut working = (**original).clone();
+                        working.globe = args.get(1).filter(|value| !matches!(value.contents(), Value::Null)).cloned();
+                        self.call_held(Value::Routine(Rc::new(working)), Vec::new())?;
                         return Ok(Value::Null);
                     }
                 }

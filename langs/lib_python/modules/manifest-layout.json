@@ -24,6 +24,7 @@
     "_collections_abc": "runtime_adapters/_collections_abc.py",
     "importlib": "runtime_adapters/importlib.py",
     "abc": "runtime_adapters/abc.py",
+    "test.support": "runtime_adapters/code_test_support.py",
     "codecs": "runtime_adapters/codecs.py",
     "sys": "runtime_adapters/sys.py",
     "_py_warnings": "runtime_adapters/warnings.py",

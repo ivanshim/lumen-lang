@@ -1589,16 +1589,19 @@ impl Value {
     /// replacements change the constants, not that original stream.
     fn routine_content(body: &crate::code::Routine) -> Value {
         Value::tuple(vec![
-            Value::Text(body.source_content.get_or_init(|| Rc::from(format!("{:?}", body.source_tokens))).clone()), Value::Small(body.source_end as i64),
+            Value::Text(body.source_content.get_or_init(|| Rc::from(crate::lex::token_image(&body.source_tokens))).clone()), Value::Small(body.source_end as i64),
             Value::text(&body.ident), Value::Small(body.declared_on as i64),
-            Value::Small(body.code_flags), Value::Small(body.future_bits),
-            Value::Flag(body.generator), Value::Flag(body.lineless),
+            Value::Small(body.code_flags | body.future_bits), Value::Flag(body.lineless),
+            body.location_bytes.clone().unwrap_or(Value::Null),
+            Value::Bytes(Rc::new(RefCell::new(body.native_image())), false, Rc::from("bytes")),
+            Value::tuple(body.handler_image().into_iter().map(|byte| Value::Small(byte as i64)).collect()),
             Value::tuple(body.formals.iter().map(|name| Value::text(name)).collect()),
             Value::tuple(body.parameter_rules.as_deref().unwrap_or_default().iter().map(|rule| Value::Small(*rule as i64)).collect()),
             body.rest_at.map_or(Value::Null, |at| Value::Small(at as i64)),
             Value::tuple(body.code_names.iter().map(|name| Value::text(name)).collect()),
             Value::tuple(body.local_names.iter().map(|name| Value::text(name)).collect()),
             Value::tuple(body.idents.iter().map(|name| Value::text(name)).collect()),
+            Value::tuple(body.cell_names.iter().filter(|name| !body.local_names.contains(name)).map(|name| Value::text(name)).collect()),
             Value::tuple(body.code_constants.clone()),
         ])
     }
@@ -2078,6 +2081,11 @@ impl Value {
             Value::Adapter(w) if w.0 == 4 => format!("<staticmethod({})>", if matches!(w.1[0],Value::Null){"None".to_owned()}else{w.1[0].plain()}),
             Value::Adapter(w) if w.0 == 5 => format!("<classmethod({})>", if matches!(w.1[0],Value::Null){"None".to_owned()}else{w.1[0].plain()}),
             Value::Adapter(parts) if parts.0 == 34 => format!("<coroutine_wrapper object at 0x{:x}>", Rc::as_ptr(parts) as usize),
+            Value::Adapter(code) if code.0 == 7 => match code.1.first() {
+                Some(Value::Routine(body)) => format!("<code object {} at {:p}, file {:?}, line {}>",
+                    body.ident, Rc::as_ptr(code), body.written_in.as_deref().unwrap_or("<string>"), body.declared_on),
+                _ => "<code object>".to_string(),
+            },
             Value::Adapter(_) => "<member wrapper>".to_string(),
             Value::Object(o) => o.fields.borrow().iter().find(|(key, _)| key == "\0typing_repr")
                 .map(|(_, value)| value.plain()).unwrap_or_else(|| format!("<object {}>", o.class_now().name)),

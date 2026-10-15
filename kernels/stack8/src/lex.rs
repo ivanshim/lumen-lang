@@ -1942,3 +1942,27 @@ fn number_error_column(word: &str, message: &str) -> usize {
     }
     letters.len().saturating_sub(1)
 }
+
+// Native code images retain the exact scanner input for reconstruction.
+pub(crate) fn token_image(tokens: &[Token]) -> String {
+    let records: Vec<_> = tokens.iter().map(|t| serde_json::json!([
+        t.shape as u8, t.lexeme, t.raw, t.width, t.row, t.column, t.end_column, t.end_row, t.byte_column, t.byte_end_column
+    ])).collect();
+    serde_json::Value::Array(records).to_string()
+}
+
+pub(crate) fn image_tokens(image: &str) -> Result<Vec<Token>, String> {
+    let bad = || "ValueError: invalid native token image".to_string();
+    let records: serde_json::Value = serde_json::from_str(image).map_err(|_| bad())?;
+    let kinds = [Shape::Instr, Shape::Quoted, Shape::Numeral, Shape::Quote, Shape::Bytes, Shape::StringBegin, Shape::StringEnd, Shape::StringField, Shape::StringExpression, Shape::StringFault, Shape::Codepoints, Shape::EscapeWarning, Shape::Sign, Shape::LineEnd, Shape::Lead, Shape::Open, Shape::Close, Shape::Finish];
+    let decoded: Vec<Token> = records.as_array().ok_or_else(bad)?.iter().map(|record| {
+        let a = record.as_array().filter(|a| a.len() == 10).ok_or_else(bad)?;
+        let number = |at: usize| a[at].as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(bad);
+        let shape = *kinds.get(number(0)?).ok_or_else(bad)?;
+        let raw = if a[2].is_null() { None } else { Some(a[2].as_str().ok_or_else(bad)?.to_string()) };
+        Ok(Token { shape, lexeme: a[1].as_str().ok_or_else(bad)?.to_string(), raw,
+            width: number(3)?, row: number(4)?, byte_column: number(8)?, byte_end_column: number(9)?, column: number(5)?, end_column: number(6)?, end_row: number(7)? })
+    }).collect::<Result<_, String>>()?;
+    if decoded.last().is_none_or(|token| token.shape != Shape::Finish) { return Err(bad()); }
+    Ok(decoded)
+}
