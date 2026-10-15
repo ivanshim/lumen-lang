@@ -8739,7 +8739,14 @@ impl<'a> Engine<'a> {
             } else { positional.extend(supplied); }
             let defaults = self.class_get(partial, "keywords", false)?.contents();
             let Value::Map(defaults) = defaults else { return Err("TypeError: partial keywords must be a dictionary".into()); };
-            let mut options: Vec<(String, Value)> = defaults.iter().map(|(key, value)| (key.plain(), value.clone())).collect();
+            let mut options: Vec<(String, Value)> = Vec::new();
+            for (key, value) in defaults.iter() {
+                // Keyword names are strings; a key added by hand to the dictionary may not be.
+                if !matches!(key.contents(), Value::Text(_) | Value::Object(_)) {
+                    return Err("TypeError: keywords must be strings".into());
+                }
+                options.push((key.plain(), value.clone()));
+            }
             for (key, value) in keywords {
                 if let Some((_, held)) = options.iter_mut().find(|(word, _)| *word == key) { *held = value; }
                 else { options.push((key, value)); }

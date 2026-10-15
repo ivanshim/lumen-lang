@@ -8917,7 +8917,13 @@ impl<'a> Machine<'a> {
             } else { given.append(&mut actual); }
             let saved_names = self.read_class_member(object, "keywords", false)?.settled();
             let Value::Dict(saved_names) = saved_names else { return Err(String::from("TypeError: partial keywords must be a dictionary").into()); };
-            let mut named: Vec<_> = saved_names.iter().map(|pair| (pair.0.bare(), pair.1.clone())).collect();
+            let mut named = Vec::new();
+            for pair in saved_names.iter() {
+                if !matches!(pair.0.settled(), Value::Text(_) | Value::Attributes(_)) {
+                    return Err(String::from("TypeError: keywords must be strings").into());
+                }
+                named.push((pair.0.bare(), pair.1.clone()));
+            }
             for (name, held) in overriding {
                 match named.iter_mut().find(|pair| pair.0 == name) {
                     Some(pair) => pair.1 = held,
