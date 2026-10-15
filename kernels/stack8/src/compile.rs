@@ -839,7 +839,7 @@ fn private_tokens<'t>(source: &'t [Token], lang: &Lang) -> std::borrow::Cow<'t, 
                 Shape::Instr if lang.builtins.contains_key(&source[i].lexeme) => {}
                 Shape::Instr => {
                     let keyword = in_pattern && source.get(i + 1).map_or(false, |next| lang.assign_words.contains(&next.lexeme));
-                    if !keyword {
+                    if !keyword && source[i].lexeme.starts_with("__") && !source[i].lexeme.ends_with("__") && !source[i].lexeme.contains('.') {
                         let changed = private_name(&owner.lexeme, &source[i].lexeme);
                         if changed != source[i].lexeme { result.to_mut()[i].lexeme = changed; }
                     }
@@ -1603,24 +1603,26 @@ impl<'a> Compiler<'a> {
         // The routine a piece is written in, the class that routine
         // belongs to, and the two written together: all known while the
         // program is put together, so each stands for what it names.
-        let unit = self.piece();
-        let routine = match unit.outermost {
-            true => String::new(),
-            false => unit.ident.clone(),
-        };
-        let within = self.within.as_ref().map(|(named, _)| named.clone()).unwrap_or_default();
-        for (binding, said) in [
-            (&self.lang.routine_binding, routine.clone()),
-            (&self.lang.class_binding, within.clone()),
-            (&self.lang.method_binding, match within.is_empty() {
-                true => routine,
-                false => format!("{}::{}", within, routine),
-            }),
-        ] {
-            if binding.as_deref() == Some(name) {
-                self.constant(Value::text(&said));
-                return;
-            }
+        if self.lang.routine_binding.as_deref() == Some(name) {
+            let unit = self.pieces.last().expect("a unit");
+            let said = if unit.outermost { "" } else { &unit.ident };
+            let value = Value::text(said);
+            self.constant(value);
+            return;
+        }
+        if self.lang.class_binding.as_deref() == Some(name) {
+            let said = self.within.as_ref().map_or("", |(owner, _)| owner.as_str());
+            let value = Value::text(said);
+            self.constant(value);
+            return;
+        }
+        if self.lang.method_binding.as_deref() == Some(name) {
+            let unit = self.pieces.last().expect("a unit");
+            let routine = if unit.outermost { "" } else { &unit.ident };
+            let owner = self.within.as_ref().map_or("", |(owner, _)| owner.as_str());
+            let said = if owner.is_empty() { routine.to_owned() } else { format!("{owner}::{routine}") };
+            self.constant(Value::text(&said));
+            return;
         }
         // A name an annotation reads is read when the annotation is, not settled
         // here, so that reading it afresh can stand for it.
@@ -2804,8 +2806,8 @@ impl<'a> Compiler<'a> {
         self.pass_token();
         let mut names = Vec::new();
         loop {
-            let kind = if self.on_any(&lang.carries_pairs) { self.take(); "ParamSpec" }
-                else if self.on_any(&lang.carries_words) { self.take(); "TypeVarTuple" } else { "TypeVar" };
+            let kind = if self.on_any(&lang.carries_pairs) { self.pass_token(); "ParamSpec" }
+                else if self.on_any(&lang.carries_words) { self.pass_token(); "TypeVarTuple" } else { "TypeVar" };
             let name = self.want_name("as a type parameter")?;
             if names.iter().any(|kept| kept == &name) {
                 return Err(format!("SyntaxError: duplicate type parameter '{name}'").into());
@@ -2886,7 +2888,7 @@ impl<'a> Compiler<'a> {
         ends.push(pair.close.clone());
         let mut written: Vec<String> = Vec::new();
         loop {
-            if self.on_any(&lang.carries_words) || self.on_any(&lang.carries_pairs) { self.take(); }
+            if self.on_any(&lang.carries_words) || self.on_any(&lang.carries_pairs) { self.pass_token(); }
             let parameter = self.look().lexeme.clone();
             self.want_name("as a type parameter")?;
             written.push(parameter);
@@ -2896,7 +2898,7 @@ impl<'a> Compiler<'a> {
                 bound_ends.extend(lang.assign_words.clone());
                 self.annotation_expression(&bound_ends)?;
             }
-            if self.on_assign() { self.take(); self.annotation_expression(&ends)?; }
+            if self.on_assign() { self.pass_token(); self.annotation_expression(&ends)?; }
             if !self.on_any(&lang.tuple_marks) { break; }
             self.pass_token();
             if self.at_symbol(&pair.close) { break; }
@@ -3889,7 +3891,7 @@ impl<'a> Compiler<'a> {
                 ahead += 1;
             }
         }
-        if bracketed { self.take(); }
+        if bracketed { self.pass_token(); }
         let mut watchers = Vec::new();
         loop {
             let begin = self.pos;
@@ -4053,7 +4055,7 @@ impl<'a> Compiler<'a> {
             self.write(&part);
             self.bind_block_target(&part)?;
             if !self.lang.syntax_members.is_empty() { self.let_go(&part); }
-            if self.lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { self.take(); }
+            if self.lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) { self.pass_token(); }
         }
         Ok(())
     }
@@ -4252,13 +4254,13 @@ impl<'a> Compiler<'a> {
                 let mut sliced = false;
                 loop {
                     if self.on_any(&self.lang.block_intros) {
-                        self.take(); sliced = true;
+                        self.pass_token(); sliced = true;
                     } else if self.at_symbol(&pair.close) { break; }
                     else if self.lang.calling.as_ref().and_then(|c| c.between.as_ref()).map_or(false, |s| self.at_symbol(s)) {
-                        self.take(); sliced = true;
+                        self.pass_token(); sliced = true;
                     } else {
                         if self.on_any(&self.lang.pipe_words) && self.look_ahead(1).lexeme == self.look().lexeme && self.look_ahead(2).lexeme == self.look().lexeme {
-                            self.take(); self.take(); self.take();
+                            self.pass_token(); self.pass_token(); self.take();
                             self.constant(Value::Null);
                             sliced = true;
                         } else { self.expr(0)?; }
@@ -4358,7 +4360,7 @@ impl<'a> Compiler<'a> {
             }
         }
         let a_class = self.on_keyword(&lang.class_words) && lang.explicit_this;
-        if self.on_keyword(&lang.async_words) { self.take(); self.coroutine_next = true; }
+        if self.on_keyword(&lang.async_words) { self.pass_token(); self.coroutine_next = true; }
         let name = if self.on_keyword(&lang.class_words) && lang.explicit_this {
             let name = self.look_ahead(1).lexeme.clone();
             if self.explicit_class((!held.is_empty()).then_some(adorned_from))? {
@@ -5309,7 +5311,7 @@ impl<'a> Compiler<'a> {
                 if self.look_ahead(1).lexeme == g.close { tuple = true; }
             }
         }
-        if tuple { self.take(); }
+        if tuple { self.pass_token(); }
         let sep = self.lang.calling.as_ref().and_then(|b| b.between.clone()).unwrap_or_default();
         let mut count = 0;
         let mut comma = false;
@@ -5469,7 +5471,7 @@ impl<'a> Compiler<'a> {
     fn pattern_numeral(&mut self) -> Res<(Value, bool)> {
         let lang = self.lang;
         let below = lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Sub));
-        if below { self.take(); }
+        if below { self.pass_token(); }
         if self.look().shape != Shape::Numeral { return Err(self.pattern_fault()); }
         let token = self.take();
         let imaginary = token.lexeme.chars().next_back().map_or(false, |c| lang.imaginary_letters.contains(&c));
@@ -5599,9 +5601,9 @@ impl<'a> Compiler<'a> {
             }
         }
         if token.shape == Shape::Instr {
-            if lang.true_words.iter().any(|w| w == token.spelling()) { self.take(); return Ok(Pattern::Literal(Value::Flag(true))); }
-            if lang.false_words.iter().any(|w| w == token.spelling()) { self.take(); return Ok(Pattern::Literal(Value::Flag(false))); }
-            if lang.null_words.iter().any(|w| w == token.spelling()) { self.take(); return Ok(Pattern::Literal(Value::Null)); }
+            if lang.true_words.iter().any(|w| w == token.spelling()) { self.pass_token(); return Ok(Pattern::Literal(Value::Flag(true))); }
+            if lang.false_words.iter().any(|w| w == token.spelling()) { self.pass_token(); return Ok(Pattern::Literal(Value::Flag(false))); }
+            if lang.null_words.iter().any(|w| w == token.spelling()) { self.pass_token(); return Ok(Pattern::Literal(Value::Null)); }
             let capture = self.pattern_capture()?;
             let mut path = Vec::new();
             while lang.pipe_words.contains(&self.look().lexeme) {
@@ -6298,7 +6300,7 @@ impl<'a> Compiler<'a> {
             }
             self.pass_token();
             let grouped = lang.catch_group.as_ref().map_or(false, |m| self.at_symbol(m));
-            if grouped { self.take(); }
+            if grouped { self.pass_token(); }
             if !lang.syntax_members.is_empty() {
                 if grouped && self.on_any(&lang.block_intros) { return Err("SyntaxError: expected one or more exception types".into()); }
                 if clauses.first().map_or(false, |c| c.grouped != grouped) {
@@ -6309,7 +6311,7 @@ impl<'a> Compiler<'a> {
                 }
             }
             let tuple = lang.catch_tuple_open.as_ref().map_or(false, |m| self.at_symbol(m));
-            if tuple { self.take(); }
+            if tuple { self.pass_token(); }
             let mut kinds = Vec::new();
             let bare = !tuple && self.on_any(&lang.block_intros);
             let empty = tuple && lang.catch_tuple_close.as_ref().map_or(false, |m| self.at_symbol(m));
@@ -6349,7 +6351,7 @@ impl<'a> Compiler<'a> {
                 }
                 if !lang.syntax_members.is_empty() && (self.at_symbol(".") || self.at_symbol("[")) {
                     let kind = if self.at_symbol(".") { "attribute" } else { "subscript" };
-                    while !self.on_any(&lang.block_intros) && !self.on_sep() && !self.exhausted() { self.take(); }
+                    while !self.on_any(&lang.block_intros) && !self.on_sep() && !self.exhausted() { self.pass_token(); }
                     let last = &self.tokens[self.pos - 1];
                     self.registry.stopped_end = last.column + last.lexeme.chars().count();
                     self.registry.stopped_end_row = last.row;
@@ -6605,13 +6607,13 @@ impl<'a> Compiler<'a> {
             if kind == 4 {
                 self.read(&word);
                 self.write(&held);
-                self.take(); self.take(); self.take();
+                self.pass_token(); self.pass_token(); self.take();
             } else if kind == 0 {
                 self.expr(0)?;
                 self.write(&held);
-            } else { self.take(); }
+            } else { self.pass_token(); }
             if self.look().shape != Shape::LineEnd { return Err(lang.decorator_amiss.clone().unwrap_or_default()); }
-            while self.look().shape == Shape::LineEnd { self.take(); }
+            while self.look().shape == Shape::LineEnd { self.pass_token(); }
             saved.push((kind, held));
         }
         let named;
@@ -6623,7 +6625,7 @@ impl<'a> Compiler<'a> {
             // put the finished member there once.
             if !self.read_class_alias(&named) { self.read(&named); }
         } else {
-            if self.on_keyword(&lang.async_words) { self.take(); self.coroutine_next = true; }
+            if self.on_keyword(&lang.async_words) { self.pass_token(); self.coroutine_next = true; }
             if !self.on_keyword(&lang.function_words) { return Err(lang.decorator_amiss.clone().unwrap_or_default()); }
             self.pass_token();
             named = self.want_name("as the method name")?;
@@ -6899,7 +6901,7 @@ impl<'a> Compiler<'a> {
             let slot=self.gensym("member_decorator");self.write(&slot);decorators.push(slot);
             self.skip_seps();
         }
-        if self.on_keyword(&lang.async_words) && Lang::spells(&lang.function_words, &self.look_ahead(1).spelling()) { self.take(); self.coroutine_next = true; }
+        if self.on_keyword(&lang.async_words) && Lang::spells(&lang.function_words, &self.look_ahead(1).spelling()) { self.pass_token(); self.coroutine_next = true; }
         if !decorators.is_empty() && !self.on_keyword(&lang.function_words) && !self.on_keyword(&lang.class_words) {self.gathering().unready=true;}
         if self.on_keyword(&lang.function_words) {
             self.pass_token();
@@ -7375,7 +7377,7 @@ impl<'a> Compiler<'a> {
             let heads_the_body = std::mem::take(&mut opening);
             if self.class_member(heads_the_body)? { continue; }
             if inline {
-                while self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme) { self.take(); }
+                while self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme) { self.pass_token(); }
             } else { self.skip_seps(); }
         }
         if !inline {
@@ -7482,7 +7484,7 @@ impl<'a> Compiler<'a> {
             let mut count = 0;
             while !self.at_symbol(&close) {
                 let spread = lang.dyadic.get(&self.look().lexeme).map_or(false, |op| matches!(op.action, Action::Mul | Action::Power));
-                if spread { self.take(); unready = true; }
+                if spread { self.pass_token(); unready = true; }
                 let keyword = self.look().shape == Shape::Instr && lang.assign_words.contains(&self.look_ahead(1).lexeme);
                 let mut handed = None;
                 // The keyword that names a metaclass says what makes the
@@ -7518,7 +7520,7 @@ impl<'a> Compiler<'a> {
                     self.piece().instrs.truncate(from);
                 }
                 count += 1;
-                if apart.as_ref().map_or(false, |s| self.at_symbol(s)) { self.take(); } else { break; }
+                if apart.as_ref().map_or(false, |s| self.at_symbol(s)) { self.pass_token(); } else { break; }
             }
             self.want_sign(&close, "after the bases")?;
             }
@@ -7643,7 +7645,7 @@ impl<'a> Compiler<'a> {
             let heads_the_body = std::mem::take(&mut opening);
             if self.class_member(heads_the_body)? { continue; }
             if inline {
-                while self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme) { self.take(); }
+                while self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme) { self.pass_token(); }
             } else { self.skip_seps(); }
         }
         if !inline {
@@ -7747,12 +7749,12 @@ impl<'a> Compiler<'a> {
         self.pass_token();
         let mut names = std::collections::HashSet::new();
         loop {
-            if self.on_any(&lang.carries_pairs) || self.on_any(&lang.carries_words) { self.take(); }
+            if self.on_any(&lang.carries_pairs) || self.on_any(&lang.carries_words) { self.pass_token(); }
             let name = self.want_name("as a type parameter")?;
             if !lang.syntax_members.is_empty() && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".into()); }
             if !names.insert(name) { return Err(lang.parameters_amiss.first().cloned().unwrap_or_default()); }
-            if self.on_any(&lang.annotation_marks) { self.take(); self.expr_at(0, false)?; }
-            if self.on_assign() { self.take(); self.expr(0)?; }
+            if self.on_any(&lang.annotation_marks) { self.pass_token(); self.expr_at(0, false)?; }
+            if self.on_assign() { self.pass_token(); self.expr(0)?; }
             if !self.on_any(&lang.tuple_marks) { break; }
             self.pass_token();
             if self.on_any(&lang.type_params_close) { break; }
@@ -8360,7 +8362,7 @@ impl<'a> Compiler<'a> {
         let mut depth = 0usize;
         while !self.exhausted() {
             let token = self.look();
-            if depth == 0 && mark.map_or(false, |m| token.lexeme == m) { self.take(); return Ok(()); }
+            if depth == 0 && mark.map_or(false, |m| token.lexeme == m) { self.pass_token(); return Ok(()); }
             if token.shape == Shape::LineEnd { break; }
             if token.shape == Shape::Sign {
                 if pairs.iter().any(|pair| pair.open == token.lexeme) { depth += 1; }
@@ -9094,7 +9096,7 @@ impl<'a> Compiler<'a> {
 
     fn tuple_piece(&mut self, writable: bool) -> Res<bool> {
         let spread = !self.lang.tuple_marks.is_empty() && self.on_any(&self.lang.unpack_rest);
-        if spread { self.take(); }
+        if spread { self.pass_token(); }
         self.expr_at(0, writable)?;
         if spread {
             self.act(Action::Unpack(1, Some(0)), 1);
@@ -9554,7 +9556,7 @@ impl<'a> Compiler<'a> {
                 self.pos = after;
                 return Ok(());
             }
-            if self.on_assign() { self.take(); self.scope_value()?; }
+            if self.on_assign() { self.pass_token(); self.scope_value()?; }
             self.piece().instrs.truncate(from);
             self.scope_fault(&self.lang.scope_unready.clone());
             return Ok(());
@@ -10634,7 +10636,7 @@ impl<'a> Compiler<'a> {
                 Some((op, _, width)) => { infix.action = op; width }
                 None => 1,
             };
-            for _ in 0..width { self.take(); }
+            for _ in 0..width { self.pass_token(); }
             let right_floor = if infix.right_assoc { infix.level } else { infix.level + 1 };
             match infix.action {
                 Action::And | Action::Or => {
@@ -10775,7 +10777,7 @@ impl<'a> Compiler<'a> {
         self.write(&near);
         let mut exits = Vec::new();
         loop {
-            for _ in 0..width { self.take(); }
+            for _ in 0..width { self.pass_token(); }
             self.expr(tier + 1)?;
             self.write(&far);
             // Each side is moved out of its temporary at its last use, so
@@ -10963,7 +10965,7 @@ impl<'a> Compiler<'a> {
         }
         let from = self.mark();
         let origin = self.pos;
-        let tok = self.look().clone();
+        let tok = self.look();
         if self.yield_operand && lang.dyadic.get(tok.spelling()).map_or(false, |op| matches!(op.action, Action::Mul)) {
             self.pass_token();
             let start = self.mark();
@@ -11004,7 +11006,7 @@ impl<'a> Compiler<'a> {
             self.pass_token();
             self.piece().generator = true;
             let delegated = self.on_keyword(&lang.yield_from_words);
-            if delegated { self.take(); }
+            if delegated { self.pass_token(); }
             if delegated && !lang.syntax_members.is_empty() && !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest) {
                 return Err("SyntaxError: invalid syntax".into());
             }
@@ -11023,7 +11025,7 @@ impl<'a> Compiler<'a> {
             let mut star_at = self.pos;
             if delegated || !ended(self) {
                 let spread = !delegated && !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest);
-                if spread { spread_seen = true; star_at = self.pos; self.take(); }
+                if spread { spread_seen = true; star_at = self.pos; self.pass_token(); }
                 self.expr(0)?;
                 if spread {
                     self.act(Action::Unpack(1, Some(0)), 1);
@@ -11038,7 +11040,7 @@ impl<'a> Compiler<'a> {
                         self.pass_token();
                         if ended(self) { break; }
                         let spread = !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest);
-                        if spread { spread_seen = true; star_at = self.pos; self.take(); }
+                        if spread { spread_seen = true; star_at = self.pos; self.pass_token(); }
                         self.expr(0)?;
                         count += 1;
                         if spread {
@@ -11811,7 +11813,7 @@ impl<'a> Compiler<'a> {
                     }
                     self.forget_targets(&pair, true, true)?;
                     self.discard();
-                    if call.between.as_ref().map_or(false, |s| self.at_symbol(s)) { self.take(); }
+                    if call.between.as_ref().map_or(false, |s| self.at_symbol(s)) { self.pass_token(); }
                     continue;
                 }
             }
@@ -11918,7 +11920,7 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
-        if bracketed { self.take(); }
+        if bracketed { self.pass_token(); }
         self.constant(Value::Null);
         Ok(())
     }
@@ -12505,7 +12507,7 @@ impl<'a> Compiler<'a> {
             if star {
                 let next = self.look_ahead(1).lexeme.as_str();
                 if next == close || next == ":" { return Err("SyntaxError: Invalid star expression".into()); }
-                self.take(); expanded = true;
+                self.pass_token(); expanded = true;
                 self.validate_star_operand()?;
             }
             let start = self.mark();
@@ -12939,7 +12941,7 @@ impl<'a> Compiler<'a> {
         self.act(if map { Action::MakeMap } else if self.lang.set_literals && self.lang.map_brackets.iter().any(|p| p.close == pair.close) { Action::MakeSet } else { Action::MakeArray }, 0);
         while !self.at_symbol(&pair.close) {
             let spread = if map { self.on_any(&self.lang.map_spread) } else { self.on_any(&self.lang.array_spread) };
-            if spread { self.take(); }
+            if spread { self.pass_token(); }
             let mut item_at = self.pos;
             self.expr(0)?;
             if map && !spread {
@@ -13281,7 +13283,7 @@ impl<'a> Compiler<'a> {
             // of cloning everything gathered so far on every item.
             if !result.is_empty() { self.read_taking(result); }
             let spread = self.on_any(if map { &self.lang.map_spread } else { &self.lang.array_spread });
-            if spread { self.take(); }
+            if spread { self.pass_token(); }
             let before_yield = self.yield_operand;
             if result.is_empty() { self.yield_operand = true; }
             self.expr(0)?;
