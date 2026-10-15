@@ -595,7 +595,8 @@ pub struct Machine<'a> {
     library_index: RefCell<Option<LibraryIndex>>,
     pub library_aliases: HashMap<String, String>,
     library_origins: std::collections::HashSet<String>,
-    imported: HashMap<String, Value>,
+    imported: HashMap<String, Value, crate::table::FxBuildHasher>,
+    recursion_hint: Cell<usize>,
     /// The dictionary of a loaded space, built the first time globals()
     /// wants it and answered every time after: one dictionary, so a
     /// name changed through it is changed in the space.
@@ -1389,7 +1390,12 @@ impl<'a> Machine<'a> {
         let [module, binding] = self.rules.words_ext_system_recursion_variable else { return original };
         let Some(Value::Thing(namespace)) = self.imported.get(module) else { return original };
         let held = namespace.holds.borrow();
-        held.iter().find(|(key, _)| key == binding).and_then(|(_, item)| match item.settled() {
+        // Asked at every call, so the place the binding stood at last time is tried first.
+        let at = match held.get(self.recursion_hint.get()) {
+            Some((key, _)) if key == binding => Some(self.recursion_hint.get()),
+            _ => held.iter().position(|(key, _)| key == binding).inspect(|at| self.recursion_hint.set(*at)),
+        };
+        at.map(|at| &held[at]).and_then(|(_, item)| match item.settled() {
             Value::Small(number) => usize::try_from(number).ok(),
             _ => None,
         }).or(original).map(|number| match original {
@@ -2115,7 +2121,8 @@ impl<'a> Machine<'a> {
             library_aliases: HashMap::new(),
             library_origins: std::collections::HashSet::new(),
             importing: std::collections::HashSet::new(),
-            imported: HashMap::new(),
+            imported: HashMap::default(),
+            recursion_hint: Cell::new(0),
             space_books: HashMap::new(),
             globals_by_cell: HashMap::new(),
             native_slots: table.strings("ext.stmt.class.special").iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
@@ -10379,17 +10386,21 @@ impl<'a> Machine<'a> {
                 if let Some(doc) = Self::builtin_kind_doc(word) { return Some(Value::text(doc)); }
             }
         }
-        let descriptor = self.table.prim_words.iter().find(|(p, _)| *p == Prim::AsText)
-            .and_then(|(_, word)| self.table.prims.get(&format!("{word}.{name}")));
-        if matches!(value, Value::Unpaired(_)) && (matches!(self.table.prims.get(name), Some(Prim::Textual(_))) || matches!(descriptor, Some(Prim::Textual(_)))) {
-            return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
-        }
-        if let (Value::Text(subject), Some(Prim::Textual(work))) = (value, self.table.prims.get(name)) {
-            return Some(Value::TextCall { subject: subject.clone(), work: *work, name: Rc::from(name) });
-        }
-        if let (Value::Unpaired(numbers), Some(Prim::Textual(work))) = (value, self.table.prims.get(name)) {
-            if Self::category_safe_work(*work) {
-                return Some(Value::TextCall { subject: Rc::from(Value::category_text(numbers).as_str()), work: *work, name: Rc::from(name) });
+        // The words of the primitive table are looked for only by the kinds
+        // of value that can answer to one; every other read passes by.
+        if matches!(value, Value::Unpaired(_) | Value::Text(_)) {
+            let descriptor = self.table.prim_words.iter().find(|(p, _)| *p == Prim::AsText)
+                .and_then(|(_, word)| self.table.prims.get(&format!("{word}.{name}")));
+            if matches!(value, Value::Unpaired(_)) && (matches!(self.table.prims.get(name), Some(Prim::Textual(_))) || matches!(descriptor, Some(Prim::Textual(_)))) {
+                return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
+            }
+            if let (Value::Text(subject), Some(Prim::Textual(work))) = (value, self.table.prims.get(name)) {
+                return Some(Value::TextCall { subject: subject.clone(), work: *work, name: Rc::from(name) });
+            }
+            if let (Value::Unpaired(numbers), Some(Prim::Textual(work))) = (value, self.table.prims.get(name)) {
+                if Self::category_safe_work(*work) {
+                    return Some(Value::TextCall { subject: Rc::from(Value::category_text(numbers).as_str()), work: *work, name: Rc::from(name) });
+                }
             }
         }
         // A walk, a row, a map or a set hands over the walking pair and
@@ -10415,10 +10426,12 @@ impl<'a> Machine<'a> {
         // the receiver first. Python binds the actual operation rather
         // than its spelling, so ordinary callable dispatch can invoke it.
         // A sealed set holds no altering working of its own.
-        let setted = match self.table.prims.get(name).copied() {
-            Some(operation @ Prim::SetCall(code @ 1..=17)) if matches!(value.settled(), Value::Set(_)) && !(Self::set_alters(code) && value.set_sealed()) => Some(operation),
-            _ => None,
-        };
+        let setted = if matches!(value.settled(), Value::Set(_)) {
+            match self.table.prims.get(name).copied() {
+                Some(operation @ Prim::SetCall(code @ 1..=17)) if !(Self::set_alters(code) && value.set_sealed()) => Some(operation),
+                _ => None,
+            }
+        } else { None };
         if let Some(operation) = setted {
             let callable = if !self.rules.words_ext_stmt_class_builder.is_empty() {
                 Value::Intrinsic(operation, Rc::from(name))

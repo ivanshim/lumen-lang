@@ -149,6 +149,7 @@ pub struct Engine<'a> {
     location: Option<(u32, u32, u32, u32)>,
     frame_class: Option<Rc<Class>>,
     stream_class: Option<Weak<Class>>,
+    limit_place: StateCell<usize>,
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>)>,
@@ -1708,6 +1709,7 @@ impl<'a> Engine<'a> {
             location: None,
             frame_class: None,
             stream_class: None,
+            limit_place: StateCell::new(0),
             generator_frames: HashMap::new(),
             coroutines: HashMap::new(),
             async_generators: HashMap::new(),
@@ -4158,7 +4160,10 @@ impl<'a> Engine<'a> {
         let [module, binding] = self.lang.recursion_variable.as_slice() else { return fallback };
         let Some(Value::Object(space)) = self.modules.get(module) else { return fallback };
         let fields = space.fields.borrow();
-        fields.iter().find(|(key, _)| key == binding).and_then(|(_, value)| match value.contents() {
+        // Asked at every call: the entry is looked for first where it stood the last time.
+        let place = fields.get(self.limit_place.get()).filter(|(key, _)| key == binding).map(|_| self.limit_place.get())
+            .or_else(|| fields.iter().position(|(key, _)| key == binding).map(|at| { self.limit_place.set(at); at }));
+        place.map(|at| &fields[at]).and_then(|(_, value)| match value.contents() {
             Value::Small(number) => usize::try_from(number).ok(),
             _ => None,
         }).or(fallback).map(|requested| {
