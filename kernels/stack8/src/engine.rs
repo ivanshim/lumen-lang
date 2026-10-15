@@ -148,7 +148,8 @@ pub struct Engine<'a> {
     inline_comp: Option<(usize, Vec<String>, Vec<Value>)>,
     location: Option<(u32, u32, u32, u32)>,
     frame_class: Option<Rc<Class>>,
-    stream_class: Option<(Weak<Class>, u64)>,
+    stream_origin: Option<Weak<Class>>,
+    stream_class: Option<(Weak<Class>, u64, [String; 3])>,
     limit_place: StateCell<usize>,
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>, Value, usize)>,
@@ -1708,6 +1709,7 @@ impl<'a> Engine<'a> {
             inline_comp: None,
             location: None,
             frame_class: None,
+            stream_origin: None,
             stream_class: None,
             limit_place: StateCell::new(0),
             generator_frames: HashMap::new(),
@@ -21283,36 +21285,43 @@ impl<'a> Engine<'a> {
         self.byte_work(task, args, false)
     }
 
-    /// Whether the object is of the memory-stream class the _io module
-    /// makes and of no subclass: told by name and home once, then by identity.
+    /// Validate the embedded stream class and its complete slot descriptors.
     fn stream_object(&mut self, object: &Rc<Instance>) -> bool {
         let class = object.class_now();
-        // What was checked holds only until some class's members change.
+        if !self.stream_origin.as_ref().and_then(Weak::upgrade).is_some_and(|origin| Rc::ptr_eq(&origin, &class)) { return false; }
         let revision = crate::value::members_revision();
-        if let Some((known, seen)) = &self.stream_class {
+        if let Some((known, seen, _)) = &self.stream_class {
             if *seen == revision && known.upgrade().is_some_and(|known| Rc::ptr_eq(&known, &class)) { return true; }
         }
-        let home = Self::own_class_value(&class, self.class_word("module")).map(|value| value.plain());
-        let plain = class.name == "BytesIO" && home.as_deref() == Some("_io")
-            && ["_closed", "_data", "_pos"].iter().all(|slot| matches!(Self::own_class_value(&class, slot), Some(Value::Adapter(w)) if w.0 == 16))
-            && ["__getattribute__", "__getattr__", "__setattr__", "__delattr__"].iter().all(|hook| class.holder(hook).is_none());
-        self.stream_class = plain.then(|| (Rc::downgrade(&class), revision));
-        plain
+        self.stream_class = None;
+        if ["__getattribute__", "__getattr__", "__setattr__", "__delattr__"].iter().any(|hook| class.holder(hook).is_some()) { return false; }
+        let mut places = [String::new(), String::new(), String::new()];
+        for (index, name) in ["_closed", "_data", "_pos"].iter().enumerate() {
+            let Some(Value::Adapter(slot)) = Self::own_class_value(&class, name) else { return false; };
+            if slot.0 != 16 || slot.1.len() != 2
+                || !matches!(&slot.1[0], Value::Text(word) if word.as_ref() == *name)
+                || !matches!(&slot.1[1], Value::Class(owner) if Rc::ptr_eq(owner, &class)) { return false; }
+            let Ok(place) = self.slot_place(&Value::Object(object.clone()), &slot.1) else { return false; };
+            places[index] = place;
+        }
+        self.stream_class = Some((Rc::downgrade(&class), revision, places));
+        true
     }
-    /// What such a stream holds for its closed flag, its storage and its
-    /// position; nothing where any of the three is missing.
+    /// Read the validated slots using the same storage keys as attribute lookup.
     fn stream_slots(&mut self, owner: &Value) -> Option<(Value, Value, Value)> {
         let Value::Object(object) = owner else { return None };
         if !self.stream_object(object) { return None; }
+        let (_, _, places) = self.stream_class.as_ref()?;
         let fields = object.fields.borrow();
-        let hold = |prefix: &str| fields.iter().find(|(key, _)| key.starts_with(prefix)).map(|(_, held)| held.clone());
-        Some((hold("\0slot:_closed:")?, hold("\0slot:_data:")?, hold("\0slot:_pos:")?))
+        let hold = |key: &str| fields.iter().find(|(name, _)| name == key).map(|(_, held)| held.clone());
+        Some((hold(&places[0])?, hold(&places[1])?, hold(&places[2])?))
     }
+    /// Advance a validated stream slot, or retain ordinary attribute assignment.
     fn stream_moved(&mut self, owner: &Value, place: i64, held_here: bool) -> Flow<()> {
         if held_here {
-            if let Value::Object(object) = owner {
+            if let (Value::Object(object), Some((_, _, places))) = (owner, &self.stream_class) {
                 let mut fields = object.fields.borrow_mut();
-                if let Some(entry) = fields.iter_mut().find(|(key, _)| key.starts_with("\0slot:_pos:")) {
+                if let Some(entry) = fields.iter_mut().find(|(key, _)| key == &places[2]) {
                     entry.1 = Value::Small(place);
                     return Ok(());
                 }
@@ -29776,6 +29785,13 @@ impl Engine<'_> {
                     if let Some((_, value)) = attrs.iter_mut().find(|(key, _)| key == "__loader__") { *value = loader; }
                 }
             }
+        }
+        // Bind native cursor access to the class made by the embedded adapter.
+        if embedded && path == "_io" {
+            self.stream_origin = self.member_of(module.clone(), "BytesIO")?.and_then(|value| {
+                if let Value::Class(class) = value.contents() { Some(Rc::downgrade(&class)) } else { None }
+            });
+            self.stream_class = None;
         }
         // Module code may replace its own entry in the Python import cache.
         // CPython returns that replacement after the module body completes.

@@ -582,7 +582,8 @@ pub struct Machine<'a> {
     gathering_locals: Option<(usize, Vec<String>, Rc<Env>)>,
     extent: Option<(u32, u32, u32, u32)>,
     activation_kind: Option<Rc<Blueprint>>,
-    memory_stream_class: Option<(std::rc::Weak<Blueprint>, u64)>,
+    memory_stream_source: Option<std::rc::Weak<Blueprint>>,
+    memory_stream_class: Option<(std::rc::Weak<Blueprint>, u64, Vec<String>)>,
     tool_words: RefCell<Vec<Option<String>>>,
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
     coroutine_bodies: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<Routine>, Option<Weak<Thing>>, Value, usize)>,
@@ -2182,6 +2183,7 @@ impl<'a> Machine<'a> {
             gathering_locals: None,
             extent: None,
             activation_kind: None,
+            memory_stream_source: None,
             memory_stream_class: None,
             tool_words: RefCell::new(Vec::new()),
             generator_frames: HashMap::new(),
@@ -15695,40 +15697,54 @@ impl<'a> Machine<'a> {
         self.octet_work(operation, values, false)
     }
 
-    // Transfer a checked memory-stream slice directly between native byte buffers.
-    /// Whether this thing is of the memory-stream class the _io module
-    /// makes, and no subclass of it: the class is told by name and home the
-    /// first time and then by identity.
+    // Check that native cursor access still means ordinary slot access.
     fn memory_stream_thing(&mut self, thing: &Rc<Thing>) -> bool {
         let class = thing.blueprint();
-        // What was checked holds only until some class namespace changes.
+        let Some(source) = self.memory_stream_source.as_ref().and_then(|source| source.upgrade()) else { return false; };
+        if !Rc::ptr_eq(&source, &class) { return false; }
         let stamp = crate::data::namespace_change();
-        if let Some((known, seen)) = &self.memory_stream_class {
-            if *seen == stamp && known.upgrade().is_some_and(|known| Rc::ptr_eq(&known, &class)) { return true; }
+        if self.memory_stream_class.as_ref().is_some_and(|(saved, when, _)| {
+            *when == stamp && saved.upgrade().is_some_and(|saved| Rc::ptr_eq(&saved, &class))
+        }) { return true; }
+        self.memory_stream_class.take();
+        for hook in ["__getattribute__", "__getattr__", "__setattr__", "__delattr__"] {
+            if self.inherited_entry(&class, hook).is_some() { return false; }
         }
-        let home = Self::own_entry(&class, self.detail("module")).map(|value| value.bare());
-        let plain = class.name == "BytesIO" && home.as_deref() == Some("_io")
-            && ["_closed", "_data", "_pos"].iter().all(|slot| matches!(Self::own_entry(&class, slot), Some(Value::Wrapped(32, _))))
-            && ["__getattribute__", "__getattr__", "__setattr__", "__delattr__"].iter().all(|hook| self.inherited_entry(&class, hook).is_none());
-        self.memory_stream_class = plain.then(|| (Rc::downgrade(&class), stamp));
-        plain
+        let mut keys = Vec::with_capacity(3);
+        for field in ["_closed", "_data", "_pos"] {
+            match Self::own_entry(&class, field) {
+                Some(Value::Wrapped(32, record)) if record.len() == 2 => {
+                    match (&record[0], &record[1]) {
+                        (Value::Text(spelling), Value::Blueprint(declared)) if spelling.as_ref() == field && Rc::ptr_eq(declared, &class) => (),
+                        _ => return false,
+                    }
+                    match self.slot_key(&Value::Thing(thing.clone()), &record) {
+                        Ok(key) => keys.push(key),
+                        Err(_) => return false,
+                    }
+                }
+                _ => return false,
+            }
+        }
+        self.memory_stream_class = Some((Rc::downgrade(&class), stamp, keys));
+        true
     }
-    /// The closed flag, the storage and the position of such a stream, as
-    /// the thing holds them; none where any of the three is not there.
+    // Find all three cursor values at their descriptor-resolved locations.
     fn memory_stream_slots(&mut self, stream: &Value) -> Option<(Value, Value, Value)> {
         let Value::Thing(thing) = stream else { return None };
         if !self.memory_stream_thing(thing) { return None; }
+        let keys = &self.memory_stream_class.as_ref()?.2;
         let holds = thing.holds.borrow();
-        let find = |prefix: &str| holds.iter().find(|(key, _)| key.starts_with(prefix)).map(|(_, held)| held.settled());
-        Some((find("\0slot:_closed:")?, find("\0slot:_data:")?, find("\0slot:_pos:")?))
+        let find = |index: usize| holds.iter().find(|entry| entry.0 == keys[index]).map(|entry| entry.1.settled());
+        Some((find(0)?, find(1)?, find(2)?))
     }
+    // Store the cursor at its checked descriptor key when direct access is safe.
     fn memory_stream_moved(&mut self, stream: &Value, place: i64, held_here: bool) -> Result<(), Escape> {
-        if held_here {
-            if let Value::Thing(thing) = stream {
-                if let Some(entry) = thing.holds.borrow_mut().iter_mut().find(|(key, _)| key.starts_with("\0slot:_pos:")) {
-                    entry.1 = Value::Small(place);
-                    return Ok(());
-                }
+        if let (true, Value::Thing(thing), Some((_, _, keys))) = (held_here, stream, &self.memory_stream_class) {
+            let mut held = thing.holds.borrow_mut();
+            if let Some((_, position)) = held.iter_mut().find(|entry| entry.0 == keys[2]) {
+                *position = Value::Small(place);
+                return Ok(());
             }
         }
         self.alter_class_member(stream.clone(), "_pos", Some(Value::Small(place)), false)?;
@@ -30791,6 +30807,14 @@ impl Machine<'_> {
                     }
                 }
             }
+        }
+        // Remember the adapter's actual blueprint before import-cache replacement.
+        if path == "_io" && from_library {
+            self.memory_stream_source = match self.attribute(&value, "BytesIO").map(|entry| entry.settled()) {
+                Some(Value::Blueprint(kind)) => Some(Rc::downgrade(&kind)),
+                _ => None,
+            };
+            self.memory_stream_class.take();
         }
         let value = match self.cached_import(path) {
             Some(replacement) => replacement,
