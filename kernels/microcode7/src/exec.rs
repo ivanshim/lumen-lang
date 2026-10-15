@@ -22714,6 +22714,30 @@ impl<'a> Machine<'a> {
                         }
                         Value::Nil
                     }
+                    5 => {
+                        n(7)?;
+                        let secret = self.octet_gathered(&v[1], false, false)?;
+                        let seasoning = self.octet_gathered(&v[2], false, false)?;
+                        let cost_n = as_index(&v[3])? as usize;
+                        let cost_r = as_index(&v[4])? as usize;
+                        let cost_p = as_index(&v[5])? as usize;
+                        let length = as_index(&v[6])? as usize;
+                        let mixed = crate::crypto::memory_hard(&secret, &seasoning, cost_n, cost_r, cost_p, length)?;
+                        self.octets(mixed, false)
+                    }
+                    6 => {
+                        n(6)?;
+                        let algorithm = match v[1].settled() {
+                            Value::Text(word) => word.to_string(),
+                            _ => return Err(String::from("TypeError: hash name must be str")),
+                        };
+                        let secret = self.octet_gathered(&v[2], false, false)?;
+                        let seasoning = self.octet_gathered(&v[3], false, false)?;
+                        let rounds = as_index(&v[4])? as usize;
+                        let length = as_index(&v[5])? as usize;
+                        let derived = crate::crypto::stretch_key(&algorithm, &secret, &seasoning, rounds, length)?;
+                        self.octets(derived, false)
+                    }
                     _ => return Err(String::from("NotImplementedError: unsupported cryptographic operation")),
                 }
             }
