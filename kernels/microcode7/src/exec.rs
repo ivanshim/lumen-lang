@@ -22119,9 +22119,28 @@ impl<'a> Machine<'a> {
                         inputs.extend(self.library_aliases.iter().map(|(name, alias)| (String::from("MODULE_ALIAS"), name.clone(), alias.clone(), false)));
                         if let Some(root) = &self.library_directory { inputs.push((String::from("SELF"), String::from("library_root"), root.to_string_lossy().into_owned(), false)); }
                         // The nested interpreter uses separate runtime state.
-                        let status = match crate::go(self.table, script, &[], &inputs) {
-                            Ok(()) => 0,
-                            Err(message) => { eprintln!("{}", message.strip_prefix('\0').unwrap_or(&message)); -1 }
+                        // Its text is run after a startup that imports the system
+                        // module and unbinds it, so an exception nobody caught is
+                        // printed by the hook and the caller's names stay unchanged.
+                        // Traceback line numbers still count the supplied text only.
+                        let mut lead = String::new();
+                        lead.push('\n');
+                        lead.push_str("import sys\n");
+                        lead.push_str("del sys\n");
+                        let skipped = lead.matches('\n').count();
+                        inputs.push((String::from("SELF"), String::from("lines_before"), skipped.to_string(), false));
+                        let mut body = String::with_capacity(lead.len() + script.len());
+                        body.push_str(&lead);
+                        body.push_str(script);
+                        let ran = crate::go(self.table, &body, &[], &inputs);
+                        let status = if let Err(message) = ran {
+                            let pending = message.strip_prefix('\0').unwrap_or(message.as_str());
+                            if !pending.is_empty() {
+                                eprintln!("{pending}");
+                            }
+                            -1
+                        } else {
+                            0
                         };
                         return Ok(Value::Small(status));
                     }
