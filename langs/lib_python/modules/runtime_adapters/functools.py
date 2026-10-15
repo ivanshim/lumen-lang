@@ -51,8 +51,11 @@ del _class
 
 
 # Native partial formatting retains slot references before user representations.
-def _partial_repr(self, _base=partial):
-    return __partial_repr__(self, _base)
+# These bridges read the pure-Python partial's slots; the _functools partial
+# formats and calls itself.
+if 'func' in partial.__slots__:
+    def _partial_repr(self, _base=partial):
+        return __partial_repr__(self, _base)
 
-partial.__repr__ = recursive_repr()(_partial_repr)
-partial.__call__ = __partial_call
+    partial.__repr__ = recursive_repr()(_partial_repr)
+    partial.__call__ = __partial_call
