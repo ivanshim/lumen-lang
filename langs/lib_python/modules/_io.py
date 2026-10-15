@@ -1499,6 +1499,28 @@ class BufferedRWPair(BufferedReader):
         _pyio = _text_runtime()
         self._implementation = _pyio.BufferedRWPair(reader, writer, buffer_size)
         self._live = self._implementation
+    # A pair has no single checked raw stream: its implementation answers.
+    def readable(self):
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.readable()
+    def writable(self):
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.writable()
+    def seekable(self):
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.seekable()
+    @property
+    def closed(self):
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.closed
     # Forward resource warnings to each actual raw stream of the pair.
     def _dealloc_warn(self, source):
         implementation = getattr(self, '_implementation', None)
