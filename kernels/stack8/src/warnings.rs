@@ -293,10 +293,16 @@ impl Engine<'_> {
 }
 
 impl Engine<'_> {
+    /// Load a private bridge without redispatching that request to public finders.
+    fn bootstrap_import(&mut self, path: &str) -> Flow<Value> {
+        if let Some(held) = self.modules.get(path) { return Ok(held.clone()); }
+        let marked = self.finder_active.insert(path.to_owned());
+        let loaded = self.import_module(path);
+        if marked { self.finder_active.remove(path); }
+        loaded
+    }
+
     fn finder_import(&mut self, path: &str) -> Flow<Option<Value>> {
-        // The import machinery's own modules are the reference's frozen bootstrap: no finder on sys.meta_path is asked for them.
-        const BOOTSTRAP: [&str; 6] = ["_zipimport_path", "_runtime_import", "_imp", "importlib", "importlib._bootstrap", "importlib._bootstrap_external"];
-        if BOOTSTRAP.contains(&path) || BOOTSTRAP.iter().any(|name| self.importing.contains(*name)) { return Ok(None); }
         let Some(sys) = self.modules.get("sys").cloned() else { return Ok(None); };
         let Some(finders) = self.member_of(sys, "meta_path")? else { return Ok(None); };
         let search_path = if let Some((parent, _)) = path.rsplit_once('.') {
@@ -329,14 +335,14 @@ impl Engine<'_> {
                 let Some(find_spec) = self.member_of(finder, "find_spec")? else { continue; };
                 let spec = self.call_held(find_spec, vec![Value::text(path), search_path.clone(), Value::Null])?;
                 if matches!(spec.contents(), Value::Null) { continue; }
-                if self.modules.get("importlib").cloned().is_some_and(|module| self.member_of(module, "_native_spec").ok().flatten().is_some()) {
-                    let bridge = self.builtin(Builtin::ModuleLoad, "__load_module", &mut vec![Value::text("_zipimport_path")])?;
+                if !self.importing.contains("_zipimport_path") && (self.modules.contains_key("_zipimport_path") || self.modules.get("importlib").cloned().is_some_and(|module| self.member_of(module, "_native_spec").ok().flatten().is_some())) {
+                    let bridge = self.bootstrap_import("_zipimport_path").map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
                     let loaded = self.warning_method(bridge, "load", vec![spec])?;
                     self.modules.insert(path.to_string(), loaded.clone());
                     self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear();
                     return Ok(Some(loaded));
                 }
-                let bootstrap = self.import_module("importlib._bootstrap").map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                let bootstrap = self.bootstrap_import("importlib._bootstrap").map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
                 // The pinned loader owns namespace creation, replacement and failure cleanup.
                 let loaded = self.warning_method(bootstrap, "_load_unlocked", vec![spec]);
                 let module = match loaded {

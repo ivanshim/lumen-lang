@@ -27400,7 +27400,7 @@ impl Engine<'_> {
             && (!self.module_sources.contains_key(path) || archive_path) && !self.importing.contains("\0path-hooks") && !self.importing.contains("sys") && (bridge_ready || !library_initializing) {
             self.importing.insert("\0path-hooks".to_owned());
             let hooked: Flow<(Value, Value)> = (|| {
-                let bridge = self.import_module("_zipimport_path")?;
+                let bridge = self.bootstrap_import("_zipimport_path")?;
                 let resolve = self.class_get(bridge.clone(), "find", false)?;
                 let search = match parent {
                     Some(_) => self.class_get(package_module.clone().unwrap(), "__path__", false)?,
@@ -27623,7 +27623,7 @@ impl Engine<'_> {
                         }
                     }
                 } else {
-                    let bridge = self.import_module("_zipimport_path")?;
+                    let bridge = self.bootstrap_import("_zipimport_path")?;
                     let bind = self.class_get(bridge, "bind", false)?;
                     if let Err(fault) = self.class_apply(bind, vec![Value::text(above), Value::text(name), module.clone()]) {
                         self.importing.remove(path);

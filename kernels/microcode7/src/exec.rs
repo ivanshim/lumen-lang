@@ -28022,7 +28022,7 @@ impl Machine<'_> {
         if python_paths && self.imported.contains_key("sys") && !self.importing.contains("sys") && (bootstrap_complete || !initializing_library)
             && self.importing.insert(String::from("\0finder-search")) {
             let found: Result<(Value, Value), String> = (|| {
-                let support = self.load_namespace("_zipimport_path")?;
+                let support = self.bootstrap_namespace("_zipimport_path")?;
                 let callable = self.member_text(support.clone(), "find")?;
                 let places = if split.is_some() {
                     self.member_text(parent_namespace.clone().unwrap(), "__path__")?
@@ -28264,7 +28264,7 @@ impl Machine<'_> {
             let parent = self.cached_import(owner).or_else(|| self.imported.get(owner).cloned());
             if let Some(parent) = parent {
                 if !self.is_our_namespace(&parent, owner) {
-                    let helper = self.load_namespace("_zipimport_path")?;
+                    let helper = self.bootstrap_namespace("_zipimport_path")?;
                     let attach = self.member_text(helper, "bind")?;
                     match self.apply_within(attach, vec![Value::text(owner), Value::text(name), value.clone()]) {
                         Ok(_) => (),

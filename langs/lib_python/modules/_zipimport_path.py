@@ -1,6 +1,5 @@
 # Route non-file loaders through upstream module creation and initialization.
 import sys
-import os
 from importlib import _bootstrap, _bootstrap_external
 
 # Find a non-native spec while bootstrap imports stay on the native road.
@@ -16,6 +15,7 @@ def find(fullname, path):
         if getattr(finder, "_native_source_finder", False):
             return None
         if type(spec.loader) is _bootstrap_external.SourceFileLoader:
+            import os
             native_file = __load_module(fullname, True)
             if native_file is not None:
                 native_file = os.path.abspath(native_file)
