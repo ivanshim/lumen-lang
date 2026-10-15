@@ -228,6 +228,7 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `tests/python-3.14.8/archivetestdata/testtar.tar.xz` | `Lib/test/archivetestdata/testtar.tar.xz`, copied byte for byte; SHA-256 `89e0326292b96a5700582a37ebf3d8ba60f1d136772b5cd15b2c2ae653fda188` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `tests/python-3.14.8/archivetestdata/recursion.tar` | `Lib/test/archivetestdata/recursion.tar`, copied byte for byte; SHA-256 `d80f55ac66a2570c8a19d2b1dad7c057cf4c944d9c2f8adaf5bf6c8539881e13` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `tests/python-3.14.8/archivetestdata/zipdir.zip` | `Lib/test/archivetestdata/zipdir.zip`, copied byte for byte; SHA-256 `19cb87050b0fb410da3b88df752c2e1bdaeec77ac052b04febef31a68823cfcb` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_file.py` | [python/cpython](https://github.com/python/cpython) `Lib/test/test_file.py`, copied byte for byte (SHA-256 `d06f70907858deff6ecf762574b6ca02f3e5a3afa8396455e288edd65091671a`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
 The `python-3.14.8/test/` package and its support, import, threading, OS, script, and
 pseudo-terminal helpers are also preserved byte for byte at that commit. `Lib/test/datetimetester.py` is preserved, with its source header, in
