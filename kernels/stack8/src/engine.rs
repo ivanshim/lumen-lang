@@ -171,6 +171,10 @@ pub struct Engine<'a> {
     function_members: Vec<(crate::faint::Hold, Rc<Instance>)>,
     collecting_cycles: bool,
     kind_names: RefCell<HashMap<String, Vec<String>>>,
+    /// The bytes working each method name was found to stand for, once
+    /// sought, by whether the row asking was changeable: the seeking
+    /// formats a label for every candidate, so it is done once a name.
+    byte_answers: RefCell<HashMap<(bool, String), Option<&'static str>>>,
     member_words: [&'a str; 22],
     opened_descriptors: HashMap<i32, std::fs::File>,
     lang: &'a Lang,
@@ -1645,7 +1649,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
+            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()), byte_answers: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
             contexts: crate::context::ContextStore::default(),
@@ -19488,6 +19492,14 @@ impl<'a> Engine<'a> {
     /// before it answers by its bare tail as well, since that is how a
     /// row of bytes names a method its kind keeps.
     pub(super) fn byte_member(&self, name: &str, changeable: bool) -> Option<&'static str> {
+        let asked = (changeable, name.to_string());
+        if let Some(answer) = self.byte_answers.borrow().get(&asked) { return *answer; }
+        let answer = self.byte_member_sought(name, changeable);
+        self.byte_answers.borrow_mut().insert(asked, answer);
+        answer
+    }
+
+    fn byte_member_sought(&self, name: &str, changeable: bool) -> Option<&'static str> {
         let spelt = |words: &Vec<String>| words.iter().any(|word| word == name || word.rsplit('.').next() == Some(name));
         let changers: &[&str] = if changeable { Self::BYTE_CHANGERS } else { &[] };
         Self::BYTE_MEMBERS.iter().chain(changers).copied().find(|working| {
