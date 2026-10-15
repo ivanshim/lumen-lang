@@ -33203,11 +33203,45 @@ fn publish_zone_figures(given: &[Value]) -> Result<Value, String> {
     ]))
 }
 
-fn bytes_at(pointer: *const std::ffi::c_char) -> String {
-    if pointer.is_null() {
-        return String::new();
+// Read a category's multibyte string through a temporary thread locale.
+fn bytes_at(pointer: *const std::ffi::c_char, category: i32) -> Result<String, String> {
+    if pointer.is_null() { return Ok(String::new()); }
+    let narrow = unsafe { std::ffi::CStr::from_ptr(pointer) };
+    if narrow.to_bytes().iter().all(|byte| *byte < 128) {
+        return Ok(narrow.to_string_lossy().into_owned());
     }
-    unsafe { std::ffi::CStr::from_ptr(pointer) }.to_string_lossy().into_owned()
+    extern "C" {
+        fn setlocale(kind: i32, value: *const std::ffi::c_char) -> *mut std::ffi::c_char;
+        fn newlocale(bits: i32, value: *const std::ffi::c_char, old: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        fn uselocale(handle: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        fn freelocale(handle: *mut std::ffi::c_void);
+        fn mbstowcs(output: *mut u32, input: *const std::ffi::c_char, capacity: usize) -> usize;
+    }
+    let (handle, saved, mut units, used) = unsafe {
+        let current_name = setlocale(category, std::ptr::null());
+        let handle = newlocale(1 /* LC_CTYPE_MASK */, current_name, std::ptr::null_mut());
+        if handle.is_null() { return Err(String::from("OSError: cannot open locale character set")); }
+        let saved = uselocale(handle);
+        if saved.is_null() {
+            freelocale(handle);
+            return Err(String::from("OSError: cannot select locale character set"));
+        }
+        let capacity = narrow.to_bytes().len() + 1;
+        let mut units = vec![0u32; capacity];
+        let used = mbstowcs(units.as_mut_ptr(), pointer, capacity);
+        (handle, saved, units, used)
+    };
+    unsafe { uselocale(saved); freelocale(handle); }
+    if used == usize::MAX { return Err(String::from("UnicodeError: cannot decode locale text")); }
+    units.truncate(used);
+    let mut decoded = String::new();
+    for code in units {
+        match char::from_u32(code) {
+            Some(letter) => decoded.push(letter),
+            None => return Err(String::from("UnicodeError: invalid locale character")),
+        }
+    }
+    Ok(decoded)
 }
 
 fn grouping_at(pointer: *const u8) -> Value {
@@ -33253,7 +33287,8 @@ fn snapshot_monetary(given: &[Value]) -> Result<Value, String> {
         if slot == 2 || slot == 7 {
             words.push(grouping_at(pointer as *const u8));
         } else {
-            words.push(Value::text(&bytes_at(pointer)));
+            let category = if slot < 2 { 1 } else { 4 };
+            words.push(Value::text(&bytes_at(pointer, category)?));
         }
         slot += 1;
     }
@@ -33403,20 +33438,26 @@ fn paint_host_picture(given: &[Value]) -> Result<Value, String> {
             None => std::ptr::null(),
         },
     };
-    let pattern = match std::ffi::CString::new(format) {
-        Ok(kept) => kept,
-        Err(_) => return Err(String::from("ValueError: embedded null character")),
-    };
+    if format.chars().any(|ch| ch == '\0') {
+        return Err(String::from("ValueError: embedded null character"));
+    }
+    let pattern = wide_units(format);
     extern "C" {
-        fn strftime(out: *mut std::ffi::c_char, max: usize, fmt: *const std::ffi::c_char, when: *const Painted) -> usize;
+        fn wcsftime(out: *mut u32, max: usize, fmt: *const u32, when: *const Painted) -> usize;
     }
     let mut room = 256usize;
     let allowance = 1usize << 22; // widths in the format may ask for megabytes
     loop {
-        let mut buffer = vec![0u8; room];
-        let count = unsafe { strftime(buffer.as_mut_ptr() as *mut std::ffi::c_char, buffer.len(), pattern.as_ptr(), &painted) };
+        let mut buffer = vec![0u32; room];
+        let count = unsafe { wcsftime(buffer.as_mut_ptr(), buffer.len(), pattern.as_ptr(), &painted) };
         if count > 0 {
-            let rendered = String::from_utf8_lossy(&buffer[..count]).into_owned();
+            let mut rendered = String::new();
+            for &code in buffer.iter().take(count) {
+                let Some(letter) = char::from_u32(code) else {
+                    return Err(String::from("UnicodeError: invalid strftime character"));
+                };
+                rendered.push(letter);
+            }
             return Ok(Value::text(&rendered));
         }
         // A zero write in a buffer below the allowance did not fit.

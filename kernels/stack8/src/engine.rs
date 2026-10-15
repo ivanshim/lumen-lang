@@ -30469,11 +30469,45 @@ fn civil_zone(args: &[Value]) -> Result<Value, String> {
     ]))
 }
 
-fn civil_c_string(pointer: *const std::ffi::c_char) -> String {
+// Decode locale data with its category's character set without changing LC_CTYPE.
+fn civil_c_string(pointer: *const std::ffi::c_char, category: i32) -> Result<String, String> {
     if pointer.is_null() {
-        return String::new();
+        return Ok(String::new());
     }
-    unsafe { std::ffi::CStr::from_ptr(pointer) }.to_string_lossy().into_owned()
+    let source = unsafe { std::ffi::CStr::from_ptr(pointer) }.to_bytes();
+    if source.is_ascii() {
+        return Ok(source.iter().map(|&byte| char::from(byte)).collect());
+    }
+    extern "C" {
+        fn setlocale(category: i32, name: *const std::ffi::c_char) -> *mut std::ffi::c_char;
+        fn newlocale(mask: i32, name: *const std::ffi::c_char, base: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        fn uselocale(locale: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        fn freelocale(locale: *mut std::ffi::c_void);
+        fn mbstowcs(dest: *mut u32, source: *const std::ffi::c_char, count: usize) -> usize;
+    }
+    // LC_CTYPE_MASK is 1 on the host ABI, independent of the data category.
+    let name = unsafe { setlocale(category, std::ptr::null()) };
+    let decoder = unsafe { newlocale(1, name, std::ptr::null_mut()) };
+    if decoder.is_null() {
+        return Err("OSError: cannot open locale character set".to_string());
+    }
+    let previous = unsafe { uselocale(decoder) };
+    if previous.is_null() {
+        unsafe { freelocale(decoder) };
+        return Err("OSError: cannot select locale character set".to_string());
+    }
+    let length = source.len();
+    let mut wide = vec![0u32; length + 1];
+    let count = unsafe { mbstowcs(wide.as_mut_ptr(), pointer, wide.len()) };
+    unsafe {
+        uselocale(previous);
+        freelocale(decoder);
+    }
+    if count == usize::MAX {
+        return Err("UnicodeError: cannot decode locale text".to_string());
+    }
+    wide[..count].iter().map(|&unit| char::from_u32(unit)
+        .ok_or_else(|| "UnicodeError: invalid locale character".to_string())).collect()
 }
 
 fn civil_groups(pointer: *const std::ffi::c_char) -> Value {
@@ -30537,18 +30571,18 @@ fn civil_monetary(args: &[Value]) -> Result<Value, String> {
         return Err("OSError: localeconv failed".to_string());
     }
     let row = unsafe { &*record };
-    let text = |pointer| Value::text(&civil_c_string(pointer));
+    let text = |pointer, category| civil_c_string(pointer, category).map(|s| Value::text(&s));
     Ok(Value::tuple(vec![
-        text(row.decimal_point),
-        text(row.thousands_sep),
+        text(row.decimal_point, 1)?,
+        text(row.thousands_sep, 1)?,
         civil_groups(row.grouping),
-        text(row.int_curr_symbol),
-        text(row.currency_symbol),
-        text(row.mon_decimal_point),
-        text(row.mon_thousands_sep),
+        text(row.int_curr_symbol, 4)?,
+        text(row.currency_symbol, 4)?,
+        text(row.mon_decimal_point, 4)?,
+        text(row.mon_thousands_sep, 4)?,
         civil_groups(row.mon_grouping),
-        text(row.positive_sign),
-        text(row.negative_sign),
+        text(row.positive_sign, 4)?,
+        text(row.negative_sign, 4)?,
         Value::Small(i64::from(row.int_frac_digits)),
         Value::Small(i64::from(row.frac_digits)),
         Value::Small(i64::from(row.p_cs_precedes)),
@@ -30684,17 +30718,20 @@ fn civil_picture(args: &[Value]) -> Result<Value, String> {
         gmtoff: east,
         zone: zone_owned.as_ref().map(|kept| kept.as_ptr()).unwrap_or(std::ptr::null()),
     };
-    let pattern = std::ffi::CString::new(format).map_err(|_| "ValueError: embedded null character".to_string())?;
+    if format.contains('\0') {
+        return Err("ValueError: embedded null character".to_string());
+    }
+    let pattern = civil_wide(format)?;
     extern "C" {
-        fn strftime(out: *mut std::ffi::c_char, max: usize, fmt: *const std::ffi::c_char, when: *const CivilStamp) -> usize;
+        fn wcsftime(out: *mut u32, max: usize, fmt: *const u32, when: *const CivilStamp) -> usize;
     }
     // Same ceiling for any width the format asks for: padded fields can be megabytes.
     let allowance = 1usize << 22;
     let mut room = 256usize;
-    let mut buffer = vec![0u8; room];
+    let mut buffer = vec![0u32; room];
     let written = loop {
         let count = unsafe {
-            strftime(buffer.as_mut_ptr() as *mut std::ffi::c_char, room, pattern.as_ptr(), &stamp)
+            wcsftime(buffer.as_mut_ptr(), room, pattern.as_ptr(), &stamp)
         };
         if count > 0 {
             break count;
@@ -30708,7 +30745,9 @@ fn civil_picture(args: &[Value]) -> Result<Value, String> {
         room = if grown > room { grown } else { allowance };
         buffer.resize(room, 0);
     };
-    let rendered = String::from_utf8_lossy(&buffer[..written]).into_owned();
+    let rendered: Result<String, String> = buffer[..written].iter().map(|&unit|
+        char::from_u32(unit).ok_or_else(|| "UnicodeError: invalid strftime character".to_string())).collect();
+    let rendered = rendered?;
     Ok(Value::text(&rendered))
 }
 
