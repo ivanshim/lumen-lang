@@ -19418,12 +19418,15 @@ impl<'a> Engine<'a> {
 
     // Read or write bounded memory-stream storage without intermediate Python slices.
     fn byte_memory(&mut self, args: &[Value]) -> Res<Value> {
-        if matches!(args.last(), Some(Value::Small(6))) { return self.watch_byte_reader_code(args); }
-        if matches!(args.last(), Some(Value::Small(5))) {
-            let [subject, saved, field, Value::Flag(invert), Value::Small(5)] = args else { return Err("TypeError: invalid memory fingerprint arguments".into()); };
-            return Ok(Value::Flag(self.byte_fingerprint_matches(subject, field, saved)? != *invert));
+        match args.last() {
+            Some(Value::Small(3)) => return self.byte_fields(args),
+            Some(Value::Small(6)) => return self.watch_byte_reader_code(args),
+            Some(Value::Small(5)) => {
+                let [subject, saved, field, Value::Flag(invert), Value::Small(5)] = args else { return Err("TypeError: invalid memory fingerprint arguments".into()); };
+                return Ok(Value::Flag(self.byte_fingerprint_matches(subject, field, saved)? != *invert));
+            }
+            _ => {}
         }
-        if matches!(args.last(), Some(Value::Small(3))) { return self.byte_fields(args); }
         let [Value::Bytes(storage, true, _), Value::Small(position), input, Value::Flag(closed), Value::Small(mode)] = args else {
             return Err("TypeError: invalid memory stream arguments".into());
         };

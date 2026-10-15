@@ -14358,14 +14358,18 @@ impl<'a> Machine<'a> {
 
     // Keep memory-stream transfers proportional to the bytes requested or supplied.
     fn memory_octets(&mut self, supplied: &[Value]) -> Result<Value, String> {
-        if supplied.last().is_some_and(|value| matches!(value, Value::Small(6))) { return self.observe_octet_readers(supplied); }
-        if supplied.last().is_some_and(|value| matches!(value, Value::Small(5))) {
-            if supplied.len() != 5 { return Err(String::from("TypeError: invalid memory fingerprint arguments")); }
-            let Value::Flag(inverted) = supplied[3] else { return Err(String::from("TypeError: invalid memory fingerprint arguments")); };
-            let equal = self.octet_fingerprint_equal(&supplied[0], &supplied[2], &supplied[1])?;
-            return Ok(Value::Flag(equal ^ inverted));
+        let operation = match supplied.last() { Some(Value::Small(number)) => *number, _ => -1 };
+        match operation {
+            6 => return self.observe_octet_readers(supplied),
+            5 => {
+                if supplied.len() != 5 { return Err(String::from("TypeError: invalid memory fingerprint arguments")); }
+                let Value::Flag(inverted) = supplied[3] else { return Err(String::from("TypeError: invalid memory fingerprint arguments")); };
+                let equal = self.octet_fingerprint_equal(&supplied[0], &supplied[2], &supplied[1])?;
+                return Ok(Value::Flag(equal ^ inverted));
+            }
+            3 => return self.gather_octet_fields(supplied),
+            _ => {}
         }
-        if supplied.last().is_some_and(|value| matches!(value, Value::Small(3))) { return self.gather_octet_fields(supplied); }
         if supplied.len() != 5 { return Err("TypeError: invalid memory stream arguments".to_owned()); }
         let (buffer, cursor, closed, action) = match (&supplied[0], &supplied[1], &supplied[3], &supplied[4]) {
             (Value::Octets { cell, changeable: true, .. }, Value::Small(at), Value::Flag(shut), Value::Small(action)) =>
