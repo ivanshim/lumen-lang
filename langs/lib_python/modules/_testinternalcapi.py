@@ -99,8 +99,11 @@ def DecodeLocaleEx(data, current_locale=0, errors='strict', /):
 # The persistent map CPython exposes as _testinternalcapi.hamt, the store
 # behind a context. set and delete hand back the same object when nothing
 # would change (the stored value is that same object, or the key is
-# absent) and a fresh map otherwise. Lookup goes through hash and
-# equality and lets an error from either one out. An iterator keeps its
+# absent) and a fresh map otherwise. A stored key matches itself before
+# equality is asked, so a key that is not equal to itself is still found,
+# and the lookup key is the left operand of that comparison. Hashing and
+# equality errors escape. An empty map has no entry, so get and
+# membership do not hash. An iterator keeps its
 # map alive and reports the length the map had when the iterator was
 # made, so a cycle that runs through the iterator can be collected.
 #
@@ -116,6 +119,15 @@ _SLOT = _FAN - 1
 
 def _hash_bits(key):
     return hash(key) & _MASK64
+
+
+# Not a KeyError: a key callback may raise KeyError, and that has to
+# reach the caller. Lookup hands this back when the key is not there.
+_MISSING = object()
+
+
+def _same_key(stored, key):
+    return stored is key or key == stored
 
 
 def _empty_slots():
@@ -153,7 +165,7 @@ def _put(node, key, value, hashed, shift):
     kind = node[0]
     if kind == 'L':
         if node[1] == hashed:
-            if node[2] == key:
+            if _same_key(node[2], key):
                 if node[3] is value:
                     return node, False
                 return ('L', hashed, node[2], value), False
@@ -165,7 +177,7 @@ def _put(node, key, value, hashed, shift):
         found = False
         pairs = []
         for old_key, old_value in node[2]:
-            if old_key == key:
+            if _same_key(old_key, key):
                 found = True
                 if old_value is value:
                     return node, False
@@ -190,7 +202,7 @@ def _delete(node, key, hashed, shift):
         return None, False
     kind = node[0]
     if kind == 'L':
-        if node[1] == hashed and node[2] == key:
+        if node[1] == hashed and _same_key(node[2], key):
             return None, True
         return node, False
     if kind == 'C':
@@ -199,7 +211,7 @@ def _delete(node, key, hashed, shift):
         kept = []
         found = False
         for old_key, old_value in node[2]:
-            if not found and old_key == key:
+            if not found and _same_key(old_key, key):
                 found = True
             else:
                 kept.append((old_key, old_value))
@@ -219,19 +231,19 @@ def _delete(node, key, hashed, shift):
 
 def _find(node, key, hashed, shift):
     if node is None:
-        raise KeyError(key)
+        return _MISSING
     kind = node[0]
     if kind == 'L':
-        if node[1] == hashed and node[2] == key:
+        if node[1] == hashed and _same_key(node[2], key):
             return node[3]
-        raise KeyError(key)
+        return _MISSING
     if kind == 'C':
         if node[1] != hashed:
-            raise KeyError(key)
+            return _MISSING
         for old_key, old_value in node[2]:
-            if old_key == key:
+            if _same_key(old_key, key):
                 return old_value
-        raise KeyError(key)
+        return _MISSING
     index = (hashed >> shift) & _SLOT
     return _find(node[1][index], key, hashed, shift + 5)
 
@@ -300,10 +312,12 @@ class hamt:
         return self._spawn(root, self._len + (1 if grew else 0))
 
     def get(self, key, default=None):
-        try:
-            return _find(self._root, key, _hash_bits(key), 0)
-        except KeyError:
+        if self._root is None:
             return default
+        found = _find(self._root, key, _hash_bits(key), 0)
+        if found is _MISSING:
+            return default
+        return found
 
     def delete(self, key):
         hashed = _hash_bits(key)
@@ -319,14 +333,18 @@ class hamt:
         return _HamtIter(self, 'keys')
 
     def __contains__(self, key):
-        try:
-            _find(self._root, key, _hash_bits(key), 0)
-        except KeyError:
+        if self._root is None:
             return False
-        return True
+        found = _find(self._root, key, _hash_bits(key), 0)
+        return found is not _MISSING
 
     def __getitem__(self, key):
-        return _find(self._root, key, _hash_bits(key), 0)
+        if self._root is None:
+            raise KeyError(key)
+        found = _find(self._root, key, _hash_bits(key), 0)
+        if found is _MISSING:
+            raise KeyError(key)
+        return found
 
     def __eq__(self, other):
         if type(other) is not hamt:
@@ -336,9 +354,8 @@ class hamt:
         pairs = []
         _walk(self._root, pairs)
         for key, value in pairs:
-            try:
-                found = _find(other._root, key, _hash_bits(key), 0)
-            except KeyError:
+            found = _find(other._root, key, _hash_bits(key), 0)
+            if found is _MISSING:
                 return False
             if found != value:
                 return False
