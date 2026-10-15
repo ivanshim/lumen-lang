@@ -21448,7 +21448,75 @@ impl<'a> Engine<'a> {
         })
     }
 
+    /// Route native codec calls without entering the large general builtin frame.
+    #[inline(always)]
     pub(super) fn builtin_values(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
+        if let Builtin::Bytes(task @ (2 | 3)) = builtin {
+            if name == "__codec_encode" || name == "__codec_decode" {
+                let native_input = matches!((task, args.first()), (2, Some(Value::Text(_))) | (3, Some(Value::Bytes(..))));
+                if native_input && args.iter().skip(1).all(|v| matches!(v, Value::Text(_) | Value::Flag(_) | Value::Small(_))) {
+                    // Match the ordinary builtin argument unwrapping before conversion.
+                    for value in args.iter_mut() { *value = value.contents(); }
+                    return self.codec_bytes(task, args);
+                }
+            }
+        }
+        self.builtin_values_other(builtin, name, args)
+    }
+
+    /// Convert codec input with the same prefix buffering and error fallback.
+    fn codec_bytes(&mut self, task: u8, args: &[Value]) -> Res<Value> {
+        if args.is_empty() { return Err(self.byte_fault("arguments")); }
+        let data = if task == 3 { self.byte_row(&args[0], false)? } else { Vec::new() };
+        // The extended codec interface also returns BOM-selected byte order.
+        if task == 3 && args.len() == 6 {
+            let (Value::Text(codec), Value::Text(_), Value::Flag(last), Value::Small(0), Value::Small(order)) =
+                (&args[1], &args[2], &args[3], &args[4], &args[5]) else { return Ok(Value::Null); };
+            let (le, be, little_name, big_name): (&[u8], &[u8], &str, &str) = match codec.as_ref() {
+                "utf_16" => (&[255, 254], &[254, 255], "utf_16_le", "utf_16_be"),
+                "utf_32" => (&[255, 254, 0, 0], &[0, 0, 254, 255], "utf_32_le", "utf_32_be"),
+                _ => return Ok(Value::Null),
+            };
+            let (selected, start) = if *order == 0 && data.starts_with(le) { (-1, le.len()) }
+                else if *order == 0 && data.starts_with(be) { (1, be.len()) }
+                else { (*order, 0) };
+            let chosen = if selected <= 0 { little_name } else { big_name };
+            return Ok(Self::wide_chunk(&data, chosen, *last, start).map_or(Value::Null, |(text, used)|
+                Value::tuple(vec![Value::text(&text), Value::Small(used as i64), Value::Small(selected)])));
+        }
+        if task == 3 && args.len() == 5 {
+            let decoded = match (&args[1], &args[2], &args[3], &args[4]) {
+                (Value::Text(codec), Value::Text(_), Value::Flag(last), Value::Small(start)) if *start >= 0 =>
+                    Self::wide_chunk(&data, codec, *last, *start as usize),
+                _ => None,
+            };
+            return Ok(decoded.map_or(Value::Null, |(text, used)|
+                Value::tuple(vec![Value::text(&text), Value::Small(used as i64)])));
+        }
+        // Return a complete UTF-8 prefix without a temporary decoder;
+        // malformed input stays on the adapter's existing error road.
+        if task == 3 && args.len() == 4 {
+            if self.byte_codec(args.get(1))? != Self::CODEC_WIDE { return Err(self.byte_fault("arguments")); }
+            let Value::Flag(final_chunk) = args[3] else { return Err(self.byte_fault("arguments")); };
+            if !matches!(&args[2], Value::Text(_)) { return Ok(Value::Null); }
+            let complete = match std::str::from_utf8(&data) {
+                Ok(text) => Some((text, data.len())),
+                Err(error) if !final_chunk && error.error_len().is_none() => {
+                    let count = error.valid_up_to();
+                    Some((std::str::from_utf8(&data[..count]).map_err(|_| self.byte_fault("unready"))?, count))
+                }
+                _ => None,
+            };
+            return Ok(match complete {
+                Some((text, count)) => Value::tuple(vec![Value::text(text), Value::Small(count as i64)]),
+                None => Value::Null,
+            });
+        }
+        self.byte_transcode(task == 2, &data, args, false)
+    }
+
+    /// Handle builtin values that need the complete protocol dispatch.
+    fn builtin_values_other(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
         if matches!(builtin, Builtin::Append | Builtin::Replace) {
             if let Some(original @ (Value::Collection(..) | Value::Bond(_))) = args.last().cloned() {
                 let cell = match &original { Value::Collection(cell, _) | Value::Bond(cell) => cell, _ => unreachable!() };
@@ -21549,53 +21617,7 @@ impl<'a> Engine<'a> {
             // the walk into a row first so that a walk backwards over a
             // byte string can be built straight back into one.
             Builtin::Bytes(task @ (2 | 3)) if name == "__codec_encode" || name == "__codec_decode" => {
-                if args.is_empty() { return Err(self.byte_fault("arguments")); }
-                let data = if task == 3 { self.byte_row(&args[0], false)? } else { Vec::new() };
-                // The extended codec interface also returns BOM-selected byte order.
-                if task == 3 && args.len() == 6 {
-                    let (Value::Text(codec), Value::Text(_), Value::Flag(last), Value::Small(0), Value::Small(order)) =
-                        (&args[1], &args[2], &args[3], &args[4], &args[5]) else { return Ok(Value::Null); };
-                    let (le, be, little_name, big_name): (&[u8], &[u8], &str, &str) = match codec.as_ref() {
-                        "utf_16" => (&[255, 254], &[254, 255], "utf_16_le", "utf_16_be"),
-                        "utf_32" => (&[255, 254, 0, 0], &[0, 0, 254, 255], "utf_32_le", "utf_32_be"),
-                        _ => return Ok(Value::Null),
-                    };
-                    let (selected, start) = if *order == 0 && data.starts_with(le) { (-1, le.len()) }
-                        else if *order == 0 && data.starts_with(be) { (1, be.len()) }
-                        else { (*order, 0) };
-                    let chosen = if selected <= 0 { little_name } else { big_name };
-                    return Ok(Self::wide_chunk(&data, chosen, *last, start).map_or(Value::Null, |(text, used)|
-                        Value::tuple(vec![Value::text(&text), Value::Small(used as i64), Value::Small(selected)])));
-                }
-                if task == 3 && args.len() == 5 {
-                    let decoded = match (&args[1], &args[2], &args[3], &args[4]) {
-                        (Value::Text(codec), Value::Text(_), Value::Flag(last), Value::Small(start)) if *start >= 0 =>
-                            Self::wide_chunk(&data, codec, *last, *start as usize),
-                        _ => None,
-                    };
-                    return Ok(decoded.map_or(Value::Null, |(text, used)|
-                        Value::tuple(vec![Value::text(&text), Value::Small(used as i64)])));
-                }
-                // Return a complete UTF-8 prefix without a temporary decoder;
-                // malformed input stays on the adapter's existing error road.
-                if task == 3 && args.len() == 4 {
-                    if self.byte_codec(args.get(1))? != Self::CODEC_WIDE { return Err(self.byte_fault("arguments")); }
-                    let Value::Flag(final_chunk) = args[3] else { return Err(self.byte_fault("arguments")); };
-                    if !matches!(&args[2], Value::Text(_)) { return Ok(Value::Null); }
-                    let complete = match std::str::from_utf8(&data) {
-                        Ok(text) => Some((text, data.len())),
-                        Err(error) if !final_chunk && error.error_len().is_none() => {
-                            let count = error.valid_up_to();
-                            Some((std::str::from_utf8(&data[..count]).map_err(|_| self.byte_fault("unready"))?, count))
-                        }
-                        _ => None,
-                    };
-                    return Ok(match complete {
-                        Some((text, count)) => Value::tuple(vec![Value::text(text), Value::Small(count as i64)]),
-                        None => Value::Null,
-                    });
-                }
-                self.byte_transcode(task == 2, &data, &args, false)?
+                self.codec_bytes(task, args)?
             }
             Builtin::Bytes(task) => {
                 if task == 0 && args.len() == 1 {

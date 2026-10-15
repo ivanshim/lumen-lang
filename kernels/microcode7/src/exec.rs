@@ -20398,7 +20398,76 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// Keep native codec entry points out of the general value dispatch frame.
+    #[inline(always)]
     fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        if matches!(op, Prim::Octets(2 | 3)) && matches!(name, "__codec_encode" | "__codec_decode") {
+            let direct = match (op, v.first()) {
+                (Prim::Octets(2), Some(Value::Text(_))) | (Prim::Octets(3), Some(Value::Octets { .. })) =>
+                    v.iter().skip(1).all(|part| matches!(part, Value::Small(_) | Value::Flag(_) | Value::Text(_))),
+                _ => false,
+            };
+            if direct { return self.codec_octets(op, v); }
+        }
+        self.other_primitive_values(op, name, v)
+    }
+
+    /// Decode a complete prefix, leaving malformed data to the codec adapter.
+    fn codec_octets(&mut self, op: Prim, v: &[Value]) -> Result<Value, String> {
+        let Some(source) = v.first() else { return Err(self.octet_error("arguments")); };
+        let decoding = matches!(op, Prim::Octets(3));
+        let buffer = if decoding { self.octet_contents(source, false)? } else { Vec::new() };
+        if decoding && v.len() == 6 {
+            if let (Value::Text(base), Value::Text(_), Value::Flag(final_part), Value::Small(0), Value::Small(direction)) =
+                (&v[1], &v[2], &v[3], &v[4], &v[5]) {
+                let four = match base.as_ref() { "utf_32" => true, "utf_16" => false, _ => return Ok(Value::Nil) };
+                let marks: (&[u8], &[u8]) = if four { (&[255, 254, 0, 0], &[0, 0, 254, 255]) }
+                    else { (&[255, 254], &[254, 255]) };
+                let mut endian = *direction;
+                let mut skipped = 0;
+                if endian == 0 {
+                    if buffer.starts_with(marks.0) { endian = -1; skipped = marks.0.len(); }
+                    else if buffer.starts_with(marks.1) { endian = 1; skipped = marks.1.len(); }
+                }
+                let alphabet = match (four, endian > 0) {
+                    (true, true) => "utf_32_be", (true, false) => "utf_32_le",
+                    (false, true) => "utf_16_be", (false, false) => "utf_16_le",
+                };
+                if let Some(Value::Tuple(parts)) = Self::decoded_wide(&buffer, alphabet, *final_part, skipped) {
+                    let mut result = parts.to_vec();
+                    result.push(Value::Small(endian));
+                    return Ok(Value::tuple(result));
+                }
+            }
+            return Ok(Value::Nil);
+        }
+        if decoding && v.len() == 5 {
+            if let (Value::Text(alphabet), Value::Text(_), Value::Flag(end), Value::Small(begin)) = (&v[1], &v[2], &v[3], &v[4]) {
+                if *begin >= 0 { return Ok(Self::decoded_wide(&buffer, alphabet, *end, *begin as usize).unwrap_or(Value::Nil)); }
+            }
+            return Ok(Value::Nil);
+        }
+        if decoding && v.len() == 4 {
+            // Give the codec bridge its valid text and consumed byte count;
+            // it retains its usual policy handling for every malformed row.
+            let last = match &v[3] { Value::Flag(flag) => *flag, _ => return Err(self.octet_error("arguments")) };
+            if self.octet_encoding(v.get(1))? != Self::WIDE { return Err(self.octet_error("arguments")); }
+            if !matches!(v[2], Value::Text(_)) { return Ok(Value::Nil); }
+            let consumed = match std::str::from_utf8(&buffer) {
+                Ok(_) => buffer.len(),
+                Err(fault) => {
+                    if last || fault.error_len().is_some() { return Ok(Value::Nil); }
+                    fault.valid_up_to()
+                }
+            };
+            let prefix = std::str::from_utf8(&buffer[..consumed]).map_err(|_| self.octet_error("unready"))?;
+            return Ok(Value::tuple(vec![Value::text(prefix), Value::Small(consumed as i64)]));
+        }
+        return self.convert_text(!decoding, &buffer, v, false);
+    }
+
+    /// Retain the full protocol road for other values and wrapped codec inputs.
+    fn other_primitive_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
         if matches!(op, Prim::Placed | Prim::Erase) {
             fn proxy(held: &Value) -> bool { match held {
                 Value::Window(_, 'm') => true,
@@ -20789,56 +20858,7 @@ impl<'a> Machine<'a> {
             }
         }
         if matches!(op, Prim::Octets(2 | 3)) && matches!(name, "__codec_encode" | "__codec_decode") {
-            let Some(source) = v.first() else { return Err(self.octet_error("arguments")); };
-            let decoding = matches!(op, Prim::Octets(3));
-            let buffer = if decoding { self.octet_contents(source, false)? } else { Vec::new() };
-            if decoding && v.len() == 6 {
-                if let (Value::Text(base), Value::Text(_), Value::Flag(final_part), Value::Small(0), Value::Small(direction)) =
-                    (&v[1], &v[2], &v[3], &v[4], &v[5]) {
-                    let four = match base.as_ref() { "utf_32" => true, "utf_16" => false, _ => return Ok(Value::Nil) };
-                    let marks: (&[u8], &[u8]) = if four { (&[255, 254, 0, 0], &[0, 0, 254, 255]) }
-                        else { (&[255, 254], &[254, 255]) };
-                    let mut endian = *direction;
-                    let mut skipped = 0;
-                    if endian == 0 {
-                        if buffer.starts_with(marks.0) { endian = -1; skipped = marks.0.len(); }
-                        else if buffer.starts_with(marks.1) { endian = 1; skipped = marks.1.len(); }
-                    }
-                    let alphabet = match (four, endian > 0) {
-                        (true, true) => "utf_32_be", (true, false) => "utf_32_le",
-                        (false, true) => "utf_16_be", (false, false) => "utf_16_le",
-                    };
-                    if let Some(Value::Tuple(parts)) = Self::decoded_wide(&buffer, alphabet, *final_part, skipped) {
-                        let mut result = parts.to_vec();
-                        result.push(Value::Small(endian));
-                        return Ok(Value::tuple(result));
-                    }
-                }
-                return Ok(Value::Nil);
-            }
-            if decoding && v.len() == 5 {
-                if let (Value::Text(alphabet), Value::Text(_), Value::Flag(end), Value::Small(begin)) = (&v[1], &v[2], &v[3], &v[4]) {
-                    if *begin >= 0 { return Ok(Self::decoded_wide(&buffer, alphabet, *end, *begin as usize).unwrap_or(Value::Nil)); }
-                }
-                return Ok(Value::Nil);
-            }
-            if decoding && v.len() == 4 {
-                // Give the codec bridge its valid text and consumed byte count;
-                // it retains its usual policy handling for every malformed row.
-                let last = match &v[3] { Value::Flag(flag) => *flag, _ => return Err(self.octet_error("arguments")) };
-                if self.octet_encoding(v.get(1))? != Self::WIDE { return Err(self.octet_error("arguments")); }
-                if !matches!(v[2], Value::Text(_)) { return Ok(Value::Nil); }
-                let consumed = match std::str::from_utf8(&buffer) {
-                    Ok(_) => buffer.len(),
-                    Err(fault) => {
-                        if last || fault.error_len().is_some() { return Ok(Value::Nil); }
-                        fault.valid_up_to()
-                    }
-                };
-                let prefix = std::str::from_utf8(&buffer[..consumed]).map_err(|_| self.octet_error("unready"))?;
-                return Ok(Value::tuple(vec![Value::text(prefix), Value::Small(consumed as i64)]));
-            }
-            return self.convert_text(!decoding, &buffer, v, false);
+            return self.codec_octets(op, v);
         }
         if let Prim::Octets(which) = op { return self.octet_routine(which, v); }
         if v.len() == 2 {
