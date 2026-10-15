@@ -49,7 +49,7 @@ pub fn indent(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<Vec<Token
 }
 
 pub fn indent_position(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<Vec<Token>, (String, u32, usize)> {
-    if table.has_any("ext.builtin.exceptions.syntax") { return column_blocks(&tokens); }
+    if table.syntax_exceptions { return column_blocks(&tokens); }
     let by_indent = table.blocks == Blocks::Indented;
     let unit = table.count("block.indent_size").unwrap_or(4);
     let mut opens: Vec<&str> = ["syntax.group.open", "syntax.call.open", "syntax.array.open"].iter().filter_map(|k| table.single(k)).collect();
@@ -71,7 +71,7 @@ pub fn indent_position(tokens: Vec<Token>, table: &Table, ahead: u32) -> Result<
     let mut out = Vec::with_capacity(tokens.len());
     let mut inside = 0usize;
     let mut stack = vec![0usize];
-    let mark = |k: Shape, line: u32| Token { end_row: 0, end_column: 0, column: 1, shape: k, lexeme: String::new(), raw: None, span: 0, row: line };
+    let mark = |k: Shape, line: u32| Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: k, lexeme: String::new(), raw: None, span: 0, row: line };
     for t in tokens {
         if t.shape == Shape::LineEnd {
             got_to = t.row + 1;
@@ -270,7 +270,21 @@ fn column_blocks(input: &[Token]) -> Result<Vec<Token>, (String, u32, usize)> {
             output.push(t.clone());
             continue;
         }
-        if t.lexeme == "not" && matches!(tail.as_str(), "+" | "-" | "*" | "**" | "~" | "<<" | ">>" | "/" | "//" | "%" | "&" | "|" | "^") {
+        let mut expanded_index = false;
+        // Expanded subscription items permit boolean expressions after *.
+        if t.lexeme == "not" && tail == "*" {
+            if let Some((mark, row, column)) = opened.last().filter(|open| open.0 == "[") {
+                let preceding = input[..i].iter().filter(|word| !matches!(word.shape, Shape::Lead | Shape::LineEnd)).rev().nth(1);
+                if preceding.is_some_and(|word| word.lexeme == *mark || word.lexeme == ",") {
+                    let start = input.iter().position(|word| word.row == *row && word.column == *column).unwrap();
+                    if let Some(receiver) = input[..start].iter().rev().find(|word| !matches!(word.shape, Shape::LineEnd | Shape::Lead)) {
+                        expanded_index = receiver.shape == Shape::Quote || [")", "]", "}"].contains(&receiver.lexeme.as_str())
+                            || receiver.shape == Shape::Bare && !["return", "yield", "in", "if", "else", "for", "lambda", "not", "and", "or", "await"].contains(&receiver.lexeme.as_str());
+                    }
+                }
+            }
+        }
+        if t.lexeme == "not" && !expanded_index && matches!(tail.as_str(), "+" | "-" | "*" | "**" | "~" | "<<" | ">>" | "/" | "//" | "%" | "&" | "|" | "^") {
             return Err(("SyntaxError: 'not' after an operator must be parenthesized".to_owned(), t.row, t.column));
         }
         if t.shape == Shape::Sign {

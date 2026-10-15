@@ -24,26 +24,26 @@ pub struct Request<'a> {
 /// The names each builtin kind answers to, a line of words to a kind:
 /// what CPython keeps in the type's own namespace. A kind answers its
 /// own alone, so a tuple has no append however a list has one.
-const KIND_MEMBERS: &[(&str, &str)] = &[
-    ("str", "upper lower title capitalize swapcase strip lstrip rstrip split rsplit join replace find rfind index rindex count startswith endswith \
-             isdigit isalpha isalnum isspace islower isupper center ljust rjust zfill format encode"),
-    ("list", "append extend insert pop remove sort reverse copy clear index count"),
-    ("dict", "get keys values items setdefault update pop popitem copy clear fromkeys"),
-    ("bytearray", "copy"),
-    ("tuple", "index count"),
-    ("range", "index count"),
-    ("int", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__"),
-    ("bool", "bit_length bit_count numerator denominator real imag conjugate as_integer_ratio is_integer __index__ __truediv__"),
-    ("float", "real imag conjugate as_integer_ratio is_integer hex __floor__ __ceil__"),
-    ("complex", "real imag conjugate"),
+const KIND_MEMBERS: &[(&str, &[&str])] = &[
+    ("str", &["upper", "lower", "title", "capitalize", "swapcase", "strip", "lstrip", "rstrip", "split", "rsplit", "join", "replace", "find", "rfind", "index", "rindex", "count", "startswith", "endswith", "isdigit", "isalpha", "isalnum", "isspace", "islower", "isupper", "center", "ljust", "rjust", "zfill", "format", "encode"]),
+    ("list", &["append", "extend", "insert", "pop", "remove", "sort", "reverse", "copy", "clear", "index", "count"]),
+    ("dict", &["get", "keys", "values", "items", "setdefault", "update", "pop", "popitem", "copy", "clear", "fromkeys"]),
+    ("bytearray", &["copy"]),
+    ("tuple", &["index", "count"]),
+    ("range", &["index", "count"]),
+    ("int", &["bit_length", "bit_count", "numerator", "denominator", "real", "imag", "conjugate", "as_integer_ratio", "is_integer", "__index__", "__truediv__"]),
+    ("bool", &["bit_length", "bit_count", "numerator", "denominator", "real", "imag", "conjugate", "as_integer_ratio", "is_integer", "__index__", "__truediv__"]),
+    ("float", &["real", "imag", "conjugate", "as_integer_ratio", "is_integer", "hex", "__floor__", "__ceil__"]),
+    ("complex", &["real", "imag", "conjugate"]),
 ];
 
 /// Whether a value of this kind answers to a member of that name.
 pub fn answers_to(value: &Value, operation: &str) -> bool {
-    if matches!(value.settled(), Value::Attributes(_)) { return operation == "clear"; }
-    let kind = value.settled().kind_word();
+    let value = value.settled();
+    if matches!(value, Value::Attributes(_)) { return operation == "clear"; }
+    let kind = value.kind_word();
     KIND_MEMBERS.iter().find(|(named, _)| *named == kind)
-        .map_or(false, |(_, words)| words.split_whitespace().any(|word| word == operation))
+        .is_some_and(|(_, words)| words.contains(&operation))
 }
 
 /// Whether the table above is the whole of what a value's kind answers
@@ -222,6 +222,8 @@ impl Request<'_> {
             // answers the six category questions, each of which
             // reads one character at a time and never hands any of
             // them back out.
+            Value::Unpaired(numbers) if matches!(self.operation, "find" | "rfind" | "index" | "rindex" | "count" | "replace" | "lower" | "upper") => self.work_units(&numbers),
+            Value::Unpaired(numbers) if matches!(self.operation, "split" | "rsplit") => self.split_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "strip" | "lstrip" | "rstrip") => self.trim_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "startswith" | "endswith") => self.affix_units(&numbers),
             Value::Unpaired(numbers) if matches!(self.operation, "isdigit"|"isalpha"|"isalnum"|"isspace"|"islower"|"isupper")=>self.on_text(&Value::category_text(&numbers)),
@@ -397,6 +399,9 @@ impl Request<'_> {
         Err(self.unknown())
     }
     fn split_text(&self,s:&str)->ResultValue{
+        if self.given.first().is_some_and(|v| matches!(v.settled(), Value::Unpaired(_))) {
+            return self.split_units(&s.chars().map(|c| c as u32).collect::<Vec<_>>());
+        }
         self.takes(0,2)?;let reverse=self.operation=="rsplit";let bound=self.number(1,-1)?;
         let maximum=if bound<0{usize::MAX}else{bound as usize};let mut chunks=Vec::new();
         let delimiter=match self.given.first(){Some(v) if !matches!(v,Value::Nil)=>Some(letters(v,self.complaint)?),_=>None};
@@ -421,6 +426,66 @@ impl Request<'_> {
         }
         if reverse{chunks.reverse();}
         Ok(Value::Vector(crate::tuples::Sequence::plain(chunks.iter().map(|part|Value::text(part)).collect::<Vec<_>>())).keep(true))
+    }
+    // Preserve surrogate characters while searching, replacing, or changing case.
+    pub(crate) fn work_units(&self, text: &[u32]) -> ResultValue {
+        let operation = self.operation;
+        if operation == "lower" || operation == "upper" {
+            self.takes(0, 0)?;
+            let work = if operation == "upper" { crate::text::Work::UPPER } else { crate::text::Work::LOWER };
+            let mut units = Vec::new();
+            let mut letters = String::new();
+            for &number in text {
+                if let Some(c) = char::from_u32(number) { letters.push(c); }
+                else {
+                    units.extend(crate::text::case_changed(&letters, work).chars().map(|c| c as u32));
+                    letters.clear(); units.push(number);
+                }
+            }
+            units.extend(crate::text::case_changed(&letters, work).chars().map(|c| c as u32));
+            return Ok(Value::characters(units));
+        }
+        self.takes(if operation == "replace" { 2 } else { 1 }, 3)?;
+        let sought = self.given[0].settled().character_numbers().ok_or_else(|| self.fail("arguments"))?;
+        if operation == "replace" {
+            let newer = self.given[1].settled().character_numbers().ok_or_else(|| self.fail("arguments"))?;
+            let count = self.given.get(2).map(|v| whole(v, self.complaint)).transpose()?.unwrap_or(-1);
+            let maximum = usize::try_from(count).unwrap_or(usize::MAX);
+            let (mut position, mut remaining) = (0, maximum);
+            let mut output = Vec::new();
+            loop {
+                if remaining > 0 && text[position..].starts_with(&sought) {
+                    output.extend(&newer); remaining -= 1;
+                    if !sought.is_empty() { position += sought.len(); continue; }
+                }
+                match text.get(position) { Some(&n) => { output.push(n); position += 1; }, None => break }
+            }
+            return Ok(Value::characters(output));
+        }
+        let beginning = self.number(1, 0)?;
+        let end = self.number(2, text.len() as i64)?;
+        let left = place(beginning, text.len()); let right = place(end, text.len());
+        let ordered = beginning <= text.len() as i64 && left <= right;
+        let slice = if ordered { &text[left..right] } else { &[] };
+        if operation == "count" {
+            let amount = if !ordered { 0 } else if sought.is_empty() { slice.len() + 1 } else {
+                let mut count = 0; let mut offset = 0;
+                while offset + sought.len() <= slice.len() {
+                    if slice[offset..].starts_with(&sought) { count += 1; offset += sought.len(); }
+                    else { offset += 1; }
+                }
+                count
+            };
+            return Ok(Value::Small(amount as i64));
+        }
+        let reverse = operation == "rfind" || operation == "rindex";
+        let location = if !ordered { None } else if sought.is_empty() { Some(if reverse { slice.len() } else { 0 }) }
+            else {
+                let mut positions = slice.windows(sought.len());
+                if reverse { positions.rposition(|part| part == sought) } else { positions.position(|part| part == sought) }
+            };
+        if location.is_none() && (operation == "index" || operation == "rindex") { return Err(self.fail("missing")); }
+        Ok(Value::Small(location.map(|n| (left + n) as i64).unwrap_or(-1)))
     }
     fn split_units(&self, units: &[u32]) -> ResultValue {
         self.takes(0, 2)?;
@@ -584,20 +649,30 @@ impl Request<'_> {
     }
 
     fn search_text(&self,s:&str)->ResultValue{
-        self.takes(1,3)?;let length=s.chars().count();let raw=self.number(1,0)?;
+        self.takes(1,3)?;
+        let ascii=s.is_ascii();
+        let length=if ascii {s.len()} else {s.chars().count()};
+        let raw=self.number(1,0)?;
         let lo=place(raw,length);let hi=place(self.number(2,length as i64)?,length);
         let valid=raw<=length as i64&&lo<=hi;
-        let part:String=s.chars().skip(lo).take(hi.saturating_sub(lo)).collect();
+        // Search the original bytes; bounds are still Unicode character positions.
+        let cut=|at:usize| {
+            if ascii {at} else if at==length {s.len()}
+            else if at<=length/2 {s.char_indices().nth(at).map_or(s.len(),|(byte,_)|byte)}
+            else {s.char_indices().rev().nth(length-at-1).map_or(0,|(byte,_)|byte)}
+        };
+        let part=if valid {&s[cut(lo)..cut(hi)]} else {""};
         if self.operation=="startswith"||self.operation=="endswith"{
             let patterns=if let Value::Row(row)=&self.given[0]{row.to_vec()}else{vec![self.given[0].clone()]};
             for pattern in patterns{let text=letters(&pattern,self.complaint)?;let matches=if self.operation=="startswith"{part.starts_with(&text)}else{part.ends_with(&text)};if valid&&matches{return Ok(Value::Flag(true));}}
             return Ok(Value::Flag(false));
         }
-        let needle=self.string(0)?;
-        if self.operation=="count"{let count=if !valid{0}else if needle.is_empty(){part.chars().count()+1}else{part.matches(&needle).count()};return Ok(Value::Small(count as i64));}
-        let at=if !valid{None}else if self.operation=="rfind"{part.rfind(&needle)}else{part.find(&needle)};
-        if self.operation=="index"&&at.is_none(){return Err(self.fail("substring"));}
-        Ok(Value::Small(match at{None=>-1,Some(byte)=>(lo+part[..byte].chars().count()) as i64}))
+        let held=self.given[0].settled();
+        let Value::Text(needle)=held else {return Err(self.fail("arguments"));};
+        if self.operation=="count"{let count=if !valid{0}else if needle.is_empty(){hi-lo+1}else{part.matches(needle.as_ref()).count()};return Ok(Value::Small(count as i64));}
+        let at=if !valid{None}else if self.operation=="rfind"||self.operation=="rindex"{part.rfind(needle.as_ref())}else{part.find(needle.as_ref())};
+        if (self.operation=="index"||self.operation=="rindex")&&at.is_none(){return Err(self.fail("substring"));}
+        Ok(Value::Small(match at{None=>-1,Some(byte)=>(lo+if ascii {byte} else {part[..byte].chars().count()}) as i64}))
     }
     fn on_list(&self,mut values:Vec<Value>)->ResultValue{
         match self.operation{

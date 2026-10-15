@@ -18,4 +18,6 @@ def is_python_build(check_home=False):
     return False
 # This interpreter has no CPython configure-time variable database.
 def get_config_var(name):
+    if name == 'TZPATH':
+        return '' if os.name == 'nt' else '/usr/share/zoneinfo:/usr/lib/zoneinfo:/usr/share/lib/zoneinfo:/etc/zoneinfo'
     return None

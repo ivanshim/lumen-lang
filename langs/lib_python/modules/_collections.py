@@ -12,51 +12,41 @@ def _deque_size(value):
     return number
 
 
-def _deque_field(owner, name):
-    return deque.__dict__[name].__get__(owner, deque)
+# The three slots of a deque are read and written through the descriptors
+# the class itself owns, so that a subclass (or its __getattribute__ or
+# __setattr__) can never intercept them.  They are bound once, below the class.
+def _deque_bind(name):
+    return deque.__dict__[name].__get__, deque.__dict__[name].__set__
 
 
-def _deque_store(owner, name, value):
-    deque.__dict__[name].__set__(owner, value)
-
-
-def _deque_push(owner, value, left=False):
-    if left:
-        _deque_field(owner, '_data').insert(0, value)
-    else:
-        _deque_field(owner, '_data').append(value)
-    limit = _deque_field(owner, '_maxlen')
-    if limit is not None and len(_deque_field(owner, '_data')) > limit:
-        _deque_field(owner, '_data').pop(-1 if left else 0)
-    _deque_store(owner, '_state', _deque_field(owner, '_state') + 1)
+def _deque_check(name, minimum, maximum, given, keywords):
+    # The argument checks of a deque method called as deque.<name>(*given, **keywords).
+    if not given:
+        raise TypeError('unbound method deque.' + name + '() needs an argument')
+    self, count = given[0], len(given) - 1
+    if not isinstance(self, deque):
+        raise TypeError("descriptor '" + name + "' for 'collections.deque' objects doesn't apply to a '" + type(self).__name__ + "' object")
+    if keywords:
+        raise TypeError('deque.' + name + '() takes no keyword arguments')
+    if count < minimum or count > maximum:
+        if minimum == maximum == 1:
+            message = 'deque.' + name + '() takes exactly one argument (' + str(count) + ' given)'
+        elif maximum == 0:
+            message = 'deque.' + name + '() takes no arguments (' + str(count) + ' given)'
+        elif minimum == maximum:
+            message = name + ' expected ' + str(maximum) + ' arguments, got ' + str(count)
+        elif count < minimum:
+            message = name + ' expected at least ' + str(minimum) + ' argument' + ('s' if minimum != 1 else '') + ', got ' + str(count)
+        else:
+            message = name + ' expected at most ' + str(maximum) + ' argument' + ('s' if maximum != 1 else '') + ', got ' + str(count)
+        raise TypeError(message)
 
 
 def _deque_method(name, minimum, maximum):
     def decorate(function):
         def invoke(*given, **keywords):
-            if not given:
-                raise TypeError('unbound method deque.' + name + '() needs an argument')
-            self, args = given[0], given[1:]
-            if not isinstance(self, deque):
-                raise TypeError("descriptor '" + name + "' for 'collections.deque' objects doesn't apply to a '" + type(self).__name__ + "' object")
-            if keywords:
-                raise TypeError('deque.' + name + '() takes no keyword arguments')
-            given = len(args)
-            if given < minimum or given > maximum:
-                if minimum == maximum == 1:
-                    message = 'deque.' + name + '() takes exactly one argument (' + str(given) + ' given)'
-                elif maximum == 0:
-                    message = 'deque.' + name + '() takes no arguments (' + str(given) + ' given)'
-                elif name == 'rotate':
-                    message = 'deque.rotate expected at most 1 argument, got ' + str(given)
-                elif minimum == maximum:
-                    message = name + '() takes exactly ' + str(maximum) + ' arguments (' + str(given) + ' given)'
-                elif given < minimum:
-                    message = name + '() takes at least ' + str(minimum) + ' argument' + ('s' if minimum != 1 else '') + ' (' + str(given) + ' given)'
-                else:
-                    message = name + '() takes at most ' + str(maximum) + ' argument' + ('s' if maximum != 1 else '') + ' (' + str(given) + ' given)'
-                raise TypeError(message)
-            return function(self, *args)
+            _deque_check(name, minimum, maximum, given, keywords)
+            return function(*given)
         invoke.__name__ = name
         invoke.__qualname__ = 'deque.' + name
         invoke.__doc__ = function.__doc__
@@ -64,20 +54,25 @@ def _deque_method(name, minimum, maximum):
     return decorate
 
 
+def _deque_slot_check(name, count, given, keywords):
+    # The argument checks of a deque slot wrapper such as deque.__len__(*given).
+    if not given:
+        raise TypeError("descriptor '" + name + "' of 'collections.deque' object needs an argument")
+    self = given[0]
+    if not isinstance(self, deque):
+        raise TypeError("descriptor '" + name + "' requires a 'collections.deque' object but received a '" + type(self).__name__ + "'")
+    if keywords:
+        raise TypeError('wrapper ' + name + '() takes no keyword arguments')
+    if len(given) - 1 != count:
+        prefix = name + ' ' if name == '__setitem__' else ''
+        raise TypeError(prefix + 'expected ' + str(count) + ' argument' + ('s' if count != 1 else '') + ', got ' + str(len(given) - 1))
+
+
 def _deque_protocol(name, count):
     def decorate(function):
         def invoke(*given, **keywords):
-            if not given:
-                raise TypeError("descriptor '" + name + "' of 'collections.deque' object needs an argument")
-            self, args = given[0], given[1:]
-            if not isinstance(self, deque):
-                raise TypeError("descriptor '" + name + "' requires a 'collections.deque' object but received a '" + type(self).__name__ + "'")
-            if keywords:
-                raise TypeError('wrapper ' + name + '() takes no keyword arguments')
-            if len(args) != count:
-                prefix = ' ' if name in ('__setitem__', '__mul__', '__rmul__', '__imul__') else ''
-                raise TypeError(prefix + 'expected ' + str(count) + ' argument' + ('s' if count != 1 else '') + ', got ' + str(len(args)))
-            return function(self, *args)
+            _deque_slot_check(name, count, given, keywords)
+            return function(*given)
         invoke.__name__ = name
         invoke.__qualname__ = 'deque.' + name
         invoke.__doc__ = function.__doc__
@@ -102,7 +97,7 @@ def _deque_args(args, keywords):
     names = ('iterable', 'maxlen')
     for key in keywords:
         if key not in names:
-            raise TypeError("'" + key + "' is an invalid keyword argument for deque()")
+            raise TypeError("deque() got an unexpected keyword argument '" + key + "'")
     for position, value in enumerate(args):
         if names[position] in keywords:
             raise TypeError("argument for deque() given by name ('" + names[position] + "') and position (" + str(position + 1) + ")")
@@ -117,17 +112,22 @@ def _deque_iter_setup(iterator, owner, index, reverse):
     if not isinstance(owner, deque):
         raise TypeError('argument 1 must be collections.deque, not ' + type(owner).__name__)
     index = _deque_size(index)
+    data = _data_of(owner)
     iterator._owner = owner
-    iterator._state = _deque_field(owner, '_state')
-    iterator._position = len(_deque_field(owner, '_data')) - 1 if reverse else 0
-    iterator._remaining = len(_deque_field(owner, '_data'))
-    iterator._reverse = reverse
-    for _ in range(min(max(0, index), iterator._remaining)):
+    iterator._state = _state_of(owner)
+    iterator._data = data
+    iterator._size = len(data)
+    iterator._remaining = len(data)
+    for _ in range(min(max(0, index), len(data))):
         next(iterator)
 
 
 class _deque_iterator:
-    __slots__ = ('_owner', '_state', '_position', '_remaining', '_reverse')
+    # The list behind a deque never changes identity, and any change of its
+    # length bumps the owner's state, so item n of a live iteration sits at
+    # size - remaining (or remaining - 1 when running backwards).
+    __slots__ = ('_owner', '_state', '_data', '_size', '_remaining')
+    __module__ = 'collections'
     __native_type_name__ = '_collections._deque_iterator'
 
     def __init__(self, *args, **kwargs):
@@ -138,28 +138,25 @@ class _deque_iterator:
         return self
 
     def __next__(self):
-        owner = self._owner
-        if self._reverse and not self._remaining:
-            raise StopIteration
-        if _deque_field(owner, '_state') != self._state:
+        if _state_of(self._owner) != self._state:
             self._remaining = 0
             raise RuntimeError('deque mutated during iteration')
-        if not self._remaining:
+        left = self._remaining
+        if not left:
             raise StopIteration
-        result = _deque_field(owner, '_data')[self._position]
-        self._position += -1 if self._reverse else 1
-        self._remaining -= 1
-        return result
+        self._remaining = left - 1
+        return self._data[self._size - left]
 
     def __length_hint__(self):
         return self._remaining
 
     def __reduce__(self):
-        return (type(self), (self._owner, len(_deque_field(self._owner, '_data')) - self._remaining))
+        return (type(self), (self._owner, len(_data_of(self._owner)) - self._remaining))
 
 
 class _deque_reverse_iterator:
-    __slots__ = ('_owner', '_state', '_position', '_remaining', '_reverse')
+    __slots__ = ('_owner', '_state', '_data', '_size', '_remaining')
+    __module__ = 'collections'
     __native_type_name__ = '_collections._deque_reverse_iterator'
 
     def __init__(self, *args, **kwargs):
@@ -167,9 +164,47 @@ class _deque_reverse_iterator:
         _deque_iter_setup(self, owner, index, True)
 
     __iter__ = _deque_iterator.__iter__
-    __next__ = _deque_iterator.__next__
     __length_hint__ = _deque_iterator.__length_hint__
     __reduce__ = _deque_iterator.__reduce__
+
+    def __next__(self):
+        left = self._remaining
+        if not left:
+            raise StopIteration
+        if _state_of(self._owner) != self._state:
+            self._remaining = 0
+            raise RuntimeError('deque mutated during iteration')
+        self._remaining = left - 1
+        return self._data[left - 1]
+
+
+# Items of these exact types compare without running any Python code, so a
+# scan over them cannot change the deque and may be left to the list itself.
+_PLAIN_KINDS = frozenset((int, float, bool, str, bytes, complex, type(None)))
+
+
+# Containers of these exact types are read without running any Python code.
+_BULK_KINDS = (list, tuple, range, str, bytes)
+
+
+def _deque_plain(data, value):
+    kinds = set(map(type, data))
+    kinds.add(type(value))
+    return kinds <= _PLAIN_KINDS
+
+
+def _deque_slice_index(value):
+    if not hasattr(type(value), '__index__'):
+        raise TypeError('slice indices must be integers or have an __index__ method')
+    return _index(value)
+
+
+def _deque_index_value(position):
+    # The index of a deque item, as the sequence slots read it.
+    position = _index(position)
+    if position > _sys.maxsize or position < -_sys.maxsize - 1:
+        raise IndexError("cannot fit 'int' into an index-sized integer")
+    return position
 
 
 class deque:
@@ -189,9 +224,9 @@ class deque:
         if not issubclass(cls, deque):
             raise TypeError('collections.deque.__new__(' + cls.__name__ + '): ' + cls.__name__ + ' is not a subtype of collections.deque')
         owner = object.__new__(cls)
-        _deque_store(owner, '_data', [])
-        _deque_store(owner, '_maxlen', None)
-        _deque_store(owner, '_state', 0)
+        _data_put(owner, [])
+        _maxlen_put(owner, None)
+        _state_put(owner, 0)
         return owner
 
     def __init__(*given, **kwargs):
@@ -206,13 +241,13 @@ class deque:
         limit = None if maxlen is None else _deque_size(maxlen)
         if limit is not None and limit < 0:
             raise ValueError('maxlen must be non-negative')
-        _deque_store(self, '_maxlen', limit)
+        _maxlen_put(self, limit)
         deque.clear(self)
         deque.extend(self, iterable)
 
     @property
     def maxlen(self):
-        return _deque_field(self, '_maxlen')
+        return _maxlen_of(self)
 
     @maxlen.setter
     def maxlen(self, value):
@@ -222,118 +257,234 @@ class deque:
     def maxlen(self):
         raise AttributeError("attribute 'maxlen' of 'collections.deque' objects is not writable")
 
-    @_deque_method('append', 1, 1)
-    def append(self, value, /):
-        _deque_push(self, value)
+    # The end operations are the hot path: each does its own cheap argument
+    # test and falls back on _deque_check only to find which error to raise.
 
-    @_deque_method('appendleft', 1, 1)
-    def appendleft(self, value, /):
-        _deque_push(self, value, True)
+    def append(*given, **keywords):
+        if len(given) != 2 or keywords:
+            _deque_check('append', 1, 1, given, keywords)
+        self, value = given
+        try:
+            data = _data_of(self)
+        except Exception:
+            _deque_check('append', 1, 1, given, keywords)
+            raise
+        data.append(value)
+        limit = _maxlen_of(self)
+        if limit is not None and len(data) > limit:
+            data.pop(0)
+        _state_put(self, _state_of(self) + 1)
 
-    @_deque_method('pop', 0, 0)
-    def pop(self):
-        if not _deque_field(self, '_data'):
+    def appendleft(*given, **keywords):
+        if len(given) != 2 or keywords:
+            _deque_check('appendleft', 1, 1, given, keywords)
+        self, value = given
+        try:
+            data = _data_of(self)
+        except Exception:
+            _deque_check('appendleft', 1, 1, given, keywords)
+            raise
+        data.insert(0, value)
+        limit = _maxlen_of(self)
+        if limit is not None and len(data) > limit:
+            data.pop()
+        _state_put(self, _state_of(self) + 1)
+
+    def pop(*given, **keywords):
+        if len(given) != 1 or keywords:
+            _deque_check('pop', 0, 0, given, keywords)
+        self = given[0]
+        try:
+            data = _data_of(self)
+        except Exception:
+            _deque_check('pop', 0, 0, given, keywords)
+            raise
+        if not data:
             raise IndexError('pop from an empty deque')
-        _deque_store(self, '_state', _deque_field(self, '_state') + 1)
-        return _deque_field(self, '_data').pop()
+        _state_put(self, _state_of(self) + 1)
+        return data.pop()
 
-    @_deque_method('popleft', 0, 0)
-    def popleft(self):
-        if not _deque_field(self, '_data'):
+    def popleft(*given, **keywords):
+        if len(given) != 1 or keywords:
+            _deque_check('popleft', 0, 0, given, keywords)
+        self = given[0]
+        try:
+            data = _data_of(self)
+        except Exception:
+            _deque_check('popleft', 0, 0, given, keywords)
+            raise
+        if not data:
             raise IndexError('pop from an empty deque')
-        _deque_store(self, '_state', _deque_field(self, '_state') + 1)
-        return _deque_field(self, '_data').pop(0)
+        _state_put(self, _state_of(self) + 1)
+        return data.pop(0)
 
     @_deque_method('extend', 1, 1)
     def extend(self, iterable, /):
+        data = _data_of(self)
         if iterable is self:
-            iterable = list(_deque_field(self, '_data'))
+            iterable = list(data)
+        limit = _maxlen_of(self)
+        if type(iterable) in _BULK_KINDS or type(iterable) is deque:
+            # an empty source adds nothing, so live iterators stay valid
+            if limit != 0 and len(iterable):
+                data.extend(_data_of(iterable) if type(iterable) is deque else iterable)
+                if limit is not None and len(data) > limit:
+                    del data[:len(data) - limit]
+                _state_put(self, _state_of(self) + 1)
+            return
+        if limit == 0:
+            for value in iterable:
+                pass
+            return
         for value in iterable:
-            if _deque_field(self, '_maxlen') != 0:
-                _deque_push(self, value)
+            data.append(value)
+            if limit is not None and len(data) > limit:
+                data.pop(0)
+            _state_put(self, _state_of(self) + 1)
 
     @_deque_method('extendleft', 1, 1)
     def extendleft(self, iterable, /):
+        data = _data_of(self)
         if iterable is self:
-            iterable = list(_deque_field(self, '_data'))
+            iterable = list(data)
+        limit = _maxlen_of(self)
+        if type(iterable) in _BULK_KINDS or type(iterable) is deque:
+            if limit != 0 and len(iterable):
+                items = list(_data_of(iterable) if type(iterable) is deque else iterable)
+                items.reverse()
+                data[:0] = items
+                if limit is not None and len(data) > limit:
+                    del data[limit:]
+                _state_put(self, _state_of(self) + 1)
+            return
+        if limit == 0:
+            for value in iterable:
+                pass
+            return
         for value in iterable:
-            if _deque_field(self, '_maxlen') != 0:
-                _deque_push(self, value, True)
+            data.insert(0, value)
+            if limit is not None and len(data) > limit:
+                data.pop()
+            _state_put(self, _state_of(self) + 1)
 
     @_deque_method('clear', 0, 0)
     def clear(self):
-        if _deque_field(self, '_data'):
-            _deque_store(self, '_data', [])
-            _deque_store(self, '_state', _deque_field(self, '_state') + 1)
+        data = _data_of(self)
+        if data:
+            del data[:]
+            _state_put(self, _state_of(self) + 1)
 
-    @_deque_method('rotate', 0, 1)
-    def rotate(self, n=1, /):
-        n = _deque_size(n)
-        size = len(_deque_field(self, '_data'))
+    def rotate(*given, **keywords):
+        count = len(given)
+        if count < 1 or count > 2 or keywords:
+            _deque_check('rotate', 0, 1, given, keywords)
+        self = given[0]
+        try:
+            data = _data_of(self)
+        except Exception:
+            _deque_check('rotate', 0, 1, given, keywords)
+            raise
+        n = given[1] if count == 2 else 1
+        if type(n) is not int or n > _sys.maxsize or n < -_sys.maxsize - 1:
+            n = _deque_size(n)
+        size = len(data)
         if size > 1:
-            _deque_store(self, '_state', _deque_field(self, '_state') + 1)
+            _state_put(self, _state_of(self) + 1)
             n %= size
-            _deque_store(self, '_data', _deque_field(self, '_data')[-n:] + _deque_field(self, '_data')[:-n] if n else _deque_field(self, '_data')[:])
+            if n:
+                data[:] = data[-n:] + data[:-n]
 
     @_deque_method('reverse', 0, 0)
     def reverse(self):
-        _deque_field(self, '_data').reverse()
+        _data_of(self).reverse()
 
     @_deque_method('count', 1, 1)
     def count(self, value, /):
         result = 0
-        for item in _deque_iterator(self):
+        data = _data_of(self)
+        if _deque_plain(data, value):
+            return data.count(value)
+        state = _state_of(self)
+        for position in range(len(data)):
+            item = data[position]
             if item is value or item == value:
                 result += 1
+            if state != _state_of(self):
+                raise RuntimeError('deque mutated during iteration')
         return result
 
-    @_deque_method('index', 1, 3)
-    def index(self, value, start=0, stop=_sys.maxsize, /):
-        start, stop = _index(start), _index(stop)
-        start = min(_sys.maxsize, max(-_sys.maxsize - 1, start))
-        stop = min(_sys.maxsize, max(-_sys.maxsize - 1, stop))
-        size = len(_deque_field(self, '_data'))
+    def index(*given, **keywords):
+        count = len(given)
+        if count < 2 or count > 4 or keywords:
+            _deque_check('index', 1, 3, given, keywords)
+        self, value = given[0], given[1]
+        try:
+            data = _data_of(self)
+        except Exception:
+            _deque_check('index', 1, 3, given, keywords)
+            raise
+        start = given[2] if count > 2 else 0
+        stop = given[3] if count > 3 else _sys.maxsize
+        if type(start) is not int:
+            start = _deque_slice_index(start)
+        if type(stop) is not int:
+            stop = _deque_slice_index(stop)
+        size = len(data)
         if start < 0:
-            start = max(0, size + start)
+            start = max(0, start + size)
         if stop < 0:
-            stop = max(0, size + stop)
-        stop = min(stop, size)
-        state = _deque_field(self, '_state')
+            stop = max(0, stop + size)
+        if stop > size:
+            stop = size
+        if _deque_plain(data, value):
+            part = data[start:stop]
+            if value in part:
+                return start + part.index(value)
+            raise ValueError('deque.index(x): x not in deque')
+        state = _state_of(self)
         for position in range(start, stop):
-            item = _deque_field(self, '_data')[position]
+            item = data[position]
             found = item is value or item == value
             if found:
                 return position
-            if state != _deque_field(self, '_state'):
+            if state != _state_of(self):
                 raise RuntimeError('deque mutated during iteration')
         raise ValueError('deque.index(x): x not in deque')
 
     @_deque_method('insert', 2, 2)
     def insert(self, position, value, /):
         position = _deque_size(position)
-        if _deque_field(self, '_maxlen') is not None and len(_deque_field(self, '_data')) == _deque_field(self, '_maxlen'):
+        data = _data_of(self)
+        if _maxlen_of(self) is not None and len(data) == _maxlen_of(self):
             raise IndexError('deque already at its maximum size')
-        _deque_field(self, '_data').insert(position, value)
-        _deque_store(self, '_state', _deque_field(self, '_state') + 1)
+        data.insert(position, value)
+        _state_put(self, _state_of(self) + 1)
 
     @_deque_method('remove', 1, 1)
     def remove(self, value, /):
-        state = _deque_field(self, '_state')
-        for position in range(len(_deque_field(self, '_data'))):
-            item = _deque_field(self, '_data')[position]
+        data = _data_of(self)
+        if _deque_plain(data, value):
+            if value not in data:
+                raise ValueError('deque.remove(x): x not in deque')
+            data.pop(data.index(value))
+            _state_put(self, _state_of(self) + 1)
+            return
+        state = _state_of(self)
+        for position in range(len(data)):
+            item = data[position]
             found = item is value or item == value
-            if state != _deque_field(self, '_state'):
+            if state != _state_of(self):
                 raise IndexError('deque mutated during iteration')
             if found:
-                _deque_field(self, '_data').pop(position)
-                _deque_store(self, '_state', _deque_field(self, '_state') + 1)
+                data.pop(position)
+                _state_put(self, _state_of(self) + 1)
                 return
         raise ValueError('deque.remove(x): x not in deque')
 
     @_deque_method('copy', 0, 0)
     def copy(self):
         cls = type(self)
-        result = cls(self) if _deque_field(self, '_maxlen') is None else cls(self, _deque_field(self, '_maxlen'))
+        result = cls(self) if _maxlen_of(self) is None else cls(self, _maxlen_of(self))
         if not isinstance(result, deque):
             raise TypeError(cls.__name__ + '() must return a deque, not ' + type(result).__name__)
         return result
@@ -342,9 +493,14 @@ class deque:
     def __copy__(self):
         return deque.copy(self)
 
-    @_deque_protocol('__len__', 0)
-    def __len__(self):
-        return len(_deque_field(self, '_data'))
+    def __len__(*given, **keywords):
+        if len(given) != 1 or keywords:
+            _deque_slot_check('__len__', 0, given, keywords)
+        try:
+            return len(_data_of(given[0]))
+        except Exception:
+            _deque_slot_check('__len__', 0, given, keywords)
+            raise
 
     @_deque_protocol('__iter__', 0)
     def __iter__(self):
@@ -354,49 +510,55 @@ class deque:
     def __reversed__(self):
         return _deque_reverse_iterator(self)
 
-    @_deque_protocol('__getitem__', 1)
-    def __getitem__(self, position):
-        if not isinstance(position, int) and not hasattr(type(position), '__index__'):
-            raise TypeError("sequence index must be integer, not '" + type(position).__name__ + "'")
-        position = _index(position)
-        if position > _sys.maxsize or position < -_sys.maxsize - 1:
-            raise IndexError("cannot fit 'int' into an index-sized integer")
-        size = len(_deque_field(self, '_data'))
-        if not -size <= position < size:
-            raise IndexError('deque index out of range')
-        return _deque_field(self, '_data')[position]
+    def __getitem__(*given, **keywords):
+        if len(given) != 2 or keywords:
+            _deque_slot_check('__getitem__', 1, given, keywords)
+        self, position = given
+        try:
+            data = _data_of(self)
+        except Exception:
+            _deque_slot_check('__getitem__', 1, given, keywords)
+            raise
+        if type(position) is not int:
+            if not hasattr(type(position), '__index__'):
+                raise TypeError("sequence index must be integer, not '" + type(position).__name__ + "'")
+            position = _deque_index_value(position)
+        try:
+            return data[position]
+        except IndexError:
+            if -_sys.maxsize - 1 <= position <= _sys.maxsize:
+                raise IndexError('deque index out of range') from None
+            raise IndexError("cannot fit 'int' into an index-sized integer") from None
 
     @_deque_protocol('__setitem__', 2)
     def __setitem__(self, position, value):
-        position = _index(position)
-        if position > _sys.maxsize or position < -_sys.maxsize - 1:
-            raise IndexError("cannot fit 'int' into an index-sized integer")
-        size = len(_deque_field(self, '_data'))
-        if not -size <= position < size:
+        position = _deque_index_value(position)
+        data = _data_of(self)
+        if not -len(data) <= position < len(data):
             raise IndexError('deque index out of range')
-        data = list(_deque_field(self, '_data'))
         data[position] = value
-        _deque_store(self, '_data', data)
 
     @_deque_protocol('__delitem__', 1)
     def __delitem__(self, position):
-        position = _index(position)
-        if position > _sys.maxsize or position < -_sys.maxsize - 1:
-            raise IndexError("cannot fit 'int' into an index-sized integer")
-        size = len(_deque_field(self, '_data'))
-        if not -size <= position < size:
+        position = _deque_index_value(position)
+        data = _data_of(self)
+        if not -len(data) <= position < len(data):
             raise IndexError('deque index out of range')
-        _deque_field(self, '_data').pop(position)
-        _deque_store(self, '_state', _deque_field(self, '_state') + 1)
+        data.pop(position)
+        _state_put(self, _state_of(self) + 1)
 
     @_deque_protocol('__contains__', 1)
     def __contains__(self, value):
-        state = _deque_field(self, '_state')
-        for item in _deque_iterator(self):
+        data = _data_of(self)
+        if _deque_plain(data, value):
+            return value in data
+        state = _state_of(self)
+        for position in range(len(data)):
+            item = data[position]
             found = item is value or item == value
             if found:
                 return True
-            if state != _deque_field(self, '_state'):
+            if state != _state_of(self):
                 raise RuntimeError('deque mutated during iteration')
         return False
 
@@ -406,7 +568,7 @@ class deque:
             return NotImplemented
         if self is other:
             return True
-        if len(_deque_field(self, '_data')) != len(_deque_field(other, '_data')):
+        if len(_data_of(self)) != len(_data_of(other)):
             return False
         from operator import eq
         return deque._compare(self, other, eq)
@@ -417,7 +579,7 @@ class deque:
             return NotImplemented
         if self is other:
             return False
-        if len(_deque_field(self, '_data')) != len(_deque_field(other, '_data')):
+        if len(_data_of(self)) != len(_data_of(other)):
             return True
         from operator import ne
         return deque._compare(self, other, ne)
@@ -425,6 +587,9 @@ class deque:
     def _compare(self, other, operation):
         if not isinstance(other, deque):
             return NotImplemented
+        one, two = _data_of(self), _data_of(other)
+        if _deque_plain(one, None) and _deque_plain(two, None):
+            return operation(one, two)
         left, right = iter(self), iter(other)
         exhausted = object()
         while True:
@@ -481,28 +646,32 @@ class deque:
 
     @_deque_protocol('__imul__', 1)
     def __imul__(self, times):
-        times = _deque_size(times)
-        if not _deque_field(self, '_data') or times == 1:
+        if not hasattr(type(times), '__index__'):
+            raise TypeError("can't multiply sequence by non-int of type '" + type(times).__name__ + "'")
+        times = _index(times)
+        if times > _sys.maxsize or times < -_sys.maxsize - 1:
+            raise OverflowError("cannot fit 'int' into an index-sized integer")
+        data = _data_of(self)
+        if not data or times == 1:
             return self
         if times <= 0:
             deque.clear(self)
             return self
-        size = len(_deque_field(self, '_data'))
+        size = len(data)
         if size == 1:
-            limit = _deque_field(self, '_maxlen')
+            limit = _maxlen_of(self)
             if limit is not None:
                 times = min(times, limit)
-            _deque_store(self, '_state', _deque_field(self, '_state') + 1)
-            data = _deque_field(self, '_data')
+            _state_put(self, _state_of(self) + 1)
             item = data[0]
             for _ in range(times - 1):
                 data.append(item)
             return self
         if size > _sys.maxsize // times:
             raise MemoryError
-        old = _deque_field(self, '_data')[:]
-        if _deque_field(self, '_maxlen') is not None:
-            times = min(times, (_deque_field(self, '_maxlen') + size - 1) // size)
+        old = data[:]
+        if _maxlen_of(self) is not None:
+            times = min(times, (_maxlen_of(self) + size - 1) // size)
         for _ in range(times - 1):
             deque.extend(self, old)
         return self
@@ -511,13 +680,13 @@ class deque:
     @_recursive_repr('[...]')
     def __repr__(self):
         result = type(self).__name__ + '(' + repr(list(self))
-        if _deque_field(self, '_maxlen') is not None:
-            result += ', maxlen=' + str(_deque_field(self, '_maxlen'))
+        if _maxlen_of(self) is not None:
+            result += ', maxlen=' + str(_maxlen_of(self))
         return result + ')'
 
     @_deque_method('__reduce__', 0, 0)
     def __reduce__(self):
-        args = () if _deque_field(self, '_maxlen') is None else ((), _deque_field(self, '_maxlen'))
+        args = () if _maxlen_of(self) is None else ((), _maxlen_of(self))
         for cls in type(self).__mro__:
             if cls is object:
                 break
@@ -546,10 +715,18 @@ class deque:
             state = (state, slots)
         return (type(self), args, state, iter(self))
 
-    def __class_getitem__(cls, item):
+    def __class_getitem__(*given, **keywords):
+        if keywords:
+            raise TypeError('deque.__class_getitem__() takes no keyword arguments')
+        if len(given) != 2:
+            raise TypeError('deque.__class_getitem__() takes exactly one argument (' + str(len(given) - 1) + ' given)')
         from types import GenericAlias
-        return GenericAlias(cls, item)
+        return GenericAlias(*given)
 
+
+_data_of, _data_put = _deque_bind('_data')
+_maxlen_of, _maxlen_put = _deque_bind('_maxlen')
+_state_of, _state_put = _deque_bind('_state')
 
 
 _repr_factories = set()
@@ -561,7 +738,9 @@ class defaultdict(dict):
     # attribute a subclass may define, the way the reference keeps it in
     # a member of its own.
     __slots__ = ('_defaultdict__factory',)
+    __module__ = 'collections'
 
+    __module__ = 'collections'
     def __new__(cls, default_factory=None, *args, **kwargs):
         return super().__new__(cls)
 
@@ -672,7 +851,12 @@ class _OrderedDictIterator:
         self._mapping = mapping
         self._kind = kind
         self._back = back
-        self._keys = list(mapping)
+        self._keys = []
+        root = object.__getattribute__(mapping, '_OrderedDict__root')
+        current = root.next
+        while current is not root:
+            self._keys.append(current.key)
+            current = current.next
         if back:
             self._keys.reverse()
         self._at = 0
@@ -699,10 +883,16 @@ class _OrderedDictIterator:
         return len(self._keys) - self._at
 
     def __reduce__(self):
-        clone = type(self)(self._mapping, self._kind, self._back)
-        clone._at = self._at
-        clone._version = self._version
-        return (iter, (list(clone),))
+        if self._mapping._version != self._version:
+            raise RuntimeError('OrderedDict mutated during iteration')
+        remaining = []
+        for key in self._keys[self._at:]:
+            if self._kind == 'k':
+                remaining.append(key)
+            else:
+                value = dict.__getitem__(self._mapping, key)
+                remaining.append(value if self._kind == 'v' else (key, value))
+        return (iter, (remaining,))
 
     def __setstate__(self, state):
         self._at, self._version = state
@@ -737,7 +927,9 @@ def _native_ordered_dict(base):
     marker = object()
 
     class OrderedDict(base):
+        __module__ = 'collections'
         __slots__ = ('_version',)
+        __module__ = 'collections'
 
         def __new__(cls, /, *args, **kwds):
             self = base.__new__(cls, *args, **kwds)
@@ -821,24 +1013,10 @@ def _native_ordered_dict(base):
             return ordered
 
         def __iter__(self):
-            version = self._version
-            root = object.__getattribute__(self, '_OrderedDict__root')
-            current = root.next
-            while current is not root:
-                yield current.key
-                if self._version != version:
-                    raise RuntimeError('OrderedDict mutated during iteration')
-                current = current.next
+            return _OrderedDictIterator(self, 'k')
 
         def __reversed__(self):
-            version = self._version
-            root = object.__getattribute__(self, '_OrderedDict__root')
-            current = root.prev
-            while current is not root:
-                yield current.key
-                if self._version != version:
-                    raise RuntimeError('OrderedDict mutated during iteration')
-                current = current.prev
+            return _OrderedDictIterator(self, 'k', True)
 
     OrderedDict.__module__ = 'collections'
     OrderedDict.__qualname__ = 'OrderedDict'

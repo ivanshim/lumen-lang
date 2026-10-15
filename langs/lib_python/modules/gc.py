@@ -10,6 +10,15 @@ _threshold = (2000, 10, 0)
 garbage = []
 callbacks = []
 
+def get_objects(generation=None):
+    if generation is not None:
+        if not isinstance(generation, int):
+            raise TypeError("'" + type(generation).__name__ + "' object cannot be interpreted as an integer")
+        if generation < 0 or generation > 2:
+            raise ValueError('invalid generation')
+        raise NotImplementedError('the collector does not partition its tracked objects into generations')
+    return __gc_objects()
+
 def collect(generation=2):
     return __gc_collect()
 

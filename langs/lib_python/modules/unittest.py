@@ -4,6 +4,20 @@ _host_class_methods = __class_methods
 _host_clock = __clock
 _host_load_module = __load_module
 _host_program_namespace = __program_namespace
+_host_clear_traceback = __trace_native__
+_traceback_module = None
+
+def _clear_exception_frames(traceback):
+    if traceback is None:
+        return
+    global _traceback_module
+    if _traceback_module is None:
+        _traceback_module = _host_load_module('traceback', 'cached')
+    if _traceback_module is not None:
+        _traceback_module.clear_frames(traceback)
+    elif not _host_clear_traceback(10, traceback):
+        _traceback_module = _host_load_module('traceback')
+        _traceback_module.clear_frames(traceback)
 
 # Assertions and the test lifecycle live beside the modules they serve.
 class SkipTest(Exception):
@@ -31,9 +45,15 @@ class _Raises:
             raise AssertionError(_class_name(self.expected) + ' not raised')
         if not isinstance(value, self.expected):
             return False
-        self.exception = value
-        if self.phrase is not None and self.phrase.search(_message(value)) is None:
-            raise AssertionError('"' + self.phrase.pattern + '" does not match "' + _message(value) + '"')
+        _clear_exception_frames(traceback)
+        self.exception = value.with_traceback(None)
+        # An exception's string is its own message, the way CPython's
+        # assertRaisesRegex reads it; a `message` attribute on the
+        # exception is not the same thing (argparse's ArgumentError
+        # carries the raw text there and the argument name only in
+        # __str__), so the pattern is matched against str(value).
+        if self.phrase is not None and self.phrase.search(str(value)) is None:
+            raise AssertionError('"' + self.phrase.pattern + '" does not match "' + str(value) + '"')
         return True
 
 class TestResult:
@@ -57,8 +77,8 @@ class _NotWarns:
 
     def __enter__(self):
         import warnings
-        self.manager = warnings.catch_warnings(record=True, _internal=True)
-        self.manager.__enter__()
+        self.manager = warnings.catch_warnings(record=True)
+        self.records = self.manager.__enter__()
         warnings.simplefilter('always', self.expected)
         return self
 
@@ -66,7 +86,7 @@ class _NotWarns:
         self.manager.__exit__(kind, value, traceback)
         if kind is not None:
             return False
-        for record in self.manager.records:
+        for record in self.records:
             if isinstance(record.message, self.expected):
                 raise AssertionError(repr(record.message) + ' triggered')
         return False
@@ -76,12 +96,18 @@ class TestCase:
     failureException = AssertionError
     maxDiff = 640
     longMessage = True
+    _class_cleanups = []
 
     def __init__(self, methodName='runTest'):
         self._method = methodName
         self._cleanups = []
         self._result = None
         self._type_equality_funcs = {}
+
+    # Represent a case using its real class and selected method.
+    def __repr__(self):
+        cls = type(self)
+        return '<%s.%s testMethod=%s>' % (cls.__module__, cls.__qualname__, self._method)
 
     @classmethod
     def setUpClass(cls):
@@ -90,6 +116,38 @@ class TestCase:
     @classmethod
     def tearDownClass(cls):
         pass
+
+    @classmethod
+    def addClassCleanup(cls, function, /, *args, **kwargs):
+        # Each concrete class owns its stack, including classes that inherit
+        # fixture methods from another test case.
+        if '_class_cleanups' not in cls.__dict__:
+            cls._class_cleanups = []
+        cls._class_cleanups.append((function, args, kwargs))
+
+    @classmethod
+    def enterClassContext(cls, cm):
+        kind = type(cm)
+        try:
+            enter = kind.__enter__
+            exit = kind.__exit__
+        except AttributeError:
+            raise TypeError(f"'{kind.__module__}.{kind.__qualname__}' object does not support the context manager protocol") from None
+        result = enter(cm)
+        cls.addClassCleanup(exit, cm, None, None, None)
+        return result
+
+    @classmethod
+    def doClassCleanups(cls):
+        import sys
+        cls.tearDown_exceptions = []
+        cleanups = cls.__dict__.get('_class_cleanups', [])
+        while cleanups:
+            function, args, kwargs = cleanups.pop()
+            try:
+                function(*args, **kwargs)
+            except Exception:
+                cls.tearDown_exceptions.append(sys.exc_info())
 
     def setUp(self):
         pass
@@ -114,7 +172,7 @@ class TestCase:
         self._type_equality_funcs[typeobj] = function
 
     def assertEqual(self, a, b, msg=None):
-        if type(a) is type(b):
+        if self._type_equality_funcs and type(a) is type(b):
             assertion = self._type_equality_funcs.get(type(a))
             if assertion is not None:
                 if isinstance(assertion, str):
@@ -151,19 +209,24 @@ class TestCase:
         return getattr(self, '_test_module', '__main__') + '.' + _class_name(self) + '.' + self._method
 
     def assertNotEqual(self, a, b, msg=None):
-        self._check(a != b, str(a) + ' == ' + str(b), msg)
+        if not (a != b):
+            self._check(False, str(a) + ' == ' + str(b), msg)
 
     def assertTrue(self, value, msg=None):
-        self._check(not not value, str(value) + ' is not true', msg)
+        if not value:
+            self._check(False, str(value) + ' is not true', msg)
 
     def assertFalse(self, value, msg=None):
-        self._check(not value, str(value) + ' is not false', msg)
+        if value:
+            self._check(False, str(value) + ' is not false', msg)
 
     def assertIs(self, a, b, msg=None):
-        self._check(a is b, str(a) + ' is not ' + str(b), msg)
+        if a is not b:
+            self._check(False, str(a) + ' is not ' + str(b), msg)
 
     def assertIsNot(self, a, b, msg=None):
-        self._check(a is not b, 'unexpected identity', msg)
+        if a is b:
+            self._check(False, 'unexpected identity', msg)
 
     def assertIsNone(self, value, msg=None):
         self.assertIs(value, None, msg)
@@ -172,13 +235,16 @@ class TestCase:
         self.assertIsNot(value, None, msg)
 
     def assertIn(self, member, container, msg=None):
-        self._check(member in container, str(member) + ' not found in ' + str(container), msg)
+        if member not in container:
+            self._check(False, str(member) + ' not found in ' + str(container), msg)
 
     def assertNotIn(self, member, container, msg=None):
-        self._check(member not in container, str(member) + ' unexpectedly found', msg)
+        if member in container:
+            self._check(False, str(member) + ' unexpectedly found', msg)
 
     def assertIsInstance(self, value, kind, msg=None):
-        self._check(isinstance(value, kind), 'value is not an instance of the requested class', msg)
+        if not isinstance(value, kind):
+            self._check(False, 'value is not an instance of the requested class', msg)
 
     def assertGreater(self, a, b, msg=None):
         if not (a > b):
@@ -206,7 +272,8 @@ class TestCase:
             close = difference <= delta
         else:
             close = difference < 0.5 * 10 ** (-places)
-        self._check(a == b or close, str(a) + ' != ' + str(b) + ' within tolerance', msg)
+        if not (a == b or close):
+            self._check(False, str(a) + ' != ' + str(b) + ' within tolerance', msg)
 
     def assertCountEqual(self, first, second, msg=None):
         left = list(first)
@@ -226,8 +293,15 @@ class TestCase:
     def assertRaises(self, expected, *args, **keywords):
         if len(args) == 0:
             return _Raises(expected)
-        with _Raises(expected):
+        try:
             args[0](*args[1:], **keywords)
+        except BaseException as error:
+            if not isinstance(error, expected):
+                raise
+            _clear_exception_frames(error.__traceback__)
+            error.with_traceback(None)
+            return
+        raise AssertionError(_class_name(expected) + ' not raised')
 
     def assertRaisesRegex(self, expected, phrase, *args, **keywords):
         if len(args) == 0:
@@ -273,17 +347,17 @@ class TestCase:
     def shortDescription(self):
         return None
 
-    def assertNotIsSubclass(self, cls, superclass, msg=None):
-        self._check(not issubclass(cls, superclass), _representation(cls) + ' is a subclass of ' + _representation(superclass), msg)
-
     def assertIsSubclass(self, cls, superclass, msg=None):
-        self._check(issubclass(cls, superclass), _representation(cls) + ' is not a subclass of ' + _representation(superclass), msg)
+        if not issubclass(cls, superclass):
+            self._check(False, _representation(cls) + ' is not a subclass of ' + _representation(superclass), msg)
 
     def assertNotIsSubclass(self, cls, superclass, msg=None):
-        self._check(not issubclass(cls, superclass), _representation(cls) + ' is a subclass of ' + _representation(superclass), msg)
+        if issubclass(cls, superclass):
+            self._check(False, _representation(cls) + ' is a subclass of ' + _representation(superclass), msg)
 
     def assertNotIsInstance(self, value, kind, msg=None):
-        self._check(not isinstance(value, kind), _representation(value) + ' is an instance of the requested class', msg)
+        if isinstance(value, kind):
+            self._check(False, _representation(value) + ' is an instance of the requested class', msg)
 
     def assertNotAlmostEqual(self, a, b, places=None, msg=None, delta=None):
         if delta is not None and places is not None:
@@ -295,7 +369,8 @@ class TestCase:
             close = difference <= delta
         else:
             close = difference < 0.5 * 10 ** (-places)
-        self._check(not (a == b or close), _representation(a) + ' == ' + _representation(b) + ' within tolerance', msg)
+        if a == b or close:
+            self._check(False, _representation(a) + ' == ' + _representation(b) + ' within tolerance', msg)
 
     def assertSequenceEqual(self, first, second, msg=None, seq_type=None):
         if seq_type is not None:
@@ -350,8 +425,8 @@ class TestCase:
         with context:
             args[0](*args[1:], **kwargs)
 
-    def assertWarnsRegex(self, expected, pattern, *args, **kwargs):
-        context = _Warns(expected, pattern)
+    def assertWarnsRegex(self, expected_warning, expected_regex, *args, **kwargs):
+        context = _Warns(expected_warning, expected_regex)
         if len(args) == 0:
             return context
         with context:
@@ -362,20 +437,25 @@ class TestCase:
 
     def assertHasAttr(self, obj, name, msg=None):
         marker = _Context()
-        self._check(getattr(obj, name, marker) is not marker, 'attribute ' + _representation(name) + ' is missing', msg)
+        if getattr(obj, name, marker) is marker:
+            self._check(False, 'attribute ' + _representation(name) + ' is missing', msg)
 
     def assertNotHasAttr(self, obj, name, msg=None):
         marker = _Context()
-        self._check(getattr(obj, name, marker) is marker, 'attribute ' + _representation(name) + ' is present', msg)
+        if getattr(obj, name, marker) is not marker:
+            self._check(False, 'attribute ' + _representation(name) + ' is present', msg)
 
     def assertStartsWith(self, text, prefix, msg=None):
-        self._check(text[:len(prefix)] == prefix, _representation(text) + ' does not start with ' + _representation(prefix), msg)
+        if not (text[:len(prefix)] == prefix):
+            self._check(False, _representation(text) + ' does not start with ' + _representation(prefix), msg)
 
     def assertNotStartsWith(self, text, prefix, msg=None):
-        self._check(text[:len(prefix)] != prefix, _representation(text) + ' starts with ' + _representation(prefix), msg)
+        if not (text[:len(prefix)] != prefix):
+            self._check(False, _representation(text) + ' starts with ' + _representation(prefix), msg)
 
     def assertEndsWith(self, text, suffix, msg=None):
-        self._check(suffix == '' or text[-len(suffix):] == suffix, _representation(text) + ' does not end with ' + _representation(suffix), msg)
+        if not (suffix == '' or text[-len(suffix):] == suffix):
+            self._check(False, _representation(text) + ' does not end with ' + _representation(suffix), msg)
 
     def _tail_type_check(self, text, tails, msg):
         # A prefix or suffix handed a kind it cannot compare fails with
@@ -603,6 +683,11 @@ class TestSuite:
             return True
         outcome = _host_call_outcome(fixture)
         if outcome[0]:
+            if name == 'doClassCleanups':
+                faults = getattr(self.class_, 'tearDown_exceptions', [])
+                for kind, value, traceback in faults:
+                    result.errors = [*result.errors, [name, _message(value), _class_name(self.class_)]]
+                return len(faults) == 0
             return True
         entry = [name, _message(outcome[1], outcome[2]), _class_name(self.class_)]
         if isinstance(outcome[1], SkipTest):
@@ -916,7 +1001,7 @@ class _Warns:
 
     def __enter__(self):
         import warnings
-        self.manager = warnings.catch_warnings(record=True, _internal=True)
+        self.manager = warnings.catch_warnings(record=True)
         self.records = self.manager.__enter__()
         self.warnings = self.records
         warnings.simplefilter('always', self.expected)
@@ -930,7 +1015,7 @@ class _Warns:
         first_matching = None
         matched = False
         non_matching = []
-        for record in self.manager.records:
+        for record in self.records:
             if isinstance(record.message, self.expected):
                 if first_matching is None:
                     first_matching = record.message
@@ -944,9 +1029,7 @@ class _Warns:
                     self.lineno = record.lineno
             else:
                 non_matching = [*non_matching, record]
-        # A nested assertWarns records into the innermost list only, so a
-        # warning claimed by no pattern here is handed back to the enclosing
-        # context instead of being dropped.
+        # Preserve other warning categories for an enclosing recorder.
         for record in non_matching:
             warnings.warn_explicit(record.message, record.category, record.filename, record.lineno)
         if matched:
@@ -1030,9 +1113,12 @@ class TextTestRunner:
                         test._fixture('tearDownClass', result)
             finally:
                 try:
-                    test._module_fixture('tearDownModule', result)
+                    test._fixture('doClassCleanups', result)
                 finally:
-                    test._module_fixture('doModuleCleanups', result)
+                    try:
+                        test._module_fixture('tearDownModule', result)
+                    finally:
+                        test._module_fixture('doModuleCleanups', result)
             return None
         failures = len(result.failures)
         errors = len(result.errors)
@@ -1057,7 +1143,7 @@ class TextTestRunner:
             mark = 'x'
             description = 'expected failure'
         elif len(result.unexpectedSuccesses) > unexpected:
-            mark = 'u'
+            mark = 'F'  # An unexpected success is a failing test result.
             description = 'unexpected success'
         if self.verbosity > 1:
             self._write(description + '\n')

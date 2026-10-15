@@ -22,7 +22,6 @@ pub mod value;
 pub mod code;
 pub mod faint;
 mod core;
-mod multibyte;
 mod posix;
 mod complex;
 mod structpack;
@@ -59,6 +58,7 @@ pub fn run(language: &str, source: &str, program_args: &[String], request: &[(St
             let mut lang = Lang::parse(text).map_err(|e| format!("Error: definition of '{language}': {e}"))?;
             settle_brief(&mut lang, request);
             settle_markup(&mut lang, request);
+            if let Some((entries, sources)) = compile::prepared_entries(text) { lang.prepared_scopes = Some(entries); lang.prepared_source_tokens = Some(sources); }
             return go(&lang, source, program_args, request);
         }
     }
@@ -70,6 +70,7 @@ pub fn run_definition(definition: &str, source: &str, program_args: &[String], r
     let mut lang = Lang::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
     settle_brief(&mut lang, request);
     settle_markup(&mut lang, request);
+    if let Some((entries, sources)) = compile::prepared_entries(definition) { lang.prepared_scopes = Some(entries); lang.prepared_source_tokens = Some(sources); }
     go(&lang, source, program_args, request)
 }
 
@@ -271,8 +272,9 @@ fn whole_import<'a>(source: &'a str, lang: &Lang, before: u32) -> std::borrow::C
 }
 
 fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
-    // File input has universal newlines before the tokenizer sees it.
-    let universal = (!lang.syntax_members.is_empty() && source.contains("\r\n")).then(|| source.replace("\r\n", "\n"));
+    // File input has universal newlines before the tokenizer sees it:
+    // a CRLF pair and a lone CR both end a line.
+    let universal = (!lang.syntax_members.is_empty() && source.contains('\r')).then(|| source.replace("\r\n", "\n").replace('\r', "\n"));
     let source = universal.as_deref().unwrap_or(source);
     let before = lines_before(request);
     let source = whole_import(source, lang, before);
@@ -313,6 +315,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     for name in &lang.module_doc {
         registry.slot(name);
     }
+    registry.source = Some(std::rc::Rc::from(&*source));
     let program = match compile::compile(&tokens, lang, &mut registry, before) {
         Ok(program) => program,
         Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally, &source,
@@ -343,7 +346,20 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     // The same arguments as a list. The file the run was started with
     // stands first in it, as the system that started the run counts it.
     if lang.args_list.is_some() || lang.args_count.is_some() {
-        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "file").map(|(.., v, _)| v.clone());
+        // sys.argv[0] is the path the run was started with: the given
+        // path for a directory, but the resolved file for a script or
+        // -m, whose co_filename and __spec__.origin already name it; the
+        // two must agree or a module filter keyed on __main__ misses.
+        // Only Python runs a directory as the __main__.py inside it, so
+        // only Python reads the given path back for argv[0]; every other
+        // language keeps the resolved file it has always kept.
+        let as_directory = lang.python_numbers
+            && std::env::var("LUMEN_RUN_MODULE").map_or(false, |name| name == "__main__");
+        let wanted = if as_directory { "given" } else { "file" };
+        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "argv0")
+            .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == wanted))
+            .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == "file"))
+            .map(|(.., v, _)| v.clone());
         let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
         all.extend(program_args.iter().map(|a| Value::text(a)));
         if let Some(name) = &lang.args_count {
@@ -556,6 +572,7 @@ fn put_step(into: &mut Vec<(Value, Value)>, steps: &[&str], value: Value) {
     into[at].1 = Value::Map(std::rc::Rc::new(inside.into()));
 }
 mod sre;
+mod multibyte;
 
 
 mod statistics;

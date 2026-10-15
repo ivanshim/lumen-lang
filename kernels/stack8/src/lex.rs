@@ -30,7 +30,7 @@ pub enum Shape {
     Finish,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
     pub shape: Shape,
     pub lexeme: String,
@@ -40,6 +40,8 @@ pub struct Token {
     pub raw: Option<String>,
     pub width: usize,
     pub row: usize,
+    pub byte_column: usize,
+    pub byte_end_column: usize,
     pub column: usize,
     pub end_column: usize,
     pub end_row: usize,
@@ -252,19 +254,20 @@ fn heredoc_at(text: &str, lang: &Lang) -> Option<Heredoc> {
 
 // Only names continued by punctuation need the longest-builtin scan.
 // Index them by the identifier already consumed, once per cursor tree.
-fn continued_names(lang: &Lang) -> std::rc::Rc<std::collections::HashMap<String, Vec<String>>> {
-    let mut names: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
-    for name in lang.builtins.keys().chain(lang.print_file_error.iter()).chain(lang.print_file_output.iter()) {
-        let head: String = name.chars().enumerate()
-            .take_while(|(at, letter)| *at == 0 || lang.extends_name(*letter))
-            .map(|(_, letter)| letter).collect();
-        if head.len() < name.len() { names.entry(head).or_default().push(name.clone()); }
+
+fn symbol_groups(lang: &Lang) -> std::rc::Rc<std::collections::HashMap<char, Vec<&str>>> {
+    let mut groups: std::collections::HashMap<char, Vec<&str>> = std::collections::HashMap::new();
+    for spelling in &lang.symbols {
+        if let Some(first) = spelling.chars().next() {
+            groups.entry(first).or_default().push(spelling);
+        }
     }
-    std::rc::Rc::new(names)
+    std::rc::Rc::new(groups)
 }
 
 struct Cursor<'a> {
     lang: &'a Lang,
+    signs: std::rc::Rc<std::collections::HashMap<char, Vec<&'a str>>>,
     continued: std::rc::Rc<std::collections::HashMap<String, Vec<String>>>,
     text: Vec<char>,
     at: usize,
@@ -301,13 +304,13 @@ impl<'a> Cursor<'a> {
     }
 
     fn push(&mut self, shape: Shape, lexeme: String, width: usize, row: usize, column: usize) {
-        self.out.push(Token { end_row: self.row, end_column: self.column, shape, lexeme, raw: None, width, row, column });
+        self.out.push(Token { byte_column: 0, byte_end_column: 0, end_row: self.row, end_column: self.column, shape, lexeme, raw: None, width, row, column });
     }
 
     /// The same, keeping the spelling the text wrote where folding
     /// changed it, for the language's own words to be matched against.
     fn push_spelled(&mut self, shape: Shape, lexeme: String, raw: Option<String>, width: usize, row: usize, column: usize) {
-        self.out.push(Token { end_row: self.row, end_column: self.column, shape, lexeme, raw, width, row, column });
+        self.out.push(Token { byte_column: 0, byte_end_column: 0, end_row: self.row, end_column: self.column, shape, lexeme, raw, width, row, column });
     }
 
     /// The indentation of a line; a blank line is skipped whole. Returns
@@ -511,6 +514,8 @@ impl<'a> Cursor<'a> {
     }
 
     fn string_open(&self) -> Option<(usize, String, bool, bool)> {
+        let first = self.look(0)?;
+        if first.is_ascii() && !self.lang.string_starters[first as usize] { return None; }
         let lang = self.lang;
         let mut count = 0;
         let (mut raw, mut bytes, mut plain, mut format) = (false, false, false, false);
@@ -542,6 +547,8 @@ impl<'a> Cursor<'a> {
     /// byte and plain, byte and format, or format and template) name
     /// the incompatible pair by Python's prefix precedence.
     fn prefix_conflict(&self) -> Option<String> {
+        let first = self.look(0)?;
+        if first.is_ascii() && !self.lang.string_starters[first as usize] { return None; }
         let lang = self.lang;
         let mut present = [false; 5];
         let mut repeated = false;
@@ -616,12 +623,14 @@ impl<'a> Cursor<'a> {
         // A string read short of its end leaves no warnings of its own:
         // what was pushed while reading it is taken back, so a later
         // pass that gathers warnings keeps only strings that finished.
+        let marker_size = mark.chars().count();
+        let marker_head = mark.chars().next().expect("a string delimiter");
         let saved = self.out.len();
         let outcome = (|| -> Result<(), String> {
             let (line, col) = (self.row, self.column);
             let bytes = self.text[self.at..self.at + prefix].iter().any(|c| self.lang.byte_prefixes.contains(c));
             self.template = if format { self.text[self.at..self.at + prefix].iter().find(|c| self.lang.template_prefixes.contains(c)).copied() } else { None };
-            for _ in 0..prefix + mark.chars().count() { self.step(); }
+            for _ in 0..prefix + marker_size { self.step(); }
             if format { self.push(Shape::StringBegin, self.template.map(|c| c.to_string()).unwrap_or_default(), 0, line, col); }
             let mut warned = false;
             let mut body_start = self.at;
@@ -632,7 +641,7 @@ impl<'a> Cursor<'a> {
                     break;
                 }
                 let Some(c) = self.look(0) else {
-                    let triple = mark.chars().count() > 1;
+                    let triple = marker_size > 1;
                     let named = match (triple, format) {
                         (false, false) => &self.lang.string_unterminated,
                         (true, false) => &self.lang.string_unterminated_triple,
@@ -648,7 +657,7 @@ impl<'a> Cursor<'a> {
                 if bytes && (!c.is_ascii() || c == '\\' && self.look(1).map_or(false, |c| !c.is_ascii())) {
                     return Err(self.lang.byte_words["ext.lexical.string.bytes.ascii"][0].clone());
                 }
-                if c == '\n' && mark.chars().count() == 1 {
+                if c == '\n' && marker_size == 1 {
                     if !format && depth == 0 && !self.lang.syntax_members.is_empty() {
                         if let Some(said) = &self.lang.string_unterminated { return Err(said.clone()); }
                     }
@@ -665,7 +674,20 @@ impl<'a> Cursor<'a> {
                     } else { return Err(self.field_error(1)); }
                 } else if c == '\\' {
                     self.rich_escape(body_start, raw, format, bytes, &mut text, &mut fault, &mut warned)?;
-                } else { text.push(self.step()); }
+                } else if c == '\n' {
+                    text.push(self.step());
+                } else {
+                    let beginning = self.at;
+                    let mut ending = beginning + 1;
+                    while let Some(&letter) = self.text.get(ending) {
+                        if letter == marker_head || matches!(letter, '\\' | '\n')
+                            || format && matches!(letter, '{' | '}') || bytes && !letter.is_ascii() { break; }
+                        ending += 1;
+                    }
+                    text.extend(self.text[beginning..ending].iter().copied());
+                    self.column += ending - beginning;
+                    self.at = ending;
+                }
             }
             if bytes { self.push(Shape::Bytes, text, 0, line, col); }
             else { self.string_text(&mut text, &mut fault, line, col); }
@@ -929,7 +951,7 @@ impl<'a> Cursor<'a> {
         self.push(Shape::StringExpression, expression.clone(), 0, line, col);
         let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
         self.push(Shape::Sign, group.open.clone(), 0, line, col);
-        let mut inner = Cursor { lang: self.lang, continued: self.continued.clone(), text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+        let mut inner = Cursor { lang: self.lang, continued: self.continued.clone(), signs: self.signs.clone(), text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
         if let Err(message) = inner.run(false) {
             self.row = inner.row;
             self.column = inner.column;
@@ -1184,7 +1206,7 @@ impl<'a> Cursor<'a> {
                 self.push(Shape::Quote, part, 0, line, col);
                 continue;
             }
-            let mut inner = Cursor { lang, continued: self.continued.clone(), text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+            let mut inner = Cursor { lang, continued: self.continued.clone(), signs: self.signs.clone(), text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
             inner.run(false)?;
             self.out.append(&mut inner.out);
         }
@@ -1261,14 +1283,24 @@ impl<'a> Cursor<'a> {
                 s.push(self.step());
             }
             if number_spelling(&s, lang).is_err() && !lang.syntax_members.is_empty() {
-                for keyword in ["else", "for", "not", "and", "or", "in", "if", "is"] {
+                // Try the shorter suffix first: a base digit can precede it.
+                for keyword in ["else", "not", "and", "or", "in", "if", "is", "for"] {
                     if let Some(prefix) = s.strip_suffix(keyword) {
                         if !prefix.is_empty() && number_spelling(prefix, lang).is_ok()
                             && !(prefix == "0" && keyword == "or")
-                            && !(prefix.starts_with("0x") && matches!(keyword, "and" | "else")) {
+                            && !((prefix.starts_with("0x") || prefix.starts_with("0X")) && matches!(keyword, "and" | "else")) {
                             let kept = prefix.len();
                             self.at -= keyword.len();
                             self.column -= keyword.len();
+                            // The reference warns about a number a
+                            // keyword was written against, naming
+                            // the base it had already read.
+                            let base = if prefix.starts_with("0b") || prefix.starts_with("0B") { "binary" }
+                                else if prefix.starts_with("0o") || prefix.starts_with("0O") { "octal" }
+                                else if prefix.starts_with("0x") || prefix.starts_with("0X") { "hexadecimal" }
+                                else if prefix.chars().next_back().map_or(false, |c| lang.imaginary_letters.contains(&c)) { "imaginary" }
+                                else { "decimal" };
+                            self.push(Shape::EscapeWarning, format!("invalid {base} literal"), 0, line, col);
                             s.truncate(kept);
                             break;
                         }
@@ -1290,14 +1322,19 @@ impl<'a> Cursor<'a> {
     fn word(&mut self, prefixed: bool) {
         let (line, col) = (self.row, self.column);
         let lang = self.lang;
-        let mut s = String::new();
-        if prefixed {
-            s.push(self.step());
+        let begin = self.at;
+        if prefixed { self.step(); }
+        let letters_begin = self.at;
+        while self.at < self.text.len() {
+            let letter = self.text[self.at];
+            let belongs = if letter.is_ascii() { letter == '_' || letter.is_ascii_alphanumeric() }
+                else { lang.extends_name(letter) };
+            if !belongs { break; }
+            self.at += 1;
         }
-        while let Some(c) = self.look(0).filter(|c| lang.extends_name(*c)) {
-            s.push(c);
-            self.step();
-        }
+        self.column += self.at - letters_begin;
+        let mut s = String::with_capacity(self.at - begin);
+        s.extend(self.text[begin..self.at].iter().copied());
         // A builtin may go on with symbols and more words (println!,
         // console.log): the longest spelled in the definition wins.
         let mut extra = 0;
@@ -1325,13 +1362,14 @@ impl<'a> Cursor<'a> {
         // words are matched against the spelling the text wrote, so the
         // token keeps both when they differ.
         let mut raw = None;
-        if lang.identifier_normalized {
-            let folded = crate::unicode::normalized(&s);
+        if lang.identifier_normalized && !s.is_ascii() {
+            let folded = crate::unicode::normalized(&s, 2);
             if folded != s { raw = Some(std::mem::replace(&mut s, folded)); }
         }
-        let lowered = s.to_lowercase();
-        if lang.names_folded || (lang.keywords_folded && lang.keywords.contains(&lowered)) {
-            s = lowered;
+        // Case-sensitive languages need no lowercase copy of every identifier.
+        if lang.names_folded || lang.keywords_folded {
+            let lowered = s.to_lowercase();
+            if lang.names_folded || lang.keywords.contains(&lowered) { s = lowered; }
         }
         self.push_spelled(Shape::Instr, s, raw, 0, line, col);
     }
@@ -1363,8 +1401,11 @@ impl<'a> Cursor<'a> {
 
     fn symbol(&mut self) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
-        let window: String = self.text[self.at..].iter().take(8).collect();
-        let Some(sym) = self.lang.symbols.iter().find(|s| window.starts_with(s.as_str())).cloned() else {
+        let candidates = self.signs.get(&self.text[self.at]);
+        let selected = candidates.and_then(|spellings| spellings.iter().find(|word| {
+            word.chars().enumerate().all(|(offset, letter)| offset < 8 && self.text.get(self.at + offset) == Some(&letter))
+        }));
+        let Some(sym) = selected.map(|word| (*word).to_owned()) else {
             let c = self.text[self.at];
             if !self.lang.syntax_members.is_empty() && (c.is_control() || c == '\u{a0}') { return Err(format!("SyntaxError: invalid non-printable character U+{:04X}", c as u32)); }
             if !self.lang.syntax_members.is_empty() && !c.is_ascii() { return Err(format!("SyntaxError: invalid character '{c}' (U+{:04X})", c as u32)); }
@@ -1498,11 +1539,24 @@ const BRACKET_LEVELS: usize = 200;
 pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, usize)> {
     let mut tokens = lex_notices(source, lang)?;
     tokens.retain(|t| t.shape != Shape::EscapeWarning);
+    if !lang.trace_fields.is_empty() {
+        let columns: Vec<Vec<usize>> = source.split('\n').map(|line| {
+            let mut offsets = vec![0];
+            for c in line.chars() { offsets.push(offsets.last().unwrap() + c.len_utf8()); }
+            offsets
+        }).collect();
+        for token in &mut tokens {
+            let offset = |row: usize, column: usize| columns.get(row.saturating_sub(1))
+                .and_then(|line| line.get(column.saturating_sub(1))).map_or(column, |byte| byte + 1);
+            token.byte_column = offset(token.row, token.column);
+            token.byte_end_column = if token.end_column == 0 { 0 } else { offset(token.end_row, token.end_column) };
+        }
+    }
     Ok(tokens)
 }
 
 pub fn escape_warnings(source: &str, lang: &Lang) -> Vec<(String, usize)> {
-    if lang.escape_warning.is_empty() || !source.contains('\\') { return Vec::new(); }
+    if lang.escape_warning.is_empty() { return Vec::new(); }
     // A reading that stops short on a fault later in the text still
     // says what it noticed about a string already read, so warnings are
     // gathered straight from the reader rather than only when it ends.
@@ -1512,7 +1566,7 @@ pub fn escape_warnings(source: &str, lang: &Lang) -> Vec<(String, usize)> {
     let source = normalized.as_deref().unwrap_or(source);
     if lang.template || (!lang.syntax_members.is_empty() && source.contains('\0')) { return Vec::new(); }
     let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-    let mut cur = Cursor { lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
+    let mut cur = Cursor { lang, continued: lang.builtin_tails.clone(), signs: symbol_groups(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
     let _ = cur.run(true);
     cur.out.into_iter().filter(|t| t.shape == Shape::EscapeWarning).map(|t| (t.lexeme, t.row)).collect()
 }
@@ -1527,7 +1581,7 @@ fn lex_notices(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, 
         true => woven_source(source, lang).map_err(|(s, r)| (s, r, 1))?,
         false => {
             let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-            let mut cur = Cursor { lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
+            let mut cur = Cursor { lang, continued: lang.builtin_tails.clone(), signs: symbol_groups(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
             if let Err(said) = cur.run(true) {
                 if !lang.syntax_members.is_empty() && said == "SyntaxError: unexpected EOF while parsing" {
                     let mut opens = Vec::new();
@@ -1577,7 +1631,7 @@ fn lex_notices(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, 
     }
     let row = source.chars().filter(|c| *c == '\n').count() + 1;
     let column = source.rsplit('\n').next().unwrap_or("").chars().count() + 1;
-    out.push(Token { end_row: 0, end_column: 0, shape: Shape::Finish, lexeme: "EOF".to_string(), raw: None, width: 0, row, column });
+    out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Finish, lexeme: "EOF".to_string(), raw: None, width: 0, row, column });
     Ok(out)
 }
 
@@ -1683,9 +1737,9 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
         if text.is_empty() {
             return;
         }
-        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), raw: None, width: 0, row: 1, column: 1 });
-        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Quote, lexeme: text.to_string(), raw: None, width: 0, row: 1, column: 1 });
-        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), raw: None, width: 0, row: 1, column: 1 });
+        out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), raw: None, width: 0, row: 1, column: 1 });
+        out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Quote, lexeme: text.to_string(), raw: None, width: 0, row: 1, column: 1 });
+        out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), raw: None, width: 0, row: 1, column: 1 });
     };
     let mut rest = source;
     let mut row = 1;
@@ -1722,16 +1776,16 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
             None => (after, ""),
         };
         let text = drop_comments(code, lang);
-        let mut cur = Cursor { lang, continued: continued_names(lang), text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+        let mut cur = Cursor { lang, continued: lang.builtin_tails.clone(), signs: symbol_groups(lang), text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
         if let Err(said) = cur.run(true) {
             return Err((said, cur.row));
         }
         // A run of code stands as its own statement, however it ended.
         if writes {
-            out.push(Token { end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), raw: None, width: 0, row, column: 1 });
+            out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Instr, lexeme: telling.clone(), raw: None, width: 0, row, column: 1 });
         }
         out.append(&mut cur.out);
-        out.push(Token { end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), raw: None, width: 0, row: cur.row, column: 1 });
+        out.push(Token { byte_column: 0, byte_end_column: 0, end_row: 0, end_column: 0, shape: Shape::Sign, lexeme: ending.clone(), raw: None, width: 0, row: cur.row, column: 1 });
         row = cur.row;
         // One line end straight after the closing marker is PHP's to eat.
         // Eaten or not, the line it ended is a line of the page and is

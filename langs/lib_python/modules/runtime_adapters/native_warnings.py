@@ -184,8 +184,6 @@ def _warn(message, category, filename, lineno, module, source):
     if context is not None and context.record:
         context.records.append(WarningMessage(message, category, filename, lineno, source=source))
     else:
-        if source is not None:
-            raise NotImplementedError('warning allocation traceback cannot run yet')
         showwarning(message, category, filename, lineno)
 
 

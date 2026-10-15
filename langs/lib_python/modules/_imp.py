@@ -10,7 +10,7 @@ def _override_multi_interp_extensions_check(override):
 def is_builtin(name):
     if name in ('sys', 'builtins'):
         return -1
-    return 1 if name in ('_imp', '_thread', '_warnings', '_weakref', '_io', 'posix', 'marshal') else 0
+    return 1 if name in ('_imp', '_thread', '_weakref', '_io', 'posix', 'marshal', '_warnings') else 0
 
 def is_frozen(name):
     return False
@@ -64,3 +64,7 @@ class _NativeLoader:
     def exec_module(module):
         # The source-backed native create operation initializes the namespace.
         pass
+
+    @staticmethod
+    def get_source(fullname):
+        return __loader_source(fullname)

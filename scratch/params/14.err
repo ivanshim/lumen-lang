@@ -1,1 +1,1 @@
-TypeError: argument after ** must be a mapping with string keys
+TypeError: keywords must be strings

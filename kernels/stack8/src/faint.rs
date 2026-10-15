@@ -15,6 +15,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
 use std::rc::{Rc, Weak};
 
 use crate::code::Routine;
@@ -38,6 +39,23 @@ pub(super) fn family_interns(class: &Rc<Class>) -> bool {
     INTERNED_FAMILIES.with(|known| known.borrow().iter().any(|family|
         family.as_ptr() == Rc::as_ptr(class) && family.strong_count() != 0))
 }
+/// A hasher for the graph's keys, which are addresses: one multiply
+/// spreads them, where the default hasher's rounds cost more than the
+/// walk they serve.
+#[derive(Default)]
+struct PlaceHasher(u64);
+
+impl Hasher for PlaceHasher {
+    fn finish(&self) -> u64 { self.0 ^ (self.0 >> 29) }
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes { self.0 = (self.0 ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3); }
+    }
+    fn write_usize(&mut self, address: usize) {
+        self.0 = (address as u64 >> 3).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+}
+
+type Places<V> = HashMap<usize, V, BuildHasherDefault<PlaceHasher>>;
 
 /// What a weak hold points at: one of the kinds a program may hold weakly.
 #[derive(Debug, Clone)]
@@ -85,6 +103,37 @@ impl Hold {
             Hold::Lasts(_) => false,
         }
     }
+}
+
+/// Collect only identities relevant to live callbacks, including the
+/// reference object whose loss cancels its callback. No strong hold is kept.
+fn observe(reference: &Faint, addresses: &mut HashSet<usize>) {
+    addresses.insert(reference.bearer.as_ptr() as usize);
+    match &reference.hold {
+        Hold::Object(target) => { addresses.insert(target.as_ptr() as usize); }
+        Hold::Class(target) => { addresses.insert(target.as_ptr() as usize); }
+        Hold::Routine(target) => { addresses.insert(target.as_ptr() as usize); }
+        Hold::Method(receiver, body, identity) => {
+            addresses.insert(receiver.as_ptr() as usize);
+            addresses.insert(body.as_ptr() as usize);
+            addresses.insert(identity.as_ptr() as usize);
+        }
+        Hold::Generator(target) => {
+            if let Some(live) = target.upgrade() { addresses.insert(live.as_ptr() as usize); }
+        }
+        Hold::Set(target) => {
+            if let Some(live) = target.upgrade() { addresses.insert(live.as_ptr() as usize); }
+        }
+        Hold::Native(..) | Hold::Octets(..) | Hold::Container(_) | Hold::Lasts(_) => {}
+    }
+}
+
+fn observe_remaining(references: &[Rc<Faint>]) {
+    let _ = OBSERVED.try_with(|addresses| {
+        let mut addresses = addresses.borrow_mut();
+        addresses.clear();
+        references.iter().for_each(|reference| observe(reference, &mut addresses));
+    });
 }
 
 /// A weak hold as the program sees it: what it points at, the program's
@@ -140,6 +189,7 @@ thread_local! {
     // Bit zero is queued work; bit one marks a nonempty anchor list.
     static PENDING: Cell<u8> = const { Cell::new(0) };
     /// Whether a value somebody may be watching has gone since the last look.
+    static OBSERVED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
     static DIED: Cell<bool> = const { Cell::new(false) };
     /// Objects rebuilt for their last words, with the routine to say them.
     static LAST_WORDS: RefCell<Vec<(Rc<Instance>, Value)>> = const { RefCell::new(Vec::new()) };
@@ -195,6 +245,7 @@ pub fn clear_group(group: &[Value]) -> Vec<(Value, Value)> {
             }
         }
         let _ = WATCHING.try_with(|count| count.set(kept.len()));
+        observe_remaining(&kept);
         *watched = kept;
         notices
     }).unwrap_or_default();
@@ -261,7 +312,7 @@ fn note_death() {
 }
 
 /// The routine a class says its last words with, where it has one.
-pub fn last_word_of(class: &Class) -> Option<Value> {
+pub fn last_word_of(class: &Rc<Class>) -> Option<Value> {
     LAST_WORD.try_with(|w| {
         let name = w.borrow();
         let name = name.as_deref()?;
@@ -269,7 +320,8 @@ pub fn last_word_of(class: &Class) -> Option<Value> {
             return Some(Value::Routine(program.clone()));
         }
         let holder = class.holder(name)?;
-        holder.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.clone())
+        let answer=holder.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.clone());
+        answer
     }).ok().flatten()
 }
 
@@ -296,24 +348,25 @@ pub fn departing(dying: &mut Instance) {
             wake();
         }
     }
-    if INSTANCE_WATCHES.try_with(|targets| targets.borrow().contains(&here)).unwrap_or(false) { note_death(); }
+    plain_departing(here);
 }
 
 /// A walk is going. One asleep inside a try is rebuilt around its own
 /// frame and queued, so that its last parts run as the language asks.
 pub fn walk_departing(dying: &mut Generator) {
-    let asleep = dying.started && !dying.closed && !dying.finalized && dying.program.is_some();
+    let unawaited = !dying.started && dying.program.as_ref().is_some_and(|body| body.code_flags & 128 != 0);
+    let asleep = (dying.started || unawaited) && !dying.closed && !dying.finalized && dying.program.is_some();
     if asleep && LAST_WORD.try_with(|w| w.borrow().is_some()).unwrap_or(false) {
         // Build only while the queue is alive. A rejected try_with must
         // not drop a captured suspended body and recursively rebuild it.
         let _ = UNFINISHED.try_with(|q| {
             let again = Generator {
-                name: dying.name.clone(), qualified: dying.qualified.clone(), trace_frame: dying.trace_frame.take(), suspended_position: dying.suspended_position,
+                name: dying.name.clone(), qualified: dying.qualified.clone(), coroutine_identity: dying.coroutine_identity, coroutine_origin: dying.coroutine_origin.clone(), async_hooks_initialized: dying.async_hooks_initialized, async_finalizer: dying.async_finalizer.clone(), trace_frame: dying.trace_frame.take(), suspended_position: dying.suspended_position,
                 program: dying.program.clone(),
                 frame: std::mem::take(&mut dying.frame),
                 stack: std::mem::take(&mut dying.stack),
                 pc: dying.pc,
-                started: true,
+                started: dying.started,
                 closed: false,
                 finalized: false,
                 waiting: dying.waiting,
@@ -327,6 +380,7 @@ pub fn walk_departing(dying: &mut Generator) {
                 reversed_walk: dying.reversed_walk.take(),
                 resume: std::mem::take(&mut dying.resume),
                 resuming: dying.resuming,
+                running: false,
                 held: std::mem::take(&mut dying.held),
                 hurled: dying.hurled.take(),
                 walked: dying.walked.take(),
@@ -337,12 +391,14 @@ pub fn walk_departing(dying: &mut Generator) {
         });
         wake();
     }
-    note_death();
+    plain_departing(dying as *const Generator as usize);
 }
 
 /// A set, a class or a routine is going: only the watchers care.
-pub fn plain_departing() {
-    note_death();
+pub fn plain_departing(address: usize) {
+    if WATCHING.try_with(Cell::get).unwrap_or(0) == 0 { return; }
+    let interested = OBSERVED.try_with(|addresses| addresses.borrow().contains(&address)).unwrap_or(false);
+    if interested { note_death(); }
 }
 
 /// What the engine has to do now: the objects with last words to say,
@@ -388,6 +444,7 @@ pub fn settle() -> (Vec<(Rc<Instance>, Value)>, Vec<Rc<RefCell<Generator>>>, Vec
             }
             let _ = INSTANCE_WATCHES.try_with(|targets| *targets.borrow_mut() = observed);
             kept.reverse();
+            observe_remaining(&kept);
             *watched = kept;
         });
     }
@@ -453,6 +510,7 @@ pub fn make(hold: Hold, bearer: Weak<Instance>, told: Option<Value>) -> Value {
         });
     }
     if faint.told.borrow().is_some() {
+        let _ = OBSERVED.try_with(|addresses| observe(&faint, &mut addresses.borrow_mut()));
         let _ = WATCHED.try_with(|w| w.borrow_mut().push(faint.clone()));
         let _ = WATCHING.try_with(|n| n.set(n.get() + 1));
     }
@@ -499,8 +557,8 @@ struct Node {
 /// unreachable by the program.
 pub struct Graph {
     order: Vec<usize>,
-    nodes: HashMap<usize, Node>,
-    bookkeeping: HashMap<usize, usize>,
+    nodes: Places<Node>,
+    bookkeeping: Places<usize>,
 }
 
 /// Where a value's pointer stands, for the kinds that live behind one.
@@ -573,11 +631,13 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                 out.extend(shared.iter().map(|(_, v)| v.clone()));
             }
             out.extend(c.methods.iter().map(|(_, p)| Value::Routine(p.clone())));
-            out.extend(c.base.iter().map(|b| Value::Class(b.clone())));
-            out.extend(c.lineage.borrow().iter().chain(&c.direct).chain(&c.answers).map(|b| Value::Class(b.clone())));
+            out.extend(c.base().iter().map(|b| Value::Class(b.clone())));
+            out.extend(c.lineage().iter().chain(&c.direct()).chain(&c.answers).map(|b| Value::Class(b.clone())));
         }
         Value::Generator(g) => {
             if let Ok(g) = g.try_borrow() {
+                out.push(g.coroutine_origin.clone());
+                out.push(g.async_finalizer.clone());
                 out.extend(g.trace_frame.iter().map(|f| Value::Object(f.clone())));
                 out.extend(g.program.iter().map(|p| Value::Routine(p.clone())));
                 out.extend(g.frame.iter().cloned());
@@ -594,6 +654,10 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                     match &step.phase {
                         Phase::Arm(_, v) => out.push(v.clone()),
                         Phase::Last(Ending::Thrown(v), _) => out.push(v.clone()),
+                        Phase::ContextExit(left, walk, _) => {
+                            out.push(walk.clone());
+                            if let Ending::Thrown(value) = left { out.push(value.clone()); }
+                        }
                         _ => {}
                     }
                 }
@@ -708,9 +772,24 @@ fn external_places(value: Value, out: &mut Vec<Value>) {
 }
 
 impl Graph {
+    /// The actual owners in this collector snapshot, once per heap identity.
+    /// Returning clones retains their existing Python identities.
+    pub fn tracked_objects(&self) -> Vec<Value> {
+        self.order.iter().filter_map(|place|self.nodes.get(place)).filter_map(|node| {
+            match &node.held {
+                Value::Fields(object)=>Some(Value::Object(object.clone())),
+                Value::Tie(_) | Value::Hashed(_)=>None,
+                Value::Array(_) | Value::Map(_)=>None,
+                Value::Binding(cell)=>Some(Value::Adapter(Rc::new((31,vec![Value::Binding(cell.clone())])))),
+                Value::Bond(cell) if !matches!(&*cell.borrow(),Value::Array(_)|Value::Map(_)|Value::Set(_)|Value::Collection(..))=>None,
+                value=>Some(value.clone()),
+            }
+        }).collect()
+    }
+
     /// Everything reachable from the remembered candidates still alive.
     pub fn from_candidates(extra: Vec<Value>, live: Vec<Value>) -> Graph {
-        let mut bookkeeping = HashMap::new();
+        let mut bookkeeping = Places::default();
         for value in &extra {
             let parts = match value {
                 Value::Method(object, routine, _) => vec![Value::Object(object.clone()), Value::Routine(routine.clone())],
@@ -738,8 +817,8 @@ impl Graph {
         }
     }
 
-    fn build(roots: Vec<Value>, bookkeeping: HashMap<usize, usize>) -> Graph {
-        let mut nodes: HashMap<usize, Node> = HashMap::new();
+    fn build(roots: Vec<Value>, bookkeeping: Places<usize>) -> Graph {
+        let mut nodes: Places<Node> = Places::default();
         let mut order = Vec::new();
         let mut open: Vec<usize> = Vec::new();
         for root in roots {
@@ -757,11 +836,11 @@ impl Graph {
             let mut reached = Vec::with_capacity(children.len());
             for child in children.drain(..) {
                 // A bound method is not a place of its own but two.
-                let parts: Vec<Value> = match child {
-                    Value::Method(o, r, _) => vec![Value::Object(o), Value::Routine(r)],
-                    other => vec![other],
+                let (first, second) = match child {
+                    Value::Method(o, r, _) => (Value::Object(o), Some(Value::Routine(r))),
+                    other => (other, None),
                 };
-                for part in parts {
+                for part in std::iter::once(first).chain(second) {
                     let Some(at) = place_of(&part) else { continue };
                     match nodes.get_mut(&at) {
                         Some(node) => node.inward += 1,
@@ -854,6 +933,8 @@ impl Graph {
                 Value::Generator(g) => {
                     if let Ok(mut g) = g.try_borrow_mut() {
                         g.closed = true;
+                        grave.push(std::mem::replace(&mut g.coroutine_origin, Value::Null));
+                        grave.push(std::mem::replace(&mut g.async_finalizer, Value::Null));
                         grave.extend(g.frame.drain(..));
                         grave.extend(g.stack.drain(..));
                         grave.extend(g.items.drain(..));
@@ -889,7 +970,7 @@ impl Graph {
 /// Whether a walk in the graph is asleep inside a try, so that closing
 /// it is the finalisation the language asks for.
 pub fn asleep(walk: &Rc<RefCell<Generator>>) -> bool {
-    walk.try_borrow().map_or(false, |g| g.started && !g.closed && !g.finalized && g.program.is_some())
+    walk.try_borrow().map_or(false, |g| (g.started || g.program.as_ref().is_some_and(|code| code.code_flags & 128 != 0)) && !g.closed && !g.finalized && g.program.is_some())
 }
 
 /// Compare weak targets by identity, including classes and builtin types.

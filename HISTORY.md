@@ -2705,3 +2705,99 @@ check of the final commit agrees on 1196 scratch programs with no mismatch, pass
 regression, broken progress line or kernel disagreement; the only length changes are builtin's new doctest and
 tokenize's coverage gain; kernel independence reports no problem. Still timing out in parts: decimal, bytes,
 tokenize (microcode7), io's TextIOWrapper classes and email as a whole file.
+
+### 1bk. Batch 21g merged as #542; batch 21h: rlcompleter, pep646, codecs, extcall, dynamic, pkg, typing, pathlib, locale
+
+Twelve branches, each reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator; the
+branches came from DeepSeek V4.1 Flash and GPT-6.1 Sol workers.
+
+- fix/dsflash-rlcompleter (rlcompleter; real native getsets), fix/dsflash-pep646 (PEP 646 star syntax; lambda star
+  probes), fix/stdlib-codecs (codecs, one faithful implementation), fix/dsflash-extcall (call-spread mapping
+  expansion via keys(), real callee names), fix/dsflash-dynamic (dynamic builtins and globals; deep-list overflow on
+  microcode7), fix/dsflash-pkg (package imports, wildcard submodules), fix/dsflash-stringprep (UCD 3.2 normalization),
+  fix/dsflash-yieldfrom (yield from, generator_stop), fix/stdlib-typing (typing and types, partial), fix/stdlib-pathlib
+  (pathlib, io/posixpath additions), fix/dsflash-locale (locale), fix/dsflash-ucn (CJK/Tangut algorithmic names).
+
+Integration corrections followed the merges: native namespace and protocol behaviour preserved across the merged
+kernels, reference regressions from the first full check repaired (bytes, dataclasses, hmac, reprlib, syntax), pathlib
+runners given their package test context, ordinary calls kept off the spread-error name lookup, staged doctest context
+preserved, and the tokenizer's quoted-text scan made cheaper. One canonical test.support subTests awaits coroutine
+tests; failing async tests and async partials fail on both kernels; inspect recognizes coroutine partials.
+
+Measured: 12949 (stack8) of 14167 and 12811 (microcode7) of 14030, over 185 files, from 11764 of 12914 and 11666 of
+12818 over 166. New files: test_dynamic 11/11, test_extcall 1/1 (148 doctests), test_generator_stop 2/2, test_locale
+40/43, test_longexp 1/1, test_pep646_syntax 1/1 (117 doctests), test_pkg 8/8, test_rlcompleter 11/11, test_stringprep
+1/1, test_types 118/128, test_typing 679/714, test_ucn 16/18, test_yield_from 43/43, the pathlib runners 211/230;
+codecs 273/288 and pathlib 950/1369 by class (both whole files still time out). test_dataclasses 271 -> 272 on both
+kernels; test_bytes 170 -> 171 (microcode7) and 170/227 -> 217/274 on stack8, where ByteArrayAsStringTest now
+completes. The full check of the final commit agrees on 1196 scratch programs with no mismatch, passes every gate, and
+shows no regression, broken progress line or kernel disagreement; the length changes are bytes' coverage gain and
+stack8 tokenize 132 -> 126 (its roundtrip class timed out again); kernel independence reports no problem. Still slow
+or timing out: contextlib runs about a third (stack8) to a half (microcode7) longer than in 21g; decimal, bytes,
+calendar, tokenize, io's TextIOWrapper classes, codecs and pathlib time out as whole files or in parts.
+
+### 1bl. Batch 21h merged as #543; batch 21i: shelve, argparse, io, gettext, unicode, bufio, traceback, coroutines, descr
+
+Twelve branches, each reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator and
+finished by a GPT-6 Astra escalation; the branches came from DeepSeek V4.1 Flash, DeepSeek V4 Pro, Claude Sonnet 5.5
+and GPT-6.1 Sol workers.
+
+- fix/dsflash-shelve-dbm (dbm_dumb, shelve), fix/perf-mc7-overhead (microcode7 call overhead; timing only),
+  fix/dspro-argparse (argparse, byte-exact argparse/gettext/shutil/py_compile), fix/claude-io (buffered and text
+  streams), fix/dsflash-gettext (gettext; unittest class cleanups, mock defaults), fix/dsflash-picklebuffer
+  (PickleBuffer tests), fix/dsflash-unicode-file (database-driven normalization), fix/dsflash-bufio (bufio; guarded
+  readinto refill), fix/stdlib-traceback (canonical traceback, positioned assertions, codeop), fix/stdlib-coroutines
+  (coroutines; finalizer globals, async-generator ownership), fix/dsflash-robotparser (robotparser; microcode7
+  separator whitespace), fix/stdlib-descr (descr; class and MRO behaviour).
+
+Integration corrections followed the merges: empty-suite start-up restored by loading unittest.case lazily (12.0/14.2 s
+-> 2.9/2.9 s, below 21h), retained-finalizer scans made cheaper, re-entrant metaclass MRO hooks see the proposed bases
+(descr 148/163 on both kernels), and stack8 compilation no longer formats unreachable placeholder names. One
+canonical test.support subTests awaits coroutine tests; failing async tests and async partials fail on both kernels;
+inspect recognizes coroutine partials.
+
+Measured: 15329 (stack8) of 16974 and 15185 (microcode7) of 16828, over 198 files, from 12949 of 14167 and 12811 of
+14030 over 185. New files: test_bufio 4/4, test_coroutines 97/100, test_dbm_dumb 26/26, test_descr 148/163,
+test_gettext 73/74, test_picklebuffer 6/9, test_robotparser 101/110, test_shelve 182/182, test_unicode_file 2/2,
+test_unicode_file_functions 30/30, test_warnings 173/197; argparse 1893/1894 and traceback 204/370 by group (both
+whole files still time out). Also array 833 -> 847, bigmem 161 -> 162, builtin 116 -> 120, dataclasses 272 -> 274,
+enumerate 77 -> 78, generators 57 -> 58, types 118 -> 119, typing 679 -> 684, patma 0 -> 326/328, tabnanny 0 -> 18/20,
+pathlib 950/1369 by class, bytes 266/321 and io 613/669 (stack8) / 531/585 (microcode7), calendar 76/79 on microcode7,
+decimal 167/368 on stack8. The full check of the final commit agrees on 1239 scratch programs with no mismatch, passes
+every gate, and shows no regression, broken progress line or kernel disagreement; the length changes (bytes, decimal,
+io, microcode7 calendar) are coverage gains; kernel independence reports no problem. Still slow or timing out:
+exceptions runs about a third longer on both kernels and with about a quarter to a half longer (the canonical
+traceback's cold imports, paid again by every child interpreter); decimal, tokenize, io's CTextIOWrapper class,
+argparse, traceback, codecs, email, json, pickle and pickletools time out as whole files or in parts.
+
+### 1bm. Batch 21i merged as #544; batch 21j: warnings, platform, cookiejar, future, tarfile, deque, json, tempfile, zoneinfo
+
+Twelve branches, each reviewed and accepted on its own, were merged one at a time by a GPT-6.1 Sol integrator; the
+branches came from DeepSeek V4.1 Flash, Claude Sonnet 5.5 and GPT-6.1 Sol workers.
+
+- fix/stdlib-warnings (warnings; finder namespace, replacement and parent-binding fixes), fix/dsflash-platform
+  (platform), fix/stdlib-http-cookiejar (http.cookiejar), fix/dsflash-future-stmt (postponed-annotation grammar),
+  fix/dsflash-type-aliases (type aliases, outer-list GenericAlias repr), fix/stdlib-tarfile (tarfile),
+  fix/claude-deque (deque), fix/dsflash-charmapcodec (charmap codecs), fix/dsflash-json-speed (json speed; closed-stdin
+  communicate), fix/dsflash-source-encoding (source encoding notices in both scanners), fix/stdlib-tempfile
+  (tempfile), fix/stdlib-zoneinfo (zoneinfo, native lzma).
+
+Integration corrections followed the merges: the public POSIX wrapper carried by tempfile forwards natively (native
+errno and BrokenPipeError kept); exact bytes skip a needless memoryview in the shared codec and builtin buffer helpers
+(other buffers keep their validation; a 100-iteration IO probe about 17 % faster); prepared-library metadata uses a
+bounded one-entry proof cache per kernel and the preparation roster includes the large shared start-up libraries and
+locale; dict.get no longer builds mutation-position snapshots. The coroutine requirements of 21i hold: one canonical
+test.support subTests awaits coroutine tests, and failing async tests and async partials fail on both kernels.
+
+Measured: 17985 (stack8) of 19680 and 16041 (microcode7) of 17724, over 209 files, from 15329 of 16974 and 15185 of
+16828 over 198. New files: test_charmapcodec 4/4, test_future_stmt 31/31, test_http_cookiejar 80/80, test_platform
+34/39, test_source_encoding 93/94, test_tempfile 108/118, test_type_aliases 30/30, test_zoneinfo 237/275; deque 77/80
+and tarfile 538/760 by group (both whole files still time out). Also json TIMEOUT -> 222/225 on both kernels, email
+TIMEOUT -> 1800/1810 on stack8, warnings 173 -> 187/197, io 613 -> 615/669 (stack8) and 531 -> 533/585 (microcode7),
+typing 684 -> 685. The full check of the final commit agrees on 1246 scratch programs with no mismatch, passes every
+gate, and shows no regression, length change or broken progress line; its one kernel disagreement is test_email, which
+completes on stack8 and still times out as a whole file on microcode7 under the debug build (it timed out on both
+before; coverage, not a lost pass). Kernel independence reports no problem. Against 21i, pathlib, datetime and
+userstring are no slower; json now completes but runs about a third slower than on its own branch. Still timing out as
+whole files or in parts: deque, tarfile, email (microcode7), io's CTextIOWrapper class, decimal, tokenize, argparse,
+traceback, codecs, pickle and pickletools.

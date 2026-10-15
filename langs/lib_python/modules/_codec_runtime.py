@@ -270,17 +270,20 @@ class CodecInfo(tuple):
 
 _registry_cache = {}
 _registry_started = False
+_registry_normalizer = None
 
 # Resolve normalized codec names through registered search functions.
 def lookup(encoding):
-    global _registry_started
+    global _registry_started, _registry_normalizer
     if not isinstance(encoding, str):
         raise TypeError('encoding must be str, not ' + type(encoding).__name__)
     encoding.encode('utf-8')
     if '\0' in encoding:
         raise ValueError('embedded null character')
-    from _codecs import _normalize_encoding
-    name = _normalize_encoding(encoding).lower()
+    if _registry_normalizer is None:
+        from _codecs import _normalize_encoding
+        _registry_normalizer = _normalize_encoding
+    name = _registry_normalizer(encoding).lower()
     if name in _registry_cache:
         return _registry_cache[name]
     if not _registry_started:
@@ -656,7 +659,11 @@ def charmap_decode(data, errors='strict', mapping=None):
     return (result, len(data))
 
 def charmap_build(mapping):
-    return {ord(c): i for i, c in enumerate(mapping) if c != '\ufffe'}
+    if not isinstance(mapping, str):
+        raise TypeError('charmap_build() argument must be str, not ' + type(mapping).__name__)
+    if not mapping:
+        raise TypeError('bad argument type for built-in operation')
+    return {ord(c): i for i, c in enumerate(mapping[:256]) if c != '\ufffe'}
 
 # Read an encoding map through indexing and preserve undefined entries.
 def _mapped(mapping, code):

@@ -364,6 +364,7 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         return crate::unicode::named_text(name).map(|text| Value::text(&text)).ok_or_else(|| "KeyError: undefined character name".into());
     }
     if op == 11 {
+        let form = number(2).unwrap_or(2) as u8;
         let supplied = args.get(1).ok_or_else(|| "TypeError: normalize() argument 2 must be str".to_string())?;
         let plain = supplied.type_text();
         if matches!(&plain, Value::Text(text) if text.is_ascii()) { return Ok(plain); }
@@ -379,13 +380,13 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
             match char::from_u32(n) {
                 Some(c) => run.push(c),
                 None => {
-                    out.extend(crate::unicode::normalized(&run).chars().map(u32::from));
+                    out.extend(crate::unicode::normalized(&run, form).chars().map(u32::from));
                     run.clear();
                     out.push(n);
                 }
             }
         }
-        out.extend(crate::unicode::normalized(&run).chars().map(u32::from));
+        out.extend(crate::unicode::normalized(&run, form).chars().map(u32::from));
         return Ok(Value::from_codes(out));
     }
     if op == 12 {

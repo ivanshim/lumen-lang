@@ -58,3 +58,14 @@ load_string.__qualname__ = '_Unpickler.load_string'
 _Unpickler.load_string = load_string
 _Unpickler.dispatch[STRING[0]] = load_string
 del load_string
+
+# Reduce native typing objects through their actual runtime kinds.
+def _save_native_generic_alias(self, obj):
+    self.save_reduce(type(obj), (obj.__origin__, obj.__args__), obj=obj)
+
+import _typing as _native_typing
+import types as _native_types
+for _parameter_name in ('TypeVar', 'ParamSpec', 'TypeVarTuple', 'TypeAliasType'):
+    _Pickler.dispatch[getattr(_native_typing, _parameter_name)] = _Pickler.save_global
+_Pickler.dispatch[_native_types.GenericAlias] = _save_native_generic_alias
+del _native_typing, _native_types, _parameter_name

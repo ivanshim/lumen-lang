@@ -39,10 +39,13 @@ def forget(modname):
         cache_from_source = importlib.util.cache_from_source
     for dirname in sys.path:
         source = os.path.join(dirname, modname + '.py')
-        unlink(source + 'c')
+        if os.path.lexists(source + 'c'):
+            unlink(source + 'c')
         if cache_from_source is not None:
             for opt in ('', 1, 2):
-                unlink(cache_from_source(source, optimization=opt))
+                cached = cache_from_source(source, optimization=opt)
+                if os.path.lexists(cached):
+                    unlink(cached)
 
 @contextlib.contextmanager
 def _ignore_deprecated_imports(ignore=True):
@@ -292,3 +295,19 @@ def ensure_lazy_imports(imported_module, modules_to_block):
     )
     from .script_helper import assert_python_ok
     assert_python_ok("-S", "-c", script)
+
+
+def make_legacy_pyc(source):
+    """Move a PEP 3147/488 pyc file to its legacy pyc location.
+
+    :param source: The file system path to the source file.  The source file
+        does not need to exist, however the PEP 3147/488 pyc file must exist.
+    :return: The file system path to the legacy pyc file.
+    """
+    import importlib.util
+    import shutil
+    pyc_file = importlib.util.cache_from_source(source)
+    assert source.endswith('.py')
+    legacy_pyc = source + 'c'
+    shutil.move(pyc_file, legacy_pyc)
+    return legacy_pyc

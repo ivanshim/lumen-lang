@@ -3,21 +3,75 @@ _host_stream_read = __stream_read
 _host_stream_write = __stream_write
 _host_environment = __posix
 
+def _write_standard(*args):
+    result = _host_stream_write(*args)
+    if isinstance(result, tuple):
+        raise OSError(*result)
+    return result
+
 # Host details which the present numeric and object model can honour.
 argv = __program_namespace()['__program_argv']
+# Startup options are consumed by the warnings module when first imported.
+warnoptions = []
+_startup_options = __posix('environ')[1].get(b'LUMEN_WARNOPTIONS', b'').decode('utf-8')
+while _startup_options:
+    _size, _tail = _startup_options.split(':', 1)
+    _size = int(_size)
+    warnoptions.append(_tail[:_size])
+    _startup_options = _tail[_size:]
+del _startup_options
+_xoptions = {}
+_startup_options = __posix('environ')[1].get(b'LUMEN_XOPTIONS', b'').decode('utf-8')
+while _startup_options:
+    _size, _tail = _startup_options.split(':', 1)
+    _size = int(_size)
+    _option = _tail[:_size]
+    _name, _equals, _value = _option.partition('=')
+    _xoptions[_name] = _value if _equals else True
+    _startup_options = _tail[_size:]
+del _startup_options
 # Where a name that is `import`ed is looked for: a directory put here
 # is searched, in order, before the library carried inside this run.
-# The isolated default contains the library's own source location.
-# Callers add other directories explicitly; a program's directory is not
-# placed ahead of the embedded library merely because it contains a script.
+# Keep the safe-path default without implicitly adding the script directory.
+# Explicit PYTHONPATH entries precede the embedded library in their given order.
+# Normalize a POSIX search entry against the startup directory.
+def _absolute_search_entry(entry, cwd):
+    if not entry.startswith('/'):
+        entry = cwd + '/' + entry
+    prefix = '//' if entry.startswith('//') and not entry.startswith('///') else '/'
+    pieces = []
+    for piece in entry.split('/'):
+        if piece in ('', '.'):
+            continue
+        if piece == '..':
+            if pieces:
+                pieces.pop()
+        else:
+            pieces.append(piece)
+    return prefix + '/'.join(pieces)
+
+
 path = [__file__.rsplit('/', 1)[0]]
+_path_host = __host_info()
+_python_path = _path_host[3].get('PYTHONPATH', '')
+if _python_path:
+    _search_paths = []
+    for _entry in _python_path.split(':') + path:
+        _entry = _absolute_search_entry(_entry, _path_host[0])
+        if _entry not in _search_paths:
+            _search_paths.append(_entry)
+    path = _search_paths
 maxsize = 9223372036854775807
 # Where a written bytecode cache would live, and whether one is
 # written: the reference reads both while naming a cache file.
 pycache_prefix = None
 dont_write_bytecode = True
 version_info = (3, 14, 8, 'final', 0)
-version = '3.14.8 (Lumen)'
+version = '3.14.8 (Lumen) [Rust]'
+# The source-control identity the reference build records beside the
+# version. This interpreter is not checked out from CPython's tree, so
+# there is no branch or revision; the build tag names it plainly instead.
+_git = ('Lumen', '', '')
 hexversion = 0x030e08f0
 platform = 'linux'
 # Which Python this is. A test that reaches for the internals of the
@@ -30,9 +84,23 @@ implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
+from _runtime_import import SourceFinder as _SourceFinder, make_spec as _make_spec, find_custom as _find_custom
+meta_path = [_SourceFinder()]
+path_hooks = []
+path_importer_cache = {}
+pycache_prefix = None
 _recursion_limit = 1000
 
-# Startup flags describe the library environment and requested development mode.
+def _environment(name):
+    import posix
+    value = posix.environ.get(name)
+    if value is None:
+        value = posix.environ.get(name.encode())
+    if isinstance(value, bytes):
+        value = value.decode()
+    return value
+
+# Stub: startup flags describe the fixed library environment.
 class _Flags:
     debug = 0
     inspect = 0
@@ -41,15 +109,25 @@ class _Flags:
     dont_write_bytecode = 1
     no_user_site = 1
     no_site = 1
-    ignore_environment = 1
+    ignore_environment = 0
     verbose = 0
     bytes_warning = 0
     quiet = 0
     hash_randomization = 0
     isolated = 1
-    dev_mode = _host_environment('environ')[1].get(b'LUMEN_PYTHON_DEV_MODE') == b'1'
-    utf8_mode = 1
-    warn_default_encoding = 0
+    # The options that PYTHONDEVMODE, PYTHONUTF8 and
+    # PYTHONWARNDEFAULTENCODING (or -X dev, -X utf8, -X
+    # warn_default_encoding, which the helpers that start a second
+    # interpreter hand over as those) turn on or off, read when asked.
+    @property
+    def dev_mode(self):
+        return bool(_environment('PYTHONDEVMODE')) or _host_environment('environ')[1].get(b'LUMEN_PYTHON_DEV_MODE') == b'1'
+    @property
+    def utf8_mode(self):
+        return 0 if _environment('PYTHONUTF8') == '0' else 1
+    @property
+    def warn_default_encoding(self):
+        return 1 if _environment('PYTHONWARNDEFAULTENCODING') else 0
     safe_path = True
     int_max_str_digits = 4300
     gil = 1
@@ -135,6 +213,8 @@ def set_int_max_str_digits(maxdigits):
 # takes its own skip road instead of finding an attribute missing.
 class _StandardStream:
     closed = False
+    encoding = 'utf-8'
+    errors = 'backslashreplace'
 
     def _ensure_open(self):
         if self.closed:
@@ -182,7 +262,7 @@ class _BinaryOutput(_StandardStream):
         self.error = error
     def write(self, data):
         self._ensure_open()
-        return _host_stream_write(data, self.error, True)
+        return _write_standard(data, self.error, True)
     def flush(self):
         self._ensure_open()
     def isatty(self):
@@ -195,7 +275,7 @@ class _Output(_StandardStream):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
         self._ensure_open()
-        return _host_stream_write(*args, False)
+        return _write_standard(*args, False)
 
     def flush(self):
         self._ensure_open()
@@ -210,7 +290,7 @@ class _Error(_StandardStream):
         if keywords:
             raise TypeError("write() takes no keyword arguments")
         self._ensure_open()
-        return _host_stream_write(*args, True)
+        return _write_standard(*args, True)
 
     def flush(self):
         self._ensure_open()
@@ -359,12 +439,19 @@ def getsizeof(value, default=None):
         if base is object or base in _sizeof_bases:
             break
         if '__sizeof__' in base.__dict__:
-            measured = type(value).__sizeof__(value)
+            method = base.__dict__['__sizeof__']
+            binder = getattr(type(method), '__get__', None)
+            if binder is not None:
+                method = binder(method, value, type(value))
+            try:
+                measured = method()
+            except TypeError:
+                if default is not None:
+                    return default
+                raise
             if not isinstance(measured, int):
                 raise TypeError('__sizeof__() should return int, got ' + type(measured).__name__)
             if measured < 0:
-                if default is not None:
-                    return default
                 raise ValueError('__sizeof__() should return >= 0')
             return measured
     # A rough count of the value's payload and its enclosing record.
@@ -423,11 +510,15 @@ def _report_unraisable(exc_value, exc_traceback, about, kind):
             exc_traceback = raised.__traceback__
     if kind == 'deallocator':
         message = 'Exception ignored while calling deallocator ' + repr(about)
+    elif kind == 'file':
+        message = 'Exception ignored while finalizing file ' + repr(about)
+    elif kind == 'coroutine':
+        message = 'Exception ignored while finalizing coroutine ' + repr(about)
     elif kind == 'generator':
         message = 'Exception ignored while closing generator ' + repr(about)
     else:
         message = None
-    target = None if kind == 'generator' else about
+    target = None if kind in ('generator', 'coroutine', 'file') else about
     try:
         unraisablehook(UnraisableHookArgs(type(exc_value), exc_value,
                                          exc_traceback, message, target))
@@ -497,7 +588,7 @@ def _getframemodulename(depth=0):
     return __frame_module(max(depth, 0) + 1)
 
 # Names supplied by the native importer and its source-backed adapters.
-builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_warnings', '_weakref', '_io', 'posix', 'marshal')
+builtin_module_names = ('sys', 'builtins', '_imp', '_thread', '_weakref', '_io', 'posix', 'marshal', '_warnings')
 
 
 def getfilesystemencoding():
@@ -517,3 +608,44 @@ def settrace(trace):
     __trace_native__(1, trace)
 def getdefaultencoding():
     return "utf-8"
+# Source and native modules participate in the same finder protocol.
+
+
+def getrefcount(object, /):
+    return __trace_native__(5, object)
+
+
+def get_coroutine_origin_tracking_depth():
+    return __trace_native__(3)
+
+
+def set_coroutine_origin_tracking_depth(depth):
+    from operator import index
+    __trace_native__(4, index(depth))
+
+
+_asyncgen_hook_missing = object()
+_asyncgen_hook_type = None
+
+
+def get_asyncgen_hooks():
+    global _asyncgen_hook_type
+    if _asyncgen_hook_type is None:
+        from collections import namedtuple
+        _asyncgen_hook_type = namedtuple('asyncgen_hooks', 'firstiter finalizer', module='sys')
+    return _asyncgen_hook_type(*__trace_native__(6))
+
+
+def set_asyncgen_hooks(firstiter=_asyncgen_hook_missing, finalizer=_asyncgen_hook_missing):
+    if firstiter is not _asyncgen_hook_missing and firstiter is not None and not callable(firstiter):
+        raise TypeError('callable firstiter expected')
+    if finalizer is not _asyncgen_hook_missing and finalizer is not None and not callable(finalizer):
+        raise TypeError('callable finalizer expected')
+    if firstiter is not _asyncgen_hook_missing:
+        __trace_native__(7, firstiter)
+    if finalizer is not _asyncgen_hook_missing:
+        __trace_native__(8, finalizer)
+
+
+def is_finalizing():
+    return __trace_native__(9)

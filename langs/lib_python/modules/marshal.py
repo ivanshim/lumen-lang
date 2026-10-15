@@ -309,6 +309,4 @@ def load(file):
 
 
 def __getattr__(name):
-    if name.startswith('__') and name.endswith('__'):
-        raise AttributeError("module 'marshal' has no attribute '" + name + "'")
-    raise 'NotImplementedError: marshal.' + name + ' is not supported'
+    raise AttributeError("module 'marshal' has no attribute '" + name + "'")

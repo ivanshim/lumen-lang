@@ -108,9 +108,16 @@ pub fn keywords(op: TextOp, args: &mut Vec<Value>, named: Vec<(String, Value)>, 
     let initial = args.len();
     let method = checked_name(op);
     if !named.is_empty() && !method.is_empty() {
-        if !matches!(op, TextOp::Expandtabs | TextOp::Splitlines) { return Err(format!("TypeError: str.{method}() takes no keyword arguments")); }
-        let total = initial.saturating_sub(1) + named.len();
-        if total > 1 { return Err(format!("TypeError: {method}() takes at most 1 argument ({total} given)")); }
+        match op {
+            TextOp::Expandtabs | TextOp::Splitlines => {
+                let total = initial.saturating_sub(1) + named.len();
+                if total > 1 { return Err(format!("TypeError: {method}() takes at most 1 argument ({total} given)")); }
+            }
+            // Replace also takes count by name, after its two
+            // positional-only arguments; the loop below lays it down.
+            TextOp::Replace => {}
+            _ => return Err(format!("TypeError: str.{method}() takes no keyword arguments")),
+        }
     }
     let mut used = Vec::new();
     for (key, value) in named {
@@ -124,6 +131,7 @@ pub fn keywords(op: TextOp, args: &mut Vec<Value>, named: Vec<(String, Value)>, 
             TextOp::Encode if fits("encoding") => 1,
             TextOp::Encode if fits("errors") => 2,
             TextOp::Replace if fits("count") => 3,
+            TextOp::Replace => return Err(fault(lang, "arguments")),
             _ if !method.is_empty() => return Err(format!("TypeError: '{key}' is an invalid keyword argument for {method}()")),
             _ => return Err(fault(lang, "arguments")),
         };
@@ -199,6 +207,25 @@ fn final_sigma(letters: &[char], at: usize) -> bool {
 }
 
 pub(crate) fn recase(s: &str, op: TextOp) -> String {
+    if s.is_ascii() {
+        match op {
+            TextOp::Upper => return s.to_ascii_uppercase(),
+            TextOp::Lower | TextOp::Casefold => return s.to_ascii_lowercase(),
+            TextOp::Capitalize | TextOp::Title | TextOp::Swapcase => {
+                let mut prior = false;
+                return s.bytes().enumerate().map(|(at, byte)| {
+                    let upper = match op {
+                        TextOp::Capitalize => at == 0,
+                        TextOp::Title => !prior,
+                        _ => byte.is_ascii_lowercase(),
+                    };
+                    prior = byte.is_ascii_alphabetic();
+                    char::from(if upper { byte.to_ascii_uppercase() } else { byte.to_ascii_lowercase() })
+                }).collect();
+            }
+            _ => {},
+        }
+    }
     let letters: Vec<char> = s.chars().collect();
     let mut prior = false;
     let mut answer = String::new();
@@ -304,10 +331,38 @@ fn split_units_text(args: &[Value], reverse: bool, lang: &Lang) -> Result<Value,
 }
 
 pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording) -> Result<Value, String> {
+    if let Some(Value::Codepoints(points)) = args.first() {
+        if matches!(op, TextOp::Lower | TextOp::Upper | TextOp::Casefold | TextOp::Swapcase) {
+            if args.len() != 1 { return Err(format!("TypeError: str.{}() takes no arguments ({} given)", _name, args.len()-1)); }
+            let mut output = Vec::new(); let mut scalar_run = String::new();
+            for point in points.iter().copied().chain(std::iter::once(0x110000)) {
+                if let Some(character) = char::from_u32(point) { scalar_run.push(character); }
+                else {
+                    let changed = run(op,_name,&[Value::text(&scalar_run)],lang,words)?;
+                    output.extend(changed.text_codes().unwrap_or_default());
+                    if point <= 0x10ffff { output.push(point); }
+                    scalar_run.clear();
+                }
+            }
+            return Ok(Value::from_codes(output));
+        }
+    }
     let opened: Vec<Value> = args.iter().map(Value::contents).collect();
     let args = opened.as_slice();
 
     use TextOp::*;
+    // Native descriptors use the same code-point operations as bound methods.
+    let unit_operation = match op { Find => "find", Rfind => "rfind", Index => "index", Rindex => "rindex", Count => "count", Replace => "replace", Lower => "lower", Upper => "upper", _ => "" };
+    if !unit_operation.is_empty() && matches!(args.first(), Some(Value::Text(_) | Value::Codepoints(_)))
+        && args.iter().take(3).any(|v| matches!(v, Value::Codepoints(_))) {
+        return crate::methods::codepoint_operation(&args[0].text_codes().unwrap(), unit_operation, &args[1..], &|key| fault(lang, key));
+    }
+    // Native and bound splitting share the code-point path for surrogate text.
+    if matches!(op, Split | Rsplit) && matches!(args.first(), Some(Value::Text(_) | Value::Codepoints(_)))
+        && args.iter().take(2).any(|v| matches!(v, Value::Codepoints(_))) {
+        return crate::methods::call(&args[0], if op == Rsplit { "rsplit" } else { "split" }, &args[1..], &[], words,
+            &|reason| fault(lang, reason), &|_, _| fault(lang, "receiver"), true);
+    }
     if op == Maketrans {
         return translated_table(args,lang);
     }
@@ -779,6 +834,7 @@ fn mapping_format(s: &str, mapping: &Value, lang: &Lang, words: &Wording, depth:
 
 /// Immutable text keeps the same code-point extent throughout its life.
 pub(crate) fn character_length(text: &Rc<str>) -> usize {
+    if text.len() <= 64 { return text.chars().count(); }
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::rc::Weak;
@@ -796,4 +852,35 @@ pub(crate) fn character_length(text: &Rc<str>) -> usize {
         entries.insert(address, (Rc::downgrade(text), count));
         count
     })
+}
+
+// Equal byte and scalar extents identify ASCII without rescanning a cached text.
+// A boundary at the end is useful for slices; an element still requires a char.
+pub(crate) fn character_byte(text: &Rc<str>, index: usize) -> Option<usize> {
+    let length = character_length(text);
+    if index > length { return None; }
+    if length == text.len() { return Some(index); }
+    if index == length { return Some(text.len()); }
+    text.char_indices().nth(index).map(|(byte, _)| byte)
+}
+
+pub(crate) fn character_at(text: &Rc<str>, index: usize) -> Option<char> {
+    if text.len() <= 64 && text.is_ascii() { return text.as_bytes().get(index).map(|byte| char::from(*byte)); }
+    text.get(character_byte(text, index)?..)?.chars().next()
+}
+
+#[cfg(test)]
+mod recase_tests {
+    use super::{recase, TextOp};
+    #[test]
+    fn ascii_and_unicode_case_changes() {
+        assert_eq!(recase("Az09\x1f", TextOp::Upper), "AZ09\x1f");
+        assert_eq!(recase("Az09\x1f", TextOp::Casefold), "az09\x1f");
+        assert_eq!(recase("Straße ΣΟΣ", TextOp::Lower), "straße σος");
+        assert_eq!(recase("Straße ΣΟΣ", TextOp::Upper), "STRASSE ΣΟΣ");
+        assert_eq!(recase("hELLO don't 42world!", TextOp::Capitalize), "Hello don't 42world!");
+        assert_eq!(recase("hELLO don't 42world!", TextOp::Title), "Hello Don'T 42World!");
+        assert_eq!(recase("hELLO don't 42world!", TextOp::Swapcase), "Hello DON'T 42WORLD!");
+
+    }
 }

@@ -1,1 +1,1 @@
-NameError: name 'Point' is not defined
+NameError: name 'Point' is not defined. Did you mean: 'print'?
