@@ -202,6 +202,7 @@ struct Invocation {
     python_development: bool,
     program_name: Option<String>,
     python_ignore_environment: bool,
+    python_interactive: bool,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -769,6 +770,11 @@ fn run_all() {
         source_of(written, text_is_bytes(&inv.language) && honours_extensions(&inv.kernel))
     };
     let source = without_shebang(source);
+    let source = if inv.python_interactive {
+        let initial = serde_json::to_string(&source).expect("interactive initial source");
+        let filename = serde_json::to_string(&inv.file).expect("interactive source filename");
+        format!("{}\n_lumen_interact({initial}, {filename}, globals())\n", include_str!("python_interactive.py"))
+    } else { source };
     if inv.language.name() == "python" && inv.file == "<string>" { env::set_var("LUMEN_COMMAND_SOURCE", &source); }
     else { env::remove_var("LUMEN_COMMAND_SOURCE"); }
 
@@ -1115,6 +1121,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut tracing_limit = None;
     let mut extended_options = Vec::new();
     let mut python_ignore_environment = false;
+    let mut python_interactive = false;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
     // The name a Python program sees as its own first argument. It is
@@ -1267,6 +1274,11 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 rest = &rest[2..];
                 break;
             }
+            Some("-i") if file.is_none() && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                python_interactive = true;
+                language = Some(Language::Named("python".to_owned()));
+                rest = &rest[1..];
+            }
             // These Python startup switches describe services already isolated
             // from site imports and configure byte diagnostics before execution.
             Some(flag) if file.is_none() && (flag == "-S" || flag == "-u"
@@ -1407,6 +1419,11 @@ fn parse_args(args: &[OsString]) -> Invocation {
 
     if let Some(limit) = tracing_limit { env::set_var("LUMEN_TRACE_FRAMES", limit.to_string()); }
     else { env::remove_var("LUMEN_TRACE_FRAMES"); }
+    if python_interactive && file.is_none() {
+        file = Some("<stdin>".to_owned());
+        module_source = Some(String::new());
+        program_name = Some(String::new());
+    }
     let file = file.unwrap_or_else(|| usage(program));
     let language = language.unwrap_or_else(|| {
         // A language not named on the command line may be carried in
@@ -1480,7 +1497,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         let encoded = extended_options.iter().map(|option| format!("{}:{option}", option.chars().count())).collect::<String>();
         env::set_var("LUMEN_XOPTIONS", encoded);
     } else { env::remove_var("LUMEN_XOPTIONS"); }
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_ignore_environment, python_development, warning_options, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_ignore_environment, python_interactive, python_development, warning_options, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.
