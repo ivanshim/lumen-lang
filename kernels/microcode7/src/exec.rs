@@ -12706,7 +12706,8 @@ impl<'a> Machine<'a> {
                 if positional.len() <= place { positional.resize(place + 1, Value::Unset); }
                 positional[place] = worth;
             }
-            for held in positional.iter_mut() { if matches!(held, Value::Unset) { *held = Value::Nil; } }
+            // Keep the missing-globals sentinel so None still receives the relative-import type check.
+            for (place, held) in positional.iter_mut().enumerate() { if matches!(held, Value::Unset) && !(op == Prim::Summon && place == 1) { *held = Value::Nil; } }
             return Ok(None);
         }
         if matches!(op, Prim::Octets(0 | 1)) && self.rules.names_shadow_builtins && !keywords.is_empty() {
@@ -30041,8 +30042,8 @@ impl<'a> Machine<'a> {
             let globe = v.get(1).map(|source| match Self::underlying(source) { Some(base) => base.settled(), None => source.settled() });
             match &globe {
                 Some(Value::Attributes(_) | Value::Dict(_)) => (),
-                // Without globals there is no __name__ to read from; a wrong kind is refused.
-                None | Some(Value::Nil) => return Err(String::from("KeyError: '__name__' not in globals")),
+                // Missing globals has no package context; every supplied value must be a dictionary.
+                None | Some(Value::Unset) => return Err(String::from("KeyError: '__name__' not in globals")),
                 _ => return Err(String::from("TypeError: globals must be a dict")),
             }
             let asked = |word: &str| match &globe {

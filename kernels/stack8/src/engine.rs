@@ -29412,7 +29412,8 @@ impl Engine<'_> {
             if args.len() <= at { args.resize(at + 1, Value::Gap); }
             args[at] = value;
         }
-        for value in &mut args { if matches!(value, Value::Gap) { *value = Value::Null; } }
+        // Preserve argument presence: relative imports reject explicit None but diagnose omitted globals separately.
+        for (at, value) in args.iter_mut().enumerate() { if matches!(value, Value::Gap) && !(builtin == Builtin::Summon && at == 1) { *value = Value::Null; } }
         match builtin {
             Builtin::OuterNames | Builtin::NearNames => {
                 if !args.is_empty() { return Err(self.core_fault("core.arity", name)); }
@@ -29484,8 +29485,8 @@ impl Engine<'_> {
         let mut absolute = name.to_string();
         if level > 0 {
             let globe = args.get(1).map(|value| Self::worth_of(value).unwrap_or_else(|| value.contents()).contents());
-            // No globals at all leaves no __name__ to read; something that is not a dict is refused.
-            if matches!(globe, None | Some(Value::Null)) { return Err("KeyError: '__name__' not in globals".into()); }
+            // Only an absent argument lacks globals; explicit None must pass dictionary validation.
+            if matches!(globe, None | Some(Value::Gap)) { return Err("KeyError: '__name__' not in globals".into()); }
             if !matches!(globe, Some(Value::Map(_) | Value::Fields(_))) { return Err("TypeError: globals must be a dict".into()); }
             let asked = |word: &str| match &globe {
                 Some(Value::Map(pairs)) => pairs.iter().find(|(key, _)| matches!(key, Value::Text(text) if text.as_ref() == word)).map(|(_, held)| held.contents()),
