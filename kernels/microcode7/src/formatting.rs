@@ -283,6 +283,7 @@ impl Layout<'_> {
         // stays with the tens and everything else takes the general
         // form. Text has no such presentation and says so. The
         // grouping belongs to the locale, so none may stand beside it.
+        let locale_number = shape.letter == Some('n');
         if shape.letter == Some('n') {
             if shape.separator.is_some() || shape.fraction_separator.is_some() { return Err(self.invalid()); }
             if !matches!(item, Value::Text(_)) {
@@ -354,6 +355,7 @@ impl Layout<'_> {
             }
             if shape.zero && shape.justify.is_none() { shape.justify = Some('='); }
             digits = shape.grouped(digits, front.len(), if radix == 10 { 3 } else { 4 });
+            if locale_number { digits = spell_with_locale(&digits); }
             return Ok(shape.padded(front, digits, '>'));
         }
         if shape.letter.map_or(false, |c| !"eEfFgG%".contains(c)) { return Err(unknown()); }
@@ -364,7 +366,8 @@ impl Layout<'_> {
         let body = shape.real_digits(number.abs());
         let nought = shape.no_minus_zero && body.trim_end_matches('%').parse::<f64>().ok() == Some(0.0);
         let prefix = shape.front(number.is_sign_negative() && !number.is_nan() && !nought);
-        let body = if number.is_finite() { shape.grouped(body, prefix.len(), 3) } else { body };
+        let mut body = if number.is_finite() { shape.grouped(body, prefix.len(), 3) } else { body };
+        if locale_number { body = spell_with_locale(&body); }
         Ok(shape.padded(prefix, body, '>'))
     }
 
@@ -888,6 +891,59 @@ fn long_real_digits(value: f64, wanted: usize, exponent: bool) -> String {
 
 /// The two real parts of a worth that keeps them, and nothing at all
 /// for a worth that does not.
+
+fn spell_with_locale(body: &str) -> String {
+    let (mark, gap, pattern) = crate::exec::numeric_marks();
+    fn bunch(digits: &str, gap: &str, pattern: &[i64]) -> String {
+        if pattern.is_empty() || digits.is_empty() { return digits.to_string(); }
+        let bytes = digits.as_bytes();
+        if !bytes.last().copied().unwrap_or(0).is_ascii_digit() { return digits.to_string(); }
+        let mut pending = digits;
+        let mut chunks = Vec::new();
+        let mut seen = 0usize;
+        let mut prior = 0i64;
+        let mut forever = false;
+        while !pending.is_empty() {
+            let width = if forever {
+                prior
+            } else if seen >= pattern.len() {
+                break;
+            } else {
+                let step = pattern[seen];
+                seen += 1;
+                if step == 127 { break; }
+                if step == 0 {
+                    if prior <= 0 { break; }
+                    forever = true;
+                    prior
+                } else {
+                    prior = step;
+                    step
+                }
+            };
+            if width <= 0 { break; }
+            if !pending.as_bytes()[pending.len() - 1].is_ascii_digit() { break; }
+            let take = (width as usize).min(pending.len());
+            let cut = pending.len() - take;
+            if pending[cut..].bytes().any(|byte| !byte.is_ascii_digit()) { break; }
+            chunks.push(&pending[cut..]);
+            pending = &pending[..cut];
+        }
+        if chunks.is_empty() { return digits.to_string(); }
+        if !pending.is_empty() { chunks.push(pending); }
+        chunks.reverse();
+        chunks.join(gap)
+    }
+    if let Some((whole, tail)) = body.split_once('.') {
+        let mut written = bunch(whole, &gap, &pattern);
+        written.push_str(&mark);
+        written.push_str(tail);
+        written
+    } else {
+        bunch(body, &gap, &pattern)
+    }
+}
+
 fn complex_parts(item: &Value) -> Option<(f64, f64)> {
     match item {
         Value::Complex(pair) => Some((pair.0, pair.1)),

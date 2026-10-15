@@ -33228,6 +33228,32 @@ fn snapshot_monetary(given: &[Value]) -> Result<Value, String> {
     Ok(Value::tuple(words))
 }
 
+
+pub(crate) fn numeric_marks() -> (String, String, Vec<i64>) {
+    let row = match snapshot_monetary(&[Value::Nil]) {
+        Ok(Value::Tuple(held)) => held,
+        _ => return (String::from("."), String::new(), Vec::new()),
+    };
+    let mut point = String::from(".");
+    let mut gap = String::new();
+    let mut steps = Vec::new();
+    for (index, piece) in row.iter().enumerate() {
+        match index {
+            0 => { if let Value::Text(held) = piece { point = held.as_ref().to_string(); } }
+            1 => { if let Value::Text(held) = piece { gap = held.as_ref().to_string(); } }
+            2 => {
+                if let Value::Tuple(parts) = piece {
+                    for part in parts.iter() {
+                        if let Value::Small(number) = part { steps.push(*number); }
+                    }
+                }
+            }
+            _ => break,
+        }
+    }
+    (point, gap, steps)
+}
+
 fn wide_units(text: &str) -> Vec<u32> {
     let mut units = Vec::new();
     let mut rest = text.chars();

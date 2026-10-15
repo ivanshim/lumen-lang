@@ -30511,6 +30511,26 @@ fn civil_monetary(args: &[Value]) -> Result<Value, String> {
     ]))
 }
 
+
+pub(crate) fn locale_number_marks() -> (String, String, Vec<i64>) {
+    let answered = match civil_monetary(std::slice::from_ref(&Value::Null)) {
+        Ok(Value::Tuple(row)) => row,
+        _ => return (String::from("."), String::new(), Vec::new()),
+    };
+    let pull = |slot: usize| match answered.get(slot) {
+        Some(Value::Text(held)) => held.as_ref().to_string(),
+        _ => String::new(),
+    };
+    let groups = match answered.get(2) {
+        Some(Value::Tuple(parts)) => parts.iter().filter_map(|piece| match piece {
+            Value::Small(number) => Some(*number),
+            _ => None,
+        }).collect(),
+        _ => Vec::new(),
+    };
+    (pull(0), pull(1), groups)
+}
+
 fn civil_wide(text: &str) -> Result<Vec<u32>, String> {
     let mut wide = Vec::with_capacity(text.chars().count() + 1);
     for ch in text.chars() {
