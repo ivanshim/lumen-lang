@@ -78,6 +78,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_unicodedata_320", include_str!("_unicodedata_320.py"), "_unicodedata_320.py"),
     ("_weakref", include_str!("_weakref.py"), "_weakref.py"),
     ("_weakrefset", include_str!("_weakrefset.py"), "_weakrefset.py"),
+    ("_zoneinfo", include_str!("_zoneinfo.py"), "_zoneinfo.py"),
     ("abc", concat!(include_str!("abc.py"), "\n", include_str!("runtime_adapters/abc.py")), "abc.py"),
     ("annotationlib", concat!(include_str!("runtime_adapters/native_annotationlib.py"), "\n", include_str!("runtime_adapters/annotationlib.py")), "annotationlib.py"),
     ("argparse", include_str!("argparse.py"), "argparse.py"),
