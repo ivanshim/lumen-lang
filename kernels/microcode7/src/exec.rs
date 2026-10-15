@@ -18701,6 +18701,13 @@ impl<'a> Machine<'a> {
         // is the working the left side's own method names. The value on
         // the right gives the marks its words and is never asked for the
         // turned-about answer, which it has no business giving.
+        // The tail below names the operations it can answer for; these do
+        // not appear in it (a member test is answered there only for the
+        // members of a traceback), so for them it only ever says nothing.
+        if matches!(operation, Prim::Selfsame | Prim::Unlike | Prim::Octets(_) | Prim::SortOf | Prim::MakeArray | Prim::Kept | Prim::Couple | Prim::Partition(..) | Prim::SliceBounds | Prim::TupleJoined | Prim::MakeTuple)
+            || operation == Prim::HasMember && !matches!(operands, [Value::Backtrace(_), Value::Text(_)]) {
+            return Ok(None);
+        }
         return self.user_operation_rest(operation, operands);
     }
 
@@ -20437,6 +20444,10 @@ impl<'a> Machine<'a> {
     }
 
     fn prim(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        // Where classes are kept, every member test of a thing is answered yes
+        // (the read that follows says which member is missing), whichever
+        // layer below it would be reached through.
+        if op == Prim::HasMember && matches!(v, [Value::Thing(_), _]) && self.has_class_order() { return Ok(Value::Flag(true)); }
         // Exact native integers cannot supply user slots or collection
         // behavior. Their arithmetic still uses the normal numeric rules.
         if let [Value::Small(_), Value::Small(right)] = v {
