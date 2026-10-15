@@ -211,6 +211,10 @@ _memory_framer = pickle._Framer
 _native_descriptors = tuple(None if op is None else op.arg for op in _native_opcodes)
 _native_names = tuple(None if op is None else op.name for op in _native_opcodes)
 _native_protocols = tuple(None if op is None else op.proto for op in _native_opcodes)
+_plan_actions = tuple(1 if code in (112, 113, 114, 148) else
+                      2 if code in (103, 104, 106) else
+                      3 if code == 149 else 4 if code == 128 else 0
+                      for code in range(256))
 
 def _optimization_plan(data, compact_frame=False):
     if not _native_code_watch[0]:
@@ -219,6 +223,8 @@ def _optimization_plan(data, compact_frame=False):
     referenced = {}
     operations = []
     protocol = 0
+    merge_spans = True
+    span_start = span_end = -1
     header = b''
     position = 0
     checked = [False] * 256
@@ -243,32 +249,43 @@ def _optimization_plan(data, compact_frame=False):
                     return None
                 checked[code] = True
             position = end
-            if code in (112, 113, 114, 148):
+            action = _plan_actions[code]
+            if action and span_start >= 0:
+                operations.append((span_start, span_end))
+                span_start = span_end = -1
+            if action == 0:
+                # Hold an adjacent run locally instead of rewriting its list entry.
+                if merge_spans:
+                    if span_end != start:
+                        if span_start >= 0:
+                            operations.append((span_start, span_end))
+                        span_start = start
+                    span_end = end
+                else:
+                    operations.append((start, end))
+            elif action == 1:
                 if code == 148:
                     argument = len(assigned)
                 assigned.add(argument)
                 operations.append((-1, argument))
-            elif code in (103, 104, 106):
+            elif action == 2:
                 protocol = max(protocol, _native_protocols[code])
                 referenced[argument] = None
                 operations.append((-2, argument))
-            elif code == 149:
+            elif action == 3:
                 continue
-            elif code == 128:
+            else:
                 if start and argument >= 4:
                     return None
                 protocol = max(protocol, argument)
+                merge_spans = protocol < 4 or compact_frame
                 if start == 0:
                     header = data[start:end]
                 else:
                     operations.append((start, end))
-            else:
-                # Adjacent spans combine when no intermediate frame can be needed.
-                if (protocol < 4 or compact_frame) and operations and operations[-1][1] == start and operations[-1][0] >= 0:
-                    operations[-1] = (operations[-1][0], end)
-                else:
-                    operations.append((start, end))
             if code == 46:
+                if span_start >= 0:
+                    operations.append((span_start, span_end))
                 return referenced, operations, protocol, header
 
 # Assemble each complete frame once instead of calling stream methods per opcode.

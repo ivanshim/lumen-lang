@@ -14221,7 +14221,7 @@ impl<'a> Machine<'a> {
         let mut at = usize::try_from(index).map_err(|_| String::from("ValueError: negative memory stream position"))?;
         let source = cell.borrow();
         let mut batch = Vec::new();
-        for _ in 0..256 {
+        for _ in 0..1024 {
             let begin = at;
             let Some(byte) = source.get(begin).copied() else { break };
             let format = match table.get(usize::from(byte)) { Some(Value::Small(n)) if (0..512).contains(n) => *n, _ => break };
@@ -14230,6 +14230,8 @@ impl<'a> Machine<'a> {
             let item;
             if layout == 0 {
                 item = Value::Nil;
+            } else if layout == 24 || layout == 25 {
+                item = Value::Flag(layout == 24);
             } else if (18..=19).contains(&layout) || (21..=23).contains(&layout) {
                 let Some(line_length) = source[at..].iter().position(|b| b == &10) else { break };
                 if line_length > 4096 { break; }

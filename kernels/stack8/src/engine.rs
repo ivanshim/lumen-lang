@@ -19291,7 +19291,7 @@ impl<'a> Engine<'a> {
         let mut position = usize::try_from(*origin).map_err(|_| "ValueError: negative memory stream position")?;
         let bytes = storage.borrow();
         let mut records = Vec::new();
-        while records.len() < 256 {
+        while records.len() < 1024 {
             let start = position;
             let Some(&code) = bytes.get(start) else { break };
             let Some(Value::Small(marked)) = layouts.get(code as usize) else { break };
@@ -19300,6 +19300,8 @@ impl<'a> Engine<'a> {
             position = start + 1;
             let argument = match *tag {
                 0 => Value::Null,
+                24 => Value::Flag(true),
+                25 => Value::Flag(false),
                 1..=5 => {
                     let width = match tag { 1 => 1, 2 => 2, 3 | 4 => 4, _ => 8 };
                     let Some(part) = bytes.get(position..position + width) else { break };

@@ -93,7 +93,7 @@ del commit_frame
 # Decode consecutive scalar pushes in exact memory streams as one read-only
 # transfer. Other opcodes keep the canonical dispatch and framing machinery.
 _scalar_formats = {
-    NONE[0]: 0, NEWTRUE[0]: 0, NEWFALSE[0]: 0,
+    NONE[0]: 0, NEWTRUE[0]: 24, NEWFALSE[0]: 25,
     INT[0]: 18, BININT[0]: 3, BININT1[0]: 1, BININT2[0]: 2,
     LONG[0]: 19, LONG1[0]: 14, LONG4[0]: 15,
     BINBYTES[0]: 8, SHORT_BINBYTES[0]: 7, BINBYTES8[0]: 9,
@@ -193,10 +193,6 @@ def _load_memory(self):
                                         break
                                     checked[code] = True
                                 stream._pos = end
-                                if code == NEWTRUE[0]:
-                                    argument = True
-                                elif code == NEWFALSE[0]:
-                                    argument = False
                                 append(argument)
                             else:
                                 continue
