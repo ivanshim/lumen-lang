@@ -7282,9 +7282,10 @@ impl<'a> Compiler<'a> {
             self.arguments(&pair)?
         } else { 0 };
         if generic {
-            let names = std::mem::take(&mut self.generic_class_parameters);
-            for name in &names { self.read(name); }
-            self.act(Action::MakeTuple, names.len());
+            // The implicit Generic base is built on the very parameters
+            // the body reads: taking the names a second time finds none.
+            for name in &parameters { self.read(name); }
+            self.act(Action::MakeTuple, parameters.len());
             self.constant(Value::Adapter(Rc::new((49, Vec::new()))));
             self.act(Action::Invoke(Rc::from("generic base")), 2);
             count += 1;

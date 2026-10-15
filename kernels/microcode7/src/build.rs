@@ -6116,10 +6116,11 @@ impl<'a> Builder<'a> {
         } else { Vec::new() };
         if generic {
             let maker = constant(Value::Wrapped(49, Rc::new(Vec::new()).into()));
-            let names = std::mem::take(&mut self.generic_class_parameters);
-            let types = names.iter().map(|name| self.read(name)).collect();
-            let parameters = prim_call(Prim::MakeTuple, types);
-            args.push(Form::Apply(Callee::Code(Box::new(maker)), vec![parameters]));
+            // Generic[...] stands on the same parameter names the body
+            // was handed above; the taken list holds nothing by now.
+            let types = parameters.iter().map(|word| self.read(word)).collect();
+            let row = prim_call(Prim::MakeTuple, types);
+            args.push(Form::Apply(Callee::Code(Box::new(maker)), vec![row]));
         }
         let header = self.gensym("class_header");
         setup.push(Form::Write(header.clone(), Box::new(prim_call(Prim::MakeTuple, args))));
