@@ -151,7 +151,11 @@ impl Registry {
         self.index.insert(name.to_string(), self.idents.len());
         if let Some((_, tail)) = name.strip_prefix("\0module:").and_then(|word| word.split_once(':')) {
             if let Some((path, member)) = tail.split_once(':') {
-                self.module_index.entry(path.to_string()).or_default().insert(member.to_string(), self.idents.len());
+                // The path is spelled into a key only for the first member it has.
+                match self.module_index.get_mut(path) {
+                    Some(members) => { members.insert(member.to_string(), self.idents.len()); }
+                    None => { self.module_index.entry(path.to_string()).or_default().insert(member.to_string(), self.idents.len()); }
+                }
             }
         }
         self.idents.push(name.to_string());
@@ -260,7 +264,7 @@ struct BindingPlan {
 /// Scope summaries contain names rather than runtime slots or values.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct PreparedScope {
-    plans: HashMap<usize, BindingPlan>,
+    plans: HashMap<usize, BindingPlan, crate::value::FxBuildHasher>,
     bound: HashSet<String, crate::value::FxBuildHasher>,
     exports: HashSet<String, crate::value::FxBuildHasher>,
 }
@@ -311,9 +315,29 @@ impl<'a> PackedTokens<'a> {
     fn byte(&mut self) -> Option<u8> { let byte = *self.bytes.get(self.at)?; self.at += 1; Some(byte) }
     fn count(&mut self) -> Option<usize> {
         let end = self.at.checked_add(8)?;
-        let value = u64::from_le_bytes(self.bytes.get(self.at..end)?.try_into().ok()?);
+        if end > self.bytes.len() { return None; }
+        let mut value = 0u64;
+        let mut place = end;
+        while place > self.at { place -= 1; value = value << 8 | self.bytes[place] as u64; }
         self.at = end;
         usize::try_from(value).ok()
+    }
+    /// The seven counts that close a token's record, read in one step.
+    fn counts(&mut self) -> Option<[usize; 7]> {
+        let end = self.at.checked_add(56)?;
+        if end > self.bytes.len() { return None; }
+        let mut found = [0usize; 7];
+        let mut slot = 0;
+        while slot < 7 {
+            let base = self.at + slot * 8;
+            let value = self.bytes[base] as u64 | (self.bytes[base + 1] as u64) << 8 | (self.bytes[base + 2] as u64) << 16 | (self.bytes[base + 3] as u64) << 24
+                | (self.bytes[base + 4] as u64) << 32 | (self.bytes[base + 5] as u64) << 40 | (self.bytes[base + 6] as u64) << 48 | (self.bytes[base + 7] as u64) << 56;
+            if (value as usize) as u64 != value { return None; }
+            found[slot] = value as usize;
+            slot += 1;
+        }
+        self.at = end;
+        Some(found)
     }
     fn text(&mut self) -> Option<String> {
         let length = self.count()?;
@@ -334,16 +358,19 @@ fn unpack_tokens(proof: &[u8]) -> Option<Vec<Token>> {
         let shape = *SHAPES.get(usize::from(input.byte()?))?;
         let lexeme = input.text()?;
         let raw = match input.byte()? { 0 => None, 1 => Some(input.text()?), _ => return None };
-        tokens.push(Token { shape, lexeme, raw, width: input.count()?, row: input.count()?, column: input.count()?, end_column: input.count()?, end_row: input.count()?, byte_column: input.count()?, byte_end_column: input.count()? });
+        let [width, row, column, end_column, end_row, byte_column, byte_end_column] = input.counts()?;
+        tokens.push(Token { shape, lexeme, raw, width, row, column, end_column, end_row, byte_column, byte_end_column });
     }
     (input.at == proof.len()).then_some(tokens)
 }
 
-pub(crate) fn prepared_tokens(source: &str, lang: &Lang) -> Option<Vec<Token>> {
+/// The tokens a bundled library text was prepared into, and the place of
+/// its entry among the prepared scopes.
+pub(crate) fn prepared_tokens(source: &str, lang: &Lang) -> Option<(Vec<Token>, usize)> {
     if lang.prologue_brief_setting.is_some() { return None; }
     let (_, index) = lang.prepared_source_tokens?.iter().find(|(text, _)| *text == source)?;
     let (_, proof, _) = lang.prepared_scopes?.get(*index)?;
-    unpack_tokens(&unpack_library_proof(proof)?)
+    Some((unpack_tokens(&unpack_library_proof(proof)?)?, *index))
 }
 
 fn token_stamp(bytes: &[u8]) -> u64 {
@@ -374,8 +401,14 @@ fn unpack_library_proof(compressed: &'static [u8]) -> Option<Rc<Vec<u8>>> {
     Some(bytes)
 }
 
-fn prepared_scope(tokens: &[Token], lang: &Lang) -> Option<PreparedScope> {
+fn prepared_scope(tokens: &[Token], lang: &Lang, hint: Option<usize>) -> Option<PreparedScope> {
     let entries = lang.prepared_scopes?;
+    // Tokens that were themselves unpacked from entry `at` need not be
+    // spelled out and matched against it again.
+    if let Some(at) = hint {
+        let (_, _, text) = entries.get(at)?;
+        return serde_json::from_slice(&unpack_library_proof(text)?).ok();
+    }
     let fingerprint = token_fingerprint(tokens);
     let stamp = token_stamp(&fingerprint);
     for &(key, proof, text) in entries {
@@ -390,7 +423,7 @@ pub fn prepare_library(definition: &str, source: &str) -> Option<(u64, Vec<u8>, 
     let tokens = crate::lex::lex_position(source, &lang).ok()?;
     let tokens = crate::layout::layout_position(tokens, &lang, 0).ok()?;
     let mut registry = Registry::default();
-    let mut plans = HashMap::new();
+    let mut plans = HashMap::default();
     compile_pass(&tokens, &lang, &mut registry, 0, None, None, None, true, &mut plans, true, false, false).ok()?;
     let proof = token_fingerprint(&tokens);
     if unpack_tokens(&proof).as_deref() != Some(tokens.as_slice()) { return None; }
@@ -402,7 +435,7 @@ pub fn prepare_library(definition: &str, source: &str) -> Option<(u64, Vec<u8>, 
 #[derive(Default)]
 struct LocalNameIndex {
     counted: std::cell::Cell<usize>,
-    slots: std::cell::RefCell<HashMap<String, usize>>,
+    slots: std::cell::RefCell<HashMap<String, usize, crate::value::FxBuildHasher>>,
 }
 impl LocalNameIndex {
     fn reset(&mut self) { self.counted.set(0); self.slots.get_mut().clear(); }
@@ -454,7 +487,7 @@ struct Piece {
 pub struct Compiler<'a> {
     source_tokens: Rc<[Token]>,
     source_content: Rc<std::cell::OnceCell<Rc<str>>>,
-    plans: HashMap<usize, BindingPlan>,
+    plans: HashMap<usize, BindingPlan, crate::value::FxBuildHasher>,
     discovering: bool,
     annotation_target: Option<usize>,
     /// Whether the statement being read was marked asynchronous.
@@ -677,6 +710,26 @@ pub fn compile_within(
     within: Option<(String, Option<String>)>,
     read_in: bool,
 ) -> Res<Rc<Routine>> {
+    compile_hinted(tokens, lang, table, before, written_in, inside, within, read_in, None)
+}
+
+/// A whole text read as it stands, its tokens having been unpacked from
+/// the prepared entry `hint` (see `prepared_tokens`), if they were.
+pub fn compile_prepared(tokens: &[Token], lang: &Lang, table: &mut Registry, written_in: Option<Rc<str>>, hint: Option<usize>) -> Res<Rc<Routine>> {
+    compile_hinted(tokens, lang, table, 0, written_in, None, None, true, hint)
+}
+
+fn compile_hinted(
+    tokens: &[Token],
+    lang: &Lang,
+    table: &mut Registry,
+    before: u32,
+    written_in: Option<Rc<str>>,
+    inside: Option<Vec<String>>,
+    within: Option<(String, Option<String>)>,
+    read_in: bool,
+    hint: Option<usize>,
+) -> Res<Rc<Routine>> {
     table.stopped_end = 0;
     table.stopped_end_row = 0;
     // Compiling a module introduces many symbols. Reserve once rather than
@@ -685,12 +738,12 @@ pub fn compile_within(
     table.index.reserve(symbol_capacity);
     table.idents.reserve(symbol_capacity);
     let future_bits = std::mem::take(&mut table.future_bits);
-    let mut plans = HashMap::new();
+    let mut plans = HashMap::default();
     let wants_value = std::mem::take(&mut table.value_only);
     let interactive = std::mem::take(&mut table.interactive);
     if lang.closes_over {
         let reusable = before == 0 && inside.is_none() && within.is_none() && !wants_value && !interactive && future_bits == 0 && table.optimize == 0;
-        if let Some(stored) = reusable.then(|| prepared_scope(tokens, lang)).flatten() {
+        if let Some(stored) = reusable.then(|| prepared_scope(tokens, lang, hint)).flatten() {
             plans = stored.plans;
             table.builtin_exports.extend(stored.exports);
             table.program_bound.extend(stored.bound);
@@ -870,7 +923,7 @@ fn compile_pass(
     inside: Option<Vec<String>>,
     within: Option<(String, Option<String>)>,
     read_in: bool,
-    plans: &mut HashMap<usize, BindingPlan>,
+    plans: &mut HashMap<usize, BindingPlan, crate::value::FxBuildHasher>,
     discovering: bool,
     wants_value: bool,
     interactive: bool,
@@ -14031,6 +14084,19 @@ fn peephole(mut instrs: Vec<Instr>) -> Vec<Instr> {
         }
         watched[at] = depth > 0 || at < watched_to;
     }
+    // Running counts of the jump targets and watched words, so that whether
+    // a stretch of words is clear of both is two subtractions.
+    let mut targets_before = Vec::with_capacity(targets.len() + 1);
+    let mut watched_before = Vec::with_capacity(watched.len() + 1);
+    let (mut aimed, mut guarded) = (0usize, 0usize);
+    targets_before.push(0usize);
+    watched_before.push(0usize);
+    for at in 0..instrs.len() {
+        aimed += usize::from(targets[at]);
+        guarded += usize::from(watched[at]);
+        targets_before.push(aimed);
+        watched_before.push(guarded);
+    }
     let comparison = |op: &Action| matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge);
     let arithmetic = |op: &Action| comparison(op) || matches!(op, Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power | Action::Join | Action::At);
     let mut out: Vec<Instr> = Vec::with_capacity(instrs.len());
@@ -14038,7 +14104,7 @@ fn peephole(mut instrs: Vec<Instr>) -> Vec<Instr> {
     let mut i = 0;
     while i < instrs.len() {
         let clear = |width: usize| {
-            i + width <= instrs.len() && !targets[i + 1..i + width].iter().any(|&t| t) && !watched[i..i + width].iter().any(|&w| w)
+            i + width <= instrs.len() && targets_before[i + width] == targets_before[i + 1] && watched_before[i + width] == watched_before[i]
         };
         let mut group = None;
         let mut width = 4;

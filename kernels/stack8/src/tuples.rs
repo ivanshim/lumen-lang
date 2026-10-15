@@ -6,32 +6,39 @@ use crate::value::Value;
 
 const LIMIT: usize = 1024 * 1024;
 const SLOTS: usize = 256;
+// Rows of up to this capacity are shelved by their exact capacity, so
+// the usual small tuple finds a row without looking at the others.
+const SHELVES: usize = 16;
 thread_local! {
     static ENABLED: Cell<bool> = const { Cell::new(false) };
     static EMPTY: Rc<Vec<Value>> = Rc::new(Vec::new());
-    static FREE: RefCell<Released> = const { RefCell::new(Released { rows: Vec::new(), bytes: 0 }) };
+    static FREE: RefCell<Released> = const { RefCell::new(Released { shelves: Vec::new(), large: Vec::new(), count: 0, bytes: 0 }) };
 }
 
 // Budget accounting belongs to the pool, not to each released tuple.
-struct Released { rows: Vec<Rc<Vec<Value>>>, bytes: usize }
+struct Released { shelves: Vec<Vec<Rc<Vec<Value>>>>, large: Vec<Rc<Vec<Value>>>, count: usize, bytes: usize }
 impl Released {
     fn take(&mut self, needed: usize) -> Option<Rc<Vec<Value>>> {
-        let mut best = None;
-        let mut capacity = usize::MAX;
-        for (at, row) in self.rows.iter().enumerate().rev() {
-            let size = row.capacity();
-            if size >= needed && size < capacity {
-                best = Some(at); capacity = size;
-                if size == needed { break; }
-            }
-        }
-        best.map(|at| {
-            let row = self.rows.swap_remove(at);
-            self.bytes -= row.capacity().saturating_mul(std::mem::size_of::<Value>());
-            row
-        })
+        if self.count == 0 { return None; }
+        let row = self.shelves.iter_mut().skip(needed).find_map(Vec::pop).or_else(|| {
+            let (at, _) = self.large.iter().enumerate().rev()
+                .filter(|(_, row)| row.capacity() >= needed)
+                .min_by_key(|(_, row)| row.capacity())?;
+            Some(self.large.swap_remove(at))
+        })?;
+        self.count -= 1;
+        self.bytes -= row.capacity().saturating_mul(std::mem::size_of::<Value>());
+        Some(row)
     }
-    fn clear(&mut self) { self.rows.clear(); self.bytes = 0; }
+    fn keep(&mut self, row: Rc<Vec<Value>>) {
+        let size = row.capacity();
+        if size < SHELVES {
+            if self.shelves.is_empty() { self.shelves.resize_with(SHELVES, Vec::new); }
+            self.shelves[size].push(row);
+        } else { self.large.push(row); }
+        self.count += 1;
+    }
+    fn clear(&mut self) { self.shelves.clear(); self.large.clear(); self.count = 0; self.bytes = 0; }
 }
 
 /// An ordinary Rc for arrays, or the final-owner release boundary for tuples.
@@ -83,9 +90,9 @@ impl Drop for Items {
         let bytes = parts.capacity().saturating_mul(std::mem::size_of::<Value>());
         let _ = FREE.try_with(|free| {
             let mut free = free.borrow_mut();
-            if free.rows.len() < SLOTS && bytes <= LIMIT.saturating_sub(free.bytes) {
+            if free.count < SLOTS && bytes <= LIMIT.saturating_sub(free.bytes) {
                 free.bytes += bytes;
-                free.rows.push(self.storage.clone());
+                free.keep(self.storage.clone());
             }
         });
     }
@@ -115,6 +122,22 @@ mod tests {
         let array = Items::plain(Vec::new());
         assert_eq!(Rc::as_ptr(&first), Rc::as_ptr(&second));
         assert_ne!(Rc::as_ptr(&first), Rc::as_ptr(&array));
+    }
+    #[test]
+    fn released_rows_are_taken_back_by_size() {
+        let _scope = Scope::enter(true);
+        let small = Items::tuple(vec![Value::Small(1), Value::Small(2)]);
+        let large = Items::tuple((0..40).map(Value::Small).collect());
+        let (small_at, large_at) = (Rc::as_ptr(&small), Rc::as_ptr(&large));
+        drop(small);
+        drop(large);
+        // Each size finds the row of its own size, and a size beyond every
+        // shelf the smallest large row that holds it.
+        let two = Items::tuple(vec![Value::Small(3), Value::Small(4)]);
+        let thirty_three = Items::tuple((0..33).map(Value::Small).collect());
+        assert_eq!(Rc::as_ptr(&two), small_at);
+        assert_eq!(Rc::as_ptr(&thirty_three), large_at);
+        assert_eq!(thirty_three.len(), 33);
     }
     #[test]
     fn final_owner_releases_elements_and_recycles_actual_storage() {

@@ -5998,7 +5998,7 @@ impl<'a> Engine<'a> {
     /// account of itself as the program wrote them over, the namespace
     /// handed to it, or an entry of whichever namespace it keeps.
     fn routine_member(&self, subject: &Value, name: &str) -> Option<Value> {
-        let (_,members)=self.function_members.iter().find(|(v,_)| v.revive().map_or(false, |key| key.equals(subject)))?;
+        let members=&self.function_members[self.function_position(subject)?].1;
         let fields=members.fields.borrow();
         {
             let own=format!("\0{name}");
@@ -6015,7 +6015,8 @@ impl<'a> Engine<'a> {
     }
     /// The names a routine's own namespace holds, for its directory.
     fn routine_member_names(&self, subject: &Value) -> Vec<String> {
-        let Some((_,members))=self.function_members.iter().find(|(v,_)| v.revive().map_or(false, |key| key.equals(subject))) else {return Vec::new()};
+        let Some(at)=self.function_position(subject) else {return Vec::new()};
+        let members=&self.function_members[at].1;
         let fields=members.fields.borrow();
         if let Some((_,book))=fields.iter().find(|(n,_)| n==Self::HANDED_BOOK) {
             let Value::Map(pairs)=book.contents() else {return Vec::new()};
@@ -6069,20 +6070,51 @@ impl<'a> Engine<'a> {
         fresh
     }
     pub(super) fn function_storage(&mut self, function: &Value) -> usize {
-        if let Some(at) = self.function_members.iter().position(|(v, _)| v.revive().map_or(false, |key| key.equals(function))) { return at; }
+        if let Some(at) = self.function_position(function) { return at; }
         let class = self.root_class();
         self.made += 1;
         let fields = Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(Vec::new()), mark: self.made });
         let entry = (crate::faint::hold_of(function).expect("function has a weak identity"), fields);
         // Reclaim dead metadata without moving live indices held across
         // annotation callbacks. Repeated short-lived functions must not
-        // leave an ever-growing lookup table behind.
-        if let Some(vacant) = self.function_members.iter().position(|(key, _)| key.gone()) {
+        // leave an ever-growing lookup table behind. The table is searched
+        // for a dead entry only once it has grown past what the last
+        // search left, so that a crowd of live entries is not walked at
+        // every new one.
+        let vacant = if self.function_members.len() >= self.function_vacancy_floor {
+            let found = self.function_members.iter().position(|(key, _)| key.gone());
+            if found.is_none() { self.function_vacancy_floor = self.function_members.len() + self.function_members.len() / 4 + 16; }
+            found
+        } else { None };
+        let at = if let Some(vacant) = vacant {
             self.function_members[vacant] = entry;
             vacant
         } else {
             self.function_members.push(entry);
             self.function_members.len() - 1
+        };
+        if let crate::faint::Hold::Routine(held) = &self.function_members[at].0 { self.function_index.insert(held.as_ptr() as usize, at); }
+        at
+    }
+    /// Where a function's own metadata stands in `function_members`. A
+    /// bare routine is found by its address; any other holder is looked
+    /// for among the entries.
+    fn function_position(&self, subject: &Value) -> Option<usize> {
+        if let Value::Routine(routine) = subject {
+            let at = *self.function_index.get(&(Rc::as_ptr(routine) as usize))?;
+            return match self.function_members.get(at) {
+                Some((crate::faint::Hold::Routine(held), _)) if std::ptr::eq(held.as_ptr(), Rc::as_ptr(routine)) && held.strong_count() > 0 => Some(at),
+                _ => None,
+            };
+        }
+        self.function_members.iter().position(|(v, _)| v.revive().map_or(false, |key| key.equals(subject)))
+    }
+    /// Rebuild the address index after the table has lost entries.
+    pub(super) fn reindex_functions(&mut self) {
+        self.function_index.clear();
+        self.function_vacancy_floor = 0;
+        for (at, (hold, _)) in self.function_members.iter().enumerate() {
+            if let crate::faint::Hold::Routine(held) = hold { self.function_index.insert(held.as_ptr() as usize, at); }
         }
     }
     /// The annotations a class carries: its own, worked out the first
