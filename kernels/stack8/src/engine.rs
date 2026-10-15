@@ -3835,7 +3835,16 @@ impl<'a> Engine<'a> {
     }
 
     fn note_keyword(&mut self, folded: &mut Vec<(Value, Value)>, key: &Value, shown: &str) -> Flow<()> {
-        if !self.map_enter(folded, key.clone(), Value::Null)? {
+        // Exact strings have no user hash/equality hooks. Keep the common
+        // keyword path local; mixed or subclass keys still use dictionary insertion.
+        let repeated = if let Value::Text(text) = key {
+            if folded.iter().all(|(prior, _)| matches!(prior, Value::Text(_))) {
+                let present = folded.iter().any(|(prior, _)| matches!(prior, Value::Text(previous) if previous == text));
+                if !present { folded.push((key.clone(), Value::Null)); }
+                present
+            } else { !self.map_enter(folded, key.clone(), Value::Null)? }
+        } else { !self.map_enter(folded, key.clone(), Value::Null)? };
+        if repeated {
             let label = self.word_of_key(key).unwrap_or_else(|_| key.plain());
             let said = if shown.is_empty() { Self::named_fault(&self.lang.call_duplicate, &label) }
                 else { self.keyword_repeated(shown.trim_end_matches("() "), &label) };
@@ -6290,15 +6299,19 @@ impl<'a> Engine<'a> {
         if let Some(handle) = self.frame_codes.get(&key).and_then(Weak::upgrade) {
             return Value::Adapter(handle);
         }
-        let mut body = (**program).clone();
-        body.held.clear();
-        body.enclosed.clear();
-        // Code retains instructions and metadata, not the function's live globals.
-        body.globe = None;
-        body.born = None;
-        body.home = None;
-        body.annotation = None;
-        let handle = Rc::new((7, vec![Value::Routine(Rc::new(body))]));
+        let snapshot = program.code_snapshot.get_or_init(|| {
+            let mut body = (**program).clone();
+            body.held.clear();
+            body.enclosed.clear();
+            // A code object owns no live defaults, closure cells or globals.
+            body.globals_rebound = false;
+            body.globe = None;
+            body.born = None;
+            body.home = None;
+            body.annotation = None;
+            Rc::new(body)
+        });
+        let handle = Rc::new((7, vec![Value::Routine(snapshot.clone())]));
         self.frame_codes.insert(key, Rc::downgrade(&handle));
         Value::Adapter(handle)
     }
@@ -9438,7 +9451,7 @@ impl<'a> Engine<'a> {
                         if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
                     }
                     self.reaching += 1;
-                    let inner = self.special_text(&view.0, true);
+                    let inner = self.special_text(&view.0.proxy_dictionary(), true);
                     self.reaching -= 1;
                     return Ok(format!("mappingproxy({})", inner?));
                 }
@@ -19029,6 +19042,7 @@ impl<'a> Engine<'a> {
             }
             changed.revised = RefCell::new(None);
             changed.code_identity = Rc::new(());
+            changed.code_snapshot = std::cell::OnceCell::new();
             return Ok(Self::adapter(7, vec![Value::Routine(Rc::new(changed))]));
         }
         if operation == "clear" {
@@ -28527,6 +28541,11 @@ impl Engine<'_> {
             }
         }
         let ident = self.registry.idents.get(far)?;
+        let bare = ident.rfind(':').map_or(ident.as_str(), |at| &ident[at + 1..]);
+        if self.outer_book.is_some() && Self::public_name(bare)
+            && self.running_routine.as_ref().is_some_and(|routine| routine.globals_rebound) {
+            return Some(Kept::Outer);
+        }
         if !self.module_books.is_empty() {
             if let Some(rest) = ident.strip_prefix("\0module:") {
                 let path = rest.splitn(3, ':').nth(1)?;

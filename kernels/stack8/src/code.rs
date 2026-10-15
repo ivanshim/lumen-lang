@@ -997,6 +997,11 @@ impl Builtin {
 #[derive(Clone, Debug)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Routine {
+    /// Reuse code-only snapshots while the compiled function remains alive.
+    #[serde(skip)]
+    pub globals_rebound: bool,
+    #[serde(skip)]
+    pub code_snapshot: std::cell::OnceCell<Rc<Routine>>,
     pub postponed_annotation: bool,
     pub annotation_source: Option<String>,
     pub checks_annotation_format: bool,

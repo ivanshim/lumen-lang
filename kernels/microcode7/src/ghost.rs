@@ -679,6 +679,7 @@ impl Knot {
                     if let Ok(g) = g.try_borrow() { g.reaches(out); }
                 }
                 Value::Routine(p) => {
+                    if let Some(image) = p.code_description.get() { out.push(Knot::Held(Value::Routine(image.clone()))); }
                     if let Some(source) = &p.definition { out.push(Knot::Held(Value::Routine(source.clone()))); }
                     if let Some(a) = &p.annotator { out.push(Knot::Held(Value::Routine(a.clone()))); }
                     for v in &p.literals { held(out, v); }

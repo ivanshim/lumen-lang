@@ -6189,13 +6189,17 @@ impl<'a> Machine<'a> {
         let handle = match origin {
             Some(source) => self.code_handle(&source),
             None => {
-                let mut immutable = (**body).clone();
-                immutable.definition = None;
-                immutable.globe = None;
-                immutable.born = None;
-                immutable.framed_in = None;
-                immutable.annotator = None;
-                Value::Wrapped(7, Rc::new(vec![Value::Routine(Rc::new(immutable))]).into())
+                let immutable = body.code_description.get_or_init(|| {
+                    let mut immutable = (**body).clone();
+                    immutable.definition = None;
+                    immutable.globals_rebound = false;
+                    immutable.globe = None;
+                    immutable.born = None;
+                    immutable.framed_in = None;
+                    immutable.annotator = None;
+                    Rc::new(immutable)
+                });
+                Value::Wrapped(7, Rc::new(vec![Value::Routine(immutable.clone())]).into())
             },
         };
         if let Value::Wrapped(7, parts) = &handle {
@@ -11324,6 +11328,7 @@ impl<'a> Machine<'a> {
             let checked = self.code_metadata_call("validate_replace", vec![receiver.clone(), edits])?;
             let Value::Dict(edits) = checked.settled() else { return Err(self.class_unready()) };
             let mut copy = (**body).clone();
+            copy.code_description = std::cell::OnceCell::new();
             let mut counts = [body.taking.as_ref().map_or(body.formals.len(), |kinds| kinds.iter().filter(|kind| matches!(kind, 'b' | 'p')).count()),
                 body.taking.as_ref().map_or(0, |kinds| kinds.iter().filter(|kind| **kind == 'p').count()),
                 body.taking.as_ref().map_or(0, |kinds| kinds.iter().filter(|kind| **kind == 'n').count())];
@@ -13358,7 +13363,7 @@ impl<'a> Machine<'a> {
         if values.iter().all(|v| !matches!(v, Value::Couple(_))) { return Ok((values, Vec::new())); }
         let only_expansion = self.has_class_order() && values.iter().all(|v| matches!(v, Value::Couple(_)))
             && values.iter().filter(|v| matches!(v, Value::Couple(pair) if matches!(pair.0, Value::Flag(false)))).count() == 1;
-        let opened = self.open_arguments(values);
+        let opened = self.open_arguments_shown(values, &format!("{name}() "));
         if only_expansion {
             if let Err(Escape::Error(text)) = &opened {
                 if let Some(kind) = text.strip_prefix("TypeError: Value after * must be an iterable, not ") {
@@ -13451,7 +13456,16 @@ impl<'a> Machine<'a> {
     }
 
     fn note_keyword(&mut self, folded: &mut Vec<(Value, Value)>, key: &Value, shown: &str) -> Res<()> {
-        if !self.map_enter(folded, key.clone(), Value::Unset)? {
+        // Exact strings have no user hash/equality hooks. Keep the common
+        // keyword path local; mixed or subclass keys still use dictionary insertion.
+        let repeated = if let Value::Text(text) = key {
+            if folded.iter().all(|(prior, _)| matches!(prior, Value::Text(_))) {
+                let present = folded.iter().any(|(prior, _)| matches!(prior, Value::Text(previous) if previous == text));
+                if !present { folded.push((key.clone(), Value::Unset)); }
+                present
+            } else { !self.map_enter(folded, key.clone(), Value::Unset)? }
+        } else { !self.map_enter(folded, key.clone(), Value::Unset)? };
+        if repeated {
             let label = match key { Value::Text(text) => text.to_string(), _ => self.prim(Prim::Quoted, "repr", &[key.clone()])?.bare() };
             let words = self.table.strings("ext.syntax.call.amiss.keyword");
             let said = if !shown.is_empty() && words.len() >= 3 {
@@ -17478,7 +17492,7 @@ impl<'a> Machine<'a> {
             // ellipsis instead of running on forever.
             Value::Window(owner, portion) => {
                 if *portion == 'm' {
-                    let rendering = self.object_words(owner, true)?;
+                    let rendering = self.object_words(&owner.proxy_pairs(), true)?;
                     return Ok(format!("mappingproxy({rendering})"));
                 }
                 if !crate::data::window_entered(owner, *portion) { return Ok(String::from("...")); }
@@ -29144,8 +29158,12 @@ impl<'a> Machine<'a> {
         if scoped && self.world_book.is_some() { return Some(Held::World); }
         if self.world_book.is_none() && self.readings.is_empty() { return None; }
         let ident = self.idents.get(at)?;
-        if self.readings.is_empty() && ident.as_bytes().first() == Some(&0) { return None; }
         let bare = ident.rsplit_once('/').map_or(ident.as_str(), |(_, bare)| bare);
+        if self.world_book.is_some() && Self::visible_name(bare)
+            && self.frames_named.last().is_some_and(|routine| routine.globals_rebound) {
+            return Some(Held::World);
+        }
+        if self.readings.is_empty() && ident.as_bytes().first() == Some(&0) { return None; }
         if !Self::visible_name(bare) { return None; }
         if let Some(which) = self.readings.iter().position(|book| (book.from..book.upto).contains(&at)) { return Some(Held::Reading(which)); }
         if self.world_book.is_some() && Self::visible_name(ident) {
@@ -29419,7 +29437,7 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn class_from_function(&mut self, supplied: Vec<Value>) -> Result<Value, Escape> {
-        let (mut plain, named) = self.open_arguments(supplied)?;
+        let (mut plain, named) = self.open_arguments_shown(supplied, "__build_class__() ")?;
         if plain.len() < 2 { return Err("TypeError: __build_class__: not enough arguments".to_owned().into()); }
         let callable = plain.remove(0).settled();
         let (body, environment) = match callable {

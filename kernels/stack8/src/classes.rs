@@ -3264,6 +3264,7 @@ impl<'a> Engine<'a> {
             let Some(globals) = parts[1].clone() else { return Err("TypeError: function() missing required argument 'globals'".into()); };
             if !matches!(globals.contents(), Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
             let mut made = (**origin).clone();
+            made.globals_rebound = true;
             made.doc = if made.code_flags & 0x4000000 != 0 {
                 made.code_constants.first().and_then(|value| match value { Value::Text(text) => Some(text.to_string()), _ => None })
             } else { None };
@@ -4037,7 +4038,7 @@ impl<'a> Engine<'a> {
                 return Ok(value);
             }
             return match w.0 {
-                2 if !w.1.is_empty() && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
+                2 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 29 | 48 | 122 | 124 | 126 | 133 | 180 | 155 | 156 | 157 | 158 | 236 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 64 if w.1[0].plain() == "normal_pdf" && subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
                 63 if subject.is_some() => Ok(Self::adapter(3, vec![value.clone(), subject.unwrap()])),
@@ -6237,7 +6238,7 @@ impl<'a> Engine<'a> {
     pub(super) fn annotation_name(&mut self, name: &str) -> Res<Option<Value>> {
         if name.starts_with(['#', '\0']) { return Ok(None); }
         let Some((body, owner, _)) = &self.annotation_scope else { return Ok(None); };
-        if !self.running_routine.as_ref().is_some_and(|running| Rc::ptr_eq(body, running)) { return Ok(None); }
+        if !self.running_routine.as_ref().is_some_and(|running| Rc::ptr_eq(body, running) || running.ident == "#annotation fallback") { return Ok(None); }
         let owner = owner.clone();
         let words = self.lang.class_annotations.clone();
         let namespace = self.import_module(&words[1]).map_err(|fault| fault.told(&self.wording()))?;

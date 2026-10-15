@@ -856,6 +856,11 @@ pub enum Traps {
 #[derive(Debug, Clone)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Routine {
+    /// Share immutable code metadata across short-lived traceback code handles.
+    #[serde(skip)]
+    pub globals_rebound: bool,
+    #[serde(skip)]
+    pub code_description: std::cell::OnceCell<Rc<Routine>>,
     pub display_names: std::cell::RefCell<Option<(Rc<str>, Rc<str>)>>,
     /// The compiled definition shared by independently created functions.
     #[serde(serialize_with = "crate::cache::write_maybe", deserialize_with = "crate::cache::read_maybe")]

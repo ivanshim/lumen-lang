@@ -173,3 +173,12 @@ class _Addition:
         return 'add'
 
 add = _Addition()
+
+
+# A fresh accelerator can import operator recursively before these exports exist.
+# Complete the public aliases after the native-style addition has been created.
+import sys as _sys
+_operator_module = _sys.modules.get('operator')
+if _operator_module is not None:
+    _operator_module.add = add
+    _operator_module.__add__ = add

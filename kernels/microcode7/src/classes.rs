@@ -3433,6 +3433,7 @@ impl<'a> Machine<'a> {
             let Some(globals) = options[1].clone() else { return Err(String::from("TypeError: function() missing required argument 'globals'").into()); };
             if !matches!(globals.settled(), Value::Dict(_)) { return Err(String::from("TypeError: function() argument 'globals' must be dict").into()); }
             let mut fresh = (**origin).clone();
+            fresh.globals_rebound = true;
             fresh.doc = fresh.literals.first().filter(|_| fresh.flags & (1 << 26) != 0)
                 .and_then(|entry| if let Value::Text(label) = entry { Some(label.to_string()) } else { None });
             fresh.globe = Some(globals.clone());
@@ -4713,7 +4714,7 @@ impl<'a> Machine<'a> {
     pub(super) fn symbolic_name(&mut self, key: &str) -> Result<Option<Value>, String> {
         if key.chars().next().is_some_and(|initial| matches!(initial, '#' | '\0')) { return Ok(None); }
         let active = match &self.symbolic_annotation {
-            Some((program, declaring, _)) if self.frames_named.last().is_some_and(|frame| Rc::ptr_eq(frame, program)) => declaring.clone(),
+            Some((program, declaring, _)) if self.frames_named.last().is_some_and(|frame| Rc::ptr_eq(frame, program) || frame.ident == "<annotation fallback>") => declaring.clone(),
             _ => return Ok(None),
         };
         let options = self.rules.words_ext_stmt_class_annotations.to_vec();

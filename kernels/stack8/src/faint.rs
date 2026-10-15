@@ -677,6 +677,7 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
             }
         }
         Value::Routine(r) => {
+            out.extend(r.code_snapshot.get().map(|image| Value::Routine(image.clone())));
             out.extend(r.annotation.iter().map(|p| Value::Routine(p.clone())));
             out.extend(r.code_constants.iter().cloned());
             out.extend(r.globe.iter().cloned());
