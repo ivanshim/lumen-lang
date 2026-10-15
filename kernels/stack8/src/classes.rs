@@ -6089,6 +6089,18 @@ impl<'a> Engine<'a> {
             _ => None,
         }
     }
+    /// The same addresses read off a weak hold, which still names them
+    /// after what it held has gone, so a dead row's key can be dropped.
+    fn hold_address(held: &crate::faint::Hold) -> Option<(usize, usize)> {
+        use crate::faint::Hold;
+        match held {
+            Hold::Routine(code) => Some((code.as_ptr() as usize, 0)),
+            Hold::Method(receiver, code, _) => Some((receiver.as_ptr() as usize, code.as_ptr() as usize)),
+            Hold::Object(instance) => Some((instance.as_ptr() as usize, usize::MAX)),
+            Hold::Class(class) => Some((class.as_ptr() as usize, usize::MAX - 1)),
+            _ => None,
+        }
+    }
     /// The row of `function_members` that is this function's, through
     /// the index where it has an address, else by searching the rows.
     /// A row the index names is believed only while its weak hold
@@ -6140,6 +6152,12 @@ impl<'a> Engine<'a> {
             self.function_sweep = at;
         }
         let at = if let Some(vacant) = vacant {
+            // The departed occupant's key goes with it, so the index
+            // never keeps a key for a row that answers for someone else.
+            if let Some(old) = Self::hold_address(&self.function_members[vacant].0) {
+                let mut rows = self.function_rows.borrow_mut();
+                if rows.get(&old) == Some(&vacant) { rows.remove(&old); }
+            }
             self.function_members[vacant] = entry;
             vacant
         } else {
