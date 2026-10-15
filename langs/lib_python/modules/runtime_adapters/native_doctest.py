@@ -407,6 +407,8 @@ def _namespace_of(obj):
 
 
 def _module_name_of(obj):
+    if isinstance(obj, dict):
+        return obj.get("__name__", "__main__")
     if obj is None:
         names = __program_namespace()
         name = names.get('__name__')
@@ -772,7 +774,8 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
     if test_finder is None:
         test_finder = DocTestFinder()
     if module is None:
-        module = sys.modules[__program_namespace(1).f_globals['__name__']]
+        caller = __program_namespace(1).f_globals
+        module = sys.modules.get(sys._getframemodulename(1), caller)
     tests = test_finder.find(module, None, None, globs, extraglobs)
     suite = unittest.TestSuite()
     optionflags = options.get('optionflags', 0)

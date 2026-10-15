@@ -7901,7 +7901,7 @@ impl<'a> Engine<'a> {
             }
         }
         else {names.extend(self.routine_member_names(one));}
-        if let Some(class) = class.as_ref() {
+        if let Some(class) = class.as_ref().filter(|_| !matches!(one, Value::Object(_)) || !names.iter().any(|name| name == self.class_word("kind"))) {
             for part in ["kind", "get", "set", "remove", "allocate", "subclass", "doc"] {
                 let name = self.class_word(part); if !name.is_empty() { names.push(name.to_string()); }
             }
