@@ -23959,9 +23959,12 @@ impl<'a> Engine<'a> {
 
         if builtin == Builtin::Math {
             if let Some(Value::Text(operation)) = args.first().map(Value::contents) {
-                // The host error number. Library code plants one, or clears
-                // one, ahead of a magnitude that must not inherit a stale value.
-                if operation.as_ref() == "set_errno" {
+                // The host error number, and only in a language that
+                // measures with floating math. Library code plants one,
+                // or clears one, ahead of a magnitude that must not
+                // inherit a stale range error. Every other language
+                // falls through to the ordinary missing-working complaint.
+                if operation.as_ref() == "set_errno" && self.lang.math_floating {
                     if args.len() != 2 { return Err("TypeError: set_errno() takes exactly one argument".into()); }
                     let planted = match args[1].contents() {
                         Value::Small(n) => i32::try_from(n).map_err(|_| "OverflowError: Python int too large to convert to C int".to_string())?,

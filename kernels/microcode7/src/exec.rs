@@ -22820,7 +22820,9 @@ impl<'a> Machine<'a> {
             let task = v.first().map(Value::settled);
             if let Some(Value::Text(task)) = task {
                 match task.as_ref() {
-                    "set_errno" => {
+                    // Host error number while floating math is on.
+                    // Otherwise the name is not a working of this language.
+                    "set_errno" if self.rules.floating_math => {
                         if v.len() != 2 { return Err(String::from("TypeError: set_errno() takes exactly one argument")); }
                         let planted = match v[1].settled() {
                             Value::Small(n) => i32::try_from(n).map_err(|_| String::from("OverflowError: Python int too large to convert to C int"))?,
