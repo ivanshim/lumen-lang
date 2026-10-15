@@ -387,6 +387,10 @@ pub struct Lang {
     pub names_folded: bool,
     pub quote_for_names: Option<char>,
     pub symbols: Vec<String>,
+    /// Which of the symbols (by place in that list, in its order) begin with each
+    /// ASCII letter, and which begin with any other: the lexer looks only there.
+    pub symbols_from: Vec<Vec<usize>>,
+    pub symbols_wide: Vec<usize>,
     pub keywords: HashSet<String>,
 
     pub blocks: Blocks,
@@ -2472,6 +2476,8 @@ impl Lang {
             names_folded: r.flag("identifier.case_insensitive")?,
             quote_for_names: r.letter("lexical.name_quote")?,
             symbols: Vec::new(),
+            symbols_from: Vec::new(),
+            symbols_wide: Vec::new(),
             continuation_amiss: r.strings("ext.lexical.line_continuation.amiss")?,
             type_params_open: r.strings("ext.stmt.type_params.open")?,
             type_params_close: r.strings("ext.stmt.type_params.close")?,
@@ -3257,6 +3263,16 @@ impl Lang {
             reserved = reserved.into_iter().map(|w| w.to_lowercase()).collect();
         }
         symbols.sort_by_key(|s| std::cmp::Reverse(s.len()));
+        let mut from = vec![Vec::new(); 128];
+        let mut wide = Vec::new();
+        for (place, symbol) in symbols.iter().enumerate() {
+            match symbol.chars().next() {
+                Some(letter) if letter.is_ascii() => from[letter as usize].push(place),
+                _ => wide.push(place),
+            }
+        }
+        self.symbols_from = from;
+        self.symbols_wide = wide;
         self.symbols = symbols;
         self.keywords = reserved;
         Ok(())

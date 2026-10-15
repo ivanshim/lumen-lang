@@ -1389,8 +1389,19 @@ impl<'a> Cursor<'a> {
 
     fn symbol(&mut self) -> Result<(), String> {
         let (line, col) = (self.row, self.column);
-        let window: String = self.text[self.at..].iter().take(8).collect();
-        let Some(sym) = self.lang.symbols.iter().find(|s| window.starts_with(s.as_str())).cloned() else {
+        let ahead = &self.text[self.at..];
+        let first = ahead[0];
+        let none: Vec<usize> = Vec::new();
+        let places = if first.is_ascii() { self.lang.symbols_from.get(first as usize).unwrap_or(&none) } else { &self.lang.symbols_wide };
+        let spelled = |word: &str| {
+            let mut taken = 0;
+            for letter in word.chars() {
+                if taken >= 8 || ahead.get(taken) != Some(&letter) { return false; }
+                taken += 1;
+            }
+            true
+        };
+        let Some(sym) = places.iter().map(|&place| &self.lang.symbols[place]).find(|word| spelled(word)).cloned() else {
             let c = self.text[self.at];
             if !self.lang.syntax_members.is_empty() && (c.is_control() || c == '\u{a0}') { return Err(format!("SyntaxError: invalid non-printable character U+{:04X}", c as u32)); }
             if !self.lang.syntax_members.is_empty() && !c.is_ascii() { return Err(format!("SyntaxError: invalid character '{c}' (U+{:04X})", c as u32)); }

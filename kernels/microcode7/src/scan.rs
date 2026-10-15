@@ -1191,6 +1191,16 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
     let name_leads = table.letters("ext.lexical.name_lead");
     let syntax_words = table.syntactic();
     let routed = !table.strings("ext.builtin.print.redirect").is_empty();
+    // The signs, as letters and by the letter they begin with (those no
+    // longer than the eight the text ahead was cut to, in the order the
+    // table gives them, so that the first to fit is the same one).
+    let sign_letters: Vec<Vec<char>> = table.signs.iter().map(|sign| sign.chars().collect()).collect();
+    let mut signs_from: Vec<Vec<usize>> = vec![Vec::new(); 128];
+    let mut signs_wide: Vec<usize> = Vec::new();
+    for (place, letters) in sign_letters.iter().enumerate() {
+        if letters.is_empty() || letters.len() > 8 { continue; }
+        if letters[0].is_ascii() { signs_from[letters[0] as usize].push(place); } else { signs_wide.push(place); }
+    }
     let mut tokens: Vec<Token> = Vec::new();
     let line_beginnings: Vec<usize> = std::iter::once(0).chain(src.iter().enumerate().filter_map(|(i, c)| (*c == '\n').then_some(i + 1))).collect();
     let at_column = |index| index - line_beginnings[line_beginnings.partition_point(|start| *start <= index) - 1] + 1;
@@ -1570,8 +1580,8 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             pos = k;
             continue;
         }
-        let ahead: String = src[pos..src.len().min(pos + 8)].iter().collect();
-        let Some(sym) = table.signs.iter().find(|s| ahead.starts_with(s.as_str())).cloned() else {
+        let candidates = if c.is_ascii() { &signs_from[c as usize] } else { &signs_wide };
+        let Some(sym) = candidates.iter().find(|&&place| src[pos..].starts_with(&sign_letters[place])).map(|&place| table.signs[place].clone()) else {
             return Err(told_of_character(table, c, row));
         };
         pos += sym.chars().count();
