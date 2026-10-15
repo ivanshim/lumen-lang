@@ -2,36 +2,33 @@
 // belong to classes and routines rather than to their callers.
 use super::*;
 
+const NO_PLACE: usize = usize::MAX;
+
 impl<'a> Engine<'a> {
     pub(super) fn class_word(&self, part: &str) -> &str {
-        match part {
-            "name" => self.member_words[0],
-            "qualified" => self.member_words[1],
-            "module" => self.member_words[2],
-            "kind" => self.member_words[3],
-            "get" => self.member_words[4],
-            "set" => self.member_words[5],
-            "remove" => self.member_words[6],
-            "call" => self.member_words[7],
-            "namespace" => self.member_words[8],
-            "root" => self.member_words[9],
-            "allocate" => self.member_words[10],
-            "descriptor.get" => self.member_words[11],
-            "descriptor.set" => self.member_words[12],
-            "descriptor.delete" => self.member_words[13],
-            "doc" => self.member_words[14],
-            "defaults" => self.member_words[15],
-            "base" => self.member_words[16],
-            "bases" => self.member_words[17],
-            "mro" => self.member_words[18],
-            "order" => self.member_words[19],
-            "receiver" => self.member_words[20],
-            "unready" => self.member_words[21],
-            "subclass" => self.member_words[22],
-            "text_signature" => self.member_words[23],
-            "slots" => self.member_words[24],
-            _ => self.lang.class_details.get(part).and_then(|v| v.first()).map_or("", String::as_str),
-        }
+        // Told apart by first letter, then compared with the one or two
+        // words that begin with it, since this is asked many times a step.
+        let place = match part.as_bytes().first() {
+            Some(b'n') => if part == "name" { 0 } else if part == "namespace" { 8 } else { NO_PLACE },
+            Some(b'q') if part == "qualified" => 1,
+            Some(b'm') => if part == "module" { 2 } else if part == "mro" { 18 } else { NO_PLACE },
+            Some(b'k') if part == "kind" => 3,
+            Some(b'g') if part == "get" => 4,
+            Some(b's') => match part { "set" => 5, "subclass" => 22, "slots" => 24, _ => NO_PLACE },
+            Some(b'r') => match part { "remove" => 6, "root" => 9, "receiver" => 20, _ => NO_PLACE },
+            Some(b'c') if part == "call" => 7,
+            Some(b'a') if part == "allocate" => 10,
+            Some(b'd') => match part {
+                "descriptor.get" => 11, "descriptor.set" => 12, "descriptor.delete" => 13, "doc" => 14, "defaults" => 15, _ => NO_PLACE,
+            },
+            Some(b'b') => match part { "base" => 16, "bases" => 17, _ => NO_PLACE },
+            Some(b'o') if part == "order" => 19,
+            Some(b'u') if part == "unready" => 21,
+            Some(b't') if part == "text_signature" => 23,
+            _ => NO_PLACE,
+        };
+        if place != NO_PLACE { return self.member_words[place]; }
+        self.lang.class_details.get(part).and_then(|v| v.first()).map_or("", String::as_str)
     }
     // Read once when the language itself was read, since no program
     // still running can change which words a class stands under: every

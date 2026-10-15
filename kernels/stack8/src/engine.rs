@@ -6285,7 +6285,7 @@ impl<'a> Engine<'a> {
             (keys[5].clone(), code),
             (keys[11].clone(), back.map_or(Value::Null, Value::Object)),
             (keys[12].clone(), Value::Null), (keys[13].clone(), global_book),
-            ("\0slots".into(), Value::tuple(program.idents.iter().zip(locals).map(|(name, value)| if name.as_bytes().first() == Some(&b'#') && !(program.generator && program.formals.first() == Some(name)) { Value::Blank } else { value.clone() }).collect())),
+            ("\0slots".into(), Value::tuple(program.idents.iter().zip(locals).map(|(name, value)| if matches!(name.as_bytes().first(), Some(b'#')) && !(program.generator && program.formals.first() == Some(name)) { Value::Blank } else { value.clone() }).collect())),
             ("\0routine".into(), Value::Routine(program.clone())),
             ("\0observed".into(), Value::Null),
             ("\0instruction".into(), Value::Small(-1)),
@@ -11928,6 +11928,7 @@ impl<'a> Engine<'a> {
         self.comprehension_items(value)
     }
 
+    #[allow(unused_variables)]
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
         if let Action::HasMember(member) = op {
             if let Some(window @ Value::View(_)) = self.data.last().and_then(Self::view_in) {
@@ -12031,7 +12032,276 @@ impl<'a> Engine<'a> {
             if let Some(v)=result {self.data.push(v);return Ok(());}
         }
         let result = match op {
-            Action::Match(pattern, names, tuple) => {
+            Action::Match(pattern, names, tuple) => { return self.perform_arm_1(op, argc); }
+            Action::WalkAsync => { return self.perform_arm_2(op, argc); }
+            Action::ByteAssign(repeat) => { return self.perform_arm_3(op, argc); }
+            Action::KeepPoint => self.drop_top()?.with_point(true),
+            Action::BindValueMethod(operation) => { return self.perform_arm_4(op, argc); }
+            Action::Not => {
+                let held = self.drop_top()?;
+                Value::Flag(!self.special_truth(&held)?)
+            }
+            Action::AsBool => {
+                let held = self.drop_top()?;
+                Value::Flag(self.special_truth(&held)?)
+            }
+            // A name worked out while the run goes stands for the
+            // binding of that name among the outermost ones, since only
+            // those have names the run can still see.
+            // The cell of the outermost binding a value names, so that a
+            // name may be fastened to it, one handed over, or one given
+            // back: a binding named as the run goes has a cell like any
+            // other, and this is how it is asked for.
+            Action::BondNamed => { return self.perform_arm_5(op, argc); }
+            Action::Named => { return self.perform_arm_6(op, argc); }
+            Action::WriteNamed => { return self.perform_arm_7(op, argc); }
+            Action::ForgetNamed => { return self.perform_arm_8(op, argc); }
+            Action::ReadyNamed => { return self.perform_arm_9(op, argc); }
+            Action::BondWithin(count) => { return self.perform_arm_10(op, argc); }
+            Action::BondOwn(name) => { return self.perform_arm_11(op, argc); }
+            Action::ForgetWithin => { return self.perform_arm_12(op, argc); }
+            Action::FastenNamed => { return self.perform_arm_13(op, argc); }
+            // A value made a value of another kind. Numbers give up what
+            // lies past the point, text is read for the number it opens
+            // with, and anything that is not an array becomes an array
+            // holding just itself.
+            Action::Cast(kind) => { return self.perform_arm_14(op, argc); }
+            Action::BitTurn if self.lang.bits_unbounded && !self.lang.whole_bits => {
+                let v = self.drop_top()?;
+                if matches!(v, Value::Flag(_)) { self.bool_invert_warning()?; }
+                if let Some(answer) = self.special_call(&v, 44, Vec::new())? { self.data.push(answer); return Ok(()); }
+                let v = self.worth_free_of(&v, &[44]).unwrap_or(v);
+                Value::of_big(!self.whole_bits(&v)?)
+            }
+            Action::BitTurn => { return self.perform_arm_15(op, argc); }
+            Action::Positive => { return self.perform_arm_16(op, argc); }
+            Action::Negate => { return self.perform_arm_17(op, argc); }
+            Action::Adorn(kind) => { return self.perform_arm_18(op, argc); }
+            // A member call the receiver's kind does not answer to: a
+            // routine of that name takes the receiver first, as a pipe,
+            // and where nothing is bound by the name the value simply
+            // has no such member.
+            Action::MemberAmiss(name) => {
+                let under = self.data.len().saturating_sub(argc);
+                let told = self.member_amiss(self.data.get(under).unwrap_or(&Value::Null), name);
+                self.drop_many(argc)?;
+                return Err(told.into());
+            }
+            Action::Invoke(name) => { return self.perform_arm_19(op, argc); }
+            Action::Evaluate => {
+                return match self.drop_top()? {
+                    Value::Routine(p) => self.invoke(&p, Vec::new()),
+                    _ => Err("eval needs a program".to_string().into()),
+                };
+            }
+            Action::Execute => { return self.perform_arm_20(op, argc); }
+            Action::TupleJoin => { return self.perform_arm_21(op, argc); }
+            Action::Unpack(count, rest) => { return self.perform_arm_22(op, argc); }
+            Action::ComprehensionItems => { return self.perform_arm_23(op, argc); }
+            Action::UnpackCount(wanted) | Action::BindCount(wanted) => { return self.perform_arm_24(op, argc); }
+            Action::GatherItem { map, spread } => { return self.perform_arm_25(op, argc); }
+            Action::Suspend | Action::Delegate => return Err(self.lang.yield_unsupported.first().cloned().unwrap_or_default().into()),
+            Action::MakeTuple => Value::tuple(self.drop_many(argc)?),
+            Action::MakeSet => Value::Set(Rc::new(RefCell::new(self.set_from(Vec::new())?))),
+            Action::MakeArray => gathered(self.drop_many(argc)?, false, self.lang.plain_keys),
+            Action::MakeMap => gathered(self.drop_many(argc)?, true, self.lang.plain_keys),
+            Action::Tie => {
+                let pair = self.drop_many(2)?;
+                let mut pair = pair.into_iter();
+                let (k, v) = (pair.next().expect("the key"), pair.next().expect("the value"));
+                Value::Tie(Rc::new((k, v)))
+            }
+            Action::KeyAt | Action::ValueAt => { return self.perform_arm_26(op, argc); }
+            Action::InPlace(inner) => { return self.perform_arm_27(op, argc); }
+            Action::SliceUnavailable => return Err(self.lang.slice_unsupported.clone().unwrap_or_default().into()),
+            Action::Slice => {
+                let step = self.drop_top()?;
+                let stop = self.drop_top()?;
+                let start = self.drop_top()?;
+                Value::Slice(Rc::new([start, stop, step]))
+            }
+            Action::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string().into()),
+            // A place in text holds one letter and no more, so what is
+            // written there is the first letter of what was handed
+            // over, and the write is worth that letter and not the
+            // whole. The language says as much where it has words for
+            // it. The thing written into is looked at and handed back
+            // as it was: only the value beneath it changes.
+            Action::Fitted => { return self.perform_arm_28(op, argc); }
+            Action::Forge(plan) => { return self.perform_arm_29(op, argc); }
+            Action::Make => { return self.perform_arm_30(op, argc); }
+            Action::Import(path, style) => { return self.perform_arm_31(op, argc); }
+            Action::ImportFrom(path, name) => { return self.perform_arm_32(op, argc); }
+            Action::ImportAll => { return self.perform_arm_33(op, argc); }
+            Action::HasMember(name) => { return self.perform_arm_34(op, argc); }
+            // A member is read of what a module's cell holds, not of the cell.
+            // A container asked for one of its special members keeps
+            // the cell its names share, so that a write through the
+            // member is a write every one of those names sees.
+            Action::Grab(name) if self.data.last().is_some_and(|value| matches!(value.contents(), Value::ByteKind(..)) || matches!(value.contents(), Value::Bytes(_, mutable, _) if name.as_ref() == "__buffer__" || mutable && (name.as_ref() == "__release_buffer__" || self.lang.constructor.as_deref()==Some(name.as_ref())))) => {
+                let receiver = self.drop_top()?;
+                self.class_get(receiver.contents(), name, false)?
+            }
+            Action::Grab(name) => { return self.perform_arm_35(op, argc); },
+            // The property becomes a cell the object and the name that
+            // takes it both stand for, so a write through either is a
+            // write both see.
+            Action::RestoreMember(name) => { return self.perform_arm_36(op, argc); }
+            Action::BondField(name) => { return self.perform_arm_37(op, argc); }
+            Action::Uproot(name) => { return self.perform_arm_38(op, argc); }
+            Action::Plant(name) => { return self.perform_arm_39(op, argc); }
+            // The property or method a value names, worked out while
+            // the program runs. The name is on top; what it belongs to
+            // is under it, with any arguments under that.
+            Action::GrabNamed => {
+                let spelled = self.drop_top()?;
+                let sp = self.wording();
+                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                return self.perform(&Action::Grab(name), 1);
+            }
+            Action::PlantNamed => { return self.perform_arm_40(op, argc); }
+            Action::ReachNamed => {
+                let spelled = self.drop_top()?;
+                let sp = self.wording();
+                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                return self.perform(&Action::Reach(name), 1);
+            }
+            Action::SummonNamed(count) => {
+                let spelled = self.drop_top()?;
+                let sp = self.wording();
+                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                return self.perform(&Action::Summon(name), count + 2);
+            }
+            Action::SowNamed => { return self.perform_arm_41(op, argc); }
+            Action::SendNamed(count) => {
+                let spelled = self.drop_top()?;
+                let sp = self.wording();
+                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                return self.perform(&Action::Send(name), count + 1);
+            }
+            Action::Send(name) => { return self.perform_arm_42(op, argc); }
+            Action::Reach(name) => { return self.perform_arm_43(op, argc); },
+            Action::Sow(name) => { return self.perform_arm_44(op, argc); }
+            Action::Summon(name) => { return self.perform_arm_45(op, argc); }
+            Action::Kindred(name) => match self.drop_top()? {
+                Value::Object(o) => Value::Flag(o.class_now().named(&name, self.lang.classes_folded)),
+                _ => Value::Flag(false),
+            },
+            // A parent call with no argument written: the word read as
+            // a name stands for the parent class itself, the cell and
+            // the first argument make the thing, each absence said the
+            // way the reference says it; any other callable the name
+            // was given is called with no arguments at all.
+            Action::Superless => { return self.perform_arm_46(op, argc); }
+            // A routine written where a value stands, taking away with
+            // it the values under it: one for each slot it names.
+            Action::Close => { return self.perform_arm_47(op, argc); }
+            Action::KindredTo => { return self.perform_arm_48(op, argc); }
+            Action::Twin => {
+                let top = self.data.last().cloned().ok_or("Stack underflow")?;
+                top
+            }
+            Action::Matches(names) => match self.drop_top()? {
+                Value::Object(o) => Value::Flag(names.iter().any(|n| o.class_now().named(n, self.lang.classes_folded))),
+                _ => Value::Flag(false),
+            },
+            Action::Reraise => { return self.perform_arm_49(op, argc); }
+            Action::AssertFault => { return self.perform_arm_50(op, argc); }
+            Action::Hurl => { return self.perform_arm_51(op, argc); }
+            Action::Titled => match self.drop_top()? {
+                Value::Object(o) => Value::text(&o.class_now().name),
+                Value::Class(c) => Value::text(&c.name),
+                v => return Err(format!("{} has no class name", v.plain()).into()),
+            },
+            Action::Nothing => Value::Flag(matches!(self.drop_top()?, Value::Null | Value::Blank | Value::Gap)),
+            // Words a definition has ready for a shape it still allows,
+            // said where the shape is reached and nowhere else.
+            Action::Remark(kind, said) => {
+                self.complain(*kind, said);
+                Value::Null
+            }
+            Action::HeldOrSaid(kind, said) => {
+                let held = self.drop_top()?;
+                if !matches!(held, Value::Bond(_)) {
+                    self.complain(*kind, said);
+                }
+                held
+            }
+            Action::HeldOrStop(told) => match self.drop_top()? {
+                held @ Value::Bond(_) => held,
+                _ => return Err(told.to_string().into()),
+            },
+            // Only the run can say whether what a routine named had a
+            // cell of its own; where it had none, one is made for it, so
+            // that a routine giving back a cell always gives one.
+            Action::HeldAnyway(kind, said) => match self.drop_top()? {
+                held @ Value::Bond(_) => held,
+                held => {
+                    self.complain(*kind, said);
+                    Value::Bond(Rc::new(RefCell::new(held)))
+                }
+            },
+            Action::Standing(within) => { return self.perform_arm_52(op, argc); }
+            // A thing may be its own walk, or may hand another over to
+            // be walked in its stead. Either way the walk begins here.
+            Action::AsyncContext(leaving) => { return self.perform_arm_53(op, argc); }
+            Action::ContextExit => {
+                let manager=self.drop_top()?.contents();
+                let Value::Object(instance)=&manager else{return Err(self.unmanaged(&manager.core_kind()).into())};
+                let asynchronous=self.special_value(&manager,85).is_some() && self.special_value(&manager,86).is_some();
+                let slot=self.special_value(&manager,34).ok_or_else(||self.manager_refused(&instance.class_now().name,false,"__exit__",asynchronous))?;
+                self.bind_class_value(slot,Some(manager.clone()),instance.class_now())?
+            }
+            Action::ContextEnter => { return self.perform_arm_54(op, argc); }
+            Action::SettleObjects => { return self.perform_arm_55(op, argc); }
+            Action::Awaited | Action::AsyncGenerator | Action::AsyncWalk => unreachable!("asynchronous walks were handled before dispatch"),
+            Action::WalkFrom => { return self.perform_arm_56(op, argc); }
+            Action::WalkAlone => { return self.perform_arm_57(op, argc); }
+            // Where a walk keeps its place by the item it handed out,
+            // the pass after it looks for that item where it left it and
+            // then everywhere else, since the body may have moved it.
+            // A thing's places stay where they are, so a walk over one
+            // counts them as it always did.
+            Action::WalkPast => { return self.perform_arm_58(op, argc); }
+            Action::IteratorSeed => { return self.perform_arm_59(op, argc); }
+            Action::WalkMore => { return self.perform_arm_60(op, argc); }
+            Action::WalkThis | Action::WalkKey => { return self.perform_arm_61(op, argc); }
+            Action::WalkOnward => {
+                let held = self.drop_top()?;
+                self.walk_asked(&held, self.lang.walk_onward.clone())?;
+                Value::Null
+            }
+            Action::Extent => { return self.perform_arm_62(op, argc); },
+            Action::Collect => {
+                let mark = self.data.iter().rposition(|v| matches!(v, Value::Fence)).ok_or("Stack underflow")?;
+                let items = self.data.split_off(mark + 1);
+                self.data.pop();
+                Value::array(items)
+            }
+            Action::Display => {
+                let value = self.data.last().cloned().ok_or_else(|| Fault::Note("Stack underflow".into()))?;
+                self.display_interactive(value.contents())?;
+                return Ok(());
+            }
+            Action::StringFault => {
+                let message = self.drop_top()?.plain();
+                return Err(message.into());
+            }
+            Action::StringRender => { return self.perform_arm_63(op, argc); }
+            Action::Interpolation | Action::TemplateMake => { return self.perform_arm_64(op, argc); }
+            Action::Builtin(builtin, name) => { return self.perform_arm_65(op, argc); }
+            dyadic => { return self.perform_arm_66(op, argc); }
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_1(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Match(pattern, names, tuple)
+            => {
                 let subject = self.drop_top()?;
                 // The values the pattern read ahead -- classes and dotted
                 // names -- stand under the subject, in the order read.
@@ -12043,8 +12313,19 @@ impl<'a> Engine<'a> {
                         bindings.iter().find(|(n, _)| n == name).expect("a pattern binding").1.clone()
                     }).collect::<Vec<_>>())),
                 }
-            }
-            Action::WalkAsync => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_2(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::WalkAsync
+            => {
                 // The thing is asked for its asynchronous walk, and what
                 // it hands over is marked, so that each step asks that
                 // walk's own word for the next member.
@@ -12063,8 +12344,19 @@ impl<'a> Engine<'a> {
                     return Err(format!("{}{}", self.lang.coroutine_errors[11], kind).into());
                 }
                 Value::Adapter(Rc::new((30, vec![walker])))
-            }
-            Action::ByteAssign(repeat) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_3(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::ByteAssign(repeat)
+            => {
                 let operands = self.drop_many(2)?;
                 // A row written over with these signs keeps the cell it
                 // lives in, so that every name for it sees the change.
@@ -12077,9 +12369,19 @@ impl<'a> Engine<'a> {
                     *target.borrow_mut() = source.borrow().clone();
                     operands[0].clone()
                 } else { result }
-            }
-            Action::KeepPoint => self.drop_top()?.with_point(true),
-            Action::BindValueMethod(operation) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_4(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::BindValueMethod(operation)
+            => {
                 let target = self.drop_top()?.held(false);
                 // A method every kind of value shares a word for is still
                 // the method of only some of them: a value whose kind
@@ -12091,23 +12393,19 @@ impl<'a> Engine<'a> {
                     if self.builtin_member(&target, &word)?.is_none() { return Err(self.member_amiss(&target, &word).into()); }
                 }
                 self.bound_value_method(target, operation)?
-            }
-            Action::Not => {
-                let held = self.drop_top()?;
-                Value::Flag(!self.special_truth(&held)?)
-            }
-            Action::AsBool => {
-                let held = self.drop_top()?;
-                Value::Flag(self.special_truth(&held)?)
-            }
-            // A name worked out while the run goes stands for the
-            // binding of that name among the outermost ones, since only
-            // those have names the run can still see.
-            // The cell of the outermost binding a value names, so that a
-            // name may be fastened to it, one handed over, or one given
-            // back: a binding named as the run goes has a cell like any
-            // other, and this is how it is asked for.
-            Action::BondNamed => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_5(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::BondNamed
+            => {
                 let spelled = self.drop_top()?;
                 let name = self.name_spelled(&spelled);
                 let at = self.registry.slot(&name);
@@ -12123,8 +12421,19 @@ impl<'a> Engine<'a> {
                     self.world[at] = Value::Bond(shared.clone());
                     Value::Bond(shared)
                 }
-            }
-            Action::Named => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_6(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Named
+            => {
                 let spelled = self.drop_top()?;
                 let name = self.name_spelled(&spelled);
                 let at = self.registry.slot(&name);
@@ -12138,8 +12447,19 @@ impl<'a> Engine<'a> {
                     Value::Blank => return Err(format!("Undefined variable: {}", name).into()),
                     held => held.clone(),
                 }
-            }
-            Action::WriteNamed => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_7(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::WriteNamed
+            => {
                 let value = self.drop_top()?;
                 let spelled = self.drop_top()?;
                 let name = self.name_spelled(&spelled);
@@ -12150,16 +12470,38 @@ impl<'a> Engine<'a> {
                     _ => self.world[at] = value,
                 }
                 Value::Null
-            }
-            Action::ForgetNamed => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_8(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::ForgetNamed
+            => {
                 let spelled = self.drop_top()?;
                 let name = self.name_spelled(&spelled);
                 let at = self.registry.slot(&name);
                 self.world.resize(self.registry.idents.len(), Value::Blank);
                 self.world[at] = Value::Blank;
                 Value::Null
-            }
-            Action::ReadyNamed => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_9(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::ReadyNamed
+            => {
                 let spelled = self.drop_top()?;
                 let name = self.name_spelled(&spelled);
                 let at = self.registry.slot(&name);
@@ -12168,8 +12510,19 @@ impl<'a> Engine<'a> {
                     self.world[at] = Value::Null;
                 }
                 Value::Null
-            }
-            Action::BondWithin(count) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_10(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::BondWithin(count)
+            => {
                 let mut keys = self.drop_many(*count)?;
                 for k in keys.iter_mut() {
                     *k = self.key(k);
@@ -12189,8 +12542,19 @@ impl<'a> Engine<'a> {
                     }
                     _ => return Err("Cannot take a cell from a place in something that is not an array".into()),
                 }
-            }
-            Action::BondOwn(name) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_11(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::BondOwn(name)
+            => {
                 let stands = {
                     let top = self.drop_top()?;
                     self.class_it_spells(top)
@@ -12202,8 +12566,19 @@ impl<'a> Engine<'a> {
                         return Err(told.into());
                     }
                 }
-            }
-            Action::ForgetWithin => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_12(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::ForgetWithin
+            => {
                 let named = self.drop_top()?;
                 let holder = self.data.last().cloned().ok_or_else(|| self.special_fault())?;
                 let target = holder.contents();
@@ -12409,8 +12784,19 @@ impl<'a> Engine<'a> {
                 drop(inside);
                 if let Some((book, name)) = mirror_cell { self.globals_mirror_remove(&book, &name); }
                 Value::Null
-            }
-            Action::FastenNamed => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_13(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::FastenNamed
+            => {
                 let held = self.drop_top()?;
                 let spelled = self.drop_top()?;
                 let name = self.name_spelled(&spelled);
@@ -12421,12 +12807,19 @@ impl<'a> Engine<'a> {
                 // has none does rather than stopping.
                 self.world[at] = held;
                 Value::Null
-            }
-            // A value made a value of another kind. Numbers give up what
-            // lies past the point, text is read for the number it opens
-            // with, and anything that is not an array becomes an array
-            // holding just itself.
-            Action::Cast(kind) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_14(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Cast(kind)
+            => {
                 let v = self.drop_top()?;
                 let sp = self.wording();
                 match kind {
@@ -12451,15 +12844,19 @@ impl<'a> Engine<'a> {
                         self.at_real_width(made)
                     }
                 }
-            }
-            Action::BitTurn if self.lang.bits_unbounded && !self.lang.whole_bits => {
-                let v = self.drop_top()?;
-                if matches!(v, Value::Flag(_)) { self.bool_invert_warning()?; }
-                if let Some(answer) = self.special_call(&v, 44, Vec::new())? { self.data.push(answer); return Ok(()); }
-                let v = self.worth_free_of(&v, &[44]).unwrap_or(v);
-                Value::of_big(!self.whole_bits(&v)?)
-            }
-            Action::BitTurn => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_15(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::BitTurn
+            => {
                 let v = self.drop_top()?;
                 if matches!(v, Value::Flag(_)) { self.bool_invert_warning()?; }
                 if let Some(answer) = self.special_call(&v, 44, Vec::new())? { self.data.push(answer); return Ok(()); }
@@ -12472,8 +12869,19 @@ impl<'a> Engine<'a> {
                     }
                     _ => Value::Small(!self.bits_said(&v)?),
                 }
-            }
-            Action::Positive => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_16(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Positive
+            => {
                 let v = self.drop_top()?;
                 if let Some(answer) = self.special_call(&v, 41, Vec::new())? {
                     self.data.push(answer);
@@ -12486,8 +12894,19 @@ impl<'a> Engine<'a> {
                     number @ (Value::Complex(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_)) => number,
                     _ => return Err(self.lang.plus_non_number.clone().unwrap_or_default().into()),
                 }
-            }
-            Action::Negate => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_17(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Negate
+            => {
                 // 0 - x, so a real keeps its precision.
                 let v = self.drop_top()?;
                 if let Value::Complex(z) = &v { self.data.push(crate::complex::made(self.lang, -z.real,-z.imag)); return Ok(()); }
@@ -12521,8 +12940,19 @@ impl<'a> Engine<'a> {
                     // highest one does.
                     _ => self.within_width(turned),
                 }
-            }
-            Action::Adorn(kind) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_18(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Adorn(kind)
+            => {
                 let descriptor = match kind {
                     1 => Descriptor::Static(self.drop_top()?),
                     2 => Descriptor::Class(self.drop_top()?),
@@ -12540,18 +12970,19 @@ impl<'a> Engine<'a> {
                     }
                 };
                 Value::Descriptor(Rc::new(descriptor))
-            }
-            // A member call the receiver's kind does not answer to: a
-            // routine of that name takes the receiver first, as a pipe,
-            // and where nothing is bound by the name the value simply
-            // has no such member.
-            Action::MemberAmiss(name) => {
-                let under = self.data.len().saturating_sub(argc);
-                let told = self.member_amiss(self.data.get(under).unwrap_or(&Value::Null), name);
-                self.drop_many(argc)?;
-                return Err(told.into());
-            }
-            Action::Invoke(name) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_19(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Invoke(name)
+            => {
                 let top = self.drop_top()?;
                 let callee = self.what_it_spells(top.contents());
                 return match callee {
@@ -12727,14 +13158,19 @@ impl<'a> Engine<'a> {
                     }
                     _ => Err(format!("'{}' is not a function", name).into()),
                 };
-            }
-            Action::Evaluate => {
-                return match self.drop_top()? {
-                    Value::Routine(p) => self.invoke(&p, Vec::new()),
-                    _ => Err("eval needs a program".to_string().into()),
-                };
-            }
-            Action::Execute => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_20(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Execute
+            => {
                 return match self.drop_top()? {
                     Value::Routine(p) => self.invoke(&p, Vec::new()),
                     v => {
@@ -12742,8 +13178,19 @@ impl<'a> Engine<'a> {
                         Ok(())
                     }
                 };
-            }
-            Action::TupleJoin => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_21(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::TupleJoin
+            => {
                 let portions = self.drop_many(2)?;
                 let mut together = Vec::new();
                 for portion in portions {
@@ -12751,8 +13198,19 @@ impl<'a> Engine<'a> {
                     together.extend(items.iter().cloned());
                 }
                 Value::array(together)
-            }
-            Action::Unpack(count, rest) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_22(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Unpack(count, rest)
+            => {
                 let source = collection_contents(&self.drop_top()?).contents();
                 let source = self.worth_free_of(&source, &[15, 11]).unwrap_or(source).contents();
                 let sized_builtin = matches!(source, Value::Array(_) | Value::Tuple(_) | Value::Map(_));
@@ -12836,8 +13294,19 @@ impl<'a> Engine<'a> {
                     return Err(told.unwrap_or_else(|| "Too many values".to_string()).into());
                 }
                 Value::array(items)
-            }
-            Action::ComprehensionItems => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_23(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::ComprehensionItems
+            => {
                 let source = self.drop_top()?;
                 if self.is_async_generator(&source) || self.is_coroutine(&source) { return Err(self.core_fault("core.uniterable", &source.core_kind()).into()); }
                 if self.lang.python_numbers {
@@ -12877,8 +13346,19 @@ impl<'a> Engine<'a> {
                     Some(walk) => walk,
                     None => Value::array(self.special_items(&source)?),
                 }
-            }
-            Action::UnpackCount(wanted) | Action::BindCount(wanted) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_24(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::UnpackCount(wanted) | Action::BindCount(wanted)
+            => {
                 let source = self.drop_top()?;
                 let parts = if let Value::Generator(walk) = &source {
                     let mut parts = Vec::new();
@@ -12896,8 +13376,19 @@ impl<'a> Engine<'a> {
                     return Err(said.into());
                 }
                 Value::array(parts)
-            }
-            Action::GatherItem { map, spread } => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_25(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::GatherItem { map, spread }
+            => {
                 let mut both = self.drop_many(2)?.into_iter();
                 let gathered_so_far = both.next().expect("growing literal").contents();
                 let next = both.next().expect("literal item");
@@ -12938,19 +13429,19 @@ impl<'a> Engine<'a> {
                     if *spread { Rc::make_mut(&mut items).extend(self.spread_members(&next)?); } else { Rc::make_mut(&mut items).push(next); }
                     Value::Array(items)
                 }
-            }
-            Action::Suspend | Action::Delegate => return Err(self.lang.yield_unsupported.first().cloned().unwrap_or_default().into()),
-            Action::MakeTuple => Value::tuple(self.drop_many(argc)?),
-            Action::MakeSet => Value::Set(Rc::new(RefCell::new(self.set_from(Vec::new())?))),
-            Action::MakeArray => gathered(self.drop_many(argc)?, false, self.lang.plain_keys),
-            Action::MakeMap => gathered(self.drop_many(argc)?, true, self.lang.plain_keys),
-            Action::Tie => {
-                let pair = self.drop_many(2)?;
-                let mut pair = pair.into_iter();
-                let (k, v) = (pair.next().expect("the key"), pair.next().expect("the value"));
-                Value::Tie(Rc::new((k, v)))
-            }
-            Action::KeyAt | Action::ValueAt => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_26(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::KeyAt | Action::ValueAt
+            => {
                 let pair = self.drop_many(2)?;
                 let at = as_index(&pair[1])?;
                 let key = matches!(op, Action::KeyAt);
@@ -12994,8 +13485,19 @@ impl<'a> Engine<'a> {
                     }
                     _ => return Err("Cannot walk a value that is not an array".to_string().into()),
                 }
-            }
-            Action::InPlace(inner) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_27(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::InPlace(inner)
+            => {
                 let by = self.drop_top()?;
                 let held = self.drop_top()?;
                 let asked = self.settled_in_place(inner, &held, &by);
@@ -13048,22 +13550,19 @@ impl<'a> Engine<'a> {
                         return worked;
                     }
                 }
-            }
-            Action::SliceUnavailable => return Err(self.lang.slice_unsupported.clone().unwrap_or_default().into()),
-            Action::Slice => {
-                let step = self.drop_top()?;
-                let stop = self.drop_top()?;
-                let start = self.drop_top()?;
-                Value::Slice(Rc::new([start, stop, step]))
-            }
-            Action::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string().into()),
-            // A place in text holds one letter and no more, so what is
-            // written there is the first letter of what was handed
-            // over, and the write is worth that letter and not the
-            // whole. The language says as much where it has words for
-            // it. The thing written into is looked at and handed back
-            // as it was: only the value beneath it changes.
-            Action::Fitted => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_28(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Fitted
+            => {
                 let into = self.drop_top()?;
                 if let (Value::Text(_), true) = (&into, self.lang.text_places) {
                     let sp = self.wording();
@@ -13080,8 +13579,19 @@ impl<'a> Engine<'a> {
                     *self.data.last_mut().expect("the value written") = Value::text(&letter.to_string());
                 }
                 into
-            }
-            Action::Forge(plan) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_29(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Forge(plan)
+            => {
                 // What was pushed: the class to stand on, then a value for
                 // every property, every value of the class's own, and
                 // every constant, in the order the plan names them.
@@ -13220,8 +13730,19 @@ impl<'a> Engine<'a> {
                     constants: take(&plan.constant_names),
                     weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), python_names: std::cell::RefCell::new(None),
                  mro_adopted: std::cell::Cell::new(false), adopted_order: std::cell::RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)}))
-            }
-            Action::Make => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_30(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Make
+            => {
                 let mut args = self.drop_many(argc)?;
                 let stands = self.class_it_spells(args.remove(0));
                 let Value::Class(class) = stands else {
@@ -13268,8 +13789,19 @@ impl<'a> Engine<'a> {
                     None => {}
                 }
                 Value::Object(object)
-            }
-            Action::Import(path, style) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_31(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Import(path, style)
+            => {
                 // The import is asked of the builtins in force here, the
                 // very way the reference's import statement calls
                 // __import__: absent from the caller's own builtins it
@@ -13301,8 +13833,19 @@ impl<'a> Engine<'a> {
                     };
                     self.call_held(importer, vec![Value::text(path), globals, locals, fromlist, Value::Small(0)])?
                 }
-            }
-            Action::ImportFrom(path, name) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_32(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::ImportFrom(path, name)
+            => {
                 let resolved = self.import_path(path)?;
                 let path = resolved.as_str();
                 // The member a from-import (or a dotted aliased import)
@@ -13327,8 +13870,19 @@ impl<'a> Engine<'a> {
                         Err(fault) => return Err(fault),
                     }
                 }
-            }
-            Action::ImportAll => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_33(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::ImportAll
+            => {
                 let module = self.drop_top()?;
                 if let Value::Object(object) = module {
                     let fields = object.fields.borrow().clone();
@@ -13413,8 +13967,19 @@ impl<'a> Engine<'a> {
                     }
                 }
                 Value::Null
-            }
-            Action::HasMember(name) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_34(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::HasMember(name)
+            => {
                 // What a shared cell holds is what the member is looked
                 // for on, as reading one is: a name a place was taken
                 // out of stands for its cell from then on.
@@ -13516,16 +14081,19 @@ impl<'a> Engine<'a> {
                 let coroutine_reduction = (self.is_coroutine(&held) || matches!(&held, Value::Adapter(parts) if parts.0 == 34))
                     && self.lang.class_details.get("root.members").is_some_and(|words| words.iter().skip(11).take(2).any(|word| word == name.as_ref()));
                 Value::Flag(coroutine_reduction || async_awaitable || name.as_ref() == "__getformat__" && matches!(&held, Value::Real(_)) || matches!(&held, Value::ByteKind(..)) || matches!(&held, Value::Bytes(_, mutable, _) if name.as_ref() == "__buffer__" || *mutable && name.as_ref() == "__release_buffer__") || matches!(&held, Value::Native(Builtin::SortOf, _)) || self.integer_member(&held, name).is_some() || matches!(held, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) && Lang::spells(&self.lang.byte_words["ext.builtin.bytes.from_int"], name) || routine_typed || kind_named || kind_stamp || kind_maker || kind_allocate || kind_initialiser || kind_doc || kind_namespace || kind_flags || kind_carries || lone_kind || text_method || byte_method || generator_running || self.native_special(&held, name) || (!self.lang.exceptions.is_empty() && matches!(&held, Value::Class(_) | Value::Object(_))) || matches!(held, Value::ValueMethod(_)) || field || (!self.lang.class_special.is_empty() && class.is_some()) || class.map_or(false, |c| c.method(name).is_some() || c.holder(name).is_some() || c.constant(name).is_some()))
-            }
-            // A member is read of what a module's cell holds, not of the cell.
-            // A container asked for one of its special members keeps
-            // the cell its names share, so that a write through the
-            // member is a write every one of those names sees.
-            Action::Grab(name) if self.data.last().is_some_and(|value| matches!(value.contents(), Value::ByteKind(..)) || matches!(value.contents(), Value::Bytes(_, mutable, _) if name.as_ref() == "__buffer__" || mutable && (name.as_ref() == "__release_buffer__" || self.lang.constructor.as_deref()==Some(name.as_ref())))) => {
-                let receiver = self.drop_top()?;
-                self.class_get(receiver.contents(), name, false)?
-            }
-            Action::Grab(name) => match {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_35(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Grab(name)
+            => match {
                 let top = self.drop_top()?;
                 if let Some(missing) = self.annotation_operation(&top) { return Err(missing.into()); }
                 if matches!(&top, Value::Bond(_)) && matches!(top.contents(), Value::Map(_) | Value::Array(_) | Value::Set(_)) {
@@ -13755,10 +14323,18 @@ impl<'a> Engine<'a> {
                     }
                 }
             },
-            // The property becomes a cell the object and the name that
-            // takes it both stand for, so a write through either is a
-            // write both see.
-            Action::RestoreMember(name) => {
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_36(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::RestoreMember(name)
+            => {
                 let original = self.drop_top()?;
                 let changed = self.drop_top()?;
                 let owner = self.drop_top()?;
@@ -13770,8 +14346,19 @@ impl<'a> Engine<'a> {
                     self.class_write(owner, name, Some(changed), false)?;
                 }
                 Value::Null
-            }
-            Action::BondField(name) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_37(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::BondField(name)
+            => {
                 let subject = self.drop_top()?;
                 // An item assignment through a descriptor operates on its
                 // returned value; it must never replace the descriptor with
@@ -13843,8 +14430,19 @@ impl<'a> Engine<'a> {
                     }
                     v => return Err(format!("Cannot share property '{}' of {}", name, v.plain()).into()),
                 }
-            }
-            Action::Uproot(name) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_38(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Uproot(name)
+            => {
                 match self.drop_top()? {
                     Value::Object(o) => {
                         // The place stays where it was, holding nothing:
@@ -13864,8 +14462,19 @@ impl<'a> Engine<'a> {
                     }
                     v => return Err(format!("Cannot take property '{}' off {}", name, v.plain()).into()),
                 }
-            }
-            Action::Plant(name) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_39(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Plant(name)
+            => {
                 let mut pair = self.drop_many(2)?;
                 if self.lang.class_special.get(35..38).map_or(false, |names| names.iter().any(|n| n == name.as_ref())) {
                     return Err(self.lang.special_unready.first().cloned().unwrap_or_default().into());
@@ -13931,51 +14540,57 @@ impl<'a> Engine<'a> {
                     }
                     v => return Err(format!("Cannot write property '{}' of {}", name, v.plain()).into()),
                 }
-            }
-            // The property or method a value names, worked out while
-            // the program runs. The name is on top; what it belongs to
-            // is under it, with any arguments under that.
-            Action::GrabNamed => {
-                let spelled = self.drop_top()?;
-                let sp = self.wording();
-                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
-                return self.perform(&Action::Grab(name), 1);
-            }
-            Action::PlantNamed => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_40(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::PlantNamed
+            => {
                 let value = self.drop_top()?;
                 let spelled = self.drop_top()?;
                 let sp = self.wording();
                 let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
                 self.data.push(value);
                 return self.perform(&Action::Plant(name), 2);
-            }
-            Action::ReachNamed => {
-                let spelled = self.drop_top()?;
-                let sp = self.wording();
-                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
-                return self.perform(&Action::Reach(name), 1);
-            }
-            Action::SummonNamed(count) => {
-                let spelled = self.drop_top()?;
-                let sp = self.wording();
-                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
-                return self.perform(&Action::Summon(name), count + 2);
-            }
-            Action::SowNamed => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_41(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::SowNamed
+            => {
                 let value = self.drop_top()?;
                 let spelled = self.drop_top()?;
                 let sp = self.wording();
                 let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
                 self.data.push(value);
                 return self.perform(&Action::Sow(name), 2);
-            }
-            Action::SendNamed(count) => {
-                let spelled = self.drop_top()?;
-                let sp = self.wording();
-                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
-                return self.perform(&Action::Send(name), count + 1);
-            }
-            Action::Send(name) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_42(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Send(name)
+            => {
                 let mut args = self.drop_many(argc)?;
                 let subject = args.remove(0);
                 let subject = if !self.lang.class_builder.is_empty() { self.what_it_spells(subject) } else { subject };
@@ -14097,8 +14712,19 @@ impl<'a> Engine<'a> {
                 let mut all = vec![Value::Object(o)];
                 all.extend(args);
                 return self.invoke(&method, all);
-            }
-            Action::Reach(name) => match {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_43(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Reach(name)
+            => match {
                 let top = self.drop_top()?;
                 self.class_it_spells(top)
             } {
@@ -14118,7 +14744,18 @@ impl<'a> Engine<'a> {
                     return Err(told.into());
                 }
             },
-            Action::Sow(name) => {
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_44(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Sow(name)
+            => {
                 let mut pair = self.drop_many(2)?;
                 let value = pair.pop().expect("the value");
                 let stands = self.class_it_spells(pair.pop().expect("the class"));
@@ -14137,8 +14774,19 @@ impl<'a> Engine<'a> {
                         return Err(told.into());
                     }
                 }
-            }
-            Action::Summon(name) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_45(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Summon(name)
+            => {
                 let mut args = self.drop_many(argc)?;
                 let this = args.remove(0);
                 let parent = args.remove(0);
@@ -14165,17 +14813,19 @@ impl<'a> Engine<'a> {
                 let mut all = vec![this];
                 all.extend(args);
                 return self.invoke(&method, all);
-            }
-            Action::Kindred(name) => match self.drop_top()? {
-                Value::Object(o) => Value::Flag(o.class_now().named(&name, self.lang.classes_folded)),
-                _ => Value::Flag(false),
             },
-            // A parent call with no argument written: the word read as
-            // a name stands for the parent class itself, the cell and
-            // the first argument make the thing, each absence said the
-            // way the reference says it; any other callable the name
-            // was given is called with no arguments at all.
-            Action::Superless => {
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_46(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Superless
+            => {
                 let given = self.drop_many(6)?;
                 let callable = given[0].contents();
                 let descended = match &callable {
@@ -14210,10 +14860,19 @@ impl<'a> Engine<'a> {
                 let made = self.super_framed(class, owner, this)?;
                 self.data.push(made);
                 return Ok(());
-            }
-            // A routine written where a value stands, taking away with
-            // it the values under it: one for each slot it names.
-            Action::Close => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_47(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Close
+            => {
                 let held = self.drop_top()?;
                 let Value::Routine(program) = held else {
                     return Err("Only a routine can carry names away with it".to_string().into());
@@ -14223,8 +14882,19 @@ impl<'a> Engine<'a> {
                 if let Some(title) = self.creation_title(&program) { made.home = Some(title); }
                 made.held = carried;
                 Value::Routine(Rc::new(made))
-            }
-            Action::KindredTo => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_48(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::KindredTo
+            => {
                 let pair = self.drop_many(2)?;
                 let against = match &pair[1] {
                     Value::Object(o) => Some(o.class_now().name.clone()),
@@ -14236,16 +14906,19 @@ impl<'a> Engine<'a> {
                     (Value::Object(o), Some(name)) => Value::Flag(o.class_now().named(&name, self.lang.classes_folded)),
                     _ => Value::Flag(false),
                 }
-            }
-            Action::Twin => {
-                let top = self.data.last().cloned().ok_or("Stack underflow")?;
-                top
-            }
-            Action::Matches(names) => match self.drop_top()? {
-                Value::Object(o) => Value::Flag(names.iter().any(|n| o.class_now().named(n, self.lang.classes_folded))),
-                _ => Value::Flag(false),
             },
-            Action::Reraise => {
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_49(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Reraise
+            => {
                 // Raising again with nothing held is a fault of its own,
                 // told under whatever class the language's words name.
                 let Some(value) = self.caught.last().cloned() else {
@@ -14257,8 +14930,19 @@ impl<'a> Engine<'a> {
                     fields.push(("\0bare-reraise".into(), Value::Flag(true)));
                 }
                 return Err(Fault::Thrown(value));
-            }
-            Action::AssertFault => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_50(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::AssertFault
+            => {
                 let message = self.drop_top()?;
                 // No message at all is a blank; a furnished class keeps
                 // empty text as its one argument, a made-up one drops it.
@@ -14283,8 +14967,19 @@ impl<'a> Engine<'a> {
                 };
                 self.chain_context(&raised);
                 return Err(Fault::Thrown(raised));
-            }
-            Action::Hurl => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_51(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Hurl
+            => {
                 self.trace_fault_outside = None;
                 if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut().retain(|(word, _)| word != "\0traced_exception"); }
                 self.hurled_at.set(self.line);
@@ -14338,41 +15033,19 @@ impl<'a> Engine<'a> {
                 }
                 self.chain_context(&value);
                 return Err(Fault::Thrown(value));
-            }
-            Action::Titled => match self.drop_top()? {
-                Value::Object(o) => Value::text(&o.class_now().name),
-                Value::Class(c) => Value::text(&c.name),
-                v => return Err(format!("{} has no class name", v.plain()).into()),
             },
-            Action::Nothing => Value::Flag(matches!(self.drop_top()?, Value::Null | Value::Blank | Value::Gap)),
-            // Words a definition has ready for a shape it still allows,
-            // said where the shape is reached and nowhere else.
-            Action::Remark(kind, said) => {
-                self.complain(*kind, said);
-                Value::Null
-            }
-            Action::HeldOrSaid(kind, said) => {
-                let held = self.drop_top()?;
-                if !matches!(held, Value::Bond(_)) {
-                    self.complain(*kind, said);
-                }
-                held
-            }
-            Action::HeldOrStop(told) => match self.drop_top()? {
-                held @ Value::Bond(_) => held,
-                _ => return Err(told.to_string().into()),
-            },
-            // Only the run can say whether what a routine named had a
-            // cell of its own; where it had none, one is made for it, so
-            // that a routine giving back a cell always gives one.
-            Action::HeldAnyway(kind, said) => match self.drop_top()? {
-                held @ Value::Bond(_) => held,
-                held => {
-                    self.complain(*kind, said);
-                    Value::Bond(Rc::new(RefCell::new(held)))
-                }
-            },
-            Action::Standing(within) => {
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_52(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Standing(within)
+            => {
                 let pair = self.drop_many(2)?;
                 match (&pair[0], as_index(&pair[1])) {
                     // A thing that is its own walk hands out what it
@@ -14394,10 +15067,19 @@ impl<'a> Engine<'a> {
                     }
                     _ => Value::Flag(true),
                 }
-            }
-            // A thing may be its own walk, or may hand another over to
-            // be walked in its stead. Either way the walk begins here.
-            Action::AsyncContext(leaving) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_53(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::AsyncContext(leaving)
+            => {
                 let object = self.drop_top()?;
                 let held = object.contents();
                 let Value::Object(o) = &held else {
@@ -14419,15 +15101,19 @@ impl<'a> Engine<'a> {
                     let value = told?.ok_or_else(|| self.special_fault())?;
                     self.context_walk(value, "__aenter__")?
                 }
-            }
-            Action::ContextExit => {
-                let manager=self.drop_top()?.contents();
-                let Value::Object(instance)=&manager else{return Err(self.unmanaged(&manager.core_kind()).into())};
-                let asynchronous=self.special_value(&manager,85).is_some() && self.special_value(&manager,86).is_some();
-                let slot=self.special_value(&manager,34).ok_or_else(||self.manager_refused(&instance.class_now().name,false,"__exit__",asynchronous))?;
-                self.bind_class_value(slot,Some(manager.clone()),instance.class_now())?
-            }
-            Action::ContextEnter => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_54(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::ContextEnter
+            => {
                 let object = self.drop_top()?;
                 let held = object.contents();
                 if let Value::Object(o) = &held {
@@ -14449,8 +15135,19 @@ impl<'a> Engine<'a> {
                     // and a language with words for that says so by kind.
                     return Err(self.unmanaged(&held.core_kind()).into());
                 } else { object }
-            }
-            Action::SettleObjects => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_55(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::SettleObjects
+            => {
                 let source = self.drop_top()?;
                 if matches!(source, Value::Set(_)) { self.data.push(source); return Ok(()); }
                 let Value::Array(items) = source else { return Err(self.special_fault().into()) };
@@ -14468,9 +15165,19 @@ impl<'a> Engine<'a> {
                     kept.push(item.clone());
                 }
                 Value::array(kept.into_iter().map(|v| match v { Value::Hashed(pair) => pair.0.clone(), other => other }).collect())
-            }
-            Action::Awaited | Action::AsyncGenerator | Action::AsyncWalk => unreachable!("asynchronous walks were handled before dispatch"),
-            Action::WalkFrom => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_56(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::WalkFrom
+            => {
                 let mut handed = self.drop_top()?;
                 // An asynchronous walk, already asked of its thing, is
                 // stepped by that thing's own word for the next member.
@@ -14530,8 +15237,19 @@ impl<'a> Engine<'a> {
                     },
                 }
                 handed
-            }
-            Action::WalkAlone => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_57(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::WalkAlone
+            => {
                 let held = self.drop_top()?;
                 match (self.walker(&held), self.lang.walk_no_cell.clone()) {
                     (Some(_), Some(said)) => return Err(said.into()),
@@ -14539,13 +15257,19 @@ impl<'a> Engine<'a> {
                     (None, _) => self.walkable(&held)?,
                 }
                 Value::Null
-            }
-            // Where a walk keeps its place by the item it handed out,
-            // the pass after it looks for that item where it left it and
-            // then everywhere else, since the body may have moved it.
-            // A thing's places stay where they are, so a walk over one
-            // counts them as it always did.
-            Action::WalkPast => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_58(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::WalkPast
+            => {
                 let three = self.drop_many(3)?;
                 let at = as_index(&three[1])?;
                 let onward = match (&three[0], &three[2]) {
@@ -14560,16 +15284,38 @@ impl<'a> Engine<'a> {
                     _ => at + 1,
                 };
                 Value::Small(onward as i64)
-            }
-            Action::IteratorSeed => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_59(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::IteratorSeed
+            => {
                 let supplied = self.drop_top()?.contents();
                 match supplied {
                     iterator @ (Value::Cursor(_) | Value::Generator(_) | Value::Walking(_) | Value::Walk(_) | Value::SetWalk(..)) => iterator,
                     other if self.special_value(&other, 16).is_some() => Value::Walking(Rc::new(RefCell::new((other, None)))),
                     other => return Err(self.core_fault("core.not_iterator", &other.core_kind()).into()),
                 }
-            }
-            Action::WalkMore => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_60(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::WalkMore
+            => {
                 let pair = self.drop_many(2)?;
                 if let Value::Generator(held) = &pair[0] {
                     let item = self.resume_generator(held, Value::Null)?;
@@ -14623,8 +15369,19 @@ impl<'a> Engine<'a> {
                         Value::Flag(as_index(&pair[1]).map_or(false, |at| at < reach))
                     }
                 }
-            }
-            Action::WalkThis | Action::WalkKey => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_61(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::WalkThis | Action::WalkKey
+            => {
                 let key = matches!(op, Action::WalkKey);
                 let named = match key {
                     true => self.lang.walk_key.clone(),
@@ -14653,13 +15410,19 @@ impl<'a> Engine<'a> {
                         return self.perform(if key { &Action::KeyAt } else { &Action::ValueAt }, 2);
                     }
                 }
-            }
-            Action::WalkOnward => {
-                let held = self.drop_top()?;
-                self.walk_asked(&held, self.lang.walk_onward.clone())?;
-                Value::Null
-            }
-            Action::Extent => match self.drop_top()? {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_62(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Extent
+            => match self.drop_top()? {
                 value @ Value::SetWalk(..) if self.walked_set(&value)?.is_some() => Value::Small(self.walked_set(&value)?.unwrap().borrow().held.len() as i64),
                 Value::Bytes(row, ..) => Value::Small(row.borrow().len() as i64),
                 Value::Counted(r) => Value::of_big(r.length()),
@@ -14678,22 +15441,18 @@ impl<'a> Engine<'a> {
                 }
                 _ => return Err("Cannot walk a value that is not an array".to_string().into()),
             },
-            Action::Collect => {
-                let mark = self.data.iter().rposition(|v| matches!(v, Value::Fence)).ok_or("Stack underflow")?;
-                let items = self.data.split_off(mark + 1);
-                self.data.pop();
-                Value::array(items)
-            }
-            Action::Display => {
-                let value = self.data.last().cloned().ok_or_else(|| Fault::Note("Stack underflow".into()))?;
-                self.display_interactive(value.contents())?;
-                return Ok(());
-            }
-            Action::StringFault => {
-                let message = self.drop_top()?.plain();
-                return Err(message.into());
-            }
-            Action::StringRender => {
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_63(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::StringRender
+            => {
                 let conversion = self.drop_top()?.plain();
                 let specification = self.drop_top()?.plain();
                 let value = self.drop_top()?;
@@ -14722,8 +15481,19 @@ impl<'a> Engine<'a> {
                     let writer = crate::formatting::Writer { lang: self.lang, words: self.wording() };
                     writer.field_value(&value, &specification, &conversion)?
                 }
-            }
-            Action::Interpolation | Action::TemplateMake => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_64(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Interpolation | Action::TemplateMake
+            => {
                 let mut arguments = Vec::with_capacity(argc);
                 for _ in 0..argc { arguments.push(self.drop_top()?); }
                 arguments.reverse();
@@ -14734,8 +15504,19 @@ impl<'a> Engine<'a> {
                 let namespace = self.import_module("_template_core")?;
                 let Value::Class(class) = self.import_member(&namespace, "_template_core", constructor)? else { return Err("invalid template constructor".into()); };
                 self.class_make(class, arguments)?
-            }
-            Action::Builtin(builtin, name) => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_65(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            Action::Builtin(builtin, name)
+            => {
                 if self.data.len() < argc {
                     return Err("Stack underflow".to_string().into());
                 }
@@ -14770,8 +15551,19 @@ impl<'a> Engine<'a> {
                     Some(fled) => return Err(fled),
                     None => result?,
                 }
-            }
-            dyadic => {
+            },
+            _ => unreachable!(),
+        };
+        self.data.push(self.keep_collection(result));
+        Ok(())
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn perform_arm_66(&mut self, op: &Action, argc: usize) -> Flow<()> {
+        
+        let result = match op {
+            dyadic
+            => {
                 let b = self.drop_top()?;
                 let a = self.drop_top()?;
                 let told = self.special_dyad(dyadic, &a, &b);
@@ -14779,11 +15571,13 @@ impl<'a> Engine<'a> {
                 // raised on, not the words that stood in for it.
                 if let Some(fled) = self.carried.take() { return Err(fled); }
                 told?
-            }
+            },
+            _ => unreachable!(),
         };
         self.data.push(self.keep_collection(result));
         Ok(())
     }
+
 
     // ---------- operations ----------
 
@@ -28679,6 +29473,7 @@ impl Engine<'_> {
     /// handed its dictionary out joins the dictionary too, under the
     /// binding's own cell.
     fn globals_mirror_binding(&mut self, far: usize, binding: &Rc<RefCell<Value>>) {
+        if self.module_globals.is_empty() { return; }
         let Some(ident) = self.registry.idents.get(far) else { return };
         let Some(rest) = ident.strip_prefix("\0module:") else { return };
         let Some((_, rest)) = rest.split_once(':') else { return };

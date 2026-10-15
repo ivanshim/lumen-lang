@@ -4,32 +4,58 @@ use super::*;
 
 impl<'a> Machine<'a> {
     pub(super) fn detail(&self, key: &str) -> &str {
-        match key {
-            "defaults" => self.rules.detail_defaults,
-            "call" => self.rules.detail_call,
-            "descriptor.delete" => self.rules.detail_descriptor_delete,
-            "descriptor.set" => self.rules.detail_descriptor_set,
-            "remove" => self.rules.detail_delete,
-            "subclass" => self.rules.detail_subclass,
-            "set" => self.rules.detail_set,
-            "get" => self.rules.detail_get,
-            "allocate" => self.rules.detail_allocate,
-            "descriptor.get" => self.rules.detail_descriptor_get,
-            "doc" => self.rules.detail_doc,
-            "getitem" => self.rules.detail_getitem,
-            "kind" => self.rules.detail_kind,
-            "main" => self.rules.detail_main,
-            "module" => self.rules.detail_module,
-            "mro" => self.rules.detail_mro,
-            "name" => self.rules.detail_name,
-            "namespace" => self.rules.detail_namespace,
-            "order" => self.rules.detail_order,
-            "qualified" => self.rules.detail_qualified,
-            "receiver" => self.rules.detail_receiver,
-            "root" => self.rules.detail_root,
-            "unready" => self.rules.detail_unready,
-            _ => self.table.single(&format!("ext.stmt.class.detail.{key}")).unwrap_or(""),
+        // The keys are told apart by length first, so a read compares
+        // against the few words of its own size rather than every word.
+        match key.len() {
+            3 => match key {
+                "set" => self.rules.detail_set,
+                "get" => self.rules.detail_get,
+                "doc" => self.rules.detail_doc,
+                "mro" => self.rules.detail_mro,
+                _ => self.detail_other(key),
+            },
+            4 => match key {
+                "call" => self.rules.detail_call,
+                "kind" => self.rules.detail_kind,
+                "main" => self.rules.detail_main,
+                "name" => self.rules.detail_name,
+                "root" => self.rules.detail_root,
+                _ => self.detail_other(key),
+            },
+            5 if key == "order" => self.rules.detail_order,
+            6 => match key {
+                "remove" => self.rules.detail_delete,
+                "module" => self.rules.detail_module,
+                _ => self.detail_other(key),
+            },
+            7 => match key {
+                "getitem" => self.rules.detail_getitem,
+                "unready" => self.rules.detail_unready,
+                _ => self.detail_other(key),
+            },
+            8 => match key {
+                "defaults" => self.rules.detail_defaults,
+                "subclass" => self.rules.detail_subclass,
+                "allocate" => self.rules.detail_allocate,
+                "receiver" => self.rules.detail_receiver,
+                _ => self.detail_other(key),
+            },
+            9 => match key {
+                "namespace" => self.rules.detail_namespace,
+                "qualified" => self.rules.detail_qualified,
+                _ => self.detail_other(key),
+            },
+            14 => match key {
+                "descriptor.set" => self.rules.detail_descriptor_set,
+                "descriptor.get" => self.rules.detail_descriptor_get,
+                _ => self.detail_other(key),
+            },
+            17 if key == "descriptor.delete" => self.rules.detail_descriptor_delete,
+            _ => self.detail_other(key),
         }
+    }
+    fn detail_other(&self, key: &str) -> &str {
+        self.table.single(&format!("ext.stmt.class.detail.{key}")).unwrap_or("")
     }
     // Read once when the roster itself was read, since no program still
     // running can change which words a class stands under: every value

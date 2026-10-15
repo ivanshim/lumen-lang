@@ -6508,6 +6508,7 @@ impl<'a> Machine<'a> {
         wildcard || revised || !self.displaced_primitives.is_empty()
     }
 
+    #[allow(unused_variables)]
     fn value_of(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
         if self.active_trace.is_none() {
             if let Some(body) = self.frames_named.last().cloned() { self.active_trace = self.activation(&body, frame, None); }
@@ -6531,7 +6532,30 @@ impl<'a> Machine<'a> {
             Form::Const(v) => Ok(self.collection_cell(v.clone())),
             Form::Read(slot) => Ok(self.fetch(slot, frame)?),
             Form::Take(slot) => Ok(self.take(slot, frame)?),
-            Form::Release(slot) => {
+            Form::Release(slot) => { return self.value_arm_1(node, frame); }
+            Form::Glance(slot) => { return self.value_arm_2(node, frame); }
+            Form::Bump { slot, by } => { return self.value_arm_3(node, frame); }
+            Form::Dyad { op, name, a, b } => { return self.value_arm_4(node, frame); }
+            Form::Share(slot) => Ok(Value::Shared(self.shared_cell(slot, frame))),
+            Form::Located(position, at, inner) => { return self.value_arm_5(node, frame); }
+            Form::OnLine(row, at, inner) => { return self.value_arm_6(node, frame); }
+            Form::Write(slot, value) => {
+                let v = self.value_of(value, frame)?;
+                self.store(slot, frame, v.clone())?;
+                Ok(v)
+            }
+            Form::Apply(Callee::Prim(Prim::Seq, _), args) if !self.has_wildcard_imports() => { return self.value_arm_7(node, frame); }
+            Form::Apply(Callee::Code(target), args) => self.call_form(target, args, frame),
+            _ => self.extended_value(node, frame),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn value_arm_1(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Release(slot)
+            => {
                 let value = self.fetch(slot, frame)?;
                 // Only the private slot goes away, not the shared value
                 // it may contain (a frame's locals dictionary, for example).
@@ -6543,8 +6567,17 @@ impl<'a> Machine<'a> {
                     f.cells.borrow_mut()[slot.at] = Value::Unset;
                 }
                 Ok(value)
-            }
-            Form::Glance(slot) => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn value_arm_2(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Glance(slot)
+            => {
                 let f = ascend(frame, slot.up);
                 let mut held = f.cells.borrow()[slot.at].clone();
                 if f.capture_slots.borrow().contains(&slot.at) {
@@ -6560,8 +6593,17 @@ impl<'a> Machine<'a> {
                     Value::Shared(cell) if !self.names_in_calls => cell.borrow().clone(),
                     other => other,
                 })
-            }
-            Form::Bump { slot, by } => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn value_arm_3(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Bump { slot, by }
+            => {
                 let v = self.fetch(slot, frame)?;
                 // A step down subtracts, so a string of digits counts
                 // rather than being joined to.
@@ -6575,8 +6617,17 @@ impl<'a> Machine<'a> {
                 };
                 self.store(slot, frame, r.clone())?;
                 Ok(r)
-            }
-            Form::Dyad { op, name, a, b } => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn value_arm_4(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Dyad { op, name, a, b }
+            => {
                 let av = self.input(a, frame)?;
                 let bv = self.input(b, frame)?;
                 let fast = match (&av, &bv) {
@@ -6613,9 +6664,17 @@ impl<'a> Machine<'a> {
                         Ok(made?)
                     }
                 }
-            }
-            Form::Share(slot) => Ok(Value::Shared(self.shared_cell(slot, frame))),
-            Form::Located(position, at, inner) => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn value_arm_5(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Located(position, at, inner)
+            => {
                 let previous = self.active_trace.as_ref().map(Self::activation_instruction).unwrap_or(-1);
                 self.stand_at_instruction(*at as i64);
                 let saved = (self.row, self.extent);
@@ -6626,8 +6685,17 @@ impl<'a> Machine<'a> {
                 (self.row, self.extent) = saved;
                 self.stand_at_instruction(previous);
                 result
-            }
-            Form::OnLine(row, at, inner) => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn value_arm_6(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::OnLine(row, at, inner)
+            => {
                 self.user_source_started |= self.written_in == self.entry_file;
                 self.stand_at_instruction(*at as i64);
                 self.extent = None;
@@ -6658,13 +6726,17 @@ impl<'a> Machine<'a> {
                 }
                 let outcome = self.value_of(inner, frame);
                 self.traced_result(outcome)
-            }
-            Form::Write(slot, value) => {
-                let v = self.value_of(value, frame)?;
-                self.store(slot, frame, v.clone())?;
-                Ok(v)
-            }
-            Form::Apply(Callee::Prim(Prim::Seq, _), args) if !self.has_wildcard_imports() => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn value_arm_7(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Apply(Callee::Prim(Prim::Seq, _), args)
+            => {
                 let mut last = Value::Nil;
                 for a in args {
                     // What the statement before came to is let go
@@ -6676,11 +6748,11 @@ impl<'a> Machine<'a> {
                     last = self.value_of(a, frame)?;
                 }
                 Ok(last)
-            }
-            Form::Apply(Callee::Code(target), args) => self.call_form(target, args, frame),
-            _ => self.extended_value(node, frame),
+            },
+            _ => unreachable!(),
         }
     }
+
 
     fn call_form(&mut self, target: &Form, args: &[Form], frame: &Rc<Env>) -> Res {
         let found = self.value_of(target, frame)?;
@@ -6772,6 +6844,7 @@ impl<'a> Machine<'a> {
     }
 
     #[inline(never)]
+    #[allow(unused_variables)]
     fn extended_value(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
         match node {
             Form::Tie(slot, source) => {
@@ -6783,7 +6856,100 @@ impl<'a> Machine<'a> {
             // A name worked out as the run goes stands for the binding
             // of that name among the outermost ones, those being the
             // only ones whose names the run can still see.
-            Form::Called(spells) => {
+            Form::Called(spells) => { return self.extended_arm_1(node, frame); }
+            // Words a definition holds ready for a shape it still allows.
+            // The line is set to where the shape stands, so that a call
+            // worked out on the way does not leave its own line behind.
+            Form::CellOrSaid(kind, said, row, inner) => { return self.extended_arm_2(node, frame); }
+            Form::HeldEither(kind, said, row, inner) => { return self.extended_arm_3(node, frame); }
+            Form::Remark(kind, said, row) => {
+                if *row > 0 {
+                    self.row = *row;
+                }
+                self.grumble(kind, said);
+                return Ok(Value::Nil);
+            }
+            Form::CallWrite(spells, worth) => { return self.extended_arm_4(node, frame); }
+            Form::Muted(inner) => {
+                self.quieted += 1;
+                let found = self.value_of(inner, frame);
+                self.quieted -= 1;
+                return found;
+            }
+            Form::Silenced(inner) => {
+                self.silenced += 1;
+                let found = self.value_of(inner, frame);
+                self.silenced -= 1;
+                return found;
+            }
+            // The property becomes a cell the thing and the name taking
+            // it both stand for, so a write through either is seen by
+            // both.
+            Form::ShareField(of, called) => { return self.extended_arm_5(node, frame); }
+            // A class's own value, and a binding named as the run goes,
+            // each made a cell that names may share.
+            Form::ShareOwn(of, called) => {
+                let class = self.value_of(of, frame)?;
+                let Value::Blueprint(class) = class else {
+                    return Err(format!("Cannot share '{}' in {}", called, class.bare()).into());
+                };
+                return Ok(Value::Shared(self.own_cell(&class, called)));
+            }
+            Form::ShareCalled(spells) => { return self.extended_arm_6(node, frame); }
+            Form::ShareItem(slot, place) => {
+                let at = self.value_of(place, frame)?;
+                let f = ascend(frame, slot.up);
+                if let Some(cell) = self.value_cell(f, slot.at) {
+                    let mut inside = cell.borrow_mut();
+                    return Ok(Value::Shared(shared_item(&mut inside, &at)?));
+                }
+                Ok(Value::Shared(shared_item(&mut f.cells.borrow_mut()[slot.at], &at)?))
+            }
+            Form::SharePlace(slot, places) => { return self.extended_arm_7(node, frame); }
+            Form::Ready(slot) => { return self.extended_arm_8(node, frame); }
+            Form::Forget(slot) => { return self.extended_arm_9(node, frame); }
+            Form::ShareWithin(under, places) => { return self.extended_arm_10(node, frame); }
+            Form::ForgetWithin(under, place) => { return self.extended_arm_11(node, frame); }
+            Form::ForgetCalled(spells) => {
+                let spelled = self.value_of(spells, frame)?;
+                let name = self.name_it_spells(&spelled);
+                let at = self.place_called(&name);
+                self.outermost.cells.borrow_mut()[at] = Value::Unset;
+                Ok(Value::Nil)
+            }
+            Form::TieCalled(spells, cell) => { return self.extended_arm_12(node, frame); }
+            Form::ReadyCalled(spells) => { return self.extended_arm_13(node, frame); }
+            Form::Missing(slot) => {
+                let f = ascend(frame, slot.up);
+                let values = f.cells.borrow();
+                let empty = match &values[slot.at] {
+                    Value::Shared(link) if self.rules.closes_over => matches!(*link.borrow(), Value::Unset),
+                    other => matches!(other, Value::Unset),
+                };
+                Ok(Value::Flag(empty))
+            }
+            Form::Fits { value, test, slots, tuple, kinds } => { return self.extended_arm_14(node, frame); }
+            Form::Again => { return self.extended_arm_15(node, frame); }
+            Form::Assert { condition, message } => { return self.extended_arm_16(node, frame); }
+            Form::Attempt { context, async_context, body, clauses, last, otherwise } => { return self.extended_arm_17(node, frame); }
+            Form::Class { plan, values } => { return self.extended_arm_18(node, frame); }
+            Form::Cycle { test, body, step, after, otherwise } => { return self.extended_arm_19(node, frame); }
+            Form::Apply(Callee::Prim(op, name), args) if (self.has_wildcard_imports() || self.world_shadow_applies())
+                && self.spread_override(name, *op).is_some() => {
+                let target = Box::new(Form::Const(self.spread_override(name, *op).unwrap()));
+                self.value_of(&Form::Apply(Callee::Code(target), args.clone()), frame)
+            }
+            Form::Apply(Callee::Prim(op, name), args) => { return self.extended_arm_20(node, frame); },
+            _ => unreachable!("form evaluated by the common dispatch"),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_1(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Called(spells)
+            => {
                 let spelled = self.value_of(spells, frame)?;
                 let name = self.name_it_spells(&spelled);
                 let at = self.place_called(&name);
@@ -6797,11 +6963,17 @@ impl<'a> Machine<'a> {
                     Value::Unset => return Err(format!("Undefined variable '{}'", name).into()),
                     other => other,
                 });
-            }
-            // Words a definition holds ready for a shape it still allows.
-            // The line is set to where the shape stands, so that a call
-            // worked out on the way does not leave its own line behind.
-            Form::CellOrSaid(kind, said, row, inner) => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_2(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::CellOrSaid(kind, said, row, inner)
+            => {
                 let worth = self.value_of(inner, frame)?;
                 if let Value::Shared(_) = worth {
                     return Ok(worth);
@@ -6818,8 +6990,17 @@ impl<'a> Machine<'a> {
                     }
                     None => return Err(Escape::Error(said.to_string())),
                 }
-            }
-            Form::HeldEither(kind, said, row, inner) => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_3(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::HeldEither(kind, said, row, inner)
+            => {
                 let worth = self.value_of(inner, frame)?;
                 if let Value::Shared(_) = worth {
                     return Ok(worth);
@@ -6829,15 +7010,17 @@ impl<'a> Machine<'a> {
                 }
                 self.grumble(kind, said);
                 return Ok(Value::Shared(Rc::new(RefCell::new(worth))));
-            }
-            Form::Remark(kind, said, row) => {
-                if *row > 0 {
-                    self.row = *row;
-                }
-                self.grumble(kind, said);
-                return Ok(Value::Nil);
-            }
-            Form::CallWrite(spells, worth) => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_4(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::CallWrite(spells, worth)
+            => {
                 let spelled = self.value_of(spells, frame)?;
                 let name = self.name_it_spells(&spelled);
                 let value = self.value_of(worth, frame)?;
@@ -6851,23 +7034,17 @@ impl<'a> Machine<'a> {
                     None => self.outermost.cells.borrow_mut()[at] = value.clone(),
                 }
                 return Ok(value);
-            }
-            Form::Muted(inner) => {
-                self.quieted += 1;
-                let found = self.value_of(inner, frame);
-                self.quieted -= 1;
-                return found;
-            }
-            Form::Silenced(inner) => {
-                self.silenced += 1;
-                let found = self.value_of(inner, frame);
-                self.silenced -= 1;
-                return found;
-            }
-            // The property becomes a cell the thing and the name taking
-            // it both stand for, so a write through either is seen by
-            // both.
-            Form::ShareField(of, called) => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_5(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::ShareField(of, called)
+            => {
                 let thing = self.value_of(of, frame)?;
                 if self.names_in_calls && self.has_class_order() {
                     if let Value::Thing(_) = &thing {
@@ -6928,17 +7105,17 @@ impl<'a> Machine<'a> {
                 holds[at].1 = Value::Shared(cell.clone());
                 drop(holds);
                 return Ok(Value::Shared(cell));
-            }
-            // A class's own value, and a binding named as the run goes,
-            // each made a cell that names may share.
-            Form::ShareOwn(of, called) => {
-                let class = self.value_of(of, frame)?;
-                let Value::Blueprint(class) = class else {
-                    return Err(format!("Cannot share '{}' in {}", called, class.bare()).into());
-                };
-                return Ok(Value::Shared(self.own_cell(&class, called)));
-            }
-            Form::ShareCalled(spells) => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_6(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::ShareCalled(spells)
+            => {
                 let spelled = self.value_of(spells, frame)?;
                 let name = self.name_it_spells(&spelled);
                 let at = self.place_called(&name);
@@ -6956,17 +7133,17 @@ impl<'a> Machine<'a> {
                 cells[at] = Value::Shared(cell.clone());
                 drop(cells);
                 return Ok(Value::Shared(cell));
-            }
-            Form::ShareItem(slot, place) => {
-                let at = self.value_of(place, frame)?;
-                let f = ascend(frame, slot.up);
-                if let Some(cell) = self.value_cell(f, slot.at) {
-                    let mut inside = cell.borrow_mut();
-                    return Ok(Value::Shared(shared_item(&mut inside, &at)?));
-                }
-                Ok(Value::Shared(shared_item(&mut f.cells.borrow_mut()[slot.at], &at)?))
-            }
-            Form::SharePlace(slot, places) => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_7(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::SharePlace(slot, places)
+            => {
                 let mut keys = Vec::with_capacity(places.len());
                 for place in places {
                     let named = self.value_of(place, frame)?;
@@ -6979,8 +7156,17 @@ impl<'a> Machine<'a> {
                     return Ok(Value::Shared(shared_deep(&mut inside, &keys, makes)?));
                 }
                 Ok(Value::Shared(shared_deep(&mut f.cells.borrow_mut()[slot.at], &keys, makes)?))
-            }
-            Form::Ready(slot) => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_8(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Ready(slot)
+            => {
                 let f = ascend(frame, slot.up);
                 if f.capture_slots.borrow().contains(&slot.at) {
                     let Value::Shared(cell) = &f.cells.borrow()[slot.at] else { unreachable!() };
@@ -6990,8 +7176,17 @@ impl<'a> Machine<'a> {
                     if matches!(cells[slot.at], Value::Unset) { cells[slot.at] = Value::Nil; }
                 }
                 Ok(Value::Nil)
-            }
-            Form::Forget(slot) => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_9(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Forget(slot)
+            => {
                 let f = ascend(frame, slot.up);
                 if Rc::ptr_eq(f, &self.outermost) && self.annotation_scope(frame).is_some()
                     && self.frames_named.last().is_some_and(|routine| routine.globe.is_some()) {
@@ -7008,8 +7203,17 @@ impl<'a> Machine<'a> {
                     _ => places[slot.at] = Value::Unset,
                 }
                 Ok(Value::Nil)
-            }
-            Form::ShareWithin(under, places) => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_10(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::ShareWithin(under, places)
+            => {
                 let holder = self.value_of(under, frame)?;
                 let mut keys = Vec::with_capacity(places.len());
                 for place in places {
@@ -7022,8 +7226,17 @@ impl<'a> Machine<'a> {
                 let makes = self.builds_places;
                 let mut inside = cell.borrow_mut();
                 Ok(Value::Shared(shared_deep(&mut inside, &keys, makes)?))
-            }
-            Form::ForgetWithin(under, place) => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_11(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::ForgetWithin(under, place)
+            => {
                 // A name in exec's globals is stored in its supplied mapping,
                 // not necessarily in the compiler's corresponding frame cell.
                 let holder = if let Form::Share(slot) = under.as_ref() {
@@ -7227,15 +7440,17 @@ impl<'a> Machine<'a> {
                 drop(inside);
                 if let Some(name) = mirror { self.space_mirror_remove(&cell, &name); }
                 Ok(Value::Nil)
-            }
-            Form::ForgetCalled(spells) => {
-                let spelled = self.value_of(spells, frame)?;
-                let name = self.name_it_spells(&spelled);
-                let at = self.place_called(&name);
-                self.outermost.cells.borrow_mut()[at] = Value::Unset;
-                Ok(Value::Nil)
-            }
-            Form::TieCalled(spells, cell) => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_12(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::TieCalled(spells, cell)
+            => {
                 let spelled = self.value_of(spells, frame)?;
                 let held = self.value_of(cell, frame)?;
                 let name = self.name_it_spells(&spelled);
@@ -7245,8 +7460,17 @@ impl<'a> Machine<'a> {
                 // one does rather than stopping.
                 self.outermost.cells.borrow_mut()[at] = held;
                 Ok(Value::Nil)
-            }
-            Form::ReadyCalled(spells) => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_13(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::ReadyCalled(spells)
+            => {
                 let spelled = self.value_of(spells, frame)?;
                 let name = self.name_it_spells(&spelled);
                 let at = self.place_called(&name);
@@ -7255,17 +7479,17 @@ impl<'a> Machine<'a> {
                     cells[at] = Value::Nil;
                 }
                 Ok(Value::Nil)
-            }
-            Form::Missing(slot) => {
-                let f = ascend(frame, slot.up);
-                let values = f.cells.borrow();
-                let empty = match &values[slot.at] {
-                    Value::Shared(link) if self.rules.closes_over => matches!(*link.borrow(), Value::Unset),
-                    other => matches!(other, Value::Unset),
-                };
-                Ok(Value::Flag(empty))
-            }
-            Form::Fits { value, test, slots, tuple, kinds } => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_14(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Fits { value, test, slots, tuple, kinds }
+            => {
                 let subject = self.value_of(value, frame)?;
                 // Classes and dotted names the pattern spells are worked
                 // out here, ahead of the fitting, in the order written.
@@ -7278,8 +7502,17 @@ impl<'a> Machine<'a> {
                     }
                     Ok(Value::Flag(true))
                 } else { Ok(Value::Flag(false)) }
-            }
-            Form::Again => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_15(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Again
+            => {
                 match self.holding_fault.last() {
                     Some(value) => {
                         if let Value::Thing(error) = value {
@@ -7291,8 +7524,17 @@ impl<'a> Machine<'a> {
                     },
                     None => Err(format!("\0{}", self.table.strings("ext.stmt.throw.empty").first().map(String::as_str).unwrap_or_default()).into()),
                 }
-            }
-            Form::Assert { condition, message } => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_16(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Assert { condition, message }
+            => {
                 let tested = self.value_of(condition, frame)?;
                 if self.object_truth(&tested)? { return Ok(Value::Nil); }
                 let held = self.value_of(message, frame)?;
@@ -7317,8 +7559,17 @@ impl<'a> Machine<'a> {
                 };
                 self.keep_context(&raised);
                 Err(Escape::Thrown(raised))
-            }
-            Form::Attempt { context, async_context, body, clauses, last, otherwise } => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_17(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Attempt { context, async_context, body, clauses, last, otherwise }
+            => {
                 let context_line = self.row;
                 let context_extent = self.extent;
                 let exit_site = self.active_trace.as_ref().map(Self::activation_instruction).unwrap_or(-1);
@@ -7491,8 +7742,17 @@ impl<'a> Machine<'a> {
                     final_result?;
                 }
                 ending
-            }
-            Form::Class { plan, values } => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_18(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Class { plan, values }
+            => {
                 // What was written: the class it is built on, then a value
                 // for every property, kept value and constant, in the
                 // order the plan names them.
@@ -7635,8 +7895,17 @@ impl<'a> Machine<'a> {
                     constants,
                     shared: crate::data::BlueprintEntries::new(shared),
                     weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)})))
-            }
-            Form::Cycle { test, body, step, after, otherwise } => {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn extended_arm_19(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Cycle { test, body, step, after, otherwise }
+            => {
                 let mut broken = false;
                 loop {
                     // A pass of a loop is a fair place to look at the
@@ -7684,13 +7953,18 @@ impl<'a> Machine<'a> {
                     if let Some(arm) = otherwise { self.value_of(arm, frame)?; }
                 }
                 Ok(Value::Nil)
-            }
-            Form::Apply(Callee::Prim(op, name), args) if (self.has_wildcard_imports() || self.world_shadow_applies())
-                && self.spread_override(name, *op).is_some() => {
-                let target = Box::new(Form::Const(self.spread_override(name, *op).unwrap()));
-                self.value_of(&Form::Apply(Callee::Code(target), args.clone()), frame)
-            }
-            Form::Apply(Callee::Prim(op, name), args) => match op {
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    #[allow(unused_variables)]
+    fn extended_arm_20(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        
+        match node {
+            Form::Apply(Callee::Prim(op, name), args)
+            => match op {
                 Prim::BindValueMethod => {
                     let receiver = self.value_of(&args[0], frame)?.keep(false);
                     let operation = self.value_of(&args[1], frame)?.bare();
@@ -7703,19 +7977,7 @@ impl<'a> Machine<'a> {
                     let sorted = self.ordered_members(&given[0], &keywords)?;
                     Ok(Value::Vector(crate::tuples::Sequence::plain(sorted)).keep(true))
                 }
-                Prim::Seq => {
-                    let mut last = Value::Nil;
-                    for a in args {
-                        // What the statement before came to is let go
-                        // before the next is worked out and not after
-                        // it: a program asking how much room it holds
-                        // must not be told of a value it has already
-                        // finished with.
-                        drop(std::mem::replace(&mut last, Value::Nil));
-                        last = self.value_of(a, frame)?;
-                    }
-                    Ok(last)
-                }
+                Prim::Seq => { return self.apply_prim_arm_1(node, frame); }
                 Prim::Choose => {
                     let (p, env) = self.pick(args, frame)?;
                     self.invoke(p, env, Vec::new())
@@ -7745,7 +8007,76 @@ impl<'a> Machine<'a> {
                 // inside a routine it knows that routine's names, as the
                 // reference has it, and only the outermost body has none
                 // but the globals.
-                Prim::Weigh if !Rc::ptr_eq(frame, &self.outermost) && !self.reads_manners() => {
+                Prim::Weigh if !Rc::ptr_eq(frame, &self.outermost) && !self.reads_manners() => { return self.apply_prim_arm_2(node, frame); }
+
+                Prim::Both | Prim::Either => { return self.apply_prim_arm_3(node, frame); }
+                Prim::Yield => {
+                    let v = match args.first() {
+                        Some(a) => self.value_of(a, frame)?,
+                        None => Value::Nil,
+                    };
+                    Err(Escape::Yield(v))
+                }
+                Prim::Leave | Prim::Resume => { return self.apply_prim_arm_4(node, frame); }
+                Prim::Otherwise => { return self.apply_prim_arm_5(node, frame); }
+                Prim::Hurl => { return self.apply_prim_arm_6(node, frame); }
+                // A routine written where a value stands takes names
+                // from around it away with it: it is bound to a frame of
+                // its own holding them, and the frame of a call is
+                // filled from that one.
+                Prim::Carry => { return self.apply_prim_arm_7(node, frame); }
+                Prim::Spawn => { return self.apply_prim_arm_8(node, frame); }
+                Prim::Ask => { return self.apply_prim_arm_9(node, frame); }
+                Prim::Parentless => { return self.apply_prim_arm_10(node, frame); }
+                Prim::Bid => { return self.apply_prim_arm_11(node, frame); }
+                Prim::Append | Prim::Replace | Prim::Restore => { return self.apply_prim_arm_12(node, frame); }
+                // Values put before everything the named array holds.
+                // The array is worked on where it lives, so a place
+                // handed out to a walk is still the place it was.
+                Prim::Front => { return self.apply_prim_arm_13(node, frame); }
+                // A language may say the run is over where it stands.
+                // Text given is written out first; a number is not.
+                Prim::Quit => {
+                    let values = self.value_list(args, frame)?;
+                    if let Some(Value::Text(said)) = values.first() {
+                        self.utter(said);
+                    }
+                    Err(Escape::Done)
+                }
+                op => { return self.apply_prim_arm_14(node, frame); }
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn apply_prim_arm_1(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        let Form::Apply(Callee::Prim(op, name), args) = node else { unreachable!() };
+        match op {
+            Prim::Seq
+            => {
+                    let mut last = Value::Nil;
+                    for a in args {
+                        // What the statement before came to is let go
+                        // before the next is worked out and not after
+                        // it: a program asking how much room it holds
+                        // must not be told of a value it has already
+                        // finished with.
+                        drop(std::mem::replace(&mut last, Value::Nil));
+                        last = self.value_of(a, frame)?;
+                    }
+                    Ok(last)
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn apply_prim_arm_2(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        let Form::Apply(Callee::Prim(op, name), args) = node else { unreachable!() };
+        match op {
+            Prim::Weigh
+            => {
                     let v = self.value_list(args, frame)?;
                     if v.len() != 1 {
                         return Err(Escape::Error(format!("{}() expects 1 argument, got {}", name, v.len())));
@@ -7757,9 +8088,17 @@ impl<'a> Machine<'a> {
                         None => given,
                     };
                     self.run_text_within(&source, frame)
-                }
+                },
+            _ => unreachable!(),
+        }
+    }
 
-                Prim::Both | Prim::Either => {
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn apply_prim_arm_3(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        let Form::Apply(Callee::Prim(op, name), args) = node else { unreachable!() };
+        match op {
+            Prim::Both | Prim::Either
+            => {
                     // A language may want the side that settled the pair
                     // handed back whole instead of a flag for its truth.
                     let whole = self.rules.logical_value;
@@ -7780,15 +8119,17 @@ impl<'a> Machine<'a> {
                     };
                     if whole { return Ok(right); }
                     Ok(Value::Flag(self.object_truth(&right)?))
-                }
-                Prim::Yield => {
-                    let v = match args.first() {
-                        Some(a) => self.value_of(a, frame)?,
-                        None => Value::Nil,
-                    };
-                    Err(Escape::Yield(v))
-                }
-                Prim::Leave | Prim::Resume => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn apply_prim_arm_4(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        let Form::Apply(Callee::Prim(op, name), args) = node else { unreachable!() };
+        match op {
+            Prim::Leave | Prim::Resume
+            => {
                     let levels = match args.first() {
                         Some(a) => match self.value_of(a, frame)? {
                             Value::Small(n) if n >= 1 => n as usize,
@@ -7797,8 +8138,17 @@ impl<'a> Machine<'a> {
                         None => 1,
                     };
                     Err(if *op == Prim::Leave { Escape::Leave(levels) } else { Escape::Resume(levels) })
-                }
-                Prim::Otherwise => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn apply_prim_arm_5(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        let Form::Apply(Callee::Prim(op, name), args) = node else { unreachable!() };
+        match op {
+            Prim::Otherwise
+            => {
                     // The second is worked out only when the first is nothing.
                     let first = self.value_of(&args[0], frame)?;
                     if !matches!(first, Value::Nil | Value::Unset) {
@@ -7809,8 +8159,17 @@ impl<'a> Machine<'a> {
                         Value::Bound(p, env) => Ok(self.invoke(p, env, Vec::new())?),
                         other => Ok(other),
                     }
-                }
-                Prim::Hurl => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn apply_prim_arm_6(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        let Form::Apply(Callee::Prim(op, name), args) = node else { unreachable!() };
+        match op {
+            Prim::Hurl
+            => {
                     self.omitted_trace_fault = None;
                     if let Some(activation) = &self.active_trace {
                         activation.holds.borrow_mut().retain(|(name, _)| name != "\0traced_fault");
@@ -7869,12 +8228,17 @@ impl<'a> Machine<'a> {
                     self.raised_on = self.row;
                     self.save_traceback(&raised, true);
                     Err(Escape::Thrown(raised))
-                }
-                // A routine written where a value stands takes names
-                // from around it away with it: it is bound to a frame of
-                // its own holding them, and the frame of a call is
-                // filled from that one.
-                Prim::Carry => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn apply_prim_arm_7(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        let Form::Apply(Callee::Prim(op, name), args) = node else { unreachable!() };
+        match op {
+            Prim::Carry
+            => {
                     let mut values = self.value_list(args, frame)?;
                     if values.is_empty() {
                         return Err("Nothing was given to take away".to_string().into());
@@ -7890,8 +8254,17 @@ impl<'a> Machine<'a> {
                         }
                     }
                     Ok(Value::Bound(program, took))
-                }
-                Prim::Spawn => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn apply_prim_arm_8(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        let Form::Apply(Callee::Prim(op, name), args) = node else { unreachable!() };
+        match op {
+            Prim::Spawn
+            => {
                     let mut values = self.value_list(args, frame)?;
                     if values.is_empty() {
                         return Err("Nothing was given to make".to_string().into());
@@ -7930,8 +8303,17 @@ impl<'a> Machine<'a> {
                         None => {}
                     }
                     Ok(Value::Thing(thing))
-                }
-                Prim::Ask => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn apply_prim_arm_9(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        let Form::Apply(Callee::Prim(op, name), args) = node else { unreachable!() };
+        match op {
+            Prim::Ask
+            => {
                     let mut values = self.value_list(args, frame)?;
                     if values.len() < 2 {
                         return Err(format!("{}() needs a thing and a method name", name).into());
@@ -8034,8 +8416,17 @@ impl<'a> Machine<'a> {
                     let mut all = vec![Value::Thing(thing)];
                     all.extend(values);
                     Ok(self.invoke(program, self.outermost.clone(), all)?)
-                }
-                Prim::Parentless => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn apply_prim_arm_10(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        let Form::Apply(Callee::Prim(op, name), args) = node else { unreachable!() };
+        match op {
+            Prim::Parentless
+            => {
                     // A parent call with no argument written: the word
                     // read as a name stands for the parent class itself,
                     // and the cell and the first parameter make the
@@ -8072,8 +8463,17 @@ impl<'a> Machine<'a> {
                     let this = values[3].settled();
                     let class = match &callable { Value::Blueprint(b) => b.clone(), _ => self.native_kind("super") };
                     self.parent_framed(class, owner, this)
-                }
-                Prim::Bid => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn apply_prim_arm_11(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        let Form::Apply(Callee::Prim(op, name), args) = node else { unreachable!() };
+        match op {
+            Prim::Bid
+            => {
                     let mut values = self.value_list(args, frame)?;
                     if values.len() < 3 {
                         return Err(format!("{}() needs a class and a method name", name).into());
@@ -8107,8 +8507,17 @@ impl<'a> Machine<'a> {
                     let mut all = vec![subject];
                     all.extend(values);
                     Ok(self.invoke(program, self.outermost.clone(), all)?)
-                }
-                Prim::Append | Prim::Replace | Prim::Restore => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn apply_prim_arm_12(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        let Form::Apply(Callee::Prim(op, name), args) = node else { unreachable!() };
+        match op {
+            Prim::Append | Prim::Replace | Prim::Restore
+            => {
                     let Some(Form::Read(slot)) = args.first() else {
                         return Err(format!("First argument to {}() must be an array variable name", name).into());
                     };
@@ -8446,11 +8855,17 @@ impl<'a> Machine<'a> {
                     }
                     if booked_here { self.booked_write(i, &slot.ident, Some(f.cells.borrow()[i].clone())); }
                     Ok(Value::Nil)
-                }
-                // Values put before everything the named array holds.
-                // The array is worked on where it lives, so a place
-                // handed out to a walk is still the place it was.
-                Prim::Front => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn apply_prim_arm_13(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        let Form::Apply(Callee::Prim(op, name), args) = node else { unreachable!() };
+        match op {
+            Prim::Front
+            => {
                     let Some(first) = args.first() else {
                         return Err(format!("First argument to {}() must be an array variable name", name).into());
                     };
@@ -8484,17 +8899,17 @@ impl<'a> Machine<'a> {
                         }
                     };
                     Ok(Value::Small(many as i64))
-                }
-                // A language may say the run is over where it stands.
-                // Text given is written out first; a number is not.
-                Prim::Quit => {
-                    let values = self.value_list(args, frame)?;
-                    if let Some(Value::Text(said)) = values.first() {
-                        self.utter(said);
-                    }
-                    Err(Escape::Done)
-                }
-                op => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn apply_prim_arm_14(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        let Form::Apply(Callee::Prim(op, name), args) = node else { unreachable!() };
+        match op {
+            op
+            => {
                     // The names about a call are only to be seen from
                     // here, where the frame is at hand.
                     if args.is_empty() && self.reads_manners() && matches!(op, Prim::HereBook | Prim::MembersOf | Prim::ClassWork(8) | Prim::WorldBook) {
@@ -8671,11 +9086,12 @@ impl<'a> Machine<'a> {
                         self.hand_over_unheard()?;
                     }
                     Ok(made)
-                }
-            },
-            _ => unreachable!("form evaluated by the common dispatch"),
+                },
+            _ => unreachable!(),
         }
     }
+
+
 
     /// The method a class answers a property it does not hold with, or
     /// takes the write of one with, run in the property's stead.
@@ -18143,6 +18559,7 @@ impl<'a> Machine<'a> {
         Err(format!("{}{}{}", pieces.first().map_or("", String::as_str), item.kind_word(), pieces.get(1).map_or("", String::as_str)))
     }
 
+    #[allow(unused_variables, unused_mut)]
     fn user_operation(&mut self, operation: Prim, operands: &[Value]) -> Result<Option<Value>, String> {
         if let (Prim::At, [Value::Window(owner, 'm'), key]) = (operation, operands) {
             return self.prim(operation, "", &[owner.proxy_pairs(), key.clone()]).map(Some);
@@ -18222,6 +18639,12 @@ impl<'a> Machine<'a> {
         // is the working the left side's own method names. The value on
         // the right gives the marks its words and is never asked for the
         // turned-about answer, which it has no business giving.
+        return self.user_operation_rest(operation, operands);
+    }
+
+    #[allow(unused_variables, unused_mut)]
+    fn user_operation_rest(&mut self, operation: Prim, operands: &[Value]) -> Result<Option<Value>, String> {
+        let writes = matches!(operation, Prim::Quoted | Prim::Asciied | Prim::AsText);
         if let (Prim::Mod, [Value::Text(pattern), right], true) = (operation, operands, self.rules.text_remainder) {
             // A thing built over text stands below the left side's own
             // kind, and the language asks its turned-about method first,
@@ -21125,6 +21548,7 @@ impl<'a> Machine<'a> {
         Ok(value)
     }
 
+    #[allow(unused_variables)]
     pub(super) fn dispatch_primitive(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
@@ -21139,22 +21563,7 @@ impl<'a> Machine<'a> {
             Prim::Positive => { n(1)?; v[0].clone() }
             // A landing was settled into its plain working above.
             Prim::Landing(_) => unreachable!(),
-            Prim::OctetAssign(times) => {
-                // A row written over with these signs is changed where
-                // it stands, so that every name for it sees the change.
-                if self.works_sequences() {
-                    if let Some(kept) = self.sequence_written_over(times, &v[0], &v[1])? { return Ok(kept); }
-                }
-                let changed = self.prim(if times { Prim::Times } else { Prim::Plus }, name, v)?;
-                match (&v[0], &changed) {
-                    (Value::Octets { cell, changeable: true, .. }, Value::Octets { cell: content, .. }) => {
-                        if OctetLease::held(cell) && cell.borrow().len() != content.borrow().len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
-                        cell.replace(content.borrow().to_vec());
-                        v[0].clone()
-                    }
-                    _ => changed,
-                }
-            }
+            Prim::OctetAssign(times) => { return self.dispatch_arm_1(op, name, v); }
             Prim::ClassWork(work) => return self.work_on_class(work, v.to_vec()).map_err(|e| self.carried_native_fault(e)),
             Prim::Pointed => v[0].clone().keeping_point(true),
             Prim::ComplexMade => self.complex_make(v)?,
@@ -21171,7 +21580,743 @@ impl<'a> Machine<'a> {
             Prim::Dictionary => self.dictionary(v, Vec::new())?.keep(true),
             // A method spelled with its class in front is asked of its
             // first argument, as it would be of a value of that class.
-            Prim::ValueMethod if name == "float.__getformat__" => {
+            Prim::ValueMethod if name == "float.__getformat__" => { return self.dispatch_arm_2(op, name, v); }
+            Prim::ValueMethod if name.contains('.') => { return self.dispatch_arm_3(op, name, v); }
+            Prim::ValueMethod | Prim::BindValueMethod | Prim::SortedValues => {
+                let subject = v.first().cloned().unwrap_or(Value::Nil);
+                return Err(self.member_missing(&subject, name));
+            }
+            Prim::SetAssign(operation) => { return self.dispatch_arm_4(op, name, v); }
+            Prim::SetCall(which) => self.work_set(which, v)?,
+            Prim::EmptySet => Value::Set(Rc::new(RefCell::new(self.gather_set(None)?))),
+            Prim::StartContext | Prim::BindLeaving | Prim::StartAsyncContext | Prim::AsyncContext(_) | Prim::DistinctObjects => return Err(self.bad_answer()),
+            Prim::Textual(work) => { return self.dispatch_arm_5(op, name, v); },
+            Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
+            Prim::SliceBounds => Value::Span(crate::tuples::Sequence::plain(v.to_vec())),
+            // A step onward or back adds or takes away one, save on text
+            // spelling no number: a language may walk such text along
+            // its letters instead, or leave it standing, and says so.
+            Prim::Onward(forward) => { return self.dispatch_arm_6(op, name, v); }
+            Prim::TupleJoined => match (&v[0], &v[1]) {
+                (Value::Vector(left), Value::Vector(right)) => {
+                    let joined: Vec<_> = left.iter().chain(right.iter()).cloned().collect();
+                    Value::Vector(crate::tuples::Sequence::plain(joined))
+                }
+                _ => return Err("Tuple portion is not an array".to_string()),
+            },
+            Prim::Partition(wanted, star) => { return self.dispatch_arm_7(op, name, v); }
+            // An iterator or a generator is not gathered: the loop steps
+            // it a member at a time, so what its body said before a later
+            // step raised stands said, and a loop broken off leaves the rest.
+            Prim::Iterated if self.python_numbers && matches!(v[0].settled(), Value::Progression(_)) => {
+                self.iterated_value(&v[0].settled())?
+            }
+            Prim::Iterated if self.is_async_generator(&v[0]) || self.native_coroutine(&v[0]) => {
+                return Err(self.core_complaint("core.uniterable", &v[0].kind_word()));
+            }
+            Prim::Iterated => match self.begin_set_walk(&v[0]) {
+                None if matches!(v[0], Value::Iterator(_) | Value::Generator(_)) => v[0].clone(),
+                None if matches!(v[0], Value::Cursor(_)) => Self::cursor_value(IteratorKind::Handed(v[0].clone())),
+                None => Value::Vector(crate::tuples::Sequence::plain(self.gathered_members(&v[0])?)),
+                Some(walk) => walk,
+            },
+            Prim::CheckUnpack(count) | Prim::BindingWidth(count) => { return self.dispatch_arm_8(op, name, v); }
+            Prim::ExtendLiteral(dictionary, expanded) => { return self.dispatch_arm_9(op, name, v); }
+            Prim::MakeArray => assembled(v.to_vec(), false, self.plain_keys),
+            Prim::MakeMap => assembled(v.to_vec(), true, self.plain_keys),
+            Prim::Couple => {
+                n(2)?;
+                Value::Couple(Rc::new((v[0].clone(), v[1].clone())))
+            }
+            Prim::KeyAt | Prim::ItemAt => { return self.dispatch_arm_10(op, name, v); }
+            Prim::Extent => { return self.dispatch_arm_11(op, name, v); }
+            Prim::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string()),
+            // A place in text has room for one letter, so a write there
+            // is worth that letter and not the whole of what was handed
+            // over. Where more was handed over the language says so, and
+            // where nothing was there is nothing to put.
+            Prim::Letter => { return self.dispatch_arm_12(op, name, v); }
+            // The steps of a walk that a thing may answer for itself are
+            // worked out where a call can be made, not here.
+            Prim::AsyncWalk | Prim::AwaitResult | Prim::AsyncGathered | Prim::AsyncWalked | Prim::IteratorInput | Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
+                return Err(format!("{}() is worked out where a call can be made", name))
+            }
+            Prim::Kept => { return self.dispatch_arm_13(op, name, v); }
+            Prim::Adorn(manner) => { return self.dispatch_arm_14(op, name, v); }
+            Prim::BringModule => { return self.dispatch_arm_15(op, name, v); }
+            Prim::ImportMember => { return self.dispatch_arm_16(op, name, v); }
+            Prim::SpreadModule => { return self.dispatch_arm_17(op, name, v); }
+            Prim::TemplateField | Prim::TemplateParts => {
+                let module = self.load_namespace("_template_core")?;
+                let key = if op == Prim::TemplateField { "Interpolation" } else { "Template" };
+                let constructor = self.namespace_item(&module, "_template_core", key)?;
+                let Value::Blueprint(kind) = constructor else { return Err("invalid template constructor".to_owned()); };
+                self.make_instance(kind, v.to_vec()).map_err(|fault| self.suspension_fault(fault))?
+            }
+            Prim::LoadModule => { return self.dispatch_arm_18(op, name, v); }
+            Prim::MakeHeir => { return self.dispatch_arm_19(op, name, v); }
+            Prim::CodecMapping => return crate::multibyte::invoke(v),
+            Prim::Regex => return crate::sre::invoke(v),
+            Prim::UnicodeDecomposition => return crate::sre::decompose(v),
+            Prim::CopyWorth => { return self.dispatch_arm_20(op, name, v); }
+            Prim::CallResult => { return self.dispatch_arm_21(op, name, v); }
+            Prim::ProgramNames => { return self.dispatch_arm_22(op, name, v); }
+            // Read the live owner count without keeping a lasting new owner.
+            Prim::ReferenceCount => { return self.dispatch_arm_23(op, name, v); }
+            Prim::FrameModule => { return self.dispatch_arm_24(op, name, v); }
+            Prim::ClassSeal => { return self.dispatch_arm_25(op, name, v); }
+            Prim::ReadMember => { return self.dispatch_arm_26(op, name, v); }
+            Prim::WriteMember => { return self.dispatch_arm_27(op, name, v); }
+            Prim::IsInstance => { n(2)?; Value::Flag(belongs_to(&v[0], &v[1])) }
+            Prim::HasMember => { return self.dispatch_arm_28(op, name, v); }
+            Prim::Of => { return self.dispatch_arm_29(op, name, v); }
+            Prim::Pluck => { return self.dispatch_arm_30(op, name, v); }
+            Prim::Onto => { return self.dispatch_arm_31(op, name, v); }
+            Prim::Within => { return self.dispatch_arm_32(op, name, v); }
+            Prim::Into => { return self.dispatch_arm_33(op, name, v); }
+            Prim::Akin => { return self.dispatch_arm_34(op, name, v); }
+            Prim::Named => { return self.dispatch_arm_35(op, name, v); }
+            // A language that makes a place on writing into it finds an
+            // array where nothing at all was there.
+            Prim::Added | Prim::Placed
+                if self.builds_places && matches!(v.first(), Some(Value::Nil) | Some(Value::Unset)) =>
+            {
+                let mut made = v.to_vec();
+                made[0] = Value::Vector(crate::tuples::Sequence::plain(Vec::new()));
+                self.prim(op, name, &made)?
+            }
+            Prim::Added => { return self.dispatch_arm_36(op, name, v); }
+            Prim::Placed => { return self.dispatch_arm_37(op, name, v); }
+            // A restoring write met as a plain value is a plain write:
+            // the leniency belongs to the place it is written into.
+            Prim::Restore => return self.prim_values(Prim::Placed, name, v),
+            Prim::Gather => return Err(format!("{}() is a literal, not a call", name)),
+            // Source read while the program runs, built against the
+            // globals it already has and run where it stands. A file
+            // that cannot be read answers false, as such a language says.
+            // The readers of text and the books of names are answered
+            // before the arguments are opened, where the table spells
+            // the manners text may be read in; spelled without them,
+            // the words are refused here.
+            Prim::AllocationTrace | Prim::WorldBook | Prim::HereBook | Prim::Perform | Prim::Prepare | Prim::Summon => return Err(self.source_refused()),
+            Prim::Weigh | Prim::Bring | Prim::BringOnce => { return self.dispatch_arm_38(op, name, v); }
+            // Reaching outside the run, which only a language that
+            // spells these labels does at all. What cannot be done
+            // answers false rather than stopping the run.
+            Prim::Slurp => { return self.dispatch_arm_39(op, name, v); }
+            Prim::Spill => { return self.dispatch_arm_40(op, name, v); }
+            // A fresh empty file made at the path named: nothing where
+            // it stands afterwards, or the host's own number and words.
+            Prim::FileCreate => { return self.dispatch_arm_41(op, name, v); }
+            Prim::There => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::path::Path::new(&v[0].render(w)).exists())
+            }
+            Prim::Gone => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::fs::remove_file(v[0].render(w)).is_ok())
+            }
+            // Whether the name given is a link standing for somewhere
+            // else: asked of the link itself, and not of whatever
+            // stands at its far end.
+            Prim::Linked => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::fs::symlink_metadata(v[0].render(w)).map(|m| m.file_type().is_symlink()).unwrap_or(false))
+            }
+            // A directory's own entries, sorted so a run answers the
+            // same way twice: the bare name of each, nothing before it.
+            Prim::DirEntries => { return self.dispatch_arm_42(op, name, v); }
+            // A fresh, empty directory made under one already standing,
+            // its name built from a prefix and a suffix around letters
+            // this run has not used there before.
+            Prim::DirFresh => { return self.dispatch_arm_43(op, name, v); }
+            // A directory taken away along with everything under it.
+            Prim::DirWhole => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::fs::remove_dir_all(v[0].render(w)).is_ok())
+            }
+            // A single directory lifted away from the place named,
+            // where nothing stands under it: false where it still
+            // holds anything or no such directory stood there.
+            Prim::DirDrop => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::fs::remove_dir(v[0].render(w)).is_ok())
+            }
+            // A single directory raised at the place named: true
+            // when it stands there afterwards, false when it stood
+            // already or the way to it is broken.
+            Prim::DirOne => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::fs::create_dir(v[0].render(w)).is_ok())
+            }
+            // The run takes itself over to the directory named, so
+            // that a path given short opens from there. False where
+            // no such directory stands.
+            Prim::DirStep => {
+                n(1)?;
+                let w = self.wording();
+                Value::Flag(std::env::set_current_dir(v[0].render(w)).is_ok())
+            }
+            Prim::WeakMake => return self.reference_allocating(name, v),
+            Prim::WeakGet => return self.reference_reading(name, v),
+            Prim::HeapObjects => { return self.dispatch_arm_44(op, name, v); }
+            Prim::Collect => {
+                n(0)?;
+                Value::Small(self.reap_rounds() as i64)
+            }
+            Prim::FaultWhole => {
+                n(0)?;
+                self.holding_fault.last().cloned().unwrap_or(Value::Nil)
+            }
+            Prim::FaultHeld => { return self.dispatch_arm_45(op, name, v); }
+            Prim::PathSort => { return self.dispatch_arm_46(op, name, v); }
+            Prim::LoaderSource => { return self.dispatch_arm_47(op, name, v); }
+            Prim::CryptoWork => { return self.dispatch_arm_48(op, name, v); }
+            Prim::HostPosix => { return self.dispatch_arm_49(op, name, v); },
+            Prim::HostRow => { return self.dispatch_arm_50(op, name, v); }
+            // The host's shell, handed a command and asked afterwards
+            // for all it put where a run puts what it writes. Both ways
+            // the words travel as the bytes their text stands for: the
+            // command as it goes out, the answer as it is read back in,
+            // with whatever break of line ended it left where it fell.
+            // Anything the shell said in complaint goes out beside this
+            // run's own complaints and is not gathered. Where the shell
+            // put out nothing whatever the answer is nothing; where no
+            // shell could be started the answer is false.
+            Prim::Shelled => { return self.dispatch_arm_51(op, name, v); }
+            // Reaching another host: the connection is made, what was
+            // handed over goes on it whole, and what comes back is read
+            // until the far end shuts it. A request that asks for the
+            // connection to be shut wants no more than that.
+            // Biding a while, counted in millionths of a second. Without
+            // it a run watching for something to come ready spins as
+            // fast as it can and takes the first no for the last one.
+            Prim::Bided => { return self.dispatch_arm_52(op, name, v); }
+            Prim::Reached => { return self.dispatch_arm_53(op, name, v); }
+            // A program raised alongside this one. Nothing it writes is
+            // kept: it is raised to answer on a connection, and what it
+            // would otherwise say is let fall.
+            Prim::Raised => { return self.dispatch_arm_54(op, name, v); }
+            Prim::Laid => { return self.dispatch_arm_55(op, name, v); }
+            // A second interpreter raised beside this one, its writing
+            // reached through pipes, in steps: raise it (0, with the
+            // words, the surroundings, and how its three streams go),
+            // write into its input (1), close that input (2), read all
+            // a stream says (3), wait for its end (4), ask whether it
+            // ended (5), and stop it (6). A stream goes as nothing (0),
+            // a pipe (1), or inherited (anything else); a third stream
+            // told to follow the second is kept a pipe of its own, and
+            // the library that asked joins the two later.
+            Prim::AsciiRun => { return self.dispatch_arm_56(op, name, v); }
+            Prim::JsonStringScan => { return self.dispatch_arm_57(op, name, v); }
+            Prim::Subprocess => { return self.dispatch_arm_58(op, name, v); }
+            // The host's signals, one step at a time: give a number
+            // what answers for it (0), answering what it answered with
+            // before; ask what a number was given (1); or leave a
+            // number waiting (2), to be taken up at the next
+            // statement's edge. A number never given an answer keeps
+            // the signal's own way.
+            Prim::Signal => { return self.dispatch_arm_59(op, name, v); }
+            Prim::Clock => {
+                n(1)?;
+                self.allowed = as_index(&v[0])?;
+                self.started = Some(std::time::Instant::now());
+                Value::Flag(true)
+            }
+            // What the run has taken of the host's room, as the tally
+            // beside the allocator has it: what stands taken now, the
+            // highest it ever stood at, and that highest reading thrown
+            // away so it is gathered again from this moment on.
+            Prim::RoomHeld => {
+                n(0)?;
+                Value::Small(lumen_room::used() as i64)
+            }
+            Prim::RoomHighest => {
+                n(0)?;
+                Value::Small(lumen_room::most() as i64)
+            }
+            Prim::RoomAnew => {
+                n(0)?;
+                lumen_room::forget_most();
+                Value::Nil
+            }
+            // How much room the run may take from here on.
+            Prim::RoomMark => {
+                n(1)?;
+                self.ceiling = as_index(&v[0])?;
+                Value::Flag(true)
+            }
+            // Words said as a complaint of a kind the language names,
+            // where the run stands.
+            // The calls under way, as the program may read them: each
+            // what it called, the class it stands in, where the call
+            // itself is written, and what it was handed.
+            Prim::Under => { return self.dispatch_arm_60(op, name, v); }
+            Prim::Complain => { return self.dispatch_arm_61(op, name, v); }
+            // The routine every complaint is to be handed to, or none.
+            // What the run has bound under a name, by name: the
+            // classes, and the routines.
+            Prim::ClassesBound | Prim::RoutinesBound => { return self.dispatch_arm_62(op, name, v); }
+            // The words the language has of its own, by name: what a
+            // program may call though nobody wrote them.
+            Prim::Carry => return Err("A routine takes names away where it is written and nowhere else".to_string()),
+            Prim::WordsSpelled => {
+                n(0)?;
+                let mut words: Vec<String> = self.table.prims.keys().cloned().collect();
+                words.sort();
+                Value::Vector(crate::tuples::Sequence::plain(words.iter().map(|w| Value::text(w)).collect::<Vec<_>>()))
+            }
+            // What a class answers to, by name: the methods written in
+            // it, or the properties its things carry, its own coming
+            // before those of the class it is built on. A thing is asked
+            // of the class that made it.
+            Prim::ClassMethods | Prim::ClassProperties => { return self.dispatch_arm_63(op, name, v); }
+            // The class a class stands on, by name: a thing is asked of
+            // the class it is of. Nothing where it stands on none.
+            Prim::ClassBeneath => { return self.dispatch_arm_64(op, name, v); }
+            // How far the clock the system keeps has come since the
+            // year it counts from. A clock that will not answer counts
+            // as standing at the start of it.
+            Prim::SinceEpoch => { return self.dispatch_arm_65(op, name, v); }
+            // The roots, the curves and the angles, worked over the
+            // reals of the width and named by the first worth handed
+            // over. They are worked at the width and nowhere else: a
+            // root is hardly ever a ratio, and holding one exactly
+            // would mean choosing beforehand how many figures to keep.
+            Prim::Reckon => { return self.dispatch_arm_66(op, name, v); }
+            // The Mersenne Twister a library module draws its chance
+            // from, worked by name (ext.builtin._random): a drawing
+            // stream opened, set going from a whole number or from the
+            // system's own disorder, drawn on at the width's 53 bits or
+            // as a stretch of whole bits, and told or put back to where
+            // it stands. What a stream keeps never becomes a worth: the
+            // library holds only the mark its stream answers to, and
+            // the system's own disorder can be asked for as octets.
+            Prim::Chance => { return self.dispatch_arm_67(op, name, v); }
+            Prim::OutBegun => {
+                n(0)?;
+                Value::Flag(self.written_out.get())
+            }
+            Prim::Untaken => {
+                let put = v.first().cloned().unwrap_or(Value::Nil);
+                let none = matches!(put, Value::Nil | Value::Unset);
+                *self.untaken.borrow_mut() = if none { None } else { Some(put) };
+                Value::Flag(true)
+            }
+            Prim::Hearer => {
+                let put = v.first().cloned().unwrap_or(Value::Nil);
+                let none = matches!(put, Value::Nil | Value::Unset);
+                *self.hearer.borrow_mut() = if none { None } else { Some(put) };
+                Value::Flag(true)
+            }
+            // A routine to run once the run is over, with whatever else
+            // was given standing as its arguments.
+            Prim::Afterward => { return self.dispatch_arm_68(op, name, v); }
+            // Keeping what the run writes out, and giving it up again.
+            Prim::KeepOut => {
+                self.holding.borrow_mut().push(String::new());
+                Value::Flag(true)
+            }
+            Prim::KeptOut => match self.holding.borrow().last() {
+                Some(kept) => Value::text(kept),
+                None => Value::Flag(false),
+            },
+            Prim::LooseOut => {
+                let held = self.holding.borrow_mut().pop();
+                Value::Flag(held.is_some())
+            }
+            Prim::DeepOut => Value::Small(self.holding.borrow().len() as i64),
+            Prim::Handed | Prim::HowMany | Prim::HandedAt => { return self.dispatch_arm_69(op, name, v); }
+            // A language that asks equality loosely ranks loosely too,
+            // so that ranking two values and asking which comes first
+            // give answers that agree.
+            Prim::Rank if self.loose_equals => { return self.dispatch_arm_70(op, name, v); }
+            Prim::Rank => { return self.dispatch_arm_71(op, name, v); }
+            Prim::Erase => { return self.dispatch_arm_72(op, name, v); }
+            Prim::Portray => {
+                n(1)?;
+                self.utter(&over_lines(&v[0], 0, self.wording()));
+                Value::Flag(true)
+            }
+            Prim::Invert => Value::Flag(!self.stands_true(&v[0])),
+            // Turning text over works letter by letter; anything else is
+            // read as a whole number of sixty-four bits first.
+            Prim::BitsOver | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsUp | Prim::BitsDown
+                if self.rules.unbounded_bits && !(op == Prim::BitsEither && self.rules.map_union && matches!(v, [Value::Dict(_), Value::Dict(_)])) => self.all_bits(op, v)?,
+            Prim::BitsOver => match &v[0] {
+                Value::Text(s) => {
+                    let over: Vec<u8> = self.table.raw_of(s).iter().map(|b| !b).collect();
+                    Value::text(&self.table.said_of(&over))
+                }
+                other => Value::Small(!self.bits_told(other)?),
+            },
+            Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne
+                if self.table.strings("ext.op.bit.operands").first().map(String::as_str).is_some() && !(op == Prim::BitsEither && self.rules.map_union && matches!(v, [Value::Dict(_), Value::Dict(_)])) =>
+            { return self.dispatch_arm_73(op, name, v); }
+            // Two pieces of text meet letter by letter. The shorter one
+            // says how far it goes, save where either bit will do, and
+            // there the longer one carries on alone.
+            Prim::BitsEither if self.rules.map_union
+                && matches!(v, [Value::Dict(_), Value::Dict(_)]) => {
+                return self.prim(Prim::ExtendLiteral(true, true), name, v);
+            }
+            Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne
+                if matches!(v[0], Value::Text(_)) && matches!(v[1], Value::Text(_)) =>
+            { return self.dispatch_arm_74(op, name, v); }
+            Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne => { return self.dispatch_arm_75(op, name, v); }
+            // Text turned about is text taken times minus one, the way a
+            // language reading a number out of text does it: the number
+            // the text opens with is turned about, and text opening with
+            // none is a pair no such step can take.
+            Prim::Negate
+                if matches!(v[0], Value::Text(_)) && self.complaint_words.iter().any(|(k, _)| *k == "warning") =>
+            {
+                let pair = [v[0].clone(), Value::Small(-1)];
+                return self.prim(Prim::Times, name, &pair);
+            }
+            Prim::Negate => { return self.dispatch_arm_76(op, name, v); }
+            // Nothing stands in any order beside the worth nothing is
+            // equal to, so each of the four is answered no, whichever
+            // way round it is put: the wider three are asked here and
+            // not deeper down, being the narrow one turned about.
+            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge if v.len() == 2 && math::no_order(&v[0], &v[1]) => Value::Flag(false),
+            // Which of two comes first is asked just as loosely, so an
+            // array, a flag, nothing and text spelling no number are
+            // each set against the other the way such a language sets
+            // them.
+            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge if self.loose_equals => { return self.dispatch_arm_77(op, name, v); }
+            // Where a language has a word for being the very same,
+            // being equal is the looser question: text spelling a
+            // number stands for that number, a flag turns the question
+            // into whether the other side is true, and nothing counts
+            // as untrue and as text with nothing in it.
+            Prim::Eq | Prim::Ne if self.loose_equals => { return self.dispatch_arm_78(op, name, v); }
+            // Two sets set against each other by `==` go the road
+            // membership itself takes: `equals`, reached for a plain
+            // set from below, has no interpreter to call a member's
+            // own `__eq__`, nor to tell two things that merely share
+            // a hash apart.
+            Prim::Eq | Prim::Ne if matches!((&v[0], &v[1]), (Value::Set(_), Value::Set(_))) => {
+                let (Value::Set(one), Value::Set(other)) = (&v[0], &v[1]) else { unreachable!() };
+                let (one, other) = (one.borrow().clone(), other.borrow().clone());
+                let alike = self.sets_equal(&one, &other)?;
+                Value::Flag(alike != (op == Prim::Ne))
+            }
+            Prim::Eq | Prim::Ne if self.rules.unordered_maps => { return self.dispatch_arm_79(op, name, v); }
+            Prim::Membership => { return self.dispatch_arm_80(op, name, v); }
+            Prim::Eq => Value::Flag(v[0].equals(&v[1])),
+            Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
+            Prim::Contains | Prim::Absent => { return self.dispatch_arm_81(op, name, v); }
+            Prim::Mod if self.rules.text_remainder && matches!(v[0], Value::Text(_)) => {
+                let Value::Text(pattern) = &v[0] else { unreachable!() };
+                Value::text(&self.text_remainder(pattern, &v[1])?)
+            }
+            Prim::Selfsame | Prim::Unlike if self.rules.has_any_ext_op_identical_negated => { return self.dispatch_arm_82(op, name, v); }
+            Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
+            Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
+            Prim::Join => Value::text(&format!("{}{}", self.told(&v[0], w), self.told(&v[1], w))),
+            Prim::At if self.has_class_order() && matches!(&v[0],Value::Blueprint(_)) => { return self.dispatch_arm_83(op, name, v); }
+            Prim::At => self.element(&v[0], &v[1], Reading::Plain)?,
+            Prim::Apart => self.element(&v[0], &v[1], Reading::Apart)?,
+            Prim::Toward => self.element(&v[0], &v[1], Reading::Toward)?,
+            // A glance has nothing to say about what is not there.
+            Prim::Glance => {
+                self.quieted += 1;
+                let seen = self.element(&v[0], &v[1], Reading::Plain).unwrap_or(Value::Nil);
+                self.quieted -= 1;
+                seen
+            }
+            Prim::Standing => Value::Flag(v.iter().all(|x| !matches!(x, Value::Nil | Value::Unset))),
+            Prim::Hollow => {
+                n(1)?;
+                Value::Flag(!self.stands_true(&v[0]))
+            }
+            // A value made one of another kind. Numbers give up what
+            // lies past the point, text is read for the number it opens
+            // with, and anything that is not an array becomes an array
+            // holding only itself.
+            Prim::AsChars => Value::text(&v[0].render(w)),
+            Prim::UnheldText => return Err(v[0].bare()),
+            Prim::RenderField => {
+                let result = if self.rules.has_any_ext_builtin_format {
+                    crate::formatting::Layout { table: self.table, names: w }.presented_value(&v[0], &v[1].bare(), &v[2].bare())?
+                } else { v[0].in_field(w, &v[1].bare(), &v[2].bare()).map(|text| Value::text(&text)).ok_or_else(|| self.table.strings("ext.lexical.string.format.unavailable").first().map(String::as_str).unwrap_or("This formatted value is not supported").to_owned())? };
+                result
+            }
+            Prim::FormatValue => { return self.dispatch_arm_84(op, name, v); }
+            Prim::AsTruth => Value::Flag(self.stands_true(&v[0])),
+            Prim::AsNothing => Value::Nil,
+            Prim::AsVector => match v[0].clone() {
+                held @ (Value::Vector(_) | Value::Dict(_)) => held,
+                Value::Nil | Value::Unset => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
+                held => Value::Vector(crate::tuples::Sequence::plain(vec![held])),
+            },
+            Prim::AsWhole => {
+                let worth = self.worth_of(&v[0]);
+                let whole = math::whole_part(&worth).unwrap_or_else(|| BigInt::from(0));
+                self.at_width(Value::from_big(whole))
+            }
+            Prim::AsDecimal => {
+                let worth = self.worth_of(&v[0]);
+                let made = math::to_decimal(&worth, self.real_figures()).unwrap_or(Value::Small(0));
+                self.at_width(made)
+            }
+            // Reaching in makes the place where nothing is there yet,
+            // which is what a write into it asks for.
+            Prim::Inward if matches!(&v[1], Value::Span(_)) => return Err(self.span_complaint("detached")),
+            Prim::Inward if !self.builds_places => self.element(&v[0], &v[1], Reading::Plain)?,
+            Prim::Inward => { return self.dispatch_arm_85(op, name, v); }
+            // Adding text joins it only where the language has no
+            // operator of its own for joining; where it has one, adding
+            // is arithmetic.
+            Prim::Plus
+                if !self.rules.has_any_op_concat && (matches!(v[0], Value::Text(_)) || matches!(v[1], Value::Text(_))) =>
+            { return self.dispatch_arm_86(op, name, v); }
+            Prim::Times if self.rules.repeated_text && v.iter().any(|x| matches!(x,Value::Unpaired(_))) => { return self.dispatch_arm_87(op, name, v); }
+            Prim::Times if self.rules.repeated_text && v.iter().any(|x| matches!(x,Value::Text(_))) => { return self.dispatch_arm_88(op, name, v); }
+            // Text that spells a number is worked with as that number,
+            // fractions included. Text that spells one and then says
+            // something more is worth what it opens with, and text that
+            // spells none is worth nothing; a language with a word for a
+            // warning hears of both instead of being stopped.
+            Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
+            | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::BitsUp | Prim::BitsDown
+                // Only where every piece of text will give up a number,
+                // so that what is worked out below is never text again,
+                // and, for the two shifts, only where the language has
+                // them read each side for a number at all.
+                if (matches!(v[0], Value::Text(_)) || matches!(v[1], Value::Text(_)))
+                    && (!matches!(op, Prim::BitsUp | Prim::BitsDown) || self.rules.numeric_shifts)
+                    && [&v[0], &v[1]].iter().all(|x| {
+                        !matches!(x, Value::Text(_))
+                            || number_spelled_in(x).is_some()
+                            || self.complaint_words.iter().any(|(k, _)| *k == "warning")
+                    }) =>
+            { return self.dispatch_arm_89(op, name, v); }
+            // Carrying the bits along. Each side is read as a whole
+            // number of sixty-four bits, sign and all, save where the
+            // reading above has already made numbers of them.
+            Prim::BitsUp | Prim::BitsDown => { return self.dispatch_arm_90(op, name, v); }
+            // A language whose remainder is taken between whole numbers
+            // brings what it is given to one first, the way it brings a
+            // value to the bits it works on.
+            Prim::Mod
+                if self.rules.whole_remainder
+                    && (matches!(v[0], Value::Frac(_)) || matches!(v[1], Value::Frac(_))) =>
+            {
+                let pair = [Value::Small(self.bits_told(&v[0])?), Value::Small(self.bits_told(&v[1])?)];
+                return self.prim(op, name, &pair);
+            }
+            // Two whole numbers dividing evenly leave a whole one, in a
+            // language whose division says as much rather than always
+            // leaving a real behind.
+            Prim::OverReal
+                if self.rules.lone_op_div_result == Some("whole_or_real")
+                    && matches!(v[0], Value::Small(_) | Value::Huge(_))
+                    && matches!(v[1], Value::Small(_) | Value::Huge(_))
+                    && matches!(math::compute(Calc::Over, &v[0], &v[1]), Some(Ok(Value::Small(_) | Value::Huge(_)))) =>
+            {
+                let evenly = match math::compute(Calc::Over, &v[0], &v[1]) {
+                    Some(r) => r?,
+                    None => return Err("Division requires numeric operands".to_string()),
+                };
+                self.at_width(evenly)
+            }
+            Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power => self.number_work(op, v)?,
+            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => { return self.dispatch_arm_91(op, name, v); }
+            Prim::Echo => { return self.dispatch_arm_92(op, name, v); }
+            // The line comes from the reader the table names, so a
+            // program that has put another source in the reader's place
+            // is answered from that source.
+            // One bound stops; two or three start, stop and step; what
+            // is not given stands for nothing.
+            Prim::SpanOf => {
+                if v.is_empty() || v.len() > 3 { return Err(self.table.strings("ext.builtin.slice.arity").first().map(String::as_str).unwrap_or_default().to_owned()); }
+                let mut bounds = vec![Value::Nil; 3];
+                match v.len() { 1 => bounds[1] = v[0].clone(), count => bounds[..count].clone_from_slice(v) }
+                Value::Span(crate::tuples::Sequence::plain(bounds))
+            }
+            Prim::Inquire => { return self.dispatch_arm_93(op, name, v); }
+            // Text and whether it is for the error channel; the count
+            // of characters poured is answered.
+            Prim::PourOut => { return self.dispatch_arm_94(op, name, v); }
+            // A count and whether to stop at a line's end. A count below
+            // nought means all there is. Each character is drawn whole:
+            // its first byte says how many more belong to it.
+            Prim::DrawIn => { return self.dispatch_arm_95(op, name, v); }
+            Prim::Display => {
+                self.display_interactive(v[0].settled())?;
+                Value::Nil
+            }
+            Prim::Say => {
+                self.utter(&format!("{}\n", self.show(v)));
+                Value::Nil
+            }
+            Prim::Out => {
+                self.utter(&self.show(v));
+                Value::Nil
+            }
+            Prim::Tell => {
+                let w = self.wording();
+                let text: String = v.iter().map(|x| x.render(w)).collect();
+                self.utter(&text);
+                Value::Nil
+            }
+            Prim::Define => return Err(format!("{}() needs a quoted name as its first argument", name)),
+            Prim::Dump => {
+                for x in v {
+                    self.utter(&format!("{}\n", with_kind(x, 0, self.rules.count_ext_system_real_bits.is_some(), self.wording())));
+                }
+                Value::Nil
+            }
+            Prim::Suspend | Prim::Delegate => return Err(self.generator_words("unsupported")),
+            Prim::MakeTuple => Value::tuple(v.to_vec()),
+            Prim::Following => { return self.dispatch_arm_96(op, name, v); }
+            Prim::ReadOctetFile => {
+                n(1)?;
+                let filename = v[0].render(w);
+                if let Ok(raw) = std::fs::read(filename) { self.octets(raw, false) } else { Value::Flag(false) }
+            }
+            Prim::Tupled => {
+                if v.is_empty() { Value::tuple(Vec::new()) }
+                else { n(1)?; Value::tuple(self.gathered_members(&v[0])?) }
+            }
+            Prim::WarningOperation(_) | Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::LzmaEncode | Prim::LzmaDecode | Prim::ZlibNative | Prim::BinaryFormat | Prim::BinaryAscii | Prim::ContextStore | Prim::NamespaceRead | Prim::TraceBridge | Prim::NativeFrame | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
+            Prim::Listed => {
+                match v.len() {
+                    0 => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
+                    1 => {let result=Value::Vector(crate::tuples::Sequence::plain(self.gathered_members(&v[0])?)); if matches!(v[0],Value::Window(..)|Value::Mutable(_,true)|Value::Text(_)|Value::Iterator(_)|Value::Generator(_)){result.keep(true)}else{result}},
+                    _ => return Err(format!("{}() expects 1 argument, got {}", name, v.len())),
+                }
+            }
+            Prim::SomeTrue => { return self.dispatch_arm_97(op, name, v); }
+            Prim::Total => { return self.dispatch_arm_98(op, name, v); }
+            Prim::Span if self.rules.range_values => { return self.dispatch_arm_99(op, name, v); }
+            Prim::Span => return Err(format!("{}() spells a range, which belongs in a for loop", name)),
+            Prim::MakeReal => { return self.dispatch_arm_100(op, name, v); }
+            Prim::Places => {
+                n(1)?;
+                match &v[0] {
+                    Value::Frac(e) if e.places.is_some() => Value::Small(e.places.unwrap() as i64),
+                    _ => return Err(format!("{}() requires a real argument", name)),
+                }
+            }
+            Prim::AsText if self.table.strings("ext.builtin.to_string.object").first().map(String::as_str).is_some() && v.len() != 1 => {
+                if v.is_empty() { Value::text("") } else { return self.text_decoded(&v); }
+            }
+            Prim::Iterate => { return self.dispatch_arm_101(op, name, v); }
+            Prim::ProductStep => self.recipe_factory(v)?,
+            Prim::NextOne => { return self.dispatch_arm_102(op, name, v); }
+            Prim::Repr => {
+                n(1)?;
+                Value::text(&v[0].representation(self.wording()))
+            }
+            Prim::AsText => { return self.dispatch_arm_103(op, name, v); }
+            Prim::AsInt if matches!(v.first(), Some(Value::Complex(_))) => return Err(crate::complex::complaint(self.table, "integer")),
+            Prim::AsInt if self.table.strings("ext.builtin.to_int.base").first().map(String::as_str).is_some() => self.whole_from_call(v)?,
+            Prim::AsInt => {
+                n(1)?;
+                let whole = math::whole_part(&v[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
+                Value::from_big(whole)
+            }
+            Prim::AsReal if self.rules.text_to_real && (v.is_empty() || matches!(v.first(), Some(Value::Text(_) | Value::Unpaired(_)))) => { return self.dispatch_arm_104(op, name, v); }
+            Prim::AsReal if matches!(v, [Value::Octets { .. }]) => { return self.dispatch_arm_105(op, name, v); }
+            // A text kept apart as bare code points (an unpaired surrogate,
+            // say) stands for a string no floating point reader can take,
+            // which CPython reports as a broken string.
+            Prim::AsReal if matches!(v, [Value::Unpaired(_)]) => {
+                return Err(format!("ValueError: could not convert string to float: {}", v[0].representation(self.wording())));
+            }
+            Prim::AsReal => { return self.dispatch_arm_106(op, name, v); }
+            Prim::Length => { return self.dispatch_arm_107(op, name, v); }
+            Prim::CharAtIndex => { return self.dispatch_arm_108(op, name, v); }
+            Prim::CodeOf => { return self.dispatch_arm_109(op, name, v); }
+            Prim::CharOf => { return self.dispatch_arm_110(op, name, v); }
+            // Saying the run is over is done where the call is made,
+            // since it is not a value to be worked out.
+            Prim::Quit => return Err("the run is over".to_string()),
+            Prim::Raise => {
+                n(1)?;
+                return match &v[0] {
+                    Value::Text(s) => Err(s.to_string()),
+                    _ => Err(format!("{}() argument must be a string", name)),
+                };
+            }
+            Prim::SortOf => { return self.dispatch_arm_111(op, name, v); }
+            Prim::Numer => {
+                n(1)?;
+                Value::from_big(math::ratio_of(&v[0]).ok_or_else(|| format!("{}() requires a number argument", name))?.above)
+            }
+            Prim::Denom => {
+                n(1)?;
+                Value::from_big(math::ratio_of(&v[0]).ok_or_else(|| format!("{}() requires a number argument", name))?.beneath)
+            }
+            Prim::Fetch => {
+                n(2)?;
+                self.element(&v[0], &v[1], Reading::Plain)?
+            }
+            Prim::External => { return self.dispatch_arm_112(op, name, v); }
+            Prim::Octets(_) | Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Append | Prim::Replace
+            | Prim::Front | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl | Prim::Otherwise | Prim::Parentless => unreachable!("handled in eval"),
+        })
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_1(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::OctetAssign(times)
+            => {
+                // A row written over with these signs is changed where
+                // it stands, so that every name for it sees the change.
+                if self.works_sequences() {
+                    if let Some(kept) = self.sequence_written_over(times, &v[0], &v[1])? { return Ok(kept); }
+                }
+                let changed = self.prim(if times { Prim::Times } else { Prim::Plus }, name, v)?;
+                match (&v[0], &changed) {
+                    (Value::Octets { cell, changeable: true, .. }, Value::Octets { cell: content, .. }) => {
+                        if OctetLease::held(cell) && cell.borrow().len() != content.borrow().len() { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+                        cell.replace(content.borrow().to_vec());
+                        v[0].clone()
+                    }
+                    _ => changed,
+                }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_2(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::ValueMethod
+            => {
                 if v.len() != 1 {
                     return Err(format!("TypeError: float.__getformat__() takes exactly one argument ({} given)", v.len()));
                 }
@@ -21187,8 +22332,27 @@ impl<'a> Machine<'a> {
                         return Err(format!("TypeError: __getformat__() argument must be str, not {described}"));
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_3(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::ValueMethod if name.contains('.') => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::ValueMethod
+            => {
                 if self.table.spells("ext.builtin.method.getformat", name) {
                     let kind = Value::Intrinsic(Prim::AsReal, Rc::from("float"));
                     return self.value_member(&kind, "float_getformat", v.to_vec(), Vec::new()).map_err(|away| self.carried_native_fault(away));
@@ -21213,12 +22377,27 @@ impl<'a> Machine<'a> {
                     return self.dict_fromkeys(&v[0], filling);
                 }
                 return self.value_member(&v[0], &operation, v[1..].to_vec(), Vec::new()).map_err(|fault| self.carried_native_fault(fault));
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_4(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::ValueMethod | Prim::BindValueMethod | Prim::SortedValues => {
-                let subject = v.first().cloned().unwrap_or(Value::Nil);
-                return Err(self.member_missing(&subject, name));
-            }
-            Prim::SetAssign(operation) => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::SetAssign(operation)
+            => {
                 n(2)?;
                 if operation == 0 && self.rules.map_union {
                     if matches!(v[0].settled(), Value::Dict(_)) {
@@ -21240,11 +22419,27 @@ impl<'a> Machine<'a> {
                     }
                     _ => answer,
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_5(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::SetCall(which) => self.work_set(which, v)?,
-            Prim::EmptySet => Value::Set(Rc::new(RefCell::new(self.gather_set(None)?))),
-            Prim::StartContext | Prim::BindLeaving | Prim::StartAsyncContext | Prim::AsyncContext(_) | Prim::DistinctObjects => return Err(self.bad_answer()),
-            Prim::Textual(work) => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Textual(work)
+            => {
                 let mut values: Vec<Value> = v.iter().map(|x| match Self::underlying(x) { Some(word @ (Value::Text(_) | Value::Unpaired(_))) => word, _ => x.settled() }).collect();
                 // Keep descriptor calls on the labelled native bytes encoder.
                 if work == crate::text::Work::ENCODE && self.table.has_any("ext.builtin.bytes.encode") {
@@ -21332,12 +22527,26 @@ impl<'a> Machine<'a> {
                     _ => output,
                 }
             },
-            Prim::SliceRefused => return Err(self.span_complaint("unsupported")),
-            Prim::SliceBounds => Value::Span(crate::tuples::Sequence::plain(v.to_vec())),
-            // A step onward or back adds or takes away one, save on text
-            // spelling no number: a language may walk such text along
-            // its letters instead, or leave it standing, and says so.
-            Prim::Onward(forward) => {
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_6(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Onward(forward)
+            => {
                 n(2)?;
                 let label = match forward {
                     true => "ext.op.increment.text",
@@ -21359,15 +22568,27 @@ impl<'a> Machine<'a> {
                     false => Prim::Minus,
                 };
                 return self.prim(plain, name, v);
-            }
-            Prim::TupleJoined => match (&v[0], &v[1]) {
-                (Value::Vector(left), Value::Vector(right)) => {
-                    let joined: Vec<_> = left.iter().chain(right.iter()).cloned().collect();
-                    Value::Vector(crate::tuples::Sequence::plain(joined))
-                }
-                _ => return Err("Tuple portion is not an array".to_string()),
             },
-            Prim::Partition(wanted, star) => {
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_7(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Partition(wanted, star)
+            => {
                 let portion = self.underlying_unless(&v[0], &[11, 15]).unwrap_or_else(|| v[0].clone()).settled();
                 let mut values: Vec<Value> = match &portion {
                     Value::Generator(state) => {
@@ -21457,23 +22678,27 @@ impl<'a> Machine<'a> {
                     values.extend(after);
                 }
                 Value::Vector(crate::tuples::Sequence::plain(values))
-            }
-            // An iterator or a generator is not gathered: the loop steps
-            // it a member at a time, so what its body said before a later
-            // step raised stands said, and a loop broken off leaves the rest.
-            Prim::Iterated if self.python_numbers && matches!(v[0].settled(), Value::Progression(_)) => {
-                self.iterated_value(&v[0].settled())?
-            }
-            Prim::Iterated if self.is_async_generator(&v[0]) || self.native_coroutine(&v[0]) => {
-                return Err(self.core_complaint("core.uniterable", &v[0].kind_word()));
-            }
-            Prim::Iterated => match self.begin_set_walk(&v[0]) {
-                None if matches!(v[0], Value::Iterator(_) | Value::Generator(_)) => v[0].clone(),
-                None if matches!(v[0], Value::Cursor(_)) => Self::cursor_value(IteratorKind::Handed(v[0].clone())),
-                None => Value::Vector(crate::tuples::Sequence::plain(self.gathered_members(&v[0])?)),
-                Some(walk) => walk,
             },
-            Prim::CheckUnpack(count) | Prim::BindingWidth(count) => {
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_8(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::CheckUnpack(count) | Prim::BindingWidth(count)
+            => {
                 let values = if let Value::Generator(generator) = &v[0] {
                     let mut taken = Vec::new();
                     for _ in 0..=count {
@@ -21487,8 +22712,27 @@ impl<'a> Machine<'a> {
                     return Err(self.table.single(label).unwrap_or("Comprehension target and item have different lengths").into());
                 }
                 Value::Vector(crate::tuples::Sequence::plain(values))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_9(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::ExtendLiteral(dictionary, expanded) => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::ExtendLiteral(dictionary, expanded)
+            => {
                 if let Value::Set(kept) = &v[0] {
                     let additions = if expanded { self.literal_members(&v[1])? } else { vec![v[1].clone()] };
                     let held = kept.clone();
@@ -21523,14 +22767,27 @@ impl<'a> Machine<'a> {
                     }
                     Value::Dict(Rc::new(combined.into()))
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_10(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::MakeArray => assembled(v.to_vec(), false, self.plain_keys),
-            Prim::MakeMap => assembled(v.to_vec(), true, self.plain_keys),
-            Prim::Couple => {
-                n(2)?;
-                Value::Couple(Rc::new((v[0].clone(), v[1].clone())))
-            }
-            Prim::KeyAt | Prim::ItemAt => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::KeyAt | Prim::ItemAt
+            => {
                 n(2)?;
                 let at = as_index(&v[1])?;
                 if self.check_set_walk(&v[0])?.is_some() { return self.element(&v[0], &v[1], Reading::Plain); }
@@ -21570,8 +22827,27 @@ impl<'a> Machine<'a> {
                     }
                     _ => return Err("Cannot walk a value that is not an array".to_string()),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_11(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Extent => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Extent
+            => {
                 n(1)?;
                 match &v[0] {
                     Value::Octets { cell, .. } => Value::Small(cell.borrow().len() as i64),
@@ -21591,13 +22867,27 @@ impl<'a> Machine<'a> {
                     }
                     _ => return Err("Cannot walk a value that is not an array".to_string()),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_12(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::AtEnd => return Err("An empty index belongs on the left of an assignment".to_string()),
-            // A place in text has room for one letter, so a write there
-            // is worth that letter and not the whole of what was handed
-            // over. Where more was handed over the language says so, and
-            // where nothing was there is nothing to put.
-            Prim::Letter => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Letter
+            => {
                 n(2)?;
                 match &v[1] {
                     Value::Text(_) if self.letter_places => {
@@ -21615,13 +22905,27 @@ impl<'a> Machine<'a> {
                     }
                     _ => v[0].clone(),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_13(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // The steps of a walk that a thing may answer for itself are
-            // worked out where a call can be made, not here.
-            Prim::AsyncWalk | Prim::AwaitResult | Prim::AsyncGathered | Prim::AsyncWalked | Prim::IteratorInput | Prim::Walked | Prim::AloneWalk | Prim::MoreYet | Prim::AtHand | Prim::NamedHere | Prim::StepOn | Prim::PastHeld => {
-                return Err(format!("{}() is worked out where a call can be made", name))
-            }
-            Prim::Kept => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Kept
+            => {
                 n(3)?;
                 match (&v[0], as_index(&v[1])) {
                     // A thing that is its own walk hands out what it
@@ -21646,8 +22950,27 @@ impl<'a> Machine<'a> {
                     }
                     _ => Value::Flag(true),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_14(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Adorn(manner) => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Adorn(manner)
+            => {
                 let member = if manner == 'w' {
                     n(2)?;
                     match &v[0] {
@@ -21661,8 +22984,27 @@ impl<'a> Machine<'a> {
                     Adornment { manner, target: v[0].clone(), extra: None }
                 };
                 Value::Adorned(Rc::new(member))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_15(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::BringModule => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::BringModule
+            => {
                 let requested = v[0].bare();
                 let path = self.qualified_import(&requested)?;
                 // The import is asked of the builtins in force here, the
@@ -21697,8 +23039,27 @@ impl<'a> Machine<'a> {
                         Err(away) => { self.got_away = Some(away); return Err(self.bad_answer()); }
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_16(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::ImportMember => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::ImportMember
+            => {
                 let resolved = self.qualified_import(&v[1].bare())?;
                 // The entry a from-import (or a dotted aliased import)
                 // names is read off the namespace the import itself left
@@ -21719,8 +23080,27 @@ impl<'a> Machine<'a> {
                         Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_17(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::SpreadModule => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::SpreadModule
+            => {
                 if let Value::Thing(namespace) = &v[0] {
                     let names = namespace.holds.borrow().clone();
                     // A module naming its __all__ is read out by exactly
@@ -21812,15 +23192,27 @@ impl<'a> Machine<'a> {
                     }
                 }
                 Value::Nil
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_18(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::TemplateField | Prim::TemplateParts => {
-                let module = self.load_namespace("_template_core")?;
-                let key = if op == Prim::TemplateField { "Interpolation" } else { "Template" };
-                let constructor = self.namespace_item(&module, "_template_core", key)?;
-                let Value::Blueprint(kind) = constructor else { return Err("invalid template constructor".to_owned()); };
-                self.make_instance(kind, v.to_vec()).map_err(|fault| self.suspension_fault(fault))?
-            }
-            Prim::LoadModule => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::LoadModule
+            => {
                 if v.len() == 2 && matches!(&v[1], Value::Text(mode) if mode.as_ref() == "invalidate") {
                     self.library_index.borrow_mut().take();
                     return Ok(Value::Nil);
@@ -21846,8 +23238,27 @@ impl<'a> Machine<'a> {
                     }
                     _ => { n(1)?; self.load_namespace(&v[0].bare())? }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_19(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::MakeHeir => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::MakeHeir
+            => {
                 n(3)?;
                 let title = match &v[0] { Value::Text(word) => word.to_string(), _ => return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()) };
                 let ancestor = match &v[1] {
@@ -21871,11 +23282,27 @@ impl<'a> Machine<'a> {
                     under: std::cell::RefCell::new(Some(ancestor)), name: title, shared: crate::data::BlueprintEntries::new(holdings),
                     methods: vec![], constants: vec![], reaches: vec![], answers: vec![], fields: vec![], weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
                 Value::Blueprint(Rc::new(heir))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_20(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::CodecMapping => return crate::multibyte::invoke(v),
-            Prim::Regex => return crate::sre::invoke(v),
-            Prim::UnicodeDecomposition => return crate::sre::decompose(v),
-            Prim::CopyWorth => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::CopyWorth
+            => {
                 n(2)?;
                 self.reduction_permitted(&v[0])?;
                 if let Value::Generator(_) = &v[0] {
@@ -21884,8 +23311,27 @@ impl<'a> Machine<'a> {
                 let deep = matches!(v[1], Value::Flag(true));
                 let mut known = Vec::new();
                 self.copy_worth(&v[0], deep, &mut known)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_21(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::CallResult => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::CallResult
+            => {
                 n(1)?;
                 let call = Form::Apply(Callee::Code(Box::new(Form::Const(v[0].clone()))), Vec::new());
                 let outer = self.outermost.clone();
@@ -21909,8 +23355,27 @@ impl<'a> Machine<'a> {
                     Err(escape) => { self.got_away = Some(escape); return Err("the call ended the run".into()); }
                 }
                 Value::Vector(crate::tuples::Sequence::plain(items))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_22(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::ProgramNames => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::ProgramNames
+            => {
                 // Given a module, answers its own namespace, as a read
                 // of the module's __dict__ would give it; anything else
                 // is the running program's, or a frame up the call chain.
@@ -21958,9 +23423,27 @@ impl<'a> Machine<'a> {
                 }
                 bindings.push((Value::text("__program_finalizing"), Value::Flag(self.shutting_down)));
                 Value::Dict(Rc::new(bindings.into()))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_23(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // Read the live owner count without keeping a lasting new owner.
-            Prim::ReferenceCount => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::ReferenceCount
+            => {
                 n(1)?;
                 let held = v[0].settled();
                 let owners = match &held {
@@ -21977,8 +23460,27 @@ impl<'a> Machine<'a> {
                     _ => return Err(String::from("NotImplementedError: this value has no reference-counted storage")),
                 };
                 Value::Small(owners.checked_sub(1).unwrap_or(0) as i64)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_24(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::FrameModule => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::FrameModule
+            => {
                 n(1)?;
                 let Value::Small(depth) = v[0] else { return Err(String::from("TypeError: an integer is required")); };
                 let mut at = self.active_trace.clone();
@@ -21991,8 +23493,27 @@ impl<'a> Machine<'a> {
                     Some(Value::Bound(code, _)) => self.routine_module(&code),
                     _ => return Err(String::from("ValueError: call stack is not deep enough")),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_25(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::ClassSeal => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::ClassSeal
+            => {
                 n(1)?;
                 match v[0].settled() {
                     Value::Thing(instance) => {
@@ -22005,8 +23526,27 @@ impl<'a> Machine<'a> {
                     }
                     other => return Err(format!("TypeError: expected a class, not {}", other.kind_word())),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_26(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::ReadMember => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::ReadMember
+            => {
                 if v.len() < 2 || v.len() > 3 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }
                 let word = v[1].bare();
                 match self.attribute(&v[0], &word).or_else(|| v.get(2).cloned()) {
@@ -22028,8 +23568,27 @@ impl<'a> Machine<'a> {
                         }
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_27(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::WriteMember => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::WriteMember
+            => {
                 n(3)?;
                 let sealed = match &v[0] {
                     Value::Thing(instance) => instance.holds.borrow().iter().any(|entry| entry.0 == "\0immutable"),
@@ -22049,9 +23608,27 @@ impl<'a> Machine<'a> {
                     Some((_, old)) => *old = v[2].clone(),
                 }
                 Value::Nil
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_28(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::IsInstance => { n(2)?; Value::Flag(belongs_to(&v[0], &v[1])) }
-            Prim::HasMember => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::HasMember
+            => {
                 if self.has_class_order() && v.len() == 2 && v[1].bare() == self.detail("allocate") && matches!(v[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) {
                     return Ok(Value::Flag(true));
                 }
@@ -22106,8 +23683,27 @@ impl<'a> Machine<'a> {
                 // running, where a language has a word for that.
                 let generator_running = matches!(&v[0], Value::Generator(_)) && self.attribute(&v[0], &word).is_some();
                 Value::Flag(native || of_octets || generator_running || self.native_member(&v[0], &word) || (self.rules.has_any_ext_builtin_exceptions && matches!(&v[0], Value::Blueprint(_) | Value::Thing(_))) || matches!(v[0], Value::Member(..) | Value::TextCall { .. }) || own || (self.rules.has_any_ext_stmt_class_special && class.is_some()) || class.map_or(false, |c| c.keeper(&word).is_some() || c.program(&word).is_some() || c.constant(&word).is_some()))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_29(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Of => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Of
+            => {
                 n(2)?;
                 let called = v[1].bare();
                 if !called.is_empty() && called == self.rules.detail_doc {
@@ -22226,8 +23822,27 @@ impl<'a> Machine<'a> {
                         return Err(format!("Cannot read property '{}' of {}", called, other.bare()));
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_30(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Pluck => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Pluck
+            => {
                 n(2)?;
                 let called = v[1].bare();
                 match &v[0] {
@@ -22245,8 +23860,27 @@ impl<'a> Machine<'a> {
                     }
                     other => return Err(format!("Cannot take property '{}' off {}", called, other.bare())),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_31(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Onto => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Onto
+            => {
                 n(3)?;
                 let called = v[1].bare();
                 if self.rules.member_pipes {
@@ -22286,8 +23920,27 @@ impl<'a> Machine<'a> {
                     }
                     other => return Err(format!("Cannot write property '{}' of {}", called, other.bare())),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_32(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Within => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Within
+            => {
                 n(2)?;
                 let called = v[1].bare();
                 let stands = self.class_it_spells(v[0].clone());
@@ -22316,8 +23969,27 @@ impl<'a> Machine<'a> {
                     },
                     other => return Err(self.class_lacking(other).unwrap_or_else(|| format!("Cannot reach '{}' in {}", called, other.bare()))),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_33(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Into => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Into
+            => {
                 n(3)?;
                 let called = v[1].bare();
                 let stands = self.class_it_spells(v[0].clone());
@@ -22333,8 +24005,27 @@ impl<'a> Machine<'a> {
                     }
                     other => return Err(self.class_lacking(other).unwrap_or_else(|| format!("Cannot write '{}' in {}", called, other.bare()))),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_34(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Akin => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Akin
+            => {
                 n(2)?;
                 let against = match &v[1] {
                     Value::Thing(thing) => thing.blueprint().name.clone(),
@@ -22345,25 +24036,54 @@ impl<'a> Machine<'a> {
                     Value::Thing(thing) => Value::Flag(thing.blueprint().goes_by(&against, self.classes_either_way)),
                     _ => Value::Flag(false),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_35(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Named => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Named
+            => {
                 n(1)?;
                 match &v[0] {
                     Value::Thing(thing) => Value::text(&thing.blueprint().name),
                     Value::Blueprint(class) => Value::text(&class.name),
                     other => return Err(format!("{} has no class name", other.bare())),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_36(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // A language that makes a place on writing into it finds an
-            // array where nothing at all was there.
-            Prim::Added | Prim::Placed
-                if self.builds_places && matches!(v.first(), Some(Value::Nil) | Some(Value::Unset)) =>
-            {
-                let mut made = v.to_vec();
-                made[0] = Value::Vector(crate::tuples::Sequence::plain(Vec::new()));
-                self.prim(op, name, &made)?
-            }
-            Prim::Added => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Added
+            => {
                 n(2)?;
                 match &v[0] {
                     Value::Vector(items) | Value::Tuple(items) => {
@@ -22379,8 +24099,27 @@ impl<'a> Machine<'a> {
                     }
                     _ => return Err(self.no_places()),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_37(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Placed => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Placed
+            => {
                 n(3)?;
                 // A tuple holds its places for good, and so does text
                 // where a language of sequences says so; the place
@@ -22460,20 +24199,27 @@ impl<'a> Machine<'a> {
                     }
                     _ => return Err(self.no_places()),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_38(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // A restoring write met as a plain value is a plain write:
-            // the leniency belongs to the place it is written into.
-            Prim::Restore => return self.prim_values(Prim::Placed, name, v),
-            Prim::Gather => return Err(format!("{}() is a literal, not a call", name)),
-            // Source read while the program runs, built against the
-            // globals it already has and run where it stands. A file
-            // that cannot be read answers false, as such a language says.
-            // The readers of text and the books of names are answered
-            // before the arguments are opened, where the table spells
-            // the manners text may be read in; spelled without them,
-            // the words are refused here.
-            Prim::AllocationTrace | Prim::WorldBook | Prim::HereBook | Prim::Perform | Prim::Prepare | Prim::Summon => return Err(self.source_refused()),
-            Prim::Weigh | Prim::Bring | Prim::BringOnce => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Weigh | Prim::Bring | Prim::BringOnce
+            => {
                 // A source read in stands as a call of its own, so that
                 // a fault raised in the reading, or by what it reads,
                 // names the reading among the calls it stood under.
@@ -22498,11 +24244,27 @@ impl<'a> Machine<'a> {
                 }
                 self.calls.pop();
                 return done;
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_39(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // Reaching outside the run, which only a language that
-            // spells these labels does at all. What cannot be done
-            // answers false rather than stopping the run.
-            Prim::Slurp => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Slurp
+            => {
                 let raw_mode = v.len() == 2 && self.rules.has_any_ext_builtin_exceptions_syntax;
                 if !raw_mode { n(1)?; }
                 let w = self.wording();
@@ -22519,8 +24281,27 @@ impl<'a> Machine<'a> {
                     },
                     Err(_) => Value::Flag(false),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_40(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Spill => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Spill
+            => {
                 n(2)?;
                 let w = self.wording();
                 let (place, what) = (v[0].render(w), v[1].render(w));
@@ -22533,10 +24314,27 @@ impl<'a> Machine<'a> {
                     Ok(()) => Value::Small(size as i64),
                     Err(_) => Value::Flag(false),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_41(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // A fresh empty file made at the path named: nothing where
-            // it stands afterwards, or the host's own number and words.
-            Prim::FileCreate => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::FileCreate
+            => {
                 n(1)?;
                 let w = self.wording();
                 match std::fs::File::create(v[0].render(w)) {
@@ -22548,28 +24346,27 @@ impl<'a> Machine<'a> {
                         Value::tuple(vec![Value::Small(number), Value::text(&words)])
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_42(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::There => {
-                n(1)?;
-                let w = self.wording();
-                Value::Flag(std::path::Path::new(&v[0].render(w)).exists())
-            }
-            Prim::Gone => {
-                n(1)?;
-                let w = self.wording();
-                Value::Flag(std::fs::remove_file(v[0].render(w)).is_ok())
-            }
-            // Whether the name given is a link standing for somewhere
-            // else: asked of the link itself, and not of whatever
-            // stands at its far end.
-            Prim::Linked => {
-                n(1)?;
-                let w = self.wording();
-                Value::Flag(std::fs::symlink_metadata(v[0].render(w)).map(|m| m.file_type().is_symlink()).unwrap_or(false))
-            }
-            // A directory's own entries, sorted so a run answers the
-            // same way twice: the bare name of each, nothing before it.
-            Prim::DirEntries => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::DirEntries
+            => {
                 n(1)?;
                 let w = self.wording();
                 match std::fs::read_dir(v[0].render(w)) {
@@ -22580,11 +24377,27 @@ impl<'a> Machine<'a> {
                     }
                     Err(_) => Value::Flag(false),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_43(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // A fresh, empty directory made under one already standing,
-            // its name built from a prefix and a suffix around letters
-            // this run has not used there before.
-            Prim::DirFresh => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::DirFresh
+            => {
                 n(3)?;
                 let w = self.wording();
                 let (parent, prefix, suffix) = (v[0].render(w), v[1].render(w), v[2].render(w));
@@ -22602,40 +24415,27 @@ impl<'a> Machine<'a> {
                     Some(path) => Value::text(&path.to_string_lossy()),
                     None => Value::Flag(false),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_44(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // A directory taken away along with everything under it.
-            Prim::DirWhole => {
-                n(1)?;
-                let w = self.wording();
-                Value::Flag(std::fs::remove_dir_all(v[0].render(w)).is_ok())
-            }
-            // A single directory lifted away from the place named,
-            // where nothing stands under it: false where it still
-            // holds anything or no such directory stood there.
-            Prim::DirDrop => {
-                n(1)?;
-                let w = self.wording();
-                Value::Flag(std::fs::remove_dir(v[0].render(w)).is_ok())
-            }
-            // A single directory raised at the place named: true
-            // when it stands there afterwards, false when it stood
-            // already or the way to it is broken.
-            Prim::DirOne => {
-                n(1)?;
-                let w = self.wording();
-                Value::Flag(std::fs::create_dir(v[0].render(w)).is_ok())
-            }
-            // The run takes itself over to the directory named, so
-            // that a path given short opens from there. False where
-            // no such directory stands.
-            Prim::DirStep => {
-                n(1)?;
-                let w = self.wording();
-                Value::Flag(std::env::set_current_dir(v[0].render(w)).is_ok())
-            }
-            Prim::WeakMake => return self.reference_allocating(name, v),
-            Prim::WeakGet => return self.reference_reading(name, v),
-            Prim::HeapObjects => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::HeapObjects
+            => {
                 n(0)?;
                 let snapshot=self.round_web(&[]);
                 let mut identities=std::collections::HashSet::new();
@@ -22650,24 +24450,54 @@ impl<'a> Machine<'a> {
                     }
                 }
                 Value::Vector(crate::tuples::Sequence::plain(published))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_45(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Collect => {
-                n(0)?;
-                Value::Small(self.reap_rounds() as i64)
-            }
-            Prim::FaultWhole => {
-                n(0)?;
-                self.holding_fault.last().cloned().unwrap_or(Value::Nil)
-            }
-            Prim::FaultHeld => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::FaultHeld
+            => {
                 if v.len() > 1 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }
                 let held = v.first().cloned().or_else(|| self.holding_fault.last().cloned());
                 let Some(fault) = held else { return Ok(Value::Vector(crate::tuples::Sequence::plain(vec![Value::Nil, Value::Nil]))) };
                 let kind = match &fault { Value::Thing(thing) => Value::text(&thing.blueprint().name), _ => Value::Nil };
                 let words = self.object_words(&fault, false)?;
                 Value::Vector(crate::tuples::Sequence::plain(vec![kind, Value::text(&words)]))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_46(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::PathSort => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::PathSort
+            => {
                 if !(1..=3).contains(&v.len()) { n(1)?; }
                 if let Some(answer) = self.descriptor_action(v) { return answer; }
                 let named = v[0].render(self.wording());
@@ -22695,8 +24525,27 @@ impl<'a> Machine<'a> {
                         }
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_47(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::LoaderSource => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::LoaderSource
+            => {
                 n(1)?;
                 let name = match v[0].settled() { Value::Text(word) => word.to_string(), _ => return Err(String::from("TypeError: module name must be a string")) };
                 let content = match name.as_str() {
@@ -22711,8 +24560,27 @@ impl<'a> Machine<'a> {
                 };
                 let input = self.octets(content, false);
                 self.core_run(&decode, vec![input])?
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_48(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::CryptoWork => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::CryptoWork
+            => {
                 let first = v.first().ok_or("TypeError: missing cryptographic operation")?;
                 match as_index(first)? {
                     0 => {
@@ -22764,8 +24632,27 @@ impl<'a> Machine<'a> {
                     }
                     _ => return Err(String::from("NotImplementedError: unsupported cryptographic operation")),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_49(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::HostPosix => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::HostPosix
+            => {
                 let action = v.first().map(Value::settled);
                 if matches!(&action, Some(Value::Text(word)) if word.as_ref() == "fspath") {
                     n(2)?;
@@ -22797,7 +24684,26 @@ impl<'a> Machine<'a> {
                     })?
                 }
             },
-            Prim::HostRow => {
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_50(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::HostRow
+            => {
                 if v.len() == 1 && matches!(&v[0], Value::Text(query) if query.as_ref() == "build") {
                     return Ok(Value::text(option_env!("RUSTFLAGS").unwrap_or("")));
                 }
@@ -22812,17 +24718,27 @@ impl<'a> Machine<'a> {
                 }
                 let row = vec![here, Value::text(std::env::consts::OS), Value::text(std::env::consts::ARCH), Value::Dict(Rc::new(surroundings.into()))];
                 Value::Vector(crate::tuples::Sequence::plain(row))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_51(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // The host's shell, handed a command and asked afterwards
-            // for all it put where a run puts what it writes. Both ways
-            // the words travel as the bytes their text stands for: the
-            // command as it goes out, the answer as it is read back in,
-            // with whatever break of line ended it left where it fell.
-            // Anything the shell said in complaint goes out beside this
-            // run's own complaints and is not gathered. Where the shell
-            // put out nothing whatever the answer is nothing; where no
-            // shell could be started the answer is false.
-            Prim::Shelled => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Shelled
+            => {
                 n(1)?;
                 let w = self.wording();
                 let order = self.table.raw_of(&v[0].render(w));
@@ -22841,15 +24757,27 @@ impl<'a> Machine<'a> {
                     Ok(_) => Value::Nil,
                     Err(_) => Value::Flag(false),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_52(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // Reaching another host: the connection is made, what was
-            // handed over goes on it whole, and what comes back is read
-            // until the far end shuts it. A request that asks for the
-            // connection to be shut wants no more than that.
-            // Biding a while, counted in millionths of a second. Without
-            // it a run watching for something to come ready spins as
-            // fast as it can and takes the first no for the last one.
-            Prim::Bided => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Bided
+            => {
                 n(1)?;
                 let tiny = as_index(&v[0])?;
                 let span = std::time::Duration::from_micros(tiny as u64);
@@ -22867,8 +24795,27 @@ impl<'a> Machine<'a> {
                     }
                 }
                 Value::Nil
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_53(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Reached => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Reached
+            => {
                 n(4)?;
                 use std::io::{Read as _, Write as _};
                 let w = self.wording();
@@ -22902,11 +24849,27 @@ impl<'a> Machine<'a> {
                     Err(_) => Value::Flag(false),
                     Ok(back) => Value::text(&self.table.said_of(&back)),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_54(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // A program raised alongside this one. Nothing it writes is
-            // kept: it is raised to answer on a connection, and what it
-            // would otherwise say is let fall.
-            Prim::Raised => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Raised
+            => {
                 n(3)?;
                 use std::os::unix::ffi::OsStrExt as _;
                 let w = self.wording();
@@ -22936,8 +24899,27 @@ impl<'a> Machine<'a> {
                         Value::Small(mark)
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_55(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Laid => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Laid
+            => {
                 n(1)?;
                 let mark = as_index(&v[0])? as i64;
                 match self.alongside.remove(&mark) {
@@ -22948,17 +24930,27 @@ impl<'a> Machine<'a> {
                         Value::Flag(true)
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_56(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // A second interpreter raised beside this one, its writing
-            // reached through pipes, in steps: raise it (0, with the
-            // words, the surroundings, and how its three streams go),
-            // write into its input (1), close that input (2), read all
-            // a stream says (3), wait for its end (4), ask whether it
-            // ended (5), and stop it (6). A stream goes as nothing (0),
-            // a pipe (1), or inherited (anything else); a third stream
-            // told to follow the second is kept a pipe of its own, and
-            // the library that asked joins the two later.
-            Prim::AsciiRun => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::AsciiRun
+            => {
                 n(4)?;
                 let offset = as_index(&v[1])?;
                 let room = as_index(&v[3])?;
@@ -22979,8 +24971,27 @@ impl<'a> Machine<'a> {
                     end += 1;
                 }
                 Value::Small(end as i64)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_57(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::JsonStringScan => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::JsonStringScan
+            => {
                 if v.len() == 3 && self.stands_true(&v[2]) {
                     let Value::Text(text) = v[0].settled() else { return Ok(Value::Nil); };
                     let escape_non_ascii = self.stands_true(&v[1]);
@@ -23024,8 +25035,27 @@ impl<'a> Machine<'a> {
                     }
                 }
                 Value::Nil
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_58(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Subprocess => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Subprocess
+            => {
                 if v.is_empty() { return Err(format!("{}() wants a step first", name)); }
                 let step = as_index(&v[0])?;
                 match step {
@@ -23169,14 +25199,27 @@ impl<'a> Machine<'a> {
                     }
                     _ => return Err(format!("{}() unknown step {}", name, step)),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_59(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // The host's signals, one step at a time: give a number
-            // what answers for it (0), answering what it answered with
-            // before; ask what a number was given (1); or leave a
-            // number waiting (2), to be taken up at the next
-            // statement's edge. A number never given an answer keeps
-            // the signal's own way.
-            Prim::Signal => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Signal
+            => {
                 if v.is_empty() { return Err(format!("{}() wants a step first", name)); }
                 let step = as_index(&v[0])?;
                 match step {
@@ -23249,42 +25292,27 @@ impl<'a> Machine<'a> {
                     }
                     _ => return Err(format!("{name}() knows no step {step}")),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_60(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Clock => {
-                n(1)?;
-                self.allowed = as_index(&v[0])?;
-                self.started = Some(std::time::Instant::now());
-                Value::Flag(true)
-            }
-            // What the run has taken of the host's room, as the tally
-            // beside the allocator has it: what stands taken now, the
-            // highest it ever stood at, and that highest reading thrown
-            // away so it is gathered again from this moment on.
-            Prim::RoomHeld => {
-                n(0)?;
-                Value::Small(lumen_room::used() as i64)
-            }
-            Prim::RoomHighest => {
-                n(0)?;
-                Value::Small(lumen_room::most() as i64)
-            }
-            Prim::RoomAnew => {
-                n(0)?;
-                lumen_room::forget_most();
-                Value::Nil
-            }
-            // How much room the run may take from here on.
-            Prim::RoomMark => {
-                n(1)?;
-                self.ceiling = as_index(&v[0])?;
-                Value::Flag(true)
-            }
-            // Words said as a complaint of a kind the language names,
-            // where the run stands.
-            // The calls under way, as the program may read them: each
-            // what it called, the class it stands in, where the call
-            // itself is written, and what it was handed.
-            Prim::Under => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Under
+            => {
                 n(0)?;
                 let mut told = Vec::new();
                 for call in self.calls.iter().rev() {
@@ -23307,8 +25335,27 @@ impl<'a> Machine<'a> {
                     told.push(Value::Dict(Rc::new(pairs.into())));
                 }
                 Value::Vector(crate::tuples::Sequence::plain(told))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_61(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Complain => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Complain
+            => {
                 n(2)?;
                 let w = self.wording();
                 let named = v[0].render(w).to_string();
@@ -23320,11 +25367,27 @@ impl<'a> Machine<'a> {
                     }
                     None => Value::Flag(false),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_62(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // The routine every complaint is to be handed to, or none.
-            // What the run has bound under a name, by name: the
-            // classes, and the routines.
-            Prim::ClassesBound | Prim::RoutinesBound => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::ClassesBound | Prim::RoutinesBound
+            => {
                 n(0)?;
                 let cells = self.outermost.cells.borrow();
                 let mut named = Vec::new();
@@ -23342,21 +25405,27 @@ impl<'a> Machine<'a> {
                     }
                 }
                 Value::Vector(crate::tuples::Sequence::plain(named))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_63(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // The words the language has of its own, by name: what a
-            // program may call though nobody wrote them.
-            Prim::Carry => return Err("A routine takes names away where it is written and nowhere else".to_string()),
-            Prim::WordsSpelled => {
-                n(0)?;
-                let mut words: Vec<String> = self.table.prims.keys().cloned().collect();
-                words.sort();
-                Value::Vector(crate::tuples::Sequence::plain(words.iter().map(|w| Value::text(w)).collect::<Vec<_>>()))
-            }
-            // What a class answers to, by name: the methods written in
-            // it, or the properties its things carry, its own coming
-            // before those of the class it is built on. A thing is asked
-            // of the class that made it.
-            Prim::ClassMethods | Prim::ClassProperties => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::ClassMethods | Prim::ClassProperties
+            => {
                 n(1)?;
                 let of = match self.class_it_spells(v[0].clone()) {
                     Value::Thing(thing) => Some(thing.blueprint().clone()),
@@ -23392,10 +25461,27 @@ impl<'a> Machine<'a> {
                 }
                 if op == Prim::ClassMethods && !self.rules.words_ext_stmt_class_builder.is_empty() { gathered.retain(|called| !called.starts_with('\0')); }
                 Value::Vector(crate::tuples::Sequence::plain(gathered.iter().map(|called| Value::text(called)).collect()))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_64(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // The class a class stands on, by name: a thing is asked of
-            // the class it is of. Nothing where it stands on none.
-            Prim::ClassBeneath => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::ClassBeneath
+            => {
                 n(1)?;
                 let of = match self.class_it_spells(v[0].clone()) {
                     Value::Thing(thing) => Some(thing.blueprint().clone()),
@@ -23406,11 +25492,27 @@ impl<'a> Machine<'a> {
                     Some(under) => Value::text(&under.name),
                     None => Value::Nil,
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_65(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // How far the clock the system keeps has come since the
-            // year it counts from. A clock that will not answer counts
-            // as standing at the start of it.
-            Prim::SinceEpoch => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::SinceEpoch
+            => {
                 if self.rules.clock_parts {
                     if let Some(Value::Text(operation))=v.first() {
                         if operation.as_ref()=="struct_time" && v.len()==1 { return Ok(Value::Blueprint(self.clock_record_type())); }
@@ -23488,13 +25590,27 @@ impl<'a> Machine<'a> {
                 n(0)?;
                 let gone = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
                 Value::Small(gone.map_or(0, |since| since.as_secs() as i64))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_66(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // The roots, the curves and the angles, worked over the
-            // reals of the width and named by the first worth handed
-            // over. They are worked at the width and nowhere else: a
-            // root is hardly ever a ratio, and holding one exactly
-            // would mean choosing beforehand how many figures to keep.
-            Prim::Reckon => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Reckon
+            => {
                 let Some(working) = v.first().map(|x| x.render(w)) else {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
@@ -23768,16 +25884,27 @@ impl<'a> Machine<'a> {
                     },
                     None => return Err(format!("{}(): there is no working called '{}'", name, working)),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_67(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // The Mersenne Twister a library module draws its chance
-            // from, worked by name (ext.builtin._random): a drawing
-            // stream opened, set going from a whole number or from the
-            // system's own disorder, drawn on at the width's 53 bits or
-            // as a stretch of whole bits, and told or put back to where
-            // it stands. What a stream keeps never becomes a worth: the
-            // library holds only the mark its stream answers to, and
-            // the system's own disorder can be asked for as octets.
-            Prim::Chance => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Chance
+            => {
                 // How many words the Twister keeps, and how far ahead
                 // each rolled word reaches for another.
                 const KEPT: usize = 624;
@@ -24020,26 +26147,27 @@ impl<'a> Machine<'a> {
                     }
                     _ => return Err(format!("{}(): there is no working called '{}'", name, working)),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_68(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::OutBegun => {
-                n(0)?;
-                Value::Flag(self.written_out.get())
-            }
-            Prim::Untaken => {
-                let put = v.first().cloned().unwrap_or(Value::Nil);
-                let none = matches!(put, Value::Nil | Value::Unset);
-                *self.untaken.borrow_mut() = if none { None } else { Some(put) };
-                Value::Flag(true)
-            }
-            Prim::Hearer => {
-                let put = v.first().cloned().unwrap_or(Value::Nil);
-                let none = matches!(put, Value::Nil | Value::Unset);
-                *self.hearer.borrow_mut() = if none { None } else { Some(put) };
-                Value::Flag(true)
-            }
-            // A routine to run once the run is over, with whatever else
-            // was given standing as its arguments.
-            Prim::Afterward => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Afterward
+            => {
                 if v.is_empty() {
                     return Err(format!("{}() needs a program to run", name));
                 }
@@ -24047,22 +26175,27 @@ impl<'a> Machine<'a> {
                 let work = given.remove(0);
                 self.afterward.borrow_mut().push((work, given));
                 Value::Nil
-            }
-            // Keeping what the run writes out, and giving it up again.
-            Prim::KeepOut => {
-                self.holding.borrow_mut().push(String::new());
-                Value::Flag(true)
-            }
-            Prim::KeptOut => match self.holding.borrow().last() {
-                Some(kept) => Value::text(kept),
-                None => Value::Flag(false),
             },
-            Prim::LooseOut => {
-                let held = self.holding.borrow_mut().pop();
-                Value::Flag(held.is_some())
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_69(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::DeepOut => Value::Small(self.holding.borrow().len() as i64),
-            Prim::Handed | Prim::HowMany | Prim::HandedAt => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Handed | Prim::HowMany | Prim::HandedAt
+            => {
                 let Some(handed) = self.handed.last().cloned() else {
                     // What a language says when one of these is reached
                     // where no call is running, in its own words where it
@@ -24103,11 +26236,27 @@ impl<'a> Machine<'a> {
                         }
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_70(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // A language that asks equality loosely ranks loosely too,
-            // so that ranking two values and asking which comes first
-            // give answers that agree.
-            Prim::Rank if self.loose_equals => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Rank
+            => {
                 n(2)?;
                 let alike = self.prim(Prim::Eq, name, v)?.is_true();
                 Value::Small(if alike {
@@ -24117,8 +26266,27 @@ impl<'a> Machine<'a> {
                 } else {
                     1
                 })
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_71(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Rank => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Rank
+            => {
                 n(2)?;
                 // Numbers by their order, anything else by its text.
                 match (math::below(&v[0], &v[1]), math::below(&v[1], &v[0])) {
@@ -24130,8 +26298,27 @@ impl<'a> Machine<'a> {
                         Value::Small(if x < y { -1 } else if x > y { 1 } else { 0 })
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_72(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Erase => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Erase
+            => {
                 n(2)?;
                 match &v[0] {
                     // A span names several places at once, and the rest
@@ -24192,27 +26379,27 @@ impl<'a> Machine<'a> {
                     row @ Value::Octets { .. } => self.octets_shortened(row, &v[1])?,
                     other => return Err(format!("{}() cannot take a place out of {}", name, other.bare())),
                 }
-            }
-            Prim::Portray => {
-                n(1)?;
-                self.utter(&over_lines(&v[0], 0, self.wording()));
-                Value::Flag(true)
-            }
-            Prim::Invert => Value::Flag(!self.stands_true(&v[0])),
-            // Turning text over works letter by letter; anything else is
-            // read as a whole number of sixty-four bits first.
-            Prim::BitsOver | Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne | Prim::BitsUp | Prim::BitsDown
-                if self.rules.unbounded_bits && !(op == Prim::BitsEither && self.rules.map_union && matches!(v, [Value::Dict(_), Value::Dict(_)])) => self.all_bits(op, v)?,
-            Prim::BitsOver => match &v[0] {
-                Value::Text(s) => {
-                    let over: Vec<u8> = self.table.raw_of(s).iter().map(|b| !b).collect();
-                    Value::text(&self.table.said_of(&over))
-                }
-                other => Value::Small(!self.bits_told(other)?),
             },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_73(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
+            }
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
             Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne
-                if self.table.strings("ext.op.bit.operands").first().map(String::as_str).is_some() && !(op == Prim::BitsEither && self.rules.map_union && matches!(v, [Value::Dict(_), Value::Dict(_)])) =>
-            {
+            => {
                 let whole = |value: &Value| match value {
                     Value::Small(_) | Value::Huge(_) | Value::Flag(_) => value.as_big(),
                     _ => Err(self.table.strings("ext.op.bit.operands").first().map(String::as_str).unwrap().to_owned()),
@@ -24226,17 +26413,27 @@ impl<'a> Machine<'a> {
                     (Value::Flag(_), Value::Flag(_)) => Value::Flag(answer != BigInt::from(0)),
                     _ => Value::from_big(answer),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_74(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // Two pieces of text meet letter by letter. The shorter one
-            // says how far it goes, save where either bit will do, and
-            // there the longer one carries on alone.
-            Prim::BitsEither if self.rules.map_union
-                && matches!(v, [Value::Dict(_), Value::Dict(_)]) => {
-                return self.prim(Prim::ExtendLiteral(true, true), name, v);
-            }
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
             Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne
-                if matches!(v[0], Value::Text(_)) && matches!(v[1], Value::Text(_)) =>
-            {
+            => {
                 let (left, right) = (v[0].bare(), v[1].bare());
                 let (left, right) = (self.table.raw_of(&left), self.table.raw_of(&right));
                 let (left, right) = (&left[..], &right[..]);
@@ -24252,26 +26449,54 @@ impl<'a> Machine<'a> {
                     });
                 }
                 Value::text(&String::from_utf8_lossy(&letters))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_75(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::BitsBoth | Prim::BitsEither | Prim::BitsOne
+            => {
                 let (left, right) = (self.bits_told(&v[0])?, self.bits_told(&v[1])?);
                 Value::Small(match op {
                     Prim::BitsBoth => left & right,
                     Prim::BitsEither => left | right,
                     _ => left ^ right,
                 })
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_76(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // Text turned about is text taken times minus one, the way a
-            // language reading a number out of text does it: the number
-            // the text opens with is turned about, and text opening with
-            // none is a pair no such step can take.
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
             Prim::Negate
-                if matches!(v[0], Value::Text(_)) && self.complaint_words.iter().any(|(k, _)| *k == "warning") =>
-            {
-                let pair = [v[0].clone(), Value::Small(-1)];
-                return self.prim(Prim::Times, name, &pair);
-            }
-            Prim::Negate => {
+            => {
                 let source = Self::underlying(&v[0]).filter(|worth| matches!(worth, Value::Small(_) | Value::Huge(_) | Value::Frac(_))).unwrap_or_else(|| v[0].clone());
                 let turned = match math::compute(Calc::Minus, &Value::Small(0), &source) {
                     Some(r) => r?,
@@ -24287,17 +26512,27 @@ impl<'a> Machine<'a> {
                     // runs over does.
                     _ => self.at_width(turned),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_77(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // Nothing stands in any order beside the worth nothing is
-            // equal to, so each of the four is answered no, whichever
-            // way round it is put: the wider three are asked here and
-            // not deeper down, being the narrow one turned about.
-            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge if v.len() == 2 && math::no_order(&v[0], &v[1]) => Value::Flag(false),
-            // Which of two comes first is asked just as loosely, so an
-            // array, a flag, nothing and text spelling no number are
-            // each set against the other the way such a language sets
-            // them.
-            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge if self.loose_equals => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge
+            => {
                 n(2)?;
                 let (left, right) = (v[0].clone(), v[1].clone());
                 Value::Flag(match op {
@@ -24306,13 +26541,27 @@ impl<'a> Machine<'a> {
                     Prim::Le => !self.comes_first(&right, &left)?,
                     _ => !self.comes_first(&left, &right)?,
                 })
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_78(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // Where a language has a word for being the very same,
-            // being equal is the looser question: text spelling a
-            // number stands for that number, a flag turns the question
-            // into whether the other side is true, and nothing counts
-            // as untrue and as text with nothing in it.
-            Prim::Eq | Prim::Ne if self.loose_equals => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Eq | Prim::Ne
+            => {
                 n(2)?;
                 let counts = |x: &Value| matches!(x.kind(), Some(Kind::Whole | Kind::Fraction | Kind::Decimal));
                 let empty = |x: &Value| matches!(x, Value::Nil | Value::Unset);
@@ -24345,19 +26594,27 @@ impl<'a> Machine<'a> {
                     _ => left.equals(right),
                 };
                 Value::Flag((op == Prim::Eq) == alike)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_79(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // Two sets set against each other by `==` go the road
-            // membership itself takes: `equals`, reached for a plain
-            // set from below, has no interpreter to call a member's
-            // own `__eq__`, nor to tell two things that merely share
-            // a hash apart.
-            Prim::Eq | Prim::Ne if matches!((&v[0], &v[1]), (Value::Set(_), Value::Set(_))) => {
-                let (Value::Set(one), Value::Set(other)) = (&v[0], &v[1]) else { unreachable!() };
-                let (one, other) = (one.borrow().clone(), other.borrow().clone());
-                let alike = self.sets_equal(&one, &other)?;
-                Value::Flag(alike != (op == Prim::Ne))
-            }
-            Prim::Eq | Prim::Ne if self.rules.unordered_maps => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Eq | Prim::Ne
+            => {
                 // An object's __dict__ reads as a dict but is served as
                 // the object's own attribute pairs, so a plain
                 // (Value::Dict, Value::Dict) match never sees it and the
@@ -24374,8 +26631,27 @@ impl<'a> Machine<'a> {
                     },
                 };
                 Value::Flag(alike != (op == Prim::Ne))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_80(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Membership => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Membership
+            => {
                 n(2)?;
                 let present = if let (Value::Text(needle), Value::Text(text)) = (&v[0], &v[1]) {
                     text.contains(needle.as_ref())
@@ -24385,10 +26661,27 @@ impl<'a> Machine<'a> {
                     self.gathered_members(&v[1])?.iter().any(|item| self.equal_contents(&v[0], item))
                 };
                 Value::Flag(present)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_81(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Eq => Value::Flag(v[0].equals(&v[1])),
-            Prim::Ne => Value::Flag(!v[0].equals(&v[1])),
-            Prim::Contains | Prim::Absent => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Contains | Prim::Absent
+            => {
                 // A complex number whose imaginary part is nought is asked
                 // for as the real number it equals.
                 let sought = match &v[0] {
@@ -24481,12 +26774,27 @@ impl<'a> Machine<'a> {
                     _ => return Err(self.table.strings("ext.op.in.unsupported").first().map(String::as_str).unwrap_or_default().to_string()),
                 };
                 Value::Flag(if op == Prim::Absent { !present } else { present })
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_82(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Mod if self.rules.text_remainder && matches!(v[0], Value::Text(_)) => {
-                let Value::Text(pattern) = &v[0] else { unreachable!() };
-                Value::text(&self.text_remainder(pattern, &v[1])?)
-            }
-            Prim::Selfsame | Prim::Unlike if self.rules.has_any_ext_op_identical_negated => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Selfsame | Prim::Unlike
+            => {
                 let identical = match (&v[0], &v[1]) {
                     // Every value is itself: a small number by its worth,
                     // whatever lives behind a pointer by that pointer.
@@ -24536,11 +26844,27 @@ impl<'a> Machine<'a> {
                     _ => return Err(self.table.strings("ext.op.identical.unsupported").first().map(String::as_str).unwrap_or_default().to_string()),
                 };
                 Value::Flag(if op == Prim::Unlike { !identical } else { identical })
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_83(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
-            Prim::Unlike => Value::Flag(!v[0].selfsame(&v[1])),
-            Prim::Join => Value::text(&format!("{}{}", self.told(&v[0], w), self.told(&v[1], w))),
-            Prim::At if self.has_class_order() && matches!(&v[0],Value::Blueprint(_)) => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::At
+            => {
                 let Value::Blueprint(class)=&v[0] else{unreachable!()};
                 // Resolve inherited user hooks before the native fallback.
                 if let Some(entry) = self.inherited_entry(class, self.rules.detail_getitem) {
@@ -24571,35 +26895,27 @@ impl<'a> Machine<'a> {
                 } else {
                     return Err(self.rules.detail_unready.to_owned());
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_84(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::At => self.element(&v[0], &v[1], Reading::Plain)?,
-            Prim::Apart => self.element(&v[0], &v[1], Reading::Apart)?,
-            Prim::Toward => self.element(&v[0], &v[1], Reading::Toward)?,
-            // A glance has nothing to say about what is not there.
-            Prim::Glance => {
-                self.quieted += 1;
-                let seen = self.element(&v[0], &v[1], Reading::Plain).unwrap_or(Value::Nil);
-                self.quieted -= 1;
-                seen
-            }
-            Prim::Standing => Value::Flag(v.iter().all(|x| !matches!(x, Value::Nil | Value::Unset))),
-            Prim::Hollow => {
-                n(1)?;
-                Value::Flag(!self.stands_true(&v[0]))
-            }
-            // A value made one of another kind. Numbers give up what
-            // lies past the point, text is read for the number it opens
-            // with, and anything that is not an array becomes an array
-            // holding only itself.
-            Prim::AsChars => Value::text(&v[0].render(w)),
-            Prim::UnheldText => return Err(v[0].bare()),
-            Prim::RenderField => {
-                let result = if self.rules.has_any_ext_builtin_format {
-                    crate::formatting::Layout { table: self.table, names: w }.presented_value(&v[0], &v[1].bare(), &v[2].bare())?
-                } else { v[0].in_field(w, &v[1].bare(), &v[2].bare()).map(|text| Value::text(&text)).ok_or_else(|| self.table.strings("ext.lexical.string.format.unavailable").first().map(String::as_str).unwrap_or("This formatted value is not supported").to_owned())? };
-                result
-            }
-            Prim::FormatValue => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::FormatValue
+            => {
                 let layout = crate::formatting::Layout { table: self.table, names: w };
                 if v.is_empty() || v.len() > 2 { return Err(self.table.strings("ext.syntax.call.amiss").first().map(String::as_str).unwrap_or_default().to_owned()); }
                 let spec = match v.get(1) {
@@ -24611,29 +26927,27 @@ impl<'a> Machine<'a> {
                     None => String::new(),
                 };
                 layout.presented_value(&v[0], &spec, "")?
-            }
-            Prim::AsTruth => Value::Flag(self.stands_true(&v[0])),
-            Prim::AsNothing => Value::Nil,
-            Prim::AsVector => match v[0].clone() {
-                held @ (Value::Vector(_) | Value::Dict(_)) => held,
-                Value::Nil | Value::Unset => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
-                held => Value::Vector(crate::tuples::Sequence::plain(vec![held])),
             },
-            Prim::AsWhole => {
-                let worth = self.worth_of(&v[0]);
-                let whole = math::whole_part(&worth).unwrap_or_else(|| BigInt::from(0));
-                self.at_width(Value::from_big(whole))
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_85(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::AsDecimal => {
-                let worth = self.worth_of(&v[0]);
-                let made = math::to_decimal(&worth, self.real_figures()).unwrap_or(Value::Small(0));
-                self.at_width(made)
-            }
-            // Reaching in makes the place where nothing is there yet,
-            // which is what a write into it asks for.
-            Prim::Inward if matches!(&v[1], Value::Span(_)) => return Err(self.span_complaint("detached")),
-            Prim::Inward if !self.builds_places => self.element(&v[0], &v[1], Reading::Plain)?,
-            Prim::Inward => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Inward
+            => {
                 self.quieted += 1;
                 let reached = self.element(&v[0], &v[1], Reading::Plain).unwrap_or(Value::Nil);
                 self.quieted -= 1;
@@ -24641,13 +26955,27 @@ impl<'a> Machine<'a> {
                     Value::Nil | Value::Unset => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
                     already => already,
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_86(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // Adding text joins it only where the language has no
-            // operator of its own for joining; where it has one, adding
-            // is arithmetic.
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
             Prim::Plus
-                if !self.rules.has_any_op_concat && (matches!(v[0], Value::Text(_)) || matches!(v[1], Value::Text(_))) =>
-            {
+            => {
                 // Exact Python strings concatenate from their borrowed UTF-8 storage.
                 match (&v[0], &v[1]) {
                     (Value::Text(first), Value::Text(second)) if self.table.flag("ext.op.arithmetic.python_numbers") => {
@@ -24663,8 +26991,27 @@ impl<'a> Machine<'a> {
                     }
                     _ => Value::text(&format!("{}{}", v[0].render(w), v[1].render(w))),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_87(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Times if self.rules.repeated_text && v.iter().any(|x| matches!(x,Value::Unpaired(_))) => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Times
+            => {
                 let (numbers, multiplier) = match (&v[0],&v[1]) { (Value::Unpaired(t),x)|(x,Value::Unpaired(t)) => (t,x), _ => unreachable!() };
                 let number = match multiplier {
                     Value::Flag(b) => if *b { 1 } else { 0 }, Value::Small(i) => *i,
@@ -24679,8 +27026,27 @@ impl<'a> Machine<'a> {
                     for _ in 0..number { repeated.extend(numbers.iter().copied()); }
                 }
                 Value::characters(repeated)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_88(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Times if self.rules.repeated_text && v.iter().any(|x| matches!(x,Value::Text(_))) => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Times
+            => {
                 let (word, multiplier) = match (&v[0],&v[1]) { (Value::Text(t),x)|(x,Value::Text(t)) => (t,x), _ => unreachable!() };
                 let number = match multiplier {
                     Value::Flag(b) => if *b { 1 } else { 0 }, Value::Small(i) => *i,
@@ -24695,26 +27061,32 @@ impl<'a> Machine<'a> {
                     for _ in 0..number { repeated.push_str(word); }
                 }
                 Value::text(&repeated)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_89(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // Text that spells a number is worked with as that number,
-            // fractions included. Text that spells one and then says
-            // something more is worth what it opens with, and text that
-            // spells none is worth nothing; a language with a word for a
-            // warning hears of both instead of being stopped.
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
             Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power
             | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge | Prim::BitsUp | Prim::BitsDown
                 // Only where every piece of text will give up a number,
                 // so that what is worked out below is never text again,
                 // and, for the two shifts, only where the language has
                 // them read each side for a number at all.
-                if (matches!(v[0], Value::Text(_)) || matches!(v[1], Value::Text(_)))
-                    && (!matches!(op, Prim::BitsUp | Prim::BitsDown) || self.rules.numeric_shifts)
-                    && [&v[0], &v[1]].iter().all(|x| {
-                        !matches!(x, Value::Text(_))
-                            || number_spelled_in(x).is_some()
-                            || self.complaint_words.iter().any(|(k, _)| *k == "warning")
-                    }) =>
-            {
+            => {
                 // A language may refuse text spelling no number at all
                 // where a number is wanted, naming the kinds it was
                 // handed rather than working with nothing.
@@ -24748,11 +27120,27 @@ impl<'a> Machine<'a> {
                 };
                 let pair = [worth(&v[0]), worth(&v[1])];
                 return self.prim(op, name, &pair);
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_90(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // Carrying the bits along. Each side is read as a whole
-            // number of sixty-four bits, sign and all, save where the
-            // reading above has already made numbers of them.
-            Prim::BitsUp | Prim::BitsDown => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::BitsUp | Prim::BitsDown
+            => {
                 let (bits, by) = (self.bits_told(&v[0])?, self.bits_told(&v[1])?);
                 match math::carried_bits(bits, by, op == Prim::BitsUp) {
                     Some(carried) => Value::Small(carried),
@@ -24763,34 +27151,27 @@ impl<'a> Machine<'a> {
                         None => return Err("Bit shift by a negative number".to_string()),
                     },
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_91(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // A language whose remainder is taken between whole numbers
-            // brings what it is given to one first, the way it brings a
-            // value to the bits it works on.
-            Prim::Mod
-                if self.rules.whole_remainder
-                    && (matches!(v[0], Value::Frac(_)) || matches!(v[1], Value::Frac(_))) =>
-            {
-                let pair = [Value::Small(self.bits_told(&v[0])?), Value::Small(self.bits_told(&v[1])?)];
-                return self.prim(op, name, &pair);
-            }
-            // Two whole numbers dividing evenly leave a whole one, in a
-            // language whose division says as much rather than always
-            // leaving a real behind.
-            Prim::OverReal
-                if self.rules.lone_op_div_result == Some("whole_or_real")
-                    && matches!(v[0], Value::Small(_) | Value::Huge(_))
-                    && matches!(v[1], Value::Small(_) | Value::Huge(_))
-                    && matches!(math::compute(Calc::Over, &v[0], &v[1]), Some(Ok(Value::Small(_) | Value::Huge(_)))) =>
-            {
-                let evenly = match math::compute(Calc::Over, &v[0], &v[1]) {
-                    Some(r) => r?,
-                    None => return Err("Division requires numeric operands".to_string()),
-                };
-                self.at_width(evenly)
-            }
-            Prim::Plus | Prim::Minus | Prim::Times | Prim::Over | Prim::OverReal | Prim::IntDiv | Prim::Mod | Prim::Power => self.number_work(op, v)?,
-            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge
+            => {
                 // A whole number asked whether it stands in order
                 // beside a real is answered exactly, not carried to
                 // the width first: a whole too great for any real of
@@ -24809,27 +27190,54 @@ impl<'a> Machine<'a> {
                     Prim::Le => !below(&right, &left)?,
                     _ => !below(&left, &right)?,
                 })
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_92(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Echo => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Echo
+            => {
                 n(1)?;
                 match &v[0] {
                     Value::Text(s) => self.utter(s),
                     _ => return Err(format!("{}() requires a string argument", name)),
                 }
                 Value::Nil
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_93(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // The line comes from the reader the table names, so a
-            // program that has put another source in the reader's place
-            // is answered from that source.
-            // One bound stops; two or three start, stop and step; what
-            // is not given stands for nothing.
-            Prim::SpanOf => {
-                if v.is_empty() || v.len() > 3 { return Err(self.table.strings("ext.builtin.slice.arity").first().map(String::as_str).unwrap_or_default().to_owned()); }
-                let mut bounds = vec![Value::Nil; 3];
-                match v.len() { 1 => bounds[1] = v[0].clone(), count => bounds[..count].clone_from_slice(v) }
-                Value::Span(crate::tuples::Sequence::plain(bounds))
-            }
-            Prim::Inquire => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Inquire
+            => {
                 let words = self.table.strings("ext.builtin.input.reader").to_vec();
                 if words.len() != 2 { return Err(self.argument_fault("ext.builtin.stream.amiss", None)); }
                 let namespace = self.namespace_for(&words[0])?;
@@ -24838,10 +27246,27 @@ impl<'a> Machine<'a> {
                     line @ Value::Text(_) => line,
                     _ => return Err(self.argument_fault("ext.builtin.stream.amiss", None)),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_94(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // Text and whether it is for the error channel; the count
-            // of characters poured is answered.
-            Prim::PourOut => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::PourOut
+            => {
                 use std::io::Write;
                 if v.len() == 3 && self.stands_true(&v[2]) {
                     let Value::Octets { cell: data, .. } = v[0].settled() else { return Err(self.argument_fault("ext.builtin.stream.amiss", None)); };
@@ -24874,11 +27299,27 @@ impl<'a> Machine<'a> {
                     }
                 }
                 Value::Small(content.chars().count() as i64)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_95(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // A count and whether to stop at a line's end. A count below
-            // nought means all there is. Each character is drawn whole:
-            // its first byte says how many more belong to it.
-            Prim::DrawIn => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::DrawIn
+            => {
                 use std::io::Read;
                 if v.len() == 3 && self.stands_true(&v[2]) {
                     let Value::Small(limit) = v[0].settled() else { return Err(self.argument_fault("ext.builtin.stream.amiss", None)); };
@@ -24917,35 +27358,27 @@ impl<'a> Machine<'a> {
                     if stop_at_line && lead[0] == b'\n' { break; }
                 }
                 Value::text(&String::from_utf8(drawn).map_err(|_| failed())?)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_96(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Display => {
-                self.display_interactive(v[0].settled())?;
-                Value::Nil
-            }
-            Prim::Say => {
-                self.utter(&format!("{}\n", self.show(v)));
-                Value::Nil
-            }
-            Prim::Out => {
-                self.utter(&self.show(v));
-                Value::Nil
-            }
-            Prim::Tell => {
-                let w = self.wording();
-                let text: String = v.iter().map(|x| x.render(w)).collect();
-                self.utter(&text);
-                Value::Nil
-            }
-            Prim::Define => return Err(format!("{}() needs a quoted name as its first argument", name)),
-            Prim::Dump => {
-                for x in v {
-                    self.utter(&format!("{}\n", with_kind(x, 0, self.rules.count_ext_system_real_bits.is_some(), self.wording())));
-                }
-                Value::Nil
-            }
-            Prim::Suspend | Prim::Delegate => return Err(self.generator_words("unsupported")),
-            Prim::MakeTuple => Value::tuple(v.to_vec()),
-            Prim::Following => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Following
+            => {
                 if !(1..=2).contains(&v.len()) { return Err(self.generator_words("unsupported")); }
                 let Value::Generator(state) = &v[0] else { return Err(format!("TypeError: '{}' object is not iterable", v[0].kind_word())); };
                 // What the body raised, and what it returned, are parked
@@ -24971,25 +27404,27 @@ impl<'a> Machine<'a> {
                         }
                     },
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_97(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::ReadOctetFile => {
-                n(1)?;
-                let filename = v[0].render(w);
-                if let Ok(raw) = std::fs::read(filename) { self.octets(raw, false) } else { Value::Flag(false) }
-            }
-            Prim::Tupled => {
-                if v.is_empty() { Value::tuple(Vec::new()) }
-                else { n(1)?; Value::tuple(self.gathered_members(&v[0])?) }
-            }
-            Prim::WarningOperation(_) | Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::LzmaEncode | Prim::LzmaDecode | Prim::ZlibNative | Prim::BinaryFormat | Prim::BinaryAscii | Prim::ContextStore | Prim::NamespaceRead | Prim::TraceBridge | Prim::NativeFrame | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
-            Prim::Listed => {
-                match v.len() {
-                    0 => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
-                    1 => {let result=Value::Vector(crate::tuples::Sequence::plain(self.gathered_members(&v[0])?)); if matches!(v[0],Value::Window(..)|Value::Mutable(_,true)|Value::Text(_)|Value::Iterator(_)|Value::Generator(_)){result.keep(true)}else{result}},
-                    _ => return Err(format!("{}() expects 1 argument, got {}", name, v.len())),
-                }
-            }
-            Prim::SomeTrue => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::SomeTrue
+            => {
                 n(1)?;
                 let source = self.iterated_value(&v[0])?;
                 loop {
@@ -25000,8 +27435,27 @@ impl<'a> Machine<'a> {
                         }
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_98(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Total => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Total
+            => {
                 if v.is_empty() { return Err(format!("TypeError: {name}() takes at least 1 positional argument (0 given)")); }
                 if v.len() > 2 { return Err(format!("TypeError: {name}() takes at most 2 arguments ({} given)", v.len())); }
                 let mut answer = v.get(1).cloned().unwrap_or(Value::Small(0));
@@ -25055,8 +27509,27 @@ impl<'a> Machine<'a> {
                     }
                 }
                 self.total_result(answer, balance)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_99(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Span if self.rules.range_values => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Span
+            => {
                 if v.is_empty() { return Err("TypeError: range expected at least 1 argument, got 0".to_string()); }
                 if v.len() > 3 { return Err(format!("TypeError: range expected at most 3 arguments, got {}", v.len())); }
                 let integer = |item: &Value| match item {
@@ -25070,9 +27543,27 @@ impl<'a> Machine<'a> {
                 let stride = v.get(2).map(integer).transpose()?.unwrap_or_else(|| BigInt::from(1));
                 if stride == BigInt::from(0) { return Err(self.argument_fault("ext.builtin.range.zero", None)); }
                 Value::Progression(Rc::new(crate::data::Progression { first, limit, stride, word: name.to_owned() }))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_100(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Span => return Err(format!("{}() spells a range, which belongs in a for loop", name)),
-            Prim::MakeReal => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::MakeReal
+            => {
                 if v.is_empty() || v.len() > 2 {
                     return Err(format!("{}() expects 1 or 2 arguments, got {}", name, v.len()));
                 }
@@ -25083,18 +27574,27 @@ impl<'a> Machine<'a> {
                     Some(_) => return Err("Precision argument must be an integer".to_string()),
                 };
                 math::to_decimal(&v[0], digits).ok_or_else(|| format!("{}() requires a number, rational, or real argument", name))?
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_101(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Places => {
-                n(1)?;
-                match &v[0] {
-                    Value::Frac(e) if e.places.is_some() => Value::Small(e.places.unwrap() as i64),
-                    _ => return Err(format!("{}() requires a real argument", name)),
-                }
-            }
-            Prim::AsText if self.table.strings("ext.builtin.to_string.object").first().map(String::as_str).is_some() && v.len() != 1 => {
-                if v.is_empty() { Value::text("") } else { return self.text_decoded(&v); }
-            }
-            Prim::Iterate => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Iterate
+            => {
                 n(1)?;
                 let source = v[0].clone();
                 if let Value::Thing(thing) = &source {
@@ -25108,9 +27608,27 @@ impl<'a> Machine<'a> {
                 self.made += 1;
                 Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of: Rc::new(kind), turn: self.made,
                     holds: RefCell::new(vec![("\0walked".into(), source), ("\0walk-step".into(), Value::Small(0))]) }))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_102(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::ProductStep => self.recipe_factory(v)?,
-            Prim::NextOne => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::NextOne
+            => {
                 if !(1..=2).contains(&v.len()) { return Err(self.argument_fault("ext.builtin.exceptions.unready", None)); }
                 let refuse = || self.argument_fault("ext.builtin.exceptions.unready", None);
                 let Value::Thing(thing) = &v[0] else { return Err(refuse()) };
@@ -25128,12 +27646,27 @@ impl<'a> Machine<'a> {
                 if let Some(answer) = answer { *position += 1; answer }
                 else if let Some(fallback) = v.get(1) { fallback.clone() }
                 else { return Err(format!("\0{}:", self.table.strings("ext.system.fault.class.stop").first().map(String::as_str).unwrap_or_default())); }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_103(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Repr => {
-                n(1)?;
-                Value::text(&v[0].representation(self.wording()))
-            }
-            Prim::AsText => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::AsText
+            => {
                 if matches!(v.first(), Some(Value::Octets { .. })) && self.table.strings("ext.system.syntax_warnings").len() == 2
                     && std::env::var("LUMEN_PYTHON_BYTES_WARNING").ok().and_then(|number| number.parse::<u32>().ok()).is_some_and(|level| level != 0) {
                     self.publish_warning("BytesWarning", if matches!(v.first(), Some(Value::Octets { changeable: true, .. })) { "str() on a bytearray instance" } else { "str() on a bytes instance" })?;
@@ -25147,15 +27680,27 @@ impl<'a> Machine<'a> {
                     return self.object_words(&v[0], false).map(|text| Value::text(&text));
                 }
                 Value::text(&self.told(&v[0], w))
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_104(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::AsInt if matches!(v.first(), Some(Value::Complex(_))) => return Err(crate::complex::complaint(self.table, "integer")),
-            Prim::AsInt if self.table.strings("ext.builtin.to_int.base").first().map(String::as_str).is_some() => self.whole_from_call(v)?,
-            Prim::AsInt => {
-                n(1)?;
-                let whole = math::whole_part(&v[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
-                Value::from_big(whole)
-            }
-            Prim::AsReal if self.rules.text_to_real && (v.is_empty() || matches!(v.first(), Some(Value::Text(_) | Value::Unpaired(_)))) => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::AsReal
+            => {
                 if v.len() > 1 { return Err(self.argument_fault("ext.syntax.call.amiss", None)); }
                 if let Some(Value::Text(source)) = v.first() {
                     let source = source.trim().to_ascii_lowercase();
@@ -25208,8 +27753,27 @@ impl<'a> Machine<'a> {
                 }
                 let worth = if v.is_empty() { Value::Small(0) } else { number_spelled_in(&v[0]).ok_or_else(failure)? };
                 self.at_width(math::to_decimal(&worth, math::DEFAULT_PLACES).ok_or_else(failure)?)
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_105(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::AsReal if matches!(v, [Value::Octets { .. }]) => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::AsReal
+            => {
                 let original = v[0].representation(self.wording());
                 let Value::Octets { cell, .. } = &v[0] else { unreachable!() };
                 let bytes = cell.borrow();
@@ -25217,14 +27781,27 @@ impl<'a> Machine<'a> {
                     .ok_or_else(|| format!("ValueError: could not convert string to float: {original}"))?;
                 return self.prim(Prim::AsReal, name, &[Value::text(source)])
                     .map_err(|_| format!("ValueError: could not convert string to float: {original}"));
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_106(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // A text kept apart as bare code points (an unpaired surrogate,
-            // say) stands for a string no floating point reader can take,
-            // which CPython reports as a broken string.
-            Prim::AsReal if matches!(v, [Value::Unpaired(_)]) => {
-                return Err(format!("ValueError: could not convert string to float: {}", v[0].representation(self.wording())));
-            }
-            Prim::AsReal => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::AsReal
+            => {
                 n(1)?;
                 match &v[0] {
                     x @ Value::Frac(e) if e.places.is_some() => x.clone(),
@@ -25248,8 +27825,27 @@ impl<'a> Machine<'a> {
                         self.at_width(exact)
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_107(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Length => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::Length
+            => {
                 n(1)?;
                 if let Some(native) = Self::underlying(&v[0]) { return self.prim(Prim::Length, name, &[native.settled()]); }
                 if let Some(held) = self.check_set_walk(&v[0])? { return Ok(Value::Small(held.borrow().entries.len() as i64)); }
@@ -25271,8 +27867,27 @@ impl<'a> Machine<'a> {
                         _ => format!("{}() requires a string or array argument", name),
                     }),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_108(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::CharAtIndex => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::CharAtIndex
+            => {
                 n(2)?;
                 match (&v[0], &v[1]) {
                     (Value::Text(s), Value::Small(i)) => match usize::try_from(*i).ok().and_then(|i| s.chars().nth(i)) {
@@ -25282,8 +27897,27 @@ impl<'a> Machine<'a> {
                     (Value::Text(_), _) => return Err(format!("{}() second argument must be an integer", name)),
                     _ => return Err(format!("{}() first argument must be a string", name)),
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_109(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::CodeOf => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::CodeOf
+            => {
                 n(1)?;
                 let words = self.table.strings("ext.builtin.core.ord");
                 if words.len() == 4 {
@@ -25310,8 +27944,27 @@ impl<'a> Machine<'a> {
                         _ => return Err(format!("{}() requires a string argument", name)),
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_110(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::CharOf => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::CharOf
+            => {
                 n(1)?;
                 if self.rules.has_any_ext_builtin_core_chr_range {
                     let point = match &v[0] {
@@ -25338,18 +27991,27 @@ impl<'a> Machine<'a> {
                         None => return Err(format!("{}() argument {} is not a valid Unicode code point", name, code)),
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_111(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            // Saying the run is over is done where the call is made,
-            // since it is not a value to be worked out.
-            Prim::Quit => return Err("the run is over".to_string()),
-            Prim::Raise => {
-                n(1)?;
-                return match &v[0] {
-                    Value::Text(s) => Err(s.to_string()),
-                    _ => Err(format!("{}() argument must be a string", name)),
-                };
-            }
-            Prim::SortOf => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::SortOf
+            => {
                 n(1)?;
                 if self.rules.has_any_ext_builtin_isinstance {
                     // Anything standing for a kind is itself of the kind
@@ -25414,20 +28076,27 @@ impl<'a> Machine<'a> {
                         None => return Err(format!("{}(): the language has no word for that kind", name)),
                     }
                 }
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn dispatch_arm_112(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let w = self.wording();
+        let n = |k: usize| -> Result<(), String> {
+            if v.len() == k { return Ok(()); }
+            if matches!(op, Prim::SomeTrue | Prim::CharOf) {
+                let words = self.table.strings("ext.builtin.core.arity.one");
+                if words.len() == 3 { return Err(format!("{}{}{}{}{}", words[0], name, words[1], v.len(), words[2])); }
             }
-            Prim::Numer => {
-                n(1)?;
-                Value::from_big(math::ratio_of(&v[0]).ok_or_else(|| format!("{}() requires a number argument", name))?.above)
-            }
-            Prim::Denom => {
-                n(1)?;
-                Value::from_big(math::ratio_of(&v[0]).ok_or_else(|| format!("{}() requires a number argument", name))?.beneath)
-            }
-            Prim::Fetch => {
-                n(2)?;
-                self.element(&v[0], &v[1], Reading::Plain)?
-            }
-            Prim::External => {
+            Err(format!("{}() expects {} argument{}, got {}", name, k, if k == 1 { "" } else { "s" }, v.len()))
+        };
+
+        let result = match op {
+            Prim::External
+            => {
                 let target = match v.first() {
                     Some(Value::Text(s)) => s.to_string(),
                     Some(_) => return Err(format!("First argument to {} must be a string (function name)", name)),
@@ -25453,11 +28122,12 @@ impl<'a> Machine<'a> {
                     }
                 }
                 x.clone()
-            }
-            Prim::Octets(_) | Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Yield | Prim::Leave | Prim::Resume | Prim::Append | Prim::Replace
-            | Prim::Front | Prim::Spawn | Prim::Ask | Prim::Bid | Prim::Hurl | Prim::Otherwise | Prim::Parentless => unreachable!("handled in eval"),
-        })
+            },
+            _ => unreachable!(),
+        };
+        Ok(result)
     }
+
 
     fn number_work(&mut self, op: Prim, v: &[Value]) -> Result<Value, String> {
         if let [Value::Small(left), Value::Small(right)] = v {
