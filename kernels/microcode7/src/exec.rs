@@ -14211,7 +14211,7 @@ impl<'a> Machine<'a> {
     fn gather_octet_fields(&self, given: &[Value]) -> Result<Value, String> {
         if given.len() != 5 { return Err("TypeError: invalid memory field arguments".to_owned()); }
         let (cell, index, table, closed) = match (&given[0], &given[1], &given[2], &given[3]) {
-            (Value::Octets { cell, changeable: false, .. }, Value::Small(index), Value::Tuple(table), Value::Flag(closed)) => (cell, *index, table, *closed),
+            (Value::Octets { cell, .. }, Value::Small(index), Value::Tuple(table), Value::Flag(closed)) => (cell, *index, table, *closed),
             _ => return Err("TypeError: invalid memory field arguments".to_owned()),
         };
         if closed { return Err("ValueError: I/O operation on closed file.".to_owned()); }

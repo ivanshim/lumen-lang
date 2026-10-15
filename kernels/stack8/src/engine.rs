@@ -19283,7 +19283,7 @@ impl<'a> Engine<'a> {
 
     // Decode bounded opcode fields using a caller-supplied layout table.
     fn byte_fields(&self, args: &[Value]) -> Res<Value> {
-        let [Value::Bytes(storage, false, _), Value::Small(origin), Value::Tuple(layouts), Value::Flag(closed), Value::Small(3)] = args else {
+        let [Value::Bytes(storage, _, _), Value::Small(origin), Value::Tuple(layouts), Value::Flag(closed), Value::Small(3)] = args else {
             return Err("TypeError: invalid memory field arguments".into());
         };
         if *closed { return Err("ValueError: I/O operation on closed file.".into()); }
