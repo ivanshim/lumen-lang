@@ -9928,6 +9928,7 @@ impl<'a> Machine<'a> {
             if let Some(text) = self.primitive_doc(value) { return Some(Value::text(text)); }
         }
         if name == self.detail("doc") && matches!(value.settled(), Value::Nil) { return Some(Value::text("The type of the None singleton.")); }
+        if name == self.detail("doc") && matches!(value.settled(), Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Complex(_) | Value::Text(_) | Value::Flag(_) | Value::Vector(_) | Value::Tuple(_) | Value::Dict(_) | Value::Set(_) | Value::Octets { .. } | Value::Intrinsic(..)) { return Some(Value::Nil); }
         if matches!(value, Value::Window(_, 'm')) && matches!(name, "copy" | "get" | "items" | "keys" | "values" | "__hash__" | "__getitem__" | "__contains__" | "__len__" | "__iter__" | "__reversed__" | "__or__" | "__ror__" | "__ior__") {
             return Some(Value::Member(Rc::new(value.clone()), name.to_owned()));
         }

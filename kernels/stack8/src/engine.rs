@@ -8174,6 +8174,8 @@ impl<'a> Engine<'a> {
             if let Some(doc) = self.primitive_doc(value) { return Ok(Some(Value::text(doc))); }
         }
         if name == self.class_word("doc") && matches!(value.contents(), Value::Null) { return Ok(Some(Value::text("The type of the None singleton."))); }
+        // A builtin value carries no docstring of its own: reading one is not a fault.
+        if name == self.class_word("doc") && matches!(value.contents(), Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Real(_) | Value::Complex(_) | Value::Text(_) | Value::Flag(_) | Value::Array(_) | Value::Tuple(_) | Value::Map(_) | Value::Set(_) | Value::Bytes(..)) { return Ok(Some(Value::Null)); }
         if let Value::View(view) = value {
             if view.1 == "mapping" && ["get", "keys", "values", "items", "copy", "__getitem__", "__contains__", "__len__", "__iter__", "__reversed__", "__or__", "__ror__", "__ior__", "__hash__"].contains(&name) {
                 return Ok(Some(Value::ValueMethod(Rc::new((value.clone(), name.to_string())))));

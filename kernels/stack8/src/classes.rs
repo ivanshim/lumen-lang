@@ -4223,6 +4223,7 @@ impl<'a> Engine<'a> {
         if name == self.class_word("doc") && matches!(subject.contents(), Value::Null) {
             return Ok(Value::text("The type of the None singleton."));
         }
+        if name == self.class_word("doc") && matches!(subject.contents(), Value::SortOf(_)) { return Ok(Value::Null); }
         if name == self.class_word("allocate") && matches!(subject.contents(), Value::Null | Value::Ellipsis | Value::Declined(_)) {
             let kind = self.named_kind(&subject.contents());
             return self.class_get(kind, name, plain);

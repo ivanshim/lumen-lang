@@ -14,6 +14,7 @@ verbose = False
 is_wasi = sys.platform == "wasi"
 is_emscripten = sys.platform == "emscripten"
 is_wasm32 = is_emscripten or is_wasi
+TEST_HTTP_URL = "http://www.pythontest.net"
 Py_DEBUG = False
 Py_GIL_DISABLED = False
 MS_WINDOWS = False
