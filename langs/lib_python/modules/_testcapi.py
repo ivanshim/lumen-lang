@@ -67,3 +67,9 @@ def Py_CompileStringExFlags(source, filename, start, flags=0, optimize=-1):
         flags &= ~0x0800
     return compile(source, filename, modes[start], flags=flags,
                    dont_inherit=True, optimize=optimize)
+
+def set_errno(code):
+    # Plant the host C library's error number. A magnitude that overflows
+    # records a range error there; the next magnitude must not treat a
+    # number left behind as its own overflow.
+    __math('set_errno', code)

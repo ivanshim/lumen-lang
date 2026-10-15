@@ -22820,6 +22820,17 @@ impl<'a> Machine<'a> {
             let task = v.first().map(Value::settled);
             if let Some(Value::Text(task)) = task {
                 match task.as_ref() {
+                    "set_errno" => {
+                        if v.len() != 2 { return Err(String::from("TypeError: set_errno() takes exactly one argument")); }
+                        let planted = match v[1].settled() {
+                            Value::Small(n) => i32::try_from(n).map_err(|_| String::from("OverflowError: Python int too large to convert to C int"))?,
+                            Value::Flag(bit) => i32::from(u8::from(bit)),
+                            Value::Huge(n) => n.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?,
+                            _ => return Err(String::from("TypeError: an integer is required")),
+                        };
+                        unsafe { *libc::__errno_location() = planted };
+                        return Ok(Value::Nil);
+                    }
                     "mt19937" if self.table.flag("ext.builtin.random.words") => {
                         return if v.len() == 4 { self.twister_draw(v) } else { self.twister_next(v) };
                     },
@@ -38507,9 +38518,8 @@ impl Machine<'_> {
             Magnitude => {
                 require(1, 1)?;
                 if let Value::Complex(pair) = &input[0] {
-                    let norm = pair.0.hypot(pair.1);
-                    if pair.0.is_finite() && pair.1.is_finite() && !norm.is_finite() { return Err(self.core_complaint("core.power.overflow", "")); }
-                    return Ok(crate::complex::decimal_value(norm));
+                    let span = crate::complex::distance(pair.0, pair.1)?;
+                    return Ok(crate::complex::decimal_value(span));
                 }
                 let parts = math::ratio_of(&as_number(&input[0])).ok_or_else(|| self.core_complaint("core.abs.type", &input[0].kind_word()))?;
                 Ok(math::make_number(parts.above.abs(), parts.beneath, parts.places))
