@@ -94,8 +94,7 @@ def _varint(number, output):
 def location_table(code):
     output = []
     line = code.co_firstlineno
-    for _, _, _, _, position in __trace_native__(2, code):
-        start, end, column, finish = position
+    for start, end, column, finish in code.co_positions():
         if start is None:
             output.append(248)
             continue

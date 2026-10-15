@@ -47,7 +47,7 @@ hasjump = {'Skip', 'SkipCmp', 'Depart', 'Cycle', 'Choose'}
 
 class Positions:
     def __init__(self, values):
-        self.lineno, self.end_lineno, self.col_offset, self.end_col_offset = values
+        self.lineno, self.col_offset, self.end_lineno, self.end_col_offset = values
 
 class Instruction:
     def __init__(self, offset, opcode, argval, is_jump, positions):
@@ -59,6 +59,7 @@ class Instruction:
         self.starts_line = self.positions.lineno
         self.is_jump_target = False
         self.is_jump = is_jump
+        self.cache_info = None
 
 
 def get_instructions(x, *, first_line=None, show_caches=False, adaptive=False):
