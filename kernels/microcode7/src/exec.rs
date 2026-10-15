@@ -1002,6 +1002,13 @@ fn unique_directory_name() -> String {
     String::from_utf8(out).unwrap()
 }
 
+// Whether a name opens with the mark of one the builder made up, or with a
+// nul; asked at every fetch and store, so read off the first byte.
+#[inline(always)]
+fn opens_with_mark(word: &str) -> bool { matches!(word.as_bytes(), [b'#', ..]) }
+#[inline(always)]
+fn opens_with_nul(word: &str) -> bool { matches!(word.as_bytes(), [0, ..]) }
+
 /// The frame a name's address reaches from the one a call stands in:
 /// as far up as the address says, and no farther than the frames go,
 /// since a routine answered bare reaches the outermost one.
@@ -4090,7 +4097,7 @@ impl<'a> Machine<'a> {
             return if matches!(held, Value::Unset) { self.fetch(slot, frame) } else { Ok(held) };
         }
         if let Value::Shared(cell) = &f.cells.borrow()[slot.at] {
-            if self.names_in_calls && !f.capture_slots.borrow().contains(&slot.at) && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/") && !slot.ident.starts_with('#')) {
+            if self.names_in_calls && !f.capture_slots.borrow().contains(&slot.at) && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/") && !opens_with_mark(&slot.ident)) {
                 return Ok(Value::Shared(cell.clone()));
             }
             if !self.rules.closes_over { return Ok(cell.borrow().clone()); }
@@ -4115,7 +4122,7 @@ impl<'a> Machine<'a> {
         let f = if imported_global { self.outermost.clone() } else { ascend(frame, slot.up).clone() };
         // For the second format every name of the globals the annotation
         // reads is a stand-in, whatever it is bound to.
-        if Rc::ptr_eq(&f, &self.outermost) && !Rc::ptr_eq(frame, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0') {
+        if Rc::ptr_eq(&f, &self.outermost) && !Rc::ptr_eq(frame, &self.outermost) && !opens_with_mark(&slot.ident) && !opens_with_nul(&slot.ident) {
             if let Some((names, true)) = self.annotation_scope(frame) {
                 let copied = self.frames_named.last().is_some_and(|routine| routine.globe.is_some());
                 if copied {
@@ -4140,7 +4147,7 @@ impl<'a> Machine<'a> {
             let routine = self.frames_named.last().map_or("<unknown>", |body| body.ident.as_str());
             return Err(format!("RuntimeError: closure binding '{}' is unavailable in {routine}", slot.ident));
         };
-        if slot.up > 0 && !Rc::ptr_eq(&f, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0')
+        if slot.up > 0 && !Rc::ptr_eq(&f, &self.outermost) && !opens_with_mark(&slot.ident) && !opens_with_nul(&slot.ident)
             && self.frames_named.last().is_some_and(|routine| routine.globe.is_none()) {
             if let Some((names, all)) = self.annotation_scope(frame) {
                 let content = v.settled();
@@ -4165,7 +4172,7 @@ impl<'a> Machine<'a> {
         // Imported source names have binding wrappers; compiler temporaries
         // hold collection cells directly and must retain those cells.
         if let Value::Shared(cell) = &v {
-            if self.names_in_calls && !(Rc::ptr_eq(&f, &self.outermost) && self.idents[slot.at].starts_with("\0import/") && !slot.ident.starts_with('#')) { return Ok(v); }
+            if self.names_in_calls && !(Rc::ptr_eq(&f, &self.outermost) && self.idents[slot.at].starts_with("\0import/") && !opens_with_mark(&slot.ident)) { return Ok(v); }
             let held = cell.borrow().clone();
             if !self.rules.closes_over { return Ok(held); }
             v = held;
@@ -4260,7 +4267,7 @@ impl<'a> Machine<'a> {
 
     fn store(&mut self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
         // A copied annotation namespace owns its global writes.
-        if !slot.ident.starts_with('#') && Rc::ptr_eq(ascend(frame, slot.up), &self.outermost)
+        if !opens_with_mark(&slot.ident) && Rc::ptr_eq(ascend(frame, slot.up), &self.outermost)
             && self.annotation_scope(frame).is_some() && self.frames_named.last().is_some_and(|running| running.globe.is_some()) {
             if let Some(book) = self.world_book.clone() {
                 let content = self.collection_cell(value);
@@ -4276,7 +4283,7 @@ impl<'a> Machine<'a> {
                 *cell.borrow_mut() = stored;
                 return Ok(());
             }
-            if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") && !slot.ident.starts_with('#') {
+            if Rc::ptr_eq(destination, &self.outermost) && self.idents[slot.at].starts_with("\0import/") && !opens_with_mark(&slot.ident) {
                 self.booked_write(slot.at, &slot.ident, Some(stored.clone()));
                 let binding = match &destination.cells.borrow()[slot.at] {
                     Value::Shared(cell) => Some(cell.clone()),
@@ -6535,7 +6542,7 @@ impl<'a> Machine<'a> {
         if self.any_unheard.get() {
             self.hand_over_unheard()?;
         }
-        if crate::ghost::stirred() {
+        if crate::ghost::stirred(matches!(node, Form::OnLine(..))) {
             self.attend_to_gone();
         }
         match node {
@@ -7020,7 +7027,7 @@ impl<'a> Machine<'a> {
                 let mut places = f.cells.borrow_mut();
                 match &places[slot.at] {
                     Value::Shared(cell) if f.capture_slots.borrow().contains(&slot.at) => *cell.borrow_mut() = Value::Unset,
-                    Value::Shared(cell) if !slot.ident.starts_with('#') && self.rules.closes_over && (!self.names_in_calls || Rc::ptr_eq(f, &self.outermost) && self.loaded_spaces.contains_key(&self.written_in)) => *cell.borrow_mut() = Value::Unset,
+                    Value::Shared(cell) if !opens_with_mark(&slot.ident) && self.rules.closes_over && (!self.names_in_calls || Rc::ptr_eq(f, &self.outermost) && self.loaded_spaces.contains_key(&self.written_in)) => *cell.borrow_mut() = Value::Unset,
                     _ => places[slot.at] = Value::Unset,
                 }
                 Ok(Value::Nil)
@@ -26106,7 +26113,9 @@ impl<'a> Machine<'a> {
         let reverse = stride < 0;
         let distance = if reverse { ends[0] - ends[1] } else { ends[1] - ends[0] };
         let many = if distance <= 0 { 0 } else { (distance - 1) / stride.abs() + 1 };
-        let picked = (0..many).map(|turn| (ends[0] + turn * stride) as usize).collect();
+        let mut picked = Vec::with_capacity(many.max(0) as usize);
+        let mut place = ends[0];
+        for _ in 0..many.max(0) as usize { picked.push(place as usize); place += stride; }
         let begin = ends[0].max(0) as usize;
         let end = ends[1].max(ends[0]).max(0) as usize;
         Ok((begin..end, picked, unit))
