@@ -500,10 +500,9 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
             if born < 0 {
                 Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO))
             } else {
-                // Closing the master hangs up the session leader. A Python
-                // handler is not a host disposition, so the child ignores
-                // that hangup and exits on its own.
-                if born == 0 { libc::signal(libc::SIGHUP, libc::SIG_IGN); }
+                // The child keeps the disposition it already had. A handler
+                // installed before the fork is a host sigaction, so a hangup
+                // still reaches that handler; the default still ends the child.
                 Ok(Value::tuple(vec![Value::Small(born as i64), Value::Small(master as i64)]))
             }
         },

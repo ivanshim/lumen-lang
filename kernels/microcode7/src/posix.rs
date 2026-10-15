@@ -124,11 +124,8 @@ fn split_onto_terminal() -> Result<Value, i32> {
     if born < 0 {
         return Err(errno());
     }
-    if born == 0 {
-        // The kernel hangs up this session when the master closes. Python
-        // handlers do not change the host disposition, so swallow that one.
-        unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN); }
-    }
+    // Leave the disposition alone. Whatever was installed before the split,
+    // including the default, is what the child still answers a hangup with.
     Ok(Value::tuple(vec![Value::Small(i64::from(born)), Value::Small(i64::from(held))]))
 }
 
