@@ -1323,12 +1323,14 @@ impl<'a> Engine<'a> {
         let carried = [&self.lang.notes_member, &self.lang.exception_cause, &self.lang.exception_context, &self.lang.exception_suppress, &self.lang.traceback_member];
         let source = source.fields.borrow();
         let mut target = target.fields.borrow_mut();
+        // Marked once the field borrows are released: the context may be the source itself.
+        let mut behind_later = None;
         for key in carried.into_iter().flatten() {
             let Some((_, held)) = source.iter().find(|(n, _)| n == key) else { continue };
             // Only a sequence of notes is handed to both halves; notes
             // that are not a sequence are left behind, as the reference does.
             if self.lang.exception_context.as_deref() == Some(key.as_str()) {
-                if let Value::Object(behind) = held.contents() { Self::mark_context_target(&behind); }
+                if let Value::Object(behind) = held.contents() { behind_later = Some(behind); }
             }
             let held = if self.lang.notes_member.as_deref() == Some(key) {
                 match held.contents() {
@@ -1341,6 +1343,9 @@ impl<'a> Engine<'a> {
                 None => target.push((key.clone(), held)),
             }
         }
+        drop(source);
+        drop(target);
+        if let Some(behind) = behind_later { Self::mark_context_target(&behind); }
     }
 
     fn check_syntax_details(&mut self, args: &[Value]) -> Res<Vec<Value>> {

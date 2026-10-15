@@ -1723,10 +1723,12 @@ impl<'a> Machine<'a> {
         let source = source.holds.borrow();
         let mut target = target.holds.borrow_mut();
         let notes = self.table.single("ext.builtin.exceptions.notes");
+        // Noted once the borrows are released: the context may be the source itself.
+        let mut older_later = None;
         for key in labels.iter().filter_map(|label| self.table.single(label)) {
             let Some((_, held)) = source.iter().find(|(k, _)| k == key) else { continue };
             if self.table.single("ext.builtin.exceptions.context") == Some(key) {
-                if let Value::Thing(older) = held.settled() { Self::stand_behind(&older); }
+                if let Value::Thing(older) = held.settled() { older_later = Some(older); }
             }
             // Only a sequence of notes is handed to both halves; notes
             // that are not a sequence are left behind, as the reference does.
@@ -1745,6 +1747,9 @@ impl<'a> Machine<'a> {
                 None => target.push((key.to_string(), held)),
             }
         }
+        drop(source);
+        drop(target);
+        if let Some(older) = older_later { Self::stand_behind(&older); }
     }
 
     fn syntax_detail_count(&mut self, values: &[Value]) -> Result<Vec<Value>, String> {
