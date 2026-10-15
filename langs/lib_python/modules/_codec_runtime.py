@@ -664,7 +664,7 @@ def _escaped_hex(rest, marker, width):
     count = len(pieces) - 1
     # In a run of escapes each piece but the last is just its digits.
     middle = ''.join(pieces[1:-1])
-    dense = len(middle) == width * (count - 1)
+    dense = len(middle) == width * (count - 1) and set(map(len, pieces[1:-1])) <= {width}
     if dense:
         digits = middle + pieces[-1][:width]
     else:
