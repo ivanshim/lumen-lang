@@ -89,14 +89,29 @@ class Pattern:
         if state is None:
             return None
         return Match(_TOKEN, self, string, text, pos, endpos, state)
+    # A text subject with plain positions takes the direct road: the
+    # same clamping and matching calls, without the general input and
+    # run steps between them.
+    def _text_match(self, string, pos, endpos, mode):
+        pos, endpos = _native(9, string, pos, endpos)
+        state = _native(0, self._code, string, pos, endpos, self._groups, mode, 0)
+        if state is None:
+            return None
+        return Match(_TOKEN, self, string, string, pos, endpos, state)
     def prefixmatch(self, string, pos=0, endpos=9223372036854775807):
+        if type(string) is str and type(pos) is int and type(endpos) is int and self._isbytes is not True:
+            return self._text_match(string, pos, endpos, 0)
         text, pos, endpos = self._input(string, pos, endpos)
         return self._run(string, text, pos, endpos, 0)
     match = prefixmatch
     def fullmatch(self, string, pos=0, endpos=9223372036854775807):
+        if type(string) is str and type(pos) is int and type(endpos) is int and self._isbytes is not True:
+            return self._text_match(string, pos, endpos, 1)
         text, pos, endpos = self._input(string, pos, endpos)
         return self._run(string, text, pos, endpos, 1)
     def search(self, string, pos=0, endpos=9223372036854775807):
+        if type(string) is str and type(pos) is int and type(endpos) is int and self._isbytes is not True:
+            return self._text_match(string, pos, endpos, 2)
         text, pos, endpos = self._input(string, pos, endpos)
         return self._run(string, text, pos, endpos, 2)
     def scanner(self, string, pos=0, endpos=9223372036854775807):
