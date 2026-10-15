@@ -33,7 +33,9 @@ class _CodecCall:
         self.__name__ = name or function.__name__
     # Pass codec arguments through unchanged.
     def __call__(self, *args, **kwargs):
-        return self.function(*args, **kwargs)
+        if kwargs:
+            return self.function(*args, **kwargs)
+        return self.function(*args)
     # Restore native codec entry points by their public module identity.
     def __reduce__(self):
         return (_get_codec_call, (self.__name__,))
@@ -83,11 +85,10 @@ def _encoder(name):
 def _escape_end(data, raw):
     i = 0
     while i < len(data):
-        start = i
-        if data[i] != 92:
-            i += 1
-            continue
-        i += 1
+        start = data.find(b'\\', i)
+        if start < 0:
+            return len(data)
+        i = start + 1
         if i == len(data):
             return start
         c = data[i]
