@@ -1179,6 +1179,16 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
     let unit = table.count("block.indent_size").unwrap_or(4);
     let fold_kw = table.flag("lexical.keywords_case_insensitive");
     let fold_id = table.flag("identifier.case_insensitive");
+    // What the loop below asks again at every character, asked once: the
+    // marks that begin a comment or continue a line as letters, whether
+    // strings may be long, and the sign a name may be led by.
+    let comment_marks: Vec<Vec<char>> = table.strings("lexical.comment_line").iter().map(|mark| mark.chars().collect()).collect();
+    let continuation_marks: Vec<Vec<char>> = table.strings("ext.lexical.line_continuation").iter().map(|mark| mark.chars().collect()).collect();
+    let lone_continuations: Vec<char> = continuation_marks.iter().filter(|mark| mark.len() == 1).map(|mark| mark[0]).collect();
+    let long_strings = !table.strings("ext.lexical.string.long").is_empty();
+    let name_leads = table.letters("ext.lexical.name_lead");
+    let syntax_words = table.has_any("ext.builtin.exceptions.syntax");
+    let routed = !table.strings("ext.builtin.print.redirect").is_empty();
     let mut tokens: Vec<Token> = Vec::new();
     let line_beginnings: Vec<usize> = std::iter::once(0).chain(src.iter().enumerate().filter_map(|(i, c)| (*c == '\n').then_some(i + 1))).collect();
     let at_column = |index| index - line_beginnings[line_beginnings.partition_point(|start| *start <= index) - 1] + 1;
@@ -1202,8 +1212,8 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
                 k += 1;
             }
             let line_end = src[k..].iter().position(|c| *c == '\n').map_or(src.len(), |p| k + p);
-            if src[k..line_end].iter().all(|c| c.is_ascii_whitespace() || !table.has_any("ext.builtin.exceptions.syntax") && c.is_whitespace())
-                || table.strings("lexical.comment_line").iter().any(|mark| src[k..].starts_with(&mark.chars().collect::<Vec<_>>())) {
+            if src[k..line_end].iter().all(|c| c.is_ascii_whitespace() || !syntax_words && c.is_whitespace())
+                || comment_marks.iter().any(|mark| src[k..].starts_with(mark)) {
                 if line_end < src.len() {
                     row += 1;
                 }
@@ -1216,8 +1226,8 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
         }
         column.set(at_column(pos));
         ended.1 = column.get();
-        if !table.strings("ext.lexical.string.long").is_empty() {
-            if table.strings("lexical.comment_line").iter().any(|m| src[pos..].starts_with(&m.chars().collect::<Vec<_>>())) {
+        if long_strings {
+            if comment_marks.iter().any(|mark| src[pos..].starts_with(mark)) {
                 while pos < src.len() && src[pos] != '\n' { pos += 1; }
                 continue;
             }
@@ -1264,9 +1274,9 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
         }
         let c = src[pos];
         let mut carried = false;
-        for mark in table.strings("ext.lexical.line_continuation") {
-            if written_at(&src, pos, mark) {
-                let mut end = pos + mark.chars().count();
+        for mark in &continuation_marks {
+            if !mark.is_empty() && src[pos..].starts_with(mark) {
+                let mut end = pos + mark.len();
                 if src.get(end) == Some(&'\r') {
                     end += 1;
                 }
@@ -1296,7 +1306,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             pos += 1;
             continue;
         }
-        if table.spells("ext.lexical.line_continuation", &c.to_string()) {
+        if lone_continuations.contains(&c) {
             pos += 1;
             if src.get(pos) == Some(&'\r') { pos += 1; }
             if src.get(pos) != Some(&'\n') {
@@ -1516,7 +1526,7 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             continue;
         }
         // A sign written before a name and saying nothing: PHP's `\Error`.
-        let led = table.letters("ext.lexical.name_lead").contains(&c) && src.get(pos + 1).map_or(false, |n| table.begins_name(*n));
+        let led = name_leads.contains(&c) && src.get(pos + 1).map_or(false, |n| table.begins_name(*n));
         let prefixed = prefix == Some(c) && src.get(pos + 1).map_or(false, |n| table.begins_name(*n));
         if table.begins_name(c) || prefixed || led {
             let mut k = if prefixed || led { pos + 1 } else { pos };
@@ -1525,7 +1535,6 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
             }
             let mut s: String = src[if led { pos + 1 } else { pos }..k].iter().collect();
             let mut longest = 0;
-            let routed = !table.strings("ext.builtin.print.redirect").is_empty();
             for name in table.continued_builtins(&s) {
                 if name.len() > s.len() && name.starts_with(s.as_str()) {
                     // With the printer routed through the module, a stream

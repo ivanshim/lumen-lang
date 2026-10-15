@@ -1923,18 +1923,21 @@ impl<'a> Builder<'a> {
         // The routine a piece stands in, the class that routine belongs
         // to, and the two written together: each is known while the form
         // is built, so each stands for what it names.
-        let routine = self.naming.last().cloned().unwrap_or_default();
-        let within = self.within.as_ref().map(|(called, _)| called.clone()).unwrap_or_default();
-        for (label, said) in [
-            ("ext.system.source.routine", routine.clone()),
-            ("ext.system.source.class", within.clone()),
-            ("ext.system.source.method", match within.is_empty() {
-                true => routine,
-                false => format!("{}::{}", within, routine),
-            }),
-        ] {
-            if self.table.single(label) == Some(name) {
-                return constant(Value::text(&said));
+        let spoken = ["ext.system.source.routine", "ext.system.source.class", "ext.system.source.method"];
+        if spoken.iter().any(|label| self.table.single(label) == Some(name)) {
+            let routine = self.naming.last().cloned().unwrap_or_default();
+            let within = self.within.as_ref().map(|(called, _)| called.clone()).unwrap_or_default();
+            for (label, said) in [
+                ("ext.system.source.routine", routine.clone()),
+                ("ext.system.source.class", within.clone()),
+                ("ext.system.source.method", match within.is_empty() {
+                    true => routine,
+                    false => format!("{}::{}", within, routine),
+                }),
+            ] {
+                if self.table.single(label) == Some(name) {
+                    return constant(Value::text(&said));
+                }
             }
         }
         // A name an annotation reads is read when the annotation is, not settled
