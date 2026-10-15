@@ -145,6 +145,15 @@ def _decoder(name, default_final=False):
     native = _runtime._raw_text_decode
     # Decode only complete characters when the caller has more bytes to supply.
     def decode(input, errors='strict', final=default_final):
+        # The strict policy over whole, valid rows is what a stream reader asks for.
+        if errors == 'strict' and type(input) is bytes:
+            if utf8:
+                try:
+                    return native(input, 'utf-8', 'strict'), len(input)
+                except UnicodeDecodeError:
+                    pass
+            elif unit and not len(input) % unit and (final or unit == 4 or len(input) < 2 or not 0xd8 <= input[-1 if form[1] else -2] <= 0xdb):
+                return native(input, form[2], 'strict'), len(input)
         if type(input) is bytes and type(errors) is str and '\x00' not in errors:
             data = input
             if utf8:
