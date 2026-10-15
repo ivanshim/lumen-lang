@@ -188,7 +188,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
                 libc::O_CREAT, libc::O_EXCL, libc::O_TRUNC, libc::O_NONBLOCK,
                 libc::O_CLOEXEC, libc::O_DIRECTORY, libc::O_NOFOLLOW,
                 libc::SEEK_SET, libc::SEEK_CUR, libc::SEEK_END, libc::F_OK,
-                libc::R_OK, libc::W_OK, libc::X_OK, libc::O_TMPFILE];
+                libc::R_OK, libc::W_OK, libc::X_OK, libc::O_TMPFILE, libc::O_NOCTTY];
             Ok(Value::tuple(row.into_iter().map(|n| Value::Small(n as i64)).collect()))
         },
         "stat" | "lstat" | "fstat" => {
@@ -404,6 +404,34 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
             let mut descriptors = [-1; 2];
             status(libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) as i64)
                 .map(|_| Value::tuple(descriptors.into_iter().map(|fd| Value::Small(fd as i64)).collect()))
+        },
+        "tcgetattr" => {
+            let mut mode = std::mem::zeroed::<libc::termios>();
+            status(libc::tcgetattr(number(0)? as i32, &mut mode) as i64).map(|_| Value::tuple(vec![
+                Value::Small(mode.c_iflag as i64), Value::Small(mode.c_oflag as i64), Value::Small(mode.c_cflag as i64), Value::Small(mode.c_lflag as i64),
+                Value::Small(libc::cfgetispeed(&mode) as i64), Value::Small(libc::cfgetospeed(&mode) as i64), bytes(mode.c_cc.to_vec())]))
+        },
+        "tcsetattr" => {
+            let fd = number(0)? as i32;
+            let mut mode = std::mem::zeroed::<libc::termios>();
+            if libc::tcgetattr(fd, &mut mode) < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) } else {
+                mode.c_iflag = number(2)? as libc::tcflag_t; mode.c_oflag = number(3)? as libc::tcflag_t;
+                mode.c_cflag = number(4)? as libc::tcflag_t; mode.c_lflag = number(5)? as libc::tcflag_t;
+                for (slot, byte) in mode.c_cc.iter_mut().zip(raw(&a[8])?) { *slot = byte; }
+                if libc::cfsetispeed(&mut mode, number(6)? as libc::speed_t) < 0 || libc::cfsetospeed(&mut mode, number(7)? as libc::speed_t) < 0 {
+                    Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO))
+                } else { status(libc::tcsetattr(fd, number(1)? as i32, &mode) as i64) }
+            }
+        },
+        "tcflow" => {
+            let fd = number(0)? as i32;
+            let arg = number(2)? as i32;
+            match number(1)? {
+                0 => status(libc::tcsendbreak(fd, arg) as i64),
+                1 => status(libc::tcdrain(fd) as i64),
+                2 => status(libc::tcflush(fd, arg) as i64),
+                _ => status(libc::tcflow(fd, arg) as i64),
+            }
         },
         "isatty" => Ok(Value::Flag(libc::isatty(number(0)? as i32) != 0)),
         "urandom" => {
