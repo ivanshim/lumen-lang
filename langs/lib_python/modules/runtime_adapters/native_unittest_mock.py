@@ -628,4 +628,6 @@ def mock_open(mock=None, read_data=''):
 
 
 def __getattr__(name):
-    raise 'NotImplementedError: unittest.mock.' + name + ' is not supported'
+    # An absent name is an AttributeError, as a module protocol asks: a
+    # getattr with a default, and pickle's scan of sys.modules, rely on it.
+    raise AttributeError("module 'unittest.mock' has no attribute '" + name + "'")

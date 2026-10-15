@@ -351,12 +351,6 @@ _is_coroutine_mark = object()
 
 
 
-def __getattr__(name):
-    if name.startswith('__'):
-        raise AttributeError("module 'inspect' has no attribute '" + name + "'")
-    raise 'NotImplementedError: inspect.' + name + ' needs to read a compiled body, which this runtime does not hand out'
-
-
 # A signature reconstructed from the code fields the runtime exposes,
 # with the parameter names, defaults and annotations a caller can read
 # back one by one. Frame walking and builtin text signatures stay
