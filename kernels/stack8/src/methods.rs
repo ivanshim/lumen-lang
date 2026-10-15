@@ -273,6 +273,8 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
             let mut right = row.len();
             if op != "rstrip" { while left < right && removes(row[left]) { left += 1; } }
             if op != "lstrip" { while right > left && removes(row[right - 1]) { right -= 1; } }
+            // A trimming that takes nothing off hands back the very row.
+            if left == 0 && right == row.len() { return Ok(held.clone()); }
             return Ok(Value::from_codes(row[left..right].to_vec()));
         }
         Value::Codepoints(row) if op == "startswith" || op == "endswith" => {
@@ -495,7 +497,11 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     arity(0,1)?;
                     let chars = a.first().filter(|v| !matches!(v, Value::Null)).map(|v| text(v,fault)).transpose()?;
                     let trim = |c: char| chars.as_ref().map_or(c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c), |set| set.contains(c));
-                    match op { "lstrip" => s.trim_start_matches(trim), "rstrip" => s.trim_end_matches(trim), _ => s.trim_matches(trim) }.to_string()
+                    let kept = match op { "lstrip" => s.trim_start_matches(trim), "rstrip" => s.trim_end_matches(trim), _ => s.trim_matches(trim) };
+                    // With nothing trimmed away, the very text is the
+                    // answer; a shorter text is a fresh one.
+                    if kept.len() == s.len() { return Ok(held.clone()); }
+                    kept.to_string()
                 }
                 "split" | "rsplit" => {
                     arity(0,2)?;

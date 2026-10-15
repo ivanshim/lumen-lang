@@ -18338,10 +18338,22 @@ impl<'a> Engine<'a> {
         // standing on the very kind the word names works here through
         // what it keeps of it, exactly as the loose member read off the
         // kind itself does.
-        if let Some((word, _)) = name.split_once('.') {
+        if let Some((word, member)) = name.split_once('.') {
             if let Some(Value::Object(o)) = args.first() {
                 if Self::kind_beneath(&o.class_now()).as_deref() == Some(word) {
-                    if let Some(worth) = Self::worth_of(&args[0]) { args[0] = worth; }
+                    if let Some(worth) = Self::worth_of(&args[0]) {
+                        // A thing standing on a text kind still answers
+                        // a trimming with a fresh exact text, so its
+                        // stored worth is copied rather than shared; a
+                        // fixed run of bytes is copied under the three
+                        // trimmings and no other working.
+                        args[0] = match worth {
+                            Value::Text(text) if matches!(builtin, Builtin::Text(crate::strings::TextOp::Strip | crate::strings::TextOp::Lstrip | crate::strings::TextOp::Rstrip)) => Value::text(&text),
+                            Value::Codepoints(row) if matches!(builtin, Builtin::Text(crate::strings::TextOp::Strip | crate::strings::TextOp::Lstrip | crate::strings::TextOp::Rstrip)) => Value::Codepoints(Rc::new(row.as_ref().clone())),
+                            Value::Bytes(cell, false, lead) if Self::byte_working(member).is_some_and(|task| matches!(task, 12 | 24 | 25)) => Value::Bytes(Rc::new(RefCell::new(cell.borrow().clone())), false, lead),
+                            other => other,
+                        };
+                    }
                 }
             }
         }
@@ -19111,6 +19123,18 @@ impl<'a> Engine<'a> {
         }
         let newargs_owner = (operation == "__getnewargs__").then(|| receiver.core_kind());
         let native_receiver = Self::worth_of(receiver);
+        // A thing of a text or fixed-bytes kind still hands a fresh
+        // exact value out of a trimming, so its immutable worth is
+        // copied here; a changeable worth stays the thing's own.
+        let native_receiver = match native_receiver {
+            Some(worth) if matches!(self.lang.value_methods.get(operation).map(String::as_str), Some("strip" | "lstrip" | "rstrip")) => Some(match worth {
+                Value::Text(text) => Value::text(&text),
+                Value::Codepoints(row) => Value::Codepoints(Rc::new(row.as_ref().clone())),
+                Value::Bytes(cell, false, lead) => Value::Bytes(Rc::new(RefCell::new(cell.borrow().clone())), false, lead),
+                other => other,
+            }),
+            other => other,
+        };
         let receiver = native_receiver.as_ref().unwrap_or(receiver);
         let contents = receiver.contents();
         if matches!(&contents, Value::Ellipsis | Value::Declined(_)) && matches!(operation, "__reduce__" | "__reduce_ex__") {
@@ -21198,8 +21222,21 @@ impl<'a> Engine<'a> {
             }
             // Everything else a row of bytes answers to it shares with
             // text, and each of those is worked out over the bytes.
-            _ => return self.byte_text_work(task, &row, *mutable, given),
+            _ => {
+                let made = self.byte_text_work(task, &row, *mutable, given)?;
+                if !*mutable && matches!(task, 24 | 25) {
+                    if let Value::Bytes(kept, ..) = &made {
+                        if kept.borrow().len() == row.len() { return Ok(args[0].clone()); }
+                    }
+                }
+                return Ok(made);
+            }
         };
+        // Trimming that takes nothing off a fixed row is that very row;
+        // a changeable row always makes a new one.
+        if !*mutable && task == 12 && result.len() == row.len() {
+            return Ok(args[0].clone());
+        }
         Ok(self.byte_make(result, *mutable))
     }
 

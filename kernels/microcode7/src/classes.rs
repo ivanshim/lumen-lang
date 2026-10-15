@@ -2969,6 +2969,18 @@ impl<'a> Machine<'a> {
                                 _ => (),
                             }
                         }
+                        // A loose trimming on a thing of a text or
+                        // fixed-bytes kind makes a fresh exact value at
+                        // each call, so the worth it works is copied
+                        // here rather than shared.
+                        let receiver = if of_own_kind && matches!(subject, Value::Thing(_)) && matches!(self.table.method_names.get(entry.as_str()).copied(), Some("strip" | "lstrip" | "rstrip")) {
+                            match receiver.settled() {
+                                Value::Text(text) => Value::text(&text),
+                                Value::Unpaired(units) => Value::Unpaired(Rc::from(&units[..])),
+                                Value::Octets { cell, changeable: false, lead } => Value::Octets { cell: Rc::new(RefCell::new(cell.borrow().clone())), changeable: false, lead },
+                                other => other,
+                            }
+                        } else { receiver };
                         let found=if of_own_kind && self.native_member(&receiver, &entry) {
                             Some(Value::Member(Rc::new(subject.clone()), entry.clone()))
                         } else if of_own_kind && entry == self.detail("descriptor.get")
@@ -6365,6 +6377,12 @@ impl<'a> Machine<'a> {
                 if let Some(member)=self.attribute(&set.settled(),key) { return Ok(member); }
             }
             if let Some(text @ Value::Text(_)) = &native {
+                // A trimming keeps the thing as its receiver, so each
+                // call copies the stored worth afresh; other workings
+                // bind the text itself.
+                if matches!(self.table.method_names.get(key).copied(), Some("strip" | "lstrip" | "rstrip")) {
+                    return Ok(Value::Member(Rc::new(value.clone()), key.to_owned()));
+                }
                 if let Some(member) = self.attribute(text, key) { return Ok(member); }
             }
             if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
@@ -6407,7 +6425,12 @@ impl<'a> Machine<'a> {
                 // which the worth beneath the thing carries out.
                 if let Value::Octets{changeable,..}=under.settled() {
                     if let Some(working)=self.octet_member(key,changeable) {
-                        return Ok(Value::Member(Rc::new(under),working.to_string()));
+                        // A fixed row under a trimming keeps the thing
+                        // as its receiver so each call copies afresh.
+                        let receiver = if !changeable && matches!(self.table.method_names.get(key).copied(), Some("strip" | "lstrip" | "rstrip")) {
+                            value.clone()
+                        } else { under };
+                        return Ok(Value::Member(Rc::new(receiver),working.to_string()));
                     }
                 }
                 // A set answers some of its methods with primitives that
