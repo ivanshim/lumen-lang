@@ -4101,7 +4101,8 @@ impl<'a> Machine<'a> {
         // reads is a stand-in, whatever it is bound to.
         if Rc::ptr_eq(&f, &self.outermost) && !Rc::ptr_eq(frame, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0') {
             if let Some((names, true)) = self.annotation_scope(frame) {
-                let copied = self.frames_named.last().is_some_and(|routine| routine.globe.is_some());
+                let copied = self.frames_named.last().and_then(|routine| routine.globe.as_ref())
+                    .is_some_and(|namespace| !matches!(namespace.settled(), Value::Attributes(_)));
                 if copied {
                     if let Some(value) = self.world_book.as_ref().and_then(|book| looked_up(book, &slot.ident)) { return Ok(value); }
                 }
@@ -28484,7 +28485,12 @@ impl<'a> Machine<'a> {
             worth.filter(|value| !matches!(value.settled(), Value::Unset))
         } else { worth };
         match self.book_holding(at) {
-            Some(Held::World) => if let Some(book) = &self.world_book { set_down_slot(book, name, worth, Some(at)) },
+            Some(Held::World) => if let Some(book) = self.world_book.clone() {
+                let module_dictionary = matches!(&*book.borrow(), Value::Attributes(_));
+                if module_dictionary {
+                    if let Err(escape) = self.booked_put(&book, name, worth) { self.got_away = Some(escape); }
+                } else { set_down_slot(&book, name, worth, Some(at)); }
+            },
             Some(Held::Reading(which)) => {
                 let book = &self.readings[which];
                 let goes_to = match &book.outer {
@@ -28776,6 +28782,9 @@ impl<'a> Machine<'a> {
                     entries.push((Value::text(&word), Value::Blueprint(self.native_kind(&word))));
                 }
             }
+        }
+        if let Some(owner) = self.table.strings("ext.system.names.module").first() {
+            entries.push((Value::text("__name__"), Value::text(owner)));
         }
         entries.sort_by(|(a, _), (b, _)| a.bare().cmp(&b.bare()));
         let book = Rc::new(RefCell::new(Value::Dict(Rc::new(entries.into()))));
@@ -30495,6 +30504,16 @@ impl<'a> Machine<'a> {
             });
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
+            (None, None) if mode != 2 && within.is_some() && self.frames_named.last().is_some_and(|code| code.globe.is_some()) => {
+                let frame = within.as_ref().expect("the active frame").1.clone();
+                let local_names = self.names_here(&frame, Prim::HereBook)?;
+                let locals = match local_names {
+                    Value::Shared(cell) | Value::Mutable(cell, _) => cell,
+                    names => Rc::new(RefCell::new(names)),
+                };
+                let globals = match caller_book { Some(book) => book, None => self.standing_world() };
+                return self.perform_booked(&source, file, mode, globals, Some(locals), top_await, literals, settling);
+            }
             (None, None) => return match within.filter(|_| mode != 2) {
                 Some((names, mine)) => self.perform_within(&source, file, mode, names, mine, top_await, literals, settling),
                 None => self.perform_here(&source, file, mode, top_await, literals, settling),

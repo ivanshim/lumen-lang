@@ -3284,7 +3284,8 @@ impl<'a> Engine<'a> {
         // reads is a stand-in, whatever it is bound to.
         if !slot.ident.starts_with('#') && !slot.ident.starts_with('\0') {
             if let Some((names, true)) = self.annotation_scope() {
-                if self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_some()) {
+                if self.running_routine.as_ref().and_then(|routine| routine.globe.as_ref())
+                    .is_some_and(|globals| !matches!(globals.contents(), Value::Fields(_))) {
                     if let Some(book) = &self.outer_book {
                         if let Some(value) = book_entry(book, &slot.ident) { return Ok(value); }
                     }
@@ -27862,7 +27863,11 @@ impl Engine<'_> {
     fn write_booked(&mut self, kept: Kept, name: &str, value: Option<Value>, binding: Option<usize>) {
         match kept {
             Kept::Module(at) => if Self::public_name(name) { compiled_book_write(&self.module_books[at].1, name, value, binding) },
-            Kept::Outer => if let Some(book) = &self.outer_book { compiled_book_write(book, name, value, binding) },
+            Kept::Outer => if let Some(book) = self.outer_book.clone() {
+                if matches!(&*book.borrow(), Value::Fields(_)) {
+                    if let Err(fault) = self.book_put(&book, name, value) { self.carried = Some(fault); }
+                } else { compiled_book_write(&book, name, value, binding); }
+            },
             Kept::Text(at) => {
                 let book = &self.text_books[at];
                 let target = match &book.outer {
@@ -28106,6 +28111,9 @@ impl Engine<'_> {
                     pairs.push((Value::text(&word), Value::Class(self.kind_class(&word))));
                 }
             }
+        }
+        if let Some(name) = self.lang.names_module.first() {
+            pairs.push((Value::text("__name__"), Value::text(name)));
         }
         pairs.sort_by(|(a, _), (b, _)| a.plain().cmp(&b.plain()));
         let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into()))));
@@ -29956,6 +29964,18 @@ impl Engine<'_> {
         let outer = as_book(args.get(1))?;
         let near = as_book(args.get(2))?;
         let (outer, near) = match (outer, near) {
+            (None, None) if mode != 2 && within.is_some() && self.running_routine.as_ref().is_some_and(|body| body.globe.is_some()) => {
+                let body = self.running_routine.clone().expect("the caller routine");
+                let frame = &within.as_ref().expect("the caller locals").1;
+                let locals = self.names_about(&body, frame, Builtin::NearNames)
+                    .map_err(|fault| { self.carried = Some(fault); self.special_fault() })?;
+                let near = match locals {
+                    Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell,
+                    other => Rc::new(RefCell::new(other)),
+                };
+                let outer = caller_book.unwrap_or_else(|| self.running_outer());
+                return self.run_text_booked(&source, file, mode, outer, Some(near), top_await, replacements, optimization);
+            }
             (None, None) => return match within.filter(|_| mode != 2) {
                 Some((names, values)) => self.run_text_within(&source, file, mode, names, values, top_await, replacements, optimization),
                 None => self.run_text_here_about(&source, file, mode, top_await, replacements, optimization),
