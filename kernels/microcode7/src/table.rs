@@ -83,7 +83,9 @@ pub struct Table {
     pub blocks: Blocks,
     /// Reverse Polish: words over one stack, no expressions.
     pub rpn: bool,
-    cells: HashMap<&'static str, Entry, FxBuildHasher>,
+    cells: HashMap<&'static str, usize, FxBuildHasher>,
+    entries: Vec<(&'static str, Entry)>,
+    recent_cells: [std::cell::Cell<usize>; 256],
     pub dyadic: HashMap<String, Infix>,
     pub monadic: HashMap<String, Infix>,
     pub precedence: HashMap<String, u32>,
@@ -502,11 +504,15 @@ impl Table {
         if !strange.is_empty() {
             return Err(format!("unknown label(s): {}", strange.join(", ")));
         }
+        let entries: Vec<_> = cells.into_iter().collect();
+        let cells = entries.iter().enumerate().map(|(index, (label, _))| (*label, index)).collect();
         let mut table = Table {
             ident: String::new(),
             blocks: Blocks::Indented,
             rpn: false,
             cells,
+            entries,
+            recent_cells: std::array::from_fn(|_| std::cell::Cell::new(usize::MAX)),
             dyadic: HashMap::new(),
             monadic: HashMap::new(),
             precedence: HashMap::new(),
@@ -540,8 +546,8 @@ impl Table {
         table.ident = table.lone("language").unwrap_or("").to_string();
         table.check()?;
         let extra_ends = table.strings("ext.stmt.terminator").to_vec();
-        if let Some(Entry::Strings(ends)) = table.cells.get_mut("stmt.terminator") {
-            ends.extend(extra_ends);
+        if let Some(index) = table.cells.get("stmt.terminator").copied() {
+            if let Entry::Strings(ends) = &mut table.entries[index].1 { ends.extend(extra_ends); }
         }
         table.precedence_tables()?;
         let mut methods = HashMap::new();
@@ -572,8 +578,24 @@ impl Table {
         self.builtin_continuations.get(prefix).map_or(&[], Vec::as_slice)
     }
 
+    // Labels retain their positions when startup options empty their words.
+    // A cached position is checked against the full spelling, so collisions
+    // and temporary query strings always reach the same ordinary lookup.
+    fn entry(&self, key: &str) -> Option<&Entry> {
+        let bytes = key.as_bytes();
+        let last = bytes.last().copied().unwrap_or(0) as usize;
+        let slot = (bytes.len().wrapping_mul(17) ^ last) & 255;
+        let index = self.recent_cells[slot].get();
+        if let Some((label, entry)) = self.entries.get(index) {
+            if *label == key { return Some(entry); }
+        }
+        let index = *self.cells.get(key)?;
+        self.recent_cells[slot].set(index);
+        Some(&self.entries[index].1)
+    }
+
     pub fn strings(&self, key: &str) -> &[String] {
-        match self.cells.get(key) {
+        match self.entry(key) {
             Some(Entry::Strings(l)) => l,
             _ => panic!("'{key}' is not a list label"),
         }
@@ -583,7 +605,7 @@ impl Table {
     /// such label. It is for a kernel asking after a label by a name it
     /// puts together rather than one the roster writes out.
     pub fn loose_strings(&self, key: &str) -> &[String] {
-        match self.cells.get(key) {
+        match self.entry(key) {
             Some(Entry::Strings(words)) => words,
             _ => &[],
         }
@@ -595,7 +617,13 @@ impl Table {
     /// It is for a label whose worth a run is started with rather than
     /// written into the definition.
     pub fn put_by(&mut self, key: &'static str) {
-        self.cells.insert(key, Entry::Strings(Vec::new()));
+        if let Some(index) = self.cells.get(key).copied() {
+            self.entries[index].1 = Entry::Strings(Vec::new());
+        } else {
+            let index = self.entries.len();
+            self.entries.push((key, Entry::Strings(Vec::new())));
+            self.cells.insert(key, index);
+        }
     }
 
     /// A required ending or an optional parting between statements.
@@ -631,7 +659,7 @@ impl Table {
     }
 
     pub fn flag(&self, key: &str) -> bool {
-        matches!(self.cells.get(key), Some(Entry::Flag(true)))
+        matches!(self.entry(key), Some(Entry::Flag(true)))
     }
 
     /// The number of the in-place method a compound working asks the
@@ -683,21 +711,21 @@ impl Table {
     }
 
     pub fn count(&self, key: &str) -> Option<usize> {
-        match self.cells.get(key) {
+        match self.entry(key) {
             Some(Entry::Count(n)) => *n,
             _ => None,
         }
     }
 
     pub fn lone(&self, key: &str) -> Option<&str> {
-        match self.cells.get(key) {
+        match self.entry(key) {
             Some(Entry::One(w)) => w.as_deref(),
             _ => None,
         }
     }
 
     fn tiers(&self) -> &[Vec<String>] {
-        match self.cells.get("op.precedence") {
+        match self.entry("op.precedence") {
             Some(Entry::Tiers(t)) => t,
             _ => &[],
         }
