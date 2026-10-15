@@ -253,8 +253,11 @@ fn anchor_ready() -> bool {
         if pending.len() > SWEEP_SPAN {
             let (earlier, latest) = pending.split_at(pending.len() - SWEEP_SPAN);
             if latest.iter().any(|thing| Rc::strong_count(thing) == 1) { return true; }
+            // The sweep wraps only once it has gone past the last of the
+            // earlier things: a stretch shorter than a span at the end is
+            // swept like any other, so that none of them is ever skipped.
             let offset = SWEEP_OFFSET.try_with(|o| o.get()).unwrap_or(0);
-            let begin = if offset + SWEEP_SPAN > earlier.len() { 0 } else { offset };
+            let begin = if offset >= earlier.len() { 0 } else { offset };
             let end = (begin + SWEEP_SPAN).min(earlier.len());
             let _ = SWEEP_OFFSET.try_with(|o| o.set(end));
             pending = &earlier[begin..end];
