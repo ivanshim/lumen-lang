@@ -136,7 +136,10 @@ _native_layouts = tuple(_field_layout(code2op.get(chr(code)))
 _native_expected = tuple(None if layout < 0 else _field_readers[layout & 255]
                          for layout in _native_layouts)
 _opcode_characters = tuple(chr(code) for code in range(256))
-_watched_readers = tuple(dict.fromkeys((*_fixed_readers, *_counted_readers, *_line_readers, decode_long)))
+_frame_functions = (pickle._Pickler.__init__, pickle._Framer.__init__,
+                    pickle._Pickler.put, pickle._Pickler.get)
+_watched_readers = tuple(dict.fromkeys((*_fixed_readers, *_counted_readers,
+                                      *_line_readers, decode_long, *_frame_functions)))
 _watched_bodies = tuple(reader.__code__ for reader in _watched_readers)
 _native_code_watch = _field_batch(_watched_readers, _watched_bodies, '__code__', False, 6)
 
@@ -209,7 +212,7 @@ _native_descriptors = tuple(None if op is None else op.arg for op in _native_opc
 _native_names = tuple(None if op is None else op.name for op in _native_opcodes)
 _native_protocols = tuple(None if op is None else op.proto for op in _native_opcodes)
 
-def _optimization_plan(data):
+def _optimization_plan(data, compact_frame=False):
     if not _native_code_watch[0]:
         return None
     assigned = set()
@@ -260,8 +263,8 @@ def _optimization_plan(data):
                 else:
                     operations.append((start, end))
             else:
-                # Without framing, adjacent unchanged opcodes form one span.
-                if protocol < 4 and operations and operations[-1][1] == start and operations[-1][0] >= 0:
+                # Adjacent spans combine when no intermediate frame can be needed.
+                if (protocol < 4 or compact_frame) and operations and operations[-1][1] == start and operations[-1][0] >= 0:
                     operations[-1] = (operations[-1][0], end)
                 else:
                     operations.append((start, end))
@@ -282,7 +285,15 @@ def optimize(p):
             or pickle._Framer is not _memory_framer
             or sys.gettrace() is not None):
         return _stream_optimize(p)
-    plan = _optimization_plan(p)
+    # In binary protocols a memo reference needs at most five output bytes.
+    # This bound proves the entire output fits before coalescing framed spans.
+    frame_limit = _memory_framer._FRAME_SIZE_TARGET
+    compact_frame = (type(frame_limit) is int and len(p) * 5 <= frame_limit
+                     and pickle._Pickler.__init__ is _frame_functions[0]
+                     and pickle._Framer.__init__ is _frame_functions[1]
+                     and pickle._Pickler.put is _frame_functions[2]
+                     and pickle._Pickler.get is _frame_functions[3])
+    plan = _optimization_plan(p, compact_frame)
     if plan is not None:
         referenced, operations, protocol, header = plan
     else:
@@ -318,6 +329,8 @@ def optimize(p):
     pickler = pickle._Pickler(io.BytesIO(), protocol)
     target = pickler.framer._FRAME_SIZE_TARGET
     minimum = pickler.framer._FRAME_SIZE_MIN
+    if compact_frame and target != frame_limit:
+        return _stream_optimize(p)
     framed = protocol >= 4
     output = [header]
     pieces = []
