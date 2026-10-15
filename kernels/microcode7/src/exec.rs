@@ -495,6 +495,7 @@ struct ExecutionRules<'a> {
     detail_descriptor_set: &'a str,
     detail_descriptor_delete: &'a str,
     detail_call: &'a str,
+    detail_code: &'a str,
     detail_defaults: &'a str,
     class_builder: bool,
     weak_members: bool,
@@ -1964,6 +1965,7 @@ impl<'a> Machine<'a> {
                 detail_descriptor_set: table.single("ext.stmt.class.detail.descriptor.set").unwrap_or(""),
                 detail_descriptor_delete: table.single("ext.stmt.class.detail.descriptor.delete").unwrap_or(""),
                 detail_call: table.single("ext.stmt.class.detail.call").unwrap_or(""),
+                detail_code: table.single("ext.stmt.class.detail.code").unwrap_or(""),
                 detail_defaults: table.single("ext.stmt.class.detail.defaults").unwrap_or(""),
                 class_builder: table.has_any("ext.stmt.class.builder"),
                 weak_members: table.has_any("ext.builtin.weak.get"),
@@ -14295,6 +14297,35 @@ impl<'a> Machine<'a> {
         Ok(Value::Vector(crate::tuples::Sequence::plain(batch)))
     }
 
+    // An unchanged function answers its cached code handle. Replacements
+    // take the full member path, including an explicitly assigned handle.
+    fn octet_fingerprint_equal(&mut self, subject: &Value, field: &Value, saved: &Value) -> Result<bool, String> {
+        let Value::Text(attribute_name) = field else { return Err(String::from("TypeError: invalid memory field path")); };
+        let code_name = self.rules.detail_code;
+        if !code_name.is_empty() && attribute_name.as_ref() == code_name {
+            let function = match subject {
+                Value::Bound(program, room) => Some((program.clone(), room.clone())),
+                Value::Routine(program) => Some((program.clone(), self.outermost.clone())),
+                _ => None,
+            };
+            if let Some((mut program, room)) = function {
+                let key = (Rc::as_ptr(&program) as usize, Rc::as_ptr(&room) as usize);
+                if !self.written_over.contains_key(&key) {
+                    while let Some(definition) = program.definition.clone() { program = definition; }
+                    let address = Rc::as_ptr(&program) as usize;
+                    if let Some(parts) = self.code_handles.get(&address).and_then(Weak::upgrade) {
+                        return Ok(matches!(saved, Value::Wrapped(7, expected) if Rc::ptr_eq(&parts, expected)));
+                    }
+                }
+            }
+        }
+        let current = self.member_text(subject.clone(), attribute_name)?;
+        Ok(match (&current, saved) {
+            (Value::Wrapped(kind, a), Value::Wrapped(other, b)) => kind == other && Rc::ptr_eq(a, b),
+            _ => current.one_place(saved),
+        })
+    }
+
     // Resolve the current token and reader before publishing one parsed record.
     fn publish_octet_field(&mut self, values: &[Value]) -> Result<Value, String> {
         if values.len() != 5 { return Err(String::from("TypeError: invalid memory field projection")); }
@@ -14324,12 +14355,7 @@ impl<'a> Machine<'a> {
                     _ => actual.one_and_same(wanted),
                 };
                 if !same { return Ok(Value::Nil); }
-                let current_body = self.member_text(actual, code_name)?;
-                let retained = match (&current_body, saved_body) {
-                    (Value::Wrapped(_, a), Value::Wrapped(_, b)) => Rc::ptr_eq(a, b),
-                    _ => current_body.one_place(saved_body),
-                };
-                if !retained { return Ok(Value::Nil); }
+                if !self.octet_fingerprint_equal(&actual, &Value::Text(code_name.clone()), saved_body)? { return Ok(Value::Nil); }
             }
             _ => return Ok(Value::Nil),
         }
@@ -14340,6 +14366,12 @@ impl<'a> Machine<'a> {
 
     // Keep memory-stream transfers proportional to the bytes requested or supplied.
     fn memory_octets(&mut self, supplied: &[Value]) -> Result<Value, String> {
+        if supplied.last().is_some_and(|value| matches!(value, Value::Small(5))) {
+            if supplied.len() != 5 { return Err(String::from("TypeError: invalid memory fingerprint arguments")); }
+            let Value::Flag(inverted) = supplied[3] else { return Err(String::from("TypeError: invalid memory fingerprint arguments")); };
+            let equal = self.octet_fingerprint_equal(&supplied[0], &supplied[2], &supplied[1])?;
+            return Ok(Value::Flag(equal ^ inverted));
+        }
         if supplied.last().is_some_and(|value| matches!(value, Value::Small(4))) { return self.publish_octet_field(supplied); }
         if supplied.last().is_some_and(|value| matches!(value, Value::Small(3))) { return self.gather_octet_fields(supplied); }
         if supplied.len() != 5 { return Err("TypeError: invalid memory stream arguments".to_owned()); }

@@ -73,7 +73,7 @@ def commit_frame(self, force=False):
                 and type(write) is _memory_method_type
                 and type(write.__self__) is _memory_stream_type
                 and write.__func__ is _stream_write
-                and _stream_write.__code__ is _stream_write_body):
+                and _memory_transfer(_stream_write, _stream_write_body, '__code__', False, 5)):
             data = frame.getvalue()
             if len(data) >= self._FRAME_SIZE_MIN:
                 write(FRAME + pack('<Q', len(data)))
@@ -185,7 +185,7 @@ def _load_memory(self):
                             for code, argument, start, end in records:
                                 if code not in checked:
                                     handler, body = _scalar_handlers[code]
-                                    if dispatch.get(code) is not handler or handler.__code__ is not body:
+                                    if dispatch.get(code) is not handler or not _memory_transfer(handler, body, '__code__', False, 5):
                                         break
                                     checked.add(code)
                                 stream._pos = end

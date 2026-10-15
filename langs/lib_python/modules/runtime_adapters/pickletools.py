@@ -227,7 +227,7 @@ def _optimization_plan(data):
                         or descriptor is not None and descriptor.reader is not _native_expected[code]
                         or name != _native_names[code]
                         or version != _native_protocols[code]
-                        or descriptor is not None and descriptor.reader.__code__ is not _native_bodies[code]):
+                        or descriptor is not None and not _field_batch(descriptor.reader, _native_bodies[code], '__code__', False, 5)):
                     return None
                 checked.add(code)
             position = end

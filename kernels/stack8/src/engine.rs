@@ -19377,6 +19377,22 @@ impl<'a> Engine<'a> {
         Ok(Value::array(records))
     }
 
+    // The ordinary code getter uses this same weak handle cache. A revised
+    // routine takes the full attribute road, including assigned code objects.
+    fn byte_fingerprint_matches(&mut self, subject: &Value, field: &Value, saved: &Value) -> Res<bool> {
+        if let (Value::Routine(program), Value::Text(name)) = (subject, field) {
+            let code_word = self.class_word("code");
+            if !code_word.is_empty() && name.as_ref() == code_word && program.revised.borrow().is_none() {
+                let address = Rc::as_ptr(&program.instrs) as usize;
+                if let Some(handle) = self.frame_codes.get(&address).and_then(Weak::upgrade) {
+                    return Ok(matches!(saved, Value::Adapter(expected) if Rc::ptr_eq(&handle, expected)));
+                }
+            }
+        }
+        let actual = self.builtin(Builtin::GetAttr, "getattr", &mut vec![subject.clone(), field.clone()])?;
+        Ok(actual.same_place(saved))
+    }
+
     // Project a decoded field through a live descriptor table at its yield boundary.
     fn byte_field_projection(&mut self, args: &[Value]) -> Res<Value> {
         let [Value::Tuple(row), registry, Value::Tuple(recipe), Value::Flag(complete), Value::Small(4)] = args else {
@@ -19401,8 +19417,8 @@ impl<'a> Engine<'a> {
                 _ => reader.same_value(expected),
             };
             if !same { return Ok(Value::Null); }
-            let body = self.builtin(Builtin::GetAttr, "getattr", &mut vec![reader, fingerprint.clone()])?;
-            if !bodies.get(index).is_some_and(|saved| body.same_place(saved)) { return Ok(Value::Null); }
+            let saved = bodies.get(index).ok_or("ValueError: invalid memory field code")?;
+            if !self.byte_fingerprint_matches(&reader, fingerprint, saved)? { return Ok(Value::Null); }
         }
         let mut projected = vec![token, argument.clone(), begin.clone()];
         if *complete { projected.push(end.clone()); }
@@ -19411,6 +19427,10 @@ impl<'a> Engine<'a> {
 
     // Read or write bounded memory-stream storage without intermediate Python slices.
     fn byte_memory(&mut self, args: &[Value]) -> Res<Value> {
+        if matches!(args.last(), Some(Value::Small(5))) {
+            let [subject, saved, field, Value::Flag(invert), Value::Small(5)] = args else { return Err("TypeError: invalid memory fingerprint arguments".into()); };
+            return Ok(Value::Flag(self.byte_fingerprint_matches(subject, field, saved)? != *invert));
+        }
         if matches!(args.last(), Some(Value::Small(4))) { return self.byte_field_projection(args); }
         if matches!(args.last(), Some(Value::Small(3))) { return self.byte_fields(args); }
         let [Value::Bytes(storage, true, _), Value::Small(position), input, Value::Flag(closed), Value::Small(mode)] = args else {

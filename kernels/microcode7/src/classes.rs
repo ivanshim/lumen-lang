@@ -7,6 +7,7 @@ impl<'a> Machine<'a> {
         match key {
             "defaults" => self.rules.detail_defaults,
             "call" => self.rules.detail_call,
+            "code" => self.rules.detail_code,
             "descriptor.delete" => self.rules.detail_descriptor_delete,
             "descriptor.set" => self.rules.detail_descriptor_set,
             "remove" => self.rules.detail_delete,
