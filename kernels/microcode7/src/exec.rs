@@ -15700,6 +15700,8 @@ impl<'a> Machine<'a> {
     // Check that native cursor access still means ordinary slot access.
     fn memory_stream_thing(&mut self, thing: &Rc<Thing>) -> bool {
         let class = thing.blueprint();
+        // A changed ancestry may add hooks without changing a namespace stamp.
+        if class.base_epoch.get() > 0 { return false; }
         let Some(source) = self.memory_stream_source.as_ref().and_then(|source| source.upgrade()) else { return false; };
         if !Rc::ptr_eq(&source, &class) { return false; }
         let stamp = crate::data::namespace_change();

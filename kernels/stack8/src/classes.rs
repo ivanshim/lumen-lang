@@ -1867,7 +1867,9 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn class_value(&self, c: &Class, name: &str) -> Option<Value> {
-        if self.lang.bind_names && c.shared.mro_misses(name) { return None; }
+        // Namespace revisions alone cannot describe a replaced inheritance order.
+        let keep_missing = self.lang.bind_names && c.base_epoch.get() == 0;
+        if keep_missing && c.shared.mro_misses(name) { return None; }
         let found = Self::ordered_lookup(c, |base| {
             Self::own_class_value(base, name).or_else(|| {
                 if !self.lang.fuller_classes { return None; }
@@ -1883,7 +1885,7 @@ impl<'a> Engine<'a> {
                 Some(self.held_kind_descriptor(&word, name))
             })
         });
-        if self.lang.bind_names && found.is_none() { c.shared.retain_mro_miss(name); }
+        if keep_missing && found.is_none() { c.shared.retain_mro_miss(name); }
         found
     }
     /// Validate a native data descriptor's receiver before invoking its getter.

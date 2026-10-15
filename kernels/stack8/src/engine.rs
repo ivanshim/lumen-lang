@@ -21288,6 +21288,8 @@ impl<'a> Engine<'a> {
     /// Validate the embedded stream class and its complete slot descriptors.
     fn stream_object(&mut self, object: &Rc<Instance>) -> bool {
         let class = object.class_now();
+        // Reparented classes retain ordinary lookup, including new inherited hooks.
+        if class.base_epoch.get() != 0 { return false; }
         if !self.stream_origin.as_ref().and_then(Weak::upgrade).is_some_and(|origin| Rc::ptr_eq(&origin, &class)) { return false; }
         let revision = crate::value::members_revision();
         if let Some((known, seen, _)) = &self.stream_class {

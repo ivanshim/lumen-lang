@@ -1986,7 +1986,9 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn inherited_entry(&self,b:&Blueprint,key:&str)->Option<Value> {
-        if self.names_in_calls && b.shared.absent_in_lineage(key) { return None; }
+        // A base change can supply an entry without altering any namespace.
+        let stable_line = b.base_epoch.get() == 0 && self.names_in_calls;
+        if stable_line && b.shared.absent_in_lineage(key) { return None; }
         let result = Self::lookup_ordered(b, |parent| {
             Self::own_entry(parent, key).or_else(|| {
                 if !self.table.has_class_order { return None; }
@@ -2004,7 +2006,7 @@ impl<'a> Machine<'a> {
                 Some(self.kind_entry(&spelling, key))
             })
         });
-        if self.names_in_calls && result.is_none() { b.shared.note_absence(key); }
+        if result.is_none() && stable_line { b.shared.note_absence(key); }
         result
     }
     fn capture_title(word: &str) -> &str {
