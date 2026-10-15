@@ -6,6 +6,8 @@ MAXREPEAT = 4294967295
 MAXGROUPS = 1073741823
 _TOKEN = object()
 _NO_COUNT = object()
+_ZERO = 0
+_MAXEND = 9223372036854775807
 
 def _case_value(i, operation):
     if type(i) is not int:
@@ -89,14 +91,26 @@ class Pattern:
         if state is None:
             return None
         return Match(_TOKEN, self, string, text, pos, endpos, state)
+    # A str subject with both bounds left at their defaults needs no bound
+    # conversion: the native matcher clamps the end itself, so the three
+    # entry points go to it directly and only the odd calls take _input.
     def prefixmatch(self, string, pos=0, endpos=9223372036854775807):
+        if pos is _ZERO and endpos is _MAXEND and type(string) is str and self._isbytes is False:
+            state = _native(0, self._code, string, 0, endpos, self._groups, 0, 0)
+            return None if state is None else Match(_TOKEN, self, string, string, 0, len(string), state)
         text, pos, endpos = self._input(string, pos, endpos)
         return self._run(string, text, pos, endpos, 0)
     match = prefixmatch
     def fullmatch(self, string, pos=0, endpos=9223372036854775807):
+        if pos is _ZERO and endpos is _MAXEND and type(string) is str and self._isbytes is False:
+            state = _native(0, self._code, string, 0, endpos, self._groups, 1, 0)
+            return None if state is None else Match(_TOKEN, self, string, string, 0, len(string), state)
         text, pos, endpos = self._input(string, pos, endpos)
         return self._run(string, text, pos, endpos, 1)
     def search(self, string, pos=0, endpos=9223372036854775807):
+        if pos is _ZERO and endpos is _MAXEND and type(string) is str and self._isbytes is False:
+            state = _native(0, self._code, string, 0, endpos, self._groups, 2, 0)
+            return None if state is None else Match(_TOKEN, self, string, string, 0, len(string), state)
         text, pos, endpos = self._input(string, pos, endpos)
         return self._run(string, text, pos, endpos, 2)
     def scanner(self, string, pos=0, endpos=9223372036854775807):
@@ -227,6 +241,7 @@ class Match:
         self._pos = pos
         self._endpos = endpos
         self._state = state
+        self._cap = (text, state, pattern._groups, pattern._groupindex) if type(string) is str else None
     @property
     def re(self):
         return self._re
@@ -277,14 +292,14 @@ class Match:
             return self._state[1]
         return self.span(group)[1]
     def group(self, *groups):
+        if self._cap is not None:
+            captures = _native(10, self._cap, groups or (0,))
+            if captures is not None:
+                return captures[0]
+        source = self._string
         if not groups:
             groups = (0,)
         result = []
-        source = self._string
-        if type(source) is str:
-            captures = _native(10, source, self._state, self._re._groups, self._re._groupindex, groups)
-            if captures is not None:
-                return captures[0]
         for group in groups:
             a, b = self.span(group)
             value = None if a < 0 else (source if type(source) is str else _buffer(source))[a:b]
