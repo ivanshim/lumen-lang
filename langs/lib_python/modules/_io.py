@@ -1029,8 +1029,10 @@ class FileIO(_RawIOBase):
                         raise ValueError('opener returned ' + str(fd))
                 owned = True
                 os.set_inheritable(fd, False)
+            # The C code asks the system directly, so a replaced os.fstat is not seen here.
+            import posix
             try:
-                file_mode = os.fstat(fd).st_mode
+                file_mode = posix.fstat(fd).st_mode
             except OSError as exc:
                 if exc.errno == 9:
                     raise
@@ -1113,9 +1115,9 @@ class FileIO(_RawIOBase):
 
     @property
     def _blksize(self):
-        import os
+        import posix
         try:
-            st = os.fstat(self._fd)
+            st = posix.fstat(self._fd)
         except OSError:
             return DEFAULT_BUFFER_SIZE
         blksize = getattr(st, 'st_blksize', 0)
