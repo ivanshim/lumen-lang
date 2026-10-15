@@ -609,6 +609,7 @@ impl Table {
     /// A label read by a name that is a literal in the kernel: the same
     /// words at the same address are the same label, so the answer is
     /// remembered by where the words stand and no word is compared.
+    #[inline(always)]
     fn cell(&self, key: &'static str) -> Option<&Entry> {
         let place = key.as_ptr() as usize;
         let hint = ((place >> 3) ^ key.len().wrapping_mul(0x9e37)) % GUESSES;
@@ -660,6 +661,7 @@ impl Table {
         self.strings_dyn(key).iter().filter_map(|w| if w.chars().count() == 1 { w.chars().next() } else { None }).collect()
     }
 
+    #[inline(always)]
     pub fn strings(&self, key: &'static str) -> &[String] {
         match self.cell(key) {
             Some(Entry::Strings(l)) => l,
@@ -698,6 +700,7 @@ impl Table {
         self.spells("stmt.terminator", sign) || self.spells("ext.stmt.separator", sign)
     }
 
+    #[inline(always)]
     pub fn single(&self, key: &'static str) -> Option<&str> {
         self.strings(key).first().map(String::as_str)
     }
@@ -721,6 +724,7 @@ impl Table {
         !self.strings(key).is_empty()
     }
 
+    #[inline(always)]
     pub fn spells(&self, key: &'static str, lexeme: &str) -> bool {
         let words = self.strings(key);
         let mut at = 0;
@@ -731,6 +735,7 @@ impl Table {
         false
     }
 
+    #[inline(always)]
     pub fn flag(&self, key: &'static str) -> bool {
         matches!(self.cell(key), Some(Entry::Flag(true)))
     }

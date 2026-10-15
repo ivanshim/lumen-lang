@@ -1223,12 +1223,17 @@ impl<'a> Builder<'a> {
         (token.column, finish, token.row.max(token.end_row))
     }
 
+    #[inline(always)]
     fn look(&self) -> &Token {
-        &self.tokens[self.pos.min(self.tokens.len() - 1)]
+        let last = self.tokens.len() - 1;
+        &self.tokens[if self.pos < last { self.pos } else { last }]
     }
 
+    #[inline(always)]
     fn glance(&self, n: usize) -> &Token {
-        &self.tokens[(self.pos + n).min(self.tokens.len() - 1)]
+        let last = self.tokens.len() - 1;
+        let at = self.pos + n;
+        &self.tokens[if at < last { at } else { last }]
     }
 
     fn advance(&mut self) -> Token {

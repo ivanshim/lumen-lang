@@ -46,6 +46,7 @@ pub struct Token {
 impl Token {
     /// The spelling the language's own words are matched against: the
     /// text as written, which NFKC folding may have changed.
+    #[inline(always)]
     pub fn spelling(&self) -> &str {
         self.raw.as_deref().unwrap_or(&self.lexeme)
     }
