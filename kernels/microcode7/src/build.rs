@@ -12650,7 +12650,8 @@ impl<'a> Builder<'a> {
         // A call of more than thirty plain arguments takes them as one
         // array (and one map of the named ones), so that evaluating the
         // call holds a few values at a time however long it is.
-        if bind_list_long(items.len() + named_values.len(), starred) {
+        if self.table.flag("ext.syntax.call.bind_names") && close_key == "syntax.call.close"
+            && bind_list_long(items.len() + named_values.len(), starred) {
             let spread = |flag: bool, body: Form| prim_call(Prim::Couple, vec![constant(Value::Flag(flag)), body]);
             let mut handed = Vec::new();
             let gather = |start: Prim, grows: Prim, parts: Vec<Form>| parts.into_iter()
