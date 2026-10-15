@@ -58,3 +58,27 @@ load_string.__qualname__ = '_Unpickler.load_string'
 _Unpickler.load_string = load_string
 _Unpickler.dispatch[STRING[0]] = load_string
 del load_string
+
+# Snapshot frames only for synchronous writes to an exact in-memory stream.
+# Other writers retain the exported view, including writers that keep chunks.
+_stream_write = io.BytesIO.write
+_commit_exported_frame = _Framer.commit_frame
+
+def commit_frame(self, force=False):
+    frame = self.current_frame
+    if frame and (frame.tell() >= self._FRAME_SIZE_TARGET or force):
+        write = self.file_write
+        if (type(frame) is io.BytesIO
+                and type(getattr(write, '__self__', None)) is io.BytesIO
+                and getattr(write, '__func__', None) is _stream_write):
+            data = frame.getvalue()
+            if len(data) >= self._FRAME_SIZE_MIN:
+                write(FRAME + pack('<Q', len(data)))
+            write(data)
+            self.current_frame = io.BytesIO()
+        else:
+            _commit_exported_frame(self, force)
+
+commit_frame.__qualname__ = '_Framer.commit_frame'
+_Framer.commit_frame = commit_frame
+del commit_frame

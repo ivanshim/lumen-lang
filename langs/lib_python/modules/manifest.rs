@@ -311,7 +311,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("pathlib._os", include_str!("pathlib/_os.py"), "pathlib/_os.py"),
     ("pdb", include_str!("pdb.py"), "pdb.py"),
     ("pickle", concat!(include_str!("pickle.py"), "\n", include_str!("runtime_adapters/pickle.py")), "pickle.py"),
-    ("pickletools", include_str!("pickletools.py"), "pickletools.py"),
+    ("pickletools", concat!(include_str!("pickletools.py"), "\n", include_str!("runtime_adapters/pickletools.py")), "pickletools.py"),
     ("pkgutil", include_str!("pkgutil.py"), "pkgutil.py"),
     ("platform", include_str!("platform.py"), "platform.py"),
     ("posix", include_str!("posix.py"), "posix.py"),
