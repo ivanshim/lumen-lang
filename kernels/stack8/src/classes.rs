@@ -3303,8 +3303,9 @@ impl<'a> Engine<'a> {
         // Expand the call once: allocation and initialization share its arguments.
         let args = if self.lang.python_numbers && args.iter().any(|item| matches!(item, Value::Tie(pair) if matches!(pair.0, Value::Flag(_)))) {
             let title = c.python_title().unwrap_or_else(|| c.name.clone());
-            self.call_items_named(&title, args)?.into_iter().map(|(name, value)| match name {
-                Some(name) => Value::Tie(Rc::new((name, value))),
+            let expanded = self.call_items_named(&title, args)?;
+            self.keyword_items(expanded)?.into_iter().map(|(name, value)| match name {
+                Some(name) => Value::Tie(Rc::new((Value::text(&name), value))),
                 None => value,
             }).collect()
         } else { args };
