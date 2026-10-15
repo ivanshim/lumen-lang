@@ -148,7 +148,7 @@ pub struct Engine<'a> {
     inline_comp: Option<(usize, Vec<String>, Vec<Value>)>,
     location: Option<(u32, u32, u32, u32)>,
     frame_class: Option<Rc<Class>>,
-    stream_class: Option<Weak<Class>>,
+    stream_class: Option<(Weak<Class>, u64)>,
     limit_place: StateCell<usize>,
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>, Value, usize)>,
@@ -21287,10 +21287,16 @@ impl<'a> Engine<'a> {
     /// makes and of no subclass: told by name and home once, then by identity.
     fn stream_object(&mut self, object: &Rc<Instance>) -> bool {
         let class = object.class_now();
-        if self.stream_class.as_ref().and_then(Weak::upgrade).is_some_and(|known| Rc::ptr_eq(&known, &class)) { return true; }
+        // What was checked holds only until some class's members change.
+        let revision = crate::value::members_revision();
+        if let Some((known, seen)) = &self.stream_class {
+            if *seen == revision && known.upgrade().is_some_and(|known| Rc::ptr_eq(&known, &class)) { return true; }
+        }
         let home = Self::own_class_value(&class, self.class_word("module")).map(|value| value.plain());
-        let plain = class.name == "BytesIO" && home.as_deref() == Some("_io");
-        if plain { self.stream_class = Some(Rc::downgrade(&class)); }
+        let plain = class.name == "BytesIO" && home.as_deref() == Some("_io")
+            && ["_closed", "_data", "_pos"].iter().all(|slot| matches!(Self::own_class_value(&class, slot), Some(Value::Adapter(w)) if w.0 == 16))
+            && ["__getattribute__", "__getattr__", "__setattr__", "__delattr__"].iter().all(|hook| class.holder(hook).is_none());
+        self.stream_class = plain.then(|| (Rc::downgrade(&class), revision));
         plain
     }
     /// What such a stream holds for its closed flag, its storage and its
@@ -21339,6 +21345,7 @@ impl<'a> Engine<'a> {
                 Some(slots) => slots,
                 None => {
                     let closed = self.class_get(owner.clone(), "_closed", false)?;
+                    if closed.is_true() { return Err("ValueError: I/O operation on closed file".into()); }
                     let buffer = self.class_get(owner.clone(), "_data", false)?;
                     (closed, buffer, self.class_get(owner.clone(), "_pos", false)?)
                 }

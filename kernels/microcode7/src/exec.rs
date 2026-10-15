@@ -582,7 +582,7 @@ pub struct Machine<'a> {
     gathering_locals: Option<(usize, Vec<String>, Rc<Env>)>,
     extent: Option<(u32, u32, u32, u32)>,
     activation_kind: Option<Rc<Blueprint>>,
-    memory_stream_class: Option<std::rc::Weak<Blueprint>>,
+    memory_stream_class: Option<(std::rc::Weak<Blueprint>, u64)>,
     tool_words: RefCell<Vec<Option<String>>>,
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
     coroutine_bodies: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<Routine>, Option<Weak<Thing>>, Value, usize)>,
@@ -15701,10 +15701,16 @@ impl<'a> Machine<'a> {
     /// first time and then by identity.
     fn memory_stream_thing(&mut self, thing: &Rc<Thing>) -> bool {
         let class = thing.blueprint();
-        if self.memory_stream_class.as_ref().and_then(std::rc::Weak::upgrade).is_some_and(|known| Rc::ptr_eq(&known, &class)) { return true; }
+        // What was checked holds only until some class namespace changes.
+        let stamp = crate::data::namespace_change();
+        if let Some((known, seen)) = &self.memory_stream_class {
+            if *seen == stamp && known.upgrade().is_some_and(|known| Rc::ptr_eq(&known, &class)) { return true; }
+        }
         let home = Self::own_entry(&class, self.detail("module")).map(|value| value.bare());
-        let plain = class.name == "BytesIO" && home.as_deref() == Some("_io");
-        if plain { self.memory_stream_class = Some(Rc::downgrade(&class)); }
+        let plain = class.name == "BytesIO" && home.as_deref() == Some("_io")
+            && ["_closed", "_data", "_pos"].iter().all(|slot| matches!(Self::own_entry(&class, slot), Some(Value::Wrapped(32, _))))
+            && ["__getattribute__", "__getattr__", "__setattr__", "__delattr__"].iter().all(|hook| self.inherited_entry(&class, hook).is_none());
+        self.memory_stream_class = plain.then(|| (Rc::downgrade(&class), stamp));
         plain
     }
     /// The closed flag, the storage and the position of such a stream, as
@@ -15744,11 +15750,11 @@ impl<'a> Machine<'a> {
         let kept_here = kept.is_some();
         let (closed, bytes, offset) = match kept {
             Some(found) => found,
-            None => (
-                self.read_class_member(stream.clone(), "_closed", false)?,
-                self.read_class_member(stream.clone(), "_data", false)?.settled(),
-                self.read_class_member(stream.clone(), "_pos", false)?,
-            ),
+            None => {
+                let closed = self.read_class_member(stream.clone(), "_closed", false)?;
+                if closed.is_true() { return Err(String::from("ValueError: I/O operation on closed file").into()); }
+                (closed, self.read_class_member(stream.clone(), "_data", false)?.settled(), self.read_class_member(stream.clone(), "_pos", false)?)
+            }
         };
         if closed.is_true() {
             return Err(String::from("ValueError: I/O operation on closed file").into());

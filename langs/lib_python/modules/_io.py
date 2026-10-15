@@ -259,14 +259,6 @@ class BytesIO(_BufferedIOBase):
         obj._pos = 0
         obj._closed = False
         return obj
-    def __del__(self):
-        # A plain memory stream that nothing refers to any more owns no file,
-        # so closing it changes nothing anyone can see, unless a buffer view
-        # of it is still out, when close refuses and says so; a subclass may
-        # have its own close.
-        if type(self) is BytesIO and (self._closed or not _export(self._data, True)):
-            return
-        _IOBase.__del__(self)
     def _checkClosed(self):
         if self._closed:
             raise ValueError('I/O operation on closed file')
