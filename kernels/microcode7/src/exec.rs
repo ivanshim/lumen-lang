@@ -26801,10 +26801,11 @@ impl<'a> Machine<'a> {
         };
         let offered = self.apply_within(member, Vec::new())?;
         let walk = self.iterated_value(&offered)?;
-        let mut rows = Vec::new();
-        loop {
-            let step = self.next_value(&walk)?;
-            let Some(key) = step else { break; };
+        // Every key is read before any value, as the mapping may change when read.
+        let mut names = Vec::new();
+        while let Some(key) = self.next_value(&walk)? { names.push(key); }
+        let mut rows = Vec::with_capacity(names.len());
+        for key in names {
             let value = self.prim(Prim::At, "", &[source.clone(), key.clone()])?;
             rows.push((key, value));
         }
