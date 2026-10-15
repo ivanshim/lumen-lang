@@ -810,6 +810,9 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
 
 
 def DocFileSuite(*paths, **options):
+    if options.get('module_relative', True) and options.get('package') is None:
+        caller = sys._getframe(1).f_globals
+        options['package'] = sys.modules[caller['__name__']]
     suite = unittest.TestSuite()
     for path in paths:
         suite.addTest(DocFileTest(path, **options))
@@ -825,7 +828,10 @@ def DocFileTest(path, **options):
     if relative:
         if path.startswith('/'):
             raise ValueError('Module-relative files may not have absolute paths')
-        namespace = _namespace_of(package)
+        if package is None:
+            namespace = sys._getframe(1).f_globals
+        else:
+            namespace = _namespace_of(package)
         path = os.path.join(os.path.dirname(namespace.get('__file__', '')), path)
     with open(path, encoding=options.get('encoding', 'utf-8')) as source:
         text = source.read()

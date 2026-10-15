@@ -79,3 +79,8 @@ Reference counts, reruns and staged checks all use `reference_arguments()` in
 `reference_layout.py` to import sources through `reference_entry.py` under their
 `test.<module>` package names. Ordinary script invocations retain
 `__name__ == '__main__'`. Package entries load their package's test suite.
+
+Import-only entry adapters with a main guard retain script invocation, so their
+explicit delegated runner is called. This is selected from source structure,
+without reference names or paths. Modules exporting test definitions retain
+the shared package import route.
