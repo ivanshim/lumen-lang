@@ -540,6 +540,19 @@ class memoryview:
     def __init__(self, object):
         self._init_buffer(object, 284)
     def _init_buffer(self, object, flags, error_prefix="memoryview: "):
+        kind = type(object)
+        if kind is bytes or kind is bytearray:
+            # The usual exporters, settled without the general checks below.
+            self._object = self._source = object
+            self._owner = self._owner_view = None
+            self._offsets = range(len(object))
+            self._format = 'B'
+            self._itemsize = self._stride = 1
+            self._readonly = kind is bytes
+            self._shape = (len(object),)
+            self._released = False
+            self._export = _export(object) if kind is bytearray else None
+            return
         from array import array
         self._object = object.obj if isinstance(object, memoryview) else object
         self._owner = None
