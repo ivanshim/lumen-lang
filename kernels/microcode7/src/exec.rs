@@ -3146,6 +3146,97 @@ impl<'a> Machine<'a> {
 
     /// Weave the ownership web, leaving the reaper's retained knots out
     /// of the program's outside holds.
+    /// Whether the language import dictionary can be read at all.
+    fn import_dictionary_ready(&self) -> bool {
+        let words = self.table.strings("ext.system.module.cache");
+        if words.len() != 2 { return false; }
+        let Some(Value::Thing(namespace)) = self.imported.get(&words[0]) else { return false };
+        let rows = namespace.holds.borrow();
+        rows.iter().any(|(member, slot)| member == &words[1] && matches!(slot.settled(), Value::Dict(_)))
+    }
+
+    /// Forget modules that `sys.modules` no longer names, and lift their
+    /// outermost cells out for the duration of this reaping. The frame
+    /// would otherwise mark every cell reachable. The saved cells are
+    /// handed back so a module the program still holds keeps its globals.
+    fn displace_stale_namespaces(&mut self) -> Vec<(usize, Value)> {
+        if !self.import_dictionary_ready() { return Vec::new(); }
+        let owner = match self.table.strings("ext.system.module.cache").first() {
+            Some(word) => word.clone(),
+            None => return Vec::new(),
+        };
+        let names: Vec<String> = self.imported.keys().cloned().collect();
+        let mut swaps: Vec<(String, Value, Option<Value>)> = Vec::new();
+        for path in names {
+            if path == owner || self.importing.contains(&path) { continue; }
+            let Some(previous) = self.imported.get(&path).cloned() else { continue; };
+            let Value::Thing(space) = previous.settled() else { continue; };
+            let mine = Rc::as_ptr(&space) as usize;
+            let found = match self.cached_import(&path) {
+                None => None,
+                Some(value) => Some(value),
+            };
+            let address = match &found {
+                Some(value) => match value.settled() {
+                    Value::Thing(other) => Rc::as_ptr(&other) as usize,
+                    _ => 0,
+                },
+                None => usize::MAX,
+            };
+            if address == mine { continue; }
+            let install = found.and_then(|value| match value.settled() {
+                Value::Thing(_) => Some(value),
+                _ => None,
+            });
+            swaps.push((path, Value::Thing(space), install));
+        }
+        if swaps.is_empty() { return Vec::new(); }
+        let mut locate = HashMap::<usize, usize>::new();
+        {
+            let cells = self.outermost.cells.borrow();
+            for (index, cell) in cells.iter().enumerate() {
+                if let Value::Shared(slot) = cell {
+                    locate.insert(Rc::as_ptr(slot) as usize, index);
+                }
+            }
+        }
+        let mut parked = Vec::new();
+        for (path, previous, install) in swaps {
+            if let Value::Thing(space) = previous {
+                let rows = space.holds.borrow();
+                if let Some((_, links)) = rows.iter().find(|(key, _)| key == "\0bindings") {
+                    if let Value::Dict(entries) = links.settled() {
+                        for (_, cell) in entries.iter() {
+                            // Bindings keep the outermost cell, not the value inside it.
+                            let Value::Shared(slot) = cell else { continue };
+                            let Some(&index) = locate.get(&(Rc::as_ptr(&slot) as usize)) else { continue };
+                            if parked.iter().any(|(at, _): &(usize, Value)| *at == index) { continue; }
+                            let mut cells = self.outermost.cells.borrow_mut();
+                            let saved = std::mem::replace(&mut cells[index], Value::Unset);
+                            parked.push((index, saved));
+                        }
+                    }
+                }
+            }
+            if let Some(current) = install {
+                self.imported.insert(path, current);
+            } else {
+                self.imported.remove(&path);
+            }
+        }
+        self.namespace_places.borrow_mut().take();
+        self.revised_members.borrow_mut().clear();
+        parked
+    }
+
+    fn restore_displaced_cells(&self, parked: Vec<(usize, Value)>) {
+        if parked.is_empty() { return; }
+        let mut cells = self.outermost.cells.borrow_mut();
+        for (index, saved) in parked {
+            if index < cells.len() { cells[index] = saved; }
+        }
+    }
+
     fn round_web(&self, retained: &[crate::ghost::Knot]) -> crate::ghost::Web {
         use crate::ghost::{Knot, Web};
         let books = self.readings.iter().flat_map(|book| {
@@ -3180,12 +3271,19 @@ impl<'a> Machine<'a> {
         use crate::ghost::{Knot, Web};
         if self.reaping { return 0; }
         self.reaping = true;
+        let displaced = self.displace_stale_namespaces();
+        let mut cell_at = Vec::with_capacity(displaced.len());
+        let mut pinned = Vec::with_capacity(displaced.len());
+        for (index, saved) in displaced {
+            cell_at.push(index);
+            pinned.push(Knot::Held(saved));
+        }
         // Dead weak keys must release their attributes before ordering finalizers.
         let members_before = self.routine_members.len();
         self.routine_members.retain(|(function, _)| function.revive().is_some());
         if self.routine_members.len() != members_before { self.reindex_routine_members(); }
         self.attend_to_gone();
-        let mut web = self.round_web(&[]);
+        let mut web = self.round_web(&pinned);
         let mut original = web.unreachable();
         // With no lost knot there is nothing to silence or farewell, and
         // the web just woven still describes the machine: reuse it.
@@ -3194,6 +3292,10 @@ impl<'a> Machine<'a> {
             self.reindex_routine_members();
             drop(web);
             self.attend_to_gone();
+            self.restore_displaced_cells(cell_at.iter().copied().zip(pinned.iter().filter_map(|knot| match knot {
+                Knot::Held(value) => Some(value.clone()),
+                Knot::Frame(_) => None,
+            })).collect());
             self.reaping = false;
             return 0;
         }
@@ -3222,8 +3324,19 @@ impl<'a> Machine<'a> {
             }
         }
         drop(web);
-        let mut checked = self.round_web(&original);
-        let lost = checked.remaining(original);
+        let parked_n = cell_at.len();
+        let mut retained = pinned;
+        retained.append(&mut original);
+        let mut checked = self.round_web(&retained);
+        let _marked = checked.unreachable();
+        let mut lost = Vec::new();
+        let mut put_back = Vec::with_capacity(parked_n);
+        for (index, knot) in retained.into_iter().enumerate() {
+            if index < parked_n {
+                if let Knot::Held(value) = &knot { put_back.push((cell_at[index], value.clone())); }
+            }
+            if checked.given_up(&knot) { lost.push(knot); }
+        }
         let found = lost.len();
         self.routine_members.retain(|(function, _)| function.revive().is_some_and(|function| !checked.unowned(&function)));
         self.reindex_routine_members();
@@ -3233,6 +3346,7 @@ impl<'a> Machine<'a> {
         drop(checked);
         drop(taken);
         self.attend_to_gone();
+        self.restore_displaced_cells(put_back);
         self.reaping = false;
         found
     }
@@ -20917,11 +21031,18 @@ impl<'a> Machine<'a> {
     pub(super) fn reference_allocating(&mut self, name: &str, v: &[Value]) -> Result<Value, String> {
         Ok({
         if v.len() != 3 { return Err(format!("{name}() expects 3 arguments, got {}", v.len())); }
-        let allowed = match v[0].settled() {
-            Value::Thing(t) => self.admits_weak(&t.blueprint()),
-            _ => true,
-        };
         let settled = v[0].settled();
+        // Loaded modules use a fresh blueprint per import path, so the
+        // weak-layout bit stays clear. A module the loader still knows
+        // is eligible anyway.
+        let allowed = if self.namespace_holding(&settled).is_some() {
+            true
+        } else {
+            match &settled {
+                Value::Thing(space) => self.admits_weak(&space.blueprint()),
+                _ => true,
+            }
+        };
         let mut ghost = if allowed { crate::ghost::ghost_of(&settled) } else { None };
         if ghost.is_none() {
             // A word naming a kind stands for the kind itself,

@@ -2374,14 +2374,94 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// Address of the object `sys.modules` currently stores for `path`.
+    /// `None` when that table cannot be read. `Some(None)` when the name
+    /// is not in it. `Some(Some(0))` when the entry is not an object.
+    fn cached_module_address(&self, path: &str) -> Option<Option<usize>> {
+        let [owner, member] = self.lang.module_cache.as_slice() else { return None };
+        let Value::Object(module) = self.modules.get(owner)? else { return None };
+        let fields = module.fields.borrow();
+        let (_, place) = fields.iter().find(|(word, _)| word == member)?;
+        let Value::Map(entries) = place.contents() else { return None };
+        let row = entries.named_row(path).unwrap_or_else(|()| {
+            entries.iter().position(|(key, _)| key_spells(key, path))
+        });
+        match row {
+            None => Some(None),
+            Some(at) => {
+                let address = match entries[at].1.contents() {
+                    Value::Object(object) => Rc::as_ptr(&object) as usize,
+                    _ => 0,
+                };
+                Some(Some(address))
+            }
+        }
+    }
+
+    /// Drop interpreter ownership of modules the program has removed or
+    /// replaced in its import cache. The returned world slots still hold
+    /// the previous module's globals; the collector counts those holds as
+    /// its own so they do not keep the discarded module alive.
+    fn quiet_replaced_modules(&mut self) -> Vec<usize> {
+        let Some(owner) = self.lang.module_cache.first().cloned() else { return Vec::new() };
+        if self.cached_module_address("\0").is_none() { return Vec::new(); }
+        let paths: Vec<String> = self.modules.keys().cloned().collect();
+        let mut retiring: Vec<(String, Value, Option<Value>)> = Vec::new();
+        for path in paths {
+            if path == owner || self.importing.contains(&path) { continue; }
+            let Some(held) = self.modules.get(&path).cloned() else { continue; };
+            let Value::Object(object) = held.contents() else { continue; };
+            let mine = Rc::as_ptr(&object) as usize;
+            let listed = match self.cached_module_address(&path) {
+                None => continue,
+                Some(found) => found,
+            };
+            if listed == Some(mine) { continue; }
+            let replacement = listed.and_then(|_| self.module_cache_value(&path)).filter(|value| matches!(value.contents(), Value::Object(_)));
+            retiring.push((path, Value::Object(object), replacement));
+        }
+        if retiring.is_empty() { return Vec::new(); }
+        let mut at_pointer: HashMap<usize, usize> = HashMap::new();
+        for (index, slot) in self.world.iter().enumerate() {
+            if let Value::Bond(cell) = slot {
+                at_pointer.insert(Rc::as_ptr(cell) as usize, index);
+            }
+        }
+        let mut quiet = Vec::new();
+        for (path, previous, replacement) in retiring {
+            if let Value::Object(ref object) = previous {
+                let fields = object.fields.borrow();
+                if let Some((_, links)) = fields.iter().find(|(name, _)| name == "\0bindings") {
+                    if let Value::Map(entries) = links.contents() {
+                        for (_, cell) in entries.iter() {
+                            // The map stores the world cell itself. Unwrapping
+                            // it would yield the global, not the cell to explain.
+                            let Value::Bond(bond) = cell else { continue };
+                            let Some(&index) = at_pointer.get(&(Rc::as_ptr(&bond) as usize)) else { continue };
+                            if !quiet.contains(&index) { quiet.push(index); }
+                        }
+                    }
+                }
+            }
+            match replacement {
+                Some(current) => { self.modules.insert(path, current); }
+                None => { self.modules.remove(&path); }
+            }
+        }
+        self.module_addresses_ready.set(false);
+        self.changed_module_positions.borrow_mut().clear();
+        quiet
+    }
+
     /// Build ownership including any nodes retained by this collection.
-    fn cycle_graph(&self, retained: &[Value]) -> crate::faint::Graph {
+    fn cycle_graph(&self, retained: &[Value], quiet_slots: &[usize]) -> crate::faint::Graph {
         let books = self.text_books.iter().flat_map(|book| {
             std::iter::once(Value::Bond(book.near.clone()))
                 .chain(book.outer.iter().cloned().map(Value::Bond))
         });
+        let quiet_cells = quiet_slots.iter().filter_map(|&slot| self.world.get(slot).cloned());
         let bookkeeping = self.function_members.iter().map(|(_, holder)| Value::Object(holder.clone()))
-            .chain(books).chain(crate::faint::anchored_values()).chain(retained.iter().cloned()).collect();
+            .chain(books).chain(crate::faint::anchored_values()).chain(retained.iter().cloned()).chain(quiet_cells).collect();
         let live = self.world.iter().chain(&self.data).chain(&self.caught).chain(&self.buffer)
             .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
             .chain(self.native_exceptions.values()).chain(std::iter::once(&self.trace_hook)).cloned()
@@ -2406,10 +2486,11 @@ impl<'a> Engine<'a> {
     fn collect_cycles(&mut self) -> usize {
         if self.collecting_cycles { return 0; }
         self.collecting_cycles = true;
+        let quiet_slots = self.quiet_replaced_modules();
         // Dead weak keys must release their attributes before ordering finalizers.
         self.function_members.retain(|(function, _)| function.revive().is_some());
         self.settle_departed();
-        let mut graph = self.cycle_graph(&[]);
+        let mut graph = self.cycle_graph(&[], &quiet_slots);
         let mut group = graph.unreached();
         // Nothing unreachable means nothing is said or cleared, so the
         // heap is the same afterwards and the first walk still stands.
@@ -2444,7 +2525,7 @@ impl<'a> Engine<'a> {
             }
         }
         drop(graph);
-        let mut after = self.cycle_graph(&group);
+        let mut after = self.cycle_graph(&group, &quiet_slots);
         let unreached = after.still_unreached(group);
         let count = unreached.len();
         self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !after.unowned(&function)));
@@ -21241,11 +21322,14 @@ impl<'a> Engine<'a> {
     pub(super) fn faint_allocate(&mut self, name: &str, args: &[Value]) -> Res<Value> {
         let made = {
             if args.len() != 3 { return Err(format!("{}() expects 3 arguments, got {}", name, args.len())); }
-            let eligible = match args[0].contents() {
-                Value::Object(o) => self.weak_layout(&o.class_now()),
+            let settled = args[0].contents();
+            // A loaded module's class is built for that one path and has no
+            // weak layout of its own. The module is still a weak target,
+            // as a module built with the module type is.
+            let eligible = self.module_holding(&settled).is_some() || match &settled {
+                Value::Object(object) => self.weak_layout(&object.class_now()),
                 _ => true,
             };
-            let settled = args[0].contents();
             let mut hold = eligible.then(|| crate::faint::hold_of(&settled)).flatten();
             if hold.is_none() {
                 // A word naming a kind stands for the kind itself,
@@ -21896,7 +21980,7 @@ impl<'a> Engine<'a> {
             }
             Builtin::TrackedObjects => {
                 if args.len()!=0 {return Err(format!("TypeError: {}() takes no arguments",self.lang.gc_objects.first().map_or("gc.get_objects",String::as_str)));}
-                let graph=self.cycle_graph(&[]);
+                let graph=self.cycle_graph(&[], &[]);
                 let mut seen=std::collections::HashSet::new();
                 let mut objects=Vec::new();
                 for object in graph.tracked_objects() {

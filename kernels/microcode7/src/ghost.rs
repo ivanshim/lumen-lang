@@ -875,6 +875,16 @@ impl Web {
 
     /// Whether a value belongs only to an unreachable round, after
     /// leaving the machine's function bookkeeping out of its holds.
+    pub fn given_up(&self, knot: &Knot) -> bool {
+        match knot {
+            Knot::Held(value) => self.unowned(value),
+            Knot::Frame(env) => {
+                let place = Rc::as_ptr(env) as *const () as usize;
+                self.strands.get(&place).is_some_and(|strand| !strand.reached)
+            }
+        }
+    }
+
     pub fn unowned(&self, value: &Value) -> bool {
         // A bound function's environment can be the live module frame.
         // Its own routine is the part that determines whether the
