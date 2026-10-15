@@ -306,7 +306,7 @@ impl<'a> Machine<'a> {
         // methods of the kind and the special names its mark answers.
         if let Some(sample)=self.directory_stand_in(item) {
             let mut named=self.native_directory(&sample);
-            if self.table.has_any("ext.stmt.class.builder") && !matches!(sample, Value::Backtrace(_)) {
+            if self.table.class_building() && !matches!(sample, Value::Backtrace(_)) {
                 named.extend(["kind","get","set","remove","allocate","subclass","doc"].iter().map(|key|self.detail(key).to_owned()).filter(|word|!word.is_empty()));
                 named.extend(self.rules.words_ext_stmt_class_constructor.iter().cloned());
                 named.extend(self.rules.words_ext_stmt_class_detail_root_members.iter().cloned());
@@ -352,7 +352,7 @@ impl<'a> Machine<'a> {
             names.extend(self.rules.specials.get(72).cloned());
         }
         if class.is_some_and(|kind| Self::native_beneath(kind).as_deref() == Some("GenericAlias")) { names.push(String::from("__parameters__")); }
-        if class.is_none() && self.table.has_any("ext.stmt.class.builder") {
+        if class.is_none() && self.table.class_building() {
             let inherited=["kind","get","set","remove","allocate","subclass","doc"].iter().map(|field|self.detail(field)).filter(|word|!word.is_empty());
             names.extend(inherited.map(str::to_owned));
             names.extend(self.rules.words_ext_stmt_class_constructor.iter().cloned());
@@ -4142,7 +4142,7 @@ impl<'a> Machine<'a> {
             else if self.rules.specials.get(72).map_or(false,|word|word==key){59}
             else{return None};
         let state = match tag {
-            10..=12 if self.table.has_any("ext.stmt.class.builder") => vec![Value::text(self.detail("root"))],
+            10..=12 if self.table.class_building() => vec![Value::text(self.detail("root"))],
             _ if key == self.detail("subclass") => vec![Value::text(key)],
             _ => Vec::new(),
         };
@@ -5622,7 +5622,7 @@ impl<'a> Machine<'a> {
                     let root = self.common_ancestor();
                     return Ok(Value::tuple(vec![Value::Blueprint(root)]));
                 }
-                if key == self.detail("order") && self.table.has_any("ext.stmt.class.builder") {
+                if key == self.detail("order") && self.table.class_building() {
                     let entry = self.kind_entry("type", key);
                     if *op == Prim::SortOf { return Ok(entry); }
                     let builder = self.builder_blueprint();
@@ -5909,7 +5909,7 @@ impl<'a> Machine<'a> {
                 }
                 if tag!=255 {
                     let state = match tag {
-                        10..=12 if self.table.has_any("ext.stmt.class.builder") => vec![Value::text(self.detail("root"))],
+                        10..=12 if self.table.class_building() => vec![Value::text(self.detail("root"))],
                         _ if key == self.detail("subclass") => vec![Value::text(key)],
                         _ => Vec::new(),
                     };
@@ -6513,7 +6513,7 @@ impl<'a> Machine<'a> {
         has_slot || b.parents().iter().any(|parent| self.admits_weak(parent))
     }
     fn allowed_slot(&self,b:&Blueprint,key:&str)->bool {
-        if self.table.has_any("ext.stmt.class.builder") && self.ancestor.as_ref().is_some_and(|root| std::ptr::eq(root.as_ref(),b)) { return false; }
+        if self.table.class_building() && self.ancestor.as_ref().is_some_and(|root| std::ptr::eq(root.as_ref(),b)) { return false; }
         if matches!(Self::native_word(b).as_deref(), Some("SimpleNamespace" | "module")) { return true; }
         let Some(declared)=Self::own_entry(b,self.detail("slots"))else{return !(b.under().is_none() && b.name==self.detail("root")) && Self::native_word(b).is_none();};
         let slots=declared.settled();
@@ -7676,7 +7676,7 @@ impl<'a> Machine<'a> {
                 }
                 // Everything lies under the class everything lies under.
                 if Rc::ptr_eq(c,&self.common_ancestor()) {
-                    if !self.table.has_any("ext.stmt.class.builder") { return Ok(true); }
+                    if !self.table.class_building() { return Ok(true); }
                     return Ok(match subject {
                         Value::Blueprint(actual) if class_only => Self::ancestry_includes(actual,c),
                         Value::Thing(object) if !class_only => Self::ancestry_includes(&object.blueprint(),c),
@@ -7980,7 +7980,7 @@ impl<'a> Machine<'a> {
             return match read {
                 // A member read by name reads through the cell a namespace
                 // keeps it in, as the program's own member read does.
-                Ok(v)=>Ok(if op==6{Value::Flag(true)}else if self.table.has_any("ext.builtin.exceptions.syntax"){let keep=match &v{Value::Shared(cell)=>matches!(&*cell.borrow(),Value::Vector(_)|Value::Set(_)|Value::SetCursor{..}|Value::Dict(_)|Value::Octets{..}),_=>false};if keep{v}else{match v{Value::Shared(cell)=>cell.borrow().clone(),held=>held}}}else{match v{Value::Shared(cell)=>cell.borrow().clone(),held=>held}}),
+                Ok(v)=>Ok(if op==6{Value::Flag(true)}else if self.table.syntactic(){let keep=match &v{Value::Shared(cell)=>matches!(&*cell.borrow(),Value::Vector(_)|Value::Set(_)|Value::SetCursor{..}|Value::Dict(_)|Value::Octets{..}),_=>false};if keep{v}else{match v{Value::Shared(cell)=>cell.borrow().clone(),held=>held}}}else{match v{Value::Shared(cell)=>cell.borrow().clone(),held=>held}}),
                 Err(escape) if self.missing_member_escape(&escape)=>{
                     if op == 6 || values.len() == 3 {
                         self.sought_in_vain.take();

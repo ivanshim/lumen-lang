@@ -1974,7 +1974,7 @@ impl<'a> Machine<'a> {
                 words_ext_builtin_method_from_number: table.strings("ext.builtin.method.from_number"),
                 words_ext_stmt_class_special_declined: table.strings("ext.stmt.class.special.declined"),
                 words_ext_builtin_bool_base: table.strings("ext.builtin.bool.base"),
-                closes_over: table.flag("ext.stmt.function.closes_over"),
+                closes_over: table.closes_over(),
                 suspends: table.flag("ext.stmt.yield.suspends"),
                 explicit_receiver: table.flag("ext.stmt.class.this.explicit"),
                 logical_value: table.flag("ext.op.logical.operand"),
@@ -2012,7 +2012,7 @@ impl<'a> Machine<'a> {
                 has_any_ext_builtin_bool_result: table.has_any("ext.builtin.bool.result"),
                 has_any_ext_builtin_core_chr_range: table.has_any("ext.builtin.core.chr.range"),
                 has_any_ext_builtin_exceptions: table.has_any("ext.builtin.exceptions"),
-                has_any_ext_builtin_exceptions_syntax: table.has_any("ext.builtin.exceptions.syntax"),
+                has_any_ext_builtin_exceptions_syntax: table.syntactic(),
                 has_any_ext_builtin_loader_source: table.has_any("ext.builtin.loader.source"),
                 has_any_ext_builtin_exceptions_traceback: table.has_any("ext.builtin.exceptions.traceback"),
                 has_any_ext_builtin_format: table.has_any("ext.builtin.format"),
@@ -2041,7 +2041,7 @@ impl<'a> Machine<'a> {
                 detail_descriptor_delete: table.single("ext.stmt.class.detail.descriptor.delete").unwrap_or(""),
                 detail_call: table.single("ext.stmt.class.detail.call").unwrap_or(""),
                 detail_defaults: table.single("ext.stmt.class.detail.defaults").unwrap_or(""),
-                class_builder: table.has_any("ext.stmt.class.builder"),
+                class_builder: table.class_building(),
                 weak_members: table.has_any("ext.builtin.weak.get"),
                 detail_subclass: table.single("ext.stmt.class.detail.subclass").unwrap_or(""),
                 detail_allocate: table.single("ext.stmt.class.detail.allocate").unwrap_or(""),
@@ -2188,8 +2188,8 @@ impl<'a> Machine<'a> {
             builds_places: table.flag("ext.op.index.makes"),
             signal_takers: Vec::new(), timer: None,
             watches_signals: table.has_any("ext.builtin.signal"),
-            names_in_calls: table.flag("ext.syntax.call.bind_names"),
-            native_slot_names: if table.flag("ext.syntax.call.bind_names") {
+            names_in_calls: table.binds_names(),
+            native_slot_names: if table.binds_names() {
                 table.strings("ext.stmt.class.special").iter().enumerate().rev()
                     .map(|(index, spelling)| (spelling.clone(), index)).collect()
             } else { HashMap::default() },

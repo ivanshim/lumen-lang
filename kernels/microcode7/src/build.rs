@@ -140,6 +140,9 @@ pub struct Builder<'a> {
     lexical_origin: Rc<str>,
     surveyed: HashMap<usize, ScopeWords>,
     survey: bool,
+    /// The last few answers of `divided_at`, which the statement readers ask
+    /// again, with the same bounds and mark, as they try one shape after another.
+    divided_memo: std::cell::RefCell<Vec<(usize, usize, &'static str, Vec<usize>)>>,
     kind_mark: Option<usize>,
     syntax_try_nesting: usize,
     finally_nesting: usize,
@@ -490,7 +493,7 @@ pub fn build_text(tokens: &[Token], table: &Table, seeded: &[String], before: u3
     let mut words = HashMap::new();
     let mut bound = shadowed.to_vec();
     let mut exports = HashSet::new();
-    if table.flag("ext.stmt.function.closes_over") {
+    if table.closes_over() {
         let discovery = build_survey(tokens, table, seeded, HashMap::new(), true, before, written_in.clone(), globe.clone(), born.clone(), framed_in.clone(), mark, None, None, true, &mut words, true, value_only, shadowed, &HashSet::new(), allow_top_await, interactive, settle, &[], future_bits).map_err(|said| (said, at.get(), column.get()))?;
         exports = discovery.native_exports;
         for name in discovery.bound_globally {
@@ -505,7 +508,7 @@ type Within<'w> = (&'w [String], Knows<'w>);
 
 fn build_marking(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, beside: Option<Value>, named: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, value_only: bool, settle: i64, aliasing: &[(String, String)], future_bits: i64) -> Res<Built> {
     let mut words = HashMap::new();
-    let (program_names, exports) = if table.flag("ext.stmt.function.closes_over") {
+    let (program_names, exports) = if table.closes_over() {
         let pass = build_survey(tokens, table, seeded, assumed.clone(), strict, before, written_in.clone(), beside.clone(), None, named.clone(), mark, within, standing_in.clone(), read_in, &mut words, true, value_only, &[], &HashSet::new(), false, false, settle, aliasing, future_bits)?;
         (pass.bound_globally, pass.native_exports)
     } else { (Vec::new(), HashSet::new()) };
@@ -668,7 +671,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     let names_in_classes = class_spellings(tokens, table);
     let tokens = names_in_classes.as_slice();
     let mut beginnings = seeded.to_vec();
-    let indexes_globals = table.flag("ext.syntax.call.bind_names");
+    let indexes_globals = table.binds_names();
     let exceptions = table.strings("ext.builtin.exceptions");
     let mut global_positions: HashMap<String, (usize, usize), FxBuildHasher> = HashMap::with_capacity_and_hasher(
         if indexes_globals { seeded.iter().filter(|word| !word.is_empty()).count() + exceptions.len() } else { 0 }, FxBuildHasher::default());
@@ -716,7 +719,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             }
         }
     }
-    let mut r = Builder { indexes_globals, global_positions, globals_indexed, lexical_origin: if survey { Rc::default() } else { Rc::from(format!("{tokens:?}")) }, annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, member_temps: Vec::new(), gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { divided_memo: std::cell::RefCell::new(Vec::new()), indexes_globals, global_positions, globals_indexed, lexical_origin: if survey { Rc::default() } else { Rc::from(format!("{tokens:?}")) }, annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, member_temps: Vec::new(), gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -831,7 +834,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
                         for name in table.strings("ext.system.module.doc") {
                             let slot = r.global_address(name);
                             if !r.named_in_program.iter().any(|bound| bound == name) { r.named_in_program.push(name.clone()); }
-                            let doc = if table.has_any("ext.stmt.class.builder") { Value::text(&settle_doc_indentation(said.as_ref())) } else { Value::Text(said.clone()) };
+                            let doc = if table.class_building() { Value::text(&settle_doc_indentation(said.as_ref())) } else { Value::Text(said.clone()) };
                             stmts.push(Form::Write(slot, Box::new(Form::Const(doc))));
                         }
                     }
@@ -840,7 +843,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
             if own_line { opening = false; }
             if defines {
                 ahead.push(stmt);
-            } else if !opening_text || (r.optimize < 2 && !table.has_any("ext.stmt.class.builder")) {
+            } else if !opening_text || (r.optimize < 2 && !table.class_building()) {
                 stmts.push(stmt);
             }
             r.skip_line_ends();
@@ -1299,7 +1302,7 @@ impl<'a> Builder<'a> {
         if self.table.spells("ext.lexical.identifier.reserved", &self.look().spelling()) {
             return Err(String::from("SyntaxError: invalid syntax"));
         }
-        if self.table.has_any("ext.builtin.exceptions.syntax") && ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.key(label)) {
+        if self.table.syntactic() && ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.key(label)) {
             return Err(String::from("SyntaxError: invalid syntax"));
         }
         if self.look().shape == Shape::Bare {
@@ -1429,7 +1432,7 @@ impl<'a> Builder<'a> {
         // the hidden cell the declaration named, exactly as it writes
         // it.
         if let Some(hidden) = self.class_cell_written(name) {
-            if self.table.flag("ext.stmt.function.closes_over") && !self.survey {
+            if self.table.closes_over() && !self.survey {
                 if let Some(slot) = self.lexical_address(&hidden, false) { return slot; }
             }
         }
@@ -1439,7 +1442,7 @@ impl<'a> Builder<'a> {
         if let Some(slot) = self.aliased(name) {
             return slot;
         }
-        if self.table.flag("ext.stmt.function.closes_over") && !self.survey {
+        if self.table.closes_over() && !self.survey {
             if let Some(slot) = self.lexical_address(name, false) { return slot; }
             return self.global_address(name);
         }
@@ -1514,7 +1517,7 @@ impl<'a> Builder<'a> {
         }
         let private = self.gather_names.iter().rfind(|pair| pair.0 == name).map(|pair| pair.1.to_string());
         let name = private.as_deref().unwrap_or(name);
-        if self.table.flag("ext.stmt.function.closes_over") && private.is_none() && !name.starts_with('#') {
+        if self.table.closes_over() && private.is_none() && !name.starts_with('#') {
             let here = self.layers.iter().rposition(|l| l.holds == Holds::Every).unwrap_or(0);
             if self.layers[here].comprehension {
                 let owner = (0..here).rev().find(|&i| self.layers[i].holds == Holds::Every && !self.layers[i].comprehension).unwrap_or(0);
@@ -1538,7 +1541,7 @@ impl<'a> Builder<'a> {
             return slot;
         }
         let is_borrowed = self.layers.iter().rev().find(|l| l.holds == Holds::Every).map_or(false, |l| l.borrowed.iter().any(|word| word == name));
-        if is_borrowed && !self.survey && self.table.flag("ext.stmt.function.closes_over") {
+        if is_borrowed && !self.survey && self.table.closes_over() {
             if let Some(slot) = self.lexical_address(name, true) { return slot; }
         }
         let depth = 0;
@@ -1588,7 +1591,7 @@ impl<'a> Builder<'a> {
     /// annotated. A `global` or `nonlocal` naming it after the fact is
     /// a fault, worded by what came first.
     fn mark_met(&mut self, name: &str, kind: u8) {
-        if !self.table.has_any("ext.builtin.exceptions.syntax") || name.starts_with('#') { return; }
+        if !self.table.syntactic() || name.starts_with('#') { return; }
         let met = self.met_here();
         if kind == MET_READ || !met.iter().any(|(n, k)| n == name && *k == kind) { met.push((name.to_string(), kind)); }
     }
@@ -1597,7 +1600,7 @@ impl<'a> Builder<'a> {
     /// an annotation or of a write is no use of the name, however it
     /// was read to get there.
     fn unmet_last_read(&mut self, name: &str) {
-        if !self.table.has_any("ext.builtin.exceptions.syntax") { return; }
+        if !self.table.syntactic() { return; }
         let met = self.met_here();
         if let Some(at) = met.iter().rposition(|(n, k)| n == name && *k == MET_READ) { met.remove(at); }
     }
@@ -1640,7 +1643,7 @@ impl<'a> Builder<'a> {
     /// making fills it. Any other word, or the word said where no such
     /// class stands, declares nothing hidden.
     fn class_cell_declared(&mut self, name: &str) -> Option<String> {
-        if !self.table.has_any("ext.stmt.class.builder") || !self.table.spells("ext.stmt.class.detail.kind", name) { return None; }
+        if !self.table.class_building() || !self.table.spells("ext.stmt.class.detail.kind", name) { return None; }
         let back = if self.in_class_body() { 2 } else { 1 };
         let at = self.under_way.len().checked_sub(back)?;
         self.under_way[at].needs_class_cell = true;
@@ -1654,7 +1657,7 @@ impl<'a> Builder<'a> {
     /// where the cell is kept rather than to a member or a name of the
     /// routine's own.
     fn class_cell_written(&self, name: &str) -> Option<String> {
-        if !self.table.has_any("ext.stmt.class.builder") || !self.table.spells("ext.stmt.class.detail.kind", name) { return None; }
+        if !self.table.class_building() || !self.table.spells("ext.stmt.class.detail.kind", name) { return None; }
         let scope = self.layers.iter().rev().find(|layer| layer.holds == Holds::Every)?;
         self.under_way.iter().rev().map(|held| held.completed_class.ident.to_string())
             .find(|hidden| scope.borrowed.iter().any(|named| named == hidden))
@@ -1667,8 +1670,8 @@ impl<'a> Builder<'a> {
     /// nothing: the plan of bindings it draws would take the read for a
     /// name of the body's own.
     fn class_cell_read(&mut self, name: &str) -> Option<Address> {
-        if !self.table.has_any("ext.stmt.class.builder") || !self.table.spells("ext.stmt.class.detail.kind", name) { return None; }
-        if !self.table.flag("ext.stmt.function.closes_over") || self.survey || !self.in_class_body() { return None; }
+        if !self.table.class_building() || !self.table.spells("ext.stmt.class.detail.kind", name) { return None; }
+        if !self.table.closes_over() || self.survey || !self.in_class_body() { return None; }
         if self.layers.last().is_some_and(|layer| layer.idents.iter().any(|named| named == name)) { return None; }
         let at = self.under_way.len().checked_sub(2)?;
         self.under_way[at].needs_class_cell = true;
@@ -1750,7 +1753,7 @@ impl<'a> Builder<'a> {
             return Form::Read(book);
         }
         let seed = self.class_names_map();
-        let seed = if self.table.has_any("ext.stmt.class.builder") { prim_call(Prim::ClassWork(15), vec![seed]) } else { seed };
+        let seed = if self.table.class_building() { prim_call(Prim::ClassWork(15), vec![seed]) } else { seed };
         let book = self.gensym("locals");
         self.parts().book = Some(book.clone());
         sequence(vec![Form::Write(book.clone(), Box::new(seed)), Form::Read(book)])
@@ -1774,7 +1777,7 @@ impl<'a> Builder<'a> {
         let key = constant(Value::text(word));
         let value = Form::Read(place.clone());
         let target = self.read_to_write(&book.ident.to_string());
-        Some(prim_call(if self.table.has_any("ext.stmt.class.builder") { Prim::ClassWork(19) } else { Prim::Replace }, vec![target, key, value]))
+        Some(prim_call(if self.table.class_building() { Prim::ClassWork(19) } else { Prim::Replace }, vec![target, key, value]))
     }
 
     /// The companion of `mirror_member` for `del name` read in a class
@@ -1788,7 +1791,7 @@ impl<'a> Builder<'a> {
         let book = self.parts().book.clone()?;
         let target = self.read_to_write(&book.ident.to_string());
         let key = constant(Value::text(word));
-        let erased = prim_call(if self.table.has_any("ext.stmt.class.builder") { Prim::ClassWork(20) } else { Prim::Erase }, vec![target, key]);
+        let erased = prim_call(if self.table.class_building() { Prim::ClassWork(20) } else { Prim::Erase }, vec![target, key]);
         Some(self.write(&book.ident.to_string(), erased))
     }
 
@@ -1817,7 +1820,7 @@ impl<'a> Builder<'a> {
     /// enclosing function's, or the module's -- and never a fresh local
     /// spelt the same, which is the footing `del a[k]` reads it on too.
     fn address_to_rewrite(&mut self, name: &str) -> Address {
-        if !self.table.flag("ext.stmt.function.closes_over") {
+        if !self.table.closes_over() {
             return self.address_to_write(name);
         }
         if let Some((depth, names)) = self.class_bindings.last() {
@@ -1869,7 +1872,7 @@ impl<'a> Builder<'a> {
             }
         }
 
-        if self.table.has_any("ext.stmt.class.builder") && !self.annotation_lookup && self.place_depth == 0 && self.in_class_body() && !name.starts_with('#') && !self.declared_outside_class(name) {
+        if self.table.class_building() && !self.annotation_lookup && self.place_depth == 0 && self.in_class_body() && !name.starts_with('#') && !self.declared_outside_class(name) {
             if let Some(book) = self.parts().book.clone() {
                 let found = self.gensym("class_lookup");
                 let read = prim_call(Prim::ClassWork(18), vec![Form::Read(book), constant(Value::text(name))]);
@@ -1906,7 +1909,7 @@ impl<'a> Builder<'a> {
     /// reading of a name, exactly as before this file's namespace was
     /// given a dictionary of its own.
     fn read_fallback(&mut self, name: &str) -> Form {
-        if !self.table.flag("ext.stmt.function.closes_over") && self.outside_lambda.iter().any(|word| word == name) {
+        if !self.table.closes_over() && self.outside_lambda.iter().any(|word| word == name) {
             let local = self.layers.iter().rev().find(|scope| scope.holds == Holds::Every)
                 .map_or(false, |scope| scope.idents.iter().any(|word| word == name));
             if !local {
@@ -2035,7 +2038,7 @@ impl<'a> Builder<'a> {
         }
         let literal_statement = !expression_body && finish > start && self.tokens.get(finish).is_some_and(|token| matches!(token.shape, Shape::LineEnd | Shape::Finish | Shape::Close) || token.lexeme == ";");
         if self.optimize >= 2 || !literal_statement { doc = None; }
-        if self.table.has_any("ext.stmt.class.builder") { doc = doc.map(|value| settle_doc_indentation(&value)); }
+        if self.table.class_building() { doc = doc.map(|value| settle_doc_indentation(&value)); }
         let qualification=self.full_name_of(name);
         let taking = self.taking.take();
         let declared_on = self.declared_at;
@@ -2060,9 +2063,9 @@ impl<'a> Builder<'a> {
         let permits_async = name == "<genexpr>" || (holds != Holds::Every || matches!(name, "<gathering>" | "<generator>"))
             && self.layers.last().map_or(false, |scope| scope.permits_async);
         self.layers.push(Layer { async_walk_seen: false, return_value_at: None, permits_async, gathering_kind: None, expression_targets: Vec::new(), comprehension: name == "<gathering>" || name == "<genexpr>", borrowed: Vec::new(), class_borrowed: Vec::new(), reaching: Vec::new(), holds, idents: params.clone(), formals: Vec::new(), formal_slots: param_slots, rpn: false, aliases: Vec::new(), encountered: Vec::new() });
-        if self.table.flag("ext.stmt.function.closes_over") && !self.survey && holds == Holds::Every {
+        if self.table.closes_over() && !self.survey && holds == Holds::Every {
             if let Some(known) = self.surveyed.get(&began) {
-                if !self.table.has_any("ext.builtin.exceptions.syntax") && known.borrowed.iter().any(|word| params.contains(word) && !known.class_borrowed.contains(word)) {
+                if !self.table.syntactic() && known.borrowed.iter().any(|word| params.contains(word) && !known.class_borrowed.contains(word)) {
                     return Err(self.table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into());
                 }
                 let scope = self.layers.last_mut().unwrap();
@@ -2077,7 +2080,7 @@ impl<'a> Builder<'a> {
         let earlier_gathering = self.gather_names.clone();
         let earlier_targets = self.gather_targets.clone();
         if !matches!(name, "<gathering>" | "<genexpr>") { self.gather_targets.clear(); }
-        if holds == Holds::Every && self.table.flag("ext.stmt.function.closes_over") {
+        if holds == Holds::Every && self.table.closes_over() {
             let own = &self.layers.last().unwrap().idents;
             self.gather_names.retain(|pair| !own.contains(&pair.0));
         }
@@ -2089,7 +2092,7 @@ impl<'a> Builder<'a> {
         let previous_stars = std::mem::take(&mut self.except_star_bases);
         if holds == Holds::Every { self.loop_depth = 0; self.finally_nesting = 0; }
         let saved_documentation = self.documentation_statement.take();
-        if literal_statement && self.table.has_any("ext.stmt.class.builder") { self.documentation_statement = Some(start); }
+        if literal_statement && self.table.class_building() { self.documentation_statement = Some(start); }
         let built_body = body(self);
         self.documentation_statement = saved_documentation;
         let mut body = built_body?;
@@ -2114,7 +2117,7 @@ impl<'a> Builder<'a> {
             let bound = scope.idents.iter().filter(|word| !scope.borrowed.contains(word) && !scope.aliases.iter().any(|pair| pair.0 == **word)).cloned().collect();
             self.surveyed.insert(began, ScopeWords { bound, outermost: scope.aliases.clone(), borrowed: scope.borrowed.clone(), class_borrowed: scope.class_borrowed.clone() });
         }
-        if generator && !self.table.flag("ext.stmt.function.closes_over") {
+        if generator && !self.table.closes_over() {
             let names = self.layers.iter().skip(1).filter(|scope| scope.holds == Holds::Every)
                 .flat_map(|scope| scope.idents.iter()).filter(|name| !scope.idents.contains(name))
                 .map(String::as_str).collect::<Vec<_>>();
@@ -2130,7 +2133,7 @@ impl<'a> Builder<'a> {
             (group, slot)
         }));
         let mut flags = 3i64;
-        if doc.is_some() && self.table.has_any("ext.stmt.class.builder") { flags += 67_108_864; }
+        if doc.is_some() && self.table.class_building() { flags += 67_108_864; }
         if self.layers.iter().skip(1).any(|s| s.holds == Holds::Every) { flags += 16; }
         for (kind, bit) in [('v', 4), ('k', 8)] {
             if taking.as_ref().map_or(false, |rules| rules.contains(&kind)) { flags |= bit; }
@@ -2138,7 +2141,7 @@ impl<'a> Builder<'a> {
         let asynchronous_body = if name == "<genexpr>" { scope.async_walk_seen } else { scope.permits_async };
         if asynchronous_body { flags |= 128; } else if generator { flags |= 32; }
         let mut literals = Vec::new();
-        if let Some(text) = &doc { literals.push(Value::text(text)); } else if !self.table.has_any("ext.stmt.class.builder") { literals.push(Value::Nil); }
+        if let Some(text) = &doc { literals.push(Value::text(text)); } else if !self.table.class_building() { literals.push(Value::Nil); }
         let mut referenced = Vec::new();
         let mut suspension = false;
         if !self.survey && holds != Holds::Nothing && self.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
@@ -2482,7 +2485,7 @@ impl<'a> Builder<'a> {
     }
 
     fn type_scope_fault(&self) -> Option<String> {
-        if !self.table.has_any("ext.builtin.exceptions.syntax") { return None; }
+        if !self.table.syntactic() { return None; }
         let word = |at: usize| self.tokens.get(at).map_or("", |token| token.spelling());
         let head = word(self.pos);
         let named = match head {
@@ -2841,7 +2844,7 @@ impl<'a> Builder<'a> {
     /// call made upon a literal. Each place is noted once.
     fn warnings_in_statement(&mut self, opened: usize) {
         let table = self.table;
-        if !table.has_any("ext.builtin.exceptions.syntax") || !table.has_any("ext.system.syntax_warnings") { return; }
+        if !table.syntactic() || !table.has_any("ext.system.syntax_warnings") { return; }
         let limit = self.statement_limit(opened);
         let mut noted: Vec<(String, u32, usize)> = Vec::new();
         let first = &self.tokens[opened];
@@ -2926,7 +2929,7 @@ impl<'a> Builder<'a> {
 
     fn past_stmt(&mut self, opened: usize) -> Res<()> {
         let table = self.table;
-        if !table.has_any("ext.stmt.legacy_call") || !table.has_any("ext.builtin.exceptions.syntax") { return Ok(()); }
+        if !table.has_any("ext.stmt.legacy_call") || !table.syntactic() { return Ok(()); }
         let shape = self.look().shape;
         if self.on_stmt_end() || matches!(shape, Shape::Finish | Shape::Close | Shape::Open | Shape::Lead) { return Ok(()); }
         // Compound statements step over the line ends past their block
@@ -2984,9 +2987,9 @@ impl<'a> Builder<'a> {
     fn class_scope(&mut self) -> Res<Form> {
         self.advance();
         let name = self.need_word("as the class name")?;
-        if self.table.has_any("ext.builtin.exceptions.syntax") && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
+        if self.table.syntactic() && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
-        if self.table.flag("ext.stmt.function.closes_over") { self.address_to_write(&name); }
+        if self.table.closes_over() { self.address_to_write(&name); }
         if self.on_any("ext.stmt.class.bases.open") {
             self.advance();
             let _bases = self.arguments_of(&name, "ext.stmt.class.bases.close", "syntax.call.separator")?;
@@ -3013,7 +3016,7 @@ impl<'a> Builder<'a> {
             if ended { break; }
             // A yield expression joined by a comma it did not open is
             // no element: the reference wants it parenthesised there.
-            if self.table.has_any("ext.builtin.exceptions.syntax") && self.key("ext.stmt.yield") {
+            if self.table.syntactic() && self.key("ext.stmt.yield") {
                 return Err(String::from("SyntaxError: invalid syntax"));
             }
             let (part, spread) = self.comma_part(writes)?;
@@ -3031,7 +3034,7 @@ impl<'a> Builder<'a> {
             self.advance();
             if self.on_stmt_end() || self.on_assign() || self.on_any("syntax.group.close")
                 || self.on_any("block.intro") || matches!(self.look().shape, Shape::Finish | Shape::Close) { break; }
-            if self.table.has_any("ext.builtin.exceptions.syntax") && self.key("ext.stmt.yield") {
+            if self.table.syntactic() && self.key("ext.stmt.yield") {
                 return Err(String::from("SyntaxError: invalid syntax"));
             }
             let (part, expanded) = self.comma_part(true)?;
@@ -3043,7 +3046,7 @@ impl<'a> Builder<'a> {
     }
 
     fn plain_or_kind(&mut self) -> Res<Form> {
-        if self.table.has_any("ext.builtin.exceptions.syntax") {
+        if self.table.syntactic() {
             let correction = match self.look().lexeme.as_str() {
                 "fur" => Some("for"), "whille" => Some("while"), "iff" => Some("if"),
                 "elseif" => Some("elif"), "tyo" => Some("try"), "classe" => Some("class"),
@@ -3225,7 +3228,7 @@ impl<'a> Builder<'a> {
                 // asynchronous, and may stand only within a coroutine.
                 self.coroutine_next = self.key("stmt.function");
                 self.asynchronous = self.key("stmt.for") || self.key("ext.stmt.with");
-                if self.asynchronous && !self.in_coroutine && !(self.layers.len() == 1 && self.layers[0].permits_async) && self.table.has_any("ext.builtin.exceptions.syntax") {
+                if self.asynchronous && !self.in_coroutine && !(self.layers.len() == 1 && self.layers[0].permits_async) && self.table.syntactic() {
                     return Err(format!("SyntaxError: '{} {}' outside async function", word, self.look().lexeme));
                 }
                 return self.stmt();
@@ -3236,8 +3239,8 @@ impl<'a> Builder<'a> {
                 return self.forget_list(false, true, None);
             }
             if self.key("ext.stmt.nonlocal") {
-                if self.table.flag("ext.stmt.function.closes_over") && !self.layers.iter().skip(1).any(|layer| layer.holds == Holds::Every) && self.class_bindings.is_empty() {
-                    if self.table.has_any("ext.builtin.exceptions.syntax") {
+                if self.table.closes_over() && !self.layers.iter().skip(1).any(|layer| layer.holds == Holds::Every) && self.class_bindings.is_empty() {
+                    if self.table.syntactic() {
                         let mut last = self.look();
                         for word in &self.tokens[self.pos..] {
                             if matches!(word.shape, Shape::LineEnd | Shape::Finish | Shape::Close) || word.lexeme == ";" { break; }
@@ -3272,14 +3275,14 @@ impl<'a> Builder<'a> {
                     // body is no function of its own to pass over this
                     // way: the walk includes the one around it, since
                     // that is the very function the declaration means.
-                    if !self.survey && self.table.flag("ext.stmt.function.closes_over") && self.lexical_address(&word, !in_class).is_none() {
+                    if !self.survey && self.table.closes_over() && self.lexical_address(&word, !in_class).is_none() {
                         let pieces = self.table.strings("ext.stmt.nonlocal.amiss");
                         return Err(format!("{}{}{}", pieces.first().map_or("", String::as_str), word, pieces.get(1).map_or("", String::as_str)));
                     }
                     if !self.on_any("syntax.call.separator") { break; }
                     self.advance();
                 }
-                if self.table.flag("ext.stmt.function.closes_over") { return Ok(constant(Value::Nil)); }
+                if self.table.closes_over() { return Ok(constant(Value::Nil)); }
                 return Ok(prim_call(Prim::Raise, vec![constant(Value::text(self.table.single("ext.stmt.nonlocal.unrun").unwrap_or_default()))]));
             }
             if self.key("stmt.if") {
@@ -3344,7 +3347,7 @@ impl<'a> Builder<'a> {
                 let earlier = std::mem::replace(&mut self.forbids_await, true);
                 self.advance();
                 let alias = self.need_word("as the type alias")?;
-                if self.table.has_any("ext.builtin.exceptions.syntax") && alias == "__debug__" {
+                if self.table.syntactic() && alias == "__debug__" {
                     return Err(String::from("SyntaxError: cannot assign to __debug__"));
                 }
                 if self.on_any("ext.stmt.type_params.open") {
@@ -3403,7 +3406,7 @@ impl<'a> Builder<'a> {
                 } else {
                     vec![if self.table.has_any("ext.op.tuple") { self.comma_value()? } else { self.expr(0)? }]
                 };
-                if !value.is_empty() && self.table.has_any("ext.builtin.exceptions.syntax") {
+                if !value.is_empty() && self.table.syntactic() {
                     self.layers.last_mut().unwrap().return_value_at.get_or_insert(return_at);
                 }
                 return Ok(prim_call(Prim::Yield, value));
@@ -3439,7 +3442,7 @@ impl<'a> Builder<'a> {
                 return self.bag_decl();
             }
             if self.key("ext.stmt.class") || self.key("ext.stmt.class.interface") {
-                if self.table.has_any("ext.builtin.exceptions.syntax") && self.glance(1).spelling() == "__debug__" {
+                if self.table.syntactic() && self.glance(1).spelling() == "__debug__" {
                     return Err("SyntaxError: cannot assign to __debug__".to_owned());
                 }
                 if !self.table.flag("ext.stmt.class.this.explicit") && self.table.has_any("ext.stmt.class.bases.open") { return self.class_scope(); }
@@ -3459,7 +3462,7 @@ impl<'a> Builder<'a> {
             if self.key("ext.stmt.throw") {
                 let raised_origin = self.pos;
                 self.advance();
-                if self.table.has_any("ext.builtin.exceptions.syntax") && self.key("ext.stmt.throw.from") {
+                if self.table.syntactic() && self.key("ext.stmt.throw.from") {
                     return Err("SyntaxError: invalid syntax".to_owned());
                 }
                 if self.table.single("ext.stmt.throw.from").is_some()
@@ -3470,7 +3473,7 @@ impl<'a> Builder<'a> {
                 let mut values = vec![self.expr(0)?];
                 if self.key("ext.stmt.throw.from") {
                     self.advance();
-                    if self.table.has_any("ext.builtin.exceptions.syntax") && (self.on_stmt_end() || matches!(self.look().shape, Shape::Close | Shape::Finish)) {
+                    if self.table.syntactic() && (self.on_stmt_end() || matches!(self.look().shape, Shape::Close | Shape::Finish)) {
                         return Err("SyntaxError: did you forget an expression after 'from'?".to_owned());
                     }
                     let cause = self.expr(0)?;
@@ -3481,7 +3484,7 @@ impl<'a> Builder<'a> {
             }
             if self.key("ext.stmt.assert") {
                 self.advance();
-                if self.table.has_any("ext.builtin.exceptions.syntax") {
+                if self.table.syntactic() {
                     if !self.divided_at(self.pos, self.tokens.len(), "ext.op.assign.expression").is_empty() {
                         return Err(String::from("SyntaxError: cannot use named expression without parentheses here"));
                     }
@@ -3607,7 +3610,7 @@ impl<'a> Builder<'a> {
                 return Err(format!("Expected '{}' following the module path, got '{}'", self.table.single("ext.stmt.import").unwrap_or_default(), self.look().lexeme));
             }
         }
-        let future = taking_names && path == "__future__" && self.table.has_any("ext.builtin.exceptions.syntax");
+        let future = taking_names && path == "__future__" && self.table.syntactic();
         if future && (!self.future_allowed(statement_at) || self.in_class_body() || self.layers.iter().skip(1).any(|l| l.holds == Holds::Every)) {
             let mut last = &self.tokens[statement_at];
             for token in self.tokens.iter().skip(statement_at) {
@@ -3618,7 +3621,7 @@ impl<'a> Builder<'a> {
             self.pos = statement_at;
             return Err(String::from("SyntaxError: from __future__ imports must occur at the beginning of the file"));
         }
-        if self.table.has_any("ext.builtin.exceptions.syntax")
+        if self.table.syntactic()
             && matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) {
             return Err(String::from("SyntaxError: Expected one or more names after 'import'"));
         }
@@ -3628,7 +3631,7 @@ impl<'a> Builder<'a> {
         }
         let mut writes = Vec::new();
         if taking_names && !enclosed && self.on_any("op.mul") {
-            if self.table.has_any("ext.builtin.exceptions.syntax") && (self.in_class_body() || self.layers.iter().skip(1).any(|scope| scope.holds == Holds::Every)) {
+            if self.table.syntactic() && (self.in_class_body() || self.layers.iter().skip(1).any(|scope| scope.holds == Holds::Every)) {
                 return Err(String::from("SyntaxError: import * only allowed at module level"));
             }
             self.advance();
@@ -3646,7 +3649,7 @@ impl<'a> Builder<'a> {
                     false => self.tokens[named_at].lexeme.clone(),
                     true => {
                         self.advance();
-                        if self.table.has_any("ext.builtin.exceptions.syntax") {
+                        if self.table.syntactic() {
                             let kind = match self.look().lexeme.as_str() { "(" => Some("tuple"), "[" => Some("list"), _ => None };
                             if let Some(name) = kind { return Err(format!("SyntaxError: cannot use {name} as import target")); }
                             if matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::ByteQuote) {
@@ -3655,7 +3658,7 @@ impl<'a> Builder<'a> {
                         }
                         let binding = self.look().lexeme.clone();
                         self.module_path(false)?;
-                        if self.table.has_any("ext.builtin.exceptions.syntax") {
+                        if self.table.syntactic() {
                             let error = if self.on_any("op.pipe") { Some("attribute") }
                                 else if self.on_any("syntax.call.open") { Some("function call") }
                                 else if self.on_any("syntax.array.open") { Some("subscript") }
@@ -3665,7 +3668,7 @@ impl<'a> Builder<'a> {
                         binding
                     }
                 };
-                if self.table.has_any("ext.builtin.exceptions.syntax") && local == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
+                if self.table.syntactic() && local == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
                 if future && !matches!(original.as_str(), "nested_scopes" | "generators" | "division" | "absolute_import" | "with_statement" | "print_function" | "unicode_literals" | "barry_as_FLUFL" | "generator_stop" | "annotations") {
                     let ending = &self.tokens[self.pos - 1];
                     self.range_end = Some((ending.column + ending.lexeme.chars().count(), ending.row));
@@ -3685,7 +3688,7 @@ impl<'a> Builder<'a> {
                     break;
                 }
                 self.advance();
-                if taking_names && !enclosed && self.table.has_any("ext.builtin.exceptions.syntax")
+                if taking_names && !enclosed && self.table.syntactic()
                     && matches!(self.look().shape, Shape::LineEnd | Shape::Close | Shape::Finish) {
                     return Err(String::from("SyntaxError: trailing comma not allowed without surrounding parentheses"));
                 }
@@ -3733,7 +3736,7 @@ impl<'a> Builder<'a> {
                 }
             }
         }
-        if !taking_names && self.table.has_any("ext.builtin.exceptions.syntax") && self.key("ext.stmt.import.from") {
+        if !taking_names && self.table.syntactic() && self.key("ext.stmt.import.from") {
             return Err("SyntaxError: Did you mean to use 'from ... import ...' instead?".to_owned());
         }
         if enclosed {
@@ -3828,7 +3831,7 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let asynchronous = std::mem::take(&mut self.asynchronous);
         self.advance();
-        if table.has_any("ext.builtin.exceptions.syntax") {
+        if table.syntactic() {
             let mut opened = Vec::new();
             for part in self.tokens.iter().skip(self.pos) {
                 if opened.is_empty() && part.lexeme == ":" { break; }
@@ -3881,8 +3884,8 @@ impl<'a> Builder<'a> {
                 value = self.located(bounds, value);
                 let entered = self.gensym("entered");
                 steps.push(Form::Write(entered.clone(), Box::new(value)));
-                if table.flag("ext.syntax.call.bind_names") { steps.push(Form::Release(manager)); }
-                value = if table.flag("ext.syntax.call.bind_names") { Form::Take(entered) } else { Form::Read(entered) };
+                if table.binds_names() { steps.push(Form::Release(manager)); }
+                value = if table.binds_names() { Form::Take(entered) } else { Form::Read(entered) };
                 contexts.push((steps.len(), watched, bounds));
             }
             if self.key("ext.stmt.with.as") {
@@ -3904,22 +3907,22 @@ impl<'a> Builder<'a> {
                     }
                     boundary += 1;
                 }
-                if table.has_any("ext.builtin.exceptions.syntax") && self.has_added_target(start..boundary) {
+                if table.syntactic() && self.has_added_target(start..boundary) {
                     return Err(String::from("SyntaxError: cannot assign to expression"));
                 }
                 steps.push(self.distribute(start..boundary, &name).map_err(|e| self.loop_target_error(start..boundary, e))?);
-                if table.flag("ext.syntax.call.bind_names") { steps.push(Form::Release(place)); }
+                if table.binds_names() { steps.push(Form::Release(place)); }
                 self.pos = boundary;
             } else { steps.push(value); }
             if !self.on_any("syntax.call.separator") { break; }
             self.advance();
-            if !enclosed && table.has_any("ext.builtin.exceptions.syntax") && self.on_any("block.intro") {
+            if !enclosed && table.syntactic() && self.on_any("block.intro") {
                 return Err("SyntaxError: the last 'with' item has a trailing comma".to_owned());
             }
             if enclosed && self.sign(close) { break; }
         }
         if enclosed { self.need_sign(close, "after the with items")?; }
-        if table.has_any("ext.builtin.exceptions.syntax") {
+        if table.syntactic() {
             if self.look().spelling() == "ad" && self.glance(1).shape == Shape::Bare {
                 return Err(String::from("SyntaxError: invalid syntax. Did you mean 'and'?"));
             }
@@ -3934,7 +3937,7 @@ impl<'a> Builder<'a> {
         // A member read in the block that raised leaves what it held
         // standing; once the manager has swallowed the fault, or the block
         // ended, the places let go.
-        if table.has_any("ext.builtin.exceptions.syntax") {
+        if table.syntactic() {
             let depth = self.layers.len();
             let stranded: Vec<Address> = self.member_temps.drain(temps_from..).filter(|(at, _)| *at == depth).map(|(_, place)| place).collect();
             steps.extend(stranded.into_iter().map(Form::Forget));
@@ -3995,7 +3998,7 @@ impl<'a> Builder<'a> {
             let name = stored.ident.to_string();
             steps.push(Form::Write(stored, Box::new(part)));
             steps.extend(self.with_target(&name)?);
-            if self.table.has_any("ext.builtin.exceptions.syntax") { steps.push(Form::Forget(self.address_to_write(&name))); }
+            if self.table.syntactic() { steps.push(Form::Forget(self.address_to_write(&name))); }
             if self.on_any("syntax.call.separator") { self.advance(); }
         }
         Ok(steps)
@@ -4003,10 +4006,10 @@ impl<'a> Builder<'a> {
 
     fn with_target(&mut self, source: &str) -> Res<Vec<Form>> {
         let table = self.table;
-        if table.has_any("ext.builtin.exceptions.syntax") && matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::ByteQuote) {
+        if table.syntactic() && matches!(self.look().shape, Shape::Numeral | Shape::Quote | Shape::ByteQuote) {
             return Err(String::from("SyntaxError: cannot assign to literal"));
         }
-        if table.has_any("ext.builtin.exceptions.syntax") && ["literal.null", "literal.true", "literal.false"].iter().any(|label| self.key(label)) {
+        if table.syntactic() && ["literal.null", "literal.true", "literal.false"].iter().any(|label| self.key(label)) {
             let literal = &self.look().lexeme;
             return Err(format!("SyntaxError: cannot assign to {literal}"));
         }
@@ -4036,7 +4039,7 @@ impl<'a> Builder<'a> {
                 let item = prim_call(Prim::At, vec![value, constant(Value::Small(position))]);
                 forms.push(Form::Write(part, Box::new(item)));
                 forms.extend(self.with_target(&part_name)?);
-                if self.table.has_any("ext.builtin.exceptions.syntax") { forms.push(Form::Forget(self.address_to_write(&part_name))); }
+                if self.table.syntactic() { forms.push(Form::Forget(self.address_to_write(&part_name))); }
                 position += 1;
                 if !self.on_any("syntax.call.separator") { break; }
                 self.advance();
@@ -4237,7 +4240,7 @@ impl<'a> Builder<'a> {
                 // depth, never a routine entered from within it -- ever
                 // find it there.
                 if self.in_class_body() {
-                    if self.table.has_any("ext.builtin.exceptions.syntax") {
+                    if self.table.syntactic() {
                         let kept = &self.class_globals.last().expect("the class body").1;
                         let met = &self.class_met.last().expect("the class body");
                         let met_kind = if kept.iter().any(|n| *n == name) { None }
@@ -4373,7 +4376,7 @@ impl<'a> Builder<'a> {
     /// A watched arm written beside its colon ends at the line end;
     /// one written below it follows the ordinary indentation reading.
     fn watched_body(&mut self) -> Res<Form> {
-        if self.table.has_any("ext.builtin.exceptions.syntax") {
+        if self.table.syntactic() {
             if !self.on_any("block.intro") { return Err(String::from("SyntaxError: expected ':'")); }
         }
         // Standing in a class body, the arm names members and is read
@@ -4412,7 +4415,7 @@ impl<'a> Builder<'a> {
         // What the body's member reads were holding when one of them
         // raised is let go as a clause takes the fault.
         let depth = self.layers.len();
-        let stranded: Vec<Address> = if table.has_any("ext.builtin.exceptions.syntax") {
+        let stranded: Vec<Address> = if table.syntactic() {
             self.member_temps.drain(temps_from..).filter(|(at, _)| *at == depth).map(|(_, place)| place).collect()
         } else { Vec::new() };
         let open = table.single("syntax.group.open").ok_or_else(|| "A catch needs syntax.group".to_string())?.to_string();
@@ -4423,7 +4426,7 @@ impl<'a> Builder<'a> {
         // A clause may stand on a line of its own, after what it follows.
         self.skip_line_ends();
         while self.key("ext.stmt.catch") {
-            if table.has_any("ext.builtin.exceptions.syntax") {
+            if table.syntactic() {
                 if let Some(begin) = all_at { self.pos = begin; self.range_end = all_end; return Err("SyntaxError: default 'except:' must be last".to_string()); }
             }
             let origin = self.pos;
@@ -4432,7 +4435,7 @@ impl<'a> Builder<'a> {
             let mut choices = None;
             let grouped = bare_clauses && self.on_any("ext.stmt.catch.group");
             if grouped { self.advance(); }
-            if table.has_any("ext.builtin.exceptions.syntax") {
+            if table.syntactic() {
                 if grouped && self.on_any("block.intro") { return Err("SyntaxError: expected one or more exception types".to_string()); }
                 if clauses.first().map_or(false, |c| grouped != c.grouped) {
                     let after = &self.tokens[self.pos - 1];
@@ -4451,7 +4454,7 @@ impl<'a> Builder<'a> {
                 if !takes_all && !(bracketed && self.on_any("ext.stmt.catch.tuple.close")) {
                     loop {
                         let selector = match self.expr(0)? {
-                            Form::Read(place) if !table.has_any("ext.builtin.exceptions.syntax") => Form::Glance(place),
+                            Form::Read(place) if !table.syntactic() => Form::Glance(place),
                             other => other,
                         };
                         selectors.push(selector);
@@ -4463,13 +4466,13 @@ impl<'a> Builder<'a> {
                 if bracketed {
                     self.need_sign(table.single("ext.stmt.catch.tuple.close").unwrap_or(")"), "after the classes caught")?;
                 }
-                if table.has_any("ext.builtin.exceptions.syntax") && !bracketed && selectors.len() > 1
+                if table.syntactic() && !bracketed && selectors.len() > 1
                     && self.key("ext.stmt.catch.as") {
                     return Err(String::from("SyntaxError: multiple exception types must be parenthesized when using 'as'"));
                 }
                 held = if self.key("ext.stmt.catch.as") {
                     self.advance();
-                    if grouped && table.has_any("ext.builtin.exceptions.syntax") {
+                    if grouped && table.syntactic() {
                         let target = if self.on_any("syntax.group.open") { Some("tuple") }
                             else if matches!(self.look().shape, Shape::Numeral | Shape::Quote) { Some("literal") }
                             else { None };
@@ -4477,10 +4480,10 @@ impl<'a> Builder<'a> {
                     }
                     let start = self.pos;
                     let binding = self.need_word("after the caught value's binding word")?;
-                    if table.has_any("ext.builtin.exceptions.syntax") && binding == "__debug__" {
+                    if table.syntactic() && binding == "__debug__" {
                         return Err(String::from("SyntaxError: cannot assign to __debug__"));
                     }
-                    if table.has_any("ext.builtin.exceptions.syntax") {
+                    if table.syntactic() {
                         let kind = match self.look().lexeme.as_str() { "." => Some("attribute"), "[" => Some("subscript"), _ => None };
                         if let Some(kind) = kind {
                             while !self.on_any("block.intro") && !self.on_stmt_end() && !self.exhausted() { self.advance(); }
@@ -4570,7 +4573,7 @@ impl<'a> Builder<'a> {
             false => None,
         };
         if clauses.is_empty() && (last.is_none() || otherwise.is_some()) {
-            let said = if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: expected 'except' or 'finally' block" }
+            let said = if table.syntactic() { "SyntaxError: expected 'except' or 'finally' block" }
                 else { "A try needs a catch or a last part" };
             return Err(said.to_string());
         }
@@ -4713,7 +4716,7 @@ impl<'a> Builder<'a> {
         }
         if !self.divided_at(self.pos, signs[0], "ext.stmt.annotation").is_empty() { return Ok(None); }
         let mut gathered = Vec::new();
-        if !self.table.has_any("ext.stmt.class.builder") {
+        if !self.table.class_building() {
             if targets.iter().any(|span| !self.target_words(span.clone(), &mut gathered)) { return Ok(None); }
             if gathered.is_empty() { return Ok(None); }
         }
@@ -4934,7 +4937,7 @@ impl<'a> Builder<'a> {
             // writing stands as it always did.
             let resume = self.pos;
             let mut default_values = Vec::new();
-            if self.table.flag("ext.syntax.call.bind_names") {
+            if self.table.binds_names() {
                 for (_, start) in &spares {
                     self.pos = *start;
                     default_values.push(self.expr(0)?);
@@ -4968,7 +4971,7 @@ impl<'a> Builder<'a> {
             // A method carrying the values its parameters fall back on
             // is handed over from its address too, since the table of
             // routines as compiled knows no such value.
-            match decorated || self.parts().arms > 0 || stands_in_routine || (self.table.flag("ext.syntax.call.bind_names") && !spares.is_empty()) {
+            match decorated || self.parts().arms > 0 || stands_in_routine || (self.table.binds_names() && !spares.is_empty()) {
                 true => self.member_noted(&method_name, slot.clone()),
                 false => {
                     self.class_bindings.last_mut().expect("the class namespace").1.insert(method_name.clone(), slot.clone());
@@ -5106,7 +5109,7 @@ impl<'a> Builder<'a> {
             let cuts = self.divided_at(self.pos + 1, self.tokens.len(), "stmt.for.in");
             let mut words = Vec::new();
             let of_words = cuts.first().map_or(false, |&at| self.target_words(self.pos + 1..at, &mut words));
-            if !of_words && !self.table.has_any("ext.stmt.class.builder") {
+            if !of_words && !self.table.class_building() {
                 let read = self.stmt()?;
                 self.parts().cannot = true;
                 return Ok(read);
@@ -5134,7 +5137,7 @@ impl<'a> Builder<'a> {
         let bound = self.class_bindings.last().expect("class namespace").1.clone();
         let mut steps = vec![brought];
         for (word, place) in bound {
-            if table.has_any("ext.stmt.class.builder") && !before.contains_key(&word) {
+            if table.class_building() && !before.contains_key(&word) {
                 if let Some(mirror) = self.mirror_member(&word, &place) { steps.push(mirror); }
             }
         }
@@ -5205,7 +5208,7 @@ impl<'a> Builder<'a> {
                 };
                 let target = self.read_to_write(&book.ident.to_string());
                 let key = constant(Value::text(&word));
-                let erased = prim_call(if self.table.has_any("ext.stmt.class.builder") { Prim::ClassWork(20) } else { Prim::Erase }, vec![target, key]);
+                let erased = prim_call(if self.table.class_building() { Prim::ClassWork(20) } else { Prim::Erase }, vec![target, key]);
                 steps.push(self.write(&book.ident.to_string(), erased));
                 continue;
             };
@@ -5404,7 +5407,7 @@ impl<'a> Builder<'a> {
             let (routine, spares) = self.method(&word)?;
             let resume = self.pos;
             let mut default_values = Vec::new();
-            if self.table.flag("ext.syntax.call.bind_names") {
+            if self.table.binds_names() {
                 for (_, start) in &spares {
                     self.pos = *start;
                     default_values.push(self.expr(0)?);
@@ -5502,7 +5505,7 @@ impl<'a> Builder<'a> {
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
         // The body uses the metaclass's actual mapping from its first statement.
-        if table.has_any("ext.stmt.class.builder") || self.class_body_names_locals(self.pos, on_one_line) {
+        if table.class_building() || self.class_body_names_locals(self.pos, on_one_line) {
             let made = self.class_book();
             setup.push(made);
         }
@@ -5523,7 +5526,7 @@ impl<'a> Builder<'a> {
                 let said = self.tokens.get(self.pos).filter(|token| token.shape == Shape::Quote).map(|_| {
                     let mut text = String::new();
                     for token in self.tokens[self.pos..].iter().take_while(|t| t.shape == Shape::Quote) { text.push_str(&token.lexeme); }
-                    Value::text(&if table.has_any("ext.stmt.class.builder") { settle_doc_indentation(&text) } else { text })
+                    Value::text(&if table.class_building() { settle_doc_indentation(&text) } else { text })
                 });
                 if let Some(said) = said { self.member_ranked(word); self.parts().attributes.push(word.to_string()); self.parts().held.push(constant(said)); }
             }
@@ -5609,7 +5612,7 @@ impl<'a> Builder<'a> {
             let value = Form::Apply(Callee::Code(Box::new(factory)), Vec::new());
             return Ok((self.write(&name, value), false));
         }
-        if self.table.has_any("ext.stmt.class.builder") { return self.python_class(nested, adorned); }
+        if self.table.class_building() { return self.python_class(nested, adorned); }
         self.advance();
         let class_title = self.original_words[self.pos].lexeme.clone();
         let named = self.need_word("as the class name")?;
@@ -5660,7 +5663,7 @@ impl<'a> Builder<'a> {
                 let mut builder = false;
                 if keyword {
                     let word = self.original_words[self.pos].lexeme.clone();
-                    if table.has_any("ext.builtin.exceptions.syntax") && word == "__debug__" {
+                    if table.syntactic() && word == "__debug__" {
                         return Err(String::from("SyntaxError: cannot assign to __debug__"));
                     }
                     self.advance();
@@ -5785,7 +5788,7 @@ impl<'a> Builder<'a> {
             let said = if self.optimize < 2 { self.tokens.get(self.pos).filter(|token| token.shape == Shape::Quote).map(|_| {
                     let mut text = String::new();
                     for token in self.tokens[self.pos..].iter().take_while(|t| t.shape == Shape::Quote) { text.push_str(&token.lexeme); }
-                    Value::text(&if table.has_any("ext.stmt.class.builder") { settle_doc_indentation(&text) } else { text })
+                    Value::text(&if table.class_building() { settle_doc_indentation(&text) } else { text })
                 }) } else { None };
             self.member_ranked(word);
             self.parts().attributes.push(word.to_string());
@@ -5906,7 +5909,7 @@ impl<'a> Builder<'a> {
         loop {
             if ["ext.stmt.function.carries", "ext.stmt.function.carries.pairs"].iter().any(|key| self.on_any(key)) { self.advance(); }
             let parameter = self.need_word("among the type parameters")?;
-            if table.has_any("ext.builtin.exceptions.syntax") && parameter == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
+            if table.syntactic() && parameter == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
             if declared.contains(&parameter) { return Err(table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().into()); }
             declared.push(parameter);
             if self.on_any("ext.stmt.annotation") { self.advance(); self.expr_at(0, false)?; }
@@ -5927,7 +5930,7 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let word = self.advance().lexeme;
         let name = self.need_word("as the class name")?;
-        if table.has_any("ext.builtin.exceptions.syntax") && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
+        if table.syntactic() && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
         if self.on_any("ext.stmt.type_params.open") { self.class_type_parameters()?; }
         // A class of method names only may be built on several at once;
         // a class is built on one and answers to any number.
@@ -6148,7 +6151,7 @@ impl<'a> Builder<'a> {
         let sigil = table.letter("identifier.variable_prefix");
         let enclosing_receiver = self.receiver.take();
         self.receiver = params.first().cloned();
-        let keep_defaults = table.flag("ext.syntax.call.bind_names");
+        let keep_defaults = table.binds_names();
         let spares_out = spares.clone();
         let local_defaults = spares.iter().map(|(place, _)| *place).collect();
         let program = self.routine(name, Holds::Every, Traps::Yields, params, least, |r| {
@@ -6573,7 +6576,7 @@ impl<'a> Builder<'a> {
         let held = self.gensym("matched");
         let save = Form::Write(held.clone(), Box::new(value));
         if !self.on_any("block.intro") {
-            if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().shape == Shape::Bare && self.glance(1).lexeme == ":" {
+            if self.table.syntactic() && self.look().shape == Shape::Bare && self.glance(1).lexeme == ":" {
                 return Err(String::from("SyntaxError: invalid syntax"));
             }
             return Err(self.bad_case());
@@ -6588,7 +6591,7 @@ impl<'a> Builder<'a> {
             self.skip_line_ends();
             if self.look().shape == Shape::Close { self.advance(); break; }
             if !self.key("ext.stmt.match.case") {
-                if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().shape == Shape::Bare && self.glance(1).lexeme == "=" {
+                if self.table.syntactic() && self.look().shape == Shape::Bare && self.glance(1).lexeme == "=" {
                     return Err(String::from("SyntaxError: invalid syntax"));
                 }
                 return Err(self.bad_case());
@@ -6698,7 +6701,7 @@ impl<'a> Builder<'a> {
     fn pattern_name(&mut self) -> Res<crate::form::CaseTest> {
         use crate::form::CaseTest;
         let word = self.need_word("as a pattern binding")?;
-        if self.table.has_any("ext.builtin.exceptions.syntax") && word == "__debug__" {
+        if self.table.syntactic() && word == "__debug__" {
             return Err(String::from("SyntaxError: cannot assign to __debug__"));
         }
         if self.table.spells("ext.stmt.match.wildcard", &word) { return Ok(CaseTest::Ignore); }
@@ -6910,13 +6913,13 @@ impl<'a> Builder<'a> {
             while !self.on_any("syntax.map.close") {
                 if let Some((start, _)) = &rest {
                     if !table.flag("ext.op.arithmetic.python_numbers") { self.pos = *start; }
-                    let words = if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: invalid syntax".to_owned() } else { self.bad_case() };
+                    let words = if table.syntactic() { "SyntaxError: invalid syntax".to_owned() } else { self.bad_case() };
                     return Err(words);
                 }
                 if self.on_any("op.pow") {
                     self.advance();
                     let start = self.pos;
-                    if table.has_any("ext.builtin.exceptions.syntax") && self.look().spelling() == "_" {
+                    if table.syntactic() && self.look().spelling() == "_" {
                         return Err(String::from("SyntaxError: invalid syntax"));
                     }
                     let CaseTest::Keep(name) = self.pattern_name()? else { return Err(self.bad_case()) };
@@ -6967,14 +6970,14 @@ impl<'a> Builder<'a> {
         while !self.on_any("syntax.call.close") {
             if self.look().shape == Shape::Bare && table.spells("stmt.assign", &self.glance(1).spelling()) {
                 let word = self.advance().lexeme;
-                if table.has_any("ext.builtin.exceptions.syntax") && word == "__debug__" { return Err(String::from("SyntaxError: cannot assign to __debug__")); }
+                if table.syntactic() && word == "__debug__" { return Err(String::from("SyntaxError: cannot assign to __debug__")); }
                 if named.iter().any(|(seen, _)| *seen == word) {
-                    return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: attribute name repeated in class pattern: {word}") } else { self.bad_case() });
+                    return Err(if table.syntactic() { format!("SyntaxError: attribute name repeated in class pattern: {word}") } else { self.bad_case() });
                 }
                 self.advance();
                 named.push((word, self.pattern_choice()?));
             } else if !named.is_empty() {
-                return Err(if table.has_any("ext.builtin.exceptions.syntax") { String::from("SyntaxError: positional patterns follow keyword patterns") } else { self.bad_case() });
+                return Err(if table.syntactic() { String::from("SyntaxError: positional patterns follow keyword patterns") } else { self.bad_case() });
             } else {
                 positional.push(self.pattern_choice()?);
             }
@@ -7200,7 +7203,7 @@ impl<'a> Builder<'a> {
                 let mut later = 0;
                 while self.glance(later).shape == Shape::LineEnd { later += 1; }
                 let token = self.glance(later);
-                if self.table.has_any("ext.builtin.exceptions.syntax") && token.shape == Shape::Bare
+                if self.table.syntactic() && token.shape == Shape::Bare
                     && self.table.spells("stmt.elif", &token.spelling()) {
                     return Err(String::from("SyntaxError: 'elif' block follows an 'else' block"));
                 }
@@ -7327,17 +7330,17 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let asynchronous = std::mem::take(&mut self.asynchronous);
         self.advance();
-        if table.has_any("ext.builtin.exceptions.syntax") && self.glance(1).spelling() == "im" {
+        if table.syntactic() && self.glance(1).spelling() == "im" {
             return Err(String::from("SyntaxError: invalid syntax. Did you mean 'in'?"));
         }
-        if table.has_any("ext.builtin.exceptions.syntax") {
+        if table.syntactic() {
             let limit = self.divided_at(self.pos, self.tokens.len(), "stmt.for.in").first().copied()
                 .or_else(|| self.divided_at(self.pos, self.tokens.len(), "block.intro").first().copied());
             if limit.is_some_and(|end| self.has_added_target(self.pos..end)) {
                 return Err(String::from("SyntaxError: cannot assign to expression"));
             }
         }
-        if table.has_any("ext.builtin.exceptions.syntax") && matches!(self.look().shape, Shape::Quote | Shape::ByteQuote | Shape::Numeral) { return Err(String::from("SyntaxError: cannot assign to literal")); }
+        if table.syntactic() && matches!(self.look().shape, Shape::Quote | Shape::ByteQuote | Shape::Numeral) { return Err(String::from("SyntaxError: cannot assign to literal")); }
         let place = if table.single("ext.op.tuple").is_some() && table.single("ext.stmt.unpack").is_some() {
             self.divided_at(self.pos, self.tokens.len(), "stmt.for.in").first().copied().and_then(|end| {
                 let start = self.pos;
@@ -7469,7 +7472,7 @@ impl<'a> Builder<'a> {
             else { table.single("syntax.call.close").unwrap().to_string() };
         let typed = table.flag("stmt.let.type_first");
         let mut params = Vec::new();
-        let bind = table.flag("ext.syntax.call.bind_names");
+        let bind = table.binds_names();
         let mut manners: Vec<char> = Vec::new();
         let mut beyond = false;
         let mut slash = false;
@@ -7490,18 +7493,18 @@ impl<'a> Builder<'a> {
             let mut manner = if beyond { 'n' } else { 'b' };
             let mut starred_annotation = false;
             if bind {
-                if closed { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: arguments cannot follow var-keyword argument".to_owned() } else { wrong() }); }
+                if closed { return Err(if table.syntactic() { "SyntaxError: arguments cannot follow var-keyword argument".to_owned() } else { wrong() }); }
                 let word = self.look().lexeme.clone();
                 if table.spells("ext.stmt.function.positional_only", &word) {
                     if slash || beyond || params.is_empty() {
                         let complaint = if slash { "/ may appear only once" } else if beyond { "/ must be ahead of *" } else { "at least one argument must precede /" };
-                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {complaint}") } else { wrong() });
+                        return Err(if table.syntactic() { format!("SyntaxError: {complaint}") } else { wrong() });
                     }
                     for before in &mut manners { *before = 'p'; }
                     slash = true;
                     self.advance();
                     if !self.sign(&close) {
-                        if table.has_any("ext.builtin.exceptions.syntax") && self.sign("*") {
+                        if table.syntactic() && self.sign("*") {
                             return Err("SyntaxError: expected comma between / and *".to_owned());
                         }
                         self.need_sign(table.single("syntax.call.separator").unwrap_or(""), "after the positional mark")?;
@@ -7513,8 +7516,8 @@ impl<'a> Builder<'a> {
                     manner = 'k';
                     self.advance();
                 } else if table.spells("ext.stmt.function.carries", &word) || table.spells("ext.stmt.function.keyword_only", &word) {
-                    if beyond { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: * argument may appear only once".to_owned() } else { wrong() }); }
-                    if self.table.has_any("ext.builtin.exceptions.syntax") && (self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == close) {
+                    if beyond { return Err(if table.syntactic() { "SyntaxError: * argument may appear only once".to_owned() } else { wrong() }); }
+                    if self.table.syntactic() && (self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == close) {
                         return Err("SyntaxError: named arguments must follow bare *".to_string());
                     }
                     beyond = true;
@@ -7563,14 +7566,14 @@ impl<'a> Builder<'a> {
                     }
                 }
                 self.formal_kinds.push(kind);
-                if table.has_any("ext.builtin.exceptions.syntax") && self.sign("(") {
+                if table.syntactic() && self.sign("(") {
                     return Err("SyntaxError: Function parameters cannot be parenthesized".to_owned());
                 }
                 params.push(self.need_word("as a parameter name")?);
-                if table.has_any("ext.builtin.exceptions.syntax") && params.last().is_some_and(|word| word == "__debug__") { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
+                if table.syntactic() && params.last().is_some_and(|word| word == "__debug__") { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
                 if !short && self.on_any("ext.stmt.annotation") {
                     self.advance();
-                    if table.has_any("ext.builtin.exceptions.syntax") && self.look().shape == Shape::Bare
+                    if table.syntactic() && self.look().shape == Shape::Bare
                         && table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
                         return Err("SyntaxError: invalid syntax".to_owned());
                     }
@@ -7593,7 +7596,7 @@ impl<'a> Builder<'a> {
                     let twice = table.strings("ext.stmt.function.parameters.duplicate");
                     if twice.is_empty() { return Err(wrong()); }
                     let message = format!("{}{}{}", twice[0], last, twice.get(1).map_or("", String::as_str));
-                    if table.has_any("ext.builtin.exceptions.syntax") {
+                    if table.syntactic() {
                         let mut cursor = self.pos;
                         while cursor > 0 { cursor -= 1; if self.tokens[cursor].lexeme == *last { break; } }
                         repeated.get_or_insert((message, cursor));
@@ -7605,11 +7608,11 @@ impl<'a> Builder<'a> {
                     (true, 'v' | 'k') => {
                         if starred_annotation { return Err("SyntaxError: invalid syntax".to_owned()); }
                         let kind = if manner == 'v' { "var-positional" } else { "var-keyword" };
-                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} argument cannot have default value") } else { wrong() });
+                        return Err(if table.syntactic() { format!("SyntaxError: {kind} argument cannot have default value") } else { wrong() });
                     }
                     (true, 'b') => optional = true,
                     (false, 'b') if optional => {
-                        if table.has_any("ext.builtin.exceptions.syntax") {
+                        if table.syntactic() {
                             // The complaint names the parameter that
                             // takes nothing, standing over it as the
                             // reference stands.
@@ -7632,10 +7635,10 @@ impl<'a> Builder<'a> {
             if self.on_assign() {
                 let row = (self.look().row as u32).saturating_sub(self.before);
                 self.advance();
-                if table.has_any("ext.builtin.exceptions.syntax") && (self.sign(&close) || self.on_any("syntax.call.separator")) {
+                if table.syntactic() && (self.sign(&close) || self.on_any("syntax.call.separator")) {
                     return Err("SyntaxError: expected default value expression".to_owned());
                 }
-                if table.has_any("ext.builtin.exceptions.syntax") && self.look().shape == Shape::Bare
+                if table.syntactic() && self.look().shape == Shape::Bare
                     && table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
                     return Err("SyntaxError: invalid syntax".to_owned());
                 }
@@ -7758,7 +7761,7 @@ impl<'a> Builder<'a> {
                 }
             }
             if self.forbids_await && self.key("ext.op.await") { return Err("SyntaxError: 'await' outside function".into()); }
-            if table.has_any("ext.builtin.exceptions.syntax") && shape == Shape::Bare && self.key("ext.stmt.yield")
+            if table.syntactic() && shape == Shape::Bare && self.key("ext.stmt.yield")
                 && (self.in_class_body() || !self.layers.iter().skip(1).any(|s| s.holds == Holds::Every)) {
                 let wording = if table.spells("ext.stmt.yield.from", &self.glance(1).spelling()) { "yield from" } else { "yield" };
                 return Err(format!("SyntaxError: '{wording}' outside function"));
@@ -7825,7 +7828,7 @@ impl<'a> Builder<'a> {
         let mut first = Vec::new();
         for (at, from) in spares {
             self.pos = from;
-            let value = if self.table.flag("ext.syntax.call.bind_names") {
+            let value = if self.table.binds_names() {
                 // What a parameter falls back on belongs to the scope the
                 // routine is written in, so the routine's own parameters
                 // answer to another spelling while it is read: a name
@@ -7863,7 +7866,7 @@ impl<'a> Builder<'a> {
     }
 
     fn func(&mut self, name: String, bound: bool) -> Res<Form> {
-        if bound && self.table.has_any("ext.builtin.exceptions.syntax") && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
+        if bound && self.table.syntactic() && name == "__debug__" { return Err("SyntaxError: cannot assign to __debug__".to_owned()); }
         let mut source_name = self.pos.saturating_sub(1);
         if self.table.spells("ext.stmt.type_params.close", &self.tokens[source_name].lexeme) {
             let mut brackets = 0usize;
@@ -7918,7 +7921,7 @@ impl<'a> Builder<'a> {
         let (params, spares, _, said) = self.parameters(&name, false)?;
         let least = params.len() - spares.len();
         let formals = params.clone();
-        let keep_defaults = table.flag("ext.syntax.call.bind_names");
+        let keep_defaults = table.binds_names();
         let mut default_values = Vec::new();
         if keep_defaults {
             let resume = self.pos;
@@ -8040,19 +8043,19 @@ impl<'a> Builder<'a> {
         let bad = || table.single("ext.stmt.function.parameters.amiss").unwrap_or_default().to_string();
         loop {
             if self.sign(colon) { self.advance(); break; }
-            if pairs { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: arguments cannot follow var-keyword argument".to_owned() } else { bad() }); }
+            if pairs { return Err(if table.syntactic() { "SyntaxError: arguments cannot follow var-keyword argument".to_owned() } else { bad() }); }
             if self.exhausted() { return Err("Expected lambda body".to_string()); }
             if table.spells("op.div", &self.look().spelling()) {
-                if table.flag("ext.stmt.function.closes_over") {
+                if table.closes_over() {
                     if positional_mark || named_only || names.is_empty() {
                         let reason = if positional_mark { "/ may appear only once" } else if named_only { "/ must be ahead of *" } else { "at least one argument must precede /" };
-                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {reason}") } else { bad() });
+                        return Err(if table.syntactic() { format!("SyntaxError: {reason}") } else { bad() });
                     }
                     positional_mark = true;
                     for way in &mut ways { *way = 'p'; }
                 }
                 self.advance();
-                if table.has_any("ext.builtin.exceptions.syntax") && self.sign("*") {
+                if table.syntactic() && self.sign("*") {
                     return Err("SyntaxError: expected comma between / and *".to_owned());
                 }
             } else {
@@ -8060,45 +8063,45 @@ impl<'a> Builder<'a> {
                 let mapping = table.spells("op.pow", &self.look().spelling());
                 let mut way = if named_only { 'n' } else { 'b' };
                 if many || mapping {
-                    if many && named_only { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: * argument may appear only once".to_owned() } else { bad() }); }
+                    if many && named_only { return Err(if table.syntactic() { "SyntaxError: * argument may appear only once".to_owned() } else { bad() }); }
                     self.advance();
                     named_only = true;
                     pairs = mapping;
                     way = if mapping { 'k' } else { 'v' };
                     if many && self.sign(comma) {
                         self.advance();
-                        if self.sign(colon) { return Err(if table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: named arguments must follow bare *".to_owned() } else { bad() }); }
+                        if self.sign(colon) { return Err(if table.syntactic() { "SyntaxError: named arguments must follow bare *".to_owned() } else { bad() }); }
                         continue;
                     }
-                    if many && table.has_any("ext.builtin.exceptions.syntax") && self.sign(colon) {
+                    if many && table.syntactic() && self.sign(colon) {
                         return Err("SyntaxError: named arguments must follow bare *".to_owned());
                     }
                     gather = Some(names.len());
                 }
-                if table.has_any("ext.builtin.exceptions.syntax") && self.sign("(") {
+                if table.syntactic() && self.sign("(") {
                     return Err("SyntaxError: Lambda expression parameters cannot be parenthesized".to_owned());
                 }
                 let parameter = self.need_word("as a lambda parameter")?;
-                if table.has_any("ext.builtin.exceptions.syntax") && parameter == "__debug__" {
+                if table.syntactic() && parameter == "__debug__" {
                     return Err("SyntaxError: cannot assign to __debug__".to_owned());
                 }
                 if names.contains(&parameter) {
                     let twice = table.strings("ext.stmt.function.parameters.duplicate");
-                    if !twice.is_empty() && table.has_any("ext.builtin.exceptions.syntax") {
+                    if !twice.is_empty() && table.syntactic() {
                         repeated.get_or_insert((format!("{}{}{}", twice[0], parameter, twice.get(1).map_or("", String::as_str)), self.pos - 1));
                     }
-                    if !table.has_any("ext.builtin.exceptions.syntax") { return Err("Duplicate lambda parameter".to_string()); }
+                    if !table.syntactic() { return Err("Duplicate lambda parameter".to_string()); }
                 }
                 names.push(parameter);
                 ways.push(way);
                 if self.on_assign() {
                     if many || mapping {
                         let kind = if many { "var-positional" } else { "var-keyword" };
-                        return Err(if table.has_any("ext.builtin.exceptions.syntax") { format!("SyntaxError: {kind} argument cannot have default value") } else { bad() });
+                        return Err(if table.syntactic() { format!("SyntaxError: {kind} argument cannot have default value") } else { bad() });
                     }
                     if way == 'b' { default_seen = true; }
                     self.advance();
-                    if table.has_any("ext.builtin.exceptions.syntax") && (self.sign(colon) || self.sign(comma)) {
+                    if table.syntactic() && (self.sign(colon) || self.sign(comma)) {
                         return Err("SyntaxError: expected default value expression".to_owned());
                     }
                     let worth = self.expr(0)?;
@@ -8106,7 +8109,7 @@ impl<'a> Builder<'a> {
                     before.push(Form::Write(hidden.clone(), Box::new(worth)));
                     spares.push((names.len() - 1, hidden));
                 } else if way == 'b' && default_seen {
-                    if table.has_any("ext.builtin.exceptions.syntax") {
+                    if table.syntactic() {
                         let newest = names.last().cloned().unwrap_or_default();
                         let mut cursor = self.pos;
                         while cursor > 0 { cursor -= 1; if self.tokens[cursor].lexeme == newest { self.pos = cursor; break; } }
@@ -8120,7 +8123,7 @@ impl<'a> Builder<'a> {
         if let Some((message, at)) = repeated { self.pos = at; return Err(message); }
         let required = gather.unwrap_or(names.len()).saturating_sub(spares.len());
         let parameters = names.clone();
-        let bind_arguments = table.flag("ext.syntax.call.bind_names");
+        let bind_arguments = table.binds_names();
         if bind_arguments { self.taking = Some(ways); }
         let enclosing: Vec<String> = self.layers.iter().skip(1).filter(|l| l.holds == Holds::Every).flat_map(|l| l.idents.clone()).collect();
         let mut unavailable = self.outside_lambda.clone();
@@ -8140,17 +8143,17 @@ impl<'a> Builder<'a> {
                 steps.push(b.choose(absent, fill, constant(Value::Nil)));
             }
             b.named_blocked = true;
-            let outcome = b.expr_at(0, !table.has_any("ext.builtin.exceptions.syntax"));
+            let outcome = b.expr_at(0, !table.syntactic());
             b.named_blocked = false;
             let body = outcome?;
-            if table.has_any("ext.builtin.exceptions.syntax") && table.spells("ext.op.assign.expression", &b.look().lexeme) {
+            if table.syntactic() && table.spells("ext.op.assign.expression", &b.look().lexeme) {
                 if b.named_value { return Err(String::from("SyntaxError: invalid syntax")); }
                 let tail = &b.tokens[b.pos - 1];
                 b.range_end = Some((tail.column + tail.lexeme.chars().count(), tail.row));
                 b.pos = keyword_at;
                 return Err(String::from("SyntaxError: cannot use assignment expressions with lambda"));
             }
-            if table.has_any("ext.builtin.exceptions.syntax") && b.on_assign() {
+            if table.syntactic() && b.on_assign() {
                 let tail = &b.tokens[b.pos - 1];
                 b.range_end = Some((tail.column + tail.lexeme.chars().count(), tail.row));
                 b.pos = keyword_at;
@@ -8185,7 +8188,7 @@ impl<'a> Builder<'a> {
     fn short_func(&mut self) -> Res<Form> {
         let table = self.table;
         self.declared_at = (self.look().row as u32).saturating_sub(self.before);
-        if table.flag("ext.syntax.call.bind_names") {
+        if table.binds_names() {
             let (params, spares, _, _) = self.parameters(ANONYMOUS, true)?;
             let manners = self.taking.take();
             let body_at = self.pos;
@@ -8325,6 +8328,17 @@ impl<'a> Builder<'a> {
     /// A declaration with its kind put by. A name alone has no work;
     /// a subscript without a value still works out its two parts.
     fn divided_at(&self, start: usize, limit: usize, label: &'static str) -> Vec<usize> {
+        if let Some(kept) = self.divided_memo.borrow().iter().find(|(from, to, mark, _)| *from == start && *to == limit && *mark == label) {
+            return kept.3.clone();
+        }
+        let cuts = self.divided_scan(start, limit, label);
+        let mut memo = self.divided_memo.borrow_mut();
+        if memo.len() >= 12 { memo.remove(0); }
+        memo.push((start, limit, label, cuts.clone()));
+        cuts
+    }
+
+    fn divided_scan(&self, start: usize, limit: usize, label: &'static str) -> Vec<usize> {
         let mut depth: Vec<String> = Vec::new();
         let mut cuts = Vec::new();
         let t = self.table;
@@ -8410,7 +8424,7 @@ impl<'a> Builder<'a> {
     }
 
     fn loop_target_error(&self, span: std::ops::Range<usize>, error: String) -> String {
-        if !self.table.has_any("ext.builtin.exceptions.syntax") || !error.starts_with("SyntaxError:") { return error; }
+        if !self.table.syntactic() || !error.starts_with("SyntaxError:") { return error; }
         if self.has_added_target(span.clone()) {
             return String::from("SyntaxError: cannot assign to expression");
         }
@@ -8426,7 +8440,7 @@ impl<'a> Builder<'a> {
         let bad = self.table.single("ext.stmt.unpack.amiss").unwrap_or("Invalid assignment target").to_string();
         let (mut lo, mut hi) = (span.start, span.end);
         if lo >= hi { return Err(bad); }
-        if self.table.has_any("ext.builtin.exceptions.syntax") && hi == lo + 1 {
+        if self.table.syntactic() && hi == lo + 1 {
             let entry = &self.tokens[lo];
             let reserved = entry.spelling() == "__debug__" || ["literal.true", "literal.false", "literal.null"]
                 .iter().any(|label| self.table.spells(label, &entry.spelling()));
@@ -8457,7 +8471,7 @@ impl<'a> Builder<'a> {
                 ends += 1;
             }
             if ends + 1 != hi { break; }
-            if self.table.has_any("ext.builtin.exceptions.syntax") && !self.divided_at(lo + 1, hi - 1, "ext.op.comprehension.for").is_empty() {
+            if self.table.syntactic() && !self.divided_at(lo + 1, hi - 1, "ext.op.comprehension.for").is_empty() {
                 return Err(String::from(if family == "syntax.array" {
                     "SyntaxError: cannot assign to list comprehension here. Maybe you meant '==' instead of '='?"
                 } else { "SyntaxError: cannot assign to generator expression" }));
@@ -8469,7 +8483,7 @@ impl<'a> Builder<'a> {
             if array { break; }
             if !self.divided_at(lo, hi, "ext.op.tuple").is_empty() { break; }
         }
-        if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() && hi == lo + 1 {
+        if self.table.class_building() && self.in_class_body() && hi == lo + 1 {
             let word = &self.tokens[lo].lexeme;
             if word == "__debug__" || ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.table.spells(label, word)) {
                 return Err(format!("SyntaxError: cannot assign to {word}"));
@@ -8481,7 +8495,7 @@ impl<'a> Builder<'a> {
         let cuts = self.divided_at(lo, hi, "ext.op.tuple");
         if cuts.is_empty() && !array {
             self.pos = lo;
-            if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() && hi == lo + 1
+            if self.table.class_building() && self.in_class_body() && hi == lo + 1
                 && self.look().shape == Shape::Bare && !self.declared_outside_class(&self.look().lexeme) {
                 let word = self.advance().lexeme;
                 let place = self.member_address(&word, "attribute");
@@ -8491,7 +8505,7 @@ impl<'a> Builder<'a> {
                 return Ok(match self.mirror_member(&word, &place) { Some(mirror) => sequence(vec![written, mirror]), None => written });
             }
             // Address expressions read their object and keys from the live book.
-            let writing_name = !self.table.has_any("ext.stmt.class.builder") || !self.in_class_body()
+            let writing_name = !self.table.class_building() || !self.in_class_body()
                 || hi == lo + 1 && self.look().shape == Shape::Bare;
             self.place_depth += usize::from(writing_name);
             let reading = if hi == lo + 1 && self.look().shape == Shape::Bare {
@@ -8499,12 +8513,12 @@ impl<'a> Builder<'a> {
                 if ["literal.true", "literal.false", "literal.null"].iter().any(|label| self.table.spells(label, &word)) {
                     Err("Invalid assignment target before '='".to_string())
                 } else { Ok(self.read(&word)) }
-            } else if self.table.has_any("ext.stmt.class.builder") && self.in_class_body() { self.deletion_place() }
+            } else if self.table.class_building() && self.in_class_body() { self.deletion_place() }
             else { self.monadic_expr() };
             self.place_depth -= usize::from(writing_name);
             let place = reading?;
             if self.pos != hi { return Err(bad); }
-            if (self.layers.last().unwrap().gathering_kind.is_some() || self.table.has_any("ext.stmt.class.builder") && self.in_class_body()) && self.table.has_any("ext.builtin.slice") {
+            if (self.layers.last().unwrap().gathering_kind.is_some() || self.table.class_building() && self.in_class_body()) && self.table.has_any("ext.builtin.slice") {
                 if let Form::Apply(Callee::Prim(Prim::At, _), mut operands) = place {
                     let container = self.gather_name("target_object");
                     let evaluate = self.write(&container, operands.remove(0));
@@ -8546,11 +8560,11 @@ impl<'a> Builder<'a> {
             let item = self.gensym("part").ident.to_string();
             writes.push(self.write(&item, value));
             writes.push(self.distribute(part, &item)?);
-            if self.table.has_any("ext.builtin.exceptions.syntax") {
+            if self.table.syntactic() {
                 writes.push(Form::Forget(self.address_to_write(&item)));
             }
         }
-        if self.table.has_any("ext.builtin.exceptions.syntax") { writes.push(Form::Forget(self.address_to_write(&held))); }
+        if self.table.syntactic() { writes.push(Form::Forget(self.address_to_write(&held))); }
         Ok(sequence(writes))
     }
     fn chained_places(&mut self) -> Res<Option<Form>> {
@@ -8561,7 +8575,7 @@ impl<'a> Builder<'a> {
         if !self.divided_at(left, signs[0], "ext.stmt.annotation").is_empty() { return Ok(None); }
         let enclosed = self.on_any("syntax.group.open") || self.on_any("syntax.array.open");
         if signs.len() == 1 && !enclosed && self.divided_at(left, signs[0], "ext.op.tuple").is_empty() { return Ok(None); }
-        if self.table.has_any("ext.builtin.exceptions.syntax") && self.has_added_target(left..signs[0]) {
+        if self.table.syntactic() && self.has_added_target(left..signs[0]) {
             return Err(String::from("SyntaxError: cannot assign to expression"));
         }
         self.pos = signs[signs.len() - 1] + 1;
@@ -8576,7 +8590,7 @@ impl<'a> Builder<'a> {
             forms.push(self.distribute(left..sign, &name)?);
             left = sign + 1;
         }
-        if self.table.has_any("ext.builtin.exceptions.syntax") { forms.push(Form::Forget(self.address_to_write(&name))); }
+        if self.table.syntactic() { forms.push(Form::Forget(self.address_to_write(&name))); }
         self.pos = resume;
         Ok(Some(sequence(forms)))
     }
@@ -8616,7 +8630,7 @@ impl<'a> Builder<'a> {
         if let Form::Read(slot) = &place {
             let named = slot.ident.to_string();
             self.unmet_last_read(&named);
-            if self.table.has_any("ext.builtin.exceptions.syntax") && named == "__debug__" {
+            if self.table.syntactic() && named == "__debug__" {
                 return Err(String::from("SyntaxError: cannot assign to __debug__"));
             }
             if !parenthesized {
@@ -8624,7 +8638,7 @@ impl<'a> Builder<'a> {
                 let declared = self.declarations.iter().find(|(_, word, _)| word == &named).map(|(_, _, outer)| *outer);
                 let class_global = declared.is_none()
                     && self.class_globals.last().filter(|(level, _)| *level == self.layers.len()).map_or(false, |(_, names)| names.iter().any(|n| n == &named));
-                if self.table.has_any("ext.builtin.exceptions.syntax") && (declared.is_some() || class_global) {
+                if self.table.syntactic() && (declared.is_some() || class_global) {
                     let token = self.tokens[began].clone();
                     self.range_end = Some((token.column + token.lexeme.chars().count(), token.row));
                     self.pos = began;
@@ -8660,7 +8674,7 @@ impl<'a> Builder<'a> {
             }
         }
         if self.on_assign() {
-            if self.table.has_any("ext.builtin.exceptions.syntax") {
+            if self.table.syntactic() {
                 if let Some(at) = self.second_sign_ahead() {
                     self.pos = at;
                     return Err("SyntaxError: invalid syntax".to_owned());
@@ -8672,7 +8686,7 @@ impl<'a> Builder<'a> {
         }
         let bare = match place {
             Form::Read(slot) => {
-                if table.flag("ext.stmt.function.closes_over") && !parenthesized { self.address_to_write(&slot.ident); }
+                if table.closes_over() && !parenthesized { self.address_to_write(&slot.ident); }
                 constant(Value::Nil)
             }
             Form::Apply(Callee::Prim(Prim::At, _), parts) => sequence(parts),
@@ -8746,7 +8760,7 @@ impl<'a> Builder<'a> {
         if forbidden && !literal && self.table.spells("stmt.assign", &self.glance(1).spelling()) {
             return Err(String::from("SyntaxError: invalid syntax"));
         }
-        if self.table.has_any("ext.builtin.exceptions.syntax") {
+        if self.table.syntactic() {
             if !self.divided_at(self.pos, self.tokens.len(), "ext.op.assign.expression").is_empty() {
                 return Err(String::from("SyntaxError: invalid syntax"));
             }
@@ -8849,7 +8863,7 @@ impl<'a> Builder<'a> {
         let assignments = self.divided_at(self.pos, self.tokens.len(), "stmt.assign");
         let compound_target = self.second_sign_ahead().is_some_and(|at| self.table.compound.contains_key(&self.tokens[at].lexeme));
         let mut writing = !assignments.is_empty() || compound_target;
-        if writing && self.table.has_any("ext.stmt.class.builder") && self.in_class_body() {
+        if writing && self.table.class_building() && self.in_class_body() {
             let assignment = assignments.first().copied().or_else(|| self.second_sign_ahead()).unwrap_or(began);
             let end = self.declaration_mark().unwrap_or(assignment).min(assignment);
             let names: Vec<_> = self.tokens[began..end].iter().filter(|token| {
@@ -8879,7 +8893,7 @@ impl<'a> Builder<'a> {
                 self.pos = assignment;
             }
         }
-        if self.on_writing() && !self.on_assign() && self.table.has_any("ext.builtin.exceptions.syntax") {
+        if self.on_writing() && !self.on_assign() && self.table.syntactic() {
             let first = self.tokens[began..self.pos].iter().find(|token| token.lexeme != "(");
             if first.is_some_and(|token| self.table.spells("ext.stmt.yield", &token.spelling())) {
                 return Err(String::from("SyntaxError: 'yield expression' is an illegal expression for augmented assignment"));
@@ -9033,7 +9047,7 @@ impl<'a> Builder<'a> {
         for place in targets {
             steps.push(Form::Write(place, Box::new(Form::Read(saved.clone()))));
         }
-        if self.table.has_any("ext.builtin.exceptions.syntax") {
+        if self.table.syntactic() {
             steps.push(if answers { Form::Release(saved) } else { Form::Forget(saved) });
         } else if answers { steps.push(Form::Read(saved)); }
         Ok(sequence(steps))
@@ -9124,7 +9138,7 @@ impl<'a> Builder<'a> {
         };
         // A subscription writes into its evaluated receiver. Saving
         // the receiver and key also keeps descriptor reads to one call.
-        if self.table.flag("ext.syntax.call.bind_names") {
+        if self.table.binds_names() {
             if let Form::Apply(Callee::Prim(Prim::At, _), operands) = &expr {
                 if operands.len() == 2 {
                     let object = self.gensym("target_object");
@@ -9255,7 +9269,7 @@ impl<'a> Builder<'a> {
                 // and nothing need be written back afterwards.
                 let start = match stands_on {
                     place @ Form::Apply(Callee::Prim(Prim::Of | Prim::At | Prim::Within, _), _) => self.cell_of(place)?,
-                    call @ Form::Apply(..) if self.table.flag("ext.syntax.call.bind_names") => {
+                    call @ Form::Apply(..) if self.table.binds_names() => {
                         let saved = self.gensym("target_result");
                         steps.push(Form::Write(saved.clone(), Box::new(call)));
                         self.cell_of(Form::Read(saved))?
@@ -9494,7 +9508,7 @@ impl<'a> Builder<'a> {
             // A read of a member becomes a write of it.
             Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
                 let named = args.pop().unwrap();
-                if self.table.has_any("ext.builtin.exceptions.syntax")
+                if self.table.syntactic()
                     && matches!(&named, Form::Const(Value::Text(word)) if word.as_ref() == "__debug__") {
                     return Err(String::from("SyntaxError: cannot assign to __debug__"));
                 }
@@ -9503,7 +9517,7 @@ impl<'a> Builder<'a> {
                 // within a class body's methods, names a static
                 // attribute of the class being read, as the reference
                 // gathers them for __static_attributes__.
-                if self.table.has_any("ext.stmt.class.builder") && !self.under_way.is_empty() && !self.in_class_body() {
+                if self.table.class_building() && !self.under_way.is_empty() && !self.in_class_body() {
                     if let (Form::Read(holder), Form::Const(Value::Text(property))) = (&thing, &named) {
                         if holder.ident.as_ref() == "self" { self.parts().self_writes.insert(property.to_string()); }
                     }
@@ -9566,7 +9580,7 @@ impl<'a> Builder<'a> {
                     _ => return Err("Invalid assignment target".to_string()),
                 }
             }
-            other if self.table.has_any("ext.builtin.exceptions.syntax") => {
+            other if self.table.syntactic() => {
                 let kind = match other { Form::Apply(Callee::Code(_), _) => "function call", _ => "expression" };
                 return Err(format!("SyntaxError: cannot assign to {kind} here. Maybe you meant '==' instead of '='?"));
             }
@@ -9650,7 +9664,7 @@ impl<'a> Builder<'a> {
         let table = self.table;
         let origin = self.pos;
         let blocked = std::mem::take(&mut self.named_blocked);
-        if floor == 0 && table.has_any("ext.builtin.exceptions.syntax")
+        if floor == 0 && table.syntactic()
             && matches!(self.look().lexeme.as_str(), "(" | "[" | "{") && self.written_inside_display(origin) {
             return Err(String::from("SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?"));
         }
@@ -9659,7 +9673,7 @@ impl<'a> Builder<'a> {
             let taken = self.advance();
             let word = taken.lexeme.clone();
             let spelled = taken.spelling().to_string();
-            if table.has_any("ext.builtin.exceptions.syntax") {
+            if table.syntactic() {
                 if table.spells("literal.true", &spelled) || table.spells("literal.false", &spelled) || table.spells("literal.null", &spelled) {
                     return Err(format!("SyntaxError: cannot use assignment expressions with {spelled}"));
                 }
@@ -9688,20 +9702,20 @@ impl<'a> Builder<'a> {
             let expression = outcome?;
             return Ok(sequence(vec![Form::Write(target.clone(), Box::new(expression)), Form::Read(target)]));
         }
-        if floor == 0 && table.has_any("ext.builtin.exceptions.syntax")
+        if floor == 0 && table.syntactic()
             && matches!(self.look().spelling(), "pass" | "break" | "continue")
             && self.glance(1).spelling() == "if" {
             return Err("SyntaxError: expected expression before 'if', but statement is given".to_owned());
         }
         let mut left = self.monadic_expr()?;
         if floor == 0 && !blocked && table.spells("ext.op.assign.expression", &self.look().spelling()) {
-            if table.has_any("ext.builtin.exceptions.syntax") && self.gather_sources > 0 {
+            if table.syntactic() && self.gather_sources > 0 {
                 return Err("SyntaxError: assignment expression cannot be used in a comprehension iterable expression".to_owned());
             }
             let target = match left {
                 Form::Read(target) => target,
                 _ => match self.named_target_kind(origin, self.pos) {
-                    Some(kind) if table.has_any("ext.builtin.exceptions.syntax") => return Err(format!("SyntaxError: cannot use assignment expressions with {kind}")),
+                    Some(kind) if table.syntactic() => return Err(format!("SyntaxError: cannot use assignment expressions with {kind}")),
                     _ => return Err("Named expression needs a variable".to_string()),
                 },
             };
@@ -9714,7 +9728,7 @@ impl<'a> Builder<'a> {
             return Ok(sequence(vec![bind, back]));
         }
         if floor == 0 && may_write && table.flag("ext.op.assign.value") && self.on_writing() {
-            if table.has_any("ext.builtin.exceptions.syntax") && origin + 1 == self.pos && matches!(self.tokens[origin].shape, Shape::Numeral | Shape::Quote | Shape::ByteQuote) {
+            if table.syntactic() && origin + 1 == self.pos && matches!(self.tokens[origin].shape, Shape::Numeral | Shape::Quote | Shape::ByteQuote) {
                 self.range_end = Some((self.look().column, self.look().row));
                 self.pos = origin;
                 return Err(String::from("SyntaxError: cannot assign to literal here. Maybe you meant '==' instead of '='?"));
@@ -9729,7 +9743,7 @@ impl<'a> Builder<'a> {
             // Infix and conditional words are matched by the spelling the
             // text wrote, not the folded name an identifier binds as.
             let text = t.spelling().to_string();
-            if table.has_any("ext.builtin.exceptions.syntax") && (text == "|" || text == "&") {
+            if table.syntactic() && (text == "|" || text == "&") {
                 let following = self.glance(1);
                 if following.lexeme == text && (following.row, following.column) == (t.row, t.column + 1) {
                     self.range_end = Some((t.column + 2, t.row));
@@ -9737,11 +9751,11 @@ impl<'a> Builder<'a> {
                     return Err(format!("SyntaxError: invalid syntax. Maybe you meant '{keyword}' or '{text}' instead of '{text}{text}'?"));
                 }
             }
-            if table.has_any("ext.builtin.exceptions.syntax") && text == "<>" && !self.barry_as_flufl {
+            if table.syntactic() && text == "<>" && !self.barry_as_flufl {
                 self.range_end = Some((t.column + 2, t.row));
                 return Err(String::from("SyntaxError: invalid syntax.  Maybe you meant '!=' instead of '<>'?"));
             }
-            if table.has_any("ext.builtin.exceptions.syntax") && text == "!=" && self.barry_as_flufl {
+            if table.syntactic() && text == "!=" && self.barry_as_flufl {
                 self.range_end = Some((t.column + 2, t.row));
                 return Err(String::from("SyntaxError: with Barry as BDFL, use '<>' instead of '!='"));
             }
@@ -9755,12 +9769,12 @@ impl<'a> Builder<'a> {
                 let test = self.expr(1)?;
                 let end = conditional.get(1).ok_or("Conditional expression needs two words")?;
                 if self.look().spelling() != end.as_str() {
-                    return Err(if table.has_any("ext.builtin.exceptions.syntax") && !self.on_any("block.intro") {
+                    return Err(if table.syntactic() && !self.on_any("block.intro") {
                         String::from("SyntaxError: expected 'else' after 'if' expression")
                     } else { format!("Expected '{}' in conditional expression", end) });
                 }
                 self.advance();
-                if table.has_any("ext.builtin.exceptions.syntax") && ["pass", "return", "raise", "del", "yield", "assert", "break", "continue", "import", "from"].contains(&self.look().spelling()) {
+                if table.syntactic() && ["pass", "return", "raise", "del", "yield", "assert", "break", "continue", "import", "from"].contains(&self.look().spelling()) {
                     return Err("SyntaxError: expected expression after 'else', but statement is given".to_owned());
                 }
                 let no = self.expr(0)?;
@@ -9931,7 +9945,7 @@ impl<'a> Builder<'a> {
     fn comparison_head(&mut self) -> Res<Option<(Prim, u32, usize)>> {
         let t = self.table;
         let first = self.look().spelling().to_string();
-        if t.has_any("ext.builtin.exceptions.syntax") && first == "<" && {
+        if t.syntactic() && first == "<" && {
             let next = self.glance(1);
             let here = self.look();
             next.lexeme == ">" && next.row == here.row && next.column == here.column + 1
@@ -10092,7 +10106,7 @@ impl<'a> Builder<'a> {
             let previous_yield = std::mem::replace(&mut self.reading_yield, true);
             let from = self.key("ext.stmt.yield.from");
             if from { self.advance(); }
-            if from && table.has_any("ext.builtin.exceptions.syntax") && self.on_any("ext.stmt.unpack.rest") {
+            if from && table.syntactic() && self.on_any("ext.stmt.unpack.rest") {
                 return Err(String::from("SyntaxError: invalid syntax"));
             }
             let at_end = |r: &Self| r.on_stmt_end() || r.exhausted() || r.look().shape == Shape::Close
@@ -10120,7 +10134,7 @@ impl<'a> Builder<'a> {
                 }
             }
             self.reading_yield = previous_yield;
-            if table.has_any("ext.builtin.exceptions.syntax") {
+            if table.syntactic() {
                 // A delegated yield answers one expression only: a comma
                 // past it parts no tuple of its, as a plain yield's does.
                 if from && self.on_any("syntax.call.separator") {
@@ -10394,7 +10408,7 @@ impl<'a> Builder<'a> {
                         return self.subscript(made, origin);
                     }
                     (true, Some(_), Some(receiver), member) if !self.under_way.is_empty()
-                        && (table.has_any("ext.stmt.class.builder") || member.is_none() || self.glance(2).lexeme != open) => {
+                        && (table.class_building() || member.is_none() || self.glance(2).lexeme != open) => {
                         self.parts().needs_class_cell = true;
                         self.parts().class_cell_protocol = true;
                         let private = self.parts().completed_class.ident.to_string();
@@ -10490,7 +10504,7 @@ impl<'a> Builder<'a> {
                     constant(Value::OctetKind { changeable: table.prims.get(&t.lexeme) == Some(&Prim::Octets(1)),
                         shown: Rc::from(format!("{}{}{}", words[0], t.lexeme, words[1])) })
                 } else if table.strings("ext.stmt.function.short").first().map_or(false, |word| word == t.spelling())
-                    && (table.flag("ext.syntax.call.bind_names") || table.single("syntax.call.open").map_or(false, |o| self.sign(o)))
+                    && (table.binds_names() || table.single("syntax.call.open").map_or(false, |o| self.sign(o)))
                 {
                     // A routine written short is one expression, and
                     // takes with it every name standing around it: it
@@ -10612,7 +10626,7 @@ impl<'a> Builder<'a> {
                                 if table.has_any("ext.builtin.tuple") { constant(Value::tuple(Vec::new())) } else { self.scope_unrun("ext.system.scope.unready") }
                             }
                                 else { self.comma_value()? };
-                            if table.has_any("ext.builtin.exceptions.syntax")
+                            if table.syntactic()
                                 && matches!(self.look().shape, Shape::Bare | Shape::Numeral) {
                                 return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
                             }
@@ -10674,7 +10688,7 @@ impl<'a> Builder<'a> {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", close));
             }
-            if targets && table.has_any("ext.builtin.exceptions.syntax") {
+            if targets && table.syntactic() {
                 if self.look().shape == Shape::Bare && self.glance(1).lexeme == "[" && self.glance(2).lexeme == "*"
                     && self.glance(3).lexeme == "(" {
                     if let Some(closed) = self.pair_close(self.pos + 3, self.tokens.len()) {
@@ -10699,7 +10713,7 @@ impl<'a> Builder<'a> {
                 if let Some(closes) = closes {
                     let parentheses = self.on_any("syntax.group.open");
                     self.advance();
-                    if table.has_any("ext.builtin.exceptions.syntax") && parentheses && self.sign("*") {
+                    if table.syntactic() && parentheses && self.sign("*") {
                         let comma = self.tokens[self.pos..].iter().take_while(|part| part.lexeme != closes).any(|part| part.lexeme == ",");
                         if !comma { return Err(String::from("SyntaxError: cannot use starred expression here")); }
                     }
@@ -10713,7 +10727,7 @@ impl<'a> Builder<'a> {
                 let place = self.deletion_place()?;
                 self.called_on_value(place, None)?
             } else { self.expr(0)? };
-            if targets && table.has_any("ext.builtin.exceptions.syntax") {
+            if targets && table.syntactic() {
                 if matches!(&named, Form::Apply(Callee::Code(_), _)) {
                     return Err(String::from("SyntaxError: cannot delete function call"));
                 }
@@ -10732,7 +10746,7 @@ impl<'a> Builder<'a> {
                 Form::Read(slot) => {
                     // A bare name deleted was written, never used, as
                     // the reference counts it against a later `global`.
-                    if targets && table.flag("ext.stmt.function.closes_over") {
+                    if targets && table.closes_over() {
                         let own = self.address_to_write(&slot.ident);
                         self.unmet_last_read(&slot.ident);
                         sequence(vec![Form::Read(own.clone()), Form::Forget(own)])
@@ -10891,7 +10905,7 @@ impl<'a> Builder<'a> {
                 // module name met inside a function names the module's
                 // binding, and a fresh local spelt the same would hold
                 // nothing and be nothing to take a place out of.
-                let shared = if self.table.flag("ext.stmt.function.closes_over") { slot } else { self.address_to_write(&slot.ident.to_string()) };
+                let shared = if self.table.closes_over() { slot } else { self.address_to_write(&slot.ident.to_string()) };
                 Form::Share(shared)
             }
             Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
@@ -10902,7 +10916,7 @@ impl<'a> Builder<'a> {
                     _ => return Err("Only a property named outright has a cell to share".to_string()),
                 }
             }
-            Form::Apply(Callee::Prim(Prim::At, _), args) if args.len() == 2 && self.table.flag("ext.syntax.call.bind_names") => {
+            Form::Apply(Callee::Prim(Prim::At, _), args) if args.len() == 2 && self.table.binds_names() => {
                 prim_call(Prim::At, args)
             }
             Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
@@ -11538,7 +11552,7 @@ impl<'a> Builder<'a> {
                 continue;
             }
             self.advance();
-            if self.table.has_any("ext.builtin.exceptions.syntax") {
+            if self.table.syntactic() {
                 let begin = if self.sign(":") && self.glance(1).lexeme == "(" { Some(self.pos + 1) }
                     else if self.sign("(") { Some(self.pos) } else { None };
                 if let Some(start) = begin {
@@ -11550,7 +11564,7 @@ impl<'a> Builder<'a> {
                     }
                 }
             }
-            if self.table.has_any("ext.builtin.exceptions.syntax") && self.sign("*") {
+            if self.table.syntactic() && self.sign("*") {
                 let next = self.glance(1).lexeme.as_str();
                 let incomplete = next == close || next == ":";
                 if incomplete { return Err(String::from("SyntaxError: Invalid star expression")); }
@@ -11669,7 +11683,7 @@ impl<'a> Builder<'a> {
         let separator = self.table.single_dyn(&format!("syntax.{}.separator", family)).unwrap().to_string();
         let mapped = family == "map" && (!self.table.flag("ext.syntax.set") || self.sign(&closing)
             || self.ahead_in_item("syntax.map.pair").is_some() || self.on_any("ext.syntax.map.spread"));
-        if self.table.has_any("ext.builtin.exceptions.syntax") {
+        if self.table.syntactic() {
             let mut inner = Vec::new();
             let mut comma_before_for = false;
 
@@ -11718,24 +11732,24 @@ impl<'a> Builder<'a> {
             let mut beginning = self.pos;
             let mut item = self.expr(0)?;
             if mapped && !spreading {
-                if self.table.has_any("ext.builtin.exceptions.syntax") && (self.sign(&closing) || self.sign(&separator)) {
+                if self.table.syntactic() && (self.sign(&closing) || self.sign(&separator)) {
                     return Err(String::from("SyntaxError: ':' expected after dictionary key"));
                 }
                 self.need_sign(self.table.single("syntax.map.pair").unwrap(), "between the key and its value")?;
                 beginning = self.pos;
-                if self.table.has_any("ext.builtin.exceptions.syntax") && (self.sign(&closing) || self.sign(&separator)) {
+                if self.table.syntactic() && (self.sign(&closing) || self.sign(&separator)) {
                     return Err(String::from("SyntaxError: expression expected after dictionary key and ':'"));
                 }
-                if self.table.has_any("ext.builtin.exceptions.syntax") && self.sign("*") {
+                if self.table.syntactic() && self.sign("*") {
                     return Err(String::from("SyntaxError: cannot use a starred expression in a dictionary value"));
                 }
                 let right = self.expr(0)?;
                 item = prim_call(Prim::Couple, vec![item, right]);
             }
-            if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().spelling() == "fur" && self.glance(1).shape == Shape::Bare {
+            if self.table.syntactic() && self.look().spelling() == "fur" && self.glance(1).shape == Shape::Bare {
                 return Err(String::from("SyntaxError: invalid syntax. Did you mean 'for'?"));
             }
-            if self.table.has_any("ext.builtin.exceptions.syntax") && matches!(self.look().shape, Shape::Bare | Shape::Numeral | Shape::Quote | Shape::ByteQuote) {
+            if self.table.syntactic() && matches!(self.look().shape, Shape::Bare | Shape::Numeral | Shape::Quote | Shape::ByteQuote) {
                 let t = self.look();
                 let ending = if t.end_column == 0 { t.column + t.lexeme.chars().count() } else { t.end_column };
                 self.range_end = Some((ending, t.end_row.max(t.row)));
@@ -11783,7 +11797,7 @@ impl<'a> Builder<'a> {
         if !self.table.flag("ext.stmt.yield.suspends") { return self.gather_comprehension(clause, end, false); }
         let head = self.pos;
         self.pos = clause;
-        self.pos = self.divided_at(self.pos, self.tokens.len(), "ext.op.comprehension.in").into_iter().next().ok_or(if self.table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected a comprehension source" })? + 1;
+        self.pos = self.divided_at(self.pos, self.tokens.len(), "ext.op.comprehension.in").into_iter().next().ok_or(if self.table.syntactic() { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected a comprehension source" })? + 1;
         let begins = self.pos;
         let source = self.gather_source()?;
         let ends = self.pos;
@@ -11829,10 +11843,10 @@ impl<'a> Builder<'a> {
         // other clause and the expression read back run inside that
         // routine exactly as they did, seeing nothing of the body's
         // names, as a method does not either.
-        if self.table.flag("ext.stmt.function.closes_over") && (self.table.has_any("ext.builtin.exceptions.syntax") || self.in_class_body()) {
+        if self.table.closes_over() && (self.table.syntactic() || self.in_class_body()) {
             let entry = self.pos;
             self.pos = first_for;
-            self.pos = self.divided_at(self.pos, self.tokens.len(), "ext.op.comprehension.in").into_iter().next().ok_or(if self.table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected a comprehension source" })? + 1;
+            self.pos = self.divided_at(self.pos, self.tokens.len(), "ext.op.comprehension.in").into_iter().next().ok_or(if self.table.syntactic() { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected a comprehension source" })? + 1;
             let begins = self.pos;
             let source = self.gather_source()?;
             let bounds = self.span_since(begins);
@@ -11849,7 +11863,7 @@ impl<'a> Builder<'a> {
                 else if walks { Prim::Walked } else { Prim::Iterated };
             return Ok(self.located(bounds, Form::Apply(Callee::Code(Box::new(routine)), vec![prim_call(begin, vec![source])])));
         }
-        if self.table.flag("ext.stmt.function.closes_over") {
+        if self.table.closes_over() {
             let routine = self.routine("<gathering>", Holds::Every, Traps::Yields, Vec::new(), 0,
                 |reader| reader.gather_in_scope(first_for, end, dictionary))?;
             return Ok(Form::Apply(Callee::Code(Box::new(routine)), Vec::new()));
@@ -11870,7 +11884,7 @@ impl<'a> Builder<'a> {
         let work = self.gather_tail(expression_at, &name, dictionary)?;
         self.gather_names.truncate(old_names);
         self.gather_targets.truncate(old_targets);
-        if self.table.has_any("ext.builtin.exceptions.syntax") && self.look().spelling() == "of" && self.glance(1).shape == Shape::Bare {
+        if self.table.syntactic() && self.look().spelling() == "of" && self.glance(1).shape == Shape::Bare {
             return Err(String::from("SyntaxError: invalid syntax. Did you mean 'if'?"));
         }
         self.need_sign(end, "to finish a comprehension")?;
@@ -11916,7 +11930,7 @@ impl<'a> Builder<'a> {
                 }
                 if record { self.gather_targets.push(word.clone()); }
                 if self.gather_names.iter().skip(first_binding).any(|pair| pair.0 == word) { return Ok(()); }
-                let binding = match self.table.flag("ext.stmt.function.closes_over") && self.table.has_any("ext.builtin.exceptions.syntax") {
+                let binding = match self.table.closes_over() && self.table.syntactic() {
                     true => word.to_string(),
                     false => self.gather_name("gather_binding"),
                 };
@@ -11930,7 +11944,7 @@ impl<'a> Builder<'a> {
     /// Build the clauses outside the expression they govern. Each walk
     /// owns its names; the first source still sees the names outside it.
     fn reject_gathering_assignment(&self, description: &str) -> Res<()> {
-        if self.table.has_any("ext.builtin.exceptions.syntax") {
+        if self.table.syntactic() {
             if self.on_assign() {
                 let hint = match description { "generator expression" => "", _ => " here. Maybe you meant '==' instead of '='?" };
                 return Err(format!("SyntaxError: cannot assign to {description}{hint}"));
@@ -11950,7 +11964,7 @@ impl<'a> Builder<'a> {
             if word.shape == Shape::Finish { break; }
             if closing.is_empty() && word.shape == Shape::Bare && self.table.spells("ext.op.comprehension.for", &word.spelling()) {
                 let end = self.divided_at(cursor + 1, self.tokens.len(), "ext.op.comprehension.in")
-                    .into_iter().next().ok_or(if self.table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected a comprehension source" })?;
+                    .into_iter().next().ok_or(if self.table.syntactic() { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected a comprehension source" })?;
                 self.gathering_bindings(cursor + 1..end, own, false)?;
                 cursor = end + 1;
                 continue;
@@ -12010,8 +12024,8 @@ impl<'a> Builder<'a> {
         self.advance();
         let target_begin = self.pos;
         let target_stop = self.divided_at(target_begin, self.tokens.len(), "ext.op.comprehension.in")
-            .into_iter().next().ok_or(if self.table.has_any("ext.builtin.exceptions.syntax") { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected the word before a comprehension source" })?;
-        if self.table.has_any("ext.builtin.exceptions.syntax") && self.has_added_target(target_begin..target_stop) {
+            .into_iter().next().ok_or(if self.table.syntactic() { "SyntaxError: 'in' expected after for-loop variables" } else { "Expected the word before a comprehension source" })?;
+        if self.table.syntactic() && self.has_added_target(target_begin..target_stop) {
             return Err(String::from("SyntaxError: cannot assign to expression"));
         }
         self.gathering_bindings(target_begin..target_stop, 0, true)?;
@@ -12156,7 +12170,7 @@ impl<'a> Builder<'a> {
                 if self.table.spells("ext.op.lambda", word) { defaults_open += 1; }
                 else if word == ":" { defaults_open = defaults_open.saturating_sub(1); }
                 if word == "=" && defaults_open == 0 && !(at == begins + 1 && self.tokens[begins].shape == Shape::Bare) {
-                    if at > begins + 1 && self.table.has_any("ext.builtin.exceptions.syntax") {
+                    if at > begins + 1 && self.table.syntactic() {
                         let spreading = match self.tokens[begins].lexeme.as_str() {
                             "*" => Some("iterable"), "**" => Some("keyword"), _ => None,
                         };
@@ -12207,9 +12221,9 @@ impl<'a> Builder<'a> {
     }
 
     fn args(&mut self, close_key: &'static str, sep_key: &'static str) -> Res<Vec<Form>> {
-        if self.table.has_any("ext.builtin.exceptions.syntax") { self.unparenthesized_generator()?; }
+        if self.table.syntactic() { self.unparenthesized_generator()?; }
         if let Some(at) = self.ahead_in_item("ext.op.comprehension.for") {
-            if self.table.has_any("ext.builtin.exceptions.syntax") && self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == "=" {
+            if self.table.syntactic() && self.glance(1).shape == Shape::Sign && self.glance(1).lexeme == "=" {
                 return Err(String::from("SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?"));
             }
             let end = self.table.single(close_key).unwrap().to_string();
@@ -12234,9 +12248,9 @@ impl<'a> Builder<'a> {
             }
             let label = self.look().shape == Shape::Bare && self.glance(1).shape == Shape::Sign
                 && (self.table.spells("syntax.call.label", &self.glance(1).spelling())
-                    || (self.table.flag("ext.syntax.call.bind_names") && self.table.spells("stmt.assign", &self.glance(1).spelling())));
+                    || (self.table.binds_names() && self.table.spells("stmt.assign", &self.glance(1).spelling())));
             let mut tag = None;
-            let bind = self.table.flag("ext.syntax.call.bind_names") && close_key == "syntax.call.close";
+            let bind = self.table.binds_names() && close_key == "syntax.call.close";
             if label {
                 if bind {
                     let word = self.original_words[self.pos].lexeme.clone();
@@ -12244,7 +12258,7 @@ impl<'a> Builder<'a> {
                     if spelled.contains(&word) && !twice.is_empty() {
                         return Err(format!("{}{}{}", twice[0], word, twice.get(1).map_or("", String::as_str)));
                     }
-                    if self.table.has_any("ext.builtin.exceptions.syntax")
+                    if self.table.syntactic()
                         && (word == "__debug__" || ["literal.true", "literal.false", "literal.null"]
                             .iter().any(|key| self.table.spells(key, &word))) {
                         return Err(format!("SyntaxError: cannot assign to {word}"));
@@ -12273,14 +12287,14 @@ impl<'a> Builder<'a> {
                     _ => {}
                 }
             }
-            if self.table.has_any("ext.builtin.exceptions.syntax") && self.key("ext.stmt.yield") {
+            if self.table.syntactic() && self.key("ext.stmt.yield") {
                 return Err(String::from("SyntaxError: invalid syntax"));
             }
-            if label && bind && self.table.has_any("ext.builtin.exceptions.syntax")
+            if label && bind && self.table.syntactic()
                 && (self.sign(&close) || sep.as_ref().is_some_and(|mark| self.sign(mark))) {
                 return Err(String::from("SyntaxError: expected argument value expression"));
             }
-            if label && bind && self.table.has_any("ext.builtin.exceptions.syntax")
+            if label && bind && self.table.syntactic()
                 && self.look().shape == Shape::Bare
                 && self.table.spells("ext.op.assign.expression", &self.glance(1).lexeme) {
                 return Err(String::from("SyntaxError: invalid syntax"));
@@ -12295,7 +12309,7 @@ impl<'a> Builder<'a> {
             if let Some(s) = &sep {
                 if self.sign(s) {
                     self.advance();
-                } else if !self.sign(&close) && self.table.has_any("ext.builtin.exceptions.syntax") {
+                } else if !self.sign(&close) && self.table.syntactic() {
                     return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
                 }
             }
@@ -12326,7 +12340,7 @@ impl<'a> Builder<'a> {
                 || layer.idents.iter().any(|entry| entry == word) {
                 return true;
             }
-            if layer.holds == Holds::Every && !self.table.flag("ext.stmt.function.closes_over") { break; }
+            if layer.holds == Holds::Every && !self.table.closes_over() { break; }
         }
         !self.native_exports.contains(word) && self.named_in_program.iter().any(|entry| entry == word)
     }

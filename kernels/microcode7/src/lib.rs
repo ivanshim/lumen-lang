@@ -116,7 +116,7 @@ const REQUEST_PARTS: [(&str, &str); 8] = [
 /// it came, for the host to tell in its own way.
 fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, String, bool)], before: u32, fatally: bool, source: &str, column: Option<usize>, end: Option<(u32, usize)>) -> String {
     let mut message = said.to_owned();
-    if before != 0 && table.has_any("ext.builtin.exceptions.syntax") {
+    if before != 0 && table.syntactic() {
         let marker = " (detected at line ";
         if let Some(start) = message.rfind(marker).filter(|_| message.ends_with(')')) {
             if let Ok(number) = message[start + marker.len()..message.len() - 1].parse::<u32>() {
@@ -125,7 +125,7 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
             }
         }
     }
-    if said == "SyntaxError: 'return' outside function" && table.has_any("ext.builtin.exceptions.syntax") {
+    if said == "SyntaxError: 'return' outside function" && table.syntactic() {
         let file = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file")
             .map(|(.., path, _)| path.as_str()).unwrap_or("");
         let line = row.saturating_sub(before);
@@ -138,7 +138,7 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
     // read is written out the way the reference writes it: the file and
     // the number of the row the reading stopped on, the row itself, a
     // mark under the place it reached, and then the complaint.
-    if table.has_any("ext.builtin.exceptions.syntax") {
+    if table.syntactic() {
         let told = message.as_str();
         let (kind, wording) = match told.split_once(": ") {
             Some((word, rest)) if word.ends_with("Error") && word.bytes().all(|b| b.is_ascii_alphabetic()) => (word, rest),
@@ -198,7 +198,7 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
 /// file and the row it was seen on and shows the row itself under it.
 fn escape_notices_ahead_of_run(source: &str, table: &Table, ahead: u32, request: &[(String, String, String, bool)]) {
     let route = table.strings("ext.lexical.escape.warning");
-    if route.len() != 4 || !table.has_any("ext.builtin.exceptions.syntax") {
+    if route.len() != 4 || !table.syntactic() {
         return;
     }
     let where_named = request
@@ -306,7 +306,7 @@ fn import_rejoined(text: &str, table: &Table, added: u32) -> Option<String> {
 fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     let _tuple_scope = tuples::Scope::enter(table.has_any("ext.builtin.tuple"));
     // A file reader folds a CRLF pair before passing on its contents.
-    let file_text = if source.contains("\r\n") && table.has_any("ext.builtin.exceptions.syntax") {
+    let file_text = if source.contains("\r\n") && table.syntactic() {
         std::borrow::Cow::Owned(source.replace("\r\n", "\n"))
     } else { std::borrow::Cow::Borrowed(source) };
     let source = file_text.as_ref();

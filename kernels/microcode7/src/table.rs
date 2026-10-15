@@ -102,6 +102,10 @@ pub struct Table {
     /// The labels in the order they were made, and what each holds.
     names: Vec<&'static str>,
     held: Box<[Entry]>,
+    /// What a few labels the reader asks at nearly every step say, settled the
+    /// first time they are asked (0 unknown, 1 no, 2 yes) and forgotten when a
+    /// label is emptied.
+    quick: [std::cell::Cell<u8>; 4],
     /// Where a label was last found, guessed from where the asking word
     /// lies in memory: the builder asks after the same few labels by the
     /// same literals, and confirming a guess costs less than hashing a
@@ -544,6 +548,7 @@ impl Table {
             cells,
             names,
             held: held.into_boxed_slice(),
+            quick: Default::default(),
             guesses: (0..GUESSES).map(|_| std::cell::Cell::new((0, 0, 0))).collect::<Vec<_>>().into_boxed_slice(),
             dyadic: HashMap::default(),
             monadic: HashMap::default(),
@@ -693,6 +698,7 @@ impl Table {
     /// It is for a label whose worth a run is started with rather than
     /// written into the definition.
     pub fn put_by(&mut self, key: &'static str) {
+        for answer in &self.quick { answer.set(0); }
         match self.cells.get(key).copied() {
             Some(at) => self.held[at] = Entry::Strings(Vec::new()),
             None => {
@@ -729,6 +735,30 @@ impl Table {
     pub fn cell_present(&self, key: &str) -> bool {
         self.given.contains(key)
     }
+
+    fn settled(&self, place: usize, ask: impl FnOnce() -> bool) -> bool {
+        match self.quick[place].get() {
+            0 => {
+                let answer = ask();
+                self.quick[place].set(if answer { 2 } else { 1 });
+                answer
+            }
+            known => known == 2,
+        }
+    }
+
+    /// Whether the language has words of its own for syntax faults.
+    #[inline(always)]
+    pub fn syntactic(&self) -> bool { self.settled(0, || self.has_any("ext.builtin.exceptions.syntax")) }
+
+    #[inline(always)]
+    pub fn closes_over(&self) -> bool { self.settled(1, || self.flag("ext.stmt.function.closes_over")) }
+
+    #[inline(always)]
+    pub fn binds_names(&self) -> bool { self.settled(2, || self.flag("ext.syntax.call.bind_names")) }
+
+    #[inline(always)]
+    pub fn class_building(&self) -> bool { self.settled(3, || self.has_any("ext.stmt.class.builder")) }
 
     pub fn has_any(&self, key: &'static str) -> bool {
         !self.strings(key).is_empty()
