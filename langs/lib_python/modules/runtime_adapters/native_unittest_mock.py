@@ -361,6 +361,7 @@ class _Patch:
         self.default_factory = default_factory
         self.temporary = None
         self.held = DEFAULT
+        self.local = False
 
     def start(self):
         create = self.create
@@ -369,7 +370,16 @@ class _Patch:
             import types as _types_mod
             if self.attribute in vars(_builtins_mod) and isinstance(self.target, _types_mod.ModuleType):
                 create = True
-        if hasattr(self.target, self.attribute):
+        # Keep local descriptors intact for restoration, and distinguish an
+        # inherited attribute from an override that must be put back.
+        try:
+            attributes = vars(self.target)
+        except TypeError:
+            attributes = {}
+        self.local = self.attribute in attributes
+        if self.local:
+            self.held = attributes[self.attribute]
+        elif hasattr(self.target, self.attribute):
             self.held = getattr(self.target, self.attribute)
         elif not create:
             raise AttributeError('the target has no attribute ' + repr(self.attribute))
@@ -387,7 +397,14 @@ class _Patch:
                 self.temporary = self.default_factory(name=self.attribute, **options)
                 if autospec:
                     original = self.held if autospec is True else autospec
-                    if callable(original):
+                    import types
+                    if isinstance(self.target, type) and autospec is True:
+                        # Inspect the defining class without invoking descriptors.
+                        for base in self.target.__mro__:
+                            if self.attribute in vars(base):
+                                original = vars(base)[self.attribute]
+                                break
+                    if isinstance(original, types.FunctionType):
                         self.temporary = _Autospec(self.temporary)
         else:
             self.temporary = self.new
@@ -395,10 +412,14 @@ class _Patch:
         return self.temporary
 
     def stop(self):
-        if self.held is DEFAULT:
-            delattr(self.target, self.attribute)
-        else:
+        if self.local:
             setattr(self.target, self.attribute, self.held)
+        else:
+            delattr(self.target, self.attribute)
+            # Slot-backed attributes have no local dictionary entry to restore.
+            if (self.held is not DEFAULT and not self.create
+                    and not hasattr(self.target, self.attribute)):
+                setattr(self.target, self.attribute, self.held)
         self.temporary = None
 
     def __enter__(self):
