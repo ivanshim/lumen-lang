@@ -588,7 +588,9 @@ pub struct Machine<'a> {
     library_locations: RefCell<Option<(HashMap<std::path::PathBuf, String>, std::collections::HashSet<std::path::PathBuf>)>>,
     pub library_aliases: HashMap<String, String>,
     library_origins: std::collections::HashSet<String>,
-    imported: HashMap<String, Value>,
+    imported: HashMap<String, Value, crate::table::FxBuildHasher>,
+    /// Where the recursion limit's own field was last found in its module.
+    limit_place: std::cell::Cell<usize>,
     /// The dictionary of a loaded space, built the first time globals()
     /// wants it and answered every time after: one dictionary, so a
     /// name changed through it is changed in the space.
@@ -1344,9 +1346,16 @@ impl<'a> Machine<'a> {
         let [module, binding] = self.rules.words_ext_system_recursion_variable else { return original };
         let Some(Value::Thing(namespace)) = self.imported.get(module) else { return original };
         let held = namespace.holds.borrow();
-        held.iter().find(|(key, _)| key == binding).and_then(|(_, item)| match item.settled() {
-            Value::Small(number) => usize::try_from(number).ok(),
-            _ => None,
+        let at = match held.get(self.limit_place.get()) {
+            Some((key, _)) if key == binding => Some(self.limit_place.get()),
+            _ => held.iter().position(|(key, _)| key == binding),
+        };
+        at.and_then(|place| {
+            self.limit_place.set(place);
+            match held[place].1.settled() {
+                Value::Small(number) => usize::try_from(number).ok(),
+                _ => None,
+            }
         }).or(original).map(|number| match original {
             // A larger logical limit cannot enlarge the execution thread's
             // native stack, which must still refuse excessively deep calls.
@@ -2070,7 +2079,8 @@ impl<'a> Machine<'a> {
             library_aliases: HashMap::new(),
             library_origins: std::collections::HashSet::new(),
             importing: std::collections::HashSet::new(),
-            imported: HashMap::new(),
+            imported: HashMap::default(),
+            limit_place: std::cell::Cell::new(0),
             space_books: HashMap::new(),
             globals_by_cell: HashMap::new(),
             native_slots: table.strings("ext.stmt.class.special").iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
