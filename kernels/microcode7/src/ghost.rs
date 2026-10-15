@@ -650,7 +650,18 @@ impl Knot {
         match self {
             Knot::Frame(env) => {
                 if let Ok(cells) = env.cells.try_borrow() {
-                    for v in cells.iter() { held(out, v); }
+                    let skips = if env.collector_skipping.get() { env.collector_skips.try_borrow().ok() } else { None };
+                    for v in cells.iter() {
+                        // A dropped module's cells stay in this frame so a
+                        // callback can read and write them. The frame's edge
+                        // is not a root of those cells for this reaping.
+                        if let Some(skipped) = skips.as_ref() {
+                            if let Value::Shared(slot) = v {
+                                if skipped.contains(&(Rc::as_ptr(slot) as usize)) { continue; }
+                            }
+                        }
+                        held(out, v);
+                    }
                 }
                 if let Some(outer) = &env.outer { out.push(Knot::Frame(outer.clone())); }
             }

@@ -3155,11 +3155,15 @@ impl<'a> Machine<'a> {
         rows.iter().any(|(member, slot)| member == &words[1] && matches!(slot.settled(), Value::Dict(_)))
     }
 
-    /// Forget modules that `sys.modules` no longer names, and lift their
-    /// outermost cells out for the duration of this reaping. The frame
-    /// would otherwise mark every cell reachable. The saved cells are
-    /// handed back so a module the program still holds keeps its globals.
-    fn displace_stale_namespaces(&mut self) -> Vec<(usize, Value)> {
+    /// A module dropped from `sys.modules` still has cells in the outermost
+    /// frame. That frame is always alive, so an edge from it would keep the
+    /// module. Leave the cells where they are: a callback or finalizer may
+    /// read and write a module the program still holds, and a finalizer may
+    /// resurrect one. Record those cells so the frame skips them until this
+    /// reaping ends. The clones handed back are that frame hold, counted and
+    /// then dropped.
+    fn note_retired_modules(&mut self) -> Vec<Value> {
+        self.clear_collector_skips();
         if !self.import_dictionary_ready() { return Vec::new(); }
         let owner = match self.table.strings("ext.system.module.cache").first() {
             Some(word) => word.clone(),
@@ -3191,16 +3195,17 @@ impl<'a> Machine<'a> {
             swaps.push((path, Value::Thing(space), install));
         }
         if swaps.is_empty() { return Vec::new(); }
-        let mut locate = HashMap::<usize, usize>::new();
+        let mut locate = std::collections::HashSet::new();
         {
             let cells = self.outermost.cells.borrow();
-            for (index, cell) in cells.iter().enumerate() {
+            for cell in cells.iter() {
                 if let Value::Shared(slot) = cell {
-                    locate.insert(Rc::as_ptr(slot) as usize, index);
+                    locate.insert(Rc::as_ptr(slot) as usize);
                 }
             }
         }
-        let mut parked = Vec::new();
+        let mut quiet = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         for (path, previous, install) in swaps {
             if let Value::Thing(space) = previous {
                 let rows = space.holds.borrow();
@@ -3209,11 +3214,9 @@ impl<'a> Machine<'a> {
                         for (_, cell) in entries.iter() {
                             // Bindings keep the outermost cell, not the value inside it.
                             let Value::Shared(slot) = cell else { continue };
-                            let Some(&index) = locate.get(&(Rc::as_ptr(&slot) as usize)) else { continue };
-                            if parked.iter().any(|(at, _): &(usize, Value)| *at == index) { continue; }
-                            let mut cells = self.outermost.cells.borrow_mut();
-                            let saved = std::mem::replace(&mut cells[index], Value::Unset);
-                            parked.push((index, saved));
+                            let addr = Rc::as_ptr(&slot) as usize;
+                            if !locate.contains(&addr) || !seen.insert(addr) { continue; }
+                            quiet.push(Value::Shared(slot.clone()));
                         }
                     }
                 }
@@ -3224,17 +3227,40 @@ impl<'a> Machine<'a> {
                 self.imported.remove(&path);
             }
         }
+        if !quiet.is_empty() {
+            let mut skips = self.outermost.collector_skips.borrow_mut();
+            for value in &quiet {
+                if let Value::Shared(slot) = value {
+                    skips.insert(Rc::as_ptr(slot) as usize);
+                }
+            }
+            drop(skips);
+            self.outermost.collector_skipping.set(true);
+        }
         self.namespace_places.borrow_mut().take();
         self.revised_members.borrow_mut().clear();
-        parked
+        quiet
     }
 
-    fn restore_displaced_cells(&self, parked: Vec<(usize, Value)>) {
-        if parked.is_empty() { return; }
-        let mut cells = self.outermost.cells.borrow_mut();
-        for (index, saved) in parked {
-            if index < cells.len() { cells[index] = saved; }
+    /// The shared cells `note_retired_modules` left in the outermost frame.
+    fn skipped_module_cells(&self) -> Vec<Value> {
+        let skips = self.outermost.collector_skips.borrow();
+        if skips.is_empty() { return Vec::new(); }
+        let cells = self.outermost.cells.borrow();
+        let mut quiet = Vec::new();
+        for cell in cells.iter() {
+            if let Value::Shared(slot) = cell {
+                if skips.contains(&(Rc::as_ptr(slot) as usize)) {
+                    quiet.push(Value::Shared(slot.clone()));
+                }
+            }
         }
+        quiet
+    }
+
+    fn clear_collector_skips(&self) {
+        self.outermost.collector_skipping.set(false);
+        self.outermost.collector_skips.borrow_mut().clear();
     }
 
     fn round_web(&self, retained: &[crate::ghost::Knot]) -> crate::ghost::Web {
@@ -3271,19 +3297,17 @@ impl<'a> Machine<'a> {
         use crate::ghost::{Knot, Web};
         if self.reaping { return 0; }
         self.reaping = true;
-        let displaced = self.displace_stale_namespaces();
-        let mut cell_at = Vec::with_capacity(displaced.len());
-        let mut pinned = Vec::with_capacity(displaced.len());
-        for (index, saved) in displaced {
-            cell_at.push(index);
-            pinned.push(Knot::Held(saved));
-        }
+        let quiet = self.note_retired_modules();
+        let pinned: Vec<Knot> = quiet.into_iter().map(Knot::Held).collect();
         // Dead weak keys must release their attributes before ordering finalizers.
         let members_before = self.routine_members.len();
         self.routine_members.retain(|(function, _)| function.revive().is_some());
         if self.routine_members.len() != members_before { self.reindex_routine_members(); }
         self.attend_to_gone();
         let mut web = self.round_web(&pinned);
+        // The frame still holds these cells. Drop the counting clones before
+        // deciding, or that second hold keeps a dropped module alive.
+        drop(pinned);
         let mut original = web.unreachable();
         // With no lost knot there is nothing to silence or farewell, and
         // the web just woven still describes the machine: reuse it.
@@ -3292,10 +3316,7 @@ impl<'a> Machine<'a> {
             self.reindex_routine_members();
             drop(web);
             self.attend_to_gone();
-            self.restore_displaced_cells(cell_at.iter().copied().zip(pinned.iter().filter_map(|knot| match knot {
-                Knot::Held(value) => Some(value.clone()),
-                Knot::Frame(_) => None,
-            })).collect());
+            self.clear_collector_skips();
             self.reaping = false;
             return 0;
         }
@@ -3324,17 +3345,39 @@ impl<'a> Machine<'a> {
             }
         }
         drop(web);
-        let parked_n = cell_at.len();
-        let mut retained = pinned;
-        retained.append(&mut original);
-        let mut checked = self.round_web(&retained);
+        // Cells the frame still holds need a second count: one for the
+        // frame and one for this vec, which stays alive so a finalizer's
+        // new reference is the extra hold that saves the knot.
+        let quiet_again = self.skipped_module_cells();
+        let mut candidates = original;
+        let mut seen = std::collections::HashSet::new();
+        for knot in &candidates {
+            if let Knot::Held(Value::Shared(slot)) = knot {
+                seen.insert(Rc::as_ptr(slot) as usize);
+            }
+        }
+        for value in &quiet_again {
+            let Value::Shared(slot) = value else { continue };
+            if seen.insert(Rc::as_ptr(slot) as usize) {
+                candidates.push(Knot::Held(value.clone()));
+            }
+        }
+        let mut books = Vec::with_capacity(candidates.len() + quiet_again.len());
+        for knot in &candidates {
+            books.push(match knot {
+                Knot::Held(value) => Knot::Held(value.clone()),
+                Knot::Frame(frame) => Knot::Frame(frame.clone()),
+            });
+        }
+        for value in &quiet_again {
+            books.push(Knot::Held(value.clone()));
+        }
+        let mut checked = self.round_web(&books);
+        drop(books);
+        drop(quiet_again);
         let _marked = checked.unreachable();
         let mut lost = Vec::new();
-        let mut put_back = Vec::with_capacity(parked_n);
-        for (index, knot) in retained.into_iter().enumerate() {
-            if index < parked_n {
-                if let Knot::Held(value) = &knot { put_back.push((cell_at[index], value.clone())); }
-            }
+        for knot in candidates {
             if checked.given_up(&knot) { lost.push(knot); }
         }
         let found = lost.len();
@@ -3346,7 +3389,7 @@ impl<'a> Machine<'a> {
         drop(checked);
         drop(taken);
         self.attend_to_gone();
-        self.restore_displaced_cells(put_back);
+        self.clear_collector_skips();
         self.reaping = false;
         found
     }
@@ -3909,7 +3952,7 @@ impl<'a> Machine<'a> {
             names.push(slot.ident.to_string());
             cells.push(apart(source, slot.at));
         }
-        (names, Rc::new(Env { cells: RefCell::new(cells), capture_slots: RefCell::new(Default::default()), outer: under, weak_callback_frame: Cell::new(false) }))
+        (names, Rc::new(Env { cells: RefCell::new(cells), capture_slots: RefCell::new(Default::default()), outer: under, weak_callback_frame: Cell::new(false), collector_skips: RefCell::new(Default::default()), collector_skipping: Cell::new(false) }))
     }
 
     /// Build source against the globals this run already has and run it
