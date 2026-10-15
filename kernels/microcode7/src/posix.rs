@@ -47,10 +47,15 @@ fn data_of(item: &Value) -> Result<Vec<u8>, String> {
 fn record(s: &libc::stat) -> Value {
     let initial = [s.st_mode as u64, s.st_ino, s.st_dev, u64::from(s.st_nlink)];
     let mut fields: Vec<Value> = initial.into_iter().map(|unsigned| Value::from_big(BigInt::from(unsigned))).collect();
-    let signed = [i64::from(s.st_uid), i64::from(s.st_gid), s.st_size, s.st_atime,
-        s.st_mtime, s.st_ctime, s.st_atime_nsec, s.st_mtime_nsec, s.st_ctime_nsec,
-        i64::from(s.st_blksize), s.st_blocks];
+    let signed = [i64::from(s.st_uid), i64::from(s.st_gid), s.st_size, s.st_atime, s.st_mtime, s.st_ctime];
     for amount in signed {fields.push(Value::Small(amount));}
+    // Each clock twice over, seconds with their fraction and then whole
+    // nanoseconds, so the module has nothing left to compute per call.
+    let clocks = [(s.st_atime, s.st_atime_nsec), (s.st_mtime, s.st_mtime_nsec), (s.st_ctime, s.st_ctime_nsec)];
+    for (seconds, nanos) in clocks { fields.push(crate::data::worth_of_binary(seconds as f64 + nanos as f64 / 1e9, crate::math::DEFAULT_PLACES)); }
+    for (seconds, nanos) in clocks { fields.push(Value::from_big(BigInt::from(seconds) * 1_000_000_000 + nanos)); }
+    fields.push(Value::Small(i64::from(s.st_blksize)));
+    fields.push(Value::Small(s.st_blocks));
     fields.push(Value::from_big(BigInt::from(s.st_rdev)));
     Value::tuple(fields)
 }

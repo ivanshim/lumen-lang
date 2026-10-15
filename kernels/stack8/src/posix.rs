@@ -53,9 +53,14 @@ fn stat_fields(info: libc::stat) -> Value {
     let mut row = vec![Value::Small(info.st_mode.into()), Value::of_big(info.st_ino.into()),
         Value::of_big(info.st_dev.into()), Value::of_big(info.st_nlink.into())];
     row.extend([info.st_uid as i64, info.st_gid as i64, info.st_size, info.st_atime,
-        info.st_mtime, info.st_ctime, info.st_atime_nsec, info.st_mtime_nsec,
-        info.st_ctime_nsec, info.st_blksize as i64, info.st_blocks].into_iter().map(Value::Small));
-    row.push(Value::of_big(info.st_rdev.into()));
+        info.st_mtime, info.st_ctime].into_iter().map(Value::Small));
+    // The three moments again as seconds with their fraction, then as
+    // whole nanoseconds: the shapes the module's stat_result carries,
+    // worked out here once instead of in the module on every call.
+    let moments = [(info.st_atime, info.st_atime_nsec), (info.st_mtime, info.st_mtime_nsec), (info.st_ctime, info.st_ctime_nsec)];
+    row.extend(moments.iter().map(|(whole, part)| crate::value::real_of(*whole as f64 + *part as f64 / 1e9, crate::arith::DEFAULT_PLACES)));
+    row.extend(moments.iter().map(|(whole, part)| Value::of_big(num_bigint::BigInt::from(*whole) * 1_000_000_000 + *part)));
+    row.extend([Value::Small(info.st_blksize as i64), Value::Small(info.st_blocks), Value::of_big(info.st_rdev.into())]);
     Value::tuple(row)
 }
 pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String>) -> Result<Value, String> {

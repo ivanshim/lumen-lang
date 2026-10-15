@@ -4,21 +4,28 @@ _host = __posix
 import operator as _operator
 
 
-def _call(op, *args, filename=None, filename2=None):
-    error, result = _host(op, *args)
-    if error:
-        message = strerror(error)
-        kind = {2: FileNotFoundError, 17: FileExistsError, 20: NotADirectoryError,
+_ERROR_KINDS = {2: FileNotFoundError, 17: FileExistsError, 20: NotADirectoryError,
                 21: IsADirectoryError, 13: PermissionError, 1: PermissionError,
                 4: InterruptedError, 32: BrokenPipeError, 11: BlockingIOError,
                 10: ChildProcessError, 3: ProcessLookupError, 110: TimeoutError,
                 103: ConnectionAbortedError, 111: ConnectionRefusedError,
-                104: ConnectionResetError}.get(error, OSError)
-        if filename2 is not None:
-            raise kind(error, message, filename, None, filename2)
-        if filename is not None:
-            raise kind(error, message, filename)
-        raise kind(error, message)
+                104: ConnectionResetError}
+
+
+def _raise(error, filename=None, filename2=None):
+    message = strerror(error)
+    kind = _ERROR_KINDS.get(error, OSError)
+    if filename2 is not None:
+        raise kind(error, message, filename, None, filename2)
+    if filename is not None:
+        raise kind(error, message, filename)
+    raise kind(error, message)
+
+
+def _call(op, *args, filename=None, filename2=None):
+    error, result = _host(op, *args)
+    if error:
+        _raise(error, filename, filename2)
     return result
 
 
@@ -27,7 +34,8 @@ def fspath(path):
 
 
 def _path(path):
-    path = fspath(path)
+    if type(path) is not str:
+        path = fspath(path)
     if isinstance(path, str):
         path.encode('utf-8', 'surrogateescape')
         if '\0' in path:
@@ -229,12 +237,9 @@ def times():
 
 
 def _stat(data):
-    # All nineteen fields are known here, so the sequence checks of
-    # stat_result.__new__ have nothing left to decide.
-    second = 1000000000
-    nanos = (data[7] * second + data[10], data[8] * second + data[11], data[9] * second + data[12])
-    times = (data[7] + data[10] / second, data[8] + data[11] / second, data[9] + data[12] / second)
-    return _host('structseq_new', stat_result, data[:10], times + nanos + data[13:16])
+    # The host hands over all nineteen fields in their final shape, so
+    # the sequence checks of stat_result.__new__ have nothing left to decide.
+    return _host('structseq_new', stat_result, data[:10], data[10:])
 
 
 def stat(path, *, dir_fd=None, follow_symlinks=True):
@@ -245,16 +250,25 @@ def stat(path, *, dir_fd=None, follow_symlinks=True):
             raise ValueError('stat: cannot use fd and follow_symlinks together')
         return fstat(_descriptor(path))
     original = _path(path)
-    return _stat(_call('stat', original, _dir(dir_fd), int(bool(follow_symlinks)), filename=original))
+    error, data = _host('stat', original, -100 if dir_fd is None else _descriptor(dir_fd), int(bool(follow_symlinks)))
+    if error:
+        _raise(error, original)
+    return _host('structseq_new', stat_result, data[:10], data[10:])
 
 
 def lstat(path, *, dir_fd=None):
     original = _path(path)
-    return _stat(_call('lstat', original, _dir(dir_fd), 0, filename=original))
+    error, data = _host('lstat', original, -100 if dir_fd is None else _descriptor(dir_fd), 0)
+    if error:
+        _raise(error, original)
+    return _host('structseq_new', stat_result, data[:10], data[10:])
 
 
 def fstat(fd):
-    return _stat(_call('fstat', _cint(fd)))
+    error, data = _host('fstat', _cint(fd))
+    if error:
+        _raise(error)
+    return _host('structseq_new', stat_result, data[:10], data[10:])
 
 
 def getcwdb():
@@ -280,27 +294,53 @@ def fchdir(fd):
 def listdir(path=None):
     if path is None:
         path = '.'
-    original = _descriptor(path) if _is_fd_path(path) else _path(path)
+    # The names straight off the directory stream: the same stream
+    # scandir reads, without an entry object made for each name.
+    if _is_fd_path(path):
+        original = _descriptor(path)
+        error, handle = _host('scandir', original)
+        if error:
+            _raise(error)
+    else:
+        original = _path(path)
+        error, handle = _host('scandir', original)
+        if error:
+            _raise(error, original)
+    text = not isinstance(original, bytes)
     result = []
-    with scandir(original) as entries:
-        for entry in entries:
-            result.append(entry.name)
+    try:
+        while True:
+            error, record = _host('scandir_next', handle)
+            if error:
+                _raise(error)
+            if record is None:
+                break
+            name = record[0]
+            result.append(name.decode('utf-8', 'surrogateescape') if text else name)
+    finally:
+        _host('scandir_close', handle)
     return result
 
 
 def mkdir(path, mode=0o777, *, dir_fd=None):
     original = _path(path)
-    _call('mkdir', original, _cint(mode), _dir(dir_fd), filename=original)
+    error, _ = _host('mkdir', original, _cint(mode), -100 if dir_fd is None else _descriptor(dir_fd))
+    if error:
+        _raise(error, original)
 
 
 def rmdir(path, *, dir_fd=None):
     original = _path(path)
-    _call('rmdir', original, _dir(dir_fd), filename=original)
+    error, _ = _host('rmdir', original, -100 if dir_fd is None else _descriptor(dir_fd))
+    if error:
+        _raise(error, original)
 
 
 def unlink(path, *, dir_fd=None):
     original = _path(path)
-    _call('unlink', original, _dir(dir_fd), filename=original)
+    error, _ = _host('unlink', original, -100 if dir_fd is None else _descriptor(dir_fd))
+    if error:
+        _raise(error, original)
 
 
 def remove(path, *, dir_fd=None):
@@ -318,11 +358,16 @@ def replace(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
 
 def open(path, flags, mode=0o777, *, dir_fd=None):
     original = _path(path)
-    return _call('open', original, _cint(flags), _cint(mode), _dir(dir_fd), filename=original)
+    error, fd = _host('open', original, _cint(flags), _cint(mode), -100 if dir_fd is None else _descriptor(dir_fd))
+    if error:
+        _raise(error, original)
+    return fd
 
 
 def close(fd):
-    _call('close', _cint(fd))
+    error, _ = _host('close', _cint(fd))
+    if error:
+        _raise(error)
 
 
 def dup(fd):
@@ -330,7 +375,10 @@ def dup(fd):
 
 
 def read(fd, length, /):
-    return _call('read', _cint(fd), _fd(length))
+    error, data = _host('read', _cint(fd), _fd(length))
+    if error:
+        _raise(error)
+    return data
 
 
 def readinto(fd, buffer, /):
@@ -348,15 +396,20 @@ def readinto(fd, buffer, /):
 
 def write(fd, data, /):
     descriptor = _cint(fd)
-    if not isinstance(data, (bytes, bytearray)):
-        try:
-            view = memoryview(data)
-        except TypeError:
-            raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'")
-        if hasattr(view, 'c_contiguous') and not view.c_contiguous:
-            raise BufferError('memoryview: underlying buffer is not C-contiguous')
-        data = bytes(view)
-    return _call('write', descriptor, bytes(data))
+    if type(data) is not bytes:
+        if not isinstance(data, (bytes, bytearray)):
+            try:
+                view = memoryview(data)
+            except TypeError:
+                raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'")
+            if hasattr(view, 'c_contiguous') and not view.c_contiguous:
+                raise BufferError('memoryview: underlying buffer is not C-contiguous')
+            data = bytes(view)
+        data = bytes(data)
+    error, count = _host('write', descriptor, data)
+    if error:
+        _raise(error)
+    return count
 
 
 def lseek(fd, position, whence, /):
@@ -369,13 +422,17 @@ def ftruncate(fd, length, /):
 
 def readlink(path, *, dir_fd=None):
     original = _path(path)
-    result = _call('readlink', original, _dir(dir_fd), filename=original)
+    error, result = _host('readlink', original, -100 if dir_fd is None else _descriptor(dir_fd))
+    if error:
+        _raise(error, original)
     return result if isinstance(original, bytes) else _decode(result)
 
 
 def symlink(src, dst, target_is_directory=False, *, dir_fd=None):
     src, dst = _path(src), _path(dst)
-    _call('symlink', src, dst, _dir(dir_fd), filename=src, filename2=dst)
+    error, _ = _host('symlink', src, dst, -100 if dir_fd is None else _descriptor(dir_fd))
+    if error:
+        _raise(error, src, dst)
 
 
 def link(src, dst, *, src_dir_fd=None, dst_dir_fd=None, follow_symlinks=True):
@@ -594,29 +651,57 @@ class DirEntry:
     def __repr__(self):
         return '<DirEntry ' + repr(self.name) + '>'
 
+_new_entry = object.__new__
+
 class _ScandirIterator:
     def __init__(self, path):
         self._closed = True
         self._path = path
-        self._handle = _call('scandir', path, filename=None if _is_fd_path(path) else path)
+        if _is_fd_path(path):
+            error, handle = _host('scandir', path)
+            if error:
+                _raise(error)
+            self._dir_fd = path
+            self._prefix = None
+            self._text = True
+        else:
+            error, handle = _host('scandir', path)
+            if error:
+                _raise(error, path)
+            self._dir_fd = None
+            self._text = not isinstance(path, bytes)
+            separator = '/' if self._text else b'/'
+            # What posixpath.join puts before each name: the directory,
+            # with a separator unless it already ends in one.
+            self._prefix = path if path.endswith(separator) else path + separator
+        self._handle = handle
         self._closed = False
     def __iter__(self):
         return self
     def __next__(self):
         if self._closed:
             raise StopIteration
-        try:
-            record = _call('scandir_next', self._handle)
-        except OSError:
+        error, record = _host('scandir_next', self._handle)
+        if error:
             self.close()
-            raise
+            _raise(error)
         if record is None:
             self.close()
             raise StopIteration
         name, inode, kind = record
-        if not isinstance(self._path, bytes):
-            name = _decode(name)
-        return DirEntry(self._path, name, inode, kind)
+        if self._text:
+            name = name.decode('utf-8', 'surrogateescape')
+        # The entry filled in directly: its slots are known here, and
+        # the path is the prefix and the name.
+        entry = _new_entry(DirEntry)
+        entry._name = name
+        entry._path = name if self._prefix is None else self._prefix + name
+        entry._inode = inode
+        entry._type = kind
+        entry._dir_fd = self._dir_fd
+        entry._stat = None
+        entry._lstat = None
+        return entry
     def close(self):
         if not self._closed:
             self._closed = True
