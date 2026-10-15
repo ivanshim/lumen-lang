@@ -1,0 +1,6 @@
+self [1, 2] True L
+generator [2, 4] True
+iterable [3, 5] True
+extended [10, 2, 30, 4]
+length ValueError attempt to assign sequence of size 4 to extended slice of size 2 [10, 2, 30, 4]
+exception RuntimeError iterator stopped [10, 2, 30, 4]

@@ -65,6 +65,9 @@ impl<'a> Machine<'a> {
             let names = self.rules.specials;
             [(15usize, 4i64), (16, 3)].into_iter().filter_map(|(slot, operation)| names.get(slot).map(|name| (name.clone(), Self::wrap(120, vec![Value::Small(operation)])))).collect()
         } else { Vec::new() };
+        if let Some(documentation) = Self::builtin_kind_doc(word) {
+            protocols.push((self.detail("doc").to_string(), Value::text(documentation)));
+        }
         if matches!(self.table.prims.get(word), Some(Prim::Uniques | Prim::Unchanging | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::Backwards)) {
             if let Some(method) = self.rules.specials.get(79) {
                 protocols.push((method.to_owned(), Self::wrap(136, vec![Value::text(word)])));

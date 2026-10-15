@@ -8405,6 +8405,28 @@ impl<'a> Machine<'a> {
                             }
                             return Ok(Value::Nil);
                         }
+                        if let (Some(Value::Span(bounds)), Some(storage)) = (&key, &worth_cell) {
+                            let bounds = self.span_settled(bounds)?;
+                            let incoming = if matches!(target, Value::Vector(_)) {
+                                let entries = self.object_members(&value).map_err(|words| {
+                                    if words.contains("not iterable") || words.contains("not an iterable") { self.span_complaint("assign") } else { words }
+                                })?;
+                                Value::Vector(crate::tuples::Sequence::plain(entries))
+                            } else { value.clone() };
+                            drop(target);
+                            self.span_written(&mut storage.borrow_mut(), &bounds, &incoming)?;
+                            return Ok(Value::Nil);
+                        }
+                        if self.works_sequences() {
+                            if let (Value::Vector(items), Some(index)) = (&target, &key) {
+                                let offset = match index { Value::Small(n) => Some(*n), Value::Flag(flag) => Some(i64::from(*flag)), Value::Huge(n) => n.to_i64(), _ => None };
+                                if let Some(offset) = offset {
+                                    let offset = if offset < 0 { offset + items.len() as i64 } else { offset };
+                                    if offset < 0 || offset >= items.len() as i64 { return Err(self.place_written_beyond(&target).into()); }
+                                    key = Some(Value::Small(offset));
+                                }
+                            }
+                        }
                         if let (Some(index), Some(cell)) = (&key, &worth_cell) {
                             // The worth beneath a thing is written into
                             // by the rules of its own kind: a row takes

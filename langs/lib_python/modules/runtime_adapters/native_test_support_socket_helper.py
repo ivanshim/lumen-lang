@@ -1,6 +1,9 @@
 # The UNIX socket capability decorator from CPython v3.14.8.
 import socket
 import unittest
+from test import support
+
+has_gethostname = not support.is_wasi
 _bind_nix_socket_error = None
 def skip_unless_bind_unix_socket(test):
     """Decorator for tests requiring a functional bind() for unix sockets."""
