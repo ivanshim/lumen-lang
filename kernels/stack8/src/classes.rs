@@ -5435,6 +5435,7 @@ impl<'a> Engine<'a> {
                 if self.lang.module_builtins.iter().any(|word| word == name) {return Err(self.class_word("property.readonly").to_string().into());}
                 if name==self.class_word("defaults") || name==self.class_word("keywords") || name==self.class_word("code") {
                     let Value::Routine(f)=&subject else {return Err(self.class_refusal())};
+                    self.invalidate_code_watches(name == self.class_word("code"));
                     if name==self.class_word("code") && Self::code_kind_differs(f, value.as_ref()) {
                         let told=self.lang.class_details.get("code.mismatch").and_then(|w| w.first()).cloned().unwrap_or_default();
                         self.warn_like(26,&told)?;

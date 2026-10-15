@@ -119,6 +119,7 @@ pub struct Engine<'a> {
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>)>,
     delegated_tokens: std::collections::HashSet<usize>,
+    code_watches: Vec<(Weak<RefCell<Value>>, bool)>,
     frame_codes: HashMap<usize, Weak<(u8, Vec<Value>)>>,
     class_root: Option<Rc<Class>>,
     /// The class every metaclass stands on, made once when one is asked for.
@@ -1601,7 +1602,7 @@ impl<'a> Engine<'a> {
             generator_frames: HashMap::new(),
             async_generators: HashMap::new(),
             delegated_tokens: std::collections::HashSet::new(),
-            frame_codes: HashMap::new(),
+            code_watches: Vec::new(), frame_codes: HashMap::new(),
             source: Rc::from(""),
             root_source: Rc::from(""),
             pages_kept: None,
@@ -19290,7 +19291,7 @@ impl<'a> Engine<'a> {
         let mut position = usize::try_from(*origin).map_err(|_| "ValueError: negative memory stream position")?;
         let bytes = storage.borrow();
         let mut records = Vec::new();
-        while records.len() < 32 {
+        while records.len() < 256 {
             let start = position;
             let Some(&code) = bytes.get(start) else { break };
             let Some(Value::Small(marked)) = layouts.get(code as usize) else { break };
@@ -19393,45 +19394,33 @@ impl<'a> Engine<'a> {
         Ok(actual.same_place(saved))
     }
 
-    // Project a decoded field through a live descriptor table at its yield boundary.
-    fn byte_field_projection(&mut self, args: &[Value]) -> Res<Value> {
-        let [Value::Tuple(row), registry, Value::Tuple(recipe), Value::Flag(complete), Value::Small(4)] = args else {
-            return Err("TypeError: invalid memory field projection".into());
-        };
-        let [Value::Small(code), argument, begin, end] = row.as_slice() else { return Err("TypeError: invalid memory field record".into()); };
-        let [Value::Tuple(keys), Value::Tuple(readers), Value::Tuple(path), Value::Tuple(bodies)] = recipe.as_slice() else { return Err("TypeError: invalid memory field recipe".into()); };
-        let index = usize::try_from(*code).map_err(|_| "ValueError: invalid memory field code")?;
-        let key = keys.get(index).ok_or("ValueError: invalid memory field code")?;
-        let expected = readers.get(index).ok_or("ValueError: invalid memory field code")?;
-        let [first, second, fingerprint] = path.as_slice() else { return Err("TypeError: invalid memory field path".into()); };
-        let token = self.mapping_lookup(registry, key, &Value::Null)?;
-        if matches!(token, Value::Null) { return Ok(Value::Null); }
-        let descriptor = self.builtin(Builtin::GetAttr, "getattr", &mut vec![token.clone(), first.clone()])?;
-        if matches!(expected, Value::Null) {
-            if !matches!(descriptor, Value::Null) { return Ok(Value::Null); }
-        } else {
-            if matches!(descriptor, Value::Null) { return Ok(Value::Null); }
-            let reader = self.builtin(Builtin::GetAttr, "getattr", &mut vec![descriptor, second.clone()])?;
-            let same = match (&reader, expected) {
-                (Value::Routine(left), Value::Routine(right)) => Rc::ptr_eq(left, right),
-                _ => reader.same_value(expected),
-            };
-            if !same { return Ok(Value::Null); }
-            let saved = bodies.get(index).ok_or("ValueError: invalid memory field code")?;
-            if !self.byte_fingerprint_matches(&reader, fingerprint, saved)? { return Ok(Value::Null); }
+    pub(super) fn invalidate_code_watches(&mut self, code_changed: bool) {
+        self.code_watches.retain(|(weak, defaults_too)| {
+            let Some(cell) = weak.upgrade() else { return false };
+            if code_changed || *defaults_too { *cell.borrow_mut() = Value::array(vec![Value::Flag(false)]); }
+            true
+        });
+    }
+
+    fn watch_byte_reader_code(&mut self, args: &[Value]) -> Res<Value> {
+        let [Value::Tuple(functions), Value::Tuple(bodies), field, Value::Flag(defaults_too), Value::Small(6)] = args else { return Err("TypeError: invalid memory code watch arguments".into()); };
+        if functions.len() != bodies.len() { return Err("ValueError: code watch length mismatch".into()); }
+        let mut approved = true;
+        for (function, body) in functions.iter().zip(bodies.iter()) {
+            if !self.byte_fingerprint_matches(function, field, body)? { approved = false; }
         }
-        let mut projected = vec![token, argument.clone(), begin.clone()];
-        if *complete { projected.push(end.clone()); }
-        Ok(Value::tuple(projected))
+        let cell = Rc::new(RefCell::new(Value::array(vec![Value::Flag(approved)])));
+        self.code_watches.push((Rc::downgrade(&cell), *defaults_too));
+        Ok(Value::Collection(cell, false))
     }
 
     // Read or write bounded memory-stream storage without intermediate Python slices.
     fn byte_memory(&mut self, args: &[Value]) -> Res<Value> {
+        if matches!(args.last(), Some(Value::Small(6))) { return self.watch_byte_reader_code(args); }
         if matches!(args.last(), Some(Value::Small(5))) {
             let [subject, saved, field, Value::Flag(invert), Value::Small(5)] = args else { return Err("TypeError: invalid memory fingerprint arguments".into()); };
             return Ok(Value::Flag(self.byte_fingerprint_matches(subject, field, saved)? != *invert));
         }
-        if matches!(args.last(), Some(Value::Small(4))) { return self.byte_field_projection(args); }
         if matches!(args.last(), Some(Value::Small(3))) { return self.byte_fields(args); }
         let [Value::Bytes(storage, true, _), Value::Small(position), input, Value::Flag(closed), Value::Small(mode)] = args else {
             return Err("TypeError: invalid memory stream arguments".into());

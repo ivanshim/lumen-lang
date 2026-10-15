@@ -85,7 +85,7 @@ pub struct Table {
     pub rpn: bool,
     cells: HashMap<&'static str, usize, FxBuildHasher>,
     entries: Vec<(&'static str, Entry)>,
-    recent_cells: [std::cell::Cell<usize>; 256],
+    recent_cells: [std::cell::Cell<usize>; 4096],
     pub dyadic: HashMap<String, Infix>,
     pub monadic: HashMap<String, Infix>,
     pub precedence: HashMap<String, u32>,
@@ -584,7 +584,8 @@ impl Table {
     fn entry(&self, key: &str) -> Option<&Entry> {
         let bytes = key.as_bytes();
         let last = bytes.last().copied().unwrap_or(0) as usize;
-        let slot = (bytes.len().wrapping_mul(17) ^ last) & 255;
+        let middle = bytes.get(bytes.len() / 2).copied().unwrap_or(0) as usize;
+        let slot = (bytes.len().wrapping_mul(17) ^ last ^ middle.wrapping_mul(257)) & 4095;
         let index = self.recent_cells[slot].get();
         if let Some((label, entry)) = self.entries.get(index) {
             if *label == key { return Some(entry); }

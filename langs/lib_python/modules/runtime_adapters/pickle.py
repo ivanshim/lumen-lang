@@ -73,7 +73,7 @@ def commit_frame(self, force=False):
                 and type(write) is _memory_method_type
                 and type(write.__self__) is _memory_stream_type
                 and write.__func__ is _stream_write
-                and _memory_transfer(_stream_write, _stream_write_body, '__code__', False, 5)):
+                and _pickle_code_watch[0]):
             data = frame.getvalue()
             if len(data) >= self._FRAME_SIZE_MIN:
                 write(FRAME + pack('<Q', len(data)))
@@ -122,6 +122,10 @@ _memory_maxsize = maxsize
 _memory_loader_type = _Unpickler
 _stream_load = _Unpickler.load
 _stream_load_body = _stream_load.__code__
+_guarded_functions = tuple(handler for handler, body in _scalar_handlers.values()) + (decode_long, _stream_write)
+_guarded_bodies = tuple(body for handler, body in _scalar_handlers.values()) + (_memory_long_body, _stream_write_body)
+_pickle_code_watch = _memory_transfer(_guarded_functions, _guarded_bodies, '__code__', False, 6)
+
 
 def _load_memory(self):
     if (type(self) is not _memory_loader_type or _Unpickler is not _memory_loader_type
@@ -156,18 +160,18 @@ def _load_memory(self):
     self.append = self.stack.append
     self.proto = 0
     dispatch = self.dispatch
-    checked = set()
+    checked = [False] * 256
     try:
         while True:
             append = self.append
-            if (type(dispatch) is dict and self.read is read and self.readline is readline
+            if (_pickle_code_watch[0] and type(dispatch) is dict and self.read is read and self.readline is readline
                     and type(self.stack) is list and type(append) is _memory_append_type
                     and append.__self__ is self.stack and append.__name__ == 'append'
                     and io.BytesIO.read is _memory_stream_read
                     and io.BytesIO.readline is _memory_stream_line
                     and unpack is _memory_unpack and maxsize == _memory_maxsize
                     and int is _memory_integer and str is _memory_string
-                    and decode_long is _memory_long and decode_long.__code__ is _memory_long_body
+                    and decode_long is _memory_long
                     and sys.gettrace() is None):
                 stream = unframer.current_frame
                 if stream is None:
@@ -183,11 +187,11 @@ def _load_memory(self):
                                                    stream._closed, 3)
                         if records:
                             for code, argument, start, end in records:
-                                if code not in checked:
+                                if not checked[code]:
                                     handler, body = _scalar_handlers[code]
-                                    if dispatch.get(code) is not handler or not _memory_transfer(handler, body, '__code__', False, 5):
+                                    if dispatch.get(code) is not handler:
                                         break
-                                    checked.add(code)
+                                    checked[code] = True
                                 stream._pos = end
                                 if code == NEWTRUE[0]:
                                     argument = True
@@ -196,7 +200,7 @@ def _load_memory(self):
                                 append(argument)
                             else:
                                 continue
-            checked.clear()
+            checked = [False] * 256
             key = read(1)
             if not key:
                 raise EOFError

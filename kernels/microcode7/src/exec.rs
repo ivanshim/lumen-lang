@@ -541,6 +541,7 @@ pub struct Machine<'a> {
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
     async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>)>,
     delegated_answers: std::collections::HashSet<usize>,
+    code_observers: Vec<(Weak<RefCell<Value>>, bool)>,
     code_handles: HashMap<usize, Weak<Vec<Value>>>,
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
@@ -2055,7 +2056,7 @@ impl<'a> Machine<'a> {
             generator_frames: HashMap::new(),
             async_generators: HashMap::new(),
             delegated_answers: std::collections::HashSet::new(),
-            code_handles: HashMap::new(),
+            code_observers: Vec::new(), code_handles: HashMap::new(),
             holding_fault: Vec::new(),
             holding_below: 0,
             asking_presence: false,
@@ -14220,7 +14221,7 @@ impl<'a> Machine<'a> {
         let mut at = usize::try_from(index).map_err(|_| String::from("ValueError: negative memory stream position"))?;
         let source = cell.borrow();
         let mut batch = Vec::new();
-        for _ in 0..32 {
+        for _ in 0..256 {
             let begin = at;
             let Some(byte) = source.get(begin).copied() else { break };
             let format = match table.get(usize::from(byte)) { Some(Value::Small(n)) if (0..512).contains(n) => *n, _ => break };
@@ -14326,53 +14327,42 @@ impl<'a> Machine<'a> {
         })
     }
 
-    // Resolve the current token and reader before publishing one parsed record.
-    fn publish_octet_field(&mut self, values: &[Value]) -> Result<Value, String> {
-        if values.len() != 5 { return Err(String::from("TypeError: invalid memory field projection")); }
-        let (record, table, end_position) = match (&values[0], &values[2], &values[3]) {
-            (Value::Tuple(record), Value::Tuple(table), Value::Flag(end_position)) if record.len() == 4 && table.len() == 4 => (record, table, *end_position),
-            _ => return Err(String::from("TypeError: invalid memory field projection")),
-        };
-        let number = match record[0] { Value::Small(code) => usize::try_from(code).ok(), _ => None };
-        let Some(number) = number else { return Err(String::from("ValueError: invalid memory field code")); };
-        let (spelling, wanted, selector, saved_body) = match (&table[0], &table[1], &table[2], &table[3]) {
-            (Value::Tuple(keys), Value::Tuple(readers), Value::Tuple(selector), Value::Tuple(bodies)) if number < keys.len() && number < readers.len() && number < bodies.len() && selector.len() == 3 => (&keys[number], &readers[number], selector, &bodies[number]),
-            _ => return Err(String::from("TypeError: invalid memory field recipe")),
-        };
-        let Value::Text(outer_name) = &selector[0] else { return Err(String::from("TypeError: invalid memory field path")); };
-        let Value::Text(inner_name) = &selector[1] else { return Err(String::from("TypeError: invalid memory field path")); };
-        let Value::Text(code_name) = &selector[2] else { return Err(String::from("TypeError: invalid memory field path")); };
-        let opcode = self.mapping_lookup(&values[1], spelling, &Value::Nil)?;
-        if matches!(opcode, Value::Nil) { return Ok(Value::Nil); }
-        let field = self.member_text(opcode.clone(), outer_name)?;
-        match (matches!(wanted, Value::Nil), matches!(field, Value::Nil)) {
-            (true, true) => {},
-            (false, false) => {
-                let actual = self.member_text(field, inner_name)?;
-                let same = match (&actual, wanted) {
-                    (Value::Bound(a, room), Value::Bound(b, other_room)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(room, other_room),
-                    (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
-                    _ => actual.one_and_same(wanted),
-                };
-                if !same { return Ok(Value::Nil); }
-                if !self.octet_fingerprint_equal(&actual, &Value::Text(code_name.clone()), saved_body)? { return Ok(Value::Nil); }
+    pub(super) fn revised_code_seen(&mut self, code: bool) {
+        let mut kept = Vec::new();
+        for (observer, defaults) in self.code_observers.drain(..) {
+            if let Some(state) = observer.upgrade() {
+                if code || defaults { state.replace(Value::Vector(crate::tuples::Sequence::plain(vec![Value::Flag(false)]))); }
+                kept.push((observer, defaults));
             }
-            _ => return Ok(Value::Nil),
         }
-        let mut answer = vec![opcode, record[1].clone(), record[2].clone()];
-        if end_position { answer.push(record[3].clone()); }
-        Ok(Value::tuple(answer))
+        self.code_observers = kept;
+    }
+
+    fn observe_octet_readers(&mut self, input: &[Value]) -> Result<Value, String> {
+        if input.len() != 5 { return Err(String::from("TypeError: invalid memory code watch arguments")); }
+        let (functions, snapshots, defaults) = match (&input[0], &input[1], &input[3]) {
+            (Value::Tuple(functions), Value::Tuple(snapshots), Value::Flag(defaults)) => (functions, snapshots, *defaults),
+            _ => return Err(String::from("TypeError: invalid memory code watch arguments")),
+        };
+        if functions.len() != snapshots.len() { return Err(String::from("ValueError: code watch length mismatch")); }
+        let mut valid = true;
+        for position in 0..functions.len() {
+            valid &= self.octet_fingerprint_equal(&functions[position], &input[2], &snapshots[position])?;
+        }
+        let shared = Rc::new(RefCell::new(Value::Vector(crate::tuples::Sequence::plain(vec![Value::Flag(valid)]))));
+        self.code_observers.push((Rc::downgrade(&shared), defaults));
+        Ok(Value::Mutable(shared, true))
     }
 
     // Keep memory-stream transfers proportional to the bytes requested or supplied.
     fn memory_octets(&mut self, supplied: &[Value]) -> Result<Value, String> {
+        if supplied.last().is_some_and(|value| matches!(value, Value::Small(6))) { return self.observe_octet_readers(supplied); }
         if supplied.last().is_some_and(|value| matches!(value, Value::Small(5))) {
             if supplied.len() != 5 { return Err(String::from("TypeError: invalid memory fingerprint arguments")); }
             let Value::Flag(inverted) = supplied[3] else { return Err(String::from("TypeError: invalid memory fingerprint arguments")); };
             let equal = self.octet_fingerprint_equal(&supplied[0], &supplied[2], &supplied[1])?;
             return Ok(Value::Flag(equal ^ inverted));
         }
-        if supplied.last().is_some_and(|value| matches!(value, Value::Small(4))) { return self.publish_octet_field(supplied); }
         if supplied.last().is_some_and(|value| matches!(value, Value::Small(3))) { return self.gather_octet_fields(supplied); }
         if supplied.len() != 5 { return Err("TypeError: invalid memory stream arguments".to_owned()); }
         let (buffer, cursor, closed, action) = match (&supplied[0], &supplied[1], &supplied[3], &supplied[4]) {

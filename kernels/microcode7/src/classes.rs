@@ -5822,6 +5822,7 @@ impl<'a> Machine<'a> {
                 // through are read off it, never written over.
                 if self.table.strings("ext.system.module.builtins").iter().any(|word| word==key){return Err(self.detail("property.readonly").to_owned().into());}
                 if key==self.detail("code")||key==self.detail("defaults")||key==self.detail("keywords"){
+                    self.revised_code_seen(key == self.detail("code"));
                     self.write_routine_over(&subject,key,replacement)?;
                     return Ok(Value::Nil);
                 }

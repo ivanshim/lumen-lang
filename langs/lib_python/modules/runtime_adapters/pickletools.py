@@ -15,12 +15,13 @@ _line_readers = {read_decimalnl_short: 0, read_decimalnl_long: 1,
                  read_floatnl: 2, read_unicodestringnl: 3,
                  read_stringnl_noescape: 4, read_stringnl_noescape_pair: 5}
 
-_reader_bodies = {reader: reader.__code__ for reader in (*_fixed_readers, *_counted_readers, *_line_readers)}
-
 # Fall back at the opcode boundary so truncation and reader errors keep their wording.
 def _interpreted_genops(data, yield_end_pos=False, position=0):
     size = len(data)
     while position < size:
+        if not _native_code_watch[0]:
+            yield from _stream_from(data, position, yield_end_pos)
+            return
         start = position
         code = data[position]
         opcode = code2op.get(chr(code))
@@ -31,8 +32,6 @@ def _interpreted_genops(data, yield_end_pos=False, position=0):
         if opcode.arg is not None:
             reader = opcode.arg.reader
             if type(reader) is not type(_stream_genops):
-                break
-            if reader in _reader_bodies and reader.__code__ is not _reader_bodies[reader]:
                 break
             fixed = _fixed_readers.get(reader)
             counted = _counted_readers.get(reader)
@@ -137,6 +136,10 @@ _native_layouts = tuple(_field_layout(code2op.get(chr(code)))
 _native_expected = tuple(None if layout < 0 else _field_readers[layout & 255]
                          for layout in _native_layouts)
 _opcode_characters = tuple(chr(code) for code in range(256))
+_watched_readers = tuple(dict.fromkeys((*_fixed_readers, *_counted_readers, *_line_readers, decode_long)))
+_watched_bodies = tuple(reader.__code__ for reader in _watched_readers)
+_native_code_watch = _field_batch(_watched_readers, _watched_bodies, '__code__', False, 6)
+
 
 # Resume stream parsing at the same opcode boundary when callers replace the table.
 def _stream_from(data, position, yield_end_pos):
@@ -144,34 +147,38 @@ def _stream_from(data, position, yield_end_pos):
     stream.seek(position)
     return _stream_genops(stream, yield_end_pos)
 
-_native_bodies = tuple(None if reader is None else reader.__code__ for reader in _native_expected)
-_field_projection = (_opcode_characters, _native_expected, ('arg', 'reader', '__code__'), _native_bodies)
-
-# Validate and publish each record at its yield boundary, allowing intervening edits.
+# Validate each descriptor at its yield boundary, allowing changes between yields.
 def _buffer_genops(data, yield_end_pos=False):
-    if type(yield_end_pos) is not bool:
-        yield from _interpreted_genops(data, yield_end_pos)
-        return
     position = 0
     while True:
-        if code2op is not _native_mapping:
+        if not _native_code_watch[0] or code2op is not _native_mapping:
             yield from _stream_from(data, position, yield_end_pos)
             return
         records = _field_batch(data, position, _native_layouts, False, 3)
         if not records:
             break
-        for record in records:
-            if code2op is not _native_mapping:
+        for code, argument, start, end in records:
+            if not _native_code_watch[0] or code2op is not _native_mapping:
                 yield from _stream_from(data, position, yield_end_pos)
                 return
-            projected = _field_batch(record, code2op, _field_projection, yield_end_pos, 4)
-            if projected is None:
-                yield from _stream_from(data, position, yield_end_pos)
+            opcode = code2op.get(_opcode_characters[code])
+            if opcode is None:
+                unchanged = False
+            else:
+                descriptor = opcode.arg
+                expected = _native_expected[code]
+                unchanged = (descriptor is None if expected is None else
+                             descriptor is not None and descriptor.reader is expected)
+            if not unchanged:
+                yield from _interpreted_genops(data, yield_end_pos, position)
                 return
-            position = record[3]
-            yield projected
-            if record[0] == 46:
-                assert projected[0].name == 'STOP'
+            position = end
+            if yield_end_pos:
+                yield opcode, argument, start, end
+            else:
+                yield opcode, argument, start
+            if code == 46:
+                assert opcode.name == 'STOP'
                 return
     yield from _interpreted_genops(data, yield_end_pos, position)
 
@@ -184,7 +191,7 @@ _buffer_starts = frozenset(ord(code) for code, opcode in code2op.items()
 
 # Select a lazy parser without observing mutable descriptors during generator creation.
 def _genops(data, yield_end_pos=False):
-    if code2op is not _native_mapping:
+    if not _native_code_watch[0] or code2op is not _native_mapping:
         return _stream_genops(data, yield_end_pos)
     if type(data) is bytes and data and data[0] in _buffer_starts:
         return _buffer_genops(data, yield_end_pos)
@@ -203,33 +210,35 @@ _native_names = tuple(None if op is None else op.name for op in _native_opcodes)
 _native_protocols = tuple(None if op is None else op.proto for op in _native_opcodes)
 
 def _optimization_plan(data):
+    if not _native_code_watch[0]:
+        return None
     assigned = set()
     referenced = {}
     operations = []
     protocol = 0
     header = b''
     position = 0
-    checked = set()
+    checked = [False] * 256
     while True:
         records = _field_batch(data, position, _native_layouts, False, 3)
         if not records:
             return None
         for code, argument, start, end in records:
-            if code not in checked:
+            if not checked[code]:
                 opcode = code2op.get(_opcode_characters[code])
                 if opcode is not _native_opcodes[code]:
                     return None
                 descriptor = opcode.arg
-                name = opcode.name
-                version = opcode.proto
+                name, version = opcode.name, opcode.proto
                 if (type(name) is not str or type(version) is not int
                         or descriptor is not _native_descriptors[code]
                         or descriptor is not None and descriptor.reader is not _native_expected[code]
                         or name != _native_names[code]
-                        or version != _native_protocols[code]
-                        or descriptor is not None and not _field_batch(descriptor.reader, _native_bodies[code], '__code__', False, 5)):
+                        or version != _native_protocols[code]):
                     return None
-                checked.add(code)
+                if not _native_code_watch[0]:
+                    return None
+                checked[code] = True
             position = end
             if code in (112, 113, 114, 148):
                 if code == 148:
