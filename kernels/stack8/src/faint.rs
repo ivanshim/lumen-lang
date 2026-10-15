@@ -338,7 +338,7 @@ pub fn departing(dying: &mut Instance) {
     let here = dying as *const Instance as usize;
     // Once the thread's own storage is gone, at the very end, nothing
     // is queued: there is no engine left to speak.
-    let spoken = SPOKEN.try_with(|s| s.borrow_mut().remove(&here)).unwrap_or(true);
+    let spoken = SPOKEN.try_with(|s| { let mut said = s.borrow_mut(); !said.is_empty() && said.remove(&here) }).unwrap_or(true);
     if !spoken {
         if let Some(words) = last_word_of(&dying.class) {
             let fields = std::mem::take(dying.fields.get_mut());

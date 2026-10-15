@@ -87,8 +87,8 @@ pub struct Registry {
     /// the next reading: the caller's own module's names standing for
     /// its slots, as the reference's eval reads the caller's globals.
     pub pending_globals: Vec<(String, String)>,
-    pub program_bound: std::collections::HashSet<String>,
-    builtin_exports: HashSet<String>,
+    pub program_bound: std::collections::HashSet<String, crate::value::FxBuildHasher>,
+    builtin_exports: HashSet<String, crate::value::FxBuildHasher>,
     /// The names a write has actually bound at the outermost scope,
     /// whether by a plain assignment standing outside every function
     /// and block or by a `global`/`static` declaration reaching back
@@ -96,7 +96,7 @@ pub struct Registry {
     /// as its own, so a name a function merely keeps for itself, which
     /// took a slot here too since every name does, is not mistaken for
     /// one the module carries.
-    pub globals: std::collections::HashSet<String>,
+    pub globals: std::collections::HashSet<String, crate::value::FxBuildHasher>,
     /// The line the reading had reached when it stopped, for a language
     /// that tells such a stopping in its own words to name.
     pub stopped_at: usize,

@@ -3,7 +3,19 @@
 use super::*;
 
 impl<'a> Engine<'a> {
-    pub(super) fn class_word(&self, part: &str) -> &str {
+    /// The language's word for a part of a class. Asked about a literal, so
+    /// the answer is kept by where the literal stands rather than found anew.
+    pub(super) fn class_word(&self, part: &'static str) -> &'a str {
+        let place = part.as_ptr() as usize;
+        let cell = &self.word_memo[((place >> 3) ^ part.len()) & 511];
+        if let Some((seen, length, word)) = cell.get() {
+            if seen == place && length == part.len() { return word; }
+        }
+        let word = self.class_word_found(part);
+        cell.set(Some((place, part.len(), word)));
+        word
+    }
+    fn class_word_found(&self, part: &str) -> &'a str {
         match part {
             "name" => self.member_words[0],
             "qualified" => self.member_words[1],
@@ -1760,7 +1772,7 @@ impl<'a> Engine<'a> {
     }
     /// The hook a class member answers the protocol with, where the
     /// member is a thing whose class furnishes one.
-    fn descriptor_hook(&self, member: &Value, part: &str) -> Option<Value> {
+    fn descriptor_hook(&self, member: &Value, part: &'static str) -> Option<Value> {
         let word = self.class_word(part);
         if word.is_empty() { return None; }
         let Value::Object(o) = member else { return None };
@@ -5761,7 +5773,7 @@ impl<'a> Engine<'a> {
     /// CPython's words, as is code closing over another count of cells.
     fn routine_rewritten(&self, f: &Rc<Routine>, name: &str, value: Option<Value>) -> Flow<Routine> {
         let now = Self::routine_now(f);
-        let refused = |part: &str| -> Fault { self.class_word(part).to_string().into() };
+        let refused = |part: &'static str| -> Fault { self.class_word(part).to_string().into() };
         if name == self.class_word("code") {
             let Some(Value::Adapter(code)) = value.as_ref().map(Value::contents) else { return Err(refused("code.amiss")) };
             let (7, Some(Value::Routine(source))) = (code.0, code.1.first()) else { return Err(refused("code.amiss")) };

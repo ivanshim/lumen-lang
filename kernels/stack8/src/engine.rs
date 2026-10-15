@@ -167,6 +167,8 @@ pub struct Engine<'a> {
     collecting_cycles: bool,
     kind_names: RefCell<HashMap<String, Vec<String>>>,
     member_words: [&'a str; 22],
+    /// Words of the language's classes already found, by where each asking literal stands.
+    word_memo: Vec<std::cell::Cell<Option<(usize, usize, &'a str)>>>,
     opened_descriptors: HashMap<i32, std::fs::File>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
@@ -219,7 +221,9 @@ pub struct Engine<'a> {
     module_locations: RefCell<Option<(HashMap<std::path::PathBuf, String>, std::collections::HashSet<std::path::PathBuf>)>>,
     pub module_aliases: HashMap<String, String>,
     embedded_names: std::collections::HashSet<String>,
-    modules: HashMap<String, Value>,
+    modules: HashMap<String, Value, crate::value::FxBuildHasher>,
+    /// Where the recursion limit last stood among the fields of its module.
+    ceiling_hint: std::cell::Cell<usize>,
     /// Each module's own dictionary, made the first time globals() asks
     /// for it and handed back every time after: one map, so that a name
     /// written through it is a name written in the module.
@@ -1620,6 +1624,7 @@ impl<'a> Engine<'a> {
             native_exceptions,
             contexts: crate::context::ContextStore::default(),
             warning_revision: 0, warning_lock_depth: 0, warning_module: None, warning_bound: None, finder_active: std::collections::HashSet::new(), has_nonstring_class_keys: false,
+            word_memo: vec![std::cell::Cell::new(None); 512],
             member_words: [
                 lang.class_details.get("name").and_then(|list| list.first()).map_or("", String::as_str),
                 lang.class_details.get("qualified").and_then(|list| list.first()).map_or("", String::as_str),
@@ -1743,7 +1748,8 @@ impl<'a> Engine<'a> {
             module_locations: RefCell::new(None),
             module_aliases: HashMap::new(),
             embedded_names: std::collections::HashSet::new(),
-            modules: HashMap::new(),
+            modules: HashMap::default(),
+            ceiling_hint: std::cell::Cell::new(0),
             module_globals: HashMap::new(),
             globals_by_cell: HashMap::new(),
             native_slots: lang.class_special.iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
@@ -4113,7 +4119,11 @@ impl<'a> Engine<'a> {
         let [module, binding] = self.lang.recursion_variable.as_slice() else { return fallback };
         let Some(Value::Object(space)) = self.modules.get(module) else { return fallback };
         let fields = space.fields.borrow();
-        fields.iter().find(|(key, _)| key == binding).and_then(|(_, value)| match value.contents() {
+        let found = match fields.get(self.ceiling_hint.get()) {
+            Some((key, value)) if key == binding => Some(value),
+            _ => fields.iter().position(|(key, _)| key == binding).map(|at| { self.ceiling_hint.set(at); &fields[at].1 }),
+        };
+        found.and_then(|value| match value.contents() {
             Value::Small(number) => usize::try_from(number).ok(),
             _ => None,
         }).or(fallback).map(|requested| {
