@@ -830,7 +830,12 @@ class TextIOWrapper(_TextIOBase):
         if (hint <= 0 and self._initialized and (self._readtranslate or self._readnl == '\n')
                 and type(self).readline is TextIOWrapper.readline
                 and type(self).__next__ is TextIOWrapper.__next__
-                and type(self).read is TextIOWrapper.read):
+                and type(self).read is TextIOWrapper.read
+                and type(self).__iter__ is TextIOWrapper.__iter__
+                # Iteration that has switched telling off ends by switching it
+                # on again; a stream that was replaced piecemeal is iterated.
+                and self._telling is not False
+                and not ('readline' in vars(self) or '__next__' in vars(self) or 'read' in vars(self) or '__iter__' in vars(self))):
             self._checkClosed()
             text = self.read()
             if not text:
