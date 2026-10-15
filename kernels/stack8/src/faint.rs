@@ -201,9 +201,6 @@ thread_local! {
     /// only the references that existed before finalization began.
     /// A finalizable instance stays itself while its last words run.
     static ANCHORED: RefCell<Vec<Rc<Instance>>> = const { RefCell::new(Vec::new()) };
-    /// Where the next step's look at the anchored objects begins, once
-    /// there are more of them than one step looks at.
-    static ANCHOR_LOOK: Cell<usize> = const { Cell::new(0) };
     /// Everything whose going somebody could notice: the weakly held
     /// values and the objects with last words. Only rounds that hold one
     /// of these are worth looking for.
@@ -282,27 +279,8 @@ pub fn release_all_anchors() {
     let _ = PENDING.try_with(|flags| flags.set(flags.get() & 1));
 }
 
-/// How many anchored objects one step looks at. Fewer than this and
-/// every step sees them all, as it always did. More, and every step
-/// still sees the newest of them, since an object let go soon after it
-/// was made is the common case and is then found at once, and takes
-/// the next stretch of the older ones in turn, so that a step costs
-/// the same however many objects wait on their last words and each of
-/// them is seen again within a bounded number of steps.
-const ANCHOR_LOOK_AT: usize = 32;
-
 fn anchor_ready() -> bool {
-    let ready = |item: &Rc<Instance>| Rc::strong_count(item) == 1;
-    ANCHORED.try_with(|all| {
-        let all = all.borrow();
-        if all.len() <= ANCHOR_LOOK_AT { return all.iter().any(ready); }
-        let (older, newest) = all.split_at(all.len() - ANCHOR_LOOK_AT);
-        if newest.iter().any(ready) { return true; }
-        let from = ANCHOR_LOOK.try_with(|at| at.get()).unwrap_or(0) % older.len();
-        let stop = (from + ANCHOR_LOOK_AT).min(older.len());
-        let _ = ANCHOR_LOOK.try_with(|at| at.set(if stop == older.len() { 0 } else { stop }));
-        older[from..stop].iter().any(ready)
-    }).unwrap_or(false)
+    ANCHORED.try_with(|all| all.borrow().iter().any(|item| Rc::strong_count(item) == 1)).unwrap_or(false)
 }
 
 /// Tell the module the name a class gives its last words. Until this
