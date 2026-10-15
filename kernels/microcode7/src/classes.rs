@@ -5704,8 +5704,12 @@ impl<'a> Machine<'a> {
             }
         }
         // A native kind's word read as a class: its maker, and its name.
-        if matches!(value.settled(), Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Frac(_) | Value::Complex(_))
-            && ["numerator", "denominator", "real", "imag"].contains(&key) {
+        let numeric_field = match value.settled() {
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) => ["numerator", "denominator", "real", "imag"].contains(&key),
+            Value::Frac(_) | Value::Complex(_) => ["real", "imag"].contains(&key),
+            _ => false,
+        };
+        if numeric_field {
             return self.method_of_value(value, key);
         }
         if matches!(value.settled(), Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Frac(_) | Value::Complex(_) | Value::Octets { .. }) {
