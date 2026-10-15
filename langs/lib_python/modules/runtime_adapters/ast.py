@@ -711,9 +711,30 @@ class _Parser(_FunctionStatementParser):
         return _FunctionStatementParser.parse_stmt(self)
 
 _BitwiseParser = _Parser
+_BitwiseTiers = (('|',), ('^',), ('&',), ('<<', '>>'))
+_BitwiseSigns = ('|', '^', '&', '<<', '>>')
+
 class _Parser(_BitwiseParser):
     def parse_arith(self):
-        return self.bitwise_expression(0)
+        # What follows the plain arithmetic is nearly always no bitwise
+        # sign, which no tier then takes; the tiers are walked, loosest
+        # last, only when one stands there.
+        node, start, end = _ExpressionParser.parse_arith(self)
+        token = self.toks[self.at]
+        if token.kind != 'op' or token.text not in _BitwiseSigns:
+            return node, start, end
+        for level in (3, 2, 1, 0):
+            tier = _BitwiseTiers[level]
+            while True:
+                token = self.toks[self.at]
+                if token.kind != 'op' or token.text not in tier:
+                    break
+                sign = self.pop().text
+                right, part_start, end = self.bitwise_expression(level + 1)
+                node = BinOp(left=node, op=_BINOPS[sign](), right=right,
+                             lineno=start[0], col_offset=start[1],
+                             end_lineno=end[0], end_col_offset=end[1])
+        return node, start, end
 
     def bitwise_expression(self, level):
         tiers = (('|',), ('^',), ('&',), ('<<', '>>'))
@@ -903,3 +924,38 @@ class _Parser(_ExceptionStatementParser):
         return self.positioned(TryStar if grouped else Try, (opening.srow, opening.scol),
                                (last.end_lineno, last.end_col_offset), body=body,
                                handlers=handlers, orelse=otherwise, finalbody=finalbody)
+
+# The same short text is parsed again and again (a traceback shows one source
+# line for every frame of a recursion, twice over): the tree of each recent text
+# is kept, and every caller is handed a fresh copy, so no caller sees another's
+# changes. Faults are not kept, and long texts are parsed afresh.
+_ParseUncached = parse
+_TreeCache = {}
+
+def _copy_tree(node):
+    copy = node.__class__.__new__(node.__class__)
+    held = dict(node.__dict__)
+    for name in node._fields:
+        value = held.get(name)
+        if isinstance(value, AST):
+            held[name] = _copy_tree(value)
+        elif type(value) is list:
+            held[name] = [_copy_tree(item) if isinstance(item, AST) else item for item in value]
+    copy.__dict__.update(held)
+    return copy
+
+def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
+          feature_version=None, optimize=-1, fold_debug=False):
+    if type(source) is not str or len(source) > 1024:
+        return _ParseUncached(source, filename, mode, type_comments=type_comments,
+                              feature_version=feature_version, optimize=optimize, fold_debug=fold_debug)
+    key = (source, mode, type_comments, feature_version, optimize, fold_debug)
+    kept = _TreeCache.get(key)
+    if kept is None:
+        tree = _ParseUncached(source, filename, mode, type_comments=type_comments,
+                              feature_version=feature_version, optimize=optimize, fold_debug=fold_debug)
+        if len(_TreeCache) >= 64:
+            _TreeCache.clear()
+        _TreeCache[key] = _copy_tree(tree)
+        return tree
+    return _copy_tree(kept)

@@ -1114,11 +1114,11 @@ class _Parser:
         return tok
 
     def at_op(self, text):
-        tok = self.peek()
+        tok = self.toks[self.at]
         return tok.kind == 'op' and tok.text == text
 
     def at_name(self, word):
-        tok = self.peek()
+        tok = self.toks[self.at]
         return tok.kind == 'name' and tok.text == word
 
     def expect_op(self, text):
