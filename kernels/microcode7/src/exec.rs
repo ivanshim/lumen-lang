@@ -844,6 +844,7 @@ pub struct Machine<'a> {
     written_out: std::cell::Cell<bool>,
     unheard: RefCell<Vec<(String, String, u32)>>,
     any_unheard: std::cell::Cell<bool>,
+    ghost_tap: crate::ghost::Tap,
     /// Whether writing into a place makes what is needed to hold it: an
     /// array where a name holds nothing, and one at each place along the
     /// way that is not there yet.
@@ -2220,6 +2221,7 @@ impl<'a> Machine<'a> {
             written_out: std::cell::Cell::new(false),
             unheard: RefCell::new(Vec::new()),
             any_unheard: std::cell::Cell::new(false),
+            ghost_tap: crate::ghost::tap(),
             builds_places: table.flag("ext.op.index.makes"),
             signal_takers: Vec::new(), timer: None,
             watches_signals: table.has_any("ext.builtin.signal"),
@@ -6520,7 +6522,7 @@ impl<'a> Machine<'a> {
         if self.any_unheard.get() {
             self.hand_over_unheard()?;
         }
-        if crate::ghost::stirred() {
+        if crate::ghost::stirred(&self.ghost_tap) {
             self.attend_to_gone();
         }
         match node {

@@ -131,7 +131,7 @@ thread_local! {
     // need polling. Class and instance listeners are notified on departure.
     // Every reason to look at the weak holds at a step, in one cell:
     // a step asks once and stands down where none is set.
-    static GHOST_STATE: Cell<u8> = const { Cell::new(0) };
+    static GHOST_STATE: Rc<Cell<u8>> = Rc::new(Cell::new(0));
     static LOST: Cell<bool> = const { Cell::new(false) };
     static FAREWELLS: RefCell<Vec<(Rc<Thing>, Value)>> = const { RefCell::new(Vec::new()) };
     static HALF_WALKS: RefCell<Vec<Rc<RefCell<Suspension>>>> = const { RefCell::new(Vec::new()) };
@@ -139,7 +139,7 @@ thread_local! {
     static REFERENCES: RefCell<Vec<Weak<Dim>>> = const { RefCell::new(Vec::new()) };
     static REFERENCES_NEXT_SWEEP: Cell<usize> = const { Cell::new(64) };
     static REFERENCES_BY_TARGET: RefCell<(HashMap<ReferenceAddress, Vec<Weak<Dim>>>, usize)> = RefCell::new((HashMap::new(), 64));
-    static ANCHORED: RefCell<Vec<Rc<Thing>>> = const { RefCell::new(Vec::new()) };
+    static ANCHORED: Rc<RefCell<Vec<Rc<Thing>>>> = Rc::new(RefCell::new(Vec::new()));
     // The addresses of the things a listener is on. A thing leaving
     // sets the lost flag only where its address is one of these.
     static WATCHED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
@@ -235,18 +235,16 @@ pub fn release_all_anchors() {
     ghost_drop(G_ANCHOR);
 }
 
-fn anchor_ready() -> bool {
-    ANCHORED.try_with(|all| {
-        let all = all.borrow();
-        // Avoid an iterator callback per retained owner at every interpreter step.
-        let mut pending = all.as_slice();
-        while let [a, b, c, d, rest @ ..] = pending {
-            if Rc::strong_count(a) == 1 || Rc::strong_count(b) == 1
-                || Rc::strong_count(c) == 1 || Rc::strong_count(d) == 1 { return true; }
-            pending = rest;
-        }
-        pending.iter().any(|item| Rc::strong_count(item) == 1)
-    }).unwrap_or(false)
+fn anchor_ready(anchored: &RefCell<Vec<Rc<Thing>>>) -> bool {
+    let all = anchored.borrow();
+    // Avoid an iterator callback per retained owner at every interpreter step.
+    let mut pending = all.as_slice();
+    while let [a, b, c, d, rest @ ..] = pending {
+        if Rc::strong_count(a) == 1 || Rc::strong_count(b) == 1
+            || Rc::strong_count(c) == 1 || Rc::strong_count(d) == 1 { return true; }
+        pending = rest;
+    }
+    pending.iter().any(|item| Rc::strong_count(item) == 1)
 }
 
 /// The method a class bids farewell with, where the language has one.
@@ -260,11 +258,30 @@ pub fn bidding() -> bool {
     FAREWELL_NAME.try_with(|n| n.borrow().is_some()).unwrap_or(false)
 }
 
+/// The cells a step reads to learn whether anything is stirring, kept by
+/// the machine so that a step does not go through the thread's table of
+/// statics each time. They are the very cells the rest of this file sets.
+pub struct Tap {
+    state: Rc<Cell<u8>>,
+    anchored: Rc<RefCell<Vec<Rc<Thing>>>>,
+}
+
+pub fn tap() -> Tap {
+    Tap {
+        state: GHOST_STATE.with(|cell| cell.clone()),
+        anchored: ANCHORED.with(|cell| cell.clone()),
+    }
+}
+
 /// Whether the machine has anything to attend to before its next step.
 #[inline(always)]
-pub fn stirred() -> bool {
-    let flags = GHOST_STATE.try_with(|s| s.get()).unwrap_or(0);
+pub fn stirred(tap: &Tap) -> bool {
+    let flags = tap.state.get();
     if flags == 0 { return false; }
+    stirred_by(flags, tap)
+}
+
+fn stirred_by(flags: u8, tap: &Tap) -> bool {
     if flags & G_POLL != 0 {
         let gone_method = LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_)) && listener.departed()))).unwrap_or(false);
         if gone_method {
@@ -278,7 +295,7 @@ pub fn stirred() -> bool {
         }
     }
     if flags & G_STIRRED != 0 { return true; }
-    if flags & G_ANCHOR != 0 { return anchor_ready(); }
+    if flags & G_ANCHOR != 0 { return anchor_ready(&tap.anchored); }
     false
 }
 
