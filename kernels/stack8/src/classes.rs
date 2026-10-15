@@ -7865,6 +7865,9 @@ impl<'a> Engine<'a> {
                 names.extend(self.lang.constructor.iter().cloned());
                 names.extend(self.lang.class_details.get("root.members").into_iter().flatten().cloned());
                 names.extend(self.lang.class_special.get(72).cloned());
+                let kind = sample.core_kind();
+                let item = self.class_word("getitem");
+                if !item.is_empty() && self.kind_owns_protocol(&kind, item) { names.push(item.to_string()); }
                 names.sort(); names.dedup();
             }
             return Value::array(names.iter().map(|n|Value::text(n)).collect());

@@ -28392,6 +28392,9 @@ impl Engine<'_> {
                 }
             }
         }
+        // The reference's builtins dictionary names its own module, which
+        // a class made in a namespace without `__name__` falls back to.
+        pairs.push((Value::text("__name__"), Value::text(self.lang.names_module.first().map_or("builtins", String::as_str))));
         pairs.sort_by(|(a, _), (b, _)| a.plain().cmp(&b.plain()));
         let book = Rc::new(RefCell::new(Value::Map(Rc::new(pairs.into()))));
         self.natives = Some(book.clone());

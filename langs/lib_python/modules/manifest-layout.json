@@ -59,7 +59,8 @@
     "test.support.script_helper": "runtime_adapters/native_test_support_script_helper.py",
     "threading": "runtime_adapters/native_threading.py",
     "unittest.mock": "runtime_adapters/native_unittest_mock.py",
-    "tracemalloc": "runtime_adapters/native_tracemalloc.py"
+    "tracemalloc": "runtime_adapters/native_tracemalloc.py",
+    "doctest": "runtime_adapters/native_doctest.py"
   },
   "names": {
     "runtime_sources/unittest_case.py": "unittest.case",

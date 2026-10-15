@@ -29069,6 +29069,9 @@ impl<'a> Machine<'a> {
                 }
             }
         }
+        // The reference's builtins dictionary names its own module, which
+        // a class made in a namespace without `__name__` falls back to.
+        entries.push((Value::text("__name__"), Value::text(self.builtin_module())));
         entries.sort_by(|(a, _), (b, _)| a.bare().cmp(&b.bare()));
         let book = Rc::new(RefCell::new(Value::Dict(Rc::new(entries.into()))));
         self.natives_book = Some(book.clone());

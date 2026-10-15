@@ -154,7 +154,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("decimal", include_str!("decimal.py"), "decimal.py"),
     ("difflib", include_str!("difflib.py"), "difflib.py"),
     ("dis", include_str!("dis.py"), "dis.py"),
-    ("doctest", include_str!("doctest.py"), "doctest.py"),
+    ("doctest", include_str!("runtime_adapters/native_doctest.py"), "doctest.py"),
     ("email", include_str!("email/__init__.py"), "email/__init__.py"),
     ("email._encoded_words", include_str!("email/_encoded_words.py"), "email/_encoded_words.py"),
     ("email._header_value_parser", include_str!("email/_header_value_parser.py"), "email/_header_value_parser.py"),

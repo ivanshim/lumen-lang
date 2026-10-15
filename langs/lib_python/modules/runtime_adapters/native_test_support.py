@@ -984,6 +984,14 @@ def run_code(code: str, extra_names: dict[str, object] | None = None) -> dict[st
     return ns
 
 
+def sortdict(dict):
+    "Like repr(dict), but in sorted order."
+    items = sorted(dict.items())
+    reprpairs = ["%r: %r" % pair for pair in items]
+    withcommas = ", ".join(reprpairs)
+    return "{%s}" % withcommas
+
+
 def captured_stdin():
     """Capture the input to sys.stdin:
 

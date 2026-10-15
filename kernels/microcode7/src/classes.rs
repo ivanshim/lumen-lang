@@ -318,6 +318,9 @@ impl<'a> Machine<'a> {
                 named.extend(self.rules.words_ext_stmt_class_constructor.iter().cloned());
                 named.extend(self.rules.words_ext_stmt_class_detail_root_members.iter().cloned());
                 named.extend(self.rules.specials.get(72).cloned());
+                let kind = sample.settled().kind_word();
+                let hook = self.detail("getitem");
+                if !hook.is_empty() && self.native_declares_protocol(&kind, hook) { named.push(hook.to_owned()); }
                 named.sort_unstable(); named.dedup();
             }
             return Value::Vector(crate::tuples::Sequence::plain(named.iter().map(|word|Value::text(word)).collect()));
