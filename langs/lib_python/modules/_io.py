@@ -298,12 +298,15 @@ class BytesIO(_BufferedIOBase):
             size = _size(size)
         if self._closed:
             raise ValueError('I/O operation on closed file')
-        end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
-        if end <= self._pos:
+        data = self._data
+        start = self._pos
+        end = len(data)
+        if 0 <= size < end - start:
+            end = start + size
+        if end <= start:
             return b''
-        result = bytes(self._data[self._pos:end])
         self._pos = end
-        return result
+        return bytes(data[start:end])
     read1 = read
     def readinto(self, buffer):
         if type(buffer) is bytearray:
