@@ -3237,8 +3237,7 @@ impl<'a> Engine<'a> {
                 // rather than a clone of everything held paid for a
                 // read about to be overwritten anyway.
                 let value = if slot.moving { std::mem::replace(&mut *shared.borrow_mut(), Value::Gap) } else { shared.borrow().clone() };
-                if slot.free && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0')
-                    && self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_none()) {
+                if slot.free && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0') {
                     if let Some((names, all)) = self.annotation_scope() {
                         if all || matches!(value, Value::Blank) {
                             let reference = self.unresolved_annotation_name(&names, &slot.ident)?;
@@ -3899,6 +3898,10 @@ impl<'a> Engine<'a> {
     /// The name the outermost names go by, where the language gives
     /// them one: the module a routine written there belongs to.
     pub(super) fn parameter_module(&self) -> Value {
+        if let Some(globals) = self.running_routine.as_ref().and_then(|routine| routine.globe.as_ref()) {
+            let namespace = Rc::new(RefCell::new(globals.contents()));
+            if let Some(name) = book_entry(&namespace, "__name__") { return name.contents(); }
+        }
         if let Some(reading) = self.reading_in.and_then(|at| self.text_books.get(at)) {
             return book_entry(reading.outer.as_ref().unwrap_or(&reading.near), "__name__").unwrap_or(Value::Null);
         }
@@ -27643,6 +27646,8 @@ fn book_entry(book: &Rc<RefCell<Value>>, name: &str) -> Option<Value> {
 /// Read the current entry using a stable compiled name where one is known.
 fn compiled_book_entry(book: &Rc<RefCell<Value>>, name: &str, binding: Option<usize>) -> Option<Value> {
     match &*book.borrow() {
+        Value::Fields(module) => module.fields.borrow().iter()
+            .find(|(key, _)| key == name).map(|(_, value)| value.clone()),
         Value::Map(pairs) => {
             let lookup = binding.map_or_else(|| pairs.named_row(name), |far| pairs.compiled_row(name, far));
             let at = lookup.unwrap_or_else(|()| pairs.iter().position(|(key, _)| key_spells(key, name)));

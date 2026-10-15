@@ -4124,8 +4124,7 @@ impl<'a> Machine<'a> {
             let routine = self.frames_named.last().map_or("<unknown>", |body| body.ident.as_str());
             return Err(format!("RuntimeError: closure binding '{}' is unavailable in {routine}", slot.ident));
         };
-        if slot.up > 0 && !Rc::ptr_eq(&f, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0')
-            && self.frames_named.last().is_some_and(|routine| routine.globe.is_none()) {
+        if slot.up > 0 && !Rc::ptr_eq(&f, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0') {
             if let Some((names, all)) = self.annotation_scope(frame) {
                 let content = v.settled();
                 if all || matches!(content, Value::Unset) {
@@ -13166,6 +13165,11 @@ impl<'a> Machine<'a> {
     /// The name the outermost names go by, where the language gives
     /// them one: the namespace a routine written there belongs to.
     pub(super) fn type_parameter_home(&self) -> Value {
+        let lexical = self.frames_named.last().and_then(|body| body.globe.as_ref());
+        if let Some(globals) = lexical {
+            let book = Rc::new(RefCell::new(globals.settled()));
+            if let Some(origin) = looked_up(&book, "__name__") { return origin.settled(); }
+        }
         let namespace = self.reading_now.and_then(|index| self.readings.get(index));
         match namespace {
             Some(names) => looked_up(names.outer.as_ref().unwrap_or(&names.near), "__name__").unwrap_or(Value::Nil),
