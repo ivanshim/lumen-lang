@@ -11996,9 +11996,9 @@ impl<'a> Engine<'a> {
                     let class = self.drop_top()?.contents();
                     Some(self.class_get(class, name, false)?)
                 },
-                Action::Grab(name) if self.data.last().is_some_and(|value| self.module_holding(value).is_some())
-                    && (self.lang.class_annotations.first().is_some_and(|word| word == name.as_ref())
-                        || self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).is_some_and(|word| word == name.as_ref())) => {
+                Action::Grab(name) if (self.lang.class_annotations.first().is_some_and(|word| word == name.as_ref())
+                        || self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).is_some_and(|word| word == name.as_ref()))
+                    && self.data.last().is_some_and(|value| self.module_holding(value).is_some()) => {
                     let module = self.drop_top()?;
                     Some(self.class_get(module, name, false)?)
                 },
@@ -20411,6 +20411,51 @@ impl<'a> Engine<'a> {
         self.byte_transcode(false, &row, args, true)
     }
 
+    /// Decode complete scalar values in a UTF-16/32 chunk; defer malformed
+    /// input to the codec adapter so its error policy and spans stay intact.
+    fn wide_chunk(row: &[u8], name: &str, final_chunk: bool, offset: usize) -> Option<(String, usize)> {
+        let width = match name {
+            "utf_16" | "utf_16_le" | "utf_16_be" => 2,
+            "utf_32" | "utf_32_le" | "utf_32_be" => 4,
+            _ => return None,
+        };
+        if offset > row.len() { return None; }
+        let mut little = !name.ends_with("_be");
+        let mut at = offset;
+        if name == "utf_16" || name == "utf_32" {
+            let le: &[u8] = if width == 2 { &[255, 254] } else { &[255, 254, 0, 0] };
+            let be: &[u8] = if width == 2 { &[254, 255] } else { &[0, 0, 254, 255] };
+            if row.starts_with(le) { at = width; }
+            else if row.starts_with(be) { little = false; at = width; }
+        }
+        let unit = |at: usize| -> u32 {
+            if width == 2 {
+                let pair = [row[at], row[at + 1]];
+                if little { u16::from_le_bytes(pair) as u32 } else { u16::from_be_bytes(pair) as u32 }
+            } else {
+                let bytes = [row[at], row[at + 1], row[at + 2], row[at + 3]];
+                if little { u32::from_le_bytes(bytes) } else { u32::from_be_bytes(bytes) }
+            }
+        };
+        let mut output = String::new();
+        while at + width <= row.len() {
+            let mut code = unit(at);
+            let mut next = at + width;
+            if width == 2 && (0xd800..=0xdbff).contains(&code) {
+                if next + width > row.len() {
+                    return if final_chunk { None } else { Some((output, at)) };
+                }
+                let low = unit(next);
+                if !(0xdc00..=0xdfff).contains(&low) { return None; }
+                code = 0x10000 + ((code - 0xd800) << 10) + low - 0xdc00;
+                next += width;
+            }
+            output.push(char::from_u32(code)?);
+            at = next;
+        }
+        if final_chunk && at != row.len() { None } else { Some((output, at)) }
+    }
+
     fn codec_library(&mut self, member: &str, args: Vec<Value>) -> Res<Value> {
         let module = self.route_module("_codec_runtime")?;
         let routine = self.member_of(module, member)?.ok_or_else(|| self.byte_fault("unready"))?;
@@ -21506,6 +21551,31 @@ impl<'a> Engine<'a> {
             Builtin::Bytes(task @ (2 | 3)) if name == "__codec_encode" || name == "__codec_decode" => {
                 if args.is_empty() { return Err(self.byte_fault("arguments")); }
                 let data = if task == 3 { self.byte_row(&args[0], false)? } else { Vec::new() };
+                // The extended codec interface also returns BOM-selected byte order.
+                if task == 3 && args.len() == 6 {
+                    let (Value::Text(codec), Value::Text(_), Value::Flag(last), Value::Small(0), Value::Small(order)) =
+                        (&args[1], &args[2], &args[3], &args[4], &args[5]) else { return Ok(Value::Null); };
+                    let (le, be, little_name, big_name): (&[u8], &[u8], &str, &str) = match codec.as_ref() {
+                        "utf_16" => (&[255, 254], &[254, 255], "utf_16_le", "utf_16_be"),
+                        "utf_32" => (&[255, 254, 0, 0], &[0, 0, 254, 255], "utf_32_le", "utf_32_be"),
+                        _ => return Ok(Value::Null),
+                    };
+                    let (selected, start) = if *order == 0 && data.starts_with(le) { (-1, le.len()) }
+                        else if *order == 0 && data.starts_with(be) { (1, be.len()) }
+                        else { (*order, 0) };
+                    let chosen = if selected <= 0 { little_name } else { big_name };
+                    return Ok(Self::wide_chunk(&data, chosen, *last, start).map_or(Value::Null, |(text, used)|
+                        Value::tuple(vec![Value::text(&text), Value::Small(used as i64), Value::Small(selected)])));
+                }
+                if task == 3 && args.len() == 5 {
+                    let decoded = match (&args[1], &args[2], &args[3], &args[4]) {
+                        (Value::Text(codec), Value::Text(_), Value::Flag(last), Value::Small(start)) if *start >= 0 =>
+                            Self::wide_chunk(&data, codec, *last, *start as usize),
+                        _ => None,
+                    };
+                    return Ok(decoded.map_or(Value::Null, |(text, used)|
+                        Value::tuple(vec![Value::text(&text), Value::Small(used as i64)])));
+                }
                 // Return a complete UTF-8 prefix without a temporary decoder;
                 // malformed input stays on the adapter's existing error road.
                 if task == 3 && args.len() == 4 {

@@ -377,6 +377,11 @@ def _wide_encode(text, name, errors):
     return bytes(row)
 
 def _wide_decode(data, name, errors, final=True, start=0):
+    # Valid scalar chunks avoid the interpreted code-unit loop. Rejected
+    # chunks retain this implementation's policy calls and exact error spans.
+    complete = _raw_text_decode(data, name, errors, final, start)
+    if complete is not None:
+        return complete
     width = 4 if name.startswith('utf_32') else 2
     little = not name.endswith('_be')
     i = start

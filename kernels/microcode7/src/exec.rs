@@ -15146,6 +15146,56 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// Read valid wide-encoding characters and retain an unfinished suffix.
+    /// A rejected chunk follows the adapter's ordinary error-handler road.
+    fn decoded_wide(bytes: &[u8], encoding: &str, last: bool, from: usize) -> Option<Value> {
+        let (stride, mut big) = match encoding {
+            "utf_16" | "utf_16_le" => (2, false),
+            "utf_16_be" => (2, true),
+            "utf_32" | "utf_32_le" => (4, false),
+            "utf_32_be" => (4, true),
+            _ => return None,
+        };
+        let mut position = from;
+        if position > bytes.len() { return None; }
+        if matches!(encoding, "utf_16" | "utf_32") {
+            let marks: (&[u8], &[u8]) = if stride == 4 {
+                (&[255, 254, 0, 0], &[0, 0, 254, 255])
+            } else { (&[255, 254], &[254, 255]) };
+            if bytes.starts_with(marks.1) { big = true; position = stride; }
+            else if bytes.starts_with(marks.0) { position = stride; }
+        }
+        let number = |place: usize| -> u32 {
+            let group = &bytes[place..place + stride];
+            if big { group.iter().fold(0, |n, b| (n << 8) | u32::from(*b)) }
+            else { group.iter().rev().fold(0, |n, b| (n << 8) | u32::from(*b)) }
+        };
+        let mut text = String::new();
+        loop {
+            if bytes.len() - position < stride { break; }
+            let first = number(position);
+            let size;
+            let scalar;
+            if stride == 2 && first >= 0xd800 && first < 0xdc00 {
+                if bytes.len() - position < 4 {
+                    if last { return None; }
+                    break;
+                }
+                let second = number(position + 2);
+                if second < 0xdc00 || second > 0xdfff { return None; }
+                scalar = ((first - 0xd800) * 1024) + second - 0xdc00 + 65536;
+                size = 4;
+            } else { scalar = first; size = stride; }
+            match char::from_u32(scalar) {
+                None => return None,
+                Some(character) => text.push(character),
+            }
+            position += size;
+        }
+        if last && position < bytes.len() { return None; }
+        Some(Value::tuple(vec![Value::text(&text), Value::Small(position as i64)]))
+    }
+
     fn codec_function(&mut self, name: &str, arguments: Vec<Value>) -> Result<Value, String> {
         let namespace = self.namespace_for("_codec_runtime")?;
         let function = self.attribute(&namespace, name).ok_or_else(|| self.octet_error("unready"))?;
@@ -20742,6 +20792,36 @@ impl<'a> Machine<'a> {
             let Some(source) = v.first() else { return Err(self.octet_error("arguments")); };
             let decoding = matches!(op, Prim::Octets(3));
             let buffer = if decoding { self.octet_contents(source, false)? } else { Vec::new() };
+            if decoding && v.len() == 6 {
+                if let (Value::Text(base), Value::Text(_), Value::Flag(final_part), Value::Small(0), Value::Small(direction)) =
+                    (&v[1], &v[2], &v[3], &v[4], &v[5]) {
+                    let four = match base.as_ref() { "utf_32" => true, "utf_16" => false, _ => return Ok(Value::Nil) };
+                    let marks: (&[u8], &[u8]) = if four { (&[255, 254, 0, 0], &[0, 0, 254, 255]) }
+                        else { (&[255, 254], &[254, 255]) };
+                    let mut endian = *direction;
+                    let mut skipped = 0;
+                    if endian == 0 {
+                        if buffer.starts_with(marks.0) { endian = -1; skipped = marks.0.len(); }
+                        else if buffer.starts_with(marks.1) { endian = 1; skipped = marks.1.len(); }
+                    }
+                    let alphabet = match (four, endian > 0) {
+                        (true, true) => "utf_32_be", (true, false) => "utf_32_le",
+                        (false, true) => "utf_16_be", (false, false) => "utf_16_le",
+                    };
+                    if let Some(Value::Tuple(parts)) = Self::decoded_wide(&buffer, alphabet, *final_part, skipped) {
+                        let mut result = parts.to_vec();
+                        result.push(Value::Small(endian));
+                        return Ok(Value::tuple(result));
+                    }
+                }
+                return Ok(Value::Nil);
+            }
+            if decoding && v.len() == 5 {
+                if let (Value::Text(alphabet), Value::Text(_), Value::Flag(end), Value::Small(begin)) = (&v[1], &v[2], &v[3], &v[4]) {
+                    if *begin >= 0 { return Ok(Self::decoded_wide(&buffer, alphabet, *end, *begin as usize).unwrap_or(Value::Nil)); }
+                }
+                return Ok(Value::Nil);
+            }
             if decoding && v.len() == 4 {
                 // Give the codec bridge its valid text and consumed byte count;
                 // it retains its usual policy handling for every malformed row.

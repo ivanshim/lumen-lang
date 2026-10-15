@@ -173,6 +173,9 @@ def _wide_ex(input, errors, byteorder, final, width):
     errors = _error_argument(errors, 'utf_16_ex_decode' if width == 2 else 'utf_32_ex_decode')
     skip = 0
     prefix = 'utf_16' if width == 2 else 'utf_32'
+    complete = _runtime._raw_text_decode(data, prefix, errors, final, 0, byteorder)
+    if complete is not None:
+        return complete
     if byteorder == 0:
         le = _runtime.BOM_UTF16_LE if width == 2 else _runtime.BOM_UTF32_LE
         be = _runtime.BOM_UTF16_BE if width == 2 else _runtime.BOM_UTF32_BE
