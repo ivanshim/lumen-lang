@@ -696,6 +696,21 @@ fn main() {
         .stack_size(1 << 30)
         .spawn(run_all)
         .expect("a thread for the run");
+    // The waiting thread takes no signals, so one sent to the process lands
+    // on the running thread and interrupts its blocking calls (waitpid,
+    // select) instead of sitting unseen while they carry on.
+    #[cfg(target_os = "linux")]
+    {
+        extern "C" {
+            fn sigfillset(set: *mut [u64; 16]) -> i32;
+            fn pthread_sigmask(how: i32, set: *const [u64; 16], old: *mut [u64; 16]) -> i32;
+        }
+        let mut every = [0u64; 16]; // glibc's sigset_t is 128 bytes
+        unsafe {
+            sigfillset(&mut every);
+            pthread_sigmask(0, &every, std::ptr::null_mut()); // SIG_BLOCK
+        }
+    }
     match roomy.join() {
         Ok(()) => {}
         Err(panicked) => std::panic::resume_unwind(panicked),

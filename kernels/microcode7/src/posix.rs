@@ -129,13 +129,17 @@ fn split_onto_terminal() -> Result<Value, i32> {
     Ok(Value::tuple(vec![Value::Small(i64::from(born)), Value::Small(i64::from(held))]))
 }
 
-fn harvest(pid: i64, flags: i64) -> Result<Value, i32> {
-    let mut code: libc::c_int = 0;
-    let got = unsafe { libc::waitpid(pid as libc::pid_t, &mut code, flags as libc::c_int) };
-    if got < 0 {
-        Err(errno())
-    } else {
-        Ok(Value::tuple(vec![Value::Small(i64::from(got)), Value::Small(i64::from(code))]))
+// A wait cut short by a signal runs the Python handlers, then waits again.
+fn harvest(pid: i64, flags: i64, mut interrupted: impl FnMut() -> Result<(), String>) -> Result<Result<Value, i32>, String> {
+    loop {
+        let mut code: libc::c_int = 0;
+        let got = unsafe { libc::waitpid(pid as libc::pid_t, &mut code, flags as libc::c_int) };
+        if got >= 0 {
+            return Ok(Ok(Value::tuple(vec![Value::Small(i64::from(got)), Value::Small(i64::from(code))])));
+        }
+        let cause = errno();
+        if cause != libc::EINTR { return Ok(Err(cause)); }
+        interrupted()?;
     }
 }
 
@@ -679,7 +683,7 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
             }
             "forkpty" => split_onto_terminal(),
             "_exit" => { libc::_exit(int(0)? as libc::c_int); },
-            "waitpid" => harvest(int(0)?, int(1)?),
+            "waitpid" => harvest(int(0)?, int(1)?, &mut interrupted)?,
             "kill" => checked(libc::kill(int(0)? as libc::pid_t, int(1)? as libc::c_int) as i64),
             _ => return Err(String::from("NotImplementedError: unknown POSIX operation")),
         }

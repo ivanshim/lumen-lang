@@ -509,9 +509,14 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
         "_exit" => { libc::_exit(number(0)? as libc::c_int); },
         "waitpid" => {
             let mut state: libc::c_int = 0;
-            let found = libc::waitpid(number(0)? as libc::pid_t, &mut state, number(1)? as libc::c_int);
-            if found < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
-            else { Ok(Value::tuple(vec![Value::Small(found as i64), Value::Small(state as i64)])) }
+            let (target, options) = (number(0)? as libc::pid_t, number(1)? as libc::c_int);
+            loop {
+                let found = libc::waitpid(target, &mut state, options);
+                if found >= 0 { break Ok(Value::tuple(vec![Value::Small(found as i64), Value::Small(state as i64)])); }
+                let fault = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+                if fault != libc::EINTR { break Err(fault); }
+                check_signals()?;
+            }
         },
         "kill" => status(libc::kill(number(0)? as libc::pid_t, number(1)? as libc::c_int) as i64),
         "pipe" => {
