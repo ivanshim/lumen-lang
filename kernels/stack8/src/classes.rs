@@ -1838,7 +1838,7 @@ impl<'a> Engine<'a> {
             _ => false,
         }
     }
-    fn own_class_value(c: &Class, name: &str) -> Option<Value> {
+    pub(super) fn own_class_value(c: &Class, name: &str) -> Option<Value> {
         if let Some(v) = c.shared.read(name, true) {
             return if matches!(v.contents(), Value::Blank | Value::Gap) { None } else { Some(v) };
         }

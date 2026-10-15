@@ -148,6 +148,7 @@ pub struct Engine<'a> {
     inline_comp: Option<(usize, Vec<String>, Vec<Value>)>,
     location: Option<(u32, u32, u32, u32)>,
     frame_class: Option<Rc<Class>>,
+    stream_class: Option<Weak<Class>>,
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>)>,
@@ -1706,6 +1707,7 @@ impl<'a> Engine<'a> {
             inline_comp: None,
             location: None,
             frame_class: None,
+            stream_class: None,
             generator_frames: HashMap::new(),
             coroutines: HashMap::new(),
             async_generators: HashMap::new(),
@@ -21276,6 +21278,38 @@ impl<'a> Engine<'a> {
         self.byte_work(task, args, false)
     }
 
+    /// Whether the object is of the memory-stream class the _io module
+    /// makes and of no subclass: told by name and home once, then by identity.
+    fn stream_object(&mut self, object: &Rc<Instance>) -> bool {
+        let class = object.class_now();
+        if self.stream_class.as_ref().and_then(Weak::upgrade).is_some_and(|known| Rc::ptr_eq(&known, &class)) { return true; }
+        let home = Self::own_class_value(&class, self.class_word("module")).map(|value| value.plain());
+        let plain = class.name == "BytesIO" && home.as_deref() == Some("_io");
+        if plain { self.stream_class = Some(Rc::downgrade(&class)); }
+        plain
+    }
+    /// What such a stream holds for its closed flag, its storage and its
+    /// position; nothing where any of the three is missing.
+    fn stream_slots(&mut self, owner: &Value) -> Option<(Value, Value, Value)> {
+        let Value::Object(object) = owner else { return None };
+        if !self.stream_object(object) { return None; }
+        let fields = object.fields.borrow();
+        let hold = |prefix: &str| fields.iter().find(|(key, _)| key.starts_with(prefix)).map(|(_, held)| held.clone());
+        Some((hold("\0slot:_closed:")?, hold("\0slot:_data:")?, hold("\0slot:_pos:")?))
+    }
+    fn stream_moved(&mut self, owner: &Value, place: i64, held_here: bool) -> Flow<()> {
+        if held_here {
+            if let Value::Object(object) = owner {
+                let mut fields = object.fields.borrow_mut();
+                if let Some(entry) = fields.iter_mut().find(|(key, _)| key.starts_with("\0slot:_pos:")) {
+                    entry.1 = Value::Small(place);
+                    return Ok(());
+                }
+            }
+        }
+        self.class_write(owner.clone(), "_pos", Some(Value::Small(place)), false)?;
+        Ok(())
+    }
     fn pickle_buffer_work(&mut self, args: &[Value]) -> Flow<Value> {
         let Some(action) = args.first().and_then(|v| v.as_big().ok()).and_then(|v| v.to_u8()) else { return Err("TypeError: invalid buffer operation".into()); };
         // Copy a memory-stream range once, or store bytes without Python slice temporaries.
@@ -21291,9 +21325,20 @@ impl<'a> Engine<'a> {
                 _ => false,
             };
             if !plain { return Ok(Value::Null); }
-            if self.class_get(owner.clone(), "_closed", false)?.is_true() { return Err("ValueError: I/O operation on closed file".into()); }
-            let buffer = self.class_get(owner.clone(), "_data", false)?;
-            let position = self.class_get(owner.clone(), "_pos", false)?;
+            // The slots of a stream of exactly the memory-stream class are
+            // read where the object keeps them; anything else is read
+            // attribute by attribute, as before.
+            let direct = self.stream_slots(owner);
+            let moved_directly = direct.is_some();
+            let (closed, buffer, position) = match direct {
+                Some(slots) => slots,
+                None => {
+                    let closed = self.class_get(owner.clone(), "_closed", false)?;
+                    let buffer = self.class_get(owner.clone(), "_data", false)?;
+                    (closed, buffer, self.class_get(owner.clone(), "_pos", false)?)
+                }
+            };
+            if closed.is_true() { return Err("ValueError: I/O operation on closed file".into()); }
             let Value::Bytes(storage, mutable, _) = buffer.contents() else { return Err("TypeError: buffer cursor requires bytes storage".into()); };
             let begin = position.as_big()?.to_usize().ok_or("ValueError: invalid buffer position")?;
             if action == 6 {
@@ -21303,7 +21348,7 @@ impl<'a> Engine<'a> {
                     let end = if count < 0 { bytes.len() } else { bytes.len().min(begin.saturating_add(count as usize)) };
                     if end <= begin { (Vec::new(), begin) } else { (bytes[begin..end].to_vec(), end) }
                 };
-                if !copy.is_empty() { self.class_write(owner.clone(), "_pos", Some(Value::Small(end as i64)), false)?; }
+                if !copy.is_empty() { self.stream_moved(owner, end as i64, moved_directly)?; }
                 return Ok(self.byte_make(copy, false));
             }
             if !mutable { return Err("TypeError: buffer store requires a bytearray".into()); }
@@ -21321,7 +21366,7 @@ impl<'a> Engine<'a> {
             }
             bytes[begin..end].copy_from_slice(&copy);
             drop(bytes);
-            self.class_write(owner.clone(), "_pos", Some(Value::Small(end as i64)), false)?;
+            self.stream_moved(owner, end as i64, moved_directly)?;
             return Ok(Value::Small(copy.len() as i64));
         }
         if action == 5 {

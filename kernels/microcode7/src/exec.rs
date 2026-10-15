@@ -582,6 +582,7 @@ pub struct Machine<'a> {
     gathering_locals: Option<(usize, Vec<String>, Rc<Env>)>,
     extent: Option<(u32, u32, u32, u32)>,
     activation_kind: Option<Rc<Blueprint>>,
+    memory_stream_class: Option<std::rc::Weak<Blueprint>>,
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
     coroutine_bodies: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<Routine>, Option<Weak<Thing>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>)>,
@@ -2173,6 +2174,7 @@ impl<'a> Machine<'a> {
             gathering_locals: None,
             extent: None,
             activation_kind: None,
+            memory_stream_class: None,
             generator_frames: HashMap::new(),
             coroutine_bodies: HashMap::new(),
             async_generators: HashMap::new(),
@@ -15679,6 +15681,38 @@ impl<'a> Machine<'a> {
     }
 
     // Transfer a checked memory-stream slice directly between native byte buffers.
+    /// Whether this thing is of the memory-stream class the _io module
+    /// makes, and no subclass of it: the class is told by name and home the
+    /// first time and then by identity.
+    fn memory_stream_thing(&mut self, thing: &Rc<Thing>) -> bool {
+        let class = thing.blueprint();
+        if self.memory_stream_class.as_ref().and_then(std::rc::Weak::upgrade).is_some_and(|known| Rc::ptr_eq(&known, &class)) { return true; }
+        let home = Self::own_entry(&class, self.detail("module")).map(|value| value.bare());
+        let plain = class.name == "BytesIO" && home.as_deref() == Some("_io");
+        if plain { self.memory_stream_class = Some(Rc::downgrade(&class)); }
+        plain
+    }
+    /// The closed flag, the storage and the position of such a stream, as
+    /// the thing holds them; none where any of the three is not there.
+    fn memory_stream_slots(&mut self, stream: &Value) -> Option<(Value, Value, Value)> {
+        let Value::Thing(thing) = stream else { return None };
+        if !self.memory_stream_thing(thing) { return None; }
+        let holds = thing.holds.borrow();
+        let find = |prefix: &str| holds.iter().find(|(key, _)| key.starts_with(prefix)).map(|(_, held)| held.settled());
+        Some((find("\0slot:_closed:")?, find("\0slot:_data:")?, find("\0slot:_pos:")?))
+    }
+    fn memory_stream_moved(&mut self, stream: &Value, place: i64, held_here: bool) -> Result<(), Escape> {
+        if held_here {
+            if let Value::Thing(thing) = stream {
+                if let Some(entry) = thing.holds.borrow_mut().iter_mut().find(|(key, _)| key.starts_with("\0slot:_pos:")) {
+                    entry.1 = Value::Small(place);
+                    return Ok(());
+                }
+            }
+        }
+        self.alter_class_member(stream.clone(), "_pos", Some(Value::Small(place)), false)?;
+        Ok(())
+    }
     fn memory_cursor(&mut self, writing: bool, parts: &[Value]) -> Res {
         let [stream, argument] = parts else { return Err("TypeError: buffer cursor operation requires a stream and argument".to_owned().into()); };
         // Only a whole number the cursor can count with, or bytes to store, are
@@ -15688,11 +15722,22 @@ impl<'a> Machine<'a> {
             match argument.settled() { Value::Small(_) => true, Value::Huge(big) => big.to_i64().is_some(), _ => false }
         };
         if !taken { return Ok(Value::Nil); }
-        if self.read_class_member(stream.clone(), "_closed", false)?.is_true() {
+        // A stream of exactly the memory-stream class keeps its three slots among
+        // what the thing holds; they are read there instead of one attribute
+        // read each, and anything unusual about them goes the long way round.
+        let kept = self.memory_stream_slots(stream);
+        let kept_here = kept.is_some();
+        let (closed, bytes, offset) = match kept {
+            Some(found) => found,
+            None => (
+                self.read_class_member(stream.clone(), "_closed", false)?,
+                self.read_class_member(stream.clone(), "_data", false)?.settled(),
+                self.read_class_member(stream.clone(), "_pos", false)?,
+            ),
+        };
+        if closed.is_true() {
             return Err(String::from("ValueError: I/O operation on closed file").into());
         }
-        let bytes = self.read_class_member(stream.clone(), "_data", false)?.settled();
-        let offset = self.read_class_member(stream.clone(), "_pos", false)?;
         let Value::Octets { cell, changeable, .. } = bytes else { return Err("TypeError: buffer cursor requires bytes storage".to_owned().into()); };
         let position = offset.as_big()?.to_usize().ok_or_else(|| "ValueError: invalid buffer position".to_owned())?;
         if !writing {
@@ -15701,7 +15746,7 @@ impl<'a> Machine<'a> {
             let stop = content.len().min(if amount >= 0 { position.saturating_add(amount as usize) } else { usize::MAX });
             let copied = if position < stop { content[position..stop].to_vec() } else { Vec::new() };
             drop(content);
-            if !copied.is_empty() { self.alter_class_member(stream.clone(), "_pos", Some(Value::Small(stop as i64)), false)?; }
+            if !copied.is_empty() { self.memory_stream_moved(stream, stop as i64, kept_here)?; }
             return Ok(self.octets(copied, false));
         }
         if !changeable { return Err(String::from("TypeError: buffer store requires a bytearray").into()); }
@@ -15722,7 +15767,7 @@ impl<'a> Machine<'a> {
         if missing > 0 { content.resize(finish, 0); }
         content[position..finish].copy_from_slice(payload.as_slice());
         drop(content);
-        self.alter_class_member(stream.clone(), "_pos", Some(Value::Small(finish as i64)), false)?;
+        self.memory_stream_moved(stream, finish as i64, kept_here)?;
         Ok(Value::Small(size as i64))
     }
     fn exported_pickle_buffer(&mut self, values: &[Value]) -> Res {
