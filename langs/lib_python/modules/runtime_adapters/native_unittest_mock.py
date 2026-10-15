@@ -317,6 +317,37 @@ def _builtin_names():
     return frozenset(name for name in dir(builtins) if not name.startswith('_'))
 
 
+class _Autospec:
+    # A stand-in for a patched function. It binds like a function when
+    # it sits on a class, so the instance reaches the mock as the first
+    # argument. Names it does not have are the mock's own.
+    # Calls are not checked against the replaced signature.
+    def __init__(self, mock):
+        self._mock = mock
+
+    def __call__(self, *args, **kwargs):
+        return self._mock(*args, **kwargs)
+
+    def __get__(self, instance, owner=None):
+        if instance is None:
+            return self
+        stand = self
+        def bound(*args, **kwargs):
+            return stand(instance, *args, **kwargs)
+        return bound
+
+    def __getattr__(self, name):
+        if name[:1] == '_':
+            raise AttributeError(name)
+        return getattr(self._mock, name)
+
+    def __setattr__(self, name, value):
+        if name[:1] == '_':
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._mock, name, value)
+
+
 class _Patch:
     def __init__(self, target, attribute, new, create, made, new_callable=None, default_factory=MagicMock):
         if new_callable is not None and new is not DEFAULT:
@@ -351,7 +382,13 @@ class _Patch:
                     options['name'] = self.attribute
                 self.temporary = self.new_callable(**options)
             else:
-                self.temporary = self.default_factory(name=self.attribute, **self.made)
+                options = dict(self.made)
+                autospec = options.pop('autospec', None)
+                self.temporary = self.default_factory(name=self.attribute, **options)
+                if autospec:
+                    original = self.held if autospec is True else autospec
+                    if callable(original):
+                        self.temporary = _Autospec(self.temporary)
         else:
             self.temporary = self.new
         setattr(self.target, self.attribute, self.temporary)
@@ -438,7 +475,7 @@ class _MultiplePatch:
         return False
 
 
-_TAKEN = ('wraps', 'return_value', 'side_effect', 'spec')
+_TAKEN = ('wraps', 'return_value', 'side_effect', 'spec', 'autospec')
 
 # A dotted name is split at its last dot: what comes before is a chain
 # of modules and, where a plain attribute lookup does not reach that
