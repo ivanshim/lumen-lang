@@ -8001,7 +8001,14 @@ impl<'a> Machine<'a> {
             4=>Prim::SetMember, 5=>Prim::DropMember, 6=>Prim::HasAttribute, 7=>Prim::MembersOf,
             other=>Prim::ClassWork(other),
         };
-        self.table.prims.iter().find(|(_,p)|**p==target).map(|(w,_)|w.to_string()).unwrap_or_default()
+        // The word is looked for among every primitive's spelling, which is a
+        // walk of the whole table, so what was found is kept for the next ask.
+        if let Some(Some(word)) = self.tool_words.borrow().get(op as usize) { return word.clone(); }
+        let word = self.table.prims.iter().find(|(_,p)|**p==target).map(|(w,_)|w.to_string()).unwrap_or_default();
+        let mut kept = self.tool_words.borrow_mut();
+        if kept.len() <= op as usize { kept.resize(op as usize + 1, None); }
+        kept[op as usize] = Some(word.clone());
+        word
     }
     pub(super) fn work_on_class(&mut self,op:u8,mut values:Vec<Value>)->Res {
         if op == 30 && self.table.has_any("ext.builtin.partial.call") {
