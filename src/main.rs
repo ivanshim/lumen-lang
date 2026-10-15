@@ -1214,14 +1214,16 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 let path = module.replace('.', "/");
                 let mut found = None;
                 let mut directories = vec![std::path::PathBuf::from(".")];
-                if let Some(search) = env::var_os("PYTHONPATH") { directories.extend(env::split_paths(&search)); }
+                if !python_ignore_environment {
+                    if let Some(search) = env::var_os("PYTHONPATH") { directories.extend(env::split_paths(&search)); }
+                }
                 for directory in directories {
-                    for (at, relative) in [format!("{path}.py"), format!("{path}.pyc"), format!("{path}/__main__.py"), format!("{path}/__main__.pyc")].into_iter().enumerate() {
+                    for (at, relative) in [format!("{path}/__main__.py"), format!("{path}/__main__.pyc"), format!("{path}.py"), format!("{path}.pyc")].into_iter().enumerate() {
                         let candidate = directory.join(relative).to_string_lossy().into_owned();
                         let source = if candidate.ends_with(".pyc") {
                             fs::metadata(&candidate).ok().map(|_| compiled_source(&candidate))
                         } else { fs::read_to_string(&candidate).ok() };
-                        if let Some(source) = source { found = Some((candidate, source, at >= 2)); break; }
+                        if let Some(source) = source { found = Some((candidate, source, at < 2)); break; }
                     }
                     if found.is_some() { break; }
                 }
@@ -1229,7 +1231,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
                     // A name the library keeps is found where the library
                     // keeps it, as the reference finds one walking sys.path.
                     let root = python_library_root();
-                    for candidate in [format!("{root}/{path}.py"), format!("{root}/{path}/__main__.py")] {
+                    for candidate in [format!("{root}/{path}/__main__.py"), format!("{root}/{path}.py")] {
                         if let Ok(source) = fs::read_to_string(&candidate) { let via_main = candidate.ends_with("/__main__.py"); found = Some((candidate, source, via_main)); break; }
                     }
                 }

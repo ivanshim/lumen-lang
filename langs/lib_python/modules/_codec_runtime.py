@@ -871,6 +871,8 @@ def _encode_surrogates(text, encoding='utf-8', errors='strict'):
         if isinstance(repl, bytes):
             row.extend(list(repl))
             continue
+        if name == 'utf_8' and any(ord(ch) >= 128 for ch in repl):
+            raise UnicodeEncodeError(shown, text, at, end, reason)
         try:
             row.extend(list(_raw_text_encode(repl, name, 'strict')))
         except UnicodeEncodeError:

@@ -934,7 +934,16 @@ def load_package_tests(pkg_dir, loader, standard_tests, pattern):
     top_dir = STDLIB_DIR
     # Reference packages live in the interpreter's versioned test directory.
     if not os.path.abspath(pkg_dir).startswith(os.path.abspath(top_dir).rstrip('/') + '/'):
-        top_dir = os.path.dirname(pkg_dir)
+        parent = os.path.dirname(pkg_dir)
+        top_dir = os.path.dirname(parent) if os.path.basename(parent) == 'test' else parent
+        import test
+        for root in test.__path__:
+            candidate = os.path.join(root, os.path.basename(pkg_dir))
+            if (os.path.basename(root) == 'test'
+                    and os.path.realpath(candidate) == os.path.realpath(pkg_dir)):
+                pkg_dir = candidate
+                top_dir = os.path.dirname(root)
+                break
     try:
         package_tests = loader.discover(start_dir=pkg_dir,
                                         top_level_dir=top_dir,

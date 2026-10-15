@@ -9,6 +9,18 @@ fn uint(table: &[u8], offset: usize) -> u32 {
 fn ulong(table: &[u8], offset: usize) -> u64 {
     let mut part = [0u8; 8]; part.copy_from_slice(&table[offset..offset+8]); u64::from_le_bytes(part)
 }
+// Keep independent table ownership while the byte codec supplies lossless expansion.
+fn unpack_table(encoded: &'static [u8], cell: &'static std::sync::OnceLock<Option<Vec<u8>>>) -> Option<&'static [u8]> {
+    if !encoded.starts_with(b"\xfd7zXZ\0") { return Some(encoded); }
+    let content = cell.get_or_init(|| match lumen_lzma::decode_limited(encoded, 1, 64 * 1024 * 1024, 64 * 1024 * 1024) {
+        Ok((content, length)) if length == encoded.len() => Some(content),
+        _ => None,
+    });
+    content.as_deref()
+}
+static JAPANESE_TWO: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
+static CHINESE_FOUR: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
+static CHINESE_TWO: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
 fn table_for(name: &str) -> Option<&'static [u8]> {
     if name == "big5" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/big5.bin")); }
     if name == "big5hkscs" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/big5hkscs.bin")); }
@@ -20,15 +32,15 @@ fn table_for(name: &str) -> Option<&'static [u8]> {
     if name == "euc_jisx0213" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/euc_jisx0213.bin")); }
     if name == "euc_kr" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/euc_kr.bin")); }
     if name == "gb2312" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/gb2312.bin")); }
-    if name == "gbk" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/gbk.bin")); }
-    if name == "gb18030" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/gb18030.bin")); }
+    if name == "gbk" { return unpack_table(include_bytes!("../../../langs/lib_python/data/multibyte/gbk.bin"), &CHINESE_TWO); }
+    if name == "gb18030" { return unpack_table(include_bytes!("../../../langs/lib_python/data/multibyte/gb18030.bin"), &CHINESE_FOUR); }
     if name == "johab" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/johab.bin")); }
     if name == "shift_jis" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/shift_jis.bin")); }
     if name == "shift_jis_2004" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/shift_jis_2004.bin")); }
     if name == "shift_jisx0213" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/shift_jisx0213.bin")); }
     if name == "iso2022_jp" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/iso2022_jp.bin")); }
     if name == "iso2022_jp_1" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/iso2022_jp_1.bin")); }
-    if name == "iso2022_jp_2" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/iso2022_jp_2.bin")); }
+    if name == "iso2022_jp_2" { return unpack_table(include_bytes!("../../../langs/lib_python/data/multibyte/iso2022_jp_2.bin"), &JAPANESE_TWO); }
     if name == "iso2022_jp_2004" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/iso2022_jp_2004.bin")); }
     if name == "iso2022_jp_3" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/iso2022_jp_3.bin")); }
     if name == "iso2022_jp_ext" { return Some(include_bytes!("../../../langs/lib_python/data/multibyte/iso2022_jp_ext.bin")); }

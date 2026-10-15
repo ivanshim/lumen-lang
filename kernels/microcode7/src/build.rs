@@ -138,7 +138,7 @@ struct LibrarySurvey {
 }
 
 pub type SurveyRows = &'static [(u64, &'static [u8], &'static [u8])];
-pub type SourceRows = &'static [(&'static str, usize)];
+pub type SourceRows = &'static [(u64, &'static [u8], usize)];
 thread_local! {
     static LIBRARY_SURVEYS: std::cell::RefCell<std::collections::BTreeMap<String, (SurveyRows, SourceRows)>> = std::cell::RefCell::new(std::collections::BTreeMap::new());
 }
@@ -221,13 +221,17 @@ fn read_token_proof(mut remaining: &[u8]) -> Option<Vec<Token>> {
 
 pub(crate) fn library_tokens(source: &str, table: &Table) -> Option<Vec<Token>> {
     if table.single("ext.lexical.prologue.brief.setting").is_some() { return None; }
-    for &(text, row) in table.library_token_sources? {
-        if text != source { continue; }
+    let requested = source_key(source);
+    for &(key, encoded_source, row) in table.library_token_sources? {
+        if key != requested { continue; }
+        if unpack_library_proof(encoded_source)?.as_slice() != source.as_bytes() { continue; }
         let (_, proof, _) = table.library_surveys?.get(row)?;
         return read_token_proof(&unpack_library_proof(proof)?);
     }
     None
 }
+
+pub fn source_key(source: &str) -> u64 { input_key(source.as_bytes()) }
 
 fn input_key(proof: &[u8]) -> u64 {
     use std::hash::Hash;
@@ -245,6 +249,13 @@ fn unpack_library_proof(packed: &'static [u8]) -> Option<Rc<Vec<u8>>> {
     if let Some(found) = LAST.with(|last| last.borrow().as_ref()
         .filter(|(bytes, _)| std::ptr::eq(*bytes, packed)).map(|(_, decoded)| decoded.clone())) {
         return Some(found);
+    }
+    if packed.starts_with(b"\xfd7zXZ\0") {
+        let (output, used) = lumen_lzma::decode_limited(packed, 1, 64 * 1024 * 1024, 64 * 1024 * 1024).ok()?;
+        if used != packed.len() { return None; }
+        let shared = Rc::new(output);
+        LAST.with(|last| *last.borrow_mut() = Some((packed, shared.clone())));
+        return Some(shared);
     }
     let reader = lumen_zlib::call(2, 0, &[], [15, 0, 0, 0, 0]);
     if reader.status != 0 { return None; }
@@ -593,6 +604,7 @@ pub struct Builder<'a> {
     kind_mark: Option<usize>,
     syntax_try_nesting: usize,
     finally_nesting: usize,
+    finally_loop_bases: Vec<usize>,
     in_lazy_from: bool,
     /// The class being read and what it is built on: what `self` and
     /// `parent` mean inside a method.
@@ -1165,7 +1177,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         }
     }
     let grammar = CompileWords::of(table);
-    let mut r = Builder { grammar: &grammar, origin_content: Rc::new(std::cell::OnceCell::new()), indexes_globals, global_positions, globals_indexed, lexical_origin: Rc::new(if survey { Vec::new() } else { tokens.to_vec() }), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, first_adornment: None, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, member_temps: Vec::new(), gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { grammar: &grammar, origin_content: Rc::new(std::cell::OnceCell::new()), indexes_globals, global_positions, globals_indexed, lexical_origin: Rc::new(if survey { Vec::new() } else { tokens.to_vec() }), annotation_lookup: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, finally_loop_bases: Vec::new(), in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, first_adornment: None, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, member_temps: Vec::new(), gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -2513,6 +2525,7 @@ impl<'a> Builder<'a> {
         let outer_declarations = std::mem::take(&mut self.declarations);
         let previous_loops = self.loop_depth;
         let previous_finally = self.finally_nesting;
+        let previous_finally_loops = if holds == Holds::Every { Some(std::mem::take(&mut self.finally_loop_bases)) } else { None };
         let previous_stars = std::mem::take(&mut self.except_star_bases);
         if holds == Holds::Every { self.loop_depth = 0; self.finally_nesting = 0; }
         let saved_documentation = self.documentation_statement.take();
@@ -2522,6 +2535,7 @@ impl<'a> Builder<'a> {
         let mut body = built_body?;
         self.loop_depth = previous_loops;
         self.finally_nesting = previous_finally;
+        if let Some(bases) = previous_finally_loops { self.finally_loop_bases = bases; }
         self.except_star_bases = previous_stars;
         self.declarations = outer_declarations;
         self.gather_names = earlier_gathering;
@@ -3625,6 +3639,7 @@ impl<'a> Builder<'a> {
     /// whoever compiled the text.
     fn note_finally_word(&mut self, word: &str) {
         if self.finally_nesting == 0 { return; }
+        if word != "return" && !self.finally_loop_bases.iter().any(|base| self.loop_depth <= *base) { return; }
         let at = self.look();
         let noted = (format!("'{word}' in a 'finally' block"), at.row, at.column);
         if !self.warnings.contains(&noted) { self.warnings.push(noted); }
@@ -5276,9 +5291,11 @@ impl<'a> Builder<'a> {
         let last = match self.key("ext.stmt.finally") {
             true => {
                 self.move_past();
+                self.finally_loop_bases.push(self.loop_depth);
                 self.finally_nesting += 1;
                 let body = self.guarded_attempt_body(bare_clauses)?;
                 self.finally_nesting -= 1;
+                self.finally_loop_bases.pop();
                 Some(Box::new(body))
             }
             false => None,

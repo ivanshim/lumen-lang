@@ -990,6 +990,10 @@ class FileIO(_RawIOBase):
         self._closed = True
         if isinstance(file, float):
             raise TypeError('integer argument expected, got float')
+        if isinstance(file, bool):
+            import warnings
+            warnings.warn('bool is used as a file descriptor', RuntimeWarning, stacklevel=2)
+            file = int(file)
         self._created = base[0] == 'x'
         self._appending = base[0] == 'a'
         owned = False

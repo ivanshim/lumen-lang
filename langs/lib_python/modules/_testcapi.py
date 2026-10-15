@@ -33,3 +33,21 @@ class HeapCTypeMetaclassNullNew(type):
 
 def pytype_fromspec_meta(metaclass):
     return type.__new__(metaclass, 'HeapCType', (object,), {})
+
+INT_MIN = -(1 << 31)
+INT_MAX = (1 << 31) - 1
+LONG_MIN = -(1 << 63)
+LONG_MAX = (1 << 63) - 1
+
+def PyTime_AsSecondsDouble(value):
+    import operator
+    value = operator.index(value)
+    if not -(1 << 63) <= value < (1 << 63):
+        raise OverflowError('timestamp out of range for C PyTime_t')
+    return float(value // 1000000000) if value % 1000000000 == 0 else float(value) / 1000000000
+
+
+def run_in_subinterp(code):
+    if not isinstance(code, str):
+        raise TypeError('code must be a string')
+    return __program_namespace('subinterp', code)

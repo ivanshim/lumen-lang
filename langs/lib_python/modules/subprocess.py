@@ -154,7 +154,8 @@ class Popen:
         self._text = self.text_mode
         self._encoding = self.encoding or 'utf-8'
         self._errors = self.errors
-        handle = _subprocess(0, argv, env, in_mode, out_mode, err_mode)
+        handle = _subprocess(0, argv, env, in_mode, out_mode, err_mode,
+                             None if cwd is None else os.fsdecode(cwd))
         if handle is False:
             raise OSError(2, 'No such file or directory', argv[0])
         self._handle = handle

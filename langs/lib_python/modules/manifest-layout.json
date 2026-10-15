@@ -25,7 +25,6 @@
     "importlib": "runtime_adapters/importlib.py",
     "abc": "runtime_adapters/abc.py",
     "codecs": "runtime_adapters/codecs.py",
-    "ast": "runtime_adapters/ast.py",
     "sys": "runtime_adapters/sys.py",
     "_py_warnings": "runtime_adapters/warnings.py",
     "importlib._bootstrap": "runtime_adapters/importlib_bootstrap.py",
@@ -60,7 +59,8 @@
     "threading": "runtime_adapters/native_threading.py",
     "unittest.mock": "runtime_adapters/native_unittest_mock.py",
     "tracemalloc": "runtime_adapters/native_tracemalloc.py",
-    "doctest": "runtime_adapters/native_doctest.py"
+    "doctest": "runtime_adapters/native_doctest.py",
+    "ast": "runtime_adapters/native_ast.py"
   },
   "names": {
     "runtime_sources/unittest_case.py": "unittest.case",

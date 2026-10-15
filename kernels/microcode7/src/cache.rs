@@ -84,7 +84,7 @@ impl Drop for ReadingScope {
 }
 
 pub fn forms(mut record: Node, seeded: &[String], globals: Option<Value>, natives: Option<Value>, module: Option<Rc<str>>) -> Result<crate::build::Built, String> {
-    if record["format"] != "lumen-microcode7-v5" { return Err("ImportError: compiled forms use a different ABI".to_owned()); }
+    if record["format"] != "lumen-microcode7-v6" { return Err("ImportError: compiled forms use a different ABI".to_owned()); }
     let mut names = seeded.to_vec();
     let prior: Vec<String> = serde_json::from_value(record["metadata"]["globals"].clone()).map_err(|error| format!("ValueError: {error}"))?;
     let mut offsets = Vec::with_capacity(prior.len());
@@ -259,4 +259,20 @@ pub fn read_members<'de, D: Deserializer<'de>>(input: D) -> Result<Vec<(String, 
         members.push((name, body_from_record(body).map_err(serde::de::Error::custom)?));
     }
     Ok(members)
+}
+
+// Serialize this kernel's form envelope before handing bytes to the codec.
+pub fn pack_forms(envelope: &serde_json::Value) -> Result<Vec<u8>, String> {
+    let serialized = serde_json::to_vec(envelope).map_err(|fault| format!("ValueError: {fault}"))?;
+    pack_saved_forms(&serialized)
+}
+pub fn pack_saved_forms(serialized: &[u8]) -> Result<Vec<u8>, String> {
+    let mut packet = Vec::from(b"LCC6".as_slice());
+    packet.extend(lumen_zlib::compress(serialized).map_err(|fault| format!("ValueError: {fault}"))?);
+    Ok(packet)
+}
+pub fn unpack_forms(packet: &[u8]) -> Result<serde_json::Value, String> {
+    let compressed = packet.strip_prefix(b"LCC6").ok_or("ValueError: invalid compiled forms header")?;
+    let serialized = lumen_zlib::decompress(compressed).map_err(|fault| format!("ValueError: {fault}"))?;
+    serde_json::from_slice(&serialized).map_err(|fault| format!("ValueError: {fault}"))
 }

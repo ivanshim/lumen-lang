@@ -303,7 +303,7 @@ struct PreparedScope {
 }
 
 pub type PreparedEntries = &'static [(u64, &'static [u8], &'static [u8])];
-pub type PreparedSources = &'static [(&'static str, usize)];
+pub type PreparedSources = &'static [(u64, &'static [u8], usize)];
 thread_local! {
     static PREPARED_DEFINITIONS: std::cell::RefCell<HashMap<String, (PreparedEntries, PreparedSources)>> = std::cell::RefCell::new(HashMap::new());
 }
@@ -368,10 +368,14 @@ fn unpack_tokens(proof: &[u8]) -> Option<Vec<Token>> {
 
 pub(crate) fn prepared_tokens(source: &str, lang: &Lang) -> Option<Vec<Token>> {
     if lang.prologue_brief_setting.is_some() { return None; }
-    let (_, index) = lang.prepared_source_tokens?.iter().find(|(text, _)| *text == source)?;
+    let key = source_stamp(source);
+    let (_, _, index) = lang.prepared_source_tokens?.iter().find(|(stamp, compressed, _)|
+        *stamp == key && unpack_library_proof(compressed).is_some_and(|bytes| bytes.as_slice() == source.as_bytes()))?;
     let (_, proof, _) = lang.prepared_scopes?.get(*index)?;
     unpack_tokens(&unpack_library_proof(proof)?)
 }
+
+pub fn source_stamp(source: &str) -> u64 { token_stamp(source.as_bytes()) }
 
 fn token_stamp(bytes: &[u8]) -> u64 {
     use std::hash::{Hash, Hasher};
@@ -391,6 +395,13 @@ fn unpack_library_proof(compressed: &'static [u8]) -> Option<Rc<Vec<u8>>> {
         std::ptr::eq(*source, compressed).then(|| bytes.clone())
     });
     if cached.is_some() { return cached; }
+    if compressed.starts_with(b"\xfd7zXZ\0") {
+        let (decoded, consumed) = lumen_lzma::decode_limited(compressed, 1, 64 * 1024 * 1024, 64 * 1024 * 1024).ok()?;
+        if consumed != compressed.len() { return None; }
+        let bytes = Rc::new(decoded);
+        PREVIOUS_PROOF.with(|saved| saved.replace(Some((compressed, bytes.clone()))));
+        return Some(bytes);
+    }
     let stream = lumen_zlib::call(2, 0, &[], [15, 0, 0, 0, 0]);
     if stream.status != 0 { return None; }
     let expanded = lumen_zlib::call(4, stream.number, compressed, [4, 64 * 1024 * 1024, 0, 0, 0]);
@@ -511,6 +522,7 @@ pub struct Compiler<'a> {
     module_annotations: Vec<(String, usize)>,
     syntax_try_nesting: usize,
     syntax_finally_nesting: usize,
+    finally_loop_bases: Vec<usize>,
     except_star_nesting: usize,
     in_lazy_from: bool,
     lang: &'a Lang,
@@ -962,7 +974,7 @@ fn compile_pass(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let future_bits = table.future_bits;
-    let mut a = Compiler { source_content: Rc::new(std::cell::OnceCell::new()), source_tokens: if discovering { Rc::from([]) } else { Rc::from(tokens) }, reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, ast_expression_starts: AST_POSITIONS.with(|entries| (!entries.borrow().is_empty()).then(Vec::new)), spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decorated_at: None, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { source_content: Rc::new(std::cell::OnceCell::new()), source_tokens: if discovering { Rc::from([]) } else { Rc::from(tokens) }, reading_annotation: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, finally_loop_bases: Vec::new(), except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, ast_expression_starts: AST_POSITIONS.with(|entries| (!entries.borrow().is_empty()).then(Vec::new)), spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decorated_at: None, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1279,7 +1291,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn ast_operation_location(&mut self) {
-        if self.on_assign() { return; }
+        if self.writing_place || self.on_writing() { return; }
         if let Some(start) = self.ast_expression_starts.as_ref().and_then(|starts| starts.last()).copied() {
             if self.pos > start { let location = self.expression_location(start); self.put(location); }
         }
@@ -2225,11 +2237,13 @@ impl<'a> Compiler<'a> {
             self.write(RESULT_CELL);
         }
         let finally_around = std::mem::replace(&mut self.syntax_finally_nesting, 0);
+        let finally_loops = std::mem::take(&mut self.finally_loop_bases);
         let outer_doc = self.opening_doc_span.take();
         if doc_literal && !self.lang.class_builder.is_empty() { self.opening_doc_span = Some((doc_begin, doc_end)); }
         let body_result = body(self);
         self.opening_doc_span = outer_doc;
         self.syntax_finally_nesting = finally_around;
+        self.finally_loop_bases = finally_loops;
         body_result?;
         self.comprehension_names = surrounding_names;
         self.comprehension_targets = surrounding_targets;
@@ -4162,7 +4176,10 @@ impl<'a> Compiler<'a> {
             let name = self.look().lexeme.clone();
             self.claim(&name);
         }
-        self.block_place()?;
+        let positions = self.ast_expression_starts.take();
+        let target = self.block_place();
+        self.ast_expression_starts = positions;
+        target?;
         if self.awkward_place {
             self.piece().instrs.truncate(from);
             self.constant(Value::text(&self.lang.binding_unrun));
@@ -6181,6 +6198,8 @@ impl<'a> Compiler<'a> {
     /// text. Each such word is noted once where it stands.
     fn warn_in_finally(&mut self, word: &str) {
         if self.syntax_finally_nesting == 0 { return; }
+        let loops = self.piece().cycles.len();
+        if word != "return" && !self.finally_loop_bases.iter().any(|base| loops <= *base) { return; }
         let at = self.look();
         let warning = (format!("'{word}' in a 'finally' block"), at.row, at.column);
         if !self.registry.warnings.contains(&warning) { self.registry.warnings.push(warning); }
@@ -6458,9 +6477,12 @@ impl<'a> Compiler<'a> {
         self.skip_seps();
         let last = if self.on_keyword(&lang.finally_words) {
             self.pass_token();
+            let loops = self.piece().cycles.len();
+            self.finally_loop_bases.push(loops);
             self.syntax_finally_nesting += 1;
             let body = self.guarded_attempt_body()?;
             self.syntax_finally_nesting -= 1;
+            self.finally_loop_bases.pop();
             Some(body)
         } else { None };
         if clauses.is_empty() && (last.is_none() || otherwise.is_some()) {

@@ -343,7 +343,7 @@ impl<'a> Machine<'a> {
             }
         }
         else{names.extend(self.routine_holding_names(item));}
-        if let Some(class) = class.filter(|_| !matches!(item, Value::Thing(_)) || !names.iter().any(|name| name == self.detail("kind"))) {
+        if let Some(class) = class.as_ref() {
             for part in ["doc", "kind", "get", "set", "remove", "allocate", "subclass"] {
                 let name = self.detail(part); if !name.is_empty() { names.push(name.to_owned()); }
             }
@@ -361,8 +361,8 @@ impl<'a> Machine<'a> {
             names.extend(self.rules.words_ext_stmt_class_detail_root_members.iter().cloned());
             names.extend(self.rules.specials.get(72).cloned());
         }
-        if class.is_some_and(|kind| Self::native_beneath(kind).as_deref() == Some("GenericAlias")) { names.push(String::from("__parameters__")); }
-        if class.is_none() && self.table.has_any("ext.stmt.class.builder") {
+        if class.as_ref().is_some_and(|kind| Self::native_beneath(kind).as_deref() == Some("GenericAlias")) { names.push(String::from("__parameters__")); }
+        if class.is_none() && !matches!(item, Value::Thing(_)) && self.table.has_any("ext.stmt.class.builder") {
             let inherited=["kind","get","set","remove","allocate","subclass","doc"].iter().map(|field|self.detail(field)).filter(|word|!word.is_empty());
             names.extend(inherited.map(str::to_owned));
             names.extend(self.rules.words_ext_stmt_class_constructor.iter().cloned());
@@ -1426,7 +1426,8 @@ impl<'a> Machine<'a> {
             Value::Dict(mapping)=>mapping.pairs().iter().map(|(key,_)|key.clone()).collect(),
             // A set stands its members as the names, in its own order.
             Value::Set(store)=>store.borrow().entries.iter().map(|(_,value)|value.clone()).collect(),
-            alone=>vec![alone]};
+            alone @ Value::Text(_)=>vec![alone],
+            iterable=>self.object_members(&iterable)?};
         let words: Vec<Value> = words.into_iter().map(|name| {
             let source=match name {Value::Keyed(key,_)=>key.as_ref().clone(),plain=>plain};
             match Self::underlying(&source) {Some(value)=>value.settled(),None=>source.settled()}
@@ -2970,6 +2971,13 @@ impl<'a> Machine<'a> {
                         }
                         let found=if of_own_kind && self.native_member(&receiver, &entry) {
                             Some(Value::Member(Rc::new(subject.clone()), entry.clone()))
+                        } else if of_own_kind && entry == self.detail("descriptor.get")
+                            && matches!(word.as_str(), "method_descriptor" | "wrapper_descriptor" | "getset_descriptor" | "member_descriptor" | "classmethod_descriptor") {
+                            match self.read_class_member(receiver.clone(), &entry, true) {
+                                Ok(bound) => Some(bound),
+                                Err(fault) if self.missing_member_escape(&fault) => None,
+                                Err(fault) => return Err(fault),
+                            }
                         } else if of_own_kind{self.attribute(&receiver,&entry)}else{None};
                         match found {
                             Some(bound)=>self.apply_class_member(bound,values),
@@ -4866,6 +4874,10 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        if (matches!(&value, Value::Intrinsic(Prim::ClassWork(11), _)) || matches!(&value, Value::Wrapped(8, _))) && self.spells_property_kind(&value.settled()) {
+            let owner = self.property_blueprint();
+            return self.read_class_member(Value::Blueprint(owner), key, direct);
+        }
         if key == self.detail("subclass") && matches!(value, Value::Nil) {
             let kind = self.native_kind("NoneType");
             if let Some(member) = self.from_the_root(key, true, &kind) {
@@ -5692,7 +5704,11 @@ impl<'a> Machine<'a> {
             }
         }
         // A native kind's word read as a class: its maker, and its name.
-        if matches!(value.settled(), Value::Frac(_) | Value::Complex(_) | Value::Octets { .. }) {
+        if matches!(value.settled(), Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Frac(_) | Value::Complex(_))
+            && ["numerator", "denominator", "real", "imag"].contains(&key) {
+            return self.method_of_value(value, key);
+        }
+        if matches!(value.settled(), Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Frac(_) | Value::Complex(_) | Value::Octets { .. }) {
             if let Some(found) = self.attribute(&value, key) { return Ok(found); }
         }
         if matches!(&value, Value::OctetKind { .. }) {
@@ -5857,6 +5873,12 @@ impl<'a> Machine<'a> {
                         return self.member_binding(entry, Some(value.clone()), builder);
                     }
                 }
+            }
+            // A class object's class belongs to its metaclass. An instance
+            // property in the class namespace cannot replace that descriptor.
+            if !key.is_empty() && key == self.detail("kind") {
+                return Ok(Self::builder_over(b).map(Value::Blueprint)
+                    .unwrap_or_else(|| self.kind_named_after(&value)));
             }
             if !key.is_empty() && key == self.detail("module") {
                 if let Some(word) = Self::native_word(b) {
@@ -6728,6 +6750,7 @@ impl<'a> Machine<'a> {
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
+        if self.namespace_holding(&subject).is_some() { self.revised_members.borrow_mut().clear(); }
         self.has_nonstring_class_keys |= key == "\0type-keys";
         if let Some(dictionary)=self.decorator_dictionary(&subject)? {
             if key=="__wrapped__" || key==self.detail("function") || key==self.detail("abstractmethod") {return Err(self.readonly_attribute(&subject,key));}

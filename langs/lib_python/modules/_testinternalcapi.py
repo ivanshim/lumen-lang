@@ -41,13 +41,8 @@ SPECIALIZATION_THRESHOLD = 2
 
 
 def get_recursion_depth():
-    import sys
-    frame = sys._getframe(1)
-    depth = 0
-    while frame is not None:
-        depth += 1
-        frame = frame.f_back
-    return depth
+    # Use the same logical depth as the kernel's recursion-limit check.
+    return __program_namespace('recursion_depth') - 1
 
 
 # Contracts of CPython v3.14.8 Modules/_testinternalcapi.c and fileutils.c.
@@ -98,3 +93,73 @@ def DecodeLocaleEx(data, current_locale=0, errors='strict', /):
 
 def __getattr__(name):
     raise AttributeError("module '_testinternalcapi' has no attribute '" + name + "'")
+
+# CPython's signed nanosecond and time_t conversion contracts.
+SIZEOF_TIME_T = 8
+
+def _time_bound(value, bits=64, kind='C PyTime_t'):
+    if not -(1 << (bits-1)) <= value < (1 << (bits-1)):
+        raise OverflowError('timestamp out of range for ' + kind)
+    return value
+
+def _time_round(value, rounding):
+    import math
+    if math.isnan(value):
+        raise ValueError('Invalid value NaN (not a number)')
+    if not math.isfinite(value):
+        raise OverflowError('timestamp out of range for C PyTime_t')
+    if rounding == 0: return math.floor(value)
+    if rounding == 1: return math.ceil(value)
+    if rounding == 2: return round(value)
+    if rounding == 3: return math.floor(value) if value < 0 else math.ceil(value)
+    raise ValueError('invalid rounding mode')
+
+def _time_index(value):
+    import operator
+    return operator.index(value)
+
+def _time_divide(value, divisor, rounding):
+    value = _time_bound(_time_index(value))
+    q, r = divmod(value, divisor)
+    if rounding == 0: return q
+    if rounding == 1: return q + bool(r)
+    if rounding == 2: return q + (r*2 > divisor or (r*2 == divisor and q % 2 != 0))
+    if rounding == 3: return q if value < 0 else q + bool(r)
+    raise ValueError('invalid rounding mode')
+
+def _PyTime_FromSeconds(value):
+    return _time_bound(_time_bound(_time_index(value), 32, 'C int') * 1000000000)
+
+def _PyTime_FromSecondsObject(value, rounding):
+    ns = _time_round(value * 1000000000, rounding) if isinstance(value, float) else _time_index(value) * 1000000000
+    return _time_bound(ns)
+
+def _PyTime_AsMilliseconds(value, rounding):
+    return _time_divide(value, 1000000, rounding)
+
+def _PyTime_AsMicroseconds(value, rounding):
+    return _time_divide(value, 1000, rounding)
+
+def _PyTime_AsTimeval(value, rounding):
+    return divmod(_PyTime_AsMicroseconds(value, rounding), 1000000)
+
+def _time_object_parts(value, rounding, scale):
+    import math
+    if isinstance(value, float):
+        fraction, seconds = math.modf(value)
+        seconds = _time_round(seconds, rounding)
+        units = _time_round(fraction * scale, rounding)
+        carry, units = divmod(units, scale)
+        seconds += carry
+    else:
+        seconds, units = _time_index(value), 0
+    return (_time_bound(seconds, 64, 'platform time_t'), units)
+
+def _PyTime_ObjectToTime_t(value, rounding):
+    return _time_bound(_time_round(value, rounding) if isinstance(value, float) else _time_index(value), 64, 'platform time_t')
+
+def _PyTime_ObjectToTimeval(value, rounding):
+    return _time_object_parts(value, rounding, 1000000)
+
+def _PyTime_ObjectToTimespec(value, rounding):
+    return _time_object_parts(value, rounding, 1000000000)

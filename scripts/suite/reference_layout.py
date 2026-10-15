@@ -24,5 +24,5 @@ def staged_reference(root, prog, versions):
     if relative in ('test_patma.py', 'test_tabnanny.py', 'test_type_aliases.py'):
         return [os.path.join(root, 'scripts', 'suite', 'reference_entry.py'), path], stage
     if relative.endswith('/__main__.py'):
-        return ['-m', 'test.' + relative.split('/')[0]], stage
+        return [os.path.join(root, 'scripts', 'suite', 'reference_entry.py'), path], stage
     return [path], stage

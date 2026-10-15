@@ -98,7 +98,7 @@ struct ContextScope;
 impl Drop for ContextScope { fn drop(&mut self) { CONTEXT.with(|c| { c.borrow_mut().pop(); }); } }
 
 pub fn program(mut packet: Json, registry: &mut crate::compile::Registry) -> Result<Rc<crate::code::Routine>, String> {
-    if packet["abi"] != "lumen-stack8-v5" { return Err("ImportError: incompatible compiled code ABI".into()); }
+    if packet["abi"] != "lumen-stack8-v6" { return Err("ImportError: incompatible compiled code ABI".into()); }
     let mut archived: crate::compile::Registry = serde_json::from_value(packet["bindings"].take()).map_err(|e| format!("ValueError: {e}"))?;
     let places: Vec<usize> = archived.idents.iter().map(|name| registry.slot(name)).collect();
     fn relocate(node: &mut Json, places: &[usize]) -> Result<(), String> {
@@ -235,4 +235,21 @@ pub fn load_methods<'de, D: Deserializer<'de>>(reader: D) -> Result<Vec<(String,
     Vec::<(String, Json)>::deserialize(reader)?.into_iter()
         .map(|(name, body)| recover_routine(body).map(|body| (name, body)))
         .collect::<Result<Vec<_>, _>>().map_err(serde::de::Error::custom)
+}
+
+// Cache framing belongs to this kernel; the codec only handles opaque bytes.
+pub fn pack_json(value: &serde_json::Value) -> Result<Vec<u8>, String> {
+    let raw = serde_json::to_vec(value).map_err(|error| format!("ValueError: {error}"))?;
+    pack_text(&raw)
+}
+pub fn pack_text(raw: &[u8]) -> Result<Vec<u8>, String> {
+    let compressed = lumen_zlib::compress(raw).map_err(|error| format!("ValueError: {error}"))?;
+    let mut bytes = b"LCC6".to_vec();
+    bytes.extend_from_slice(&compressed);
+    Ok(bytes)
+}
+pub fn unpack_json(bytes: &[u8]) -> Result<serde_json::Value, String> {
+    let raw = bytes.strip_prefix(b"LCC6").ok_or("ValueError: invalid compiled cache header")?;
+    let decoded = lumen_zlib::decompress(raw).map_err(|error| format!("ValueError: {error}"))?;
+    serde_json::from_slice(&decoded).map_err(|error| format!("ValueError: {error}"))
 }

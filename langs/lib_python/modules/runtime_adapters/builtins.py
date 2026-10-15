@@ -70,3 +70,10 @@ def aiter(iterable, /):
     if getattr(type(iterator), '__anext__', None) is None:
         raise TypeError("aiter() returned not an async iterator of type '" + type(iterator).__name__ + "'")
     return iterator
+
+# Site installs the interactive quit helpers unless startup explicitly disables it.
+import sys as _startup_sys
+if not _startup_sys.flags.no_site:
+    from _sitebuiltins import Quitter as _StartupQuitter
+    quit = _StartupQuitter("quit", "Ctrl-D (i.e. EOF)")
+    exit = _StartupQuitter("exit", "Ctrl-D (i.e. EOF)")

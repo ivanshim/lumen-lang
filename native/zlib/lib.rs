@@ -136,3 +136,24 @@ pub fn call(operation: i64, handle: i64, data: &[u8], options: [i64; 5]) -> Repl
         result
     })
 }
+
+/// One-shot compression around the same codec used by Python's zlib adapter.
+pub fn compress(input: &[u8]) -> Result<Vec<u8>, String> {
+    let stream = call(1, 0, &[], [6, 8, 15, 8, 0]);
+    if stream.status != 0 { return Err(stream.text); }
+    let reply = call(3, stream.number, input, [4, 0, 0, 0, 0]);
+    call(6, stream.number, &[], [0; 5]);
+    if reply.status != 0 || !reply.ended { return Err("incomplete compression".into()); }
+    Ok(reply.output)
+}
+/// Read one complete zlib stream, rejecting truncation and trailing bytes.
+pub fn decompress(input: &[u8]) -> Result<Vec<u8>, String> {
+    let stream = call(2, 0, &[], [15, 0, 0, 0, 0]);
+    if stream.status != 0 { return Err(stream.text); }
+    let reply = call(4, stream.number, input, [4, 0, 0, 0, 0]);
+    call(6, stream.number, &[], [0; 5]);
+    if reply.status != 0 || !reply.ended || reply.consumed as usize != input.len() {
+        return Err("incomplete compressed stream".into());
+    }
+    Ok(reply.output)
+}

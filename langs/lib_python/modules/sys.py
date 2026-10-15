@@ -75,6 +75,8 @@ version = '3.14.8 (Lumen) [Rust]'
 _git = ('Lumen', '', '')
 hexversion = 0x030e08f0
 platform = 'linux'
+platlibdir = 'lib'
+copyright = 'Lumen experimental interpreter; Python library sources are licensed by the Python Software Foundation.'
 # Which Python this is. A test that reaches for the internals of the
 # reference implementation asks the name here first, and the honest
 # answer -- not cpython -- is what lets such a test step aside instead
@@ -184,11 +186,8 @@ def setrecursionlimit(limit):
         raise TypeError("'" + type(limit).__name__ + "' object cannot be interpreted as an integer")
     if limit < 1:
         raise ValueError('recursion limit must be greater or equal than 1')
-    frame = _getframe()
-    depth = 0
-    while frame is not None:
-        depth += 1
-        frame = frame.f_back
+    # Check the same logical call depth that both kernels enforce.
+    depth = __program_namespace('recursion_depth')
     if limit <= depth:
         raise RecursionError('cannot set the recursion limit to ' + str(limit) +
                              ' at the recursion depth ' + str(depth) + ': the limit is too low')

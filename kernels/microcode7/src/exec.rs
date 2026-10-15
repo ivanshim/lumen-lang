@@ -4000,8 +4000,10 @@ impl<'a> Machine<'a> {
     /// before and after, with the builtin itself. Operators, and what a
     /// builtin does inside itself, are not told.
     fn prim_watched(&mut self, op: Prim, name: &str, values: &[Value]) -> Result<Value, String> {
-        let spoken = name.starts_with(|c: char| c.is_alphabetic()) && self.table.prims.get(name) == Some(&op);
-        if !spoken || self.watcher.borrow().is_none() || self.watching_now.get() || self.natives_told.get() {
+        if self.watcher.borrow().is_none() || self.watching_now.get() || self.natives_told.get() {
+            return self.prim(op, name, values);
+        }
+        if !name.starts_with(|c: char| c.is_alphabetic()) || self.table.prims.get(name) != Some(&op) {
             return self.prim(op, name, values);
         }
         let callable = match (op, values.first()) {
@@ -4177,7 +4179,7 @@ impl<'a> Machine<'a> {
         // reads is a stand-in, whatever it is bound to.
         if Rc::ptr_eq(&f, &self.outermost) && !Rc::ptr_eq(frame, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0') {
             if let Some((names, true)) = self.annotation_scope(frame) {
-                let copied = self.frames_named.last().is_some_and(|routine| routine.globe.is_some());
+                let copied = self.frames_named.last().is_some_and(|routine| Self::explicit_globals(routine).is_some());
                 if copied {
                     if let Some(value) = self.world_book.as_ref().and_then(|book| looked_up(book, &slot.ident)) { return Ok(value); }
                 }
@@ -4201,7 +4203,7 @@ impl<'a> Machine<'a> {
             return Err(format!("RuntimeError: closure binding '{}' is unavailable in {routine}", slot.ident));
         };
         if slot.up > 0 && !Rc::ptr_eq(&f, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0')
-            && self.frames_named.last().is_some_and(|routine| routine.globe.is_none()) {
+            && self.frames_named.last().is_some_and(|routine| Self::explicit_globals(routine).is_none()) {
             if let Some((names, all)) = self.annotation_scope(frame) {
                 let content = v.settled();
                 if all || matches!(content, Value::Unset) {
@@ -13363,10 +13365,7 @@ impl<'a> Machine<'a> {
         let namespace = self.reading_now.and_then(|index| self.readings.get(index));
         match namespace {
             Some(names) => looked_up(names.outer.as_ref().unwrap_or(&names.near), "__name__").unwrap_or(Value::Nil),
-            None => match &self.world_book {
-                Some(book) => looked_up(book, "__name__").unwrap_or(Value::Nil),
-                None => self.namespace_named().map_or(Value::Nil, |name| Value::text(&name)),
-            },
+            None => self.namespace_named().map_or(Value::Nil, |name| Value::text(&name)),
         }
     }
 
@@ -22111,6 +22110,25 @@ impl<'a> Machine<'a> {
                 Value::Vector(crate::tuples::Sequence::plain(items))
             }
             Prim::ProgramNames => {
+                if let [Value::Text(operation), Value::Text(script)] = v {
+                    if operation.as_ref() == "subinterp" {
+                        let mut inputs: Vec<(String, String, String, bool)> = Vec::new();
+                        inputs.push((String::from("SELF"), String::from("file"), String::from("<string>"), false));
+                        inputs.extend(self.library_sources.iter().map(|(name, text)| (String::from("MODULE"), name.clone(), text.clone(), false)));
+                        inputs.extend(self.library_files.iter().map(|(name, file)| (String::from("MODULE_FILE"), name.clone(), file.clone(), false)));
+                        inputs.extend(self.library_aliases.iter().map(|(name, alias)| (String::from("MODULE_ALIAS"), name.clone(), alias.clone(), false)));
+                        if let Some(root) = &self.library_directory { inputs.push((String::from("SELF"), String::from("library_root"), root.to_string_lossy().into_owned(), false)); }
+                        // The nested interpreter uses separate runtime state.
+                        let status = match crate::go(self.table, script, &[], &inputs) {
+                            Ok(()) => 0,
+                            Err(message) => { eprintln!("{}", message.strip_prefix('\0').unwrap_or(&message)); -1 }
+                        };
+                        return Ok(Value::Small(status));
+                    }
+                }
+                if v.len() == 1 && matches!(&v[0], Value::Text(word) if word.as_ref() == "recursion_depth") {
+                    return Ok(Value::Small(self.standing as i64));
+                }
                 // Given a module, answers its own namespace, as a read
                 // of the module's __dict__ would give it; anything else
                 // is the running program's, or a frame up the call chain.
@@ -26115,9 +26133,10 @@ impl<'a> Machine<'a> {
 
     /// A row laid down again and again, with room asked for first.
     fn laid_again(&self, items: &[Value], often: usize) -> Result<Vec<Value>, String> {
-        let wanted = items.len().checked_mul(often).ok_or_else(|| self.repeating_too_wide())?;
+        let no_space = || if self.rules.has_any_ext_builtin_bool_result { String::from("MemoryError: ") } else { self.repeating_too_wide() };
+        let wanted = items.len().checked_mul(often).ok_or_else(no_space)?;
         let mut row: Vec<Value> = Vec::new();
-        row.try_reserve(wanted).map_err(|_| self.repeating_too_wide())?;
+        row.try_reserve(wanted).map_err(|_| no_space())?;
         for _ in 0..often { row.extend(items.iter().cloned()); }
         Ok(row)
     }
@@ -28296,12 +28315,8 @@ impl Machine<'_> {
         };
         self.imported.insert(path.to_owned(), value.clone()); self.namespace_places.borrow_mut().take(); self.revised_members.borrow_mut().clear();
         if let Some((owner, name)) = split {
-            if let Some(Value::Thing(parent)) = self.imported.get(owner) {
-                let mut holdings = parent.holds.borrow_mut();
-                if let Some(at) = holdings.iter().position(|entry| entry.0 == name) {
-                    if let Value::Shared(link) = &holdings[at].1 { *link.borrow_mut() = value.clone(); }
-                    else { holdings[at].1 = value.clone(); }
-                } else { holdings.push((name.into(), value.clone())); }
+            if let Some(parent) = self.imported.get(owner).cloned() {
+                self.alter_class_member(parent, name, Some(value.clone()), true).map_err(|escape| self.carried_native_fault(escape))?;
             }
         }
         let cache_owner = self.table.strings("ext.system.module.cache").first().cloned();
@@ -29589,8 +29604,7 @@ impl<'a> Machine<'a> {
                 Ok(located.map(|position| entries[position].1.clone()))
             },
             Value::Attributes(space) => {
-                if space.blueprint().parents().is_empty()
-                    && self.indexed_module_member(space, "\0loaded-module").is_some()
+                if self.indexed_module_member(space, "\0loaded-module").is_some()
                     && self.indexed_module_member(space, "\0keys").is_none()
                     && self.indexed_module_member(space, "\0dictionary").is_none() {
                     if !Self::visible_name(name) { return Ok(None); }
@@ -30525,6 +30539,11 @@ impl<'a> Machine<'a> {
         let formals = self.table.strings("ext.builtin.compile.parameters");
         if v.len() < 3 || v.len() > formals.len() { return Err(self.core_complaint("core.arity", name)); }
         let (Value::Text(file), Value::Text(manner)) = (v[1].settled(), v[2].settled()) else { return Err(self.source_refused()) };
+        let mut normalized = v.to_vec();
+        if matches!(normalized[0].settled(), Value::Thing(_)) {
+            if let Some(row) = self.numeric_octets(&normalized[0])? { normalized[0] = self.octets(row, false); }
+        }
+        let v = normalized.as_slice();
         if let Some(Value::Small(flags)) = v.get(3).map(Value::settled) {
             if flags & 1024 != 0 {
                 let namespace = self.load_namespace("ast")?;
@@ -30860,7 +30879,7 @@ impl<'a> Machine<'a> {
                 let operation = self.table.strings("ext.builtin.code.cache")[0].clone();
                 let serialized = self.archive_code(&operation, std::slice::from_ref(&first))?;
                 if let Value::Octets { cell, .. } = serialized {
-                    self.cached_forms = Some(serde_json::from_slice(&cell.borrow()).map_err(|error| format!("ValueError: {error}"))?);
+                    self.cached_forms = Some(crate::cache::unpack_forms(&cell.borrow())?);
                 } else { return Err(self.source_refused()); }
             }
         }
@@ -31046,7 +31065,7 @@ impl<'a> Machine<'a> {
         if let Some(path) = home {
             if let Some(Value::Thing(space)) = self.imported.get(&path).cloned() {
                 for (name, _) in space.holds.borrow().iter() {
-                    if name.starts_with('\0') { continue; }
+                    if name.starts_with('\0') || names.iter().any(|local| local == name) { continue; }
                     let wanted = format!("\0import/{path}/{name}");
                     if self.idents.iter().any(|word| word == &wanted) {
                         aliasing.push((name.clone(), wanted));
@@ -32319,7 +32338,7 @@ impl Machine<'_> {
                 let job = if op == Prim::SetMember { 4 } else { 5 };
                 return self.work_on_class(job, input).map_err(|fault| self.carried_native_fault(fault));
             }
-            if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..)) || self.stands_for_a_kind(v) || matches!(v, Value::Frac(_) | Value::Complex(_) | Value::Octets { .. } | Value::Intrinsic(..) | Value::Member(..) | Value::TextCall { .. }) && matches!(op, Prim::GetMember | Prim::HasAttribute)) {
+            if self.has_class_order() && input.first().map_or(false, |v| matches!(v, Value::Blueprint(_) | Value::Thing(_) | Value::Routine(_) | Value::Bound(..) | Value::Method(..) | Value::Wrapped(..)) || self.stands_for_a_kind(v) || matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_) | Value::Frac(_) | Value::Complex(_) | Value::Octets { .. } | Value::Intrinsic(..) | Value::Member(..) | Value::TextCall { .. }) && matches!(op, Prim::GetMember | Prim::HasAttribute)) {
                 let job = match op { Prim::CallableValue=>Some(2), Prim::GetMember=>Some(3), Prim::SetMember=>Some(4), Prim::DropMember=>Some(5), Prim::HasAttribute=>Some(6), Prim::MembersOf=>Some(7), _=>None };
                 if let Some(job) = job {
                     let outcome = self.work_on_class(job, input);
@@ -32511,11 +32530,21 @@ impl Machine<'_> {
                 Ok(Value::Dict(Rc::new(entries.into())))
             }
             LzmaEncode => {
-                require(3, 3)?;
+                require(3, 4)?;
                 let raw = match input[0].settled() { Value::Octets { cell, .. } => cell.borrow().clone(), _ => return Err("TypeError: codec input must be bytes".into()) };
                 let preset = match input[1].settled() { Value::Small(value) => u32::try_from(value).map_err(|_| "OverflowError: invalid preset".to_owned())?, _ => return Err("TypeError: preset must be an integer".into()) };
                 let check = match input[2].settled() { Value::Small(value) => i32::try_from(value).map_err(|_| "OverflowError: invalid integrity check".to_owned())?, _ => return Err("TypeError: check must be an integer".into()) };
-                let (status, output) = match lumen_lzma::encode(&raw, preset, check) { Ok(output) => (0, output), Err(code) => (code, Vec::new()) };
+                let result = if let Some(options) = input.get(3) {
+                    let Value::Tuple(values) = options.settled() else { return Err("TypeError: LZMA1 options must be a tuple".into()); };
+                    if values.len() != 4 { return Err("ValueError: expected four LZMA1 properties".into()); }
+                    let mut properties = [0u32; 4];
+                    for (slot, value) in values.iter().enumerate() {
+                        let Value::Small(number) = value.settled() else { return Err("TypeError: LZMA1 properties must be integers".into()); };
+                        properties[slot] = u32::try_from(number).map_err(|_| "OverflowError: invalid LZMA1 property".to_owned())?;
+                    }
+                    lumen_lzma::encode_alone(&raw, preset, properties)
+                } else { lumen_lzma::encode(&raw, preset, check) };
+                let (status, output) = match result { Ok(output) => (0, output), Err(code) => (code, Vec::new()) };
                 Ok(Value::tuple(vec![Value::Small(status.into()), self.octets(output, false)]))
             }
             LzmaDecode => {
@@ -33503,12 +33532,12 @@ impl Machine<'_> {
             let operations = self.table.strings("ext.builtin.code.cache").to_vec();
             let archived = self.archive_code(&operations[0], std::slice::from_ref(code))?;
             let Value::Octets { cell, .. } = archived else { return Err(self.source_refused()); };
-            let mut envelope: serde_json::Value = serde_json::from_slice(&cell.borrow()).map_err(|err| format!("ValueError: {err}"))?;
+            let mut envelope: serde_json::Value = crate::cache::unpack_forms(&cell.borrow())?;
             let prior_path = envelope["filename"].as_str().ok_or("ValueError: absent source name")?.to_owned();
             crate::cache::relocate_source(&mut envelope["forms"], &prior_path, &new_path);
             crate::cache::relocate_source(&mut envelope["bodies"], &prior_path, &new_path);
             envelope["filename"] = serde_json::Value::String(new_path.to_string());
-            let payload = serde_json::to_vec(&envelope).map_err(|err| format!("ValueError: {err}"))?;
+            let payload = crate::cache::pack_forms(&envelope)?;
             let changed = self.archive_code(&operations[1], &[self.octets(payload, false)])?;
             if let (Value::Thing(target), Value::Thing(rebuilt)) = (code.settled(), changed) {
                 target.holds.replace(rebuilt.holds.borrow().clone());
@@ -33520,7 +33549,7 @@ impl Machine<'_> {
             return Err("TypeError: cache ABI inquiry accepts no arguments".into());
         }
         if action == 2 && input.is_empty() {
-            return Ok(Value::tuple(vec![Value::text("lumen-microcode7-v5"), Value::Small(u32::from_le_bytes(*b"L7C\x04") as i64)]));
+            return Ok(Value::tuple(vec![Value::text("lumen-microcode7-v6"), Value::Small(u32::from_le_bytes(*b"L7C\x06") as i64)]));
         }
         if input.len() != 1 { return Err("TypeError: code cache operation needs one argument".to_owned()); }
         if action == 0 {
@@ -33528,20 +33557,20 @@ impl Machine<'_> {
             if self.table.strings("ext.builtin.compile.kind").first().map(String::as_str) != Some(object.blueprint().name.as_str()) { return Err("TypeError: expected compiled code".into()); }
             let attributes = object.holds.borrow();
             if let Some((_, Value::Text(encoded))) = attributes.iter().find(|(name, _)| name == "\0form_archive") {
-                return Ok(Value::Octets { cell: Rc::new(RefCell::new(encoded.as_bytes().to_vec())), changeable: false, lead: Rc::from("b") });
+                return Ok(Value::Octets { cell: Rc::new(RefCell::new(crate::cache::pack_saved_forms(encoded.as_bytes())?)), changeable: false, lead: Rc::from("b") });
             }
             let routine = attributes.iter().find(|(name, _)| name == "\0native_forms").and_then(|(_, value)| match value { Value::Routine(body) => Some(body.clone()), _ => None }).ok_or("ValueError: code has no compiled forms")?;
             let names = attributes.iter().find(|(name, _)| name == "\0form_names").and_then(|(_, value)| match value { Value::Text(text) => Some(text), _ => None }).ok_or("ValueError: code bindings are unavailable")?;
             let metadata: serde_json::Value = serde_json::from_str(names).map_err(|e| format!("ValueError: {e}"))?;
             let (body, spellings, bodies) = crate::cache::serialize_forms(routine)?;
             let manner = match attributes[2].1 { Value::Small(n) => n, _ => return Err("ValueError: invalid compiled mode".into()) };
-            let envelope = serde_json::json!({ "format": "lumen-microcode7-v5", "filename": attributes[1].1.bare(),
+            let envelope = serde_json::json!({ "format": "lumen-microcode7-v6", "filename": attributes[1].1.bare(),
                 "manner": manner, "forms": body, "metadata": metadata, "spellings": spellings, "bodies": bodies });
-            let encoded = serde_json::to_vec(&envelope).map_err(|e| format!("ValueError: {e}"))?;
+            let encoded = crate::cache::pack_forms(&envelope)?;
             return Ok(Value::Octets { cell: Rc::new(RefCell::new(encoded)), changeable: false, lead: Rc::from("b") });
         }
         let Value::Octets { cell, .. } = input[0].settled() else { return Err("TypeError: compiled cache requires bytes".to_owned()); };
-        let envelope: serde_json::Value = serde_json::from_slice(&cell.borrow()).map_err(|e| format!("ValueError: {e}"))?;
+        let envelope: serde_json::Value = crate::cache::unpack_forms(&cell.borrow())?;
         let filename = envelope["filename"].as_str().ok_or("ValueError: compiled filename is absent")?;
         let manner = envelope["manner"].as_u64().filter(|value| *value <= 2).ok_or("ValueError: unknown compiled mode")?;
         let recovered = crate::cache::forms(envelope.clone(), &[], None, None, None)?;
@@ -33553,7 +33582,7 @@ impl Machine<'_> {
             (keys[2].clone(), Value::Small(manner as i64)), ("co_flags".to_owned(), Value::Small(recovered.program.flags)),
             ("co_firstlineno".to_owned(), Value::Small(recovered.program.declared_on as i64)), ("co_consts".to_owned(), literals),
             ("co_filename".into(), Value::text(filename))];
-        let encoded = String::from_utf8(cell.borrow().clone()).map_err(|e| format!("ValueError: {e}"))?;
+        let encoded = envelope.to_string();
         slots.push(("\0form_archive".into(), Value::text(&encoded)));
         let of = self.code_blueprint();
         self.made += 1;

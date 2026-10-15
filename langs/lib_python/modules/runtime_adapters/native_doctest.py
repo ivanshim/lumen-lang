@@ -739,7 +739,6 @@ class DocTestCase(_NamedCase):
         self._dt_setUp = setUp
         self._dt_tearDown = tearDown
         self._dt_checker = checker
-        self._method = test.name
 
     def shortDescription(self):
         return 'Doctest: ' + self._dt_test.name

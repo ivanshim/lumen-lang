@@ -78,7 +78,7 @@ impl PythonVersion {
                 let components = self.tests.split('/').map(|part| format!("{part:?}")).collect::<Vec<_>>().join(", ");
                 source.replace("'tests', 'python'", &components)
             }
-            "platform" => format!("{source}\ndef python_version():\n    return '{}'\n", self.release),
+            "platform" => format!("{source}\ndef python_version():\n    return _sys_version()[1]\n"),
             _ => source.to_string(),
         }
     }
