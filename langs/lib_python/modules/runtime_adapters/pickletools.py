@@ -15,6 +15,8 @@ _line_readers = {read_decimalnl_short: 0, read_decimalnl_long: 1,
                  read_floatnl: 2, read_unicodestringnl: 3,
                  read_stringnl_noescape: 4, read_stringnl_noescape_pair: 5}
 
+_reader_bodies = {reader: reader.__code__ for reader in (*_fixed_readers, *_counted_readers, *_line_readers)}
+
 # Fall back at the opcode boundary so truncation and reader errors keep their wording.
 def _interpreted_genops(data, yield_end_pos=False, position=0):
     size = len(data)
@@ -29,6 +31,8 @@ def _interpreted_genops(data, yield_end_pos=False, position=0):
         if opcode.arg is not None:
             reader = opcode.arg.reader
             if type(reader) is not type(_stream_genops):
+                break
+            if reader in _reader_bodies and reader.__code__ is not _reader_bodies[reader]:
                 break
             fixed = _fixed_readers.get(reader)
             counted = _counted_readers.get(reader)
@@ -140,8 +144,14 @@ def _stream_from(data, position, yield_end_pos):
     stream.seek(position)
     return _stream_genops(stream, yield_end_pos)
 
-# Validate each descriptor at its yield boundary, allowing changes between yields.
+_native_bodies = tuple(None if reader is None else reader.__code__ for reader in _native_expected)
+_field_projection = (_opcode_characters, _native_expected, ('arg', 'reader', '__code__'), _native_bodies)
+
+# Validate and publish each record at its yield boundary, allowing intervening edits.
 def _buffer_genops(data, yield_end_pos=False):
+    if type(yield_end_pos) is not bool:
+        yield from _interpreted_genops(data, yield_end_pos)
+        return
     position = 0
     while True:
         if code2op is not _native_mapping:
@@ -150,28 +160,18 @@ def _buffer_genops(data, yield_end_pos=False):
         records = _field_batch(data, position, _native_layouts, False, 3)
         if not records:
             break
-        for code, argument, start, end in records:
+        for record in records:
             if code2op is not _native_mapping:
                 yield from _stream_from(data, position, yield_end_pos)
                 return
-            opcode = code2op.get(_opcode_characters[code])
-            if opcode is None:
-                unchanged = False
-            else:
-                descriptor = opcode.arg
-                expected = _native_expected[code]
-                unchanged = (descriptor is None if expected is None else
-                             descriptor is not None and descriptor.reader is expected)
-            if not unchanged:
-                yield from _interpreted_genops(data, yield_end_pos, position)
+            projected = _field_batch(record, code2op, _field_projection, yield_end_pos, 4)
+            if projected is None:
+                yield from _stream_from(data, position, yield_end_pos)
                 return
-            position = end
-            if yield_end_pos:
-                yield opcode, argument, start, end
-            else:
-                yield opcode, argument, start
-            if code == 46:
-                assert opcode.name == 'STOP'
+            position = record[3]
+            yield projected
+            if record[0] == 46:
+                assert projected[0].name == 'STOP'
                 return
     yield from _interpreted_genops(data, yield_end_pos, position)
 
@@ -220,10 +220,14 @@ def _optimization_plan(data):
                 if opcode is not _native_opcodes[code]:
                     return None
                 descriptor = opcode.arg
-                if (descriptor is not _native_descriptors[code]
+                name = opcode.name
+                version = opcode.proto
+                if (type(name) is not str or type(version) is not int
+                        or descriptor is not _native_descriptors[code]
                         or descriptor is not None and descriptor.reader is not _native_expected[code]
-                        or opcode.name != _native_names[code]
-                        or opcode.proto != _native_protocols[code]):
+                        or name != _native_names[code]
+                        or version != _native_protocols[code]
+                        or descriptor is not None and descriptor.reader.__code__ is not _native_bodies[code]):
                     return None
                 checked.add(code)
             position = end

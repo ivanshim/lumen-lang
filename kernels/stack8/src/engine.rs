@@ -19377,8 +19377,41 @@ impl<'a> Engine<'a> {
         Ok(Value::array(records))
     }
 
+    // Project a decoded field through a live descriptor table at its yield boundary.
+    fn byte_field_projection(&mut self, args: &[Value]) -> Res<Value> {
+        let [Value::Tuple(row), registry, Value::Tuple(recipe), Value::Flag(complete), Value::Small(4)] = args else {
+            return Err("TypeError: invalid memory field projection".into());
+        };
+        let [Value::Small(code), argument, begin, end] = row.as_slice() else { return Err("TypeError: invalid memory field record".into()); };
+        let [Value::Tuple(keys), Value::Tuple(readers), Value::Tuple(path), Value::Tuple(bodies)] = recipe.as_slice() else { return Err("TypeError: invalid memory field recipe".into()); };
+        let index = usize::try_from(*code).map_err(|_| "ValueError: invalid memory field code")?;
+        let key = keys.get(index).ok_or("ValueError: invalid memory field code")?;
+        let expected = readers.get(index).ok_or("ValueError: invalid memory field code")?;
+        let [first, second, fingerprint] = path.as_slice() else { return Err("TypeError: invalid memory field path".into()); };
+        let token = self.mapping_lookup(registry, key, &Value::Null)?;
+        if matches!(token, Value::Null) { return Ok(Value::Null); }
+        let descriptor = self.builtin(Builtin::GetAttr, "getattr", &mut vec![token.clone(), first.clone()])?;
+        if matches!(expected, Value::Null) {
+            if !matches!(descriptor, Value::Null) { return Ok(Value::Null); }
+        } else {
+            if matches!(descriptor, Value::Null) { return Ok(Value::Null); }
+            let reader = self.builtin(Builtin::GetAttr, "getattr", &mut vec![descriptor, second.clone()])?;
+            let same = match (&reader, expected) {
+                (Value::Routine(left), Value::Routine(right)) => Rc::ptr_eq(left, right),
+                _ => reader.same_value(expected),
+            };
+            if !same { return Ok(Value::Null); }
+            let body = self.builtin(Builtin::GetAttr, "getattr", &mut vec![reader, fingerprint.clone()])?;
+            if !bodies.get(index).is_some_and(|saved| body.same_place(saved)) { return Ok(Value::Null); }
+        }
+        let mut projected = vec![token, argument.clone(), begin.clone()];
+        if *complete { projected.push(end.clone()); }
+        Ok(Value::tuple(projected))
+    }
+
     // Read or write bounded memory-stream storage without intermediate Python slices.
-    fn byte_memory(&self, args: &[Value]) -> Res<Value> {
+    fn byte_memory(&mut self, args: &[Value]) -> Res<Value> {
+        if matches!(args.last(), Some(Value::Small(4))) { return self.byte_field_projection(args); }
         if matches!(args.last(), Some(Value::Small(3))) { return self.byte_fields(args); }
         let [Value::Bytes(storage, true, _), Value::Small(position), input, Value::Flag(closed), Value::Small(mode)] = args else {
             return Err("TypeError: invalid memory stream arguments".into());

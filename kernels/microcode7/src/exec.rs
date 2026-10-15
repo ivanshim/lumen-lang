@@ -14295,8 +14295,52 @@ impl<'a> Machine<'a> {
         Ok(Value::Vector(crate::tuples::Sequence::plain(batch)))
     }
 
+    // Resolve the current token and reader before publishing one parsed record.
+    fn publish_octet_field(&mut self, values: &[Value]) -> Result<Value, String> {
+        if values.len() != 5 { return Err(String::from("TypeError: invalid memory field projection")); }
+        let (record, table, end_position) = match (&values[0], &values[2], &values[3]) {
+            (Value::Tuple(record), Value::Tuple(table), Value::Flag(end_position)) if record.len() == 4 && table.len() == 4 => (record, table, *end_position),
+            _ => return Err(String::from("TypeError: invalid memory field projection")),
+        };
+        let number = match record[0] { Value::Small(code) => usize::try_from(code).ok(), _ => None };
+        let Some(number) = number else { return Err(String::from("ValueError: invalid memory field code")); };
+        let (spelling, wanted, selector, saved_body) = match (&table[0], &table[1], &table[2], &table[3]) {
+            (Value::Tuple(keys), Value::Tuple(readers), Value::Tuple(selector), Value::Tuple(bodies)) if number < keys.len() && number < readers.len() && number < bodies.len() && selector.len() == 3 => (&keys[number], &readers[number], selector, &bodies[number]),
+            _ => return Err(String::from("TypeError: invalid memory field recipe")),
+        };
+        let Value::Text(outer_name) = &selector[0] else { return Err(String::from("TypeError: invalid memory field path")); };
+        let Value::Text(inner_name) = &selector[1] else { return Err(String::from("TypeError: invalid memory field path")); };
+        let Value::Text(code_name) = &selector[2] else { return Err(String::from("TypeError: invalid memory field path")); };
+        let opcode = self.mapping_lookup(&values[1], spelling, &Value::Nil)?;
+        if matches!(opcode, Value::Nil) { return Ok(Value::Nil); }
+        let field = self.member_text(opcode.clone(), outer_name)?;
+        match (matches!(wanted, Value::Nil), matches!(field, Value::Nil)) {
+            (true, true) => {},
+            (false, false) => {
+                let actual = self.member_text(field, inner_name)?;
+                let same = match (&actual, wanted) {
+                    (Value::Bound(a, room), Value::Bound(b, other_room)) => Rc::ptr_eq(a, b) && Rc::ptr_eq(room, other_room),
+                    (Value::Routine(a), Value::Routine(b)) => Rc::ptr_eq(a, b),
+                    _ => actual.one_and_same(wanted),
+                };
+                if !same { return Ok(Value::Nil); }
+                let current_body = self.member_text(actual, code_name)?;
+                let retained = match (&current_body, saved_body) {
+                    (Value::Wrapped(_, a), Value::Wrapped(_, b)) => Rc::ptr_eq(a, b),
+                    _ => current_body.one_place(saved_body),
+                };
+                if !retained { return Ok(Value::Nil); }
+            }
+            _ => return Ok(Value::Nil),
+        }
+        let mut answer = vec![opcode, record[1].clone(), record[2].clone()];
+        if end_position { answer.push(record[3].clone()); }
+        Ok(Value::tuple(answer))
+    }
+
     // Keep memory-stream transfers proportional to the bytes requested or supplied.
-    fn memory_octets(&self, supplied: &[Value]) -> Result<Value, String> {
+    fn memory_octets(&mut self, supplied: &[Value]) -> Result<Value, String> {
+        if supplied.last().is_some_and(|value| matches!(value, Value::Small(4))) { return self.publish_octet_field(supplied); }
         if supplied.last().is_some_and(|value| matches!(value, Value::Small(3))) { return self.gather_octet_fields(supplied); }
         if supplied.len() != 5 { return Err("TypeError: invalid memory stream arguments".to_owned()); }
         let (buffer, cursor, closed, action) = match (&supplied[0], &supplied[1], &supplied[3], &supplied[4]) {
