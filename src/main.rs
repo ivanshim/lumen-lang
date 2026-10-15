@@ -692,15 +692,17 @@ fn main() {
     // it complains, which wants more of the machine's stack than a run
     // is given by default; the whole run is therefore made on a thread
     // with room for it.
+    let (python_run, learn) = std::sync::mpsc::channel::<()>();
     let roomy = std::thread::Builder::new()
         .stack_size(1 << 30)
-        .spawn(run_all)
+        .spawn(move || run_all(python_run))
         .expect("a thread for the run");
-    // The waiting thread takes no signals, so one sent to the process lands
-    // on the running thread and interrupts its blocking calls (waitpid,
-    // select) instead of sitting unseen while they carry on.
+    // A Python run only: the waiting thread takes no signals, so one sent to
+    // the process lands on the running thread and interrupts its blocking
+    // calls (waitpid, select) instead of sitting unseen while they carry on.
+    // (The run ending without a word drops the sender and ends the wait.)
     #[cfg(target_os = "linux")]
-    {
+    if learn.recv().is_ok() {
         extern "C" {
             fn sigfillset(set: *mut [u64; 16]) -> i32;
             fn pthread_sigmask(how: i32, set: *const [u64; 16], old: *mut [u64; 16]) -> i32;
@@ -717,7 +719,7 @@ fn main() {
     }
 }
 
-fn run_all() {
+fn run_all(python_run: std::sync::mpsc::Sender<()>) {
     let args: Vec<OsString> = env::args_os().collect();
     let inv = parse_args(&args);
 
@@ -729,6 +731,7 @@ fn run_all() {
     std::env::set_var("LUMEN_KERNEL", inv.kernel.as_str());
     std::env::set_var("LUMEN_LANG", inv.language.name());
     if inv.language.name() == "python" {
+        let _ = python_run.send(());
         if inv.python_development { std::env::set_var("LUMEN_PYTHON_DEV_MODE", "1"); }
         else { std::env::remove_var("LUMEN_PYTHON_DEV_MODE"); }
         if inv.python_ignore_environment { std::env::set_var("LUMEN_PYTHON_IGNORE_ENV", "1"); }
