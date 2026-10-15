@@ -5949,7 +5949,7 @@ impl<'a> Machine<'a> {
                 // unchangeable one on.
                 let dynamic_generic = self.table.flag("ext.stmt.type_parameters") && Self::native_word(b).as_deref() == Some("Generic");
                 let mut bits = if Self::sealed(b) { 256 } else { 1024 };
-                if b.type_names.borrow().is_some() {bits|=512;}
+                if b.type_names.borrow().is_some() || dynamic_generic {bits|=512;}
                 if !dynamic_generic && b.constants.iter().any(|(label, _)| label == "\0native-name") { bits |= 256; }
                 // Things of a class's own making answer to the cycle
                 // collector; what stands on an atomic worth does not.

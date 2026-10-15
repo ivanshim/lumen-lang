@@ -581,6 +581,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("xml.dom", include_str!("xml/dom/__init__.py"), "xml/dom/__init__.py"),
     ("xml.dom.domreg", include_str!("xml/dom/domreg.py"), "xml/dom/domreg.py"),
     ("xml.dom.minicompat", include_str!("xml/dom/minicompat.py"), "xml/dom/minicompat.py"),
+    ("zipapp", include_str!("zipapp.py"), "zipapp.py"),
     ("zipfile", include_str!("zipfile/__init__.py"), "zipfile/__init__.py"),
     ("zipfile.__main__", include_str!("zipfile/__main__.py"), "zipfile/__main__.py"),
     ("zipfile._path", include_str!("zipfile/_path/__init__.py"), "zipfile/_path/__init__.py"),
