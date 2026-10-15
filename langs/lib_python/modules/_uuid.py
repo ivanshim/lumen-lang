@@ -6,15 +6,20 @@ import os, time
 has_uuid_generate_time_safe = 1
 
 def _hardware_node():
-    # libuuid reads the first interface with a non-zero hardware address
+    # libuuid reads the first interface with a non-zero hardware address;
+    # only addresses that fit the 48-bit UUID node field are usable
     try:
-        for name in sorted(os.listdir("/sys/class/net")):
+        names = sorted(os.listdir("/sys/class/net"))
+    except OSError:
+        return None
+    for name in names:
+        try:
             with open("/sys/class/net/" + name + "/address") as f:
                 node = int(f.read().strip().replace(":", ""), 16)
-            if node:
-                return node
-    except (OSError, ValueError):
-        pass
+        except (OSError, ValueError):
+            continue
+        if 0 < node < (1 << 48):
+            return node
     return None
 
 _node = _hardware_node()
