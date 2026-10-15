@@ -80,6 +80,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_typing_runtime", include_str!("_typing_runtime.py"), "_typing_runtime.py"),
     ("_ucd_3_2_0", include_str!("_ucd_3_2_0.py"), "_ucd_3_2_0.py"),
     ("_unicodedata_320", include_str!("_unicodedata_320.py"), "_unicodedata_320.py"),
+    ("_uuid", include_str!("_uuid.py"), "_uuid.py"),
     ("_weakref", include_str!("_weakref.py"), "_weakref.py"),
     ("_weakrefset", include_str!("_weakrefset.py"), "_weakrefset.py"),
     ("abc", concat!(include_str!("abc.py"), "\n", include_str!("runtime_adapters/abc.py")), "abc.py"),
