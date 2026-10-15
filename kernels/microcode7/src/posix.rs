@@ -64,6 +64,23 @@ fn account_record(user: &libc::passwd) -> Value {
     row.insert(3, Value::Small(user.pw_gid.into()));
     Value::tuple(row)
 }
+// Copy each group before the next host database lookup reuses its storage.
+fn group_record(group: &libc::group) -> Value {
+    let text = |p: *const libc::c_char| if p.is_null() {Value::Nil}
+        else {octets(unsafe {CStr::from_ptr(p)}.to_bytes())};
+    let mut members = Vec::new();
+    if !group.gr_mem.is_null() {
+        let mut index = 0;
+        loop {
+            let member = unsafe { *group.gr_mem.add(index) };
+            if member.is_null() { break; }
+            members.push(text(member));
+            index += 1;
+        }
+    }
+    Value::tuple(vec![text(group.gr_name), text(group.gr_passwd),
+        Value::Small(group.gr_gid.into()), Value::Vector(crate::tuples::Sequence::plain(members))])
+}
 pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), String>) -> Result<Value, String> {
     let operation = match given.first().map(Value::settled) {
         Some(Value::Text(name)) => name,
@@ -83,25 +100,16 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
     let answer = unsafe {
         match operation.as_ref() {
             "group" => {
-                let found = match int(0)? {0 => libc::getgrnam(path(1)?.as_ptr()), _ => libc::getgrgid(int(1)? as _)};
-                match found.as_ref() {
-                    None => Ok(Value::Nil),
-                    Some(group) => {
-                        let mut names = Vec::new();
-                        if !group.gr_mem.is_null() {
-                            let mut index = 0;
-                            loop {
-                                let member = *group.gr_mem.add(index);
-                                if member.is_null() {break;}
-                                names.push(octets(CStr::from_ptr(member).to_bytes()));
-                                index += 1;
-                            }
-                        }
-                        Ok(Value::tuple(vec![match group.gr_name.as_ref() {None => Value::Nil, Some(_) => octets(CStr::from_ptr(group.gr_name).to_bytes())},
-                            match group.gr_passwd.as_ref() {None => Value::Nil, Some(_) => octets(CStr::from_ptr(group.gr_passwd).to_bytes())}, Value::Small(group.gr_gid.into()),
-                            Value::Vector(crate::tuples::Sequence::plain(names))]))
-                    }
+                if int(0)? == 2 {
+                    libc::setgrent();
+                    let mut groups = Vec::new();
+                    while let Some(group) = libc::getgrent().as_ref() { groups.push(group_record(group)); }
+                    libc::endgrent();
+                    let payload = Value::Vector(crate::tuples::Sequence::plain(groups));
+                    return Ok(Value::tuple(vec![Value::Small(0), payload]));
                 }
+                let found = match int(0)? {0 => libc::getgrnam(path(1)?.as_ptr()), _ => libc::getgrgid(int(1)? as _)};
+                match found.as_ref() { None => Ok(Value::Nil), Some(group) => Ok(group_record(group)) }
             }
             "passwd" => {
                 if int(0)? == 2 {

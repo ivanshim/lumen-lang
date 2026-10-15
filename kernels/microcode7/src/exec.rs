@@ -1053,8 +1053,8 @@ impl<'a> Machine<'a> {
         let parent_of = |number| match number {
                 0 => None, 1 | 17 | 18 | 37 | 39 => Some(0), 3 | 4 | 66 => Some(2),
                 6 | 7 => Some(5), 11 => Some(10), 14 | 21 => Some(13),
-                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 | 53..=56 | 59 | 60 => Some(20), 42 => Some(19),
-                57 | 63..=65 => Some(62), 61 | 62 | 66..=68 => Some(20), 69 => Some(13), 70 => Some(36),
+                22 => Some(9), 25..=35 => Some(24), 38 => Some(37), 40 | 41 | 53..=56 | 58 | 59 | 63..=65 => Some(20), 42 => Some(19),
+                57 | 60..=62 => Some(59), 67 | 68 => Some(20), 69 => Some(13), 70 => Some(36),
                 43 | 44 | 45 => Some(22), 46 => Some(36), 47 => Some(46), _ => Some(1),
         };
         let mut order: Vec<usize> = (0..names.len()).collect();
@@ -9956,6 +9956,11 @@ impl<'a> Machine<'a> {
         if matches!(value.settled(), Value::Refusal(_) | Value::Ellipsis) && matches!(name, "__reduce_ex__" | "__reduce__") {
             return Some(Value::Member(Rc::new(value.settled()), name.to_owned()));
         }
+        if name == "__reduce_ex__" {
+            if let Some(window) = Self::window_inside(value) {
+                return Some(Value::Member(Rc::new(window), String::from("callable_reduce_ex")));
+            }
+        }
         let constructor=self.rules.words_ext_stmt_class_constructor.first().is_some_and(|word|word==name);
         if constructor && self.has_class_order() && matches!(value.settled(),Value::Octets{changeable:true,..}) {
             let arguments=Rc::new(vec![self.kind_entry("bytearray",name),value.clone()]);
@@ -10314,7 +10319,7 @@ impl<'a> Machine<'a> {
     pub(super) fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
         if self.trace_kind.as_ref().map_or(false, |known| Rc::ptr_eq(known, &class)) { return self.traceback_from_parts(args); }
         self.check_constructor_expansion(&class, &args)?;
-        if matches!(Self::native_word(&class).as_deref(), Some("range_iterator" | "longrange_iterator")) {
+        if matches!(Self::native_word(&class).as_deref(), Some("range_iterator" | "longrange_iterator" | "dict_keys" | "dict_values" | "dict_items")) {
             return Err(format!("TypeError: cannot create '{}' instances", class.name).into());
         }
         // A blueprint holding a program for being called answers the call
@@ -10803,6 +10808,10 @@ impl<'a> Machine<'a> {
             // Each proxy retains a separate allocation around the live dictionary.
             if let Some(owner) = raw { return Ok(Value::Window(Rc::new(owner.as_ref().clone()), 'm')); }
         }
+        // Reduction must retain the window rather than its materialized row.
+        if operation == "callable_reduce_ex" && Self::window_inside(&receiver).is_some() {
+            return Ok(Value::Member(Rc::new(receiver), operation.to_string()));
+        }
         if ["numerator", "denominator", "real", "imag"].contains(&operation) {
             match receiver.settled() {
                 Value::Complex(pair) => return Ok(crate::complex::decimal_value(if operation == "real" { pair.0 } else { pair.1 })),
@@ -11159,8 +11168,9 @@ impl<'a> Machine<'a> {
                 supplied => return Err(format!("TypeError: TypeVarTuple.__typing_subst__() takes exactly one argument ({supplied} given)").into()),
             }
         }
-        if name == "callable_reduce_ex" {
+        if name == "callable_reduce_ex" || name == "__reduce_ex__" && Self::window_inside(receiver).is_some() {
             if arguments.len() != 1 || !keywords.is_empty() { return Err("TypeError: __reduce_ex__() takes exactly one argument".to_owned().into()); }
+            if Self::window_inside(receiver).is_some() { return Err(format!("TypeError: cannot pickle '{}' object", receiver.kind_word()).into()); }
             self.check_reduction_protocol(&arguments[0])?;
             let reducer = self.read_class_member(receiver.clone(), "__reduce__", false)?;
             return self.apply_class_member(reducer, vec![]);
@@ -17216,7 +17226,7 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn object_words(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
-        if !matches!(subject, Value::Dict(_) | Value::Vector(_) | Value::Tuple(_) | Value::Set(_)) {
+        if !matches!(subject, Value::Dict(_) | Value::Vector(_) | Value::Tuple(_) | Value::Set(_) | Value::Window(..)) {
             return self.object_words_inner(subject, quoted);
         }
         let ceiling = self.recursion_ceiling();
@@ -17460,6 +17470,25 @@ impl<'a> Machine<'a> {
                 let of = self.object_words(&parts[1], true)?;
                 let named = if routine.qualification.is_empty() { routine.ident.as_str() } else { routine.qualification.as_str() };
                 Ok(format!("<bound method {named} of {of}>"))
+            }
+            // A window on to a map's keys, values or pairs is shown by
+            // walking its members, so it keeps both the count of how
+            // deep the writing stands and a note on the window itself,
+            // and one reached from within its own members stands as an
+            // ellipsis instead of running on forever.
+            Value::Window(owner, portion) => {
+                if *portion == 'm' {
+                    let rendering = self.object_words(owner, true)?;
+                    return Ok(format!("mappingproxy({rendering})"));
+                }
+                if !crate::data::window_entered(owner, *portion) { return Ok(String::from("...")); }
+                let rendering = (|| {
+                    let contents = subject.settled();
+                    self.object_words(&contents, true)
+                })();
+                crate::data::window_left(owner, *portion);
+                let body = rendering?;
+                Ok(format!("dict_{}({})", match portion { 'k'=>"keys",'v'=>"values",_=>"items" }, body))
             }
             // This walk holds a collection's members and not the cell
             // about them, so it leaves its own note on the members it
@@ -20669,6 +20698,11 @@ impl<'a> Machine<'a> {
         }
 
         if let (Prim::Of, [subject, word]) = (op, v) {
+            if word.bare() == "__reduce_ex__" {
+                if let Some(window) = Self::window_inside(subject) {
+                    return Ok(Value::Member(Rc::new(window), String::from("callable_reduce_ex")));
+                }
+            }
             if let Some(window @ Value::Window(_, 'm')) = Self::window_inside(subject) {
                 return self.read_class_member(window, &word.bare(), false).map_err(|fault| self.carried_native_fault(fault));
             }
@@ -20969,6 +21003,11 @@ impl<'a> Machine<'a> {
         // A window upon a map is asked whether it has a special member
         // before it settles. Settled, it is a plain row, and a row has
         // ways a window has not: the window would be credited with them.
+        if let (Prim::HasMember, [subject, word]) = (op, v) {
+            if word.bare() == "__reduce_ex__" && Self::window_inside(subject).is_some() {
+                return Ok(Value::Flag(true));
+            }
+        }
         if let (Prim::HasMember, [subject @ Value::Window(..), word]) = (op, v) {
             let called = word.bare();
             if self.rules.specials.iter().any(|spelling| *spelling == called) {
@@ -21032,6 +21071,16 @@ impl<'a> Machine<'a> {
         if matches!(op, Prim::SortOf | Prim::Belongs | Prim::SetCall(14)) && v.iter().any(|value| matches!(value, Value::Shared(..) | Value::Mutable(..)) && Self::window_inside(value).is_some()) {
             let exposed: Vec<_> = v.iter().map(|value| Self::window_inside(value).unwrap_or_else(|| value.clone())).collect();
             return self.prim_values(op, name, &exposed);
+        }
+        // Membership in a view follows the view: the keys and the map
+        // itself are searched as the map is, by a key's address and only
+        // then by its own equality; the pairs search their key the same
+        // way before weighing the value; the values have no address to go
+        // by and walk their members by equality alone.
+        if matches!(op, Prim::Contains | Prim::Absent) && v.len() == 2 {
+            if let Some(Value::Window(owner, portion)) = Self::window_inside(&v[1]) {
+                return self.window_membership(op, &v[0], &owner, portion);
+            }
         }
 
         if matches!(op, Prim::Selfsame | Prim::Unlike) && self.rules.has_any_ext_op_identical_negated && v.len() == 2 {
@@ -32612,6 +32661,39 @@ impl Machine<'_> {
         }
     }
 
+    /// Whether a needle stands among the members of a window on to a
+    /// map, asked as the reference asks it: the keys and the map itself
+    /// by the map's own lookup, the pairs by their key first and only
+    /// then by the value, and the values by walking them.
+    fn window_membership(&mut self, op: Prim, needle: &Value, owner: &Rc<Value>, portion: char) -> Result<Value, String> {
+        let absent = op == Prim::Absent;
+        let needle = needle.settled();
+        let owner_map = owner.proxy_pairs();
+        if matches!(portion, 'k' | 'm') {
+            if let Some(answer) = self.user_operation(op, &[needle, owner_map])? { return Ok(answer); }
+            return Ok(Value::Flag(absent));
+        }
+        let Value::Dict(entries) = &owner_map else { return Ok(Value::Flag(absent)); };
+        let store: &crate::data::MapStore = entries;
+        if portion == 'v' {
+            let mut present = false;
+            for (_, value) in store.iter() {
+                if self.member_agrees(value, &needle)? { present = true; break; }
+            }
+            return Ok(Value::Flag(present != absent));
+        }
+        let Value::Tuple(pair) = &needle else { return Ok(Value::Flag(absent)); };
+        if pair.len() != 2 { return Ok(Value::Flag(absent)); }
+        let (at, _) = self.map_locate(store, Some(store), &pair[0])?;
+        let Some(at) = at else { return Ok(Value::Flag(absent)); };
+        let stored = store[at].1.clone();
+        let alike = if stored.one_place(&pair[1]) { true } else {
+            let answer = self.prim(Prim::Eq, "", &[stored, pair[1].clone()])?;
+            self.object_truth(&answer)?
+        };
+        Ok(Value::Flag(alike != absent))
+    }
+
     fn core_belongs(&mut self, item: &Value, expected: &Value) -> Result<bool, String> {
         if self.spells_property_kind(expected) {
             let canonical = self.property_blueprint();
@@ -32742,6 +32824,7 @@ impl Machine<'_> {
         let live = if op == Prim::Iterator && input.len() == 1 { self.live_walk(&input[0]) } else { None };
         let portion = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(_, portion))) => Some(*portion), _ => None };
         let window_owner = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(owner, 'm'))) => Some((**owner).clone()), _ => None };
+        let window_face = match (op, input.first()) { (Prim::Quoted, Some(Value::Window(owner, portion))) if *portion != 'm' => Some((owner.clone(), *portion)), _ => None };
         // A member read by name is bound to the value as it stands, so
         // that a method which writes into the value is handed the very
         // one; the value is kept before it settles into a copy.
@@ -32757,6 +32840,10 @@ impl Machine<'_> {
                 if op == Prim::Belongs {
                     if let Some(window) = Self::window_inside(item) { *item = window; continue; }
                 }
+                // A window read by name keeps the window as it stands:
+                // settling it into its row would lose the members only a
+                // window answers, its reduction refusal among them.
+                if matches!(op, Prim::GetMember | Prim::HasAttribute) && Self::window_inside(item).is_some() { continue; }
                 if op == Prim::Quoted && matches!(item, Value::Mutable(..) | Value::Shared(..))
                     && matches!(item.settled(), Value::Vector(row) if row.iter().any(|member| matches!(member.settled(), Value::Thing(_)))) { continue; }
                 let lazy_input = match op { Prim::Octets(0 | 1) => position == 0, Prim::Octets(9) => position == 1, Prim::Numbered => position == 0, Prim::Zipped => true, Prim::Mapped => position != 0, Prim::Filtered => position == 1, Prim::Iterator => position == 0 && matches!(item.settled(), Value::Dict(_)), _ => false };
@@ -32927,6 +33014,10 @@ impl Machine<'_> {
                 if let Some(owner) = &window_owner {
                     let rendering = self.object_words(&owner.proxy_pairs(), true)?;
                     return Ok(Value::text(&format!("mappingproxy({rendering})")));
+                }
+                if let Some((owner, letter)) = &window_face {
+                    let rendering = self.object_words(&Value::Window(owner.clone(), *letter), true)?;
+                    return Ok(Value::text(&rendering));
                 }
                 if let Value::Wrapped(3, parts) = &input[0] {
                     if !self.rules.detail_main.is_empty() && parts.len() == 2

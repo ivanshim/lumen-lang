@@ -1066,7 +1066,11 @@ impl Value {
                     // A pair whose cell stands empty names nothing yet:
                     // a namespace read through a view answers only for
                     // the names written in it so far.
-                    if matches!(v.contents(), Value::Blank | Value::Gap) { return None; }
+                    let empty = match v {
+                        Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => matches!(&*cell.borrow(), Value::Blank | Value::Gap),
+                        other => matches!(other, Value::Blank | Value::Gap),
+                    };
+                    if empty { return None; }
                     let bare = match k { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
                     Some(match view.1.as_str() {
                         // A reading of the map itself walks, and is
@@ -1835,7 +1839,7 @@ impl Value {
         match self {
             Value::Collection(cell, quote) => shown_once(cell, "[...]", |held| if *quote { held.representation(sp) } else { held.display(sp) }),
             Value::View(view) if view.1 == "mapping" => format!("mappingproxy({})", view.0.proxy_dictionary().representation(sp)),
-            Value::View(view) => format!("dict_{}({})", view.1, self.contents().representation(sp)),
+            Value::View(view) => view_written(view, || format!("dict_{}({})", view.1, self.contents().representation(sp))),
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
             Value::Bond(shared) | Value::Binding(shared) => shown_once(shared, "[...]", |held| held.display(sp)),
@@ -1994,7 +1998,7 @@ impl Value {
             // is named with the kind it belongs to instead.
             Value::ValueMethod(pair) => method_written(&pair.0, &pair.1, Rc::as_ptr(pair) as *const u8 as usize),
             Value::View(view) if view.1 == "mapping" => format!("mappingproxy({})", view.0.proxy_dictionary().plain()),
-            Value::View(view) => format!("dict_{}({})", view.1, self.contents().plain()),
+            Value::View(view) => view_written(view, || format!("dict_{}({})", view.1, self.contents().plain())),
             // A builtin word naming a kind stands for the kind itself,
             // and is written as the reference writes a class; every
             // other builtin word is written as work to be done.
@@ -2745,6 +2749,28 @@ pub fn set_once<E>(cell: &Rc<RefCell<Members>>, name: &str, write: impl FnOnce()
     let answer = write();
     forget_members(Some(address));
     answer
+}
+
+/// Note that a view's members are being written out, answering whether
+/// this very view is not already being written further up. Where it is,
+/// it stands as an ellipsis in its own stead, the way the reference's
+/// own note on a view leaves it.
+pub(crate) fn view_entered(view: &Rc<(Value, String)>) -> bool {
+    MEMBERS.with(|held| held.borrow_mut().insert(Rc::as_ptr(view) as usize))
+}
+
+/// Take the note away once the writing of that view is done.
+pub(crate) fn view_left(view: &Rc<(Value, String)>) {
+    MEMBERS.with(|held| { held.borrow_mut().remove(&(Rc::as_ptr(view) as usize)); });
+}
+
+/// Write a view's members out whole, or the ellipsis where the same view
+/// is already being written further out.
+pub(crate) fn view_written(view: &Rc<(Value, String)>, write: impl FnOnce() -> String) -> String {
+    if !view_entered(view) { return String::from("..."); }
+    let written = write();
+    view_left(view);
+    written
 }
 
 /// The same for a walk that always has an answer.

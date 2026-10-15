@@ -698,7 +698,10 @@ impl<'a> Engine<'a> {
 
     fn exception_classes(names: &[String], root: &Rc<Class>) -> HashMap<String, Value> {
         let mut parents = [None, Some(0), Some(1), Some(2), Some(2), Some(1), Some(5), Some(5), Some(1), Some(1), Some(1), Some(10), Some(1), Some(1), Some(13), Some(1), Some(1), Some(0), Some(0), Some(1), Some(1), Some(13), Some(9), Some(1), Some(1), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(24), Some(1), Some(0), Some(37), Some(0), Some(20), Some(20), Some(19), Some(22), Some(22), Some(22), Some(36), Some(46), Some(1), Some(1), Some(1), Some(1), Some(1), Some(20), Some(20), Some(20), Some(20), Some(20), Some(2), Some(20), Some(20), Some(20), Some(20), Some(62), Some(62), Some(62), Some(20), Some(20), Some(20), Some(13), Some(36)];
-        if parents.len() > 62 { parents[57] = Some(62); }
+        // POSIX subclasses and the arithmetic fault follow the registered roster.
+        for (child, parent) in [(53, 20), (54, 20), (55, 20), (56, 20), (57, 59),
+            (58, 20), (59, 20), (60, 59), (61, 59), (62, 59), (63, 20),
+            (64, 20), (65, 20), (66, 2)] { parents[child] = Some(parent); }
         let mut classes: Vec<Option<Rc<Class>>> = vec![None; names.len()];
         let mut pending: Vec<usize> = (0..names.len()).collect();
         while !pending.is_empty() {
@@ -8233,6 +8236,13 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        // A view is one of the things the reference refuses to pickle, so
+        // it answers the reduction member with a reading that refuses too.
+        if name == "__reduce_ex__" {
+            if let Some(view) = Self::view_in(value) {
+                return Ok(Some(Value::ValueMethod(Rc::new((view, String::from("callable_reduce_ex"))))));
+            }
+        }
         if [self.class_word("allocate"), self.class_word("doc")].contains(&name) && matches!(value.contents(),Value::Flag(_)|Value::Small(_)|Value::Huge(_)|Value::Real(_)|Value::Complex(_)|Value::Text(_)|Value::Codepoints(_)|Value::Array(_)|Value::Tuple(_)|Value::Map(_)|Value::Bytes(..)|Value::Set(_)) {
             let result=self.class_get(value.clone(),name,true).map_err(|fault|{self.carried=Some(fault);self.special_fault()})?;
             return Ok(Some(result));
@@ -9416,6 +9426,40 @@ impl<'a> Engine<'a> {
                 let wrapping=if w.0==4 { self.lang.class_static.first() } else { self.lang.class_method.first() };
                 let inner=self.special_text(&w.1[0],true)?;
                 Ok(wrapping.map_or_else(|| "<member wrapper>".to_string(),|word|format!("<{word}({inner})>")))
+            }
+            // A view of a map's keys, values or pairs is written by walking
+            // its members, so it keeps the same count of how deep the
+            // writing stands as a collection keeps, and a note on itself
+            // so that one reached from within its own members stands as an
+            // ellipsis rather than running on forever.
+            Value::View(view) => {
+                if view.1 == "mapping" {
+                    if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
+                        if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
+                    }
+                    self.reaching += 1;
+                    let inner = self.special_text(&view.0, true);
+                    self.reaching -= 1;
+                    return Ok(format!("mappingproxy({})", inner?));
+                }
+                if !crate::value::view_entered(view) { return Ok(String::from("...")); }
+                let outcome = (|| -> Res<String> {
+                    if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
+                        if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
+                    }
+                    self.reaching += 1;
+                    let written = (|| {
+                        let contents = value.contents();
+                        let Value::Array(items) = contents else { return Ok(format!("dict_{}([])", view.1)); };
+                        let mut parts = Vec::with_capacity(items.len());
+                        for item in items.iter() { parts.push(self.special_text(item, true)?); }
+                        Ok(format!("dict_{}([{}])", view.1, parts.join(", ")))
+                    })();
+                    self.reaching -= 1;
+                    written
+                })();
+                crate::value::view_left(view);
+                outcome
             }
             _ => Ok(value.display(&self.wording())),
         }
@@ -12105,7 +12149,7 @@ impl<'a> Engine<'a> {
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
         if let Action::HasMember(member) = op {
             if let Some(window @ Value::View(_)) = self.data.last().and_then(Self::view_in) {
-                if matches!(&window, Value::View(v) if v.1 == "mapping") {
+                if member.as_ref() == "__reduce_ex__" || matches!(&window, Value::View(v) if v.1 == "mapping") {
                     self.drop_top()?;
                     let read = self.class_get(window, member, false);
                     let present = match read { Ok(_) => true, Err(fault) if self.attribute_fault(&fault) => false, Err(fault) => return Err(fault) };
@@ -12119,7 +12163,7 @@ impl<'a> Engine<'a> {
         if let Action::Grab(member) = op {
 
             if let Some(window @ Value::View(_)) = self.data.last().and_then(Self::view_in) {
-                if matches!(&window, Value::View(v) if v.1 == "mapping") {
+                if member.as_ref() == "__reduce_ex__" || matches!(&window, Value::View(v) if v.1 == "mapping") {
                     self.drop_top()?;
                     let value = self.class_get(window, member, false)?;
                     self.data.push(value);
@@ -12259,7 +12303,7 @@ impl<'a> Engine<'a> {
                 // the method of only some of them: a value whose kind
                 // keeps no such member has no such member to hand over.
                 let judged = matches!(Self::native_family(&target), Some(Kindred::Nothing | Kindred::Whole | Kindred::Real | Kindred::Ratio
-                    | Kindred::Complex | Kindred::Text | Kindred::Row | Kindred::Tuple | Kindred::Map | Kindred::Counted));
+                    | Kindred::Complex | Kindred::Text | Kindred::Row | Kindred::Tuple | Kindred::Map | Kindred::Counted | Kindred::View(_)));
                 if judged && !crate::methods::answered(&target, operation) {
                     let word = self.spelled_member(operation);
                     if self.builtin_member(&target, &word)?.is_none() { return Err(self.member_amiss(&target, &word).into()); }
@@ -15789,6 +15833,50 @@ impl<'a> Engine<'a> {
                 };
                 return self.dyadic(op, &as_set(a)?, &as_set(b)?);
             }
+            // Membership in a view follows the view: a view of a map's
+            // keys or of the map itself is asked as the map is, by a key's
+            // hash and only then by its own equality; a view of its pairs
+            // looks the pair's key up the same way and only then weighs the
+            // value; a view of its values has no hash to go by and walks
+            // its members by equality alone.
+            if matches!(op, Action::Contains | Action::Lacks) {
+                if let Value::View(view) = b {
+                    let wrapped = |present: bool| Value::Flag(present == matches!(op, Action::Contains));
+                    match view.1.as_str() {
+                        "keys" | "mapping" => {
+                            let owner = view.0.proxy_dictionary();
+                            return self.special_dyad(op, a, &owner);
+                        }
+                        "items" => {
+                            let held = Self::worth_of(a).map(|worth| worth.contents()).unwrap_or_else(|| a.contents());
+                            let Value::Tuple(pair) = held else { return Ok(wrapped(false)); };
+                            if pair.len() != 2 { return Ok(wrapped(false)); }
+                            let owner = view.0.proxy_dictionary();
+                            let Value::Map(entries) = owner else { return Ok(wrapped(false)); };
+                            if let Some(told) = self.unkeyable(&pair[0]) { return Err(told); }
+                            let wanted = self.special_key(&pair[0])?;
+                            let mut found = None;
+                            for (stored, value) in entries.iter() {
+                                if self.special_keys_equal(stored, &wanted)? { found = Some(value.clone()); break; }
+                            }
+                            match found {
+                                Some(value) => return Ok(wrapped(self.sequence_equal_item(&value, &pair[1])?)),
+                                None => return Ok(wrapped(false)),
+                            }
+                        }
+                        _ => {
+                            let contents = b.contents();
+                            let mut present = false;
+                            if let Value::Array(items) = contents {
+                                for item in items.iter() {
+                                    if self.sequence_equal_item(item, a)? { present = true; break; }
+                                }
+                            }
+                            return Ok(wrapped(present));
+                        }
+                    }
+                }
+            }
             // A view of a map's values reads no member by member: it
             // answers equal to nothing but the very view it is, as
             // CPython leaves it to the default the object kind gives
@@ -18651,8 +18739,9 @@ impl<'a> Engine<'a> {
             if args.len() != 1 { return Err(format!("TypeError: TypeVarTuple.__typing_subst__() takes exactly one argument ({} given)", args.len())); }
             return Err("TypeError: Substitution of bare TypeVarTuple is not supported".into());
         }
-        if operation == "callable_reduce_ex" {
+        if operation == "callable_reduce_ex" || operation == "__reduce_ex__" && Self::view_in(receiver).is_some() {
             if !named.is_empty() || args.len() != 1 { return Err(String::from("TypeError: __reduce_ex__() takes exactly one argument")); }
+            if Self::view_in(receiver).is_some() { return Err(format!("TypeError: cannot pickle '{}' object", receiver.core_kind())); }
             let number = self.special_index(&args[0])?.unwrap_or_else(|| args[0].contents());
             number.as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?;
             let answer = self.class_get(receiver.clone(), "__reduce__", false).and_then(|method| self.class_apply(method, Vec::new()));
@@ -26958,11 +27047,7 @@ impl Engine<'_> {
                     return Ok(Value::text(&format!("<{} object at 0x{:x}>", args[0].core_kind(), mark)));
                 }
                 if let Some(view) = window {
-                    return Ok(Value::text(&if view.1 == "mapping" {
-                        format!("mappingproxy({})", self.special_text(&view.0.proxy_dictionary(), true)?)
-                    } else {
-                        format!("dict_{}({})", view.1, args[0].core_repr(self.lang.shortest_reals))
-                    }));
+                    return Ok(Value::text(&self.special_text(&Value::View(view), true)?));
                 }
                 Value::text(&args[0].core_repr(self.lang.shortest_reals))
             }

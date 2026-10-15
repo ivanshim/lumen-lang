@@ -931,7 +931,11 @@ impl Value {
                     // A pair whose place is still empty stands for a name
                     // not yet written: a namespace that shows it shows a
                     // name it does not have, so the window passes it by.
-                    if matches!(value.settled(), Value::Unset) { continue; }
+                    let empty = match value {
+                        Value::Shared(cell) | Value::Mutable(cell, _) => matches!(&*cell.borrow(), Value::Unset),
+                        other => matches!(other, Value::Unset),
+                    };
+                    if empty { continue; }
                     let bare = match key { Value::Keyed(thing, _) => thing.as_ref().clone(), other => other.clone() };
                     // A reading of the map itself walks, and is
                     // measured, the very way its keys are: it is asked
@@ -1704,7 +1708,12 @@ impl Value {
             Value::Mutable(cell, false) => within_cell(cell, |inner| inner.render(w)),
             Value::Row(_) => self.repr(&w),
             Value::Window(owner, 'm') => format!("mappingproxy({})", owner.proxy_pairs().repr(&w)),
-            Value::Window(_, portion) => format!("dict_{}({})", match portion { 'k'=>"keys",'v'=>"values",_=>"items" }, self.settled().repr(&w)),
+            Value::Window(owner, portion) => {
+                if !window_entered(owner, *portion) { return String::from("..."); }
+                let body = self.settled().repr(&w);
+                window_left(owner, *portion);
+                format!("dict_{}({})", match portion { 'k'=>"keys",'v'=>"values",_=>"items" }, body)
+            }
             Value::Arguments(row) => Self::argument_text(row, w),
             // A cell that names share is written as what it holds.
             Value::Shared(cell) => within_cell(cell, |inner| inner.render(w)),
@@ -1883,7 +1892,12 @@ impl Value {
             // read from the kind itself is bound to no thing at all and
             // is named with the kind it belongs to instead.
             Value::Member(held, word) => method_written(held, word, Rc::as_ptr(held) as *const u8 as usize),
-            Value::Window(..) => self.settled().bare(),
+            Value::Window(owner, portion) => {
+                if !window_entered(owner, *portion) { return String::from("..."); }
+                let body = self.settled().bare();
+                window_left(owner, *portion);
+                body
+            }
             Value::Row(v) => format!("({})", v.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
             // A word naming a kind stands for the kind itself, and is
             // written as the reference writes a class; every other
@@ -2613,6 +2627,11 @@ thread_local! {
     /// is already among them costs the same whether the writing stands
     /// one deep or a hundred thousand deep.
     static AMONG: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+    /// The windows whose members are being written out at this moment,
+    /// each known by the allocation it shows and the part it shows of
+    /// it. A window reached from within its own members is written as
+    /// the ellipsis in its own stead.
+    static WINDOWS: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
     /// Where a language names them, the cells a run keeps its counts of
     /// figures in: how many a real written plainly carries, and how many
     /// one shown with its kind carries. A language that names neither
@@ -2659,6 +2678,26 @@ impl Drop for Among {
             AMONG.with(|notes| { notes.borrow_mut().remove(&address); });
         }
     }
+}
+
+/// The place a window holds among the windows being written out at this
+/// moment: the allocation it shows and the part it shows of it, told
+/// apart from every other window.
+fn window_place(owner: &Rc<Value>, portion: char) -> usize {
+    (Rc::as_ptr(owner) as usize) ^ ((portion as usize).wrapping_mul(0x9e37_79b9))
+}
+
+/// Note that a window's members are being written out, answering whether
+/// that very window is not already being written further up.
+pub fn window_entered(owner: &Rc<Value>, portion: char) -> bool {
+    let place = window_place(owner, portion);
+    WINDOWS.with(|held| held.borrow_mut().insert(place))
+}
+
+/// Take the note away once the writing of that window is done.
+pub fn window_left(owner: &Rc<Value>, portion: char) {
+    let place = window_place(owner, portion);
+    WINDOWS.with(|held| { held.borrow_mut().remove(&place); });
 }
 
 /// Write out a cell's contents by the writer given, or a row's ellipsis
