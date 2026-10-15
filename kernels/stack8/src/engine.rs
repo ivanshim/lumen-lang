@@ -21448,17 +21448,22 @@ impl<'a> Engine<'a> {
         })
     }
 
-    /// Route native codec calls without entering the large general builtin frame.
+    /// Route native byte operations without entering the general builtin frame.
     #[inline(always)]
     pub(super) fn builtin_values(&mut self, builtin: Builtin, name: &str, args: &mut Vec<Value>) -> Res<Value> {
-        if let Builtin::Bytes(task @ (2 | 3)) = builtin {
-            if name == "__codec_encode" || name == "__codec_decode" {
+        if let Builtin::Bytes(task) = builtin {
+            if matches!(task, 2 | 3) && (name == "__codec_encode" || name == "__codec_decode") {
                 let native_input = matches!((task, args.first()), (2, Some(Value::Text(_))) | (3, Some(Value::Bytes(..))));
                 if native_input && args.iter().skip(1).all(|v| matches!(v, Value::Text(_) | Value::Flag(_) | Value::Small(_))) {
                     // Match the ordinary builtin argument unwrapping before conversion.
                     for value in args.iter_mut() { *value = value.contents(); }
                     return self.codec_bytes(task, args);
                 }
+            } else {
+                let empty = task <= 1 && args.is_empty();
+                let method = task >= 2 && matches!(args.first(), Some(Value::Bytes(..)))
+                    && args.iter().skip(1).all(|v| matches!(v, Value::Bytes(..) | Value::Text(_) | Value::Small(_) | Value::Flag(_) | Value::Null));
+                if empty || method { return self.byte_call(task, args); }
             }
         }
         self.builtin_values_other(builtin, name, args)

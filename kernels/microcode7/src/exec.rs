@@ -20398,16 +20398,24 @@ impl<'a> Machine<'a> {
         }
     }
 
-    /// Keep native codec entry points out of the general value dispatch frame.
+    /// Bypass general value dispatch for native codec and octet-method arguments.
     #[inline(always)]
     fn prim_values(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
-        if matches!(op, Prim::Octets(2 | 3)) && matches!(name, "__codec_encode" | "__codec_decode") {
-            let direct = match (op, v.first()) {
-                (Prim::Octets(2), Some(Value::Text(_))) | (Prim::Octets(3), Some(Value::Octets { .. })) =>
-                    v.iter().skip(1).all(|part| matches!(part, Value::Small(_) | Value::Flag(_) | Value::Text(_))),
-                _ => false,
-            };
-            if direct { return self.codec_octets(op, v); }
+        if let Prim::Octets(which) = op {
+            if matches!(which, 2 | 3) && matches!(name, "__codec_encode" | "__codec_decode") {
+                let direct = match (which, v.first()) {
+                    (2, Some(Value::Text(_))) | (3, Some(Value::Octets { .. })) =>
+                        v.iter().skip(1).all(|part| matches!(part, Value::Small(_) | Value::Flag(_) | Value::Text(_))),
+                    _ => false,
+                };
+                if direct { return self.codec_octets(op, v); }
+            } else if which < 2 {
+                if v.is_empty() { return self.octet_routine(which, v); }
+            } else if let Some(Value::Octets { .. }) = v.first() {
+                if v[1..].iter().all(|part| matches!(part, Value::Nil | Value::Flag(_) | Value::Text(_) | Value::Small(_) | Value::Octets { .. })) {
+                    return self.octet_routine(which, v);
+                }
+            }
         }
         self.other_primitive_values(op, name, v)
     }
