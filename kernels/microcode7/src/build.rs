@@ -96,22 +96,27 @@ struct LibrarySurvey {
 pub type SurveyRows = &'static [(u64, &'static [u8], &'static [u8])];
 pub type SourceRows = &'static [(&'static str, usize)];
 thread_local! {
-    static LIBRARY_SURVEYS: std::cell::RefCell<Vec<(String, (SurveyRows, SourceRows))>> = const { std::cell::RefCell::new(Vec::new()) };
+    static LIBRARY_SURVEYS: std::cell::RefCell<std::collections::BTreeMap<String, (SurveyRows, SourceRows)>> = std::cell::RefCell::new(std::collections::BTreeMap::new());
 }
 
+// The surveys live under the definition's JSON in its one canonical form,
+// whatever spelling registered them: the newest registration of a
+// definition stands for it.
 pub fn register_prepared(definition: &str, rows: SurveyRows, sources: SourceRows) {
-    LIBRARY_SURVEYS.with(|library| library.borrow_mut().push((definition.to_owned(), (rows, sources))));
+    let Ok(object) = serde_json::from_str::<serde_json::Value>(definition) else { return; };
+    LIBRARY_SURVEYS.with(|library| { library.borrow_mut().insert(object.to_string(), (rows, sources)); });
 }
 
-// A definition written out exactly as it was registered is matched by its
-// text alone; any other spelling is settled by reading both as JSON.
+// A text already in the canonical form is the key itself and needs no
+// reading; another spelling is read and written out canonically first.
 pub(crate) fn library_rows(definition: &str) -> Option<(SurveyRows, SourceRows)> {
     LIBRARY_SURVEYS.with(|library| {
         let library = library.borrow();
-        if let Some((_, rows)) = library.iter().rev().find(|(text, _)| text == definition) { return Some(*rows); }
-        let sought = serde_json::from_str::<serde_json::Value>(definition).ok()?.to_string();
-        let same = |text: &String| serde_json::from_str::<serde_json::Value>(text).map(|object| object.to_string() == sought).unwrap_or(false);
-        library.iter().rev().find(|(text, _)| same(text)).map(|(_, rows)| *rows)
+        if let Some(rows) = library.get(definition) { return Some(*rows); }
+        match serde_json::from_str::<serde_json::Value>(definition) {
+            Ok(object) => library.get(&object.to_string()).copied(),
+            Err(_) => None,
+        }
     })
 }
 
@@ -13991,5 +13996,29 @@ mod prepared_proof_tests {
         assert!(super::unpack_library_proof(b"invalid").is_none());
         assert!(std::rc::Rc::ptr_eq(&decoded, &super::unpack_library_proof(packed).unwrap()));
 
+    }
+}
+
+#[cfg(test)]
+mod survey_registration {
+    use super::{library_rows, register_prepared, SourceRows, SurveyRows};
+    static ONE: SurveyRows = &[(10, b"x", b"x")];
+    static TWO: SurveyRows = &[(20, b"y", b"y")];
+    static THREE: SurveyRows = &[(30, b"z", b"z")];
+    static NONE: SourceRows = &[];
+    fn stamp_for(text: &str) -> Option<u64> { library_rows(text).map(|(rows, _)| rows[0].0) }
+    #[test]
+    fn the_newest_registration_wins_whatever_its_spelling() {
+        let tight = r#"{"language":"survey","words":["a"]}"#;
+        let loose = "{\n  \"words\": [\"a\"],\n  \"language\": \"survey\"\n}";
+        register_prepared(tight, ONE, NONE);
+        register_prepared(tight, TWO, NONE);
+        assert_eq!(stamp_for(tight), Some(20));
+        assert_eq!(stamp_for(loose), Some(20));
+        register_prepared(loose, THREE, NONE);
+        assert_eq!(stamp_for(tight), Some(30));
+        assert_eq!(stamp_for(loose), Some(30));
+        assert_eq!(stamp_for(r#"{"language":"else"}"#), None);
+        assert_eq!(stamp_for("{broken"), None);
     }
 }

@@ -268,22 +268,27 @@ struct PreparedScope {
 pub type PreparedEntries = &'static [(u64, &'static [u8], &'static [u8])];
 pub type PreparedSources = &'static [(&'static str, usize)];
 thread_local! {
-    static PREPARED_DEFINITIONS: std::cell::RefCell<Vec<(String, (PreparedEntries, PreparedSources))>> = const { std::cell::RefCell::new(Vec::new()) };
+    static PREPARED_DEFINITIONS: std::cell::RefCell<HashMap<String, (PreparedEntries, PreparedSources)>> = std::cell::RefCell::new(HashMap::new());
 }
 
+/// Entries are kept under the JSON the definition spells, written out the
+/// one canonical way, so a later registration of the same definition in
+/// any spelling replaces the earlier one.
 pub fn register_prepared(definition: &str, entries: PreparedEntries, sources: PreparedSources) {
-    PREPARED_DEFINITIONS.with(|all| all.borrow_mut().push((definition.to_string(), (entries, sources))));
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(definition) {
+        PREPARED_DEFINITIONS.with(|all| { all.borrow_mut().insert(value.to_string(), (entries, sources)); });
+    }
 }
 
-/// The entries registered for a definition: the one whose text is the
-/// very same is taken at once; otherwise the texts are compared as the
-/// JSON they spell, so that a reshaped definition still finds its own.
+/// The entries registered for a definition. A text that is already the
+/// canonical spelling is its own key, so it is looked up as it stands;
+/// any other spelling is written out canonically first.
 pub(crate) fn prepared_entries(definition: &str) -> Option<(PreparedEntries, PreparedSources)> {
     PREPARED_DEFINITIONS.with(|all| {
         let all = all.borrow();
-        if let Some((_, found)) = all.iter().find(|(text, _)| text == definition) { return Some(*found); }
-        let wanted = serde_json::from_str::<serde_json::Value>(definition).ok()?.to_string();
-        all.iter().rev().find(|(text, _)| serde_json::from_str::<serde_json::Value>(text).ok().is_some_and(|value| value.to_string() == wanted)).map(|(_, found)| *found)
+        if let Some(found) = all.get(definition) { return Some(*found); }
+        let value = serde_json::from_str::<serde_json::Value>(definition).ok()?;
+        all.get(&value.to_string()).copied()
     })
 }
 
@@ -14484,5 +14489,29 @@ mod prepared_proof_tests {
         assert!(super::unpack_library_proof(b"invalid").is_none());
         assert!(std::rc::Rc::ptr_eq(&decoded, &super::unpack_library_proof(packed).unwrap()));
 
+    }
+}
+
+#[cfg(test)]
+mod prepared_registration {
+    use super::{prepared_entries, register_prepared, PreparedEntries, PreparedSources};
+    static FIRST: PreparedEntries = &[(1, b"a", b"a")];
+    static SECOND: PreparedEntries = &[(2, b"b", b"b")];
+    static THIRD: PreparedEntries = &[(3, b"c", b"c")];
+    static NO_SOURCES: PreparedSources = &[];
+    fn chosen(definition: &str) -> Option<u64> { prepared_entries(definition).map(|(entries, _)| entries[0].0) }
+    #[test]
+    fn later_registrations_replace_earlier_ones_in_any_spelling() {
+        let canonical = r#"{"language":"probe","x":[1,2]}"#;
+        let spaced = "{ \"x\" : [1, 2],\n \"language\": \"probe\" }";
+        register_prepared(canonical, FIRST, NO_SOURCES);
+        register_prepared(canonical, SECOND, NO_SOURCES);
+        assert_eq!(chosen(canonical), Some(2));
+        assert_eq!(chosen(spaced), Some(2));
+        register_prepared(spaced, THIRD, NO_SOURCES);
+        assert_eq!(chosen(canonical), Some(3));
+        assert_eq!(chosen(spaced), Some(3));
+        assert_eq!(chosen(r#"{"language":"other"}"#), None);
+        assert_eq!(chosen("not json"), None);
     }
 }
