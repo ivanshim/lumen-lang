@@ -8307,6 +8307,11 @@ impl<'a> Builder<'a> {
         let mut depth: Vec<String> = Vec::new();
         let mut cuts = Vec::new();
         let t = self.table;
+        // The bracket families are asked for once, not once for every
+        // sign met on the way.
+        let brackets: Vec<(&str, Option<&str>)> = ["syntax.group", "syntax.array", "syntax.map"].iter()
+            .filter_map(|family| t.single(&format!("{family}.open")).map(|open| (open, t.single(&format!("{family}.close")))))
+            .collect();
         for i in start..limit {
             let word = &self.tokens[i];
             if depth.is_empty() {
@@ -8320,9 +8325,9 @@ impl<'a> Builder<'a> {
                     depth.pop();
                     continue;
                 }
-                for family in ["syntax.group", "syntax.array", "syntax.map"] {
-                    if t.single(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
-                        if let Some(close) = t.single(&format!("{}.close", family)) { depth.push(close.to_string()); }
+                for (open, close) in &brackets {
+                    if *open == word.lexeme.as_str() {
+                        if let Some(close) = close { depth.push(close.to_string()); }
                         break;
                     }
                 }

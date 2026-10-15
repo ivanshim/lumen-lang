@@ -294,6 +294,22 @@ struct Piece {
     /// statements on one line marks it once.
     line: u32,
     instrs: Vec<Instr>,
+    /// Every slot each name has in this unit, oldest first: the unit's
+    /// names are only ever added to, so a name is found here without
+    /// a walk back through all of them.
+    slots_of: HashMap<String, Vec<usize>>,
+}
+
+impl Piece {
+    fn add_ident(&mut self, name: String, declared: bool) {
+        self.slots_of.entry(name.clone()).or_default().push(self.idents.len());
+        self.idents.push(name);
+        self.declared.push(declared);
+    }
+    fn index_idents(&mut self) {
+        self.slots_of.clear();
+        for (at, name) in self.idents.iter().enumerate() { self.slots_of.entry(name.clone()).or_default().push(at); }
+    }
 }
 
 pub struct Compiler<'a> {
@@ -725,6 +741,7 @@ fn compile_pass(
         ident: "<program>".to_string(),
         declared: vec![false; already.len()],
         idents: already,
+        slots_of: HashMap::new(),
         scopes: Vec::new(),
         globals: std::mem::take(&mut table.pending_globals),
         lasts: Vec::new(),
@@ -737,6 +754,7 @@ fn compile_pass(
         line: 0,
         instrs: Vec::new(),
     };
+    top.index_idents();
     if read_in && !alone {
         // Text handed over while the run goes stands in a unit of its
         // own, one that is not the outermost: a name any routine
@@ -943,9 +961,9 @@ fn compile_pass(
     plans.extend(a.plans.clone());
     let unit = a.pieces.pop().expect("the top unit");
     a.registry.top_level_coroutine = unit.generator;
-    let (root_constants, root_names) = code_metadata(&unit.instrs, &None, &[], !lang.class_builder.is_empty());
+    let (root_constants, root_names) = if discovering { (Vec::new(), Vec::new()) } else { code_metadata(&unit.instrs, &None, &[], !lang.class_builder.is_empty()) };
     a.registry.future_bits = a.future_bits;
-    Ok(Rc::new(Routine { embedded_integers: None, source_end: a.pos, source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(unit.instrs)), revised: std::cell::RefCell::new(None) }))
+    Ok(Rc::new(Routine { embedded_integers: None, source_end: a.pos, source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(if discovering { unit.instrs } else { peephole(unit.instrs) }), revised: std::cell::RefCell::new(None) }))
 }
 
 impl<'a> Compiler<'a> {
@@ -1153,7 +1171,7 @@ impl<'a> Compiler<'a> {
     /// The slot a name has outside every bare block: none at the top
     /// level, where such names are global.
     fn unblocked(unit: &Piece, name: &str) -> Option<usize> {
-        (0..unit.idents.len()).rev().find(|&s| unit.idents[s] == name && !unit.declared[s])
+        unit.slots_of.get(name)?.iter().rev().copied().find(|&s| !unit.declared[s])
     }
 
     /// Where a name is read: every slot of that name from the innermost
@@ -1212,8 +1230,7 @@ impl<'a> Compiler<'a> {
         let source = self.enclosing_cell(depth - 1, name)?;
         let unit = &mut self.pieces[depth];
         let at = unit.idents.len();
-        unit.idents.push(name.to_string());
-        unit.declared.push(false);
+        unit.add_ident(name.to_string(), false);
         unit.enclosed.push((at, source));
         Some(Cell { free: true, ident: Rc::from(name), near: vec![at], far, moving: false })
     }
@@ -1282,8 +1299,7 @@ impl<'a> Compiler<'a> {
             } else {
                 let parent = &mut self.pieces[owner];
                 if !parent.idents.iter().any(|n| n == name) && !parent.nonlocals.iter().any(|n| n == name) {
-                    parent.idents.push(name.to_string());
-                    parent.declared.push(false);
+                    parent.add_ident(name.to_string(), false);
                 }
                 self.piece().nonlocals.push(name.to_string());
             }
@@ -1315,8 +1331,8 @@ impl<'a> Compiler<'a> {
             None => Self::unblocked(unit, name),
         };
         let slot = found.unwrap_or_else(|| {
-            unit.idents.push(name.to_string());
-            unit.declared.push(!unit.scopes.is_empty());
+            let declared = !unit.scopes.is_empty();
+            unit.add_ident(name.to_string(), declared);
             let s = unit.idents.len() - 1;
             if let Some(block) = unit.scopes.last_mut() {
                 block.push(s);
@@ -1742,8 +1758,7 @@ impl<'a> Compiler<'a> {
         if unit.outermost || !marked || unit.idents.iter().any(|n| n == name) {
             return;
         }
-        unit.idents.push(name.to_string());
-        unit.declared.push(false);
+        unit.add_ident(name.to_string(), false);
     }
 
     /// The name of an array about to be written into, addressed as the
@@ -1983,6 +1998,7 @@ impl<'a> Compiler<'a> {
             ident: name.to_string(),
             idents: formals.clone(),
             declared: vec![false; formals.len()],
+            slots_of: HashMap::new(),
             scopes: Vec::new(),
             globals: Vec::new(),
             lasts: Vec::new(),
@@ -1995,6 +2011,7 @@ impl<'a> Compiler<'a> {
             line: 0,
             instrs: Vec::new(),
         });
+        self.pieces.last_mut().expect("the new unit").index_idents();
         if self.lang.closes_over && !self.discovering {
             if let Some(plan) = self.plans.get(&source).cloned() {
                 if self.lang.syntax_members.is_empty() && plan.nonlocals.iter().any(|name| formals.contains(name) && !plan.class_nonlocals.contains(name)) {
@@ -2002,7 +2019,7 @@ impl<'a> Compiler<'a> {
                 }
                 let unit = self.piece();
                 for name in plan.names {
-                    if !unit.idents.contains(&name) { unit.idents.push(name); unit.declared.push(false); }
+                    if !unit.idents.contains(&name) { unit.add_ident(name, false); }
                 }
                 unit.globals = plan.globals;
                 unit.nonlocals = plan.nonlocals;
@@ -2093,8 +2110,8 @@ impl<'a> Compiler<'a> {
         }
         let native_async = if name == "<genexpr>" { unit.asynchronous_walk } else { unit.asynchronous };
         code_flags |= if native_async { if instrs.iter().any(|i| matches!(i, Instr::Act(Action::Suspend, _))) { 512 } else { 128 } } else if unit.generator { 32 } else { 0 };
-        let (code_constants, code_names) = code_metadata(&instrs, &doc, &local_names, !self.lang.class_builder.is_empty());
-        Ok(Rc::new(Routine { embedded_integers: None, source_end: self.pos, source_tokens: self.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation, code_constants, code_names, local_names, code_flags, future_bits: self.future_bits, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(peephole(instrs)), revised: std::cell::RefCell::new(None) }))
+        let (code_constants, code_names) = if self.discovering { (Vec::new(), Vec::new()) } else { code_metadata(&instrs, &doc, &local_names, !self.lang.class_builder.is_empty()) };
+        Ok(Rc::new(Routine { embedded_integers: None, source_end: self.pos, source_tokens: self.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation, code_constants, code_names, local_names, code_flags, future_bits: self.future_bits, lineless: false, qualified, doc, generator: unit.generator && self.lang.yield_suspends, rest_at: None, ident: unit.ident, formals, parameter_rules, formal_kinds, least, idents: unit.idents, returns_value, body_of_all: false, written_in: self.written_in.clone(), within, type_params, globe: self.registry.globe.clone(), born: self.registry.born.clone(), home: self.registry.home.clone(), declared_on, carried, held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(if self.discovering { instrs } else { peephole(instrs) }), revised: std::cell::RefCell::new(None) }))
     }
 
     fn annotation_text(&self, start: usize, end: usize) -> String {
