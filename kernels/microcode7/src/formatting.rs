@@ -934,14 +934,40 @@ fn spell_with_locale(body: &str) -> String {
         chunks.reverse();
         chunks.join(gap)
     }
-    if let Some((whole, tail)) = body.split_once('.') {
-        let mut written = bunch(whole, &gap, &pattern);
-        written.push_str(&mark);
-        written.push_str(tail);
-        written
+    let (mantissa, power) = detach_exponent(body);
+    let mut written = if let Some((whole, tail)) = mantissa.split_once('.') {
+        let mut grouped = bunch(whole, &gap, &pattern);
+        grouped.push_str(&mark);
+        grouped.push_str(tail);
+        grouped
     } else {
-        bunch(body, &gap, &pattern)
+        bunch(mantissa, &gap, &pattern)
+    };
+    written.push_str(power);
+    written
+}
+
+fn detach_exponent(body: &str) -> (&str, &str) {
+    let bytes = body.as_bytes();
+    let mut cursor = bytes.len();
+    while cursor > 0 {
+        cursor -= 1;
+        let byte = bytes[cursor];
+        if byte == b'e' || byte == b'E' {
+            let mut rest = &body[cursor + 1..];
+            if let Some(stripped) = rest.strip_prefix('+').or_else(|| rest.strip_prefix('-')) {
+                rest = stripped;
+            }
+            if !rest.is_empty() && rest.bytes().all(|item| item.is_ascii_digit()) {
+                return (&body[..cursor], &body[cursor..]);
+            }
+            return (body, "");
+        }
+        if !byte.is_ascii_digit() && byte != b'+' && byte != b'-' && byte != b'.' {
+            return (body, "");
+        }
     }
+    (body, "")
 }
 
 fn complex_parts(item: &Value) -> Option<(f64, f64)> {

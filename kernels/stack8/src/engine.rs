@@ -30385,6 +30385,55 @@ fn civil_locale(args: &[Value]) -> Result<Value, String> {
     Ok(Value::text(&found))
 }
 
+fn civil_zone_offsets(fallback: i64) -> (i64, i64) {
+    #[repr(C)]
+    struct CivilWhen {
+        sec: i32,
+        min: i32,
+        hour: i32,
+        mday: i32,
+        mon: i32,
+        year: i32,
+        wday: i32,
+        yday: i32,
+        isdst: i32,
+        gmtoff: i64,
+        zone: *const std::ffi::c_char,
+    }
+    extern "C" {
+        fn mktime(when: *mut CivilWhen) -> i64;
+    }
+    let mut winter: Option<i64> = None;
+    let mut summer: Option<i64> = None;
+    for month in [0i32, 6] {
+        let mut when = CivilWhen {
+            sec: 0,
+            min: 0,
+            hour: 12,
+            mday: 15,
+            mon: month,
+            year: 124,
+            wday: 0,
+            yday: 0,
+            isdst: -1,
+            gmtoff: 0,
+            zone: std::ptr::null(),
+        };
+        let stamped = unsafe { mktime(&mut when) };
+        if stamped == -1 && when.isdst < 0 {
+            continue;
+        }
+        let west = when.gmtoff.wrapping_neg();
+        if when.isdst > 0 {
+            summer = Some(west);
+        } else if when.isdst == 0 {
+            winter = Some(west);
+        }
+    }
+    let standard = winter.unwrap_or(fallback);
+    (standard, summer.unwrap_or(standard))
+}
+
 fn civil_zone(args: &[Value]) -> Result<Value, String> {
     if args.len() != 1 {
         return Err("TypeError: tzset() takes no arguments".to_string());
@@ -30410,10 +30459,10 @@ fn civil_zone(args: &[Value]) -> Result<Value, String> {
         };
         labels.push(Value::text(&label));
     }
-    let saved = if summer == 0 { 0 } else { 3600 };
+    let (standard, alternate) = civil_zone_offsets(west);
     Ok(Value::tuple(vec![
-        Value::Small(west),
-        Value::Small(west - saved),
+        Value::Small(standard),
+        Value::Small(alternate),
         Value::Small(i64::from(summer)),
         labels[0].clone(),
         labels[1].clone(),
@@ -30639,7 +30688,8 @@ fn civil_picture(args: &[Value]) -> Result<Value, String> {
     extern "C" {
         fn strftime(out: *mut std::ffi::c_char, max: usize, fmt: *const std::ffi::c_char, when: *const CivilStamp) -> usize;
     }
-    let limit = format.len().saturating_mul(256).max(4096);
+    let scaled = format.len().saturating_mul(256);
+    let allowance = if scaled > 4096 { scaled } else { 4096 };
     let mut room = 256usize;
     let mut buffer = vec![0u8; room];
     let written = loop {
@@ -30649,10 +30699,13 @@ fn civil_picture(args: &[Value]) -> Result<Value, String> {
         if count > 0 {
             break count;
         }
-        if room >= limit {
+        // Still short of the allowance: the host refused the buffer, it did not
+        // produce an empty picture. Empty is a zero write at the allowance.
+        if room >= allowance {
             break 0;
         }
-        room = room.saturating_mul(2);
+        let grown = room.saturating_mul(2);
+        room = if grown > room { grown } else { allowance };
         buffer.resize(room, 0);
     };
     let rendered = String::from_utf8_lossy(&buffer[..written]).into_owned();

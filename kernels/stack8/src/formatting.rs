@@ -928,15 +928,44 @@ fn present_locale_number(body: &str) -> String {
         pieces.reverse();
         pieces.join(&separator)
     };
-    match body.split_once('.') {
+    let (mantissa, power) = peel_locale_exponent(body);
+    let mut written = match mantissa.split_once('.') {
         Some((whole, tail)) => {
-            let mut written = place(whole);
-            written.push_str(&point);
-            written.push_str(tail);
-            written
+            let mut grouped = place(whole);
+            grouped.push_str(&point);
+            grouped.push_str(tail);
+            grouped
         }
-        None => place(body),
+        None => place(mantissa),
+    };
+    written.push_str(power);
+    written
+}
+
+/// Split a trailing scientific exponent off a rendered number.
+/// Grouping applies to the mantissa only; the exponent stays literal.
+fn peel_locale_exponent(body: &str) -> (&str, &str) {
+    let bytes = body.as_bytes();
+    let mut index = bytes.len();
+    while index > 0 && bytes[index - 1].is_ascii_digit() {
+        index -= 1;
     }
+    if index == bytes.len() || index == 0 {
+        return (body, "");
+    }
+    let mut mark = index;
+    if bytes[mark - 1] == b'+' || bytes[mark - 1] == b'-' {
+        mark -= 1;
+    }
+    if mark == 0 {
+        return (body, "");
+    }
+    let marker = bytes[mark - 1];
+    if marker != b'e' && marker != b'E' {
+        return (body, "");
+    }
+    let at = mark - 1;
+    (&body[..at], &body[at..])
 }
 
 fn complex_parts(value: &Value) -> Option<(f64, f64)> {

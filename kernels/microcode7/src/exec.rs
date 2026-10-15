@@ -33129,6 +33129,44 @@ fn read_process_locale(given: &[Value]) -> Result<Value, String> {
     Ok(Value::text(&found))
 }
 
+fn calendar_offsets(fallback: i64) -> (i64, i64) {
+    #[repr(C)]
+    struct BrokenDown {
+        parts: [i32; 9],
+        shift: i64,
+        label: *const std::ffi::c_char,
+    }
+    extern "C" {
+        fn mktime(when: *mut BrokenDown) -> i64;
+    }
+    let mut winter = fallback;
+    let mut summer: Option<i64> = None;
+    let mut month = 0i32;
+    while month <= 6 {
+        let mut when = BrokenDown {
+            parts: [0; 9],
+            shift: 0,
+            label: std::ptr::null(),
+        };
+        when.parts[2] = 12;
+        when.parts[3] = 15;
+        when.parts[4] = month;
+        when.parts[5] = 124;
+        when.parts[8] = -1;
+        let stamped = unsafe { mktime(&mut when) };
+        if !(stamped == -1 && when.parts[8] < 0) {
+            let west = when.shift.wrapping_neg();
+            if when.parts[8] > 0 {
+                summer = Some(west);
+            } else if when.parts[8] == 0 {
+                winter = west;
+            }
+        }
+        month += 6;
+    }
+    (winter, summer.unwrap_or(winter))
+}
+
 fn publish_zone_figures(given: &[Value]) -> Result<Value, String> {
     if given.len() != 1 {
         return Err(String::from("TypeError: tzset() takes no arguments"));
@@ -33155,10 +33193,10 @@ fn publish_zone_figures(given: &[Value]) -> Result<Value, String> {
         };
         slot += 1;
     }
-    let saved = if summer == 0 { 0i64 } else { 3600 };
+    let (standard, alternate) = calendar_offsets(west);
     Ok(Value::tuple(vec![
-        Value::Small(west),
-        Value::Small(west.wrapping_sub(saved)),
+        Value::Small(standard),
+        Value::Small(alternate),
         Value::Small(i64::from(summer)),
         Value::text(&labels[0]),
         Value::text(&labels[1]),
@@ -33373,7 +33411,8 @@ fn paint_host_picture(given: &[Value]) -> Result<Value, String> {
         fn strftime(out: *mut std::ffi::c_char, max: usize, fmt: *const std::ffi::c_char, when: *const Painted) -> usize;
     }
     let mut room = 192usize;
-    let ceiling = format.len().saturating_mul(200).max(3072);
+    let scaled = format.len().saturating_mul(256);
+    let allowance = if scaled > 4096 { scaled } else { 4096 };
     loop {
         let mut buffer = vec![0u8; room];
         let count = unsafe { strftime(buffer.as_mut_ptr() as *mut std::ffi::c_char, buffer.len(), pattern.as_ptr(), &painted) };
@@ -33381,10 +33420,13 @@ fn paint_host_picture(given: &[Value]) -> Result<Value, String> {
             let rendered = String::from_utf8_lossy(&buffer[..count]).into_owned();
             return Ok(Value::text(&rendered));
         }
-        if room >= ceiling {
+        // A zero write in a buffer below the allowance did not fit.
+        // Only a zero write once that allowance has been tried is empty.
+        if room >= allowance {
             return Ok(Value::text(""));
         }
-        room = room.saturating_mul(2);
+        let grown = room.saturating_mul(2);
+        room = if grown > room { grown } else { allowance };
     }
 }
 
