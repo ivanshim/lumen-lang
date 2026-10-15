@@ -31,9 +31,9 @@ const KIND_MEMBERS: &[(&str, &[&str])] = &[
     ("bytearray", &["copy"]),
     ("tuple", &["index", "count"]),
     ("range", &["index", "count"]),
-    ("int", &["bit_length", "bit_count", "numerator", "denominator", "real", "imag", "conjugate", "as_integer_ratio", "is_integer", "__index__", "__truediv__"]),
-    ("bool", &["bit_length", "bit_count", "numerator", "denominator", "real", "imag", "conjugate", "as_integer_ratio", "is_integer", "__index__", "__truediv__"]),
-    ("float", &["real", "imag", "conjugate", "as_integer_ratio", "is_integer", "hex", "__floor__", "__ceil__"]),
+    ("int", &["bit_length", "bit_count", "numerator", "denominator", "real", "imag", "conjugate", "as_integer_ratio", "is_integer", "__index__", "__truediv__", "__trunc__"]),
+    ("bool", &["bit_length", "bit_count", "numerator", "denominator", "real", "imag", "conjugate", "as_integer_ratio", "is_integer", "__index__", "__truediv__", "__trunc__"]),
+    ("float", &["real", "imag", "conjugate", "as_integer_ratio", "is_integer", "hex", "__floor__", "__ceil__", "__trunc__"]),
     ("complex", &["real", "imag", "conjugate"]),
 ];
 
@@ -262,15 +262,17 @@ impl Request<'_> {
         // The nearer whole number one side or the other: an infinity
         // owns no such neighbour, and a nan is not among the numbers at
         // all, so each fails as turning either into a plain int fails.
-        if (self.operation=="__floor__"||self.operation=="__ceil__") && real {
+        if (self.operation=="__floor__"||self.operation=="__ceil__"||self.operation=="__trunc__") && real {
             let Value::Frac(r) = &value else { unreachable!() };
             if r.past_numbers() {
                 return Err(if r.above.is_zero() { "ValueError: cannot convert float NaN to integer".to_string() }
                     else { "OverflowError: cannot convert float infinity to integer".to_string() });
             }
-            let whole = if self.operation=="__floor__" { r.above.div_floor(&r.beneath) } else { -((-&r.above).div_floor(&r.beneath)) };
+            // A truncation keeps the whole part only, which the plain quotient already is.
+            let whole = if self.operation=="__floor__" { r.above.div_floor(&r.beneath) } else if self.operation=="__ceil__" { -((-&r.above).div_floor(&r.beneath)) } else { &r.above / &r.beneath };
             return Ok(Value::from_big(whole));
         }
+        if self.operation=="__trunc__" { return Ok(Value::from_big(value.as_big()?)); }
         if self.operation=="as_integer_ratio"{
             let pair=match value{Value::Frac(r) if !r.past_numbers()=>crate::data::binary_worth(crate::data::nearest_binary(&r.above,&r.beneath)).ok_or_else(||self.fail("unready"))?,Value::Frac(r)=>return Err(if r.above.is_zero() { String::from("ValueError: cannot convert NaN to integer ratio") } else { String::from("OverflowError: cannot convert Infinity to integer ratio") }),other=>(other.as_big()?,BigInt::from(1))};
             // The two whole numbers are handed back as a tuple, which

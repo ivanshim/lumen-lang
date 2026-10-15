@@ -196,8 +196,8 @@ pub fn answered(value: &Value, operation: &str) -> bool {
     const PAIRS: &[&str] = &["get", "keys", "values", "items", "setdefault", "update", "pop", "popitem", "copy", "clear", "fromkeys"];
     const PLACES: &[&str] = &["index", "count"];
     const WHOLE: &[&str] = &["bit_length", "bit_count", "numerator", "denominator", "real", "imag", "conjugate", "as_integer_ratio",
-        "is_integer", "__index__", "__truediv__"];
-    const FRACTION: &[&str] = &["real", "imag", "conjugate", "as_integer_ratio", "is_integer", "hex", "__floor__", "__ceil__"];
+        "is_integer", "__index__", "__truediv__", "__trunc__"];
+    const FRACTION: &[&str] = &["real", "imag", "conjugate", "as_integer_ratio", "is_integer", "hex", "__floor__", "__ceil__", "__trunc__"];
     let names: &[&str] = match value.contents() {
         Value::Text(_) | Value::Codepoints(_) => TEXT,
         Value::Array(_) => ROW,
@@ -703,13 +703,15 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 // infinity carries no such int, and a nan is not one of
                 // the numbers at all, so each fails the way turning it
                 // into a plain int already fails.
-                "__floor__" | "__ceil__" if real => {
+                "__floor__" | "__ceil__" | "__trunc__" if real => {
                     let Value::Real(r) = &held else { unreachable!() };
                     if r.no_number() { return Err("ValueError: cannot convert float NaN to integer".to_string()); }
                     if r.outside() { return Err("OverflowError: cannot convert float infinity to integer".to_string()); }
-                    let whole = if op == "__floor__" { r.p.div_floor(&r.q) } else { -((-&r.p).div_floor(&r.q)) };
+                    // Truncation drops the fraction towards zero, as the quotient of the two does.
+                    let whole = if op == "__floor__" { r.p.div_floor(&r.q) } else if op == "__ceil__" { -((-&r.p).div_floor(&r.q)) } else { &r.p / &r.q };
                     Ok(Value::of_big(whole))
                 },
+                "__trunc__" => Ok(Value::of_big(held.as_big()?)),
                 "hex" if matches!(held,Value::Real(_)) => {
                     let Value::Real(r) = &held else { unreachable!() };
                     let n=crate::value::as_binary(&r.p,&r.q);

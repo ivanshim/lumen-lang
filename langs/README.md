@@ -4774,6 +4774,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.__floor__` | - | - | `__floor__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.__index__` | - | - | `__index__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.__truediv__` | - | - | `int.__truediv__` | - | - | - | - | - | - | - |
+| `ext.builtin.method.__trunc__` | - | - | `__trunc__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.append` | - | - | `append` | - | - | - | - | - | - | - |
 | `ext.builtin.method.as_integer_ratio` | - | - | `as_integer_ratio` | - | - | - | - | - | - | - |
 | `ext.builtin.method.bit_count` | - | - | `bit_count` | - | - | - | - | - | - | - |

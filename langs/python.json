@@ -1419,6 +1419,9 @@
   "ext.builtin.method.__ceil__": [
     "__ceil__"
   ],
+  "ext.builtin.method.__trunc__": [
+    "__trunc__"
+  ],
   "ext.builtin.method.isalnum": [
     "isalnum"
   ],
