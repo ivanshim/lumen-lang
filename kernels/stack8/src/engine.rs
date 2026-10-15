@@ -174,7 +174,10 @@ pub struct Engine<'a> {
     /// The bytes working each method name was found to stand for, once
     /// sought, by whether the row asking was changeable: the seeking
     /// formats a label for every candidate, so it is done once a name.
-    byte_answers: RefCell<HashMap<(bool, String), Option<&'static str>>>,
+    /// Only names that stand for a working are kept, so the map never
+    /// grows past the finite roster of workings however many names a
+    /// program asks after.
+    byte_answers: RefCell<HashMap<(bool, String), &'static str>>,
     member_words: [&'a str; 22],
     opened_descriptors: HashMap<i32, std::fs::File>,
     lang: &'a Lang,
@@ -19492,10 +19495,9 @@ impl<'a> Engine<'a> {
     /// before it answers by its bare tail as well, since that is how a
     /// row of bytes names a method its kind keeps.
     pub(super) fn byte_member(&self, name: &str, changeable: bool) -> Option<&'static str> {
-        let asked = (changeable, name.to_string());
-        if let Some(answer) = self.byte_answers.borrow().get(&asked) { return *answer; }
+        if let Some(answer) = self.byte_answers.borrow().get(&(changeable, name.to_string())) { return Some(*answer); }
         let answer = self.byte_member_sought(name, changeable);
-        self.byte_answers.borrow_mut().insert(asked, answer);
+        if let Some(working) = answer { self.byte_answers.borrow_mut().insert((changeable, name.to_string()), working); }
         answer
     }
 
