@@ -1,3 +1,2 @@
-# Retain the implementation even when _pyio imports io during its own initialization.
+# The buffered and text implementations are read in when a stream of theirs is first made, not here.
 import _io as _native_io
-_runtime_pyio = _native_io._text_runtime()
