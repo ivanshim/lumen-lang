@@ -8605,7 +8605,16 @@ impl<'a> Machine<'a> {
                         if grown && values.len() == 2 {
                             let item = values.pop().expect("literal item");
                             let source = values.pop().expect("growing literal");
-                            let extra = if expanded { Some(self.literal_members(&item)?) } else { None };
+                            let extra = if expanded {
+                                match self.literal_members(&item) {
+                                    Ok(members) => Some(members),
+                                    Err(note) if self.python_numbers => match Self::row_star_complaint(&note) {
+                                        Some(told) => return Err(told.into()),
+                                        None => return Err(note.into()),
+                                    },
+                                    Err(note) => return Err(note.into()),
+                                }
+                            } else { None };
                             match source {
                                 Value::Vector(mut prior) => {
                                     match extra { Some(more) => Rc::make_mut(&mut prior).extend(more), None => Rc::make_mut(&mut prior).push(item) }
@@ -13015,10 +13024,15 @@ impl<'a> Machine<'a> {
         let lone = values.iter().filter(|given| !matches!(given, Value::Couple(pair) if matches!(pair.0, Value::Text(_)))).count() == 1;
         let mut positions = Vec::new();
         let mut names = Vec::new();
+        let mut met_keys: Vec<Value> = Vec::new();
+        let mut alien_key = false;
         for worth in values {
             let Value::Couple(pair) = worth else { positions.push(worth); continue };
             match &pair.0 {
-                Value::Text(key) => names.push((key.to_string(), pair.1.clone())),
+                Value::Text(key) => {
+                    met_keys.push(Value::text(key));
+                    names.push((key.to_string(), pair.1.clone()));
+                }
                 Value::Flag(true) => {
                     let spread = match &pair.1 {
                         Value::Window(_, 'm') => pair.1.proxy_pairs(),
@@ -13032,21 +13046,32 @@ impl<'a> Machine<'a> {
                         Value::Window(origin, 'm') => origin.settled(),
                         value => value,
                     };
-                    match expanded {
-                        Value::Dict(entries) => {
-                            for (k, v) in entries.iter() {
-                                let k = match k { Value::Keyed(inner, _) => inner.as_ref().clone(), other => other.clone() };
-                                let word = self.word_of_key(&k)?;
-                                names.push((word, v.clone()));
+                    let rows = match expanded {
+                        Value::Dict(entries) => entries.iter().map(|(k, v)| {
+                            let k = match k { Value::Keyed(inner, _) => inner.as_ref().clone(), other => other.clone() };
+                            (k, v.clone())
+                        }).collect(),
+                        other => {
+                            let kind = other.kind_word().to_string();
+                            let mut rows = Vec::new();
+                            for key in self.mapping_keys(&other, shown, &kind)? {
+                                let value = self.prim(Prim::At, "", &[other.clone(), key.clone()])?;
+                                rows.push((key, value));
                             }
+                            rows
                         }
-                        _ => {
-                            let kind = expanded.kind_word().to_string();
-                            for key in self.mapping_keys(&expanded, shown, &kind)? {
-                                let word = self.word_of_key(&key)?;
-                                let value = self.prim(Prim::At, "", &[expanded.clone(), key])?;
-                                names.push((word, value));
-                            }
+                    };
+                    for (key, value) in rows {
+                        let word = self.word_of_key(&key);
+                        let again = self.keyword_already(&met_keys, &key)?;
+                        if again && (word.is_err() || !shown.is_empty()) {
+                            let label = match &word { Ok(name) => name.clone(), Err(_) => key.render(self.wording()) };
+                            return Err(self.repeated_keyword(shown, &label).into());
+                        }
+                        met_keys.push(self.hash_key(&key).map_err(Escape::Error)?);
+                        match word {
+                            Ok(name) => names.push((name, value)),
+                            Err(_) => alien_key = true,
                         }
                     }
                 }
@@ -13063,6 +13088,10 @@ impl<'a> Machine<'a> {
                 }
                 _ => return Err(self.argument_fault("ext.syntax.call.amiss", None).into()),
             }
+        }
+        if alien_key {
+            let told = self.table.strings("ext.syntax.call.spread.pairs.keys").first().cloned().unwrap_or_default();
+            return Err(told.into());
         }
         Ok((positions, names))
     }
@@ -13089,6 +13118,24 @@ impl<'a> Machine<'a> {
             }
         }
         Ok(keys)
+    }
+
+    fn keyword_already(&mut self, met: &[Value], key: &Value) -> Res<bool> {
+        let incoming = self.hash_key(key).map_err(Escape::Error)?;
+        for earlier in met {
+            if self.keys_agree(earlier, &incoming).map_err(Escape::Error)? { return Ok(true); }
+        }
+        Ok(false)
+    }
+
+    /// The same keyword arrived twice while mappings were joined into the call.
+    fn repeated_keyword(&self, shown: &str, key: &str) -> String {
+        let pieces = self.table.strings("ext.syntax.call.amiss.keyword");
+        let who = shown.trim_end().trim_end_matches("()");
+        if pieces.len() < 3 || who.is_empty() {
+            return self.argument_fault("ext.syntax.call.amiss.duplicate", Some(key));
+        }
+        self.whole_complaint(format!("{}{who}{}{key}{}", pieces[0], pieces[1], pieces[2]))
     }
 
     /// The word a keyword is written under. Only text stands; anything
@@ -15982,6 +16029,7 @@ impl<'a> Machine<'a> {
         let incoming = match (expanded, item.settled()) {
             (false, Value::Couple(pair)) => vec![pair.as_ref().clone()],
             (true, Value::Dict(entries)) => entries.to_vec(),
+            (true, other) if self.python_numbers => self.rows_of_display(&other)?,
             _ => return Err(self.table.strings("ext.syntax.map.spread.unmapped").first().map(String::as_str).unwrap_or("A map spread needs a map").into()),
         };
         for (key, value) in incoming {
@@ -21449,7 +21497,17 @@ impl<'a> Machine<'a> {
                 } else if !dictionary {
                     let Value::Vector(prior) = &v[0] else { unreachable!() };
                     let mut next = prior.to_vec();
-                    next.extend(if expanded { self.literal_members(&v[1])? } else { vec![v[1].clone()] });
+                    let extra = if expanded {
+                        match self.literal_members(&v[1]) {
+                            Ok(members) => members,
+                            Err(note) if self.python_numbers => {
+                                if let Some(told) = Self::row_star_complaint(&note) { return Err(told); }
+                                return Err(note);
+                            }
+                            Err(note) => return Err(note),
+                        }
+                    } else { vec![v[1].clone()] };
+                    next.extend(extra);
                     Value::Vector(crate::tuples::Sequence::plain(next))
                 } else {
                     // The fast pre-check above the general dispatch takes
@@ -21466,6 +21524,7 @@ impl<'a> Machine<'a> {
                     let incoming = match &v1 {
                         Value::Couple(pair) if !expanded => vec![pair.as_ref().clone()],
                         Value::Dict(entries) if expanded => entries.to_vec(),
+                        _ if expanded && self.python_numbers => self.rows_of_display(&v1.settled())?,
                         _ => return Err(self.table.strings("ext.syntax.map.spread.unmapped").first().map(String::as_str).unwrap_or("A map spread needs a map").into()),
                     };
                     let mut combined = prior.to_vec();
@@ -26711,12 +26770,45 @@ impl<'a> Machine<'a> {
     }
 
     fn literal_members(&mut self, offered: &Value) -> Result<Vec<Value>, String> {
-        let named = offered.kind_word();
-        let regular = format!("TypeError: '{named}' object is not iterable");
-        self.gathered_members(offered).map_err(|fault| match fault == regular {
-            true => format!("TypeError: Value after * must be an iterable, not {named}"),
-            false => fault,
-        })
+        // Displays report the ordinary iteration fault. Calls keep a
+        // separate sentence for a spread that will not walk.
+        self.gathered_members(offered)
+    }
+
+    /// List and tuple stars use this sentence. Sets leave the walk's own.
+    fn row_star_complaint(note: &str) -> Option<String> {
+        let marker = "' object is not iterable";
+        if !note.starts_with("TypeError: '") || !note.ends_with(marker) { return None; }
+        let kind = &note["TypeError: '".len()..note.len() - marker.len()];
+        if kind.chars().any(|letter| letter == '\'') { return None; }
+        Some(format!("TypeError: Value after * must be an iterable, not {kind}"))
+    }
+
+    /// Pairs copied out of a mapping into a dict display. A thing without
+    /// `keys` is not a mapping; a walk that sees the mapping change size
+    /// raises that fault rather than a stand-in.
+    fn rows_of_display(&mut self, source: &Value) -> Result<Vec<(Value, Value)>, String> {
+        let kind = source.kind_word().to_string();
+        let refused = format!("TypeError: '{kind}' object is not a mapping");
+        if !matches!(source.settled(), Value::Thing(_)) { return Err(refused); }
+        let member = match self.read_class_member(source.clone(), "keys", false) {
+            Ok(found) => found,
+            Err(escaped) if self.missing_member_escape(&escaped) => {
+                self.sought_in_vain = None;
+                return Err(refused);
+            }
+            Err(escaped) => return Err(self.suspension_fault(escaped)),
+        };
+        let offered = self.apply_within(member, Vec::new())?;
+        let walk = self.iterated_value(&offered)?;
+        let mut rows = Vec::new();
+        loop {
+            let step = self.next_value(&walk)?;
+            let Some(key) = step else { break; };
+            let value = self.prim(Prim::At, "", &[source.clone(), key.clone()])?;
+            rows.push((key, value));
+        }
+        Ok(rows)
     }
 
     pub(super) fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {

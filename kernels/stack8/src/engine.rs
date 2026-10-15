@@ -3723,10 +3723,15 @@ impl<'a> Engine<'a> {
         let shown = callee.shown();
         let lone = args.iter().filter(|given| !matches!(given, Value::Tie(pair) if matches!(pair.0, Value::Text(_)))).count() == 1;
         let mut items = Vec::new();
+        let mut seen_keywords = Vec::new();
+        let mut alien_keyword = false;
         for value in args {
             match value {
                 Value::Tie(pair) => match &pair.0 {
-                    Value::Text(name) => items.push((Some(name.to_string()), pair.1.clone())),
+                    Value::Text(name) => {
+                        seen_keywords.push(Value::text(name));
+                        items.push((Some(name.to_string()), pair.1.clone()));
+                    }
                     Value::Flag(false) => {
                         let kind = pair.1.core_kind();
                         let plain = format!("TypeError: '{kind}' object is not iterable");
@@ -3740,11 +3745,31 @@ impl<'a> Engine<'a> {
                             Err(other) => return Err(other),
                         }
                     }
-                    Value::Flag(true) => items.extend(self.mapping_pairs(&pair.1, &shown)?),
+                    Value::Flag(true) => {
+                        for (key, value) in self.mapping_pairs(&pair.1, &shown)? {
+                            let word = self.word_of_key(&key);
+                            if self.same_keyword(&seen_keywords, &key)? {
+                                let named = matches!(callee, Callee::Routine(_) | Callee::Builtin(_));
+                                if word.is_err() || named {
+                                    let label = word.unwrap_or_else(|_| key.display(&self.wording()));
+                                    return Err(self.keyword_clash(callee, &label).into());
+                                }
+                            }
+                            seen_keywords.push(self.special_key(&key)?);
+                            match word {
+                                Ok(name) => items.push((Some(name), value)),
+                                Err(_) => alien_keyword = true,
+                            }
+                        }
+                    }
                     _ => return Err(self.lang.call_amiss[0].clone().into()),
                 },
                 other => items.push((None, other)),
             }
+        }
+        if alien_keyword {
+            let told = self.lang.spread_pairs_keys.first().cloned().unwrap_or_default();
+            return Err(told.into());
         }
         // A builtin owns no keyword it means, so the same keyword twice
         // over is the reference's own complaint. A routine's duplicates
@@ -3764,7 +3789,27 @@ impl<'a> Engine<'a> {
     /// written under. A map gives its own pairs; any other thing gives
     /// the pairs its `keys` method lists, read back one by one. A key
     /// that is no text is refused as the reference refuses it.
-    fn mapping_pairs(&mut self, source: &Value, shown: &str) -> Flow<Vec<(Option<String>, Value)>> {
+    fn same_keyword(&mut self, seen: &[Value], key: &Value) -> Flow<bool> {
+        let incoming = self.special_key(key)?;
+        for prior in seen {
+            if self.special_keys_equal(prior, &incoming)? { return Ok(true); }
+        }
+        Ok(false)
+    }
+
+    /// A keyword met twice while the call's mappings are joined, named
+    /// with the callee when the call has one.
+    fn keyword_clash(&self, callee: Callee, key: &str) -> String {
+        let words = &self.lang.call_keyword_twice;
+        if words.len() < 3 { return Self::named_fault(&self.lang.call_duplicate, key); }
+        let name = match callee {
+            Callee::Routine(name) | Callee::Builtin(name) | Callee::Other(name) => name,
+            Callee::Unknown => "",
+        };
+        self.said_whole(format!("{}{name}{}{key}{}", words[0], words[1], words[2]))
+    }
+
+    fn mapping_pairs(&mut self, source: &Value, shown: &str) -> Flow<Vec<(Value, Value)>> {
         let held = match source {
             Value::View(proxy) if proxy.1 == "mapping" => source.proxy_dictionary(),
             _ => match source.contents() {
@@ -3783,7 +3828,7 @@ impl<'a> Engine<'a> {
             Value::Map(entries) => {
                 for (key, value) in entries.iter() {
                     let key = match key { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
-                    pairs.push((Some(self.word_of_key(&key)?), value.clone()));
+                    pairs.push((key, value.clone()));
                 }
             }
             Value::Object(_) => {
@@ -3792,9 +3837,8 @@ impl<'a> Engine<'a> {
                 };
                 let listed = self.call_held(keys, Vec::new())?;
                 for key in self.core_members(&listed)? {
-                    let word = self.word_of_key(&key)?;
                     let value = self.special_dyad(&Action::At, &held, &key)?;
-                    pairs.push((Some(word), value));
+                    pairs.push((key, value));
                 }
             }
             _ => return Err(self.spread_pairs_said(shown, &kind).into()),
@@ -12916,10 +12960,14 @@ impl<'a> Engine<'a> {
                     let next = if *spread && matches!(next.contents(), Value::Fields(_) | Value::View(_)) {
                         self.builtin(Builtin::Dict, "dict", &mut vec![next])?
                     } else { next };
-                    let new_pairs = match (spread, next.contents()) {
-                        (true, Value::Map(p)) => p.to_vec(),
-                        (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
-                        _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
+                    let new_pairs = if *spread && self.lang.python_numbers && !matches!(next.contents(), Value::Map(_)) {
+                        self.pairs_from_mapping(&next.contents())?
+                    } else {
+                        match (spread, next.contents()) {
+                            (true, Value::Map(p)) => p.to_vec(),
+                            (false, Value::Tie(p)) => vec![(p.0.clone(), p.1.clone())],
+                            _ => return Err(self.lang.spread_unmapped.first().cloned().unwrap_or_else(|| "Value has no map pairs".to_string()).into()),
+                        }
                     };
                     for (key, value) in new_pairs {
                         if let Some(told) = self.unkeyable(&key) { return Err(told.into()); }
@@ -12932,7 +12980,17 @@ impl<'a> Engine<'a> {
                     // item joins in one push rather than a clone of
                     // everything gathered so far for every item added.
                     let mut items = match gathered_so_far { Value::Array(a) | Value::Tuple(a) => a, _ => unreachable!() };
-                    if *spread { Rc::make_mut(&mut items).extend(self.spread_members(&next)?); } else { Rc::make_mut(&mut items).push(next); }
+                    if *spread {
+                        let walked = match self.spread_members(&next) {
+                            Ok(members) => members,
+                            Err(note) if self.lang.python_numbers => match Self::display_star_note(&note) {
+                                Some(told) => return Err(told.into()),
+                                None => return Err(note.into()),
+                            },
+                            Err(note) => return Err(note.into()),
+                        };
+                        Rc::make_mut(&mut items).extend(walked);
+                    } else { Rc::make_mut(&mut items).push(next); }
                     Value::Array(items)
                 }
             }
@@ -17735,11 +17793,35 @@ impl<'a> Engine<'a> {
     }
 
     fn spread_members(&mut self, next: &Value) -> Res<Vec<Value>> {
-        let kind = next.core_kind();
-        let ordinary = format!("TypeError: '{kind}' object is not iterable");
-        self.comprehension_items(next).map_err(|why| {
-            if why == ordinary { format!("TypeError: Value after * must be an iterable, not {kind}") } else { why }
-        })
+        // A display spread walks like any other iteration. A call keeps
+        // its own wording for a value that will not walk.
+        self.comprehension_items(next)
+    }
+
+    /// A list or tuple star says this when the value will not walk.
+    /// A set keeps the ordinary iteration sentence.
+    fn display_star_note(note: &str) -> Option<String> {
+        let Some(body) = note.strip_prefix("TypeError: '") else { return None };
+        let Some(kind) = body.strip_suffix("' object is not iterable") else { return None };
+        if kind.contains('\'') { return None; }
+        Some(format!("TypeError: Value after * must be an iterable, not {kind}"))
+    }
+
+    /// Pairs a dict display takes from a mapping that is not itself a dict.
+    /// A thing with no `keys` member is not a mapping. Walking those keys
+    /// is what raises when the mapping changes size underneath.
+    fn pairs_from_mapping(&mut self, source: &Value) -> Res<Vec<(Value, Value)>> {
+        let kind = source.core_kind();
+        let refused = format!("TypeError: '{kind}' object is not a mapping");
+        let Value::Object(_) = source else { return Err(refused); };
+        let Some(keys) = self.member_of(source.clone(), "keys")? else { return Err(refused); };
+        let listed = self.call_held(keys, Vec::new())?;
+        let mut rows = Vec::new();
+        for key in self.core_members(&listed)? {
+            let value = self.special_dyad(&Action::At, source, &key)?;
+            rows.push((key, value));
+        }
+        Ok(rows)
     }
 
     fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
