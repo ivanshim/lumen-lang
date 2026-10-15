@@ -4527,12 +4527,12 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn held_as_state(value:&Value)->Value {
         let Value::Thing(t)=value else{return Value::Nil};
-        let pairs:Vec<(Value,Value)>=t.holds.borrow().iter().filter(|(k,v)|!k.starts_with('\0')&&!matches!(v,Value::Unset)).map(|(k,v)|(Value::text(k),v.clone())).collect();
+        let pairs:Vec<(Value,Value)>=t.holds.borrow().iter().filter(|(k,v)|!k.starts_with('\0')&&!matches!(v,Value::Unset)).map(|(k,v)|(Self::attribute_key(k),v.clone())).collect();
         let ordinary = if pairs.is_empty() { Value::Nil } else { Value::Dict(Rc::new(pairs.into())) };
         let mut slotted = Vec::new();
         for (key, held) in t.holds.borrow().iter() {
             if let Some(named) = key.strip_prefix("\0slot:").and_then(|rest| rest.rsplit_once(':')) {
-                if !matches!(held, Value::Unset) { slotted.push((Value::text(named.0), held.clone())); }
+                if !matches!(held, Value::Unset) { slotted.push((Self::attribute_key(named.0), held.clone())); }
             }
         }
         if slotted.is_empty() { ordinary } else { Value::tuple(vec![ordinary, Value::Dict(Rc::new(slotted.into()))]) }
@@ -4874,6 +4874,25 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        // Resolve plain instance storage before inspecting unrelated callable kinds.
+        if self.names_in_calls && !key.starts_with("__") {
+            if let Value::Thing(instance) = &value {
+                let entries = instance.holds.borrow();
+                let saved = entries.iter().all(|(word, _)| !word.starts_with('\0'))
+                    .then(|| entries.iter().find(|(word, _)| word == key).map(|(_, member)| member.clone())).flatten();
+                drop(entries);
+                if let Some(saved) = saved {
+                    let kind = instance.blueprint();
+                    let plain_kind = Self::native_word(&kind).is_none()
+                        && Self::native_beneath(&kind).map_or(true, |word| word == self.detail("root"));
+                    if plain_kind {
+                        let hooked = !direct && self.inherited_entry(&kind, self.detail("get")).is_some();
+                        let priority = self.inherited_entry(&kind, key).is_some_and(|member| self.writes_too(&member));
+                        if !hooked && !priority { return Ok(saved); }
+                    }
+                }
+            }
+        }
         if (matches!(&value, Value::Intrinsic(Prim::ClassWork(11), _)) || matches!(&value, Value::Wrapped(8, _))) && self.spells_property_kind(&value.settled()) {
             let owner = self.property_blueprint();
             return self.read_class_member(Value::Blueprint(owner), key, direct);

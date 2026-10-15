@@ -6166,7 +6166,7 @@ The Python floating math adapter also supplies compensated `fsum`, consuming its
 It exposes that argument in the frame namespace and requires an iterator when
 the expression starts, including when its code is made into a new function.
 
-`ext.builtin.pickle_buffer` supplies native exported-buffer ownership, raw byte views, release and buffer acquisition for PickleBuffer, following CPython v3.14.8 Objects/picklebufobject.c. Its binding is separate from the absent _pickle accelerator.
+`ext.builtin.pickle_buffer` supplies native exported-buffer ownership, raw byte views, release and buffer acquisition for PickleBuffer, following CPython v3.14.8 Objects/picklebufobject.c. Its binding is separate from the absent _pickle accelerator. Operations 6, 7 and 8 read byte ranges, store bytes and read lines at a checked memory-stream cursor; the runtime IO adapter retains size validation, closed-stream checks and exported-buffer checks.
 
 `ext.builtin.text.intern` retains canonical Python strings for sys.intern and attribute-name dictionaries, including surrogate-containing strings.
 The Python-only type-parameter labels also expose `_typing` primitives to the

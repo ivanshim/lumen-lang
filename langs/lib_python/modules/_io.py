@@ -4,6 +4,7 @@
 import operator
 import sys
 from builtins import _buffer_view
+_memory_cursor = __pickle_buffer_native__
 
 DEFAULT_BUFFER_SIZE = 128 * 1024
 BlockingIOError = BlockingIOError
@@ -265,7 +266,12 @@ class BytesIO(_BufferedIOBase):
         if hasattr(self, '_data'):
             if _export(self._data, True):
                 raise BufferError('Existing exports of data: object cannot be re-sized')
-        self._data = bytearray() if initial_bytes is None else bytearray(_buffer(initial_bytes))
+        if initial_bytes is None:
+            self._data = bytearray()
+        elif type(initial_bytes) is bytes:
+            self._data = bytearray(initial_bytes)
+        else:
+            self._data = bytearray(_buffer(initial_bytes))
         self._pos = 0
         self._closed = False
     def _check_exports(self):
@@ -294,16 +300,10 @@ class BytesIO(_BufferedIOBase):
     writable = readable
     seekable = readable
     def read(self, size=-1):
-        if type(size) is not int or size > _MAXSIZE or size < _MINSIZE:
-            size = _size(size)
-        if self._closed:
-            raise ValueError('I/O operation on closed file')
-        end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
-        if end <= self._pos:
-            return b''
-        result = bytes(self._data[self._pos:end])
-        self._pos = end
-        return result
+        data = _memory_cursor(6, self, size)
+        if data is None:
+            data = _memory_cursor(6, self, _size(size))
+        return data or b''
     read1 = read
     def readinto(self, buffer):
         if type(buffer) is bytearray:
@@ -319,27 +319,14 @@ class BytesIO(_BufferedIOBase):
             return len(data)
     readinto1 = readinto
     def readline(self, size=-1):
-        size = _size(size)
-        if self._closed:
-            raise ValueError('I/O operation on closed file')
-        end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
-        start = self._pos
-        if end <= start:
-            return b''
-        data = bytes(self._data[start:end])
-        at = data.find(b'\n')
-        if at >= 0:
-            data = data[:at + 1]
-        self._pos += len(data)
-        return data
+        data = _memory_cursor(8, self, size)
+        if data is None:
+            data = _memory_cursor(8, self, _size(size))
+        return data or b''
     def write(self, b):
-        kind = type(b)
-        if kind is bytes or kind is bytearray:
-            if self._closed:
-                raise ValueError('I/O operation on closed file')
-            if _export(self._data, True):
-                raise BufferError('Existing exports of data: object cannot be re-sized')
-            return self._store(b)
+        stored = _memory_cursor(7, self, b)
+        if stored is not None:
+            return stored
         with _get_buffer(b) as view:
             if not view.c_contiguous:
                 raise BufferError('memoryview: underlying buffer is not C-contiguous')
@@ -349,16 +336,7 @@ class BytesIO(_BufferedIOBase):
                 raise BufferError('Existing exports of data: object cannot be re-sized')
             return self._store(view.tobytes())
     def _store(self, data):
-        n = len(data)
-        if not n:
-            return 0
-        if self._pos > sys.maxsize - n:
-            raise OverflowError('new position too large')
-        if self._pos > len(self._data):
-            self._data.extend(b'\0' * (self._pos - len(self._data)))
-        self._data[self._pos:self._pos + n] = data
-        self._pos += n
-        return n
+        return _memory_cursor(7, self, data)
     def seek(self, pos, whence=0):
         if type(pos) is not int or pos > _MAXSIZE or pos < _MINSIZE:
             pos = _ssize(pos)

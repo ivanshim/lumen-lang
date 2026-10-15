@@ -15482,8 +15482,63 @@ impl<'a> Machine<'a> {
         self.octet_work(operation, values, false)
     }
 
+    // Transfer a checked memory-stream slice directly between native byte buffers.
+    fn memory_cursor(&mut self, operation: i64, parts: &[Value]) -> Res {
+        let writing = operation == 7;
+        let [stream, argument] = parts else { return Err("TypeError: buffer cursor operation requires a stream and argument".to_owned().into()); };
+        // Only a whole number the cursor can count with, or bytes to store, are
+        // taken here; anything else is handed back as None untouched, and the
+        // Python side validates it in its own order.
+        let taken = if writing { matches!(argument.settled(), Value::Octets { .. }) } else {
+            match argument.settled() { Value::Small(_) => true, Value::Huge(big) => big.to_i64().is_some(), _ => false }
+        };
+        if !taken { return Ok(Value::Nil); }
+        if self.read_class_member(stream.clone(), "_closed", false)?.is_true() {
+            return Err(String::from("ValueError: I/O operation on closed file").into());
+        }
+        let bytes = self.read_class_member(stream.clone(), "_data", false)?.settled();
+        let offset = self.read_class_member(stream.clone(), "_pos", false)?;
+        let Value::Octets { cell, changeable, .. } = bytes else { return Err("TypeError: buffer cursor requires bytes storage".to_owned().into()); };
+        let position = offset.as_big()?.to_usize().ok_or_else(|| "ValueError: invalid buffer position".to_owned())?;
+        if !writing {
+            let amount = argument.as_big()?.to_i64().ok_or_else(|| "OverflowError: buffer read size is too large".to_owned())?;
+            let content = cell.borrow();
+            let limit = content.len().min(if amount >= 0 { position.saturating_add(amount as usize) } else { usize::MAX });
+            let stop = if operation == 8 && position < limit {
+                content[position..limit].iter().position(|item| *item == 10).map_or(limit, |offset| position + offset + 1)
+            } else { limit };
+            let copied = if position < stop { content[position..stop].to_vec() } else { Vec::new() };
+            drop(content);
+            if !copied.is_empty() { self.alter_class_member(stream.clone(), "_pos", Some(Value::Small(stop as i64)), false)?; }
+            return Ok(self.octets(copied, false));
+        }
+        if !changeable { return Err(String::from("TypeError: buffer store requires a bytearray").into()); }
+        if OctetLease::held(&cell) {
+            return Err(String::from("BufferError: Existing exports of data: object cannot be re-sized").into());
+        }
+        let payload = match argument.settled() {
+            Value::Octets { cell: source, .. } => source.borrow().clone(),
+            _ => return Err(String::from("TypeError: buffer store requires bytes").into()),
+        };
+        let size = payload.len();
+        if size == 0 { return Ok(Value::Small(0)); }
+        let finish = position.checked_add(size).filter(|size| *size <= i64::MAX as usize)
+            .ok_or_else(|| "OverflowError: new position too large".to_owned())?;
+        let mut content = cell.borrow_mut();
+        if finish > content.len() && OctetLease::held(&cell) {
+            return Err(String::from("BufferError: Existing exports of data: object cannot be re-sized").into());
+        }
+        let missing = finish.saturating_sub(content.len());
+        content.try_reserve(missing).map_err(|_| String::from("MemoryError: "))?;
+        if missing > 0 { content.resize(finish, 0); }
+        content[position..finish].copy_from_slice(payload.as_slice());
+        drop(content);
+        self.alter_class_member(stream.clone(), "_pos", Some(Value::Small(finish as i64)), false)?;
+        Ok(Value::Small(size as i64))
+    }
     fn exported_pickle_buffer(&mut self, values: &[Value]) -> Res {
         let mode = values.first().ok_or_else(|| "TypeError: buffer operation missing".to_owned())?.as_big()?.to_i64().ok_or_else(|| "ValueError: buffer operation out of range".to_owned())?;
+        if (6..=8).contains(&mode) { return self.memory_cursor(mode, &values[1..]); }
         match mode {
             5 => {
                 if let [_, Value::Blueprint(kind)] = values {

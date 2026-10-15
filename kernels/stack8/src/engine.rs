@@ -20710,6 +20710,55 @@ impl<'a> Engine<'a> {
 
     fn pickle_buffer_work(&mut self, args: &[Value]) -> Flow<Value> {
         let Some(action) = args.first().and_then(|v| v.as_big().ok()).and_then(|v| v.to_u8()) else { return Err("TypeError: invalid buffer operation".into()); };
+        // Copy a memory-stream range once, or store bytes without Python slice temporaries.
+        if matches!(action, 6..=8) {
+            let [_, owner, item] = args else { return Err("TypeError: buffer cursor operation requires a stream and argument".into()); };
+            // A count that is not a plain whole number the cursor can hold, or a
+            // store of anything but bytes, goes back as None before any state is
+            // read: the Python side then validates it the slow way, in its order.
+            let plain = match (action, item.contents()) {
+                (6 | 8, Value::Small(_)) => true,
+                (6 | 8, Value::Huge(big)) => big.to_i64().is_some(),
+                (7, Value::Bytes(..)) => true,
+                _ => false,
+            };
+            if !plain { return Ok(Value::Null); }
+            if self.class_get(owner.clone(), "_closed", false)?.is_true() { return Err("ValueError: I/O operation on closed file".into()); }
+            let buffer = self.class_get(owner.clone(), "_data", false)?;
+            let position = self.class_get(owner.clone(), "_pos", false)?;
+            let Value::Bytes(storage, mutable, _) = buffer.contents() else { return Err("TypeError: buffer cursor requires bytes storage".into()); };
+            let begin = position.as_big()?.to_usize().ok_or("ValueError: invalid buffer position")?;
+            if action != 7 {
+                let count = item.as_big()?.to_i64().ok_or("OverflowError: buffer read size is too large")?;
+                let (copy, end) = {
+                    let bytes = storage.borrow();
+                    let mut end = if count < 0 { bytes.len() } else { bytes.len().min(begin.saturating_add(count as usize)) };
+                    if action == 8 && begin < end {
+                        if let Some(newline) = bytes[begin..end].iter().position(|byte| *byte == b'\n') { end = begin + newline + 1; }
+                    }
+                    if end <= begin { (Vec::new(), begin) } else { (bytes[begin..end].to_vec(), end) }
+                };
+                if !copy.is_empty() { self.class_write(owner.clone(), "_pos", Some(Value::Small(end as i64)), false)?; }
+                return Ok(self.byte_make(copy, false));
+            }
+            if !mutable { return Err("TypeError: buffer store requires a bytearray".into()); }
+            // Any store while a view is out is refused, as the reference refuses it, before the length is looked at.
+            if ByteExport::active(&storage) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+            let Value::Bytes(source, _, _) = item.contents() else { return Err("TypeError: buffer store requires bytes".into()); };
+            let copy = source.borrow().to_vec();
+            if copy.is_empty() { return Ok(Value::Small(0)); }
+            let end = begin.checked_add(copy.len()).filter(|end| *end <= i64::MAX as usize).ok_or("OverflowError: new position too large")?;
+            let mut bytes = storage.borrow_mut();
+            if end > bytes.len() {
+                let growth = end - bytes.len();
+                bytes.try_reserve(growth).map_err(|_| "MemoryError: ")?;
+                bytes.resize(end, 0);
+            }
+            bytes[begin..end].copy_from_slice(&copy);
+            drop(bytes);
+            self.class_write(owner.clone(), "_pos", Some(Value::Small(end as i64)), false)?;
+            return Ok(Value::Small(copy.len() as i64));
+        }
         if action == 5 {
             let [_, Value::Class(class)] = args else { return Err("TypeError: buffer registration requires a type".into()); };
             class.shared.borrow_mut().push(("\0buffer_allocator".into(), Value::Flag(true)));

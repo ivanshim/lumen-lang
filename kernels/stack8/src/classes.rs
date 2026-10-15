@@ -3743,7 +3743,7 @@ impl<'a> Engine<'a> {
     pub(super) fn root_state(&self, subject: &Value) -> Value {
         let settled = subject.contents();
         let Value::Object(o) = &settled else { return Value::Null };
-        let mut entries: Vec<(Value, Value)> = o.fields.borrow().iter().filter(|(n,v)| !n.starts_with(['\0', '#']) && !matches!(v, Value::Blank)).map(|(n,v)| (Value::text(n), v.clone())).collect();
+        let mut entries: Vec<(Value, Value)> = o.fields.borrow().iter().filter(|(n,v)| !n.starts_with(['\0', '#']) && !matches!(v, Value::Blank)).map(|(n,v)| (Self::attribute_name(n), v.clone())).collect();
         // A class that names no slots keeps its own names in a namespace
         // dictionary; those are among what the object holds, as the
         // reference reports them.
@@ -3753,7 +3753,7 @@ impl<'a> Engine<'a> {
                     let name = match key { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
                     if let Value::Text(text) = &name {
                         if !text.starts_with(['\0', '#']) && !matches!(value, Value::Blank) {
-                            entries.push((Value::text(text), value.clone()));
+                            entries.push((Self::attribute_name(text), value.clone()));
                         }
                     }
                 }
@@ -3762,7 +3762,7 @@ impl<'a> Engine<'a> {
         let dictionary = if entries.is_empty() { Value::Null } else { Value::Map(Rc::new(entries.into())) };
         let slots: Vec<_> = o.fields.borrow().iter().filter_map(|(key, value)| {
             let slot = key.strip_prefix("\0slot:")?.rsplit_once(':')?.0;
-            (!matches!(value, Value::Blank)).then(|| (Value::text(slot), value.clone()))
+            (!matches!(value, Value::Blank)).then(|| (Self::attribute_name(slot), value.clone()))
         }).collect();
         if slots.is_empty() { dictionary }
         else { Value::tuple(vec![dictionary, Value::Map(Rc::new(slots.into()))]) }
@@ -4132,6 +4132,27 @@ impl<'a> Engine<'a> {
     /// found -- is offered to the class's fallback reader before it is
     /// reported. A plain read, the root's own, has no fallback.
     pub(super) fn class_get(&mut self, subject: Value, name: &str, plain: bool) -> Flow<Value> {
+        // An ordinary stored field needs no wrapper or native accessor routing.
+        if self.lang.bind_names && !name.starts_with("__") {
+            if let Value::Object(object) = &subject {
+                let fields = object.fields.borrow();
+                let own = (!fields.iter().any(|(key, _)| key.starts_with('\0'))).then(||
+                    fields.iter().find(|(key, held)| key == name && !matches!(held.contents(), Value::Blank))
+                        .map(|(_, held)| held.clone())).flatten();
+                drop(fields);
+                if let Some(own) = own {
+                    let class = object.class_now();
+                    if Self::kind_beneath(&class).as_deref().is_none_or(|word| word == self.class_word("root"))
+                        && self.module_holding(&subject).is_none()
+                        && (plain || self.class_value(&class, self.class_word("get")).is_none()) {
+                        let descriptor = self.class_value(&class, name);
+                        let reads_first = descriptor.as_ref().is_some_and(|entry| self.takes_writes(entry)
+                            && (matches!(entry, Value::Adapter(parts) if matches!(parts.0, 6 | 16 | 28)) || self.descriptor_hook(entry, "descriptor.get").is_some()));
+                        if !reads_first { return Ok(own); }
+                    }
+                }
+            }
+        }
         if (matches!(&subject, Value::Native(Builtin::ClassTool(11), _)) || matches!(&subject, Value::Adapter(parts) if parts.0 == 8)) && self.names_property_class(&subject.contents()) {
             let class = self.property_class();
             return self.class_get(Value::Class(class), name, plain);
