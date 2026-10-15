@@ -207,7 +207,20 @@ def _encode_error(encoding, obj, start, end, reason, errors):
         raise error
     return _handle(error, errors, False)
 
+_normalized = {}
+
+# The same spelling always normalises the same way, so a repeat is a lookup.
 def _normalize(encoding):
+    if type(encoding) is str:
+        name = _normalized.get(encoding)
+        if name is None:
+            name = _normalize_spelling(encoding)
+            if len(_normalized) < 512:
+                _normalized[encoding] = name
+        return name
+    return _normalize_spelling(encoding)
+
+def _normalize_spelling(encoding):
     if not isinstance(encoding, str):
         raise TypeError('encoding must be str')
     # CPython's normalize_encoding: runs of anything but alphanumerics
@@ -614,25 +627,63 @@ def _utf7_decode(data, errors, final=True):
 
 _escape_decode = {'a': '\a', 'b': '\b', 'f': '\f', 'n': '\n', 'r': '\r', 't': '\t', 'v': '\v', '\\': '\\', "'": "'", '"': '"'}
 
+def _escaped_row(c, raw):
+    n = ord(c)
+    if raw and n < 256 or not raw and 32 <= n < 127 and c != '\\':
+        return bytes([n])
+    if not raw and c in ('\t', '\n', '\r', '\\'):
+        return ('\\' + {'\t': 't', '\n': 'n', '\r': 'r', '\\': '\\'}[c]).encode('ascii')
+    return _escape(c).encode('ascii')
+
+# Each character's escaped spelling, kept for the characters met so far.
+_escaped_rows = ({}, {})
+
 def _escaped_encode(text, raw):
-    out = []
-    for c in text:
-        n = ord(c)
-        if raw and n < 256 or not raw and 32 <= n < 127 and c != '\\':
-            out.append(n)
-        elif not raw and c in ('\t', '\n', '\r', '\\'):
-            out.extend(list(('\\' + {'\t': 't', '\n': 'n', '\r': 'r', '\\': '\\'}[c]).encode('ascii')))
-        else:
-            out.extend(list(_escape(c).encode('ascii')))
-    return bytes(out)
+    rows = _escaped_rows[raw]
+    try:
+        return b''.join(map(rows.__getitem__, text))
+    except KeyError:
+        pass
+    if len(rows) > 4096:
+        rows.clear()
+    for c in set(text):
+        if c not in rows:
+            rows[c] = _escaped_row(c, raw)
+    return b''.join(map(rows.__getitem__, text))
 
 # Text whose escapes are all plain ones (the one-letter names and the \x,
-# \u, \U forms with their full digits) is read here a pair of backslashes
-# at a time; anything else (octal, \N, a bad or short escape, a trailing
-# backslash) answers None and goes to the full loop below.
-_plain_escapes = (('\\n', '\n'), ('\\r', '\r'), ('\\t', '\t'), ('\\a', '\a'), ('\\b', '\b'), ('\\f', '\f'),
-                  ('\\v', '\v'), ("\\'", "'"), ('\\"', '"'))
+# \u, \U forms with their full digits) is read here with a few whole-string
+# passes, one pair of backslashes at a time; anything else (octal, \N, a
+# bad or short escape, a trailing backslash) answers None and goes to the
+# full loop below.
 _escape_widths = {'u': 4, 'U': 8, 'x': 2}
+_escape_hex_codecs = {2: 'latin-1', 4: 'utf-16-be', 8: 'utf-32-be'}
+
+# Every `marker` + digits in `rest`, read together. None: leave it to the loop.
+def _escaped_hex(rest, marker, width):
+    pieces = rest.split(marker)
+    count = len(pieces) - 1
+    # In a run of escapes each piece but the last is just its digits.
+    middle = ''.join(pieces[1:-1])
+    dense = len(middle) == width * (count - 1)
+    if dense:
+        digits = middle + pieces[-1][:width]
+    else:
+        digits = ''.join([piece[:width] for piece in pieces[1:]])
+    if len(digits) != width * count or digits.strip('0123456789abcdefABCDEF'):
+        return None
+    # A unit that could be half of a surrogate pair is not paired here.
+    if width == 4 and 'd' in digits[0::4].lower():
+        return None
+    try:
+        chars = _raw_text_decode(bytes.fromhex(digits), _escape_hex_codecs[width], 'strict')
+    except UnicodeDecodeError:
+        return None
+    if '\\' in chars:
+        return None
+    if dense:
+        return pieces[0] + chars + pieces[-1][width:]
+    return pieces[0] + ''.join([char + piece[width:] for char, piece in zip(chars, pieces[1:])])
 
 def _escaped_plain(text, raw):
     segments = text.split('\\\\')
@@ -640,22 +691,18 @@ def _escaped_plain(text, raw):
         rest = segments[at]
         if '\\' not in rest:
             continue
-        if not raw:
-            for spelled, plain in _plain_escapes:
-                rest = rest.replace(spelled, plain)
-        pieces = rest.split('\\')
-        rest = pieces[0]
-        for piece in pieces[1:]:
-            width = _escape_widths.get(piece[:1])
-            if width is None or raw and width == 2:
+        hexed = []
+        for letter in set([piece[:1] for piece in rest.split('\\')[1:]]):
+            if letter in _escape_widths and not (raw and letter == 'x'):
+                hexed.append(letter)
+            elif raw or letter not in _escape_decode:
                 return None
-            digits = piece[1:1 + width]
-            if len(digits) != width or digits.strip('0123456789abcdefABCDEF'):
+            else:
+                rest = rest.replace('\\' + letter, _escape_decode[letter])
+        for letter in hexed:
+            rest = _escaped_hex(rest, '\\' + letter, _escape_widths[letter])
+            if rest is None:
                 return None
-            code = int(digits, 16)
-            if code > 0x10ffff:
-                return None
-            rest += chr(code) + piece[1 + width:]
         segments[at] = rest
     return ('\\\\' if raw else '\\').join(segments)
 
@@ -752,8 +799,16 @@ def _escaped_decode(data, raw, errors):
 
 # Decode indexed character mappings and validate mapping result types.
 _decode_translations = {}
+_charmap_helpers = None
+def _charmap_tools():
+    global _charmap_helpers
+    if _charmap_helpers is None:
+        from _codecs import _buffer, _error_argument, _text
+        _charmap_helpers = (_buffer, _error_argument, _text)
+    return _charmap_helpers
+
 def charmap_decode(data, errors='strict', mapping=None):
-    from _codecs import _buffer, _error_argument
+    _buffer, _error_argument, _text = _charmap_helpers or _charmap_tools()
     errors = _error_argument(errors, 'charmap_decode')
     data = _buffer(data)
     if mapping is None:
@@ -806,12 +861,17 @@ def _mapped(mapping, code):
 
 # Encode arbitrary indexed character maps, including multi-byte replacements.
 def charmap_encode(text, errors='strict', mapping=None):
-    from _codecs import _error_argument
+    _buffer, _error_argument, _text = _charmap_helpers or _charmap_tools()
     errors = _error_argument(errors, 'charmap_encode')
-    from _codecs import _text
     text = _text(text)
     if mapping is None:
         return (text.encode('latin-1', errors), len(text))
+    if type(mapping) is dict and type(text) is str:
+        # Every character mapped to a byte: no handler can be involved.
+        try:
+            return (bytes(list(map(mapping.__getitem__, map(ord, text)))), len(text))
+        except (KeyError, ValueError, TypeError):
+            pass
     row = []
     i = 0
     while i < len(text):
@@ -885,6 +945,11 @@ def _encode(obj, encoding='utf-8', errors=_default_errors):
     name = encoding if type(encoding) is str and encoding in _canonical else _normalize(encoding)
     if not isinstance(errors, str):
         raise TypeError('errors must be str')
+    if name in _charmaps:
+        table = _charmap_tables.get(name)
+        if table is None:
+            table = _charmap_tables[name] = charmap_build(_charmaps[name])
+        return charmap_encode(obj, errors, table)[0]
     if name in ('utf_8', 'ascii', 'latin_1'):
         return _raw_text_encode(obj, name, errors)
     if name == 'utf_8_sig':
@@ -898,11 +963,6 @@ def _encode(obj, encoding='utf-8', errors=_default_errors):
         if type(obj) is str and obj.isascii() and (name == 'raw_unicode_escape' or ('\\' not in obj and obj.isprintable())):
             return _raw_text_encode(obj, 'ascii', 'strict')
         return _escaped_encode(obj, name == 'raw_unicode_escape')
-    if name in _charmaps:
-        table = _charmap_tables.get(name)
-        if table is None:
-            table = _charmap_tables[name] = charmap_build(_charmaps[name])
-        return charmap_encode(obj, errors, table)[0]
     entry = lookup(encoding)
     if not getattr(entry, '_is_text_encoding', True):
         raise LookupError("'%s' is not a text encoding; use codecs.encode() to handle arbitrary codecs" % encoding)
@@ -924,6 +984,8 @@ def _decode(obj, encoding='utf-8', errors=_default_errors):
         if 92 not in obj:
             return _raw_text_decode(obj, 'latin-1', 'strict')
         return _escaped_decode(obj, name == 'raw_unicode_escape', errors)
+    if name in _charmaps:
+        return charmap_decode(obj, errors, _charmaps[name])[0]
     if name in ('utf_8', 'ascii', 'latin_1'):
         return _raw_text_decode(obj, name, errors)
     if name == 'utf_8_sig':
@@ -932,8 +994,6 @@ def _decode(obj, encoding='utf-8', errors=_default_errors):
         return _wide_decode(obj, name, errors)[0]
     if name == 'utf_7':
         return _utf7_decode(obj, errors)[0]
-    if name in _charmaps:
-        return charmap_decode(obj, errors, _charmaps[name])[0]
     entry = lookup(encoding)
     if not getattr(entry, '_is_text_encoding', True):
         raise LookupError("'%s' is not a text encoding; use codecs.decode() to handle arbitrary codecs" % encoding)
