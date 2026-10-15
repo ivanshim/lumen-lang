@@ -4,6 +4,10 @@ import os
 import shutil
 import tempfile
 
+# Import a reference source under its package name without changing script startup.
+def reference_arguments(root, path):
+    return [os.path.join(root, 'scripts', 'suite', 'reference_entry.py'), str(path)]
+
 # Return interpreter arguments and the disposable stage for a reference source.
 def staged_reference(root, prog, versions):
     tests = next((v['tests'] for v in versions.values()
@@ -20,9 +24,8 @@ def staged_reference(root, prog, versions):
         os.symlink(os.path.join(library, name), os.path.join(libroot, name))
     staged_suite = os.path.join(libroot, os.path.basename(tests))
     shutil.copytree(suite, staged_suite)
-    path = os.path.join(staged_suite, relative)
-    if relative in ('test_patma.py', 'test_tabnanny.py', 'test_type_aliases.py'):
-        return [os.path.join(root, 'scripts', 'suite', 'reference_entry.py'), path], stage
-    if relative.endswith('/__main__.py'):
-        return ['-m', 'test.' + relative.split('/')[0]], stage
-    return [path], stage
+    context = os.path.join(stage, 'reference')
+    os.mkdir(context)
+    os.symlink(staged_suite, os.path.join(context, 'test'))
+    path = os.path.join(context, 'test', relative)
+    return reference_arguments(root, path), stage

@@ -793,14 +793,10 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
     """A unittest suite of the examples found in a module's docstrings."""
     if test_finder is None:
         test_finder = DocTestFinder()
-    if module is None and globs is None:
-        names = __program_namespace()
-        path = '/' + names.get('__file__', '').lstrip('/')
-        directory = path.rsplit('/', 2)[-2]
-        if (directory == 'test' or '/tests/' in path and directory.split('-', 1)[0] == 'python') and path.rsplit('/', 1)[-1].startswith('test_') and path.endswith('.py'):
-            globs = _copy_dict(names)
-            globs['__name__'] = 'test.' + path.rsplit('/', 1)[-1][:-3]
-    tests = test_finder.find(module, None, None, globs, extraglobs)
+    if module is None:
+        caller = sys._getframe(1).f_globals
+        module = sys.modules[caller['__name__']]
+    tests = test_finder.find(module, globs=globs, extraglobs=extraglobs)
     suite = unittest.TestSuite()
     optionflags = options.get('optionflags', 0)
     setUp = options.get('setUp')

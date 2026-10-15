@@ -2,8 +2,9 @@ import os, sys, shutil, subprocess, pathlib, tempfile, time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 from python_versions import select, option
-from python_tests import python_tests, python_test_name, python_test_module
+from python_tests import python_tests, python_test_name
 from results_metadata import bind_for_run
+from reference_layout import reference_arguments
 REQUESTED = option(sys.argv)
 # usage: count_run.py <rawdir> [cap] [binary]   one process per core (SUITE_JOBS to change), each
 # file in its own working directory so two tests' @test files cannot meet; largest files first.
@@ -25,13 +26,7 @@ def run(p, k):
         return subprocess.run([str(BIN),"--kernel",k,"--python",VERSION["release"]]+argv, capture_output=True,
                               text=True, timeout=CAP, stdin=subprocess.DEVNULL, cwd=here)
     try:
-        r = go([str(p)])
-        module = python_test_module(p)
-        # An executable test package whose entry imports its siblings relatively
-        # cannot stand as a plain file; it is then run by its own name, the way a
-        # `-m` run of it does, which is what its reference entry expects.
-        if module and r.returncode and "relative imports require a package context" in r.stderr:
-            r = go(["-m", module])
+        r = go(reference_arguments(str(ROOT), p))
         dest.write_text("###EXIT %d\n###SECONDS %.1f\n" % (r.returncode, time.time()-t0)
                         + r.stdout + "\n###STDERR\n" + r.stderr)
     except subprocess.TimeoutExpired:

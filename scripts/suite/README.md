@@ -74,3 +74,8 @@ It records the provenance path and digest, and refuses to replace an existing
 binding. The inventory is an explicit assertion from the original run's owner;
 its hashes verify the files, not which interpreter produced them. If the
 original release cannot be established, rerun into a new directory instead.
+
+Reference counts, reruns and staged checks all use `reference_arguments()` in
+`reference_layout.py` to import sources through `reference_entry.py` under their
+`test.<module>` package names. Ordinary script invocations retain
+`__name__ == '__main__'`. Package entries load their package's test suite.

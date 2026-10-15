@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Run an unmodified reference module through unittest's normal loader."""
+"""Import an unmodified reference module through unittest's normal loader."""
+import os
 import sys
-import types
 import unittest
+import test
 
 path = sys.argv[1]
-module_name = 'test.' + path.rsplit('/', 1)[-1][:-3]
-module = types.ModuleType(module_name)
-module.__file__ = path
-module.__package__ = 'test'
-sys.modules[module_name] = module
-with open(path, encoding='utf-8') as source:
-    exec(compile(source.read(), path, 'exec'), module.__dict__)
+package_entry = os.path.basename(path) == '__main__.py'
+directory = os.path.dirname(path)
+suite = os.path.dirname(directory) if package_entry else directory
+test.__path__.insert(0, suite)
+name = 'test.' + (os.path.basename(directory) if package_entry else os.path.basename(path)[:-3])
+module = __import__(name, fromlist=['*'])
 unittest.main(module=module, argv=[path])

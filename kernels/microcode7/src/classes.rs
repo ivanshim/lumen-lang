@@ -4179,12 +4179,29 @@ impl<'a> Machine<'a> {
         }
         (!matches!(held,Value::Unset)).then_some(held)
     }
+    /// Resolve a root allocator's inherited slot through its layout parent.
+    /// Later multiple-inheritance parents cannot replace that parent's slot.
+    fn maker_slot_differs(&self, class: &Blueprint) -> bool {
+        Self::lookup_ordered(class, |entry| {
+            match Self::own_entry(entry, self.detail("allocate")) {
+                None => None,
+                Some(Value::Wrapped(1, args)) if args.is_empty() => {
+                    let prior = entry.under.borrow();
+                    Some(match prior.as_ref() {
+                        Some(base) => self.maker_slot_differs(base),
+                        None => false,
+                    })
+                }
+                Some(_) => Some(true),
+            }
+        }).unwrap_or(false)
+    }
     /// The root's making (`n`) or constructing (`i`), handed more than
     /// the class or the thing, refused as CPython refuses it: naming
     /// the root where the class wrote over that working, and the class
     /// where it wrote over neither.
     fn root_turns_away(&self,class:&Rc<Blueprint>,working:char)->Res<()> {
-        let makes=self.inherited_entry(class,self.detail("allocate")).is_some();
+        let makes=self.maker_slot_differs(class);
         let builds=self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).map_or(false,|word|self.inherited_entry(class,word).is_some_and(|f| !matches!(f, Value::Wrapped(2, v) if v.is_empty())));
         let (mine,theirs)=if working=='n'{(makes,builds)}else{(builds,makes)};
         let label=if working=='n'{"arguments.new"}else{"arguments.init"};
