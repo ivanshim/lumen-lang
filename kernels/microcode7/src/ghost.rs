@@ -140,6 +140,9 @@ thread_local! {
     static REFERENCES_NEXT_SWEEP: Cell<usize> = const { Cell::new(64) };
     static REFERENCES_BY_TARGET: RefCell<(HashMap<ReferenceAddress, Vec<Weak<Dim>>>, usize)> = RefCell::new((HashMap::new(), 64));
     static ANCHORED: RefCell<Vec<Rc<Thing>>> = const { RefCell::new(Vec::new()) };
+    /// The offset the coming sweep over the anchored things starts at
+    /// when they outnumber what a single sweep covers.
+    static SWEEP_OFFSET: Cell<usize> = const { Cell::new(0) };
     // The addresses of the things a listener is on. A thing leaving
     // sets the lost flag only where its address is one of these.
     static WATCHED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
@@ -235,11 +238,24 @@ pub fn release_all_anchors() {
     ghost_drop(G_ANCHOR);
 }
 
+/// A sweep covers this many anchored things. Up to this many, every
+/// step sweeps them all, exactly as before; beyond it the steps take
+/// turns over consecutive stretches, keeping a step's cost fixed while
+/// still reaching every thing within a bounded number of steps.
+const SWEEP_SPAN: usize = 32;
+
 fn anchor_ready() -> bool {
     ANCHORED.try_with(|all| {
         let all = all.borrow();
-        // Avoid an iterator callback per retained owner at every interpreter step.
         let mut pending = all.as_slice();
+        if pending.len() > SWEEP_SPAN {
+            let offset = SWEEP_OFFSET.try_with(|o| o.get()).unwrap_or(0);
+            let begin = if offset + SWEEP_SPAN > pending.len() { 0 } else { offset };
+            let end = (begin + SWEEP_SPAN).min(pending.len());
+            let _ = SWEEP_OFFSET.try_with(|o| o.set(end));
+            pending = &pending[begin..end];
+        }
+        // Avoid an iterator callback per retained owner at every interpreter step.
         while let [a, b, c, d, rest @ ..] = pending {
             if Rc::strong_count(a) == 1 || Rc::strong_count(b) == 1
                 || Rc::strong_count(c) == 1 || Rc::strong_count(d) == 1 { return true; }

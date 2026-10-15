@@ -201,6 +201,9 @@ thread_local! {
     /// only the references that existed before finalization began.
     /// A finalizable instance stays itself while its last words run.
     static ANCHORED: RefCell<Vec<Rc<Instance>>> = const { RefCell::new(Vec::new()) };
+    /// Where the next step's look at the anchored objects begins, once
+    /// there are more of them than one step looks at.
+    static ANCHOR_LOOK: Cell<usize> = const { Cell::new(0) };
     /// Everything whose going somebody could notice: the weakly held
     /// values and the objects with last words. Only rounds that hold one
     /// of these are worth looking for.
@@ -279,8 +282,22 @@ pub fn release_all_anchors() {
     let _ = PENDING.try_with(|flags| flags.set(flags.get() & 1));
 }
 
+/// How many anchored objects one step looks at. Fewer than this and
+/// every step sees them all, as it always did; more, and each step
+/// takes the next stretch of them in turn, so that a step costs the
+/// same however many objects wait on their last words, and each of
+/// them is seen again within a bounded number of steps.
+const ANCHOR_LOOK_AT: usize = 32;
+
 fn anchor_ready() -> bool {
-    ANCHORED.try_with(|all| all.borrow().iter().any(|item| Rc::strong_count(item) == 1)).unwrap_or(false)
+    ANCHORED.try_with(|all| {
+        let all = all.borrow();
+        if all.len() <= ANCHOR_LOOK_AT { return all.iter().any(|item| Rc::strong_count(item) == 1); }
+        let from = ANCHOR_LOOK.try_with(|at| at.get()).unwrap_or(0) % all.len();
+        let stop = (from + ANCHOR_LOOK_AT).min(all.len());
+        let _ = ANCHOR_LOOK.try_with(|at| at.set(if stop == all.len() { 0 } else { stop }));
+        all[from..stop].iter().any(|item| Rc::strong_count(item) == 1)
+    }).unwrap_or(false)
 }
 
 /// Tell the module the name a class gives its last words. Until this
