@@ -2590,13 +2590,19 @@ class _Parser:
             self.alt_stack.append(self.alt_indent_col(self.peek()))
             while self.at_name('case') and self.peek().scol == indent:
                 header = self.pop()
-                value, vs, ve = self.parse_or()
-                pattern = self.pattern_from_expr(value)
-                if self.at_name('as'):
-                    self.pop()
-                    name = self.pop()
-                    pattern = self.located(MatchAs, self.toks[self.at - 2], name, pattern=pattern, name=name.text)
-                    pattern.lineno, pattern.col_offset = vs
+                pattern, vs, ve = self.parse_case_as()
+                if self.at_op(','):
+                    elts = [pattern]
+                    while self.at_op(','):
+                        comma = self.pop()
+                        ve = (comma.erow, comma.ecol)
+                        if self.at_op(':') or self.at_name('if'):
+                            break
+                        elt, es, ee = self.parse_case_as()
+                        elts.append(elt)
+                        ve = ee
+                    pattern = MatchSequence(patterns=elts, lineno=vs[0], col_offset=vs[1],
+                                            end_lineno=ve[0], end_col_offset=ve[1])
                 guard = None
                 if self.at_name('if'):
                     self.pop()
@@ -2818,6 +2824,25 @@ class _Parser:
             node = Tuple(elts=elts, ctx=Load(), lineno=ls[0], col_offset=ls[1],
                          end_lineno=le[0], end_col_offset=le[1])
         return (node, ls, le)
+
+    def parse_case_as(self):
+        value, vs, ve = self.parse_case_item()
+        pattern = self.pattern_from_expr(value)
+        if self.at_name('as'):
+            self.pop()
+            name = self.pop()
+            pattern = MatchAs(pattern=pattern, name=name.text, lineno=vs[0], col_offset=vs[1],
+                              end_lineno=name.erow, end_col_offset=name.ecol)
+            ve = (name.erow, name.ecol)
+        return (pattern, vs, ve)
+
+    def parse_case_item(self):
+        if not self.at_op('*'):
+            return self.parse_or()
+        star = self.pop()
+        value, vs, ve = self.parse_or()
+        return (Starred(value=value, ctx=Load(), lineno=star.srow, col_offset=star.scol,
+                        end_lineno=ve[0], end_col_offset=ve[1]), (star.srow, star.scol), ve)
 
     def parse_or(self):
         node, ls, le = self.parse_and()
