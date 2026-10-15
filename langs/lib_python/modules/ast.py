@@ -2591,6 +2591,8 @@ class _Parser:
             while self.at_name('case') and self.peek().scol == indent:
                 header = self.pop()
                 pattern, vs, ve = self.parse_case_as()
+                if isinstance(pattern, MatchStar) and not self.at_op(','):
+                    _syntax('invalid syntax')
                 if self.at_op(','):
                     elts = [pattern]
                     while self.at_op(','):
@@ -2829,6 +2831,8 @@ class _Parser:
         value, vs, ve = self.parse_case_item()
         pattern = self.pattern_from_expr(value)
         if self.at_name('as'):
+            if isinstance(pattern, MatchStar):
+                _syntax('invalid syntax')
             self.pop()
             name = self.pop()
             pattern = MatchAs(pattern=pattern, name=name.text, lineno=vs[0], col_offset=vs[1],
