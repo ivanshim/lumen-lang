@@ -208,7 +208,7 @@ def _encode_error(encoding, obj, start, end, reason, errors):
         raise error
     return _handle(error, errors, False)
 
-# Normalizations that depend on nothing but the spelling, by spelling.
+# Cache pure normalizations with the same 256-entry turnover as registry spellings.
 _normalized = {}
 
 def _normalize(encoding):
@@ -247,6 +247,8 @@ def _normalize(encoding):
                'latin9': 'iso8859_15', 'l9': 'iso8859_15'}
     if name in aliases:
         if type(encoding) is str:
+            if len(_normalized) >= 256:
+                _normalized.clear()
             _normalized[encoding] = aliases[name]
         return aliases[name]
     if name in _charmaps or name in (
@@ -255,6 +257,8 @@ def _normalize(encoding):
             'utf_32', 'utf_32_le', 'utf_32_be',
             'unicode_escape', 'raw_unicode_escape', 'idna'):
         if type(encoding) is str:
+            if len(_normalized) >= 256:
+                _normalized.clear()
             _normalized[encoding] = name
         return name
     from encodings.aliases import aliases as encoding_aliases
@@ -281,7 +285,7 @@ class CodecInfo(tuple):
         self.incrementaldecoder = incrementaldecoder
 
 _registry_cache = {}
-# Entries found by the very spelling asked for, ahead of normalization.
+# Bound successful registry spellings to 256 entries, ahead of normalization.
 _exact_cache = {}
 _registry_started = False
 _registry_normalizer = None
@@ -305,6 +309,8 @@ def lookup(encoding):
     if name in _registry_cache:
         found = _registry_cache[name]
         if type(encoding) is str:
+            if len(_exact_cache) >= 256:
+                _exact_cache.clear()
             _exact_cache[encoding] = found
         return found
     if not _registry_started:
@@ -317,6 +323,8 @@ def lookup(encoding):
                 raise TypeError('codec search functions must return 4-tuples')
             _registry_cache[name] = found
             if type(encoding) is str:
+                if len(_exact_cache) >= 256:
+                    _exact_cache.clear()
                 _exact_cache[encoding] = found
             return found
     raise LookupError('unknown encoding: ' + encoding)
