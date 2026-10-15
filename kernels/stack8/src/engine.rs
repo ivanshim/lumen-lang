@@ -19368,6 +19368,59 @@ impl<'a> Engine<'a> {
         Ok(Value::of_big(if minus { -whole } else { whole }))
     }
 
+
+    /// A program launched beside this one, on a machine of its own.
+    /// Modules and globals loaded there stay there. The digit ceiling
+    /// it starts from is the outermost machine's current ceiling: a
+    /// nested launch keeps that same ceiling rather than one a child
+    /// chose for itself.
+    fn isolated_program(&self, source: &str) -> Value {
+        thread_local! {
+            static OUTER_DIGIT_CEILING: std::cell::Cell<i64> = const { std::cell::Cell::new(-1) };
+        }
+        let live = self.current_digit_limit().unwrap_or(4300) as i64;
+        let (ceiling, clear_after) = OUTER_DIGIT_CEILING.with(|slot| {
+            let kept = slot.get();
+            if kept < 0 {
+                slot.set(live);
+                (live, true)
+            } else {
+                (kept, false)
+            }
+        });
+        let head = format!("import sys as _ceiling_holder\n_ceiling_holder.set_int_max_str_digits({ceiling})\ndel _ceiling_holder\n");
+        let mut request = vec![
+            (String::from("SELF"), String::from("file"), String::from("<string>"), false),
+            (String::from("SELF"), String::from("lines_before"), String::from("3"), false),
+        ];
+        for (name, text) in &self.module_sources {
+            request.push((String::from("MODULE"), name.clone(), text.clone(), false));
+        }
+        for (name, file) in &self.module_files {
+            request.push((String::from("MODULE_FILE"), name.clone(), file.clone(), false));
+        }
+        for (name, member) in &self.module_aliases {
+            request.push((String::from("MODULE_ALIAS"), name.clone(), member.clone(), false));
+        }
+        if let Some(root) = &self.library_root {
+            request.push((String::from("SELF"), String::from("library_root"), root.clone(), false));
+        }
+        let script = head + source;
+        let status = match crate::go(self.lang, &script, &[], &request) {
+            Ok(()) => 0_i64,
+            Err(error) => {
+                if !error.is_empty() {
+                    eprintln!("{error}");
+                }
+                -1
+            }
+        };
+        if clear_after {
+            OUTER_DIGIT_CEILING.with(|slot| slot.set(-1));
+        }
+        Value::Small(status)
+    }
+
     /// A whole number is refused as text when it has more figures than
     /// the definition allows to be written out.
     fn current_digit_limit(&self) -> Option<usize> {
@@ -22651,6 +22704,11 @@ impl<'a> Engine<'a> {
             Builtin::ProductStep => self.iterator_operation(args)?,
             Builtin::AllocationTrace => self.allocation_command(args)?,
             Builtin::ProgramNamespace => {
+                if let [Value::Text(command), Value::Text(source)] = args.as_slice() {
+                    if command.as_ref() == "subinterp" {
+                        return Ok(self.isolated_program(source));
+                    }
+                }
 
                 if let [value] = args.as_slice() {
                     if let Value::Object(module) = value.contents() {

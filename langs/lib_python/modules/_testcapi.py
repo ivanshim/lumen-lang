@@ -33,3 +33,17 @@ class HeapCTypeMetaclassNullNew(type):
 
 def pytype_fromspec_meta(metaclass):
     return type.__new__(metaclass, 'HeapCType', (object,), {})
+
+
+
+# A launched program runs on a machine of its own: its modules and
+# globals are not this process's. The launcher copies the outermost
+# digit ceiling in, and puts nothing of the child back.
+def run_in_subinterp(code):
+    if code is None or not isinstance(code, str):
+        shown = "None" if code is None else type(code).__name__
+        raise TypeError("run_in_subinterp() argument 1 must be str, not " + shown)
+    # A subclass still carries text. The launcher takes a plain str.
+    if type(code) is not str:
+        code = str(code)
+    return __program_namespace("subinterp", code)

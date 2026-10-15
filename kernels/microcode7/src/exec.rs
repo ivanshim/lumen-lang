@@ -12907,6 +12907,55 @@ impl<'a> Machine<'a> {
         }
     }
 
+
+    /// Launch `script` on a fresh machine so its modules and globals
+    /// cannot leak back. The figure ceiling copied in is the one the
+    /// outermost machine had; a machine already inside another launch
+    /// does not replace it with its own.
+    fn separate_program(&self, script: &str) -> Value {
+        thread_local! {
+            static FIRST_FIGURE_LIMIT: std::cell::Cell<Option<i64>> = const { std::cell::Cell::new(None) };
+        }
+        let live = self.figure_limit().map(|count| count as i64).unwrap_or(4300);
+        let (ceiling, outermost) = FIRST_FIGURE_LIMIT.with(|held| match held.get() {
+            Some(origin) => (origin, false),
+            None => {
+                held.set(Some(live));
+                (live, true)
+            }
+        });
+        let prelude = [
+            "import sys as _figure_holder",
+            &format!("_figure_holder.set_int_max_str_digits({ceiling})"),
+            "del _figure_holder",
+            "",
+        ].join("\n");
+        let mut inputs: Vec<(String, String, String, bool)> = Vec::with_capacity(self.library_sources.len() + 4);
+        inputs.push((String::from("SELF"), String::from("file"), String::from("<string>"), false));
+        inputs.push((String::from("SELF"), String::from("lines_before"), String::from("3"), false));
+        inputs.extend(self.library_sources.iter().map(|(name, text)| (String::from("MODULE"), name.clone(), text.clone(), false)));
+        inputs.extend(self.library_files.iter().map(|(name, file)| (String::from("MODULE_FILE"), name.clone(), file.clone(), false)));
+        inputs.extend(self.library_aliases.iter().map(|(name, alias)| (String::from("MODULE_ALIAS"), name.clone(), alias.clone(), false)));
+        if let Some(root) = &self.library_directory {
+            inputs.push((String::from("SELF"), String::from("library_root"), root.to_string_lossy().into_owned(), false));
+        }
+        let whole = prelude + script;
+        let status = match crate::go(self.table, &whole, &[], &inputs) {
+            Ok(()) => 0,
+            Err(message) => {
+                let shown = message.strip_prefix('\0').unwrap_or(message.as_str());
+                if !shown.is_empty() {
+                    eprintln!("{shown}");
+                }
+                -1
+            }
+        };
+        if outermost {
+            FIRST_FIGURE_LIMIT.with(|held| held.set(None));
+        }
+        Value::Small(status)
+    }
+
     /// Whether a whole number may be written out at all: the table may
     /// put a limit on how many figures it is allowed to have.
     fn figure_limit(&self) -> Option<usize> {
@@ -21863,6 +21912,11 @@ impl<'a> Machine<'a> {
                 Value::Vector(crate::tuples::Sequence::plain(items))
             }
             Prim::ProgramNames => {
+                if let [Value::Text(operation), Value::Text(script)] = v {
+                    if operation.as_ref() == "subinterp" {
+                        return Ok(self.separate_program(script));
+                    }
+                }
                 // Given a module, answers its own namespace, as a read
                 // of the module's __dict__ would give it; anything else
                 // is the running program's, or a frame up the call chain.
