@@ -29333,17 +29333,14 @@ impl<'a> Machine<'a> {
         if (op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost)) && self.reading_now.is_none() {
             let origin = self.frames_named.last().map(|routine| self.routine_home(routine));
             if let Some(origin) = origin.filter(|name| name != self.detail("main")) {
-                // sys.modules is the registry a program sees: the module it
-                // keeps under the name, put back there after a fresh import
-                // of the same name, is the one these globals belong to.
-                let sys = self.imported.get("sys").cloned();
-                let listed = sys.and_then(|space| match space.settled() { Value::Thing(thing) => self.indexed_module_member(&thing, "modules"), _ => None })
-                    .and_then(|table| match table.settled() {
-                        Value::Dict(rows) => rows.iter().find(|(key, _)| matches!(key.settled(), Value::Text(word) if word.as_ref() == origin.as_str())).map(|(_, held)| held.settled()),
-                        _ => None,
-                    })
-                    .filter(|held| matches!(held, Value::Thing(_)));
-                if let Some(namespace) = listed.or_else(|| self.imported.get(&origin).cloned()) {
+                // The module the routine was built beside answers (its globe
+                // holds that module's very attributes), not whichever module
+                // now stands under the name after a fresh import of it.
+                let own = self.frames_named.last().and_then(|routine| routine.globe.clone()).and_then(|globe| match globe {
+                    Value::Shared(cell) => match &*cell.borrow() { Value::Attributes(module) => Some(Value::Thing(module.clone())), _ => None },
+                    _ => None,
+                });
+                if let Some(namespace) = own.or_else(|| self.imported.get(&origin).cloned()) {
                     if op == Prim::ClassWork(8) { return self.work_on_class(8, vec![namespace]).map_err(|escaped| self.suspension_fault(escaped)); }
                     let key = self.detail("namespace").to_owned();
                     return self.read_class_member(namespace, &key, false).map_err(|error| self.suspension_fault(error));
