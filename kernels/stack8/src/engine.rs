@@ -22043,6 +22043,32 @@ impl<'a> Engine<'a> {
                         Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None), class,
                             fields: RefCell::new(vec![("\0worth".into(), payload), ("\0structseq".into(), extra)]), mark: self.made }))
                     }
+                    // The next entry of an open directory stream, made as a
+                    // copy of the sample entry given where its name can be
+                    // read as text, the places of the sample taking the
+                    // new values in turn; otherwise the record the stream's
+                    // own `scandir_next` hands over, left for the module.
+                    Some(Value::Text(op)) if op.as_ref() == "scandir_entry" => {
+                        arity(5)?;
+                        let Value::Small(handle) = args[1].contents() else { return Err("TypeError: an integer is required".into()); };
+                        let reply = |code: i32, found: Value| Ok(Value::tuple(vec![Value::Small(code.into()), found]));
+                        let (name, inode, kind) = match crate::posix::next_directory_entry(handle) {
+                            Err(code) => return reply(code, Value::Null),
+                            Ok(None) => return reply(0, Value::Null),
+                            Ok(Some(found)) => found,
+                        };
+                        let sample = match args[2].contents() { Value::Object(sample) if sample.fields.borrow().len() == 7 => Some(sample), _ => None };
+                        let (Some(sample), Ok(spelled)) = (sample, String::from_utf8(name.clone())) else {
+                            return reply(0, crate::posix::directory_record(name, inode, kind));
+                        };
+                        let path = match args[3].contents() { Value::Text(before) => format!("{before}{spelled}"), _ => spelled.clone() };
+                        let mut places = sample.fields.borrow().clone();
+                        for (place, held) in places.iter_mut().zip([Value::text(&spelled), Value::text(&path), Value::of_big(inode.into()),
+                            Value::Small(kind.into()), args[4].clone(), Value::Null, Value::Null]) { place.1 = held; }
+                        self.made += 1;
+                        return reply(0, Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None), class: sample.class.clone(),
+                            fields: RefCell::new(places), mark: self.made})));
+                    }
                     Some(Value::Text(op)) if op.as_ref() == "structseq_get" => {
                         arity(3)?;
                         let Value::Object(object) = args[1].contents() else { return Err("TypeError: a struct sequence is required".into()); };

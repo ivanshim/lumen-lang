@@ -22732,6 +22732,30 @@ impl<'a> Machine<'a> {
                     self.made += 1;
                     Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None), of: blueprint, turn: self.made,
                         holds: RefCell::new(vec![(String::from("\0underlying"), row), (String::from("\0named-sequence"), attributes)])}))
+                } else if matches!(&action, Some(Value::Text(word)) if word.as_ref() == "scandir_entry") {
+                    // The next entry of an open directory stream, shaped as
+                    // a copy of the sample given where its name reads as
+                    // text, the sample's places taking the new values in
+                    // turn; otherwise the plain row, left for the module.
+                    n(5)?;
+                    let token = match v[1].settled() {Value::Small(number) => number, _ => return Err(String::from("TypeError: an integer is required"))};
+                    let answered = |code: i32, found: Value| Value::tuple(vec![Value::Small(code.into()), found]);
+                    match crate::posix::step_stream(token) {
+                        Err(code) => answered(code, Value::Nil),
+                        Ok(None) => answered(0, Value::Nil),
+                        Ok(Some((raw, inode, kind))) => match (v[2].settled(), String::from_utf8(raw.clone())) {
+                            (Value::Thing(sample), Ok(name)) if sample.holds.borrow().len() == 7 => {
+                                let path = match v[3].settled() {Value::Text(before) => format!("{before}{name}"), _ => name.clone()};
+                                let mut holds = sample.holds.borrow().clone();
+                                let fresh = [Value::text(&name), Value::text(&path), Value::from_big(num_bigint::BigInt::from(inode)),
+                                    Value::Small(kind as i64), v[4].clone(), Value::Nil, Value::Nil];
+                                for (index, value) in fresh.into_iter().enumerate() { holds[index].1 = value; }
+                                self.made += 1;
+                                answered(0, Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None), of: sample.of.clone(), turn: self.made, holds: RefCell::new(holds)})))
+                            }
+                            _ => answered(0, crate::posix::stream_row(raw, inode, kind)),
+                        },
+                    }
                 } else if matches!(&action, Some(Value::Text(word)) if word.as_ref() == "structseq_get") {
                     n(3)?;
                     let Value::Thing(instance) = v[1].settled() else {return Err(String::from("TypeError: a struct sequence is required"));};

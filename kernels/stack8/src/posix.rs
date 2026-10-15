@@ -17,6 +17,32 @@ thread_local! {
 fn bytes(data: Vec<u8>) -> Value {
     Value::Bytes(Rc::new(RefCell::new(data)), false, Rc::from("b"))
 }
+/// The name, inode number and type of the next entry of an open directory
+/// stream, the entries for the directory itself and its parent passed over;
+/// nothing once the stream is spent.
+pub fn next_directory_entry(handle: i64) -> Result<Option<(Vec<u8>, u64, u8)>, i32> {
+    DIRECTORIES.with(|held| {
+        let held = held.borrow();
+        let Some(directory) = held.1.get(&handle) else { return Err(libc::EBADF) };
+        loop {
+            let entry = unsafe {
+                *libc::__errno_location() = 0;
+                libc::readdir(directory.0)
+            };
+            if entry.is_null() {
+                let error = unsafe { *libc::__errno_location() };
+                return if error == 0 { Ok(None) } else { Err(error) };
+            }
+            let entry = unsafe { &*entry };
+            let name = unsafe { CStr::from_ptr(entry.d_name.as_ptr()) }.to_bytes();
+            if name != b"." && name != b".." { return Ok(Some((name.to_vec(), entry.d_ino as u64, entry.d_type))); }
+        }
+    })
+}
+/// An entry as the `scandir_next` operation hands it over.
+pub fn directory_record(name: Vec<u8>, inode: u64, kind: u8) -> Value {
+    Value::tuple(vec![bytes(name), Value::of_big(inode.into()), Value::Small(kind.into())])
+}
 fn raw(value: &Value) -> Result<Vec<u8>, String> {
     match value.contents() {
         Value::Text(s) => Ok(s.as_bytes().to_vec()),
