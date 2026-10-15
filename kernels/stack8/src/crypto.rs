@@ -203,15 +203,51 @@ fn smix(block: &mut [u8], n: usize) -> Result<(), String> {
     Ok(())
 }
 
-pub fn scrypt_kdf(password: &[u8], salt: &[u8], n: usize, r: usize, p: usize, dk_len: usize) -> Result<Vec<u8>, String> {
+// Derive scrypt's one-round PBKDF2 blocks without copying its large salt buffer.
+fn scrypt_expand(password: &[u8], salt: &[u8], length: usize) -> Result<Vec<u8>, String> {
+    let mut pad = [0u8; 64];
+    if password.len() > pad.len() {
+        pad[..32].copy_from_slice(&sha2::Sha256::digest(password));
+    } else {
+        pad[..password.len()].copy_from_slice(password);
+    }
+    for byte in &mut pad { *byte ^= 0x36; }
+    let mut inner = sha2::Sha256::new();
+    Digest::update(&mut inner, pad);
+    Digest::update(&mut inner, salt);
+    for byte in &mut pad { *byte ^= 0x36 ^ 0x5c; }
+    let mut outer = sha2::Sha256::new();
+    Digest::update(&mut outer, pad);
+    let mut output = Vec::new();
+    output.try_reserve_exact(length).map_err(|_| "MemoryError: ".to_string())?;
+    let mut counter = 1u32;
+    while output.len() < length {
+        let mut block = inner.clone();
+        Digest::update(&mut block, counter.to_be_bytes());
+        let mut finish = outer.clone();
+        Digest::update(&mut finish, block.finalize());
+        let digest = finish.finalize();
+        let take = (length - output.len()).min(digest.len());
+        output.extend_from_slice(&digest[..take]);
+        counter = counter.wrapping_add(1);
+    }
+    Ok(output)
+}
+
+// Enforce the full scrypt workspace budget before any variable-size allocation.
+pub fn scrypt_kdf(password: &[u8], salt: &[u8], n: usize, r: usize, p: usize, dk_len: usize, maxmem: usize) -> Result<Vec<u8>, String> {
     if n < 2 || !n.is_power_of_two() { return Err("ValueError: n must be a power of 2".into()); }
     if r == 0 || p == 0 { return Err("ValueError: Invalid parameter combination for n, r, p, maxmem.".into()); }
-    let width = r.checked_mul(128).ok_or("MemoryError: ")?;
-    let total = width.checked_mul(p).ok_or("MemoryError: ")?;
-    let mut buffer = pbkdf2_hmac("sha256", password, salt, 1, total)?;
+    let over_limit = "ValueError: memory limit exceeded";
+    let width = r.checked_mul(128).ok_or(over_limit)?;
+    let blocks = n.checked_add(p).and_then(|v| v.checked_add(2)).ok_or(over_limit)?;
+    let workspace = width.checked_mul(blocks).ok_or(over_limit)?;
+    if workspace > maxmem { return Err(over_limit.into()); }
+    let total = width * p;
+    let mut buffer = scrypt_expand(password, salt, total)?;
     for index in 0..p {
         let start = index * width;
         smix(&mut buffer[start..start + width], n)?;
     }
-    pbkdf2_hmac("sha256", password, &buffer, 1, dk_len)
+    scrypt_expand(password, &buffer, dk_len)
 }

@@ -291,17 +291,54 @@ fn scramble(area: &mut [u8], iterations: usize) -> Result<(), String> {
     Ok(())
 }
 
-pub fn memory_hard(secret: &[u8], seasoning: &[u8], n: usize, r: usize, p: usize, length: usize) -> Result<Vec<u8>, String> {
+// Stream the single-round SHA-256 expansion so lane storage is never duplicated.
+fn expand_lanes(secret: &[u8], seasoning: &[u8], size: usize) -> Result<Vec<u8>, String> {
+    let mut key = [0u8; 64];
+    match secret.len() {
+        0..=64 => key[..secret.len()].copy_from_slice(secret),
+        _ => key[..32].copy_from_slice(&sha2::Sha256::digest(secret)),
+    }
+    let mut inside = sha2::Sha256::new();
+    let mut outside = sha2::Sha256::new();
+    let mut position = 0;
+    while position != key.len() {
+        key[position] ^= 0x36;
+        position += 1;
+    }
+    Digest::update(&mut inside, key);
+    Digest::update(&mut inside, seasoning);
+    for item in key.iter_mut() { *item ^= 0x6a; }
+    Digest::update(&mut outside, key);
+    let mut derived = Vec::new();
+    if derived.try_reserve_exact(size).is_err() { return Err(String::from("MemoryError: ")); }
+    for number in 0..size.div_ceil(32) {
+        let mut first = inside.clone();
+        Digest::update(&mut first, ((number + 1) as u32).to_be_bytes());
+        let mut second = outside.clone();
+        Digest::update(&mut second, first.finalize());
+        let piece = second.finalize();
+        let end = std::cmp::min(32, size - derived.len());
+        derived.extend_from_slice(&piece[..end]);
+    }
+    Ok(derived)
+}
+
+// Check the table, parallel lanes and mixing scratch before reserving storage.
+pub fn memory_hard(secret: &[u8], seasoning: &[u8], n: usize, r: usize, p: usize, length: usize, ceiling: usize) -> Result<Vec<u8>, String> {
     if n < 2 || !n.is_power_of_two() { return Err(String::from("ValueError: n must be a power of 2")); }
     if r == 0 || p == 0 { return Err(String::from("ValueError: Invalid parameter combination for n, r, p, maxmem.")); }
-    let width = r.checked_mul(128).ok_or_else(|| String::from("MemoryError: "))?;
-    let total = width.checked_mul(p).ok_or_else(|| String::from("MemoryError: "))?;
-    let mut buffer = stretch_key("sha256", secret, seasoning, 1, total)?;
+    let budget_error = || String::from("ValueError: memory limit exceeded");
+    let width = r.checked_mul(128).ok_or_else(budget_error)?;
+    let usage = p.checked_add(2).and_then(|lanes| lanes.checked_add(n))
+        .and_then(|blocks| blocks.checked_mul(width)).ok_or_else(budget_error)?;
+    if ceiling < usage { return Err(budget_error()); }
+    let total = width * p;
+    let mut buffer = expand_lanes(secret, seasoning, total)?;
     let mut index = 0;
     while index < p {
         let start = index * width;
         scramble(&mut buffer[start..start + width], n)?;
         index += 1;
     }
-    stretch_key("sha256", secret, &buffer, 1, length)
+    expand_lanes(secret, &buffer, length)
 }

@@ -22715,14 +22715,15 @@ impl<'a> Machine<'a> {
                         Value::Nil
                     }
                     5 => {
-                        n(7)?;
+                        n(8)?;
                         let secret = self.octet_gathered(&v[1], false, false)?;
                         let seasoning = self.octet_gathered(&v[2], false, false)?;
                         let cost_n = as_index(&v[3])? as usize;
                         let cost_r = as_index(&v[4])? as usize;
                         let cost_p = as_index(&v[5])? as usize;
                         let length = as_index(&v[6])? as usize;
-                        let mixed = crate::crypto::memory_hard(&secret, &seasoning, cost_n, cost_r, cost_p, length)?;
+                        let ceiling = as_index(&v[7])? as usize;
+                        let mixed = crate::crypto::memory_hard(&secret, &seasoning, cost_n, cost_r, cost_p, length, ceiling)?;
                         self.octets(mixed, false)
                     }
                     6 => {

@@ -24,16 +24,6 @@ _mint = object()
 
 
 @_minted
-class HASH:
-    """Internal hash object type. Constructed only by this module."""
-
-
-@_minted
-class HASHXOF:
-    """Internal extendable-output hash type. Constructed only by this module."""
-
-
-@_minted
 class HMAC:
     """Keyed hash. Constructed only by hmac_new."""
 
@@ -239,10 +229,11 @@ def scrypt(password, *, salt, n, r, p, maxmem=0, dklen=64):
         raise ValueError("maxmem must be positive")
     if maxmem == 0:
         maxmem = 32 * 1024 * 1024
-    needed = 128 * r * n
+    # Budget the parallel input, ROMix table, and two block workspaces.
+    needed = 128 * r * (n + p + 2)
     if needed > maxmem:
         raise ValueError("memory limit exceeded")
-    return _native(5, password, salt, n, r, p, dklen)
+    return _native(5, password, salt, n, r, p, dklen, maxmem)
 
 
 def get_fips_mode():
@@ -265,7 +256,5 @@ openssl_shake_256 = _by_name["shake_256"]
 openssl_md_meth_names = frozenset(_by_name)
 _constructors = {constructor: name for name, constructor in _by_name.items()}
 
-for _cls in (HASH, HASHXOF, HMAC):
-    _cls.__module__ = "_hashlib"
-    _native(4, _cls)
-del _cls
+HMAC.__module__ = "_hashlib"
+_native(4, HMAC)

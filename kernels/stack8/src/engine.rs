@@ -22021,14 +22021,15 @@ impl<'a> Engine<'a> {
                         Value::Null
                     }
                     5 => {
-                        arity(7)?;
+                        arity(8)?;
                         let password = self.byte_row(&args[1].contents(), false)?;
                         let salt = self.byte_row(&args[2].contents(), false)?;
                         let n_cost = as_index(&args[3])? as usize;
                         let r_cost = as_index(&args[4])? as usize;
                         let p_cost = as_index(&args[5])? as usize;
                         let derived_len = as_index(&args[6])? as usize;
-                        self.byte_make(crate::crypto::scrypt_kdf(&password, &salt, n_cost, r_cost, p_cost, derived_len)?, false)
+                        let maxmem = as_index(&args[7])? as usize;
+                        self.byte_make(crate::crypto::scrypt_kdf(&password, &salt, n_cost, r_cost, p_cost, derived_len, maxmem)?, false)
                     }
                     6 => {
                         arity(6)?;
