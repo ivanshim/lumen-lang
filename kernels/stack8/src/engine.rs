@@ -26391,7 +26391,7 @@ impl<'a> Engine<'a> {
                         return Ok(Self::maker_beneath(&class).map_or_else(|| self.kind_maker_word(), Value::Class));
                     }
                 }
-                if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) {
+                if self.lang.instance_of_spelled {
                     // A value that stands for a kind is itself of the
                     // kind builtin's kind, whatever kind it stands for.
                     if self.stands_for_kind(&args[0]) { return Ok(self.kind_maker_word()); }
@@ -26437,7 +26437,7 @@ impl<'a> Engine<'a> {
                 // kinds at all is answered with the class named for it:
                 // the bare kind value carries no name of its own, and a
                 // class stands where the reference has a class.
-                if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) { return Ok(self.named_kind(&args[0])); }
+                if self.lang.instance_of_spelled { return Ok(self.named_kind(&args[0])); }
                 let Some(kind) = args[0].sort() else {
                     return Err(format!("{}(): unknown value type", name));
                 };

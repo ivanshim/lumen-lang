@@ -379,7 +379,9 @@ pub fn thing_departing(going: &mut Thing) {
     let here = going as *const Thing as usize;
     // With the thread's storage gone (at the very end) nothing is
     // queued: there is no machine left to run anything.
-    let bidden = BIDDEN.try_with(|b| b.borrow_mut().remove(&here)).unwrap_or(true);
+    // Nearly every thing going has no farewell on record, and asking an
+    // empty set about an address still hashes the address.
+    let bidden = BIDDEN.try_with(|b| { let mut set = b.borrow_mut(); !set.is_empty() && set.remove(&here) }).unwrap_or(true);
     if !bidden {
         if let Some(farewell) = farewell_of(&going.of) {
             let members = std::mem::take(going.holds.get_mut());
