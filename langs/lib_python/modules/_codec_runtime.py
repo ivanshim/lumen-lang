@@ -459,44 +459,43 @@ def _wide_decode(data, name, errors, final=True, start=0):
     return result, i
 
 _b64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+_utf7_kinds = {}
 
 def _utf7_encode(text):
     # Text of directly encoded characters alone is its own ASCII spelling.
     if type(text) is str and text.isascii() and text.replace('\t', '').replace('\r', '').replace('\n', '').isprintable() and '+' not in text and '\\' not in text and '~' not in text:
         return _raw_text_encode(text, 'ascii', 'strict')
-    result = ''
-    i = 0
-    while i < len(text):
-        c = text[i]
-        if c == '+':
-            result += '+-'
-            i += 1
-        elif c in '\t\r\n' or 32 <= ord(c) < 127 and c not in '\\~':
-            result += c
-            i += 1
-        else:
-            bits = 0
-            count = 0
-            result += '+'
-            while i < len(text):
-                c = text[i]
-                if c in '\t\r\n' or 32 <= ord(c) < 127 and c not in '\\+~':
-                    break
-                n = ord(c)
-                units = [n] if n < 65536 else [0xd800 + ((n - 65536) >> 10), 0xdc00 + ((n - 65536) & 1023)]
-                for unit in units:
-                    bits = (bits << 16) | unit
-                    count += 16
-                    while count >= 6:
-                        count -= 6
-                        result += _b64[(bits >> count) & 63]
-                    bits &= (1 << count) - 1
-                i += 1
-            if count:
-                result += _b64[(bits << (6 - count)) & 63]
-            if i == len(text) or text[i] in _b64 + '-':
-                result += '-'
-    return result.encode('ascii')
+    import binascii
+    kinds = _utf7_kinds
+    try:
+        marks = ''.join(map(kinds.__getitem__, text))
+    except KeyError:
+        if len(kinds) > 4096:
+            kinds.clear()
+        for c in set(text):
+            if c not in kinds:
+                kinds[c] = 'p' if c == '+' else 'd' if c in '\t\r\n' or 32 <= ord(c) < 127 and c not in '\\~' else 's'
+        marks = ''.join(map(kinds.__getitem__, text))
+    # A run starts at a character that must be shifted and goes on through any
+    # plus signs (shifted with it) up to the next directly written character;
+    # a plus sign outside a run is written '+-'.
+    parts = []
+    at = 0
+    while True:
+        begin = marks.find('s', at)
+        if begin < 0:
+            break
+        end = marks.find('d', begin)
+        if end < 0:
+            end = len(text)
+        parts.append(text[at:begin].replace('+', '+-'))
+        shifted = binascii.b2a_base64(text[begin:end].encode('utf-16-be', 'surrogatepass'), newline=False).rstrip(b'=').decode('ascii')
+        parts.append('+' + shifted)
+        if end == len(text) or text[end] in _b64 + '-':
+            parts.append('-')
+        at = end
+    parts.append(text[at:].replace('+', '+-'))
+    return ''.join(parts).encode('ascii')
 
 # Shift sequences read whole: the Base64 by the native decoder and the
 # units as UTF-16-BE. Anything irregular answers None, and the loop in

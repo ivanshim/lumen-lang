@@ -294,7 +294,7 @@ class BytesIO(_BufferedIOBase):
     writable = readable
     seekable = readable
     def read(self, size=-1):
-        if type(size) is not int or size > _MAXSIZE or size < _MINSIZE:
+        if type(size) is not int or not _MINSIZE <= size <= _MAXSIZE:
             size = _size(size)
         if self._closed:
             raise ValueError('I/O operation on closed file')

@@ -26,16 +26,13 @@ encode = _runtime.encode
 decode = _runtime.decode
 
 # Preserve C-function attribute behavior when codecs attach helpers to classes.
-class _CodecCall:
-    # Keep the underlying adapter callable without a descriptor binding.
+class _CodecCall(staticmethod):
+    # A static method stands in a class body without binding, as a C codec
+    # function does, and calls straight through to the function.
     def __init__(self, function, name=None):
+        staticmethod.__init__(self, function)
         self.function = function
         self.__name__ = name or function.__name__
-    # Pass codec arguments through unchanged.
-    def __call__(self, *args, **kwargs):
-        if kwargs:
-            return self.function(*args, **kwargs)
-        return self.function(*args)
     # Restore native codec entry points by their public module identity.
     def __reduce__(self):
         return (_get_codec_call, (self.__name__,))
