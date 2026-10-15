@@ -12932,7 +12932,10 @@ impl<'a> Machine<'a> {
         // boundary need to be rendered to settle their digit count.
         let bits = number.bits().saturating_sub(1) as u128;
         let definitely_large = bits * 30102 >= (limit as u128) * 100000;
-        if definitely_large || number.to_str_radix(10).trim_start_matches('-').len() > limit {
+        // Past the other end of the same estimate (log10(2) is below
+        // 30103/100000) a number cannot reach the limit and is not rendered.
+        let possibly_large = (bits + 1) * 30103 / 100000 + 1 > limit as u128;
+        if definitely_large || (possibly_large && number.to_str_radix(10).trim_start_matches('-').len() > limit) {
             Err(self.too_many_figures(limit))
         } else { Ok(()) }
     }
