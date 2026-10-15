@@ -29832,6 +29832,9 @@ impl Engine<'_> {
     /// caught mid-shape, or a block the end found still to come. The
     /// place the reference reports the fault at comes back with it.
     fn incomplete_unreadable(&mut self, said: &str, row: usize, column: usize, mode: usize, source: &str, top_await: bool) -> Option<(usize, usize, usize, i64)> {
+        if crate::lex::format_needs_input(source, self.lang) {
+            return Some((row, column, row, -1));
+        }
         let message = said.split_once(": ").map(|(_, words)| words).unwrap_or(said);
         if message.starts_with("unterminated triple-quoted") {
             return (!Self::assignment_stands_before(source, row, column, mode)).then_some((row, column, row, -1));

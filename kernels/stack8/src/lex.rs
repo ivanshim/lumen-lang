@@ -282,6 +282,7 @@ struct Cursor<'a> {
     /// The template letter the string being read opened with, so the
     /// beginnings pushed for it name it: none for any other string.
     template: Option<char>,
+    incomplete_format: bool,
 }
 
 /// How many fields deep a string may nest and still be named
@@ -644,6 +645,7 @@ impl<'a> Cursor<'a> {
                     break;
                 }
                 let Some(c) = self.look(0) else {
+                    self.incomplete_format = format || depth > 0;
                     let triple = marker_size > 1;
                     let named = match (triple, format, self.template.is_some()) {
                         (false, false, _) => &self.lang.string_unterminated,
@@ -859,7 +861,7 @@ impl<'a> Cursor<'a> {
         let mut expression = String::new();
         let mut brackets = Vec::new();
         loop {
-            let Some(c) = self.look(0) else { return Err(self.field_error(14)); };
+            let Some(c) = self.look(0) else { self.incomplete_format = true; return Err(self.field_error(14)); };
             // A field is code, so a backslash in it stands exactly as one
             // written outside of any string does: it joins a line ending
             // right after it, and names nothing else. Caught here, before
@@ -889,12 +891,12 @@ impl<'a> Cursor<'a> {
             if let Some(said) = self.prefix_conflict() { return Err(said); }
             if self.lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
                 while self.look(0).map_or(false, |x| x != '\n') { self.step(); }
-                if self.look(0).is_none() { return Err(self.field_error(14)); }
+                if self.look(0).is_none() { self.incomplete_format = true; return Err(self.field_error(14)); }
                 continue;
             }
             if c == '\u{a0}' { return Err(self.field_error(15)); }
-            if !brackets.is_empty() && expression.trim_end().ends_with(['(', '[', '{'])
-                && matches!(c, '>' | '/' | ';') { return Err(self.field_error(3)); }
+            if matches!(c, '>' | '/' | ';') && !brackets.is_empty()
+                && expression.trim_end().ends_with(['(', '[', '{']) { return Err(self.field_error(3)); }
             if brackets.is_empty() {
                 let start = expression.trim();
                 let operand_missing = start.chars().all(|x| x.is_whitespace() || matches!(x, '+' | '-' | '~'));
@@ -950,7 +952,10 @@ impl<'a> Cursor<'a> {
         let mut conversion = String::new();
         if self.look(0) == Some('!') {
             self.step();
-            if self.look(0).is_none() || at_word(&self.text, self.at, outer) { return Err(self.field_error(0)); }
+            if self.look(0).is_none() || at_word(&self.text, self.at, outer) {
+                self.incomplete_format = self.look(0).is_none();
+                return Err(self.field_error(0));
+            }
             let c = self.look(0).unwrap();
             if matches!(c, '}' | ':') { return Err(self.field_error(5)); }
             if c.is_whitespace() { return Err(self.field_error(7)); }
@@ -961,7 +966,10 @@ impl<'a> Cursor<'a> {
             }
             self.field_space();
         } else if debug && self.look(0) != Some(':') { conversion.push('r'); }
-        if self.look(0).is_none() || at_word(&self.text, self.at, outer) { return Err(self.field_error(0)); }
+        if self.look(0).is_none() || at_word(&self.text, self.at, outer) {
+            self.incomplete_format = self.look(0).is_none();
+            return Err(self.field_error(0));
+        }
         if !matches!(self.look(0), Some(':' | '}')) {
             return Err(self.field_error(if conversion.is_empty() || debug { 9 } else { 10 }));
         }
@@ -969,7 +977,7 @@ impl<'a> Cursor<'a> {
         self.push(Shape::StringExpression, expression.clone(), 0, line, col);
         let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
         self.push(Shape::Sign, group.open.clone(), 0, line, col);
-        let mut inner = Cursor { names: self.names.clone(), lang: self.lang, continued: self.continued.clone(), signs: self.signs.clone(), text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+        let mut inner = Cursor { names: self.names.clone(), lang: self.lang, continued: self.continued.clone(), signs: self.signs.clone(), text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None, incomplete_format: false };
         if let Err(message) = inner.run(false) {
             self.row = inner.row;
             self.column = inner.column;
@@ -990,7 +998,7 @@ impl<'a> Cursor<'a> {
                     Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(body_start, raw, depth, outer, spec_depth + 1)?; warned = false; }
                     Some('\\') => self.rich_escape(body_start, raw, true, false, &mut text, &mut fault, &mut warned)?,
                     Some(_) => text.push(self.step()),
-                    None => return Err(self.field_error(0)),
+                    None => { self.incomplete_format = true; return Err(self.field_error(0)); },
                 }
             }
         }
@@ -1224,7 +1232,7 @@ impl<'a> Cursor<'a> {
                 self.push(Shape::Quote, part, 0, line, col);
                 continue;
             }
-            let mut inner = Cursor { names: self.names.clone(), lang, continued: self.continued.clone(), signs: self.signs.clone(), text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+            let mut inner = Cursor { names: self.names.clone(), lang, continued: self.continued.clone(), signs: self.signs.clone(), text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None, incomplete_format: false };
             inner.run(false)?;
             self.out.append(&mut inner.out);
         }
@@ -1559,7 +1567,7 @@ pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, us
 }
 
 pub fn lex_loaded<'a>(source: &str, lang: &'a Lang, names: Option<NameLoader<'a>>) -> Result<Vec<Token>, (String, usize, usize)> {
-    let mut tokens = lex_notices(source, lang, names)?;
+    let mut tokens = lex_notices(source, lang, names, &mut false)?;
     tokens.retain(|t| t.shape != Shape::EscapeWarning);
     if !lang.trace_fields.is_empty() {
         let columns: Vec<Vec<usize>> = source.split('\n').map(|line| {
@@ -1588,12 +1596,20 @@ pub fn escape_warnings(source: &str, lang: &Lang) -> Vec<(String, usize)> {
     let source = normalized.as_deref().unwrap_or(source);
     if lang.template || (!lang.syntax_members.is_empty() && source.contains('\0')) { return Vec::new(); }
     let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-    let mut cur = Cursor { names: None, lang, continued: lang.builtin_tails.clone(), signs: symbol_groups(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
+    let mut cur = Cursor { names: None, lang, continued: lang.builtin_tails.clone(), signs: symbol_groups(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None, incomplete_format: false };
     let _ = cur.run(true);
     cur.out.into_iter().filter(|t| t.shape == Shape::EscapeWarning).map(|t| (t.lexeme, t.row)).collect()
 }
 
-fn lex_notices<'a>(source: &str, lang: &'a Lang, names: Option<NameLoader<'a>>) -> Result<Vec<Token>, (String, usize, usize)> {
+/// An EOF inside a formatted literal is resumable under incomplete-input flags.
+/// Keep this separate from the ordinary syntax diagnostic and its source span.
+pub fn format_needs_input(source: &str, lang: &Lang) -> bool {
+    let mut incomplete = false;
+    let _ = lex_notices(source, lang, None, &mut incomplete);
+    incomplete
+}
+
+fn lex_notices<'a>(source: &str, lang: &'a Lang, names: Option<NameLoader<'a>>, incomplete: &mut bool) -> Result<Vec<Token>, (String, usize, usize)> {
     let final_crlf = source.ends_with("\r\n");
     let normalized = (!lang.syntax_members.is_empty() && source.contains('\r'))
         .then(|| source.replace("\r\n", "\n").replace('\r', "\n"));
@@ -1603,8 +1619,9 @@ fn lex_notices<'a>(source: &str, lang: &'a Lang, names: Option<NameLoader<'a>>) 
         true => woven_source(source, lang).map_err(|(s, r)| (s, r, 1))?,
         false => {
             let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-            let mut cur = Cursor { names: names, lang, continued: lang.builtin_tails.clone(), signs: symbol_groups(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
+            let mut cur = Cursor { names: names, lang, continued: lang.builtin_tails.clone(), signs: symbol_groups(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None, incomplete_format: false };
             if let Err(said) = cur.run(true) {
+                *incomplete = cur.incomplete_format;
                 if !lang.syntax_members.is_empty() && said == "SyntaxError: unexpected EOF while parsing" {
                     let mut opens = Vec::new();
                     for token in &cur.out {
@@ -1798,7 +1815,7 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
             None => (after, ""),
         };
         let text = drop_comments(code, lang);
-        let mut cur = Cursor { names: None, lang, continued: lang.builtin_tails.clone(), signs: symbol_groups(lang), text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+        let mut cur = Cursor { names: None, lang, continued: lang.builtin_tails.clone(), signs: symbol_groups(lang), text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None, incomplete_format: false };
         if let Err(said) = cur.run(true) {
             return Err((said, cur.row));
         }

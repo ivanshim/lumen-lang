@@ -30344,6 +30344,9 @@ impl<'a> Machine<'a> {
     /// caught mid-shape, or a block the end found still to come. The
     /// place the reference reports the fault at comes back with it.
     fn incomplete_refused(&mut self, said: &str, row: u32, column: usize, mode: usize, source: &str, top_await: bool) -> Option<(u32, usize, u32, i64)> {
+        if crate::scan::pending_quotation(source, self.table) {
+            return Some((row, column, row, -1));
+        }
         let wording = said.split_once(": ").map(|(_, words)| words).unwrap_or(said);
         if wording.starts_with("unterminated triple-quoted") {
             return (!Self::assignment_before(source, row, column, mode)).then_some((row, column, row, -1));

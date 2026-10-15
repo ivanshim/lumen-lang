@@ -1274,6 +1274,11 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 rest = &rest[2..];
                 break;
             }
+            Some("-q") if file.is_none() && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
+                // The interactive driver has no startup banner to suppress.
+                language = Some(Language::Named("python".to_owned()));
+                rest = &rest[1..];
+            }
             Some("-i") if file.is_none() && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
                 python_interactive = true;
                 language = Some(Language::Named("python".to_owned()));

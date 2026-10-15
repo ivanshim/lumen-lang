@@ -577,7 +577,7 @@ pub fn escape_notices(source: &str, table: &Table) -> Vec<(String, u32)> {
         }
         if src[pos] == '\n' { row += 1; pos += 1; continue; }
         if let Some((body, end, raw, fields)) = quoted_start(&src, pos, table) {
-            let mut quote = Quotation { gate: None, source: &src, next: pos, row, table, made: Vec::new(), substitutes: std::collections::BTreeMap::new() };
+            let mut quote = Quotation { gate: None, source: &src, next: pos, row, table, made: Vec::new(), substitutes: std::collections::BTreeMap::new(), pending_literal: false };
             if quote.literal(body, &end, raw, fields, 0).is_ok() {
                 for token in &quote.made {
                     if token.shape == Shape::EscapeNotice { notices.push((token.lexeme.clone(), token.row)); }
@@ -694,14 +694,14 @@ fn scan_notices(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)
 
 fn scan_code(source: &str, table: &Table) -> Result<Vec<Token>, String> {
     let mut ended = (1, 1);
-    scan_code_from(source, table, 1, &mut ended, None)
+    scan_code_from(source, table, 1, &mut ended, None, &mut false)
 }
 
 /// The same, begun at a given row, so that a run of code woven into a
 /// page names the rows of the page and not its own.
 fn scan_code_marking(source: &str, table: &Table, first: u32) -> Result<Vec<Token>, (String, u32)> {
     let mut ended = (first, 1);
-    scan_code_from(source, table, first, &mut ended, None).map_err(|said| (said, ended.0))
+    scan_code_from(source, table, first, &mut ended, None, &mut false).map_err(|said| (said, ended.0))
 }
 
 /// The marks and letters opening a string, found before names are cut.
@@ -775,6 +775,7 @@ struct Quotation<'s, 'a> {
     row: u32,
     made: Vec<Token>,
     substitutes: std::collections::BTreeMap<usize, u32>,
+    pending_literal: bool,
 }
 
 /// How many fields deep a string may nest and still be named
@@ -837,6 +838,7 @@ impl Quotation<'_, '_> {
         let mut part_start = body;
         while !self.source[self.next..].starts_with(end) {
             let ch = self.here().ok_or_else(|| {
+                self.pending_literal = fields || depth > 0;
                 let key = match (end.len() > 1, fields, template.is_some()) {
                     (false, false, _) => "ext.lexical.string.unterminated",
                     (true, false, _) => "ext.lexical.string.unterminated.triple",
@@ -1072,7 +1074,7 @@ impl Quotation<'_, '_> {
         let mut nesting = Vec::new();
         let mut comments = Vec::new();
         loop {
-            let ch = self.here().ok_or_else(|| self.field_fault(14, &[], template))?;
+            let ch = self.here().ok_or_else(|| { self.pending_literal = true; self.field_fault(14, &[], template) })?;
             // A field is code, so a backslash in it stands exactly as one
             // written outside of any string does: it joins a line ending
             // right after it, and names nothing else. Caught here, before
@@ -1101,7 +1103,7 @@ impl Quotation<'_, '_> {
                 let begins = self.next;
                 while self.here().map_or(false, |c| c != '\n') { self.forward(1); }
                 comments.push(begins..self.next);
-                if self.here().is_none() { return Err(self.field_fault(14, &[], template)); }
+                if self.here().is_none() { self.pending_literal = true; return Err(self.field_fault(14, &[], template)); }
                 continue;
             }
             if ch == '\u{00a0}' { return Err(self.field_fault(15, &[], template)); }
@@ -1170,7 +1172,7 @@ impl Quotation<'_, '_> {
         }
         let convert = if self.here() == Some('!') {
             self.forward(1);
-            if self.here().is_none() || self.source[self.next..].starts_with(delimiter) { return Err(self.field_fault(0, &[], template)); }
+            if self.here().is_none() || self.source[self.next..].starts_with(delimiter) { self.pending_literal = self.here().is_none(); return Err(self.field_fault(0, &[], template)); }
             let first = self.here().unwrap();
             let problem = match first {
                 '}' | ':' => Some(5),
@@ -1188,7 +1190,7 @@ impl Quotation<'_, '_> {
             self.between_field_marks();
             name
         } else if debugging && self.here() != Some(':') { "r".to_owned() } else { String::new() };
-        if self.source[self.next..].starts_with(delimiter) || self.here().is_none() { return Err(self.field_fault(0, &[], template)); }
+        if self.source[self.next..].starts_with(delimiter) || self.here().is_none() { self.pending_literal = self.here().is_none(); return Err(self.field_fault(0, &[], template)); }
         if !matches!(self.here(), Some('}' | ':')) {
             let issue = if debugging || convert.is_empty() { 9 } else { 10 };
             return Err(self.field_fault(issue, &[], template));
@@ -1229,7 +1231,7 @@ impl Quotation<'_, '_> {
             self.forward(1);
             while self.here() != Some('}') {
                 if self.source[self.next..].starts_with(delimiter) { return Err(self.field_fault(19, &[], template)); }
-                match self.here().ok_or_else(|| self.field_fault(0, &[], template))? {
+                match self.here().ok_or_else(|| { self.pending_literal = true; self.field_fault(0, &[], template) })? {
                     '\n' | '\r' if delimiter.len() == 1 => return Err(self.field_fault(17, &[], template)),
                     '{' => { self.flush(&mut specification, &mut missing); self.field(body, raw, depth, delimiter, levels + 1, template)?; noticed = false; }
                     '\\' => self.slash(body, raw, true, false, &mut specification, &mut missing, &mut noticed)?,
@@ -1237,7 +1239,7 @@ impl Quotation<'_, '_> {
                 }
             }
         }
-        if self.here() != Some('}') { return Err(self.field_fault(0, &[], template)); }
+        if self.here() != Some('}') { self.pending_literal = self.here().is_none(); return Err(self.field_fault(0, &[], template)); }
         self.forward(1);
         self.flush(&mut specification, &mut missing);
         self.token(Shape::WovenEnd, String::new());
@@ -1260,7 +1262,15 @@ fn continued_past_end(tokens: &[Token], position: &mut (u32, usize)) -> String {
     }
 }
 
-fn scan_code_from<'a>(source: &str, table: &'a Table, first: u32, ended: &mut (u32, usize), gate: Option<NameGate<'a>>) -> Result<Vec<Token>, String> {
+/// Ask the quotation reader whether EOF interrupted a formatted literal,
+/// without changing the SyntaxError used by ordinary compilation.
+pub fn pending_quotation(source: &str, table: &Table) -> bool {
+    let mut pending = false;
+    let _ = scan_code_from(source, table, 1, &mut (1, 1), None, &mut pending);
+    pending
+}
+
+fn scan_code_from<'a>(source: &str, table: &'a Table, first: u32, ended: &mut (u32, usize), gate: Option<NameGate<'a>>, pending: &mut bool) -> Result<Vec<Token>, String> {
     let paired_ending = source.as_bytes().ends_with(b"\r\n");
     let input = if table.syntax_exceptions && source.contains('\r') {
         std::borrow::Cow::Owned(source.replace("\r\n", "\n").replace('\r', "\n"))
@@ -1345,8 +1355,9 @@ fn scan_code_from<'a>(source: &str, table: &'a Table, first: u32, ended: &mut (u
                 continue;
             }
             if let Some((body, end, raw, fields)) = quoted_start(&src, pos, table) {
-                let mut quote = Quotation { gate: gate.clone(), source: &src, next: pos, row, table, made: Vec::new(), substitutes: std::collections::BTreeMap::new() };
+                let mut quote = Quotation { gate: gate.clone(), source: &src, next: pos, row, table, made: Vec::new(), substitutes: std::collections::BTreeMap::new(), pending_literal: false };
                 if let Err(mut words) = quote.literal(body, &end, raw, fields, 0) {
+                    *pending = quote.pending_literal;
                     if !fields && table.syntax_exceptions && words.starts_with("SyntaxError: unterminated ") {
                         let mut detected = quote.row;
                         if !paired_ending && quote.next >= src.len() && src.last() == Some(&'\n') { detected = detected.saturating_sub(1); }
@@ -1960,7 +1971,7 @@ pub fn scan_with_gate<'a>(source: &str, table: &'a Table, gate: Option<NameGate<
         return scan_at(source, table).map_err(|(message, row)| (message, row, 1));
     }
     let mut cursor = (1, 1);
-    let mut read = scan_code_from(source, table, 1, &mut cursor, gate).map_err(|message| (message, cursor.0, cursor.1))?;
+    let mut read = scan_code_from(source, table, 1, &mut cursor, gate, &mut false).map_err(|message| (message, cursor.0, cursor.1))?;
     read.retain(|item| item.shape != Shape::EscapeNotice);
     Ok(read)
 }
