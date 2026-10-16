@@ -286,6 +286,8 @@ cache_info_type:    namedtuple class with the fields:
                         hits misses currsize maxsize
 """
 
+    __slots__ = ("_user_function", "_maxsize", "_typed", "_info_type", "_lock", "_cache", "_hits", "_misses", "_full", "_root", "__dict__", "__weakref__")
+
     def __init__(self, user_function, maxsize, typed, cache_info_type):
         if not callable(user_function):
             raise TypeError("the first argument must be callable")
@@ -294,6 +296,7 @@ cache_info_type:    namedtuple class with the fields:
         if maxsize is not None and maxsize < 0:
             maxsize = 0
         self.__wrapped__ = user_function
+        self._user_function = user_function   # private: __wrapped__ may be reassigned
         self._maxsize = maxsize
         self._typed = bool(typed)
         self._info_type = cache_info_type
@@ -301,15 +304,20 @@ cache_info_type:    namedtuple class with the fields:
         self._reset()
 
     def _reset(self):
-        self._cache = {}
+        # In place: a call still running holds the old dict and root.
+        cache = getattr(self, '_cache', None)
+        if cache is None:
+            cache = self._cache = {}
+        cache.clear()
         self._hits = self._misses = 0
         self._full = False
-        root = []
+        root = getattr(self, '_root', None)
+        if root is None:
+            root = self._root = []
         root[:] = [root, root, None, None]
-        self._root = root
 
     def __call__(self, /, *args, **kwds):
-        user_function = self.__wrapped__
+        user_function = self._user_function
         maxsize = self._maxsize
         if maxsize == 0:
             self._misses += 1
