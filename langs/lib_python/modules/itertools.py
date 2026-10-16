@@ -97,9 +97,9 @@ class chain(_Iterator):
         self.current = state[1] if len(state) > 1 else None
 
 class islice(_Iterator):
-    def __new__(cls, *args):
+    def __new__(cls, *args, **kwargs):
         # islice(it, stop) with a plain int stop is by far the commonest call: skip the generic argument checks.
-        if len(args) == 2 and type(args[1]) is int and 0 <= args[1] <= _maxsize:
+        if len(args) == 2 and not kwargs and type(args[1]) is int and 0 <= args[1] <= _maxsize:
             result = object.__new__(cls)
             stop = args[1]
             result.source = iter(args[0])
@@ -109,7 +109,7 @@ class islice(_Iterator):
             result.position = 0
             result.consume = stop
             return result
-        return _Iterator.__new__(cls, *args)
+        return _Iterator.__new__(cls, *args, **kwargs)
     def _initialize(self, iterable, *args):
         if len(args) < 1 or len(args) > 3:
             raise TypeError('islice expected 2 to 4 arguments')
