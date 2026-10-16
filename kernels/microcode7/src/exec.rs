@@ -5586,6 +5586,15 @@ impl<'a> Machine<'a> {
     fn unfold_step(&mut self, state: &mut Suspension, sent: &mut Value) -> Res<Stepped> {
         let Some(work) = state.owed.pop() else { return Ok(Stepped::Over) };
         let frame = state.frame.clone();
+        // An expression with no suspension anywhere inside is worked out whole,
+        // as a plain function would, instead of one operand and one owed
+        // step at a time.
+        if let Owed::Find(node) = &work {
+            if worked_whole(node) {
+                state.found.push(self.value_of(node, &frame)?);
+                return Ok(Stepped::Going);
+            }
+        }
         {
             match work {
                 Owed::Find(node) => match node {
@@ -5790,7 +5799,8 @@ impl<'a> Machine<'a> {
                     }
                     let Form::Cycle { test, .. } = cycle.as_ref() else { unreachable!() };
                     state.owed.push(Owed::Decide(cycle.clone()));
-                    state.owed.push(Owed::Find(*test.clone()));
+                    if worked_whole(test) { state.found.push(self.value_of(test, &frame)?); }
+                    else { state.owed.push(Owed::Find(*test.clone())); }
                 }
                 Owed::Decide(cycle) => {
                     let test = state.found.pop().unwrap_or(Value::Nil);
@@ -5805,7 +5815,10 @@ impl<'a> Machine<'a> {
                     state.found.truncate(floor);
                     let Form::Cycle { step, .. } = cycle.as_ref() else { unreachable!() };
                     state.owed.push(Owed::Test(cycle.clone()));
-                    if let Some(step) = step { state.owed.push(Owed::Drop); state.owed.push(Owed::Find(*step.clone())); }
+                    if let Some(step) = step {
+                        if worked_whole(step) { self.value_of(step, &frame)?; }
+                        else { state.owed.push(Owed::Drop); state.owed.push(Owed::Find(*step.clone())); }
+                    }
                 }
                 Owed::HandOut => {
                     state.receiving = true;
@@ -32828,6 +32841,18 @@ fn unwrapped_arm(form: Form) -> Form {
         Form::Const(Value::Routine(program)) if program.frameless => program.body.clone(),
         other => other,
     }
+}
+
+/// An expression no suspension lies inside, which `unfold_step` may hand to
+/// `value_of` whole rather than take apart.
+fn worked_whole(form: &Form) -> bool {
+    let plain = match form {
+        Form::Dyad { .. } | Form::Apply(Callee::Code(_), _) => true,
+        Form::Apply(Callee::Prim(op, _), _) => !matches!(op, Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Leave
+            | Prim::Resume | Prim::Append | Prim::Replace | Prim::Restore | Prim::Front | Prim::MoreYet),
+        _ => false,
+    };
+    plain && !suspension_within(form)
 }
 
 fn suspension_within(form: &Form) -> bool {
