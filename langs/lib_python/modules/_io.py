@@ -1597,6 +1597,11 @@ class _Open:
             binary = 'b' in mode
             if binary and (encoding is not None or errors is not None or newline is not None):
                 raise ValueError("binary mode doesn't take an encoding, errors, or newline argument")
+            if binary and buffering == 1:
+                import warnings
+                warnings.warn("line buffering (buffering=1) isn't supported in "
+                              "binary mode, the default buffer size will be used",
+                              RuntimeWarning, 2)
             raw = FileIO(file, mode.replace('t', ''), closefd, opener)
             try:
                 if buffering == 0:

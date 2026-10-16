@@ -2057,3 +2057,36 @@ mod tests {
         }
     }
 }
+
+// Store scanner records, including indentation and source extents, in native images.
+pub(crate) fn save_tokens(words: &[Token]) -> String {
+    serde_json::json!(words.iter().map(|word| (
+        word.shape as u8, &word.lexeme, &word.raw, word.span, word.row,
+        word.column, word.end_column, word.end_row, word.utf8_column, word.utf8_end
+    )).collect::<Vec<_>>()).to_string()
+}
+
+pub(crate) fn restore_tokens(serialized: &str) -> Result<Vec<Token>, String> {
+    let malformed = || String::from("ValueError: invalid native token image");
+    let json: serde_json::Value = serde_json::from_str(serialized).map_err(|_| malformed())?;
+    let tags = [Shape::Bare, Shape::Quoted, Shape::Numeral, Shape::Quote, Shape::ByteQuote, Shape::Woven, Shape::WovenEnd, Shape::Field, Shape::FieldText, Shape::Unheld, Shape::CharacterRow, Shape::EscapeNotice, Shape::Sign, Shape::LineEnd, Shape::Lead, Shape::Open, Shape::Close, Shape::Finish];
+    let mut words = Vec::new();
+    for item in json.as_array().ok_or_else(malformed)? {
+        let parts = item.as_array().ok_or_else(malformed)?;
+        if parts.len() != 10 { return Err(malformed()); }
+        let integer = |slot: usize| -> Result<usize, String> {
+            parts[slot].as_u64().and_then(|value| value.try_into().ok()).ok_or_else(malformed)
+        };
+        let tag = integer(0)?;
+        let spelling = parts[1].as_str().ok_or_else(malformed)?.to_owned();
+        let original = match &parts[2] {
+            serde_json::Value::Null => None,
+            other => Some(other.as_str().ok_or_else(malformed)?.to_owned()),
+        };
+        words.push(Token { shape: *tags.get(tag).ok_or_else(malformed)?, lexeme: spelling, raw: original,
+            span: integer(3)?, row: integer(4)?.try_into().map_err(|_| malformed())?,
+            utf8_column: integer(8)?, utf8_end: integer(9)?, column: integer(5)?, end_column: integer(6)?, end_row: integer(7)?.try_into().map_err(|_| malformed())? });
+    }
+    if words.last().map_or(true, |last| last.shape != Shape::Finish) { return Err(malformed()); }
+    Ok(words)
+}

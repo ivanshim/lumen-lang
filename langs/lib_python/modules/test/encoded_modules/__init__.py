@@ -21,6 +21,3 @@ test_strings = (
      "responsable pour toujours de ce que tu as apprivoisé."),
     ('koi8_r', 'koi8-r', "Познание бесконечности требует бесконечного времени.")
 )
-
-# Runtime path bridge to unchanging CPython source-decoding submodules.
-__path__ = [__file__.split('/langs/lib_python/modules/', 1)[0] + '/tests/python-3.14.8/encoded_modules']

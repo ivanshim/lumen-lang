@@ -51,3 +51,18 @@ def run_in_subinterp(code):
     if not isinstance(code, str):
         raise TypeError('code must be a string')
     return __program_namespace('subinterp', code)
+
+# Compile a source string with the C helper's input-mode and encoding flags.
+def Py_CompileStringExFlags(source, filename, start, flags=0, optimize=-1):
+    import operator
+    start = operator.index(start)
+    flags = operator.index(flags)
+    modes = {256: 'single', 257: 'exec', 258: 'eval'}
+    if start not in modes:
+        raise ValueError('invalid input mode')
+    if flags & 0x0800:
+        if isinstance(source, bytes):
+            source = source.decode('utf-8')
+        flags &= ~0x0800
+    return compile(source, filename, modes[start], flags=flags,
+                   dont_inherit=True, optimize=optimize)

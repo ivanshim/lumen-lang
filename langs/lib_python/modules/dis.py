@@ -12,6 +12,8 @@ COMPILER_FLAG_NAMES = {
     128: 'COROUTINE',
     256: 'ITERABLE_COROUTINE',
     512: 'ASYNC_GENERATOR',
+    1 << 26: 'HAS_DOCSTRING',
+    1 << 27: 'METHOD',
 }
 
 _REFUSAL = 'NotImplementedError: there is no CPython bytecode here to disassemble'
@@ -38,11 +40,14 @@ def distb(tb=None, *, file=None, show_caches=False, adaptive=False):
 def disco(co, lasti=-1, *, file=None):
     _refuse()
 
+# CPython opcode catalogue data, independent of native instruction inspection.
+from opcode import opmap, opname, hasarg, hasjrel, hasjabs, hasexc
+
 hasjump = {'Skip', 'SkipCmp', 'Depart', 'Cycle', 'Choose'}
 
 class Positions:
     def __init__(self, values):
-        self.lineno, self.end_lineno, self.col_offset, self.end_col_offset = values
+        self.lineno, self.col_offset, self.end_lineno, self.end_col_offset = values
 
 class Instruction:
     def __init__(self, offset, opcode, argval, is_jump, positions):
@@ -54,6 +59,7 @@ class Instruction:
         self.starts_line = self.positions.lineno
         self.is_jump_target = False
         self.is_jump = is_jump
+        self.cache_info = None
 
 
 def get_instructions(x, *, first_line=None, show_caches=False, adaptive=False):
