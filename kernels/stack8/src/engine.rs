@@ -279,6 +279,14 @@ pub struct Engine<'a> {
     /// name, so that asking twice for `dict.__repr__` answers the very
     /// descriptor asked the first time.
     loose_members: RefCell<HashMap<String, Value>>,
+    /// What `byte_member` answered for each name, the fixed kind's
+    /// answers in the first table and the changeable kind's in the
+    /// second: the words it reads never change while a program runs.
+    byte_answers: RefCell<[HashMap<String, Option<&'static str>, crate::value::FxBuildHasher>; 2]>,
+    /// The method names a row of bytes has been answered with, through
+    /// every earlier reading of `builtin_member`, by the kind's own
+    /// methods: asked again, such a name goes straight to that answer.
+    byte_reached: RefCell<[std::collections::HashSet<String, crate::value::FxBuildHasher>; 2]>,
     /// The arguments of a builtin call, one buffer reused across calls.
     buffer: Vec<Value>,
     /// What each call still running was given, the innermost last. Kept
@@ -1711,6 +1719,8 @@ impl<'a> Engine<'a> {
             memo: HashMap::new(),
             core_ids: HashMap::new(),
             loose_members: RefCell::new(HashMap::new()),
+            byte_answers: RefCell::new(Default::default()),
+            byte_reached: RefCell::new(Default::default()),
             buffer: Vec::new(),
             given: Vec::new(),
             made: 0,
@@ -8165,6 +8175,13 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn builtin_member(&mut self, value: &Value, name: &str) -> Res<Option<Value>> {
+        if let Value::Bytes(_, changeable, _) = value.contents() {
+            if self.byte_reached.borrow()[usize::from(changeable)].contains(name) {
+                if let Some(working) = self.byte_member(name, changeable) {
+                    return Ok(Some(Value::ValueMethod(Rc::new((value.clone().held(false), working.to_string())))));
+                }
+            }
+        }
         if !self.lang.class_builder.is_empty() && self.lang.constructor.as_deref()==Some(name) && matches!(value.contents(),Value::Bytes(_,true,_)) {
             let initializer=self.held_kind_descriptor("bytearray",name);
             return Ok(Some(Self::adapter(3,vec![initializer,value.clone()])));
@@ -8373,6 +8390,7 @@ impl<'a> Engine<'a> {
         // text working read byte by byte.
         if let Value::Bytes(_, changeable, _) = &held {
             if let Some(working) = self.byte_member(name, *changeable) {
+                self.byte_reached.borrow_mut()[usize::from(*changeable)].insert(name.to_string());
                 return Ok(Some(Value::ValueMethod(Rc::new((value.clone().held(false), working.to_string())))));
             }
         }
@@ -19689,6 +19707,15 @@ impl<'a> Engine<'a> {
     /// before it answers by its bare tail as well, since that is how a
     /// row of bytes names a method its kind keeps.
     pub(super) fn byte_member(&self, name: &str, changeable: bool) -> Option<&'static str> {
+        if let Some(known) = self.byte_answers.borrow()[usize::from(changeable)].get(name) {
+            return *known;
+        }
+        let answer = self.byte_member_scan(name, changeable);
+        self.byte_answers.borrow_mut()[usize::from(changeable)].insert(name.to_string(), answer);
+        answer
+    }
+
+    fn byte_member_scan(&self, name: &str, changeable: bool) -> Option<&'static str> {
         let spelt = |words: &Vec<String>| words.iter().any(|word| word == name || word.rsplit('.').next() == Some(name));
         let changers: &[&str] = if changeable { Self::BYTE_CHANGERS } else { &[] };
         Self::BYTE_MEMBERS.iter().chain(changers).copied().find(|working| {
