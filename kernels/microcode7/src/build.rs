@@ -4180,7 +4180,7 @@ impl<'a> Builder<'a> {
                 Some("'return' outside function")
             } else if (self.key("stmt.break") || self.key("stmt.continue")) && star_sealed {
                 Some("'break', 'continue' and 'return' cannot appear in an except* block")
-            } else if self.loop_depth == 0 || self.in_class_body() {
+            } else if self.loop_depth == 0 {
                 if self.key("stmt.break") { Some("'break' outside loop") }
                 else if self.key("stmt.continue") { Some("'continue' not properly in loop") } else { None }
             } else { None };
@@ -6532,6 +6532,7 @@ impl<'a> Builder<'a> {
         self.class_bindings.push((self.layers.len(), HashMap::new()));
         self.class_globals.push((self.layers.len(), Vec::new()));
         self.class_met.push(Vec::new());
+        let (outer_loops, outer_stars) = (std::mem::replace(&mut self.loop_depth, 0), std::mem::take(&mut self.except_star_bases));
         let completed_class = self.gensym("completed_class");
         self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(), self_writes: std::collections::BTreeSet::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
@@ -6593,6 +6594,8 @@ impl<'a> Builder<'a> {
         self.class_bindings.pop();
         self.class_globals.pop();
         self.class_met.pop();
+        self.loop_depth = outer_loops;
+        self.except_star_bases = outer_stars;
         self.within = previous;
         self.named_before = named_outside;
         let parts = self.under_way.pop().expect("class body");
@@ -6762,6 +6765,7 @@ impl<'a> Builder<'a> {
         self.class_bindings.push((self.layers.len(), HashMap::new()));
         self.class_globals.push((self.layers.len(), Vec::new()));
         self.class_met.push(Vec::new());
+        let (outer_loops, outer_stars) = (std::mem::replace(&mut self.loop_depth, 0), std::mem::take(&mut self.except_star_bases));
         let completed_class = self.gensym("completed_class");
         self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(), self_writes: std::collections::BTreeSet::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
@@ -6864,6 +6868,8 @@ impl<'a> Builder<'a> {
         self.class_bindings.pop();
         self.class_globals.pop();
         self.class_met.pop();
+        self.loop_depth = outer_loops;
+        self.except_star_bases = outer_stars;
         self.within = previous;
         self.named_before = named_outside;
         let ClassParts { completed_class, needs_class_cell: _, methods, mut attributes, mut held, mut ranking, annotated_names, uncertain, cannot, book, book_tracked, .. } = self.under_way.pop().expect("the class body just read");
