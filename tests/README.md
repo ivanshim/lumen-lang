@@ -889,3 +889,14 @@ compared by canonical instruction content. Upstream decorators determine the
 remaining CPython-specific skips.
 
 The batch21m-b4 doctest package and data are unmodified `Lib/test/test_doctest/` files from `Python-3.14.8.tar.xz` at `https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz` (archive SHA256 `c2215904f02b175596dc49351585104f4bc20341e1c47378b26a2c274360ce73`). The `__main__.py` adapter uses the existing Lumen generic package launcher; it is an adapter entry point.
+
+## bz2 release source integrity
+`langs/lib_python/modules/bz2.py` and `tests/python-3.14.8/test_bz2.py` are
+CPython `v3.14.8` (`Lib/bz2.py`, `Lib/test/test_bz2.py`), unchanged byte for byte.
+The `_bz2` extension is lumen's own `_bz2.py` over a native bzip2 codec
+written from the format description (`native/zlib/bz2.rs`, reached through
+`__zlib_native__` operations 32 to 38); randomised blocks are refused.
+| File | SHA-256 |
+|---|---|
+| `bz2.py` | `368b9ee55f0b6dbfc81b15e1a17c51cccddb009389eae8e9a7acf2402ca4109a` |
+| `test_bz2.py` | `f25711fabc69655cc4d4380f0e37aaf020538d6a01734b47b90a7e1add3aab0b` |
