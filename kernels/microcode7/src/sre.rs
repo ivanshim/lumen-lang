@@ -404,6 +404,24 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
         let point = u32::try_from(integer(&input[1])?).map_err(|_| String::from("OverflowError: Python int too large to convert to C unsigned long"))?;
         return Ok(Value::text(&crate::unicode::decomposition(point)));
     }
+    if action == 20 {
+        let [_, pattern, flags, binary] = input else { return Err(String::from("TypeError: invalid SRE compile argument count")); };
+        let letters = characters_for_regex(pattern)?;
+        let folding = lumen_sre::Case {
+            lower: &|value| folded(value, false),
+            cased: &|value| has_property(value, 16),
+        };
+        let Some(built) = lumen_sre::compile(&letters, integer(binary)? != 0, integer(flags)?, &folding) else { return Ok(Value::Nil); };
+        let named: Vec<Value> = built.names.iter().map(|(label, number)| Value::tuple(vec![Value::text(label), Value::Small(i64::from(*number))])).collect();
+        let slots: Vec<Value> = built.indexgroup.iter().map(|label| label.as_deref().map_or(Value::Nil, Value::text)).collect();
+        return Ok(Value::tuple(vec![
+            Value::Small(built.flags),
+            vector(built.code.iter().map(|&word| Value::Small(i64::from(word))).collect()),
+            Value::Small(built.groups as i64),
+            Value::tuple(named),
+            Value::tuple(slots),
+        ]));
+    }
     if !matches!(action, 0 | 7 | 8) {
         let value = u32::try_from(integer(&input[1])?).map_err(|_| String::from("OverflowError: Python int too large to convert to C unsigned long"))?;
         return match action {

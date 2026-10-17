@@ -411,6 +411,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("runtime_adapters.copyreg", include_str!("runtime_adapters/copyreg.py"), "runtime_adapters/copyreg.py"),
     ("runtime_adapters.native_http_client", include_str!("runtime_adapters/native_http_client.py"), "runtime_adapters/native_http_client.py"),
     ("runtime_adapters.native_warnings", include_str!("runtime_adapters/native_warnings.py"), "runtime_adapters/native_warnings.py"),
+    ("runtime_adapters.re_compiler", include_str!("runtime_adapters/re_compiler.py"), "runtime_adapters/re_compiler.py"),
     ("runtime_adapters.unicodedata", include_str!("runtime_adapters/unicodedata.py"), "runtime_adapters/unicodedata.py"),
     ("unittest.case", include_str!("runtime_sources/unittest_case.py"), "unittest/case.py"),
     ("unittest.result", include_str!("runtime_sources/unittest_result.py"), "unittest/result.py"),

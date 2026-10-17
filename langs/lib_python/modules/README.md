@@ -40,6 +40,12 @@ The native-module models _thread, itertools, sys, and io likewise have no
 corresponding pure-Python implementation of their C facilities. Their existing
 behavior and the newer integrated suite inventory are retained.
 
+`re._compiler.compile` first offers a pattern to the native compiler in `native/sre`,
+which follows CPython's `_parser.py` and `_compiler.py` and returns the same code
+list. It answers only for patterns that parse without any error or warning; every
+other pattern runs the unchanged Python compiler, which raises its own exceptions
+and warnings.
+
 Frame, C-API, dataclass, and pickle limitations remain visible as failures or
 honest skips in the reference suite. No reference test is rewritten to conceal
 a runtime limitation.

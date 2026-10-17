@@ -409,3 +409,17 @@ def compile(pattern, flags, code, groups, groupindex, indexgroup):
     from _sre_validation import validate
     validate(converted, groups)
     return Pattern(_TOKEN, pattern, flags, converted, groups, groupindex, indexgroup)
+
+def fast_compile(pattern, flags):
+    if type(flags) is not int:
+        return None
+    if type(pattern) is str:
+        found = _native(20, pattern, flags, 0)
+    elif type(pattern) is bytes:
+        found = _native(20, str(pattern, 'latin1'), flags, 1)
+    else:
+        return None
+    if found is None:
+        return None
+    flags, code, groups, names, indexgroup = found
+    return Pattern(_TOKEN, pattern, flags, code, groups, dict(names), indexgroup)
