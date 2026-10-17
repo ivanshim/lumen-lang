@@ -446,6 +446,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("test.encoded_modules", include_str!("test/encoded_modules/__init__.py"), "test/encoded_modules/__init__.py"),
     ("test.list_tests", include_str!("test/list_tests.py"), "test/list_tests.py"),
     ("test.mapping_tests", include_str!("test/mapping_tests.py"), "test/mapping_tests.py"),
+    ("test.multibytecodec_support", include_str!("test/multibytecodec_support.py"), "test/multibytecodec_support.py"),
     ("test.picklecommon", include_str!("test/picklecommon.py"), "test/picklecommon.py"),
     ("test.pickletester", include_str!("test/pickletester.py"), "test/pickletester.py"),
     ("test.re_tests", include_str!("test/re_tests.py"), "test/re_tests.py"),
