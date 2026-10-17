@@ -23,6 +23,8 @@ class MultibyteCodec:
 
 def _handler(name, error, length):
     value, position = codecs.lookup_error(name)(error)
+    if not isinstance(value, (str, bytes)):
+        raise TypeError('encoding error handler must return (str/bytes, int) tuple')
     if position < 0:
         position += length
     if position < 0 or position > length:
@@ -30,6 +32,20 @@ def _handler(name, error, length):
     return value, position
 
 class _State:
+    @property
+    def errors(self):
+        return self._errors
+
+    @errors.setter
+    def errors(self, value):
+        if not isinstance(value, str):
+            raise TypeError('errors must be str')
+        self._errors = value
+
+    @errors.deleter
+    def errors(self):
+        raise AttributeError('cannot delete attribute')
+
     def _initialize(self, decoder):
         self._state = [0] * 8
         if self.codec.name.startswith('iso2022_'):
@@ -124,7 +140,8 @@ class MultibyteIncrementalEncoder(_State):
             if pos+1 == len(text) and not final and _mapping(3, self.codec.name, first, 0):
                 self._pending = text[pos:]
                 break
-            wire = _mapping(0, self.codec.name, first, ord(text[pos+1])) if pos+1 < len(text) else None
+            # A NUL second unit would read as "no second unit" to the mapping, so never pair with it.
+            wire = _mapping(0, self.codec.name, first, ord(text[pos+1])) if pos+1 < len(text) and text[pos+1] != '\0' else None
             consumed = 2
             if wire is None:
                 wire = _mapping(0, self.codec.name, first, 0)
@@ -175,9 +192,20 @@ class MultibyteIncrementalDecoder(_State):
         self.errors = errors
         self._initialize(True)
 
+    # Keep buffered input and shift state when a feed fails, so the caller can resume.
     def decode(self, input, final=False):
         if isinstance(input, str) or isinstance(input, int):
             raise TypeError('a bytes-like object is required, not ' + type(input).__name__)
+        buffered = self._pending
+        shift = list(self._state)
+        try:
+            return self._decode(input, final)
+        except BaseException:
+            self._pending = buffered
+            self._state = shift
+            raise
+
+    def _decode(self, input, final):
         data = self._pending + bytes(input)
         self._pending = b''
         pos = 0
@@ -187,6 +215,7 @@ class MultibyteIncrementalDecoder(_State):
             begin = pos
             prefix = b''
             width = 1
+            truncated = False
             if name == 'hz':
                 if data[pos] == 126:
                     if pos+1 == len(data):
@@ -198,10 +227,11 @@ class MultibyteIncrementalDecoder(_State):
                             self._state[0] = int(following == 123)
                             pos += 2
                             continue
-                        if following == 10:
+                        # '~\n' and '~~' are escapes only in ASCII mode.
+                        if following == 10 and not self._state[0]:
                             pos += 2
                             continue
-                        if following == 126:
+                        if following == 126 and not self._state[0]:
                             result += '~'
                             pos += 2
                             continue
@@ -210,6 +240,11 @@ class MultibyteIncrementalDecoder(_State):
                     width = 2
             elif name.startswith('iso2022_'):
                 byte = data[pos]
+                if byte == 27 and pos+1 < len(data) and data[pos+1] not in ((36, 40, 46, 78) if name == 'iso2022_jp_2' else (36, 40)):
+                    # An escape that opens no designation or shift passes through as a control.
+                    result += '\x1b'
+                    pos += 1
+                    continue
                 if byte == 27:
                     end = pos+1
                     while end < len(data) and not (64 <= data[end] <= 90):
@@ -217,6 +252,7 @@ class MultibyteIncrementalDecoder(_State):
                     if end == len(data):
                         if not final:
                             break
+                        truncated = True
                     else:
                         escape = data[pos:end+1]
                         mark = data[end]
@@ -227,6 +263,9 @@ class MultibyteIncrementalDecoder(_State):
                             continue
                         if escape.startswith(b'\x1b.'):
                             self._state[2] = mark
+                            pos = end+1
+                            continue
+                        if escape == b'\x1bN' and self._state[2] == 66:
                             pos = end+1
                             continue
                         if escape == b'\x1bN':
@@ -251,6 +290,9 @@ class MultibyteIncrementalDecoder(_State):
                     prefix = self._designation()
                     group = 1 if name == 'iso2022_kr' and self._state[4] & 1 else 0
                     width = 2 if self._state[group] & 128 else 1
+                    # An unknown designation cannot start a unit: report one illegal byte.
+                    if width == 2 and not _mapping(2, name, prefix + data[pos:pos+1], 0):
+                        width = 1
             else:
                 # Search an atomic unit, keeping a valid unfinished prefix buffered.
                 width = 1
@@ -263,6 +305,8 @@ class MultibyteIncrementalDecoder(_State):
                     width += 1
                 if width == 1 and data[pos] >= 128 and _mapping(1, name, data[pos:pos+1], 0) is None and name not in ('cp932', 'shift_jis', 'shift_jis_2004', 'shift_jisx0213'):
                     width = 3 if name.startswith('euc_j') and data[pos] == 143 else 2
+            if truncated:
+                width = len(data) - pos + 1
             if pos+width > len(data):
                 if not final:
                     pos = begin
@@ -275,6 +319,9 @@ class MultibyteIncrementalDecoder(_State):
                 decoded = _mapping(1, name, unit, 0)
                 reason = 'illegal multibyte sequence'
                 end = begin+1
+                # An unassigned pair in a double-byte ISO-2022 set is one bad unit.
+                if name.startswith('iso2022_') and width == 2 and not prefix.startswith(b'\x1b.') and 33 <= data[pos] <= 126 and 33 <= data[pos+1] <= 126:
+                    end = begin+2
             if decoded is None:
                 error = UnicodeDecodeError(name, data, begin, end, reason)
                 replacement, pos = _handler(self.errors, error, len(data))
@@ -293,6 +340,8 @@ class MultibyteIncrementalDecoder(_State):
     def setstate(self, state):
         if not isinstance(state, tuple) or len(state) != 2 or not isinstance(state[0], bytes) or not isinstance(state[1], int):
             raise TypeError('setstate(): illegal state argument')
+        if len(state[0]) > 8:
+            raise UnicodeDecodeError(self.codec.name, state[0], 0, len(state[0]), 'pending buffer too large')
         self._pending = state[0]
         self._state = list(state[1].to_bytes(8, 'little'))
 
