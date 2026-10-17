@@ -46,6 +46,8 @@ class _Index(_BuiltinOperator):
         return self.__call__
 
     def __call__(self, a, /):
+        if type(a) is int:
+            return a
         if isinstance(a, int):
             return int.__index__(a)
         method = getattr(type(a), '__index__', None)
