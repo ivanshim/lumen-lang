@@ -3768,7 +3768,10 @@ def _parse_for_compile(source, filename, mode, type_comments, optimize):
 def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
           feature_version=None, optimize=-1, fold_debug=False):
     if isinstance(source, (bytes, bytearray)):
-        source = source.decode('utf-8')
+        # Source bytes name their own encoding: a byte-order mark or a coding comment.
+        import io, tokenize
+        source = bytes(source)
+        source = source.decode(tokenize.detect_encoding(io.BytesIO(source).readline)[0])
     if not isinstance(source, str):
         raise TypeError('compile() arg 1 must be a string, bytes or AST object')
     if '\x00' in source:
