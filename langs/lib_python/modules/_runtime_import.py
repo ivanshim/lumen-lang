@@ -131,6 +131,26 @@ class SourceFinder:
     def invalidate_caches(self):
         pass
 
+# Library modules reported as frozen: name -> (is a package, original name).
+FROZEN_MODULES = {
+    '__hello__': (False, '__hello__'),
+    '__phello__': (True, '__phello__'),
+    '__phello__.spam': (False, '__phello__.spam'),
+    '__phello__.ham': (True, '__phello__.ham'),
+    '__phello__.ham.eggs': (False, '__phello__.ham.eggs'),
+}
+# 0 follows the default (frozen modules in use), 1 forces them on, -1 off.
+frozen_override = 0
+
+class FrozenFinder:
+    """Meta path entry that hands frozen names to the frozen importer."""
+    @classmethod
+    def find_spec(cls, fullname, path=None, target=None):
+        if frozen_override < 0 or fullname not in FROZEN_MODULES:
+            return None
+        from importlib._bootstrap import FrozenImporter
+        return FrozenImporter.find_spec(fullname, path, target)
+
 def make_spec(name, filename):
     import sys as _system
     bootstrap = _system.modules.get('importlib._bootstrap')

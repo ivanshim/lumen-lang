@@ -87,8 +87,10 @@ implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
-from _runtime_import import SourceFinder as _SourceFinder, make_spec as _make_spec, find_custom as _find_custom
-meta_path = [_SourceFinder()]
+from _runtime_import import FrozenFinder as _FrozenFinder, SourceFinder as _SourceFinder, make_spec as _make_spec, find_custom as _find_custom, _load_module
+# Directory of the library modules (frozen modules report files beneath it).
+_stdlib_dir = _load_module('os', True).rpartition('/')[0]
+meta_path = [_FrozenFinder, _SourceFinder()]
 path_hooks = []
 path_importer_cache = {}
 pycache_prefix = None
