@@ -36,25 +36,34 @@ class _BuiltinOperator:
         return '<built-in function ' + self.__name__ + '>'
 
 
-def _index(a):
-    if isinstance(a, int):
-        return int.__index__(a)
-    method = getattr(type(a), '__index__', None)
-    if method is not None:
-        answer = method(a)
-        if isinstance(answer, int):
-            if type(answer) is not int:
-                import warnings
-                warnings.warn('__index__ returned non-int (type ' + type(answer).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') +
-                              ').  The ability to return an instance of a strict subclass of int '
-                              'is deprecated, and may be removed in a future version of Python.',
-                              DeprecationWarning, stacklevel=3)
-            return int.__index__(answer)
-        raise TypeError('__index__ returned non-int (type ' + type(answer).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') + ')')
-    raise TypeError("'" + type(a).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') + "' object cannot be interpreted as an integer")
+class _Index(_BuiltinOperator):
+    def __init__(self):
+        self.__name__ = self.__qualname__ = "index"
+        self.__doc__ = None
+
+    @property
+    def __wrapped__(self):
+        return self.__call__
+
+    def __call__(self, a, /):
+        if isinstance(a, int):
+            return int.__index__(a)
+        method = getattr(type(a), '__index__', None)
+        if method is not None:
+            answer = method(a)
+            if isinstance(answer, int):
+                if type(answer) is not int:
+                    import warnings
+                    warnings.warn('__index__ returned non-int (type ' + type(answer).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') +
+                                  ').  The ability to return an instance of a strict subclass of int '
+                                  'is deprecated, and may be removed in a future version of Python.',
+                                  DeprecationWarning, stacklevel=2)
+                return int.__index__(answer)
+            raise TypeError('__index__ returned non-int (type ' + type(answer).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') + ')')
+        raise TypeError("'" + type(a).__name__.encode('utf-8')[:200].decode('utf-8', 'ignore') + "' object cannot be interpreted as an integer")
 
 
-index = _BuiltinOperator('index', _index)
+index = _Index()
 
 
 def _replace_operator_functions():
