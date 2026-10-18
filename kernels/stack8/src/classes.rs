@@ -6861,17 +6861,21 @@ impl<'a> Engine<'a> {
         c.shared.borrow_mut().push((word,made.clone()));
         Ok(made)
     }
+    fn forward_reference(&mut self, text: &str, owner: Option<Rc<Class>>) -> Flow<Value> {
+        let words = self.lang.class_annotations.clone();
+        let namespace = self.import_module(&words[1])?;
+        let constructor = self.class_get(namespace, &words[2], false)?;
+        let reference = self.class_apply(constructor, vec![Value::text(text)])?;
+        self.class_write(reference.clone(), &words[3], Some(owner.map_or(Value::Null, Value::Class)), false)?;
+        self.class_write(reference.clone(), &words[4], Some(Value::Flag(true)), false)?;
+        Ok(reference)
+    }
     pub(super) fn annotation_name(&mut self, name: &str) -> Res<Option<Value>> {
         if name.starts_with(['#', '\0']) { return Ok(None); }
         let Some((body, owner, _)) = &self.annotation_scope else { return Ok(None); };
         if !self.running_routine.as_ref().is_some_and(|running| Rc::ptr_eq(body, running) || running.ident == "#annotation fallback") { return Ok(None); }
         let owner = owner.clone();
-        let words = self.lang.class_annotations.clone();
-        let namespace = self.import_module(&words[1]).map_err(|fault| fault.told(&self.wording()))?;
-        let constructor = self.class_get(namespace, &words[2], false).map_err(|fault| fault.told(&self.wording()))?;
-        let reference = self.class_apply(constructor, vec![Value::text(name)]).map_err(|fault| fault.told(&self.wording()))?;
-        self.class_write(reference.clone(), &words[3], Some(owner.map_or(Value::Null, Value::Class)), false).map_err(|fault| fault.told(&self.wording()))?;
-        self.class_write(reference.clone(), &words[4], Some(Value::Flag(true)), false).map_err(|fault| fault.told(&self.wording()))?;
+        let reference = self.forward_reference(name, owner).map_err(|fault| fault.told(&self.wording()))?;
         if let Value::Object(object) = reference.contents() {
             if let Some((_, _, names)) = &mut self.annotation_scope { names.push((Rc::downgrade(&object), name.to_owned())); }
         }
@@ -6899,12 +6903,7 @@ impl<'a> Engine<'a> {
         match resolved {
             Err(fault) if forward && source.is_some() && (matches!(&fault, Fault::Note(words) if words.starts_with("NameError:"))
                 || matches!(&fault, Fault::Thrown(Value::Object(error)) if error.class_now().named(&self.lang.exceptions[10], false))) => {
-                let words = self.lang.class_annotations.clone();
-                let module = self.import_module(&words[1])?;
-                let factory = self.class_get(module, &words[2], false)?;
-                let reference = self.class_apply(factory, vec![Value::text(&source.unwrap())])?;
-                self.class_write(reference.clone(), &words[3], Some(owner.clone().map_or(Value::Null, Value::Class)), false)?;
-                self.class_write(reference.clone(), &words[4], Some(Value::Flag(true)), false)?;
+                let reference = self.forward_reference(&source.unwrap(), owner.clone())?;
                 Ok(reference)
             }
             other => other,
