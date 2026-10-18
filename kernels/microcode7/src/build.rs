@@ -9821,6 +9821,103 @@ impl<'a> Builder<'a> {
         Ok(sequence(steps))
     }
 
+    /// A write through a chain of looks: the keys are worked out once and in
+    /// order, the arrays along the way kept from the outermost in, and each
+    /// rewritten in the one above it from the innermost out. `start` makes
+    /// the step that puts what the chain stands on into the first cell (it
+    /// may add steps of its own before). A chain on a name, `write_back`,
+    /// writes the outermost array back into that name.
+    fn rewrite_chain(
+        &mut self,
+        keys: Vec<Form>,
+        after: bool,
+        value: Form,
+        compound: Option<Prim>,
+        gives_back: bool,
+        write_back: Option<String>,
+        start: impl FnOnce(&mut Self, &mut Vec<Form>, &str) -> Res<Form>,
+    ) -> Res<Form> {
+        let mut steps = Vec::new();
+        let mut at_cells = Vec::new();
+        for key in keys {
+            self.gensyms += 1;
+            let cell = format!("#key{}", self.gensyms);
+            let stored = self.write(&cell, key);
+            steps.push(stored);
+            at_cells.push(cell);
+        }
+        // In through the arrays, each one kept as far as the one the write
+        // lands in.
+        let deep = match after { true => at_cells.len(), false => at_cells.len() - 1 };
+        let mut in_cells = Vec::new();
+        self.gensyms += 1;
+        let root = format!("#in{}", self.gensyms);
+        self.gensyms += 1;
+        let holding = format!("#value{}", self.gensyms);
+        // The value is worked out while what the chain stands on is still
+        // whole, since working it out may change that very thing. A
+        // compound write cannot: it wants the place read first, and so
+        // comes after the way in.
+        let mut afterward = None;
+        match compound {
+            None => steps.push(self.write(&holding, value)),
+            Some(_) => afterward = Some(value),
+        }
+        let first = start(self, &mut steps, &root)?;
+        steps.push(first);
+        in_cells.push(root);
+        for i in 0..deep {
+            self.gensyms += 1;
+            let cell = format!("#in{}", self.gensyms);
+            let (so_far, key) = (self.read(&in_cells[i]), self.read(&at_cells[i]));
+            let further = prim_call(Prim::Inward, vec![so_far, key]);
+            steps.push(self.write(&cell, further));
+            in_cells.push(cell);
+        }
+        if let (Some(op), Some(value)) = (compound, afterward) {
+            let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
+            let now = self.kept_before(prim_call(Prim::Toward, vec![lands_in, key]));
+            let combined = self.kept_after(prim_call(op, vec![now, value]));
+            steps.push(self.write(&holding, combined));
+        }
+        let lands_in = self.read(&in_cells[deep]);
+        let put = self.read(&holding);
+        steps.push(match after {
+            true => prim_call(Prim::Append, vec![lands_in, put]),
+            false => {
+                let key = self.read(&at_cells[deep]);
+                prim_call(Prim::Replace, vec![lands_in, key, put])
+            }
+        });
+        for i in (0..deep).rev() {
+            let (holds, key, done) = (self.read(&in_cells[i]), self.read(&at_cells[i]), self.read(&in_cells[i + 1]));
+            steps.push(prim_call(Prim::Restore, vec![holds, key, done]));
+        }
+        if let Some(name) = write_back {
+            let back = self.read(&in_cells[0]);
+            let home = self.address_to_rewrite(&name);
+            steps.push(Form::Write(home, Box::new(back)));
+            for name in at_cells.iter().chain(&in_cells) {
+                steps.push(Form::Forget(self.address_to_write(name)));
+            }
+        } else {
+            // The cells the rewriting stood on were scaffolding, and are
+            // let go now the write has landed: a cell the program itself
+            // does not share should not go on being held by a name of the
+            // builder's own making.
+            for cell in in_cells.iter().chain(&at_cells) {
+                let slot = self.address_to_write(cell);
+                steps.push(if self.grammar.flag_ext_op_arithmetic_python_numbers {
+                    Form::Release(slot)
+                } else { Form::Forget(slot) });
+            }
+        }
+        let value_slot = self.address_to_write(&holding);
+        steps.push(if gives_back { Form::Release(value_slot) }
+            else { sequence(vec![Form::Forget(value_slot), constant(Value::Nil)]) });
+        Ok(sequence(steps))
+    }
+
     fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
         let target_start = self.pos.saturating_sub(2);
         let compound = compound.map(|op| {
@@ -10008,88 +10105,24 @@ impl<'a> Builder<'a> {
             // whole written back into what it stood on.
             _ if footing.is_some() => {
                 let (stands_on, keys, after) = footing.expect("what the chain stands on");
-                let mut steps = Vec::new();
-                let mut at_cells = Vec::new();
-                for key in keys {
-                    self.gensyms += 1;
-                    let cell = format!("#key{}", self.gensyms);
-                    let stored = self.write(&cell, key);
-                    steps.push(stored);
-                    at_cells.push(cell);
-                }
-                let deep = match after { true => at_cells.len(), false => at_cells.len() - 1 };
-                let mut in_cells = Vec::new();
-                self.gensyms += 1;
-                let root = format!("#in{}", self.gensyms);
-                self.gensyms += 1;
-                let holding = format!("#value{}", self.gensyms);
-                // The value is worked out while what the chain stands on
-                // is still whole, since working it out may change that
-                // very thing. A compound write cannot: it wants the
-                // place read first, and so comes after the way in.
-                let mut afterward = None;
-                match compound {
-                    None => steps.push(self.write(&holding, value)),
-                    Some(_) => afterward = Some(value),
-                }
                 // What the chain stands on is taken as a cell, so that
                 // rewriting the arrays within it lands where it lives
                 // and nothing need be written back afterwards.
-                let start = match stands_on {
-                    place @ Form::Apply(Callee::Prim(Prim::Of | Prim::At | Prim::Within, _), _) => self.cell_of(place)?,
-                    call @ Form::Apply(..) if self.grammar.flag_ext_syntax_call_bind_names => {
-                        let saved = self.gensym("target_result");
-                        steps.push(Form::Write(saved.clone(), Box::new(call)));
-                        self.cell_of(Form::Read(saved))?
-                    }
-                    other => self.cell_of(other)?,
+                let start = |this: &mut Self, steps: &mut Vec<Form>, root: &str| {
+                    let start = match stands_on {
+                        place @ Form::Apply(Callee::Prim(Prim::Of | Prim::At | Prim::Within, _), _) => this.cell_of(place)?,
+                        call @ Form::Apply(..) if this.grammar.flag_ext_syntax_call_bind_names => {
+                            let saved = this.gensym("target_result");
+                            steps.push(Form::Write(saved.clone(), Box::new(call)));
+                            this.cell_of(Form::Read(saved))?
+                        }
+                        other => this.cell_of(other)?,
+                    };
+                    // Tied, not written: a plain write of a cell writes what
+                    // it holds, and here the cell itself is wanted.
+                    Ok(Form::Tie(this.address_to_write(root), Box::new(start)))
                 };
-                // Tied, not written: a plain write of a cell writes what
-                // it holds, and here the cell itself is wanted.
-                let tied = self.address_to_write(&root);
-                steps.push(Form::Tie(tied, Box::new(start)));
-                in_cells.push(root);
-                for i in 0..deep {
-                    self.gensyms += 1;
-                    let cell = format!("#in{}", self.gensyms);
-                    let (so_far, key) = (self.read(&in_cells[i]), self.read(&at_cells[i]));
-                    let further = prim_call(Prim::Inward, vec![so_far, key]);
-                    steps.push(self.write(&cell, further));
-                    in_cells.push(cell);
-                }
-                if let (Some(op), Some(value)) = (compound, afterward) {
-                    let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
-                    let now = self.kept_before(prim_call(Prim::Toward, vec![lands_in, key]));
-                    let combined = self.kept_after(prim_call(op, vec![now, value]));
-                    steps.push(self.write(&holding, combined));
-                }
-                let lands_in = self.read(&in_cells[deep]);
-                let put = self.read(&holding);
-                steps.push(match after {
-                    true => prim_call(Prim::Append, vec![lands_in, put]),
-                    false => {
-                        let key = self.read(&at_cells[deep]);
-                        prim_call(Prim::Replace, vec![lands_in, key, put])
-                    }
-                });
-                for i in (0..deep).rev() {
-                    let (holds, key, done) = (self.read(&in_cells[i]), self.read(&at_cells[i]), self.read(&in_cells[i + 1]));
-                    steps.push(prim_call(Prim::Restore, vec![holds, key, done]));
-                }
-                // The cells the rewriting stood on were scaffolding, and
-                // are let go now the write has landed: a cell the program
-                // itself does not share should not go on being held by a
-                // name of the builder's own making.
-                for cell in in_cells.iter().chain(&at_cells) {
-                    let slot = self.address_to_write(cell);
-                    steps.push(if self.grammar.flag_ext_op_arithmetic_python_numbers {
-                        Form::Release(slot)
-                    } else { Form::Forget(slot) });
-                }
-                let value_slot = self.address_to_write(&holding);
-                steps.push(if gives_back { Form::Release(value_slot) }
-                    else { sequence(vec![Form::Forget(value_slot), constant(Value::Nil)]) });
-                sequence(steps)
+                self.rewrite_chain(keys, after, value, compound, gives_back, None, start)?
             }
             // `a[i][j] = v` and `a[i][] = v`: the keys are worked out
             // once and in order, the arrays along the way kept, and each
@@ -10097,82 +10130,17 @@ impl<'a> Builder<'a> {
             // made on the way in, since that is what a write asks for.
             _ if chain.is_some() => {
                 let (name, keys, after) = chain.expect("a chain on a name");
-                let mut steps = Vec::new();
-                let mut at_cells = Vec::new();
-                for key in keys {
-                    self.gensyms += 1;
-                    let cell = format!("#key{}", self.gensyms);
-                    let stored = self.write(&cell, key);
-                    steps.push(stored);
-                    at_cells.push(cell);
-                }
-                // In through the arrays, each one kept as far as the one
-                // the write lands in.
-                let deep = match after { true => at_cells.len(), false => at_cells.len() - 1 };
-                let mut in_cells = Vec::new();
-                self.gensyms += 1;
-                let root = format!("#in{}", self.gensyms);
-                self.gensyms += 1;
-                let holding = format!("#value{}", self.gensyms);
-                // The value comes first, while the name still holds what
-                // it held: reading the array out to rewrite it would
-                // leave the name empty while the value is worked out,
-                // and working it out may change the array itself. A
-                // compound write wants the place read first, and waits.
-                let mut afterward = None;
-                match compound {
-                    None => steps.push(self.write(&holding, value)),
-                    Some(_) => afterward = Some(value),
-                }
-                // Where a write makes the places it needs, the name it
-                // starts from has nothing to say about being empty.
-                let start = self.read_to_write(&name);
-                let start = match self.grammar.flag_ext_op_index_makes {
-                    true => Form::Muted(Box::new(start)),
-                    false => start,
+                let start = |this: &mut Self, _: &mut Vec<Form>, root: &str| {
+                    // Where a write makes the places it needs, the name it
+                    // starts from has nothing to say about being empty.
+                    let start = this.read_to_write(&name);
+                    let start = match this.grammar.flag_ext_op_index_makes {
+                        true => Form::Muted(Box::new(start)),
+                        false => start,
+                    };
+                    Ok(this.write(root, start))
                 };
-                steps.push(self.write(&root, start));
-                in_cells.push(root);
-                for i in 0..deep {
-                    self.gensyms += 1;
-                    let cell = format!("#in{}", self.gensyms);
-                    let (so_far, key) = (self.read(&in_cells[i]), self.read(&at_cells[i]));
-                    let further = prim_call(Prim::Inward, vec![so_far, key]);
-                    steps.push(self.write(&cell, further));
-                    in_cells.push(cell);
-                }
-                if let (Some(op), Some(value)) = (compound, afterward) {
-                    let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
-                    let now = self.kept_before(prim_call(Prim::Toward, vec![lands_in, key]));
-                    let combined = self.kept_after(prim_call(op, vec![now, value]));
-                    steps.push(self.write(&holding, combined));
-                }
-                // Writing into a place changes the array the name holds
-                // where it stands, so each array along the way is written
-                // into the one above it, from the innermost outwards.
-                let lands_in = self.read(&in_cells[deep]);
-                let put = self.read(&holding);
-                steps.push(match after {
-                    true => prim_call(Prim::Append, vec![lands_in, put]),
-                    false => {
-                        let key = self.read(&at_cells[deep]);
-                        prim_call(Prim::Replace, vec![lands_in, key, put])
-                    }
-                });
-                for i in (0..deep).rev() {
-                    let (holds, key, done) = (self.read(&in_cells[i]), self.read(&at_cells[i]), self.read(&in_cells[i + 1]));
-                    steps.push(prim_call(Prim::Restore, vec![holds, key, done]));
-                }
-                let back = self.read(&in_cells[0]);
-                let home = self.address_to_rewrite(&name);
-                steps.push(Form::Write(home, Box::new(back)));
-                for name in at_cells.iter().chain(&in_cells) {
-                    steps.push(Form::Forget(self.address_to_write(name)));
-                }
-                let returned = self.address_to_write(&holding);
-                steps.push(if gives_back { Form::Release(returned) }
-                    else { sequence(vec![Form::Forget(returned), constant(Value::Nil)]) });
-                sequence(steps)
+                self.rewrite_chain(keys, after, value, compound, gives_back, Some(name.clone()), start)?
             }
             // `a[i] = &b`: the place holds the cell itself, so a write
             // through either name is a write the other sees.
