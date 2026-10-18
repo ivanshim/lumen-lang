@@ -7678,14 +7678,14 @@ impl<'a> Compiler<'a> {
         Ok(unready)
     }
 
-    fn python_class_body(&mut self, original_name: String, qualification: String, parameters: &[String], first_row: usize) -> Res<(String, Option<String>, bool, bool)> {
-        self.piece().python_fallthrough = true;
-        let lang = self.lang;
-        let base = None;
-        let unready = false;
-        let outer = self.within.replace((original_name.clone(), base.clone()));
+    /// Open a class body: the class becomes what the reading is within
+    /// and its depth, and the header's end and the body's opening are
+    /// read. What the reading was within before, the depth before, and
+    /// whether the body stands inline on the header's line.
+    fn open_class_body(&mut self, original_name: &str, qualification: &str, base: &Option<String>) -> Res<(Option<(String, Option<String>)>, usize, bool)> {
+        let outer = self.within.replace((original_name.to_string(), base.clone()));
         let outer_depth = std::mem::replace(&mut self.class_depth, self.pieces.len());
-        if lang.class_details.get("root").map_or(false,|v|!v.is_empty()){self.within=Some((qualification.clone(),base.clone()));}
+        if self.lang.class_details.get("root").map_or(false,|v|!v.is_empty()){self.within=Some((qualification.to_string(),base.clone()));}
         self.expect_intro()?;
         let inline = !self.on_sep() && self.look().shape != Shape::Open;
         if !inline {
@@ -7694,6 +7694,58 @@ impl<'a> Compiler<'a> {
             self.pass_token();
             self.skip_seps();
         }
+        Ok((outer, outer_depth, inline))
+    }
+
+    /// The body's record goes up, with its class cell and the names a
+    /// discovering read planned for it: where the body begins.
+    fn gather_class_body(&mut self, shared: Vec<(String, String)>, documentation: Option<String>, unready: bool) -> usize {
+        let class_source = self.pos;
+        let bindings = self.plans.get(&class_source).map(|plan| plan.names.iter().cloned().collect()).unwrap_or_default();
+        let order = shared.iter().map(|(named, _)| named.clone()).collect();
+        let class_cell = self.gensym("class_cell");
+        self.cell_to_write(&class_cell);
+        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(), attributes: std::collections::BTreeSet::new(),
+            documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
+        class_source
+    }
+
+    /// The members of a class body, read to its end; a discovering read
+    /// plans the names the body bound.
+    fn read_class_body(&mut self, inline: bool, class_source: usize) -> Res<()> {
+        let lang = self.lang;
+        let mut opening = true;
+        while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
+            let heads_the_body = std::mem::take(&mut opening);
+            if self.class_member(heads_the_body)? { continue; }
+            if inline {
+                while self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme) { self.pass_token(); }
+            } else { self.skip_seps(); }
+        }
+        if !inline {
+            if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
+            self.pass_token();
+        }
+        if self.discovering {
+            let names = self.gathering().bindings.iter().cloned().collect();
+            self.plans.insert(class_source, BindingPlan { names, ..BindingPlan::default() });
+        }
+        Ok(())
+    }
+
+    /// Leave a class body: its name tables come down, and what the
+    /// reading was within before, with the depth before, come back.
+    fn close_class_body(&mut self, outer: Option<(String, Option<String>)>, outer_depth: usize) {
+        self.class_names.pop(); self.class_globals.pop(); self.class_seen.pop();
+        self.within = outer; self.class_depth = outer_depth;
+    }
+
+    fn python_class_body(&mut self, original_name: String, qualification: String, parameters: &[String], first_row: usize) -> Res<(String, Option<String>, bool, bool)> {
+        self.piece().python_fallthrough = true;
+        let lang = self.lang;
+        let base = None;
+        let unready = false;
+        let (outer, outer_depth, inline) = self.open_class_body(&original_name, &qualification, &base)?;
         let module_slot = self.gensym("class_module");
         let module_name = lang.module_names.first().cloned().unwrap_or_default();
         let mut shared: Vec<(String, String)> = Vec::new();
@@ -7717,13 +7769,7 @@ impl<'a> Compiler<'a> {
             self.write(&slot);
             documentation = Some(slot);
         }
-        let class_source = self.pos;
-        let bindings = self.plans.get(&class_source).map(|plan| plan.names.iter().cloned().collect()).unwrap_or_default();
-        let order = shared.iter().map(|(named, _)| named.clone()).collect();
-        let class_cell = self.gensym("class_cell");
-        self.cell_to_write(&class_cell);
-        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(), attributes: std::collections::BTreeSet::new(),
-            documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
+        let class_source = self.gather_class_body(shared, documentation, unready);
         // Prepare the live mapping before ordered metadata stores and body statements.
         let metadata = std::mem::take(&mut self.gathering().shared);
         self.class_book();
@@ -7738,22 +7784,7 @@ impl<'a> Compiler<'a> {
         self.constant(Value::Small(first_row as i64));
         self.write(&first_line);
         self.mirror_member("__firstlineno__", &first_line)?;
-        let mut opening = true;
-        while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
-            let heads_the_body = std::mem::take(&mut opening);
-            if self.class_member(heads_the_body)? { continue; }
-            if inline {
-                while self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme) { self.pass_token(); }
-            } else { self.skip_seps(); }
-        }
-        if !inline {
-            if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
-            self.pass_token();
-        }
-        if self.discovering {
-            let names = self.gathering().bindings.iter().cloned().collect();
-            self.plans.insert(class_source, BindingPlan { names, ..BindingPlan::default() });
-        }
+        self.read_class_body(inline, class_source)?;
         // The attributes the body's methods wrote through `self`, one
         // sorted tuple, written last into the namespace, as the
         // reference's own class body ends.
@@ -7778,8 +7809,7 @@ impl<'a> Compiler<'a> {
             self.constant(Value::text("\0annotation_strings")); self.constant(Value::Flag(self.future_annotations)); self.read(parts.book.as_ref().expect("class namespace"));
             self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3); self.discard();
         }
-        self.class_names.pop(); self.class_globals.pop(); self.class_seen.pop();
-        self.within = outer; self.class_depth = outer_depth;
+        self.close_class_body(outer, outer_depth);
         if parts.unready { self.class_cannot_run(); self.discard(); }
         self.constant(Value::Null); self.write(RESULT_CELL);
         Ok((parts.book.expect("class namespace"), parts.needs_class_cell.then_some(parts.class_cell), parts.class_cell_protocol, parts.unready))
@@ -7911,17 +7941,7 @@ impl<'a> Compiler<'a> {
             if base.is_none() { base = Some(generic); } else { further.push(generic); }
         }
         let qualification = self.qualified(&original_name);
-        let outer = self.within.replace((original_name.clone(), base.clone()));
-        let outer_depth = std::mem::replace(&mut self.class_depth, self.pieces.len());
-        if lang.class_details.get("root").map_or(false,|v|!v.is_empty()){self.within=Some((qualification.clone(),base.clone()));}
-        self.expect_intro()?;
-        let inline = !self.on_sep() && self.look().shape != Shape::Open;
-        if !inline {
-            self.skip_seps();
-            if self.look().shape != Shape::Open { return Err("Expected an indented class body".into()); }
-            self.pass_token();
-            self.skip_seps();
-        }
+        let (outer, outer_depth, inline) = self.open_class_body(&original_name, &qualification, &base)?;
         self.class_names.push((self.pieces.len(), HashMap::new()));
         self.class_globals.push((self.pieces.len(), Vec::new()));
         self.class_seen.push(Vec::new());
@@ -7950,14 +7970,8 @@ impl<'a> Compiler<'a> {
             shared.push((word.clone(), slot.clone()));
             documentation = Some(slot);
         }
-        let class_source = self.pos;
-        let bindings = self.plans.get(&class_source).map(|plan| plan.names.iter().cloned().collect()).unwrap_or_default();
         let body_at = self.mark();
-        let order = shared.iter().map(|(named, _)| named.clone()).collect();
-        let class_cell = self.gensym("class_cell");
-        self.cell_to_write(&class_cell);
-        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(), attributes: std::collections::BTreeSet::new(),
-            documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
+        let class_source = self.gather_class_body(shared, documentation, unready);
         // The module a class statement is written in is the module's
         // own `__name__`, read where the class is defined, as the
         // reference reads it in the class body.
@@ -8015,28 +8029,9 @@ impl<'a> Compiler<'a> {
                 self.mirror_member(word, &slot)?;
             }
         }
-        let mut opening = true;
-        while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
-            let heads_the_body = std::mem::take(&mut opening);
-            if self.class_member(heads_the_body)? { continue; }
-            if inline {
-                while self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme) { self.pass_token(); }
-            } else { self.skip_seps(); }
-        }
-        if !inline {
-            if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
-            self.pass_token();
-        }
-        if self.discovering {
-            let names = self.gathering().bindings.iter().cloned().collect();
-            self.plans.insert(class_source, BindingPlan { names, ..BindingPlan::default() });
-        }
+        self.read_class_body(inline, class_source)?;
         let ClassBody { class_cell, methods, mut shared, mut order, annotated, uncertain, unready, book, book_tracked, .. } = self.gathered.pop().expect("the class body just read");
-        self.class_names.pop();
-        self.class_globals.pop();
-        self.class_seen.pop();
-        self.within = outer;
-        self.class_depth = outer_depth;
+        self.close_class_body(outer, outer_depth);
         if unready {
             self.piece().instrs.truncate(body_at);
             self.class_cannot_run();
