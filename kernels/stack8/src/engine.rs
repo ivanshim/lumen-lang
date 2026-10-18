@@ -998,12 +998,16 @@ impl<'a> Engine<'a> {
     /// A fault of the kernel's own, met where exceptions are furnished,
     /// becomes a raised value of the class the language names for it,
     /// so that a clause may take it; any other ending stands as it was.
+    fn fault_of_note(&mut self, words: String) -> Fault {
+        match self.as_fault(&words) {
+            Some(value) => Fault::Thrown(value),
+            None => Fault::Note(words),
+        }
+    }
+
     fn raised_of_note<T>(&mut self, ending: Flow<T>) -> Flow<T> {
         match ending {
-            Err(Fault::Note(words)) if !self.lang.exceptions.is_empty() => match self.as_fault(&words) {
-                Some(value) => Err(Fault::Thrown(value)),
-                None => Err(Fault::Note(words)),
-            },
+            Err(Fault::Note(words)) if !self.lang.exceptions.is_empty() => Err(self.fault_of_note(words)),
             other => other,
         }
     }
@@ -4862,10 +4866,7 @@ impl<'a> Engine<'a> {
                 Ok(()) => Ok(()),
                 Err(fault) => {
                     let fault = match fault {
-                        Fault::Note(words) => match self.as_fault(&words) {
-                            Some(value) => Fault::Thrown(value),
-                            None => Fault::Note(words),
-                        },
+                        Fault::Note(words) => self.fault_of_note(words),
                         other => other,
                     };
                     if let Fault::Thrown(value) = &fault { self.record_trace(value, program); }
@@ -5030,7 +5031,7 @@ impl<'a> Engine<'a> {
         }
         match outcome {
             Err(Fault::Note(told)) if !self.lang.exceptions.is_empty() && (told.starts_with('\0') || told.starts_with("Division by zero") || told.starts_with("Undefined property") || told.starts_with("Cannot read property") || told.starts_with("Array index")) => {
-                match self.as_fault(&told) { Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(told)) }
+                Err(self.fault_of_note(told))
             }
             other => other,
         }
@@ -5092,7 +5093,7 @@ impl<'a> Engine<'a> {
                 let ending = match ran {
                     Err(Fault::Note(words)) => match self.carried.take() {
                         Some(fled) => Err(fled),
-                        None => match self.as_fault(&words) { Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)) },
+                        None => Err(self.fault_of_note(words)),
                     },
                     other => other,
                 };
@@ -5215,9 +5216,7 @@ impl<'a> Engine<'a> {
         let mut ending = ending;
         if !self.lang.exceptions.is_empty() {
             ending = match ending {
-                Err(Fault::Note(words)) => match self.as_fault(&words) {
-                    Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)),
-                },
+                Err(Fault::Note(words)) => Err(self.fault_of_note(words)),
                 other => other,
             };
         }
@@ -5524,12 +5523,12 @@ impl<'a> Engine<'a> {
         let Value::Tuple(items) = pair.contents() else {
             let pattern = self.lang.group_split_pair.clone().unwrap_or_default();
             let told = pattern.replacen("{}", &Self::type_argument_kind(&value), 1).replacen("{}", &Self::type_argument_kind(&pair), 1);
-            return Err(match self.as_fault(&told) { Some(value) => Fault::Thrown(value), None => Fault::Note(told) });
+            return Err(self.fault_of_note(told));
         };
         if items.len() < 2 {
             let pattern = self.lang.group_split_size.clone().unwrap_or_default();
             let told = pattern.replacen("{}", &Self::type_argument_kind(&value), 1).replacen("{}", &items.len().to_string(), 1);
-            return Err(match self.as_fault(&told) { Some(value) => Fault::Thrown(value), None => Fault::Note(told) });
+            return Err(self.fault_of_note(told));
         }
         let taken = match items[0].clone() { Value::Null => None, other => Some(other) };
         let left = match items[1].clone() { Value::Null => None, other => Some(other) };
@@ -6963,21 +6962,7 @@ impl<'a> Engine<'a> {
                         // own faults has them raised as one of that
                         // class, so a program may take them like any
                         // other raised value.
-                        let fault = match fault {
-                            Fault::Note(told) if !guards.is_empty() => match self.as_fault(&told) {
-                                Some(made) => Fault::Thrown(made),
-                                None => Fault::Note(told),
-                            },
-                            other => other,
-                        };
-                        let Fault::Thrown(raised) = fault else { return Err(fault) };
-                        let Some((catch, depth, quiet)) = guards.pop() else { return Err(Fault::Thrown(raised)) };
-                        self.under = None;
-                        self.entering = None;
-                        self.hushed.set(quiet);
-                        self.data.truncate(depth);
-                        self.data.push(raised);
-                        pc = catch;
+                        pc = self.offer_signal_fault(fault, &mut guards)?;
                         continue;
                     }
                 }
@@ -18298,10 +18283,7 @@ impl<'a> Engine<'a> {
     /// guard watches, the fault leaves the run altogether.
     fn offer_signal_fault(&mut self, fault: Fault, guards: &mut Vec<(usize, usize, usize)>) -> Flow<usize> {
         let fault = match fault {
-            Fault::Note(told) if !guards.is_empty() => match self.as_fault(&told) {
-                Some(made) => Fault::Thrown(made),
-                None => Fault::Note(told),
-            },
+            Fault::Note(told) if !guards.is_empty() => self.fault_of_note(told),
             other => other,
         };
         let Fault::Thrown(raised) = fault else { return Err(fault) };
