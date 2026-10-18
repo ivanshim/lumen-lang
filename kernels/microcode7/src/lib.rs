@@ -130,8 +130,7 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
         }
     }
     if said == "SyntaxError: 'return' outside function" && table.syntax_exceptions {
-        let file = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file")
-            .map(|(.., path, _)| path.as_str()).unwrap_or("");
+        let file = self_word(request, "file").unwrap_or("");
         let line = row.saturating_sub(before);
         let shown = source.lines().nth(row.saturating_sub(1) as usize).unwrap_or("").trim_start();
         let count = shown.chars().take_while(|ch| *ch != '#').count();
@@ -152,7 +151,7 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
             eprintln!("{kind}: {wording}");
             return String::from("\0");
         }
-        let found = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone());
+        let found = |key: &str| self_word(request, key).map(str::to_string);
         let where_named = found("given").or_else(|| found("file")).unwrap_or_default();
         let number = row.saturating_sub(before);
         let written = source.lines().nth(row.saturating_sub(1) as usize).unwrap_or("");
@@ -186,7 +185,7 @@ fn cannot_read(table: &Table, said: &str, row: u32, request: &[(String, String, 
         false => "ext.system.complaint.reading",
     };
     let Some(word) = table.single(key) else { return said.to_string() };
-    let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone());
+    let named = |key: &str| self_word(request, key).map(str::to_string);
     let file = named("file").unwrap_or_default();
     let head = exec::complaint_head(table, word, said);
     print!("{head}{}", exec::complaint_tail(table, &file, row.saturating_sub(before)));
@@ -205,12 +204,7 @@ fn escape_notices_ahead_of_run(source: &str, table: &Table, ahead: u32, request:
     if route.len() != 4 || !table.syntax_exceptions {
         return;
     }
-    let where_named = request
-        .iter()
-        .find(|(from, key, ..)| from == "SELF" && key == "given")
-        .or_else(|| request.iter().find(|(from, key, ..)| from == "SELF" && key == "file"))
-        .map(|(.., path, _)| path.as_str())
-        .unwrap_or("");
+    let where_named = self_word(request, "given").or_else(|| self_word(request, "file")).unwrap_or("");
     for (wording, row) in crate::scan::escape_notices(source, table) {
         if row <= ahead {
             continue;
@@ -277,11 +271,12 @@ fn pages_lie_at(table: &Table, request: &[(String, String, String, bool)]) -> Op
 }
 
 fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
-    request
-        .iter()
-        .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
-        .and_then(|(.., n, _)| n.parse().ok())
-        .unwrap_or(0)
+    self_word(request, "lines_before").and_then(|n| n.parse().ok()).unwrap_or(0)
+}
+
+/// What the request says under `key` for the program itself.
+fn self_word<'a>(request: &'a [(String, String, String, bool)], key: &str) -> Option<&'a str> {
+    request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.as_str())
 }
 
 /// A prologue which names an import belongs beside the words that
@@ -335,11 +330,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     seeded.extend(table.single("ext.system.debug").map(str::to_string));
     seeded.extend(table.strings("ext.system.module.name").iter().cloned());
     seeded.extend(table.strings("ext.system.module.doc").iter().cloned());
-    let before: u32 = request
-        .iter()
-        .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
-        .and_then(|(.., n, _)| n.parse().ok())
-        .unwrap_or(0);
+    let before: u32 = lines_before(request);
     let reduced = if !table.rpn {
         build::build_at(&tokens, table, &seeded, HashMap::new(), true, before)
             .map_err(|(said, row, hard, span)| cannot_read(table, &said, row, request, ahead, hard, source,
@@ -362,11 +353,8 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     };
     let mut machine = exec::Machine::new(table, reduced.globals.clone());
     machine.main_bindings.extend(reduced.bound_globally.iter().cloned());
-    for (origin, field, text, _) in request {
-        if origin == "SELF" && field == "library_root" {
-            machine.library_directory = Some(std::path::PathBuf::from(text));
-            break;
-        }
+    if let Some(text) = self_word(request, "library_root") {
+        machine.library_directory = Some(std::path::PathBuf::from(text));
     }
     if table.flag("ext.stmt.import.value") {
         for (kind, name, text, _) in request {
@@ -404,10 +392,10 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
         let as_directory = table.flag("ext.op.arithmetic.python_numbers")
             && std::env::var("LUMEN_RUN_MODULE").map_or(false, |name| name == "__main__");
         let wanted = if as_directory { "given" } else { "file" };
-        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "argv0")
-            .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == wanted))
-            .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == "file"))
-            .map(|(.., v, _)| v.clone());
+        let file = self_word(request, "argv0")
+            .or_else(|| self_word(request, wanted))
+            .or_else(|| self_word(request, "file"))
+            .map(str::to_string);
         let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
         all.extend(program_args.iter().map(|a| Value::text(a)));
         if let Some(n) = table.single("ext.system.args.count") {
@@ -435,8 +423,7 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     }
     // The body as it came, for a program that would read it itself.
     if let Some(name) = table.single("ext.system.request.body") {
-        let found = request.iter().find(|(from, key, ..)| from == "SELF" && key == "body");
-        machine.define(name, found.map_or(Value::Nil, |(.., raw, _)| Value::text(raw)));
+        machine.define(name, self_word(request, "body").map_or(Value::Nil, Value::text));
     }
     // What the host found amiss in the request before the program ran,
     // told in the language's own words.
@@ -458,14 +445,14 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
             .collect();
         machine.define(name, Value::Vector(crate::tuples::Sequence::plain(said)));
     }
-    if let Some((.., place, _)) = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file") {
+    if let Some(place) = self_word(request, "file") {
         machine.found_in(place);
     }
     machine.pages_lie_at(pages_lie_at(table, request));
     // Where the program is written, as the request carries it.
     for (part, key) in OWN_PLACE {
         let Some(name) = table.single(key) else { continue };
-        if let Some((.., value, _)) = request.iter().find(|(from, field, ..)| from == "SELF" && field == part) {
+        if let Some(value) = self_word(request, part) {
             machine.define(name, Value::text(value));
         }
     }
@@ -519,13 +506,11 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     if source.contains("\\N{") { machine.unicode_scan(&source).map_err(|(said, _, _)| said)?; }
     if let Err(told) = machine.run_main(&reduced.program) {
         let _ = machine.run_afterward();
-        machine.let_things_go();
-        machine.let_go_all();
+        let_go(&mut machine);
         return Err(told);
     }
     if let Err(told) = machine.run_afterward() {
-        machine.let_things_go();
-        machine.let_go_all();
+        let_go(&mut machine);
         return Err(told);
     }
     if let Some(entry) = table.single("system.entry") {
@@ -534,16 +519,20 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
                 exec::Escape::Error(m) => m,
                 _ => String::new(),
             });
-            machine.let_things_go();
-            machine.let_go_all();
+            let_go(&mut machine);
             done?;
             return Ok(());
         }
     }
     // Whatever the run was still keeping goes out when it ends.
+    let_go(&mut machine);
+    Ok(())
+}
+
+/// Hand back whatever the run was still keeping.
+fn let_go(machine: &mut exec::Machine) {
     machine.let_things_go();
     machine.let_go_all();
-    Ok(())
 }
 
 /// Write a value where a name points: every step names a place in a
