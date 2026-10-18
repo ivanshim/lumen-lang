@@ -2871,18 +2871,7 @@ impl<'a> Machine<'a> {
                         match &kept[0] {
                             Value::Blueprint(owner) => self.blueprint_annotation_values(owner, symbolic),
                             Value::Vector(rows) => {
-                                let reading = self.armed_names.take();
-                                let mut annotations = Vec::new();
-                                for index in (0..rows.len()).step_by(2) {
-                                    let Some(source) = rows.get(index + 1) else { break; };
-                                    let source = source.settled();
-                                    if matches!(source, Value::Unset) { continue; }
-                                    self.armed_names = reading.clone();
-                                    let found = self.annotation_entry(source, symbolic, None);
-                                    self.armed_names = None;
-                                    let found = found?;
-                                    annotations.push((rows[index].clone(), found));
-                                }
+                                let annotations = self.annotation_pairs(&rows[..], symbolic, None)?;
                                 let mapping = Value::Dict(Rc::new(annotations.into()));
                                 Ok(self.collection_cell(mapping))
                             }
@@ -5193,18 +5182,22 @@ impl<'a> Machine<'a> {
         b.shared.borrow_mut().push((word, made.clone()));
         Ok(made)
     }
+    fn forward_ref(&mut self, key: &str, active: Option<Rc<Blueprint>>) -> Res<Value> {
+        let options = self.rules.words_ext_stmt_class_annotations.to_vec();
+        let namespace = self.load_namespace(&options[1])?;
+        let constructor = self.read_class_member(namespace, &options[2], false)?;
+        let symbol = self.apply_class_member(constructor, vec![Value::text(key)])?;
+        self.alter_class_member(symbol.clone(), &options[3], Some(active.map_or(Value::Nil, Value::Blueprint)), false)?;
+        self.alter_class_member(symbol.clone(), &options[4], Some(Value::Flag(true)), false)?;
+        Ok(symbol)
+    }
     pub(super) fn symbolic_name(&mut self, key: &str) -> Result<Option<Value>, String> {
         if key.chars().next().is_some_and(|initial| matches!(initial, '#' | '\0')) { return Ok(None); }
         let active = match &self.symbolic_annotation {
             Some((program, declaring, _)) if self.frames_named.last().is_some_and(|frame| Rc::ptr_eq(frame, program) || frame.ident == "<annotation fallback>") => declaring.clone(),
             _ => return Ok(None),
         };
-        let options = self.rules.words_ext_stmt_class_annotations.to_vec();
-        let module = self.load_namespace(&options[1])?;
-        let maker = self.read_class_member(module, &options[2], false).map_err(|escape| self.carried_native_fault(escape))?;
-        let symbol = self.apply_class_member(maker, vec![Value::text(key)]).map_err(|escape| self.carried_native_fault(escape))?;
-        self.alter_class_member(symbol.clone(), &options[3], Some(active.map_or(Value::Nil, Value::Blueprint)), false).map_err(|escape| self.carried_native_fault(escape))?;
-        self.alter_class_member(symbol.clone(), &options[4], Some(Value::Flag(true)), false).map_err(|escape| self.carried_native_fault(escape))?;
+        let symbol = self.forward_ref(key, active).map_err(|escape| self.carried_native_fault(escape))?;
         if let Value::Thing(thing) = symbol.settled() {
             if let Some((_, _, entries)) = self.symbolic_annotation.as_mut() { entries.push((Rc::downgrade(&thing), key.to_owned())); }
         }
@@ -5212,11 +5205,7 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn symbolic_lookup(&mut self, word: &str) -> Option<Result<Value, String>> {
-        match self.symbolic_name(word) {
-            Ok(Some(value)) => Some(Ok(value)),
-            Ok(None) => None,
-            Err(error) => Some(Err(error)),
-        }
+        self.symbolic_name(word).transpose()
     }
 
     pub(super) fn symbolic_access(&mut self, value: &Value) -> Option<String> {
@@ -5247,13 +5236,7 @@ impl<'a> Machine<'a> {
         match result {
             Err(away) if symbolic && spelling.is_some() && (matches!(&away, Escape::Error(message) if message.starts_with("NameError:"))
                 || matches!(&away, Escape::Thrown(Value::Thing(fault)) if self.stands_under(&fault.blueprint(), 10))) => {
-                let options = self.rules.words_ext_stmt_class_annotations.to_vec();
-                let namespace = self.load_namespace(&options[1])?;
-                let constructor = self.read_class_member(namespace, &options[2], false)?;
-                let unresolved = self.apply_class_member(constructor, vec![Value::text(spelling.as_deref().unwrap())])?;
-                self.alter_class_member(unresolved.clone(), &options[3], Some(declaring.clone().map_or(Value::Nil, Value::Blueprint)), false)?;
-                self.alter_class_member(unresolved.clone(), &options[4], Some(Value::Flag(true)), false)?;
-                Ok(unresolved)
+                self.forward_ref(spelling.as_deref().unwrap(), declaring.clone())
             }
             outcome => outcome,
         }
@@ -5261,30 +5244,36 @@ impl<'a> Machine<'a> {
     fn resolve_blueprint_annotations(&mut self, b: &Rc<Blueprint>) -> Res {
         self.blueprint_annotation_values(b, false)
     }
-    fn blueprint_annotation_values(&mut self, b: &Rc<Blueprint>, symbolic: bool) -> Res {
+    fn annotation_pairs(&mut self, rows: &[Value], symbolic: bool, owner: Option<Rc<Blueprint>>) -> Res<Vec<(Value, Value)>> {
         let reading = self.armed_names.take();
-        let mut pairs=Vec::new();
+        let mut pairs = Vec::new();
+        for pair in rows.chunks(2) {
+            let [key, worth] = pair else { break; };
+            let worth = worth.settled();
+            if matches!(worth, Value::Unset) { continue; }
+            self.armed_names = reading.clone();
+            let value = self.annotation_entry(worth, symbolic, owner.clone());
+            self.armed_names = None;
+            pairs.push((key.clone(), value?));
+        }
+        Ok(pairs)
+    }
+    fn blueprint_annotation_values(&mut self, b: &Rc<Blueprint>, symbolic: bool) -> Res {
         // The entry is kept in a cell, as the blueprint's members are; keys
         // and routines alternate along it. A blueprint rebuilt from its own
         // namespace keeps only the public adapter, so the row is read from
         // that as well.
-        let row=Self::own_entry(b,crate::data::ANNOTATE_WORD).map(|kept|kept.settled())
+        let stored = Self::own_entry(b, crate::data::ANNOTATE_WORD).map(|kept| kept.settled())
             .or_else(|| Self::own_entry(b, "__annotate_func__").and_then(|kept| match kept.settled() {
                 Value::Wrapped(44, contents) => contents.first().map(|first| first.settled()),
                 _ => None,
             }));
-        if let Some(Value::Vector(row))=row {
-            for pair in row.chunks(2) {
-                let [key,worth]=pair else{break};
-                let worth = worth.settled();
-                if matches!(worth, Value::Unset) { continue; }
-                self.armed_names = reading.clone();
-                let value = self.annotation_entry(worth, symbolic, Some(b.clone()));
-                self.armed_names = None;
-                let value = value?;
-                pairs.push((key.clone(),value));
-            }
-        }
+        let pairs = if let Some(Value::Vector(row)) = stored.as_ref() {
+            self.annotation_pairs(&row[..], symbolic, Some(b.clone()))?
+        } else {
+            self.armed_names.take();
+            Vec::new()
+        };
         let made=Value::Dict(Rc::new(pairs.into()));
         Ok(self.collection_cell(made))
     }
