@@ -2365,6 +2365,10 @@ pub struct Class {
 }
 
 impl Class {
+    pub fn plain(name: String, outline: Option<String>, base: Option<Rc<Class>>, direct: Vec<Rc<Class>>, lineage: Vec<Rc<Class>>, constants: Vec<(String, Value)>, shared: Vec<(String, Value)>) -> Class {
+        Class { mro_place: RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0), python_names: RefCell::new(None), lineage: RefCell::new(lineage), direct: RefCell::new(direct), outline, name, base: RefCell::new(base), answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants, shared: ClassMembers::new(shared), weak_storage: std::cell::Cell::new(None), sealed: std::cell::Cell::new(false), declares_slots: false, mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()) }
+    }
+
     pub fn order(self: &Rc<Self>) -> Vec<Rc<Class>> {
         let mut result=self.lineage();
         for at in self.mro_place.borrow().iter() {result.insert((*at).min(result.len()),self.clone());}
