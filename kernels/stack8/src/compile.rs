@@ -10276,6 +10276,71 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// The keys of a chained target, each worked out once and in order
+    /// into a place of its own; the places for the arrays along the way;
+    /// and the value, worked out first when the store is a plain one.
+    fn chain_places(&mut self, keys: &[Vec<Instr>], key_at: &[usize], deep: usize, plain: bool, keep: Option<&str>) -> Res<(Vec<String>, Vec<String>, String)> {
+        let held: Vec<String> = (0..keys.len()).map(|_| self.gensym("key")).collect();
+        for (i, key) in keys.iter().enumerate() {
+            let at = self.mark();
+            for w in relocated(key.clone(), at as i64 - key_at[i] as i64) {
+                self.put(w);
+            }
+            self.write(&held[i]);
+        }
+        let inner: Vec<String> = (0..=deep).map(|_| self.gensym("within")).collect();
+        let value = self.gensym("value");
+        if plain {
+            self.value_written(keep)?;
+            self.write(&value);
+        }
+        Ok((held, inner, value))
+    }
+
+    /// Down through the arrays from what the chain stands on, already
+    /// on the stack, to the one the write lands in; the compound
+    /// working, where there is one; then back out, each array rewritten
+    /// in the one above. The place holding the outermost rewritten array.
+    fn chain_rewrite(&mut self, held: &[String], inner: &[String], value: &str, deep: usize, appending: bool, compound: Option<Action>, keep: Option<&str>) -> Res<String> {
+        self.write(&inner[0]);
+        for i in 0..deep {
+            self.read(&inner[i]);
+            self.read(&held[i]);
+            self.act(Action::Nested, 2);
+            self.write(&inner[i + 1]);
+        }
+        if let Some(op) = compound {
+            self.read(&inner[deep]);
+            self.read(&held[deep]);
+            self.act(Action::Toward, 2);
+            self.stood_before();
+            self.addend()?;
+            self.compound_act(op);
+            self.kept(keep);
+            self.write(value);
+        }
+        let made = self.gensym("made");
+        if appending {
+            self.read(value);
+            self.read(&inner[deep]);
+            self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
+        } else {
+            self.read(&held[deep]);
+            self.read(value);
+            self.read(&inner[deep]);
+            self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+        }
+        self.write(&made);
+        for i in (0..deep).rev() {
+            self.read(&held[i]);
+            self.read(&made);
+            self.read(&inner[i]);
+            self.act(Action::Builtin(Builtin::Restore, Rc::from("put")), 3);
+            self.write(&made);
+        }
+        Ok(made)
+    }
+
     /// The store itself, the sign that asked for it already read.
     fn store_into(&mut self, from: usize, keep: Option<&str>, compound: Option<Action>, assign: &str) -> Res<()> {
         let name_origin = self.pos.saturating_sub(2);
@@ -10441,26 +10506,13 @@ impl<'a> Compiler<'a> {
             // the whole written back into what it stood on.
             _ if footing.is_some() => {
                 let base = footing.clone().expect("what the chain stands on");
-                let held: Vec<String> = (0..keys.len()).map(|_| self.gensym("key")).collect();
-                for (i, key) in keys.iter().enumerate() {
-                    let at = self.mark();
-                    for w in relocated(key.clone(), at as i64 - key_at[i] as i64) {
-                        self.put(w);
-                    }
-                    self.write(&held[i]);
-                }
                 let deep = match appending { true => keys.len(), false => keys.len() - 1 };
-                let inner: Vec<String> = (0..=deep).map(|_| self.gensym("within")).collect();
                 // What the chain stands on is read quietly: it is being
                 // written into, and a place not there yet is made on the
                 // way rather than complained about.
                 // The value is worked out first, while what the chain
                 // stands on is still whole.
-                let value = self.gensym("value");
-                if compound.is_none() {
-                    self.value_written(keep)?;
-                    self.write(&value);
-                }
+                let (held, inner, value) = self.chain_places(&keys, &key_at, deep, compound.is_none(), keep)?;
                 self.put(Instr::Hush(true));
                 let at = self.mark();
                 let shared_target = self.lang.bind_names && !self.lang.class_special.is_empty()
@@ -10468,42 +10520,7 @@ impl<'a> Compiler<'a> {
                 if shared_target { self.footing_cell(&base, from)?; }
                 else { for w in relocated(base.clone(), at as i64 - from as i64) { self.put(w); } }
                 self.put(Instr::Hush(false));
-                self.write(&inner[0]);
-                for i in 0..deep {
-                    self.read(&inner[i]);
-                    self.read(&held[i]);
-                    self.act(Action::Nested, 2);
-                    self.write(&inner[i + 1]);
-                }
-                if let Some(op) = compound {
-                    self.read(&inner[deep]);
-                    self.read(&held[deep]);
-                    self.act(Action::Toward, 2);
-                    self.stood_before();
-                    self.addend()?;
-                    self.compound_act(op);
-                    self.kept(keep);
-                    self.write(&value);
-                }
-                let made = self.gensym("made");
-                if appending {
-                    self.read(&value);
-                    self.read(&inner[deep]);
-                    self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
-                } else {
-                    self.read(&held[deep]);
-                    self.read(&value);
-                    self.read(&inner[deep]);
-                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
-                }
-                self.write(&made);
-                for i in (0..deep).rev() {
-                    self.read(&held[i]);
-                    self.read(&made);
-                    self.read(&inner[i]);
-                    self.act(Action::Builtin(Builtin::Restore, Rc::from("put")), 3);
-                    self.write(&made);
-                }
+                let made = self.chain_rewrite(&held, &inner, &value, deep, appending, compound, keep)?;
                 // A dictionary of names handed out by a builtin is
                 // written into and never written back -- but this is
                 // still one arm of the outer match, so it falls through
@@ -10535,66 +10552,15 @@ impl<'a> Compiler<'a> {
                 if !slot.moving && (keys.len() > 1 || (keys.len() == 1 && (appending || compound.is_some()))) =>
             {
                 let name = slot.ident.to_string();
-                let held: Vec<String> = (0..keys.len()).map(|_| self.gensym("key")).collect();
-                for (i, key) in keys.iter().enumerate() {
-                    let at = self.mark();
-                    for w in relocated(key.clone(), at as i64 - key_at[i] as i64) {
-                        self.put(w);
-                    }
-                    self.write(&held[i]);
-                }
                 // Down through the arrays, keeping each one, as far as
                 // the one the write itself lands in. The value comes
                 // first, while the array is still where it stands, since
                 // reading it out to rewrite it would leave the name
                 // holding nothing while the value is worked out.
                 let deep = match appending { true => keys.len(), false => keys.len() - 1 };
-                let inner: Vec<String> = (0..=deep).map(|_| self.gensym("within")).collect();
-                let value = self.gensym("value");
-                if compound.is_none() {
-                    self.value_written(keep)?;
-                    self.write(&value);
-                }
+                let (held, inner, value) = self.chain_places(&keys, &key_at, deep, compound.is_none(), keep)?;
                 self.read_to_rewrite(&name);
-                self.write(&inner[0]);
-                for i in 0..deep {
-                    self.read(&inner[i]);
-                    self.read(&held[i]);
-                    self.act(Action::Nested, 2);
-                    self.write(&inner[i + 1]);
-                }
-                // x op= e writes what x holds now, taken with e, which
-                // wants the place read first and so comes after.
-                if let Some(op) = compound {
-                    self.read(&inner[deep]);
-                    self.read(&held[deep]);
-                    self.act(Action::Toward, 2);
-                    self.stood_before();
-                    self.addend()?;
-                    self.compound_act(op);
-                    self.kept(keep);
-                    self.write(&value);
-                }
-                // Back out again, each array rewritten in the one above.
-                let made = self.gensym("made");
-                if appending {
-                    self.read(&value);
-                    self.read(&inner[deep]);
-                    self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
-                } else {
-                    self.read(&held[deep]);
-                    self.read(&value);
-                    self.read(&inner[deep]);
-                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
-                }
-                self.write(&made);
-                for i in (0..deep).rev() {
-                    self.read(&held[i]);
-                    self.read(&made);
-                    self.read(&inner[i]);
-                    self.act(Action::Builtin(Builtin::Restore, Rc::from("put")), 3);
-                    self.write(&made);
-                }
+                let made = self.chain_rewrite(&held, &inner, &value, deep, appending, compound, keep)?;
                 self.read(&made);
                 self.rewritten(&name);
                 for temporary in inner.iter().chain(&held).chain([&made, &value]) {
