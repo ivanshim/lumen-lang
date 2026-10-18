@@ -1,7 +1,7 @@
-/// Python cache header for this kernel; the host uses the same ABI marker.
-pub const PYTHON_CACHE_MAGIC: [u8; 4] = *b"L8C\x06";
-/// Serialized instruction format, including shared token origins.
-pub const PYTHON_CACHE_ABI: &str = "lumen-stack8-v6";
+/// Mark the kernel and cache revision, with CR/LF to detect text-mode corruption.
+pub const PYTHON_CACHE_MAGIC: [u8; 4] = *b"8\x07\r\n";
+/// Version the native cache envelope, including its header framing.
+pub const PYTHON_CACHE_ABI: &str = "lumen-stack8-v7";
 
 pub mod strings;
 mod unicode;
