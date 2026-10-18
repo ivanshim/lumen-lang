@@ -8460,13 +8460,11 @@ impl<'a> Machine<'a> {
     }
     /// The kind word a value names where it names one: an intrinsic
     /// word, the blueprint standing for a kind, or an octet kind.
-    fn kind_name(&self,value:&Value)->Option<String>{
-        match value{
-            Value::Intrinsic(op,word) if op.names_a_kind()=>Some(word.to_string()),
-            Value::Wrapped(8,parts)=>match &parts[0]{Value::Text(word)=>Some(word.to_string()),_=>None},
-            Value::Blueprint(b)=>Self::native_word(b),
-            Value::OctetKind{changeable,..}=>Some(self.octet_kind_word(*changeable).to_owned()),
-            _=>None,
+    fn kind_name(&self, value: &Value) -> Option<String> {
+        match value {
+            Value::Blueprint(b) => Self::native_word(b),
+            Value::Nil => None,
+            _ => self.reported_kind_word(value),
         }
     }
     /// Whether two values are the very one thing, which is how a
@@ -8559,26 +8557,26 @@ impl<'a> Machine<'a> {
         }
         false
     }
+    fn any_beneath(&mut self, subject: &Value, options: &[Value], class_only: bool) -> Res<bool> {
+        self.deeper()?;
+        let mut result = Ok(false);
+        for option in options {
+            match self.is_beneath(subject, option, class_only) {
+                Ok(false) => {}
+                answer => { result = answer; break; }
+            }
+        }
+        self.standing -= 1;
+        result
+    }
     pub(super) fn is_beneath(&mut self,subject:&Value,choice:&Value,class_only:bool)->Result<bool,Escape>{
         if let Value::Mutable(cell, _) | Value::Shared(cell) = subject { let held = cell.borrow().clone(); return self.is_beneath(&held, choice, class_only); }
         if let Value::Mutable(cell, _) | Value::Shared(cell) = choice { let held = cell.borrow().clone(); return self.is_beneath(subject, &held, class_only); }
         // Walk Python class alternatives before replacing a native subject
         // with the internal spelling used by the non-hook membership road.
         if self.names_in_calls {
-            match choice {
-                Value::Tuple(options) => {
-                    self.deeper()?;
-                    let mut result = Ok(false);
-                    for option in options.iter() {
-                        match self.is_beneath(subject, option, class_only) {
-                            Ok(false) => (),
-                            answer => { result = answer; break; }
-                        }
-                    }
-                    self.standing -= 1;
-                    return result;
-                }
-                _ => (),
+            if let Value::Tuple(options) = choice {
+                return self.any_beneath(subject, &options[..], class_only);
             }
         }
         // An instance of precisely the requested Python type needs no
@@ -8672,18 +8670,7 @@ impl<'a> Machine<'a> {
                 // A tuple of kinds is walked member by member, and the
                 // walk is guarded so a tuple nested without end raises
                 // as the reference's own reading does.
-                let members: Vec<Value> = options.to_vec();
-                self.deeper()?;
-                let mut answer=Ok(false);
-                for option in members.iter(){
-                    match self.is_beneath(subject,option,class_only){
-                        Ok(true)=>{answer=Ok(true);break;}
-                        Ok(false)=>{}
-                        Err(escape)=>{answer=Err(escape);break;}
-                    }
-                }
-                self.standing-=1;
-                answer
+                self.any_beneath(subject, &options[..], class_only)
             },
             // A union built by `|` carries a bare `Nil` for the
             // `NoneType` member, the very value `None` itself is, so
@@ -9692,6 +9679,21 @@ impl<'a> Machine<'a> {
     /// the thing it stands on, the reference's own checks worded as it
     /// words them: too many arguments, a first that is no type, and a
     /// second the type has no hold on.
+    fn run_parent_init(&mut self, made: &Value, t: &Rc<Thing>, given: Vec<Value>) -> Res {
+        let constructor = self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned();
+        if let Some(init) = self.inherited_entry(&t.blueprint(), &constructor) {
+            if matches!(&init, Value::Routine(_) | Value::Bound(..)) {
+                let bound = self.member_binding(init, Some(made.clone()), t.blueprint().clone())?;
+                let answer = self.apply_class_member(bound, given)?;
+                if !matches!(answer, Value::Nil) { return Err(format!("TypeError: __init__() should return None, not '{}'", answer.kind_word()).into()); }
+                return Ok(made.clone());
+            }
+            let mut fresh = vec![made.clone()];
+            fresh.extend(given);
+            self.apply_class_member(init, fresh)?;
+        }
+        Ok(made.clone())
+    }
     pub(super) fn parent_constructed(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
         if Self::native_word(&class).as_deref() == Some("super") {
             let (positional, named) = self.open_arguments(given.clone())?;
@@ -9708,19 +9710,7 @@ impl<'a> Machine<'a> {
         let made = self.parent_allocated(&class, given.clone())?;
         let Value::Thing(t) = &made else { return Ok(made) };
         if !Self::parent_kind_descended(&t.blueprint()) { return Ok(made); }
-        let constructor = self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned();
-        if let Some(init) = self.inherited_entry(&t.blueprint(), &constructor) {
-            if matches!(&init, Value::Routine(_) | Value::Bound(..)) {
-                let bound = self.member_binding(init, Some(made.clone()), t.blueprint().clone())?;
-                let answer = self.apply_class_member(bound, given)?;
-                if !matches!(answer, Value::Nil) { return Err(format!("TypeError: __init__() should return None, not '{}'", answer.kind_word()).into()); }
-                return Ok(made);
-            }
-            let mut fresh = vec![made.clone()];
-            fresh.extend(given);
-            self.apply_class_member(init, fresh)?;
-        }
-        Ok(made)
+        self.run_parent_init(&made, t, given)
     }
 
     /// The allocation a call of the parent class or a class beneath it
@@ -9755,17 +9745,7 @@ impl<'a> Machine<'a> {
         // builds a thing, its own constructing running with no
         // argument at all; the parent class's own init, where it is
         // the one answered, reads the frame the call stands in.
-        let constructor = self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned();
-        if let Some(init) = self.inherited_entry(&t.blueprint(), &constructor) {
-            if matches!(&init, Value::Routine(_) | Value::Bound(..)) {
-                let bound = self.member_binding(init, Some(made.clone()), t.blueprint().clone())?;
-                let answer = self.apply_class_member(bound, Vec::new())?;
-                if !matches!(answer, Value::Nil) { return Err(format!("TypeError: __init__() should return None, not '{}'", answer.kind_word()).into()); }
-                return Ok(made);
-            }
-            self.apply_class_member(init, vec![made.clone()])?;
-        }
-        Ok(made)
+        self.run_parent_init(&made, t, Vec::new())
     }
 
     /// The three names a parent thing keeps, filled from the class it
