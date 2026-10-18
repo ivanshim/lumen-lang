@@ -117,6 +117,14 @@ struct ClassParts {
     book_tracked: HashSet<String>,
 }
 
+/// What `open_class_body` leaves for `read_class_items` to put back.
+struct OpenedBody {
+    previous: Option<(String, Option<String>)>,
+    named_outside: usize,
+    on_one_line: bool,
+    body_source: usize,
+}
+
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct ScopeWords {
     bound: Vec<String>,
@@ -6213,14 +6221,14 @@ impl<'a> Builder<'a> {
         Ok((sequence(setup), cannot))
     }
 
-    fn python_class_body(&mut self, class_title: String, full_name: String, parameters: &[String], opening_row: u32) -> Res<(Form, String, Option<String>, bool, bool)> {
+    /// The head of a class body, the same for every class: the class name
+    /// and bases in force, the indented block opened, and the parts of
+    /// the class started. `read_class_items` closes what this opens.
+    fn open_class_body(&mut self, class_title: &str, full_name: &str, parent: Option<&Address>, cannot: bool) -> Res<OpenedBody> {
         let table = self.table;
-        let parent: Option<Address> = None;
-        let cannot = false;
-        let mut setup = Vec::new();
-        let previous = self.within.replace((class_title.clone(), parent.as_ref().map(|s| s.ident.to_string())));
+        let previous = self.within.replace((class_title.to_owned(), parent.map(|s| s.ident.to_string())));
         let named_outside = std::mem::replace(&mut self.named_before, self.naming.len());
-        if table.has_any("ext.stmt.class.detail.root"){self.within=Some((full_name.clone(),parent.as_ref().map(|a|a.ident.to_string())));}
+        if table.has_any("ext.stmt.class.detail.root"){self.within=Some((full_name.to_owned(),parent.map(|a|a.ident.to_string())));}
         self.need_intro()?;
         let on_one_line = !self.on_stmt_end() && self.look().shape != Shape::Open;
         if !on_one_line {
@@ -6238,6 +6246,46 @@ impl<'a> Builder<'a> {
         self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(), self_writes: std::collections::BTreeSet::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
+        Ok(OpenedBody { previous, named_outside, on_one_line, body_source })
+    }
+
+    /// The items of a class body up to its close, and the class state put
+    /// back as it stood before `open_class_body`.
+    fn read_class_items(&mut self, opened: OpenedBody, setup: &mut Vec<Form>) -> Res<ClassParts> {
+        let table = self.table;
+        let OpenedBody { previous, named_outside, on_one_line, body_source } = opened;
+        while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
+            if on_one_line && self.on_stmt_end() { break; }
+            if self.class_item(setup)? { continue; }
+            if on_one_line {
+                while self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme) {
+                    self.move_past();
+                }
+            } else { self.skip_line_ends(); }
+        }
+        if !on_one_line {
+            if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
+            self.move_past();
+        }
+        if self.survey {
+            let bound = self.parts().lexical_members.clone();
+            self.surveyed.insert(body_source, ScopeWords { bound, ..ScopeWords::default() });
+        }
+        self.class_bindings.pop();
+        self.class_globals.pop();
+        self.class_met.pop();
+        self.within = previous;
+        self.named_before = named_outside;
+        Ok(self.under_way.pop().expect("class body"))
+    }
+
+    fn python_class_body(&mut self, class_title: String, full_name: String, parameters: &[String], opening_row: u32) -> Res<(Form, String, Option<String>, bool, bool)> {
+        let table = self.table;
+        let parent: Option<Address> = None;
+        let cannot = false;
+        let mut setup = Vec::new();
+        let opened = self.open_class_body(&class_title, &full_name, parent.as_ref(), cannot)?;
+        let on_one_line = opened.on_one_line;
         // The body uses the metaclass's actual mapping from its first statement.
         if table.has_any("ext.stmt.class.builder") || self.class_body_names_locals(self.pos, on_one_line) {
             let made = self.class_book();
@@ -6275,29 +6323,7 @@ impl<'a> Builder<'a> {
         // Copy the body metadata through the prepared mapping's real setter.
         let seeded = prim_call(Prim::ClassWork(15), vec![seed]);
         setup.push(Form::Write(book.clone(), Box::new(seeded)));
-        while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
-            if on_one_line && self.on_stmt_end() { break; }
-            if self.class_item(&mut setup)? { continue; }
-            if on_one_line {
-                while self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme) {
-                    self.move_past();
-                }
-            } else { self.skip_line_ends(); }
-        }
-        if !on_one_line {
-            if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
-            self.move_past();
-        }
-        if self.survey {
-            let bound = self.parts().lexical_members.clone();
-            self.surveyed.insert(body_source, ScopeWords { bound, ..ScopeWords::default() });
-        }
-        self.class_bindings.pop();
-        self.class_globals.pop();
-        self.class_met.pop();
-        self.within = previous;
-        self.named_before = named_outside;
-        let parts = self.under_way.pop().expect("class body");
+        let parts = self.read_class_items(opened, &mut setup)?;
 
         if !parts.annotated_names.is_empty() && table.has_any("ext.stmt.class.annotations") {
             let row = parts.annotated_names.iter().flat_map(|(key, routine)| [key.clone(), routine.clone()]).collect();
@@ -6439,26 +6465,8 @@ impl<'a> Builder<'a> {
             if parent.is_none() { parent = Some(generic); } else { other_parents.push(generic); }
         }
         let full_name = self.full_name_of(&class_title);
-        let previous = self.within.replace((class_title.clone(), parent.as_ref().map(|s| s.ident.to_string())));
-        let named_outside = std::mem::replace(&mut self.named_before, self.naming.len());
-        if table.has_any("ext.stmt.class.detail.root"){self.within=Some((full_name.clone(),parent.as_ref().map(|a|a.ident.to_string())));}
-        self.need_intro()?;
-        let on_one_line = !self.on_stmt_end() && self.look().shape != Shape::Open;
-        if !on_one_line {
-            self.skip_line_ends();
-            if self.look().shape != Shape::Open { return Err("Expected an indented class body".to_string()); }
-            self.move_past();
-            self.skip_line_ends();
-        }
-        let body_source = self.pos;
-        let lexical_members = self.surveyed.get(&body_source).map(|scope| scope.bound.clone()).unwrap_or_default();
-        self.class_bindings.push((self.layers.len(), HashMap::new()));
-        self.class_globals.push((self.layers.len(), Vec::new()));
-        self.class_met.push(Vec::new());
-        let completed_class = self.gensym("completed_class");
-        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(), self_writes: std::collections::BTreeSet::new(),
-            ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
-            book: None, book_tracked: HashSet::new() });
+        let opened = self.open_class_body(&class_title, &full_name, parent.as_ref(), cannot)?;
+        let on_one_line = opened.on_one_line;
         // A body that spells `locals` or `vars` anywhere in it is
         // given its own namespace before its first statement runs, so
         // a write through either as the body's first statement finds
@@ -6537,29 +6545,7 @@ impl<'a> Builder<'a> {
             }
         }
         let before_body = setup.len();
-        while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
-            if on_one_line && self.on_stmt_end() { break; }
-            if self.class_item(&mut setup)? { continue; }
-            if on_one_line {
-                while self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().spelling()) {
-                    self.move_past();
-                }
-            } else { self.skip_line_ends(); }
-        }
-        if !on_one_line {
-            if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
-            self.move_past();
-        }
-        if self.survey {
-            let bound = self.parts().lexical_members.clone();
-            self.surveyed.insert(body_source, ScopeWords { bound, ..ScopeWords::default() });
-        }
-        self.class_bindings.pop();
-        self.class_globals.pop();
-        self.class_met.pop();
-        self.within = previous;
-        self.named_before = named_outside;
-        let ClassParts { completed_class, needs_class_cell: _, methods, mut attributes, mut held, mut ranking, annotated_names, uncertain, cannot, book, book_tracked, .. } = self.under_way.pop().expect("the class body just read");
+        let ClassParts { completed_class, needs_class_cell: _, methods, mut attributes, mut held, mut ranking, annotated_names, uncertain, cannot, book, book_tracked, .. } = self.read_class_items(opened, &mut setup)?;
         if cannot {
             setup.truncate(before_body);
             setup.push(self.class_not_ready());
