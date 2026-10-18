@@ -11676,36 +11676,11 @@ impl<'a> Builder<'a> {
         // its value is handed over and the language says so.
         let read = self.expr_at(0, true)?;
         Ok(match read {
-            Form::Read(slot) => {
-                let shared = self.address_to_write(&slot.ident.to_string());
-                Form::Share(shared)
-            }
-            Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
-                let named = args.pop().expect("the property");
-                let thing = args.pop().expect("what holds it");
-                let Form::Const(Value::Text(called)) = named else {
-                    return Err("Only a property named outright has a cell to share".to_string());
-                };
-                Form::ShareField(Box::new(thing), called)
-            }
-            Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
-                let place = args.pop().expect("the place");
-                let stands_on = args.pop().expect("what holds it");
-                self.shared_at(place, stands_on)?
-            }
-            // A class's own value is kept once for the whole class, and
-            // so keeps a cell as a binding does.
-            Form::Apply(Callee::Prim(Prim::Within, _), mut args) if args.len() == 2 => {
-                let named = args.pop().expect("the value's name");
-                let class = args.pop().expect("the class");
-                let Form::Const(Value::Text(called)) = named else {
-                    return Err("Only a class's own value named outright has a cell to share".to_string());
-                };
-                Form::ShareOwn(Box::new(class), called)
-            }
-            // A binding named as the run goes has a cell as any binding
-            // does, and asking for it asks for that very one.
-            Form::Called(spells) => Form::ShareCalled(spells),
+            // A name, a property, a place in an array, a class's own
+            // value or a binding named as the run goes: each has a cell
+            // as `cell_of` finds it.
+            Form::Read(_) | Form::Called(_) => self.cell_of(read)?,
+            Form::Apply(Callee::Prim(Prim::Of | Prim::At | Prim::Within, _), ref args) if args.len() == 2 => self.cell_of(read)?,
             // A write that ties one name to another's cell has that very
             // cell to hand over: the write is done and the cell it made
             // is what goes over, not what it holds.
