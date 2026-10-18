@@ -28919,11 +28919,8 @@ impl Engine<'_> {
         let dictionary = match self.modules.get("builtins").cloned() {
             Some(module) => {
                 let namespace = self.class_word("namespace").to_string();
-                match self.class_get(module, &namespace, false) {
-                    Ok(book) => book.contents(),
-                    Err(Fault::Note(words)) => return Err(words),
-                    Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
-                }
+                let flow = self.class_get(module, &namespace, false);
+                self.settle(flow)?.contents()
             }
             None => self.native_dict(),
         };
@@ -29834,11 +29831,8 @@ impl Engine<'_> {
                         _ => return Err("ImportError: attempted relative import with no known parent package".to_string()),
                     }
                 }
-                match self.import_module(&name) {
-                    Ok(module) => Ok(module),
-                    Err(Fault::Note(told)) => Err(told),
-                    Err(fled) => { self.carried = Some(fled); Err(String::new()) }
-                }
+                let flow = self.import_module(&name);
+                self.settle_quiet(flow)
             }
             Builtin::ReadyText => self.text_readied(name, args),
             _ => self.text_run(builtin == Builtin::Eval, name, args),
@@ -30443,25 +30437,16 @@ impl Engine<'_> {
         // PyCF_OPTIMIZED_AST has the names the optimiser settles first
         // folded in.
         if flags & 1024 != 0 {
-            let module = match self.import_module("ast") {
-                Ok(module) => module,
-                Err(Fault::Note(told)) => return Err(told),
-                Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
-            };
-            let reader = match self.class_get(module, "_tree_for_compile", false) {
-                Ok(reader) => reader.contents(),
-                Err(Fault::Note(told)) => return Err(told),
-                Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
-            };
+            let flow = self.import_module("ast");
+            let module = self.settle(flow)?;
+            let flow = self.class_get(module, "_tree_for_compile", false);
+            let reader = self.settle(flow)?.contents();
             let comments = if flags & 4096 != 0 { 1 } else { 0 };
             let settling = if flags & 32768 != 0 {
                 match args.get(5).map(Value::contents) { Some(Value::Small(n)) if n >= 0 => n, _ => 0 }
             } else { -1 };
-            return match self.class_apply(reader, vec![Value::text(&source), Value::text(&file), Value::text(&manner), Value::Small(comments), Value::Small(settling)]) {
-                Ok(tree) => Ok(tree),
-                Err(Fault::Note(told)) => Err(told),
-                Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
-            };
+            let flow = self.class_apply(reader, vec![Value::text(&source), Value::text(&file), Value::text(&manner), Value::Small(comments), Value::Small(settling)]);
+            return self.settle(flow);
         }
         let allow_top_await = flags & 8192 != 0;
         // The future flags in force: those the call names, and — unless
@@ -30540,24 +30525,15 @@ impl Engine<'_> {
         if flags & 0x400 != 0 {
             // PyCF_ONLY_AST: the value handed back is the library's
             // syntax tree of the text rather than a code value.
-            let module = match self.import_module("ast") {
-                Ok(module) => module,
-                Err(Fault::Note(told)) => return Err(told),
-                Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
-            };
-            let parse = match self.import_member(&module, "ast", "_parse_for_compile") {
-                Ok(parse) => parse,
-                Err(Fault::Note(told)) => return Err(told),
-                Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
-            };
+            let flow = self.import_module("ast");
+            let module = self.settle(flow)?;
+            let flow = self.import_member(&module, "ast", "_parse_for_compile");
+            let parse = self.settle(flow)?;
             let manner = self.lang.compile_modes[mode].clone();
             let type_comments = i64::from(flags & 0x1000 != 0);
             let optimize = match args.get(5).map(Value::contents) { Some(Value::Small(n)) => n, _ => -1 };
-            return match self.class_apply(parse, vec![Value::Text(source.clone()), Value::Text(file.clone()), Value::text(&manner), Value::Small(type_comments), Value::Small(optimize), Value::Flag(flags & 0x8000 != 0)]) {
-                Ok(tree) => Ok(tree),
-                Err(Fault::Note(told)) => Err(told),
-                Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
-            };
+            let flow = self.class_apply(parse, vec![Value::Text(source.clone()), Value::Text(file.clone()), Value::text(&manner), Value::Small(type_comments), Value::Small(optimize), Value::Flag(flags & 0x8000 != 0)]);
+            return self.settle(flow);
         }
         let class = self.code_class();
         let words = &self.lang.compile_parameters;
@@ -30593,24 +30569,15 @@ impl Engine<'_> {
     fn say_deprecation(&mut self, message: &str) -> Res<()> {
         let notice = self.lang.yield_throw_warning.clone();
         if notice.len() != 4 { return Ok(()); }
-        let module = match self.import_module(&notice[0]) {
-            Ok(module) => module,
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
-        };
-        let warn = match self.import_member(&module, &notice[0], &notice[1]) {
-            Ok(warn) => warn,
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
-        };
+        let flow = self.import_module(&notice[0]);
+        let module = self.settle(flow)?;
+        let flow = self.import_member(&module, &notice[0], &notice[1]);
+        let warn = self.settle(flow)?;
         let Some(category) = self.native_exceptions.get(&notice[2]).cloned() else { return Ok(()); };
         let file = Value::text(&self.source);
         let line = Value::Small(self.line as i64);
-        match self.class_apply(warn, vec![Value::text(message), category, file, line]) {
-            Ok(_) => Ok(()),
-            Err(Fault::Note(told)) => Err(told),
-            Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
-        }
+        let flow = self.class_apply(warn, vec![Value::text(message), category, file, line]);
+        self.settle(flow).map(|_| ())
     }
 
     /// A warning the reading noted about how a compiled text is
@@ -30622,28 +30589,22 @@ impl Engine<'_> {
         let (module_name, teller_name) = (module_name.clone(), teller_name.clone());
         let Some(kind_name) = self.lang.exceptions.get(27).cloned() else { return Ok(()) };
         let Some(category) = self.native_exceptions.get(&kind_name).cloned() else { return Ok(()) };
-        let module = match self.import_module(&module_name) {
-            Ok(module) => module,
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-        };
+        let flow = self.import_module(&module_name);
+        let module = self.settle_quiet(flow)?;
         // A module carries its names in cells; the function is what the cell holds.
-        let teller = match self.class_get(module, &teller_name, false) {
-            Ok(teller) => teller.contents(),
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-        };
+        let flow = self.class_get(module, &teller_name, false);
+        let teller = self.settle_quiet(flow)?.contents();
         // The module the warning belongs to is the one the text runs
         // under where that is named, else the one its file spells.
         let mut handed = vec![Value::text(message), category, Value::text(file), Value::Small(row as i64)];
         if let Some(named) = module_hint { handed.push(Value::text(named)); }
-        match self.class_apply(teller, handed) {
+        let flow = self.class_apply(teller, handed);
+        match flow {
             Ok(_) => Ok(()),
             Err(Fault::Thrown(raised)) if matches!(&raised, Value::Object(o) if o.class_now().named(&kind_name, false)) => {
                 Err(self.text_syntax(mode, format!("SyntaxError: {message}"), file, row, column, None, source))
             }
-            Err(Fault::Note(told)) => Err(told),
-            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+            Err(fled) => self.settle_quiet(Err(fled)),
         }
     }
 
@@ -30656,25 +30617,16 @@ impl Engine<'_> {
         let (module_name, teller_name) = (module_name.clone(), teller_name.clone());
         let Some(kind_name) = self.lang.exceptions.get(category_at).cloned() else { return Ok(()) };
         let Some(category) = self.native_exceptions.get(&kind_name).cloned() else { return Ok(()) };
-        let module = match self.import_module(&module_name) {
-            Ok(module) => module,
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-        };
+        let flow = self.import_module(&module_name);
+        let module = self.settle_quiet(flow)?;
         // A module carries its names in cells; the function is what the cell holds.
-        let teller = match self.class_get(module, &teller_name, false) {
-            Ok(teller) => teller.contents(),
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-        };
+        let flow = self.class_get(module, &teller_name, false);
+        let teller = self.settle_quiet(flow)?.contents();
         let file = Value::text(&self.source);
         let line = Value::Small(self.line as i64);
         let handed = vec![Value::text(message), category, file, line];
-        match self.class_apply(teller, handed) {
-            Ok(_) => Ok(()),
-            Err(Fault::Note(told)) => Err(told),
-            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
-        }
+        let flow = self.class_apply(teller, handed);
+        self.settle_quiet(flow).map(|_| ())
     }
 
     /// Text, or a code value, run: as one expression where it was asked
@@ -31056,11 +31008,9 @@ impl Engine<'_> {
         let answer = if self.data.len() > base { self.drop_top()? } else { Value::Null };
         self.data.truncate(base);
         if shown {
-            match self.display_interactive(answer.contents()) {
-                Ok(()) => return Ok(Value::Null),
-                Err(Fault::Note(told)) => return Err(told),
-                Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-            }
+            let flow = self.display_interactive(answer.contents());
+            self.settle_quiet(flow)?;
+            return Ok(Value::Null);
         }
         Ok(answer)
     }
