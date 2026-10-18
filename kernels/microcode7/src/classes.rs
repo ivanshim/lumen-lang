@@ -2,6 +2,10 @@
 // members are sought. Calls and member wrappers use that order alike.
 use super::*;
 
+const TM_FIELDS: [&str; 11] = [
+    "tm_year", "tm_mon", "tm_mday", "tm_hour", "tm_min", "tm_sec", "tm_wday", "tm_yday", "tm_isdst", "tm_zone", "tm_gmtoff",
+];
+
 impl<'a> Machine<'a> {
     pub(super) fn detail(&self, key: &str) -> &str {
         // The keys are told apart by length first, so a read compares
@@ -3875,12 +3879,6 @@ impl<'a> Machine<'a> {
             fresh.globals_rebound = true;
             fresh.doc = fresh.literals.first().filter(|_| fresh.flags & (1 << 26) != 0)
                 .and_then(|entry| if let Value::Text(label) = entry { Some(label.to_string()) } else { None });
-            fresh.globe = Some(globals.clone());
-            fresh.born = Some(self.builtins_here());
-            fresh.framed_in = match globals.settled() {
-                Value::Dict(entries) => entries.iter().find(|(key, _)| key.bare() == "__name__").and_then(|(_, value)| match value.settled() { Value::Text(name) => Some(name), _ => None }),
-                _ => None,
-            };
             if let Some(Value::Text(name)) = options[2].as_ref().map(Value::settled) { fresh.ident = name.to_string(); fresh.qualification = name.to_string(); }
             let closure = match options[4].as_ref().map(Value::settled) {
                 None | Some(Value::Nil) => Vec::new(),
@@ -4057,21 +4055,22 @@ impl<'a> Machine<'a> {
                 if matches!(word.as_str(),"str_iterator"|"str_ascii_iterator"){
                     return Err(format!("TypeError: cannot create '{}' instances",word).into());
                 }
+                let has_init = self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|key| self.inherited_entry(&class, key)).is_some();
                 let initial = match self.table.prims.get(word) {
                     Some(Prim::Uniques) => Vec::new(),
                     // A dict-derived constructor receives the original input after
                     // an empty native dictionary has been allocated for its instance.
-                    Some(Prim::Dictionary) if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|key| self.inherited_entry(&class, key)).is_some() => Vec::new(),
-                    Some(Prim::AsReal) if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|key| self.inherited_entry(&class, key)).is_some() => {
+                    Some(Prim::Dictionary) if has_init => Vec::new(),
+                    Some(Prim::AsReal) if has_init => {
                         self.open_arguments(given.clone())?.0.into_iter().take(1).collect()
                     },
                     // A mutable container takes its members in its own
                     // `__init__`; where the class writes one, the kind
                     // primitive is asked only to allocate the empty thing
                     // and the class's method is handed the arguments.
-                    Some(Prim::Listed | Prim::Dictionary | Prim::Octets(1)) if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|key| self.inherited_entry(&class, key)).is_some() => Vec::new(),
-                    Some(Prim::Filtered) if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
-                    Some(Prim::Unchanging | Prim::Tupling) if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).and_then(|key| self.inherited_entry(&class, key)).is_some() => self.open_arguments(given.clone())?.0,
+                    Some(Prim::Listed | Prim::Dictionary | Prim::Octets(1)) if has_init => Vec::new(),
+                    Some(Prim::Filtered) if has_init => self.open_arguments(given.clone())?.0,
+                    Some(Prim::Unchanging | Prim::Tupling) if has_init => self.open_arguments(given.clone())?.0,
                     _ => given.clone(),
                 };
                 self.thing_over_native(class.clone(),word,initial)?
@@ -5317,7 +5316,7 @@ impl<'a> Machine<'a> {
         let mut members=vec![("__module__".to_string(),Value::text("time")),("__getitem__".into(),Self::wrap(238,Vec::new())),("__new__".to_string(),self.native_allocation("struct_time"))];
         for (name, tag) in [("__repr__",233),("__str__",233),("__reduce__",234),("__replace__",237)] { members.push((name.into(),Self::wrap(tag,Vec::new()))); }
         for (name, count) in [("n_sequence_fields",9),("n_fields",11),("n_unnamed_fields",0)] { members.push((name.into(),Value::Small(count))); }
-        members.push(("__match_args__".into(), Value::tuple(["tm_year","tm_mon","tm_mday","tm_hour","tm_min","tm_sec","tm_wday","tm_yday","tm_isdst"].into_iter().map(Value::text).collect())));
+        members.push(("__match_args__".into(), Value::tuple(TM_FIELDS[..9].iter().copied().map(Value::text).collect())));
         let result=Rc::new(Blueprint { name:String::from("struct_time"),presentation:Some(String::from("<class 'time.struct_time'>")),under: std::cell::RefCell::new(Some(parent.clone())),parents: std::cell::RefCell::new(vec![parent]),ancestry:RefCell::new(ranks),answers:Vec::new(),fields:Vec::new(),reaches:Vec::new(),methods:Vec::new(),constants:vec![("\0native".into(),Value::text("struct_time"))],shared: crate::data::BlueprintEntries::new(members),instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot:Cell::new(None),has_slot_storage:true,sealed:Cell::new(false),order_supplied:Cell::new(false),supplied_order:RefCell::new(Vec::new()),type_names:RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         self.native_kinds.push(("struct_time".into(),result.clone())); result
     }
@@ -5334,7 +5333,7 @@ impl<'a> Machine<'a> {
         let attributes=attributes.unwrap_or_else(||Value::Dict(Rc::new(Vec::new().into())));
         let attributes=Self::underlying(&attributes).unwrap_or(attributes).settled();
         let Value::Dict(attributes)=attributes else{return Err("TypeError: time.struct_time() takes a dict as second arg, if any".to_owned().into())};
-        let words=["tm_year","tm_mon","tm_mday","tm_hour","tm_min","tm_sec","tm_wday","tm_yday","tm_isdst","tm_zone","tm_gmtoff"];
+        let words = TM_FIELDS;
         let used = words[row.len()..].iter().filter(|name| attributes.iter().any(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == **name))).count();
         if attributes.len() != used { return Err("TypeError: time.struct_time() got duplicate or unexpected field name(s)".to_owned().into()); }
         for name in &words[row.len()..] {row.push(attributes.iter().find_map(|(key,value)|matches!(key,Value::Text(text) if text.as_ref()==*name).then(||value.clone())).unwrap_or(Value::Nil));}
@@ -5343,7 +5342,7 @@ impl<'a> Machine<'a> {
         self.made+=1;Ok(Value::Thing(Rc::new(Thing {of:class,reclassified:RefCell::new(None),holds:RefCell::new(holds),turn:self.made})))
     }
     fn display_clock_record(&mut self, instance:&Value) -> Res {
-        let keys=["tm_year","tm_mon","tm_mday","tm_hour","tm_min","tm_sec","tm_wday","tm_yday","tm_isdst"];
+        let keys = &TM_FIELDS[..9];
         let mut text=String::from("time.struct_time(");
         for name in keys {if !text.ends_with('('){text.push_str(", ");}text.push_str(name);text.push('=');let value=self.read_class_member(instance.clone(),name,false)?;text.push_str(&self.object_words(&value,true)?);}
         text.push(')');Ok(Value::text(&text))
@@ -5352,7 +5351,7 @@ impl<'a> Machine<'a> {
     fn replace_clock_record(&mut self, parameters: Vec<Value>) -> Res {
         let (ordered, named) = self.open_arguments(parameters)?;
         if ordered.len() != 1 { return Err("TypeError: __replace__() takes one positional argument".to_owned().into()); }
-        let keys = ["tm_year","tm_mon","tm_mday","tm_hour","tm_min","tm_sec","tm_wday","tm_yday","tm_isdst","tm_zone","tm_gmtoff"];
+        let keys = TM_FIELDS;
         if named.iter().any(|(name, _)| !keys.contains(&name.as_str())) { return Err("TypeError: Got unexpected field name(s)".to_owned().into()); }
         let mut fields = Vec::new();
         for key in keys {
