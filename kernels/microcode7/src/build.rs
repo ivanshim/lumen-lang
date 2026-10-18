@@ -8135,6 +8135,11 @@ impl<'a> Builder<'a> {
     }
 
 
+    /// The nearest token before the cursor spelt `lexeme`.
+    fn back_to(&self, lexeme: &str) -> Option<usize> {
+        (0..self.pos).rev().find(|&at| self.tokens[at].lexeme == lexeme)
+    }
+
     /// The parameters of a function or a method, up to the closing bracket.
     fn parameters(&mut self, named: &str, short: bool) -> Res<(Vec<String>, Vec<(usize, usize)>, Vec<String>, Vec<Form>)> {
         let table = self.table;
@@ -8267,9 +8272,7 @@ impl<'a> Builder<'a> {
                     if twice.is_empty() { return Err(wrong()); }
                     let message = format!("{}{}{}", twice[0], last, twice.get(1).map_or("", String::as_str));
                     if table.has_any("ext.builtin.exceptions.syntax") {
-                        let mut cursor = self.pos;
-                        while cursor > 0 { cursor -= 1; if self.tokens[cursor].lexeme == *last { break; } }
-                        repeated.get_or_insert((message, cursor));
+                        repeated.get_or_insert((message, self.back_to(last).unwrap_or(0)));
                     } else {
                         return Err(message);
                     }
@@ -8287,8 +8290,7 @@ impl<'a> Builder<'a> {
                             // takes nothing, standing over it as the
                             // reference stands.
                             let newest = params.last().cloned().unwrap_or_default();
-                            let mut cursor = self.pos;
-                            while cursor > 0 { cursor -= 1; if self.tokens[cursor].lexeme == newest { self.pos = cursor; break; } }
+                            if let Some(at) = self.back_to(&newest) { self.pos = at; }
                             return Err("SyntaxError: parameter without a default follows parameter with a default".to_string());
                         }
                         return Err(wrong());
@@ -8821,8 +8823,7 @@ impl<'a> Builder<'a> {
                 } else if way == 'b' && default_seen {
                     if table.has_any("ext.builtin.exceptions.syntax") {
                         let newest = names.last().cloned().unwrap_or_default();
-                        let mut cursor = self.pos;
-                        while cursor > 0 { cursor -= 1; if self.tokens[cursor].lexeme == newest { self.pos = cursor; break; } }
+                        if let Some(at) = self.back_to(&newest) { self.pos = at; }
                         return Err("SyntaxError: parameter without a default follows parameter with a default".to_string());
                     }
                     return Err(bad());
