@@ -724,6 +724,9 @@ const RESULT_CELL: &str = "#result";
 const SEEN_READ: u8 = 0;
 const SEEN_WRITTEN: u8 = 1;
 const SEEN_ANNOTATED: u8 = 2;
+/// The reference's CO_FUTURE_* bits, one per feature a `__future__`
+/// import may name (generators' is retired to 0).
+const FUTURE: &[(&str, i64)] = &[("nested_scopes", 0x10), ("generators", 0), ("division", 0x20000), ("absolute_import", 0x40000), ("with_statement", 0x80000), ("print_function", 0x100000), ("unicode_literals", 0x200000), ("barry_as_FLUFL", 0x400000), ("generator_stop", 0x800000), ("annotations", 0x1000000)];
 const TEMP_CELL: &str = "#t";
 /// What a class body gathers as it is read: its properties and how far
 /// each may be reached from, the values it keeps for itself, its
@@ -1334,6 +1337,56 @@ impl<'a> Compiler<'a> {
             SEEN_ANNOTATED => format!("annotated name '{name}' can't be {before}"),
             _ => format!("name '{name}' is assigned to before {before} declaration"),
         }
+    }
+
+    /// Passes the separator where one stands; whether one did.
+    fn take_between(&mut self, sep: Option<&str>) -> bool {
+        match sep {
+            Some(s) if self.at_symbol(s) => { self.pass_token(); true }
+            _ => false,
+        }
+    }
+
+    /// The statements of one clause of a C-style for, separated like
+    /// call arguments, up to where `stop` says the clause ends.
+    fn c_clauses(&mut self, sep: Option<&str>, stop: impl Fn(&Self) -> bool) -> Res<()> {
+        while !stop(self) {
+            self.simple_stmt()?;
+            if !self.take_between(sep) { break; }
+        }
+        Ok(())
+    }
+
+    /// How many line ends and statement ends stand ahead.
+    fn past_line_ends(&self) -> usize {
+        let mut ahead = 0;
+        while { let t = self.look_ahead(ahead); t.shape == Shape::LineEnd || (t.shape == Shape::Sign && self.lang.ends_stmt(&t.lexeme)) } { ahead += 1; }
+        ahead
+    }
+
+    /// A name an import binds, written as an import does.
+    fn import_write(&mut self, bound: &str) {
+        self.claim(bound);
+        self.importing = true;
+        self.write(bound);
+        self.importing = false;
+    }
+
+    /// Every look inside becomes a gentle one, so that a place that is
+    /// not there answers nothing instead of stopping.
+    fn gentle_lookups(&mut self, from: usize) {
+        for w in self.piece().instrs[from..].iter_mut() {
+            if let Instr::Act(Action::At, 2) = w {
+                *w = Instr::Act(Action::Peek, 2);
+            }
+        }
+    }
+
+    /// Where the token stands in the source, for the trace.
+    fn token_location(&self, tok: &Token) -> Instr {
+        let row = (tok.row as u32).saturating_sub(self.before);
+        let stop = if tok.end_column == 0 { tok.byte_column.max(tok.column) + tok.lexeme.len() } else { tok.byte_end_column.max(tok.end_column) };
+        Instr::Location(row, tok.byte_column.max(tok.column).saturating_sub(1) as u32, row, stop.saturating_sub(1) as u32)
     }
 
     /// Whether a block opens here, past any line ends before it: a
@@ -4064,19 +4117,13 @@ impl<'a> Compiler<'a> {
                 self.warn_in_finally("return");
                 return self.return_stmt();
             }
-            if Lang::spells(&lang.break_words, &w) {
-                self.warn_in_finally("break");
+            let breaking = Lang::spells(&lang.break_words, &w);
+            if breaking || Lang::spells(&lang.continue_words, &w) {
+                self.warn_in_finally(if breaking { "break" } else { "continue" });
                 self.pass_token();
                 let levels = self.levels()?;
                 self.leaving_lasts()?;
-                return self.leave(levels);
-            }
-            if Lang::spells(&lang.continue_words, &w) {
-                self.warn_in_finally("continue");
-                self.pass_token();
-                let levels = self.levels()?;
-                self.leaving_lasts()?;
-                return self.resume(levels);
+                return if breaking { self.leave(levels) } else { self.resume(levels) };
             }
             if Lang::spells(&lang.function_words, &w) {
                 self.pass_token();
@@ -4889,7 +4936,7 @@ impl<'a> Compiler<'a> {
                     }
                 }
                 self.forbid_debug(&bound)?;
-                if future && !["nested_scopes", "generators", "division", "absolute_import", "with_statement", "print_function", "unicode_literals", "barry_as_FLUFL", "generator_stop", "annotations"].contains(&original.as_str()) {
+                if future && !FUTURE.iter().any(|(name, _)| *name == original) {
                     let last = &self.tokens[self.pos - 1];
                     self.stop_after(last);
                     self.pos = feature_at;
@@ -4897,9 +4944,7 @@ impl<'a> Compiler<'a> {
                 }
                 if future && original == "barry_as_FLUFL" { self.barry_as_flufl = true; }
                 if future {
-                    // The reference's CO_FUTURE_* bits, one per feature
-                    // the text may name (generators' is retired to 0).
-                    let bit: i64 = match original.as_str() { "nested_scopes" => 0x10, "generators" => 0, "division" => 0x20000, "absolute_import" => 0x40000, "with_statement" => 0x80000, "print_function" => 0x100000, "unicode_literals" => 0x200000, "barry_as_FLUFL" => 0x400000, "generator_stop" => 0x800000, _ => 0x1000000 };
+                    let bit = FUTURE.iter().find(|(name, _)| *name == original).map_or(0, |(_, bit)| *bit);
                     self.future_bits |= bit;
                     if original == "annotations" { self.future_annotations = true; }
                 }
@@ -4923,10 +4968,7 @@ impl<'a> Compiler<'a> {
                         self.act(Action::Import(module.clone(), ImportStyle::Names(names)), 0);
                         for (member, bound, _) in &collected {
                             self.act(Action::ImportFrom(module.clone(), member.clone()), 0);
-                            self.claim(bound);
-                            self.importing = true;
-                            self.write(bound);
-                            self.importing = false;
+                            self.import_write(bound);
                         }
                         self.discard();
                     }
@@ -4940,10 +4982,7 @@ impl<'a> Compiler<'a> {
                                 self.act(Action::ImportFrom(head, parts[at].to_string()), 0);
                             }
                         }
-                        self.claim(bound);
-                        self.importing = true;
-                        self.write(bound);
-                        self.importing = false;
+                        self.import_write(bound);
                         if *aliased && parts.len() > 1 {
                             for _ in 0..parts.len() - 1 {
                                 self.discard();
@@ -4954,10 +4993,7 @@ impl<'a> Compiler<'a> {
             } else {
                 for (_, bound, _) in &collected {
                     self.constant(Value::Null);
-                    self.claim(bound);
-                    self.importing = true;
-                    self.write(bound);
-                    self.importing = false;
+                    self.import_write(bound);
                 }
             }
         }
@@ -5000,13 +5036,8 @@ impl<'a> Compiler<'a> {
                     }
                     _ => return Err(format!("Expected identifier after the global keyword, got '{}'", seen)),
                 }
-                match &sep {
-                    Some(s) if self.at_symbol(s) => {
-                        self.pass_token();
-                        continue;
-                    }
-                    _ => return Ok(()),
-                }
+                if self.take_between(sep.as_deref()) { continue; }
+                return Ok(());
             }
             let name = self.want_name("after the global keyword")?;
             // A name bound to a global stands for that global whether or
@@ -5043,12 +5074,7 @@ impl<'a> Compiler<'a> {
             } else {
                 self.piece().globals.push((name.clone(), name));
             }
-            match &sep {
-                Some(s) if self.at_symbol(s) => {
-                    self.pass_token();
-                }
-                _ => return Ok(()),
-            }
+            if !self.take_between(sep.as_deref()) { return Ok(()); }
         }
     }
 
@@ -5093,13 +5119,8 @@ impl<'a> Compiler<'a> {
                     self.constant(Value::Null);
                 }
                 self.write(&name);
-                match &sep {
-                    Some(s) if self.at_symbol(s) => {
-                        self.pass_token();
-                        continue;
-                    }
-                    _ => return Ok(()),
-                }
+                if self.take_between(sep.as_deref()) { continue; }
+                return Ok(());
             }
             let hidden = self.gensym("static");
             let inner = self.pieces.pop().expect("the unit");
@@ -5126,12 +5147,7 @@ impl<'a> Compiler<'a> {
                 None => self.land(past),
             }
             self.piece().globals.push((name, hidden));
-            match &sep {
-                Some(s) if self.at_symbol(s) => {
-                    self.pass_token();
-                }
-                _ => return Ok(()),
-            }
+            if !self.take_between(sep.as_deref()) { return Ok(()); }
         }
     }
 
@@ -5487,15 +5503,7 @@ impl<'a> Compiler<'a> {
         let end = |a: &Self| a.look().shape == Shape::Sign && lang.ends_stmt(&a.look().lexeme);
         self.want_sign(&group.open, "after for")?;
         // init
-        while !end(self) {
-            self.simple_stmt()?;
-            match &sep {
-                Some(s) if self.at_symbol(s) => {
-                    self.pass_token();
-                }
-                _ => break,
-            }
-        }
+        self.c_clauses(sep.as_deref(), &end)?;
         self.pass_token();
         // The test is read once to find its end, then again after the body.
         let cond_at = self.pos;
@@ -5509,15 +5517,7 @@ impl<'a> Compiler<'a> {
         // The step, likewise, is read once to find the body.
         let step_at = self.pos;
         let mark = self.mark();
-        while !self.at_symbol(&group.close) && !self.exhausted() {
-            self.simple_stmt()?;
-            match &sep {
-                Some(s) if self.at_symbol(s) => {
-                    self.pass_token();
-                }
-                _ => break,
-            }
-        }
+        self.c_clauses(sep.as_deref(), |a| a.at_symbol(&group.close) || a.exhausted())?;
         self.piece().instrs.truncate(mark);
         self.want_sign(&group.close, "after the for clauses")?;
         let to_test = self.leap();
@@ -5527,15 +5527,7 @@ impl<'a> Compiler<'a> {
         let after = self.pos;
         let again = self.mark();
         self.pos = step_at;
-        while !self.at_symbol(&group.close) && !self.exhausted() {
-            self.simple_stmt()?;
-            match &sep {
-                Some(s) if self.at_symbol(s) => {
-                    self.pass_token();
-                }
-                _ => break,
-            }
-        }
+        self.c_clauses(sep.as_deref(), |a| a.at_symbol(&group.close) || a.exhausted())?;
         self.land(to_test);
         if has_test {
             self.pos = cond_at;
@@ -6123,12 +6115,7 @@ impl<'a> Compiler<'a> {
         while !self.on_sep() && !self.exhausted() {
             self.expr(0)?;
             argc += 1;
-            match &sep {
-                Some(s) if self.at_symbol(s) => {
-                    self.pass_token();
-                }
-                _ => break,
-            }
+            if !self.take_between(sep.as_deref()) { break; }
         }
         self.call(&name, argc)?;
         self.piece().result_touched = true;
@@ -6227,15 +6214,7 @@ impl<'a> Compiler<'a> {
             self.body()?;
         }
         // An else may come after line ends.
-        let mut ahead = 0;
-        loop {
-            let t = self.look_ahead(ahead);
-            if t.shape == Shape::LineEnd || (t.shape == Shape::Sign && lang.ends_stmt(&t.lexeme)) {
-                ahead += 1;
-            } else {
-                break;
-            }
-        }
+        let ahead = self.past_line_ends();
         let t = self.look_ahead(ahead);
         let elif = t.shape == Shape::Instr && Lang::spells(&lang.elif_words, &t.spelling());
         let els = t.shape == Shape::Instr && Lang::spells(&lang.else_words, &t.spelling());
@@ -7195,11 +7174,7 @@ impl<'a> Compiler<'a> {
         self.gathering().arms -= 1;
         first?;
         // A further arm may stand after the ends of lines.
-        let mut ahead = 0;
-        while {
-            let word = self.look_ahead(ahead);
-            word.shape == Shape::LineEnd || (word.shape == Shape::Sign && lang.ends_stmt(&word.lexeme))
-        } { ahead += 1; }
+        let ahead = self.past_line_ends();
         let word = self.look_ahead(ahead);
         let another = word.shape == Shape::Instr && Lang::spells(&lang.elif_words, &word.spelling());
         let otherwise = word.shape == Shape::Instr && Lang::spells(&lang.else_words, &word.spelling());
@@ -12128,33 +12103,16 @@ impl<'a> Compiler<'a> {
                                 self.put(Instr::Forget(saved));
                                 if !lang.trace_fields.is_empty() { self.put(self.expression_location(origin)); }
                                 self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), argc + 1);
-                            } else if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
+                            } else if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Lead)) {
                                 // push(arr, v), put(arr, i, v): the array is named.
                                 let target = match self.look().shape {
                                     Shape::Instr => self.take().lexeme,
                                     _ => return Err(format!("First argument to {}() must be an array variable name", tok.lexeme)),
                                 };
-                                if let Some(sep) = &call.between {
-                                    if self.at_symbol(sep) {
-                                        self.pass_token();
-                                    }
-                                }
+                                self.take_between(call.between.as_deref());
                                 let argc = self.arguments(&call)?;
-                                self.mutation(&tok.lexeme, &target, argc + 1)?;
-                            } else if native == Some(Builtin::Lead) {
-                                // The array put in front of is named, as
-                                // the one pushed onto is.
-                                let target = match self.look().shape {
-                                    Shape::Instr => self.take().lexeme,
-                                    _ => return Err(format!("First argument to {}() must be an array variable name", tok.lexeme)),
-                                };
-                                if let Some(sep) = &call.between {
-                                    if self.at_symbol(sep) {
-                                        self.pass_token();
-                                    }
-                                }
-                                let argc = self.arguments(&call)?;
-                                self.leading(&tok.lexeme, &target, argc)?;
+                                if native == Some(Builtin::Lead) { self.leading(&tok.lexeme, &target, argc)?; }
+                                else { self.mutation(&tok.lexeme, &target, argc + 1)?; }
                             } else if native == Some(Builtin::Erase) {
                                 self.forget(&call)?;
                             } else if native == Some(Builtin::Held) {
@@ -12210,9 +12168,7 @@ impl<'a> Compiler<'a> {
                                     self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), argc + 1);
                                 } else {
                                     if !lang.trace_fields.is_empty() && native.is_none() {
-                                        let row = (tok.row as u32).saturating_sub(self.before);
-                                        let stop = if tok.end_column == 0 { tok.byte_column.max(tok.column) + tok.lexeme.len() } else { tok.byte_end_column.max(tok.end_column) };
-                                        self.put(Instr::Location(row, tok.byte_column.max(tok.column).saturating_sub(1) as u32, row, stop.saturating_sub(1) as u32));
+                                        self.put(self.token_location(&tok));
                                         self.read_callee(&tok.lexeme);
                                         self.put(self.expression_location(origin));
                                         self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), argc + 1);
@@ -12261,9 +12217,7 @@ impl<'a> Compiler<'a> {
                         }
                         _ => {
                             if !lang.trace_fields.is_empty() && !self.writing_place && (self.reading_annotation || self.annotation_target.is_none()) && !lang.member_mark.as_ref().is_some_and(|mark| self.at_symbol(mark)) && !Lang::spells(&lang.expression_assign, &self.look().spelling()) {
-                                let row = (tok.row as u32).saturating_sub(self.before);
-                                let stop = if tok.end_column == 0 { tok.byte_column.max(tok.column) + tok.lexeme.len() } else { tok.byte_end_column.max(tok.end_column) };
-                                self.put(Instr::Location(row, tok.byte_column.max(tok.column).saturating_sub(1) as u32, row, stop.saturating_sub(1) as u32));
+                                self.put(self.token_location(&tok));
                             }
                             self.read(&tok.lexeme);
                         },
@@ -12993,11 +12947,7 @@ impl<'a> Compiler<'a> {
         let from = self.mark();
         self.put(Instr::Hush(true));
         self.expr(0)?;
-        for w in self.piece().instrs[from..].iter_mut() {
-            if let Instr::Act(Action::At, 2) = w {
-                *w = Instr::Act(Action::Peek, 2);
-            }
-        }
+        self.gentle_lookups(from);
         self.put(Instr::Hush(false));
         self.want_sign(&call.close, "after what is asked about")?;
         self.act(Action::AsBool, 1);
@@ -13014,13 +12964,7 @@ impl<'a> Compiler<'a> {
             let from = self.mark();
             self.put(Instr::Hush(true));
             self.expr(0)?;
-            // Every look inside becomes a gentle one, so that a place
-            // that is not there answers nothing instead of stopping.
-            for w in self.piece().instrs[from..].iter_mut() {
-                if let Instr::Act(Action::At, 2) = w {
-                    *w = Instr::Act(Action::Peek, 2);
-                }
-            }
+            self.gentle_lookups(from);
             self.put(Instr::Hush(false));
             self.act(Action::Nothing, 1);
             self.act(Action::Not, 1);
@@ -14445,15 +14389,9 @@ impl<'a> Compiler<'a> {
 
     /// How far ahead an else word follows, past line ends.
     fn else_ahead(&self) -> Option<usize> {
-        let mut ahead = 0;
-        loop {
-            let t = self.look_ahead(ahead);
-            if t.shape == Shape::LineEnd || (t.shape == Shape::Sign && self.lang.ends_stmt(&t.lexeme)) {
-                ahead += 1;
-            } else {
-                return (t.shape == Shape::Instr && Lang::spells(&self.lang.else_words, &t.spelling())).then_some(ahead);
-            }
-        }
+        let ahead = self.past_line_ends();
+        let t = self.look_ahead(ahead);
+        (t.shape == Shape::Instr && Lang::spells(&self.lang.else_words, &t.spelling())).then_some(ahead)
     }
 
     /// The word after a quoted name.
