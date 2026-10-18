@@ -4674,6 +4674,11 @@ impl<'a> Engine<'a> {
         if name == layout[2] { return Some(Value::ValueMethod(Rc::new((subject.clone(), "integer_size".to_string())))); }
         None
     }
+    fn weak_proxy(&self, subject: &Value) -> Option<Rc<Instance>> {
+        if self.lang.weak_refused.is_empty() { return None; }
+        let Value::Object(proxy) = subject.contents() else { return None; };
+        matches!(proxy.class_now().name.as_str(), "ProxyType" | "CallableProxyType").then_some(proxy)
+    }
     /// A member read that ends in a missing member -- whether the class's
     /// own reading hook said so, or a property's getter, or nothing was
     /// found -- is offered to the class's fallback reader before it is
@@ -4911,15 +4916,11 @@ impl<'a> Engine<'a> {
                 return Ok(Value::ValueMethod(Rc::new((subject.clone(), "code_replace".to_owned()))));
             }
         }
-        if !self.lang.weak_refused.is_empty() {
-            if let Value::Object(proxy) = subject.contents() {
-                if matches!(proxy.class_now().name.as_str(), "ProxyType" | "CallableProxyType") {
-                    let weak = proxy.fields.borrow().iter().find(|(key, _)| key == "\0weak").map(|(_, v)| v.clone());
-                    if let Some(Value::Faint(weak)) = weak {
-                        let target = weak.revive().ok_or_else(|| Fault::Note("ReferenceError: weakly-referenced object no longer exists".to_string()))?;
-                        return self.class_get(target, name, plain);
-                    }
-                }
+        if let Some(proxy) = self.weak_proxy(&subject) {
+            let weak = proxy.fields.borrow().iter().find(|(key, _)| key == "\0weak").map(|(_, v)| v.clone());
+            if let Some(Value::Faint(weak)) = weak {
+                let target = weak.revive().ok_or_else(|| Fault::Note("ReferenceError: weakly-referenced object no longer exists".to_string()))?;
+                return self.class_get(target, name, plain);
             }
         }
 
@@ -7073,15 +7074,11 @@ impl<'a> Engine<'a> {
                 return Ok(Value::Null);
             }
         }
-        if !self.lang.weak_refused.is_empty() {
-            if let Value::Object(proxy) = subject.contents() {
-                if matches!(proxy.class_now().name.as_str(), "ProxyType" | "CallableProxyType") {
-                    let weak = proxy.fields.borrow().iter().find(|(key, _)| key == "\0weak").map(|(_, v)| v.clone());
-                    if let Some(Value::Faint(weak)) = weak {
-                        let target = weak.revive().ok_or_else(|| Fault::Note("ReferenceError: weakly-referenced object no longer exists".to_string()))?;
-                        return self.class_write(target, name, value, plain);
-                    }
-                }
+        if let Some(proxy) = self.weak_proxy(&subject) {
+            let weak = proxy.fields.borrow().iter().find(|(key, _)| key == "\0weak").map(|(_, v)| v.clone());
+            if let Some(Value::Faint(weak)) = weak {
+                let target = weak.revive().ok_or_else(|| Fault::Note("ReferenceError: weakly-referenced object no longer exists".to_string()))?;
+                return self.class_write(target, name, value, plain);
             }
         }
 
