@@ -35,7 +35,8 @@
     "importlib.metadata": "runtime_adapters/metadata.py",
     "importlib.resources._common": "runtime_adapters/resources.py",
     "_py_abc": "runtime_adapters/_py_abc.py",
-    "marshal": "runtime_adapters/marshal.py"
+    "marshal": "runtime_adapters/marshal.py",
+    "re._compiler": "runtime_adapters/re_compiler.py"
   },
   "data": {
     "_codec_sjis": {
