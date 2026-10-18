@@ -298,7 +298,7 @@ impl<'a> Engine<'a> {
         for inherited in bases.iter().filter_map(|b| Self::maker_beneath(b)) {
             match &winner {
                 None => winner = Some(inherited),
-                Some(current) if Rc::ptr_eq(current, &inherited) || current.lineage.borrow().iter().any(|b| Rc::ptr_eq(b, &inherited)) => {},
+                Some(current) if Self::is_or_descends(current, &inherited) => {},
                 Some(current) if inherited.lineage.borrow().iter().any(|b| Rc::ptr_eq(b, current)) => winner = Some(inherited),
                 _ => return Err("TypeError: metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases".into()),
             }
@@ -812,9 +812,12 @@ impl<'a> Engine<'a> {
         }
         Ok(())
     }
+    fn is_or_descends(class: &Rc<Class>, base: &Rc<Class>) -> bool {
+        Rc::ptr_eq(class, base) || class.lineage.borrow().iter().any(|ancestor| Rc::ptr_eq(ancestor, base))
+    }
     pub(super) fn contains_class(class: &Rc<Class>, target: &Rc<Class>) -> bool {
         fn visit(class: &Rc<Class>, target: &Rc<Class>, seen: &mut Vec<*const Class>) -> bool {
-            if Rc::ptr_eq(class, target) || class.lineage.borrow().iter().any(|ancestor| Rc::ptr_eq(ancestor, target)) { return true; }
+            if Engine::is_or_descends(class, target) { return true; }
             let address = Rc::as_ptr(class);
             if seen.contains(&address) { return false; }
             seen.push(address);
@@ -823,7 +826,7 @@ impl<'a> Engine<'a> {
             if class.direct.borrow().iter().any(|base| visit(base, target, seen)) { return true; }
             class.base.borrow().as_ref().is_some_and(|base| visit(base, target, seen))
         }
-        if Rc::ptr_eq(class, target) || class.lineage.borrow().iter().any(|ancestor| Rc::ptr_eq(ancestor, target)) { return true; }
+        if Self::is_or_descends(class, target) { return true; }
         visit(class, target, &mut Vec::new())
     }
     pub(super) fn class_order(c: &Rc<Class>) -> Vec<Rc<Class>> {
@@ -869,7 +872,7 @@ impl<'a> Engine<'a> {
         for base in bases {
             if let Some(previous) = &chosen {
                 let old = self.solid_parent(previous); let next = self.solid_parent(base);
-                if Rc::ptr_eq(&old, &next) || old.lineage.borrow().iter().any(|p| Rc::ptr_eq(p, &next)) { continue; }
+                if Self::is_or_descends(&old, &next) { continue; }
                 if !next.lineage.borrow().iter().any(|p| Rc::ptr_eq(p, &old)) {
                     return Err(self.lang.layout_amiss.clone().unwrap_or_else(|| self.class_word("unready").to_string()).into());
                 }
@@ -1426,7 +1429,7 @@ impl<'a> Engine<'a> {
         let Some(Value::Class(owner))=parts.get(1) else{return Err(self.class_refusal())};
         let Value::Object(o)=thing else{return Err(format!("TypeError: descriptor '{}' for '{}' objects doesn't apply to a '{}' object",parts[0].plain(),owner.name,thing.core_kind()).into())};
         let word = parts[0].plain();
-        if !Rc::ptr_eq(&o.class_now(), owner) && !o.class_now().lineage.borrow().iter().any(|b| Rc::ptr_eq(b, owner)) {
+        if !Self::is_or_descends(&o.class_now(), owner) {
             let pieces = self.lang.class_details.get("descriptor.foreign").cloned().unwrap_or_default();
             if pieces.len() != 4 { return Err(self.class_refusal()); }
             return Err(format!("{}{word}{}{}{}{}{}", pieces[0], pieces[1], owner.name, pieces[2], o.class_now().name, pieces[3]).into());
@@ -1474,7 +1477,7 @@ impl<'a> Engine<'a> {
     fn slot_read(&self, thing: &Value, parts: &[Value]) -> Flow<Value> {
         if parts.get(2).is_some_and(|part|part.plain()=="\0instance-namespace") {
             if let (Value::Class(receiver),Some(Value::Class(declaring)))=(thing,parts.get(1)) {
-                let matches=Self::maker_beneath(receiver).is_some_and(|maker|Rc::ptr_eq(&maker,declaring)||maker.lineage.borrow().iter().any(|base|Rc::ptr_eq(base,declaring)));
+                let matches=Self::maker_beneath(receiver).is_some_and(|maker| Self::is_or_descends(&maker, declaring));
                 if matches{return Ok(Value::View(Rc::new((thing.clone(),"mapping".into()))));}
             }
         }
@@ -1667,7 +1670,7 @@ impl<'a> Engine<'a> {
                 let made = self.class_apply(Value::Class(property.class_now().clone()), vec![kept("\0fget").unwrap_or(Value::Null), kept("\0fset").unwrap_or(Value::Null), kept("\0fdel").unwrap_or(Value::Null), doc])?;
                 if let Value::Object(instance) = &made {
                     let class = instance.class_now();
-                    if self.property_class.as_ref().map_or(false, |known| Rc::ptr_eq(&class, known) || class.lineage.borrow().iter().any(|base| Rc::ptr_eq(base, known))) {
+                    if self.property_class.as_ref().map_or(false, |known| Self::is_or_descends(&class, known)) {
                         let stored_name = property.fields.borrow().iter().find(|(key, _)| key == "\0name").map(|(_, value)| value.clone());
                         if let Some(name) = stored_name {
                             let _ = Self::write_members(&mut instance.fields.borrow_mut(), "\0name", Some(name), false);
@@ -1989,7 +1992,7 @@ impl<'a> Engine<'a> {
         let Value::Class(owner) = &parts[1] else { return Err(self.class_refusal()); };
         if let Value::Object(object) = subject.contents() {
             let kind = object.class_now();
-            if Rc::ptr_eq(&kind, owner) || kind.lineage.borrow().iter().any(|base| Rc::ptr_eq(base, owner)) { return Ok(()); }
+            if Self::is_or_descends(&kind, owner) { return Ok(()); }
         }
         Err(format!("TypeError: descriptor '{}' for '{}' objects doesn't apply to a '{}' object", parts[2].plain(), owner.name, Self::type_argument_kind(subject)).into())
     }
@@ -2385,7 +2388,7 @@ impl<'a> Engine<'a> {
                     let items = self.call_items(args)?;
                     let plain: Vec<Value> = items.iter().filter(|(key, _)| key.is_none()).map(|(_, held)| held.contents()).collect();
                     let receiver = plain.first().ok_or_else(|| format!("TypeError: descriptor '{word}' of 'weakref.ReferenceType' object needs an argument"))?;
-                    let accepts = |given: &Value| matches!(given, Value::Object(instance) if Rc::ptr_eq(&instance.class_now(), base) || instance.class_now().lineage.borrow().iter().any(|parent| Rc::ptr_eq(parent, base)));
+                    let accepts = |given: &Value| matches!(given, Value::Object(instance) if Self::is_or_descends(&instance.class_now(), base));
                     if !accepts(receiver) { return Err(format!("TypeError: descriptor '{word}' requires a 'weakref.ReferenceType' object but received a '{}'", Self::type_argument_kind(receiver)).into()); }
                     if items.iter().any(|(key, _)| key.is_some()) { return Err(format!("TypeError: wrapper {word}() takes no keyword arguments").into()); }
                     let wanted = usize::from(word.as_ref() != "__hash__");
@@ -2418,13 +2421,13 @@ impl<'a> Engine<'a> {
                         if !self.stands_for_kind(receiver) {
                             return Err(format!("TypeError: weakref.ReferenceType.__new__(X): X is not a type object ({})", Self::type_argument_kind(receiver)).into());
                         }
-                        let subtype = matches!(receiver, Value::Class(kind) if Rc::ptr_eq(kind, base) || kind.lineage.borrow().iter().any(|parent| Rc::ptr_eq(parent, base)));
+                        let subtype = matches!(receiver, Value::Class(kind) if Self::is_or_descends(kind, base));
                         if !subtype {
                             let word = self.class_get(receiver.clone(), "__name__", false)?.plain();
                             return Err(format!("TypeError: weakref.ReferenceType.__new__({word}): {word} is not a subtype of weakref.ReferenceType").into());
                         }
                     } else {
-                        let subtype = matches!(receiver, Value::Object(instance) if Rc::ptr_eq(&instance.class_now(), base) || instance.class_now().lineage.borrow().iter().any(|parent| Rc::ptr_eq(parent, base)));
+                        let subtype = matches!(receiver, Value::Object(instance) if Self::is_or_descends(&instance.class_now(), base));
                         if !subtype { return Err(format!("TypeError: descriptor '__init__' requires a 'weakref.ReferenceType' object but received a '{}'", Self::type_argument_kind(receiver)).into()); }
                         if items.iter().any(|(key, _)| key.is_some()) { return Err("TypeError: ref() takes no keyword arguments".into()); }
                     }
@@ -3924,7 +3927,7 @@ impl<'a> Engine<'a> {
             if self.lang.destructor.is_some() || self.lang.finaliser.is_some() {
                 self.track_live_object(o);
             }
-            if Rc::ptr_eq(&o.class_now(),&c) || o.class_now().lineage.borrow().iter().any(|b| Rc::ptr_eq(b,&c)) {
+            if Self::is_or_descends(&o.class_now(), &c) {
                 let init = self.lang.constructor.as_deref().and_then(|n| self.class_value(&o.class_now(),n));
                 if let Some(f) = init {
                     let answer = if self.native_reference_slot(&f, &object) {
@@ -4434,7 +4437,7 @@ impl<'a> Engine<'a> {
         if slot.0 != 183 || !(slot.1.len() == 1 || slot.1.len() == 2 && matches!(slot.1.get(1), Some(Value::Text(_)))) { return false; }
         let (Some(Value::Class(declared)), Value::Object(instance)) = (slot.1.first(), value) else { return false; };
         let actual = instance.class_now();
-        Rc::ptr_eq(&actual, declared) || actual.lineage.borrow().iter().any(|base| Rc::ptr_eq(base, declared))
+        Self::is_or_descends(&actual, declared)
     }
 
     pub(super) fn bind_class_value(&mut self, value: Value, subject: Option<Value>, class: Rc<Class>) -> Flow<Value> {
@@ -4958,7 +4961,7 @@ impl<'a> Engine<'a> {
                 let dynamic = match receiver {
                     Value::Object(o) => {
                         let actual=o.class_now();
-                        if Rc::ptr_eq(&actual,owner)||actual.lineage.borrow().iter().any(|base|Rc::ptr_eq(base,owner)){actual}
+                        if Self::is_or_descends(&actual, owner) { actual }
                         else if let Some(Value::Class(reported))=self.named_class_of(receiver)? {
                             if !Rc::ptr_eq(&reported,owner)&&!reported.lineage.borrow().iter().any(|base|Rc::ptr_eq(base,owner)){return Err("TypeError: super(type, obj): obj must be an instance or subtype of type".into());}
                             reported
