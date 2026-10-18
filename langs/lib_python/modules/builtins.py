@@ -648,7 +648,14 @@ def _host_open(file, mode='r', buffering=-1, encoding=None, errors=None, newline
     # refuses it before the file is ever made.
     if newline is not None and 'b' in mode:
         raise ValueError("binary mode doesn't take a newline argument")
-    return _HostFile(file, mode, encoding, errors)
+    return _host_file(file, mode, encoding, errors)
+
+
+# The reference's builtins hold no file type: this one stays reachable
+# through its maker alone, not by name in the module.
+def _host_file(file, mode, encoding, errors, _kind=_HostFile):
+    return _kind(file, mode, encoding, errors)
+del _HostFile
 
 
 def open(*args, **kwargs):
