@@ -7776,7 +7776,7 @@ impl<'a> Engine<'a> {
         use std::os::fd::AsRawFd;
         use std::io::{Seek, SeekFrom};
         extern "C" { fn fcntl(fd: i32, command: i32, ...) -> i32; fn isatty(fd: i32) -> i32; fn pipe(fds: *mut i32) -> i32; }
-        let error = |fault: std::io::Error| Value::tuple(vec![Value::Small(fault.raw_os_error().unwrap_or(5) as i64), Value::text(fault.to_string().split(" (os error").next().unwrap_or("I/O error"))]);
+        let error = |fault: std::io::Error| Self::os_error_pair(&fault);
         if matches!(args, [Value::Null, Value::Text(action)] if action.as_ref() == "pipe") {
             use std::os::fd::FromRawFd;
             let mut ends = [-1i32; 2];
@@ -21761,10 +21761,7 @@ impl<'a> Engine<'a> {
                     let bytes = bytes.borrow();
                     let mut output: Box<dyn std::io::Write> = if self.truth(&args[1]) { Box::new(std::io::stderr()) } else { self.written_out.set(true); Box::new(std::io::stdout()) };
                     if let Err(fault) = output.write_all(&bytes).and_then(|_| output.flush()) {
-                        let number = fault.raw_os_error().unwrap_or(5);
-                        let description = fault.to_string();
-                        let description = description.split(" (os error").next().unwrap_or(&description);
-                        return Ok(Value::tuple(vec![Value::Small(number as i64), Value::text(description)]));
+                        return Ok(Self::os_error_pair(&fault));
                     }
                     return Ok(Value::Small(bytes.len() as i64));
                 }
@@ -21783,7 +21780,7 @@ impl<'a> Engine<'a> {
                         stdout.write_all(text.as_bytes()).and_then(|_| stdout.flush())
                     };
                     if let Err(error) = result {
-                        return Ok(Value::tuple(vec![Value::Small(error.raw_os_error().unwrap_or(5) as i64), Value::text(error.to_string().split(" (os error").next().unwrap_or("I/O error"))]));
+                        return Ok(Self::os_error_pair(&error));
                     }
                 }
                 Value::Small(text.chars().count() as i64)
@@ -21915,15 +21912,20 @@ impl<'a> Engine<'a> {
                     Err(_) => Value::Flag(false),
                 }
             }
-            Builtin::FileThere => {
+            Builtin::FileThere | Builtin::FileGone | Builtin::DirGone | Builtin::DirRemove | Builtin::DirMakeOne | Builtin::DirChange => {
                 arity(1)?;
                 let sp = self.wording();
-                Value::Flag(std::path::Path::new(&args[0].display(&sp)).exists())
-            }
-            Builtin::FileGone => {
-                arity(1)?;
-                let sp = self.wording();
-                Value::Flag(std::fs::remove_file(args[0].display(&sp)).is_ok())
+                let path = args[0].display(&sp);
+                let ok = match builtin {
+                    Builtin::FileThere => std::path::Path::new(&path).exists(),
+                    Builtin::FileGone => std::fs::remove_file(&path).is_ok(),
+                    Builtin::DirGone => std::fs::remove_dir_all(&path).is_ok(),
+                    Builtin::DirRemove => std::fs::remove_dir(&path).is_ok(),
+                    Builtin::DirMakeOne => std::fs::create_dir(&path).is_ok(),
+                    Builtin::DirChange => std::env::set_current_dir(&path).is_ok(),
+                    _ => unreachable!(),
+                };
+                Value::Flag(ok)
             }
             // A fresh empty file made at the path given: nothing where
             // it stands afterwards, and the host's own number and words
@@ -21933,12 +21935,7 @@ impl<'a> Engine<'a> {
                 let sp = self.wording();
                 match std::fs::File::create(args[0].display(&sp)) {
                     Ok(_) => Value::Null,
-                    Err(problem) => {
-                        let number = problem.raw_os_error().unwrap_or(5) as i64;
-                        let words = problem.to_string();
-                        let words = words.split(" (os error").next().unwrap_or(words.as_str()).to_string();
-                        Value::tuple(vec![Value::Small(number), Value::text(&words)])
-                    }
+                    Err(problem) => Self::os_error_pair(&problem),
                 }
             }
             // A directory's own entries, in no particular order but
@@ -21981,36 +21978,6 @@ impl<'a> Engine<'a> {
                     None => Value::Flag(false),
                 }
             }
-            // A directory taken away along with everything under it.
-            Builtin::DirGone => {
-                arity(1)?;
-                let sp = self.wording();
-                Value::Flag(std::fs::remove_dir_all(args[0].display(&sp)).is_ok())
-            }
-            // One directory taken away where it stands: true when it
-            // is gone afterward, false where it still holds anything
-            // or no such directory stood there at all.
-            Builtin::DirRemove => {
-                arity(1)?;
-                let sp = self.wording();
-                Value::Flag(std::fs::remove_dir(args[0].display(&sp)).is_ok())
-            }
-            // One directory made to stand at the path given: true
-            // when it stands afterwards, false when it stood there
-            // already or the way to it does not stand.
-            Builtin::DirMakeOne => {
-                arity(1)?;
-                let sp = self.wording();
-                Value::Flag(std::fs::create_dir(args[0].display(&sp)).is_ok())
-            }
-            // The directory this run works inside becomes the one
-            // named, so a path given short opens from there: false
-            // where the name is not a standing directory's.
-            Builtin::DirChange => {
-                arity(1)?;
-                let sp = self.wording();
-                Value::Flag(std::env::set_current_dir(args[0].display(&sp)).is_ok())
-            }
             // The fault in hand: its kind's name and its words, or the
             // pair of nothing when none is being handled. Given a fault,
             // that one is told of instead.
@@ -22052,7 +22019,7 @@ impl<'a> Engine<'a> {
                 if args.len() == 2 && matches!(args[1].contents(), Value::Null) {
                     match std::fs::read_link(&path) {
                         Ok(destination) => Value::text(&destination.to_string_lossy()),
-                        Err(error) => Value::tuple(vec![Value::Small(error.raw_os_error().unwrap_or(5) as i64), Value::text(error.to_string().split(" (os error").next().unwrap_or("I/O error"))]),
+                        Err(error) => Self::os_error_pair(&error),
                     }
                 } else if args.len() == 1 {
                     Value::Small(if path.is_file() { 1 } else if path.is_dir() { 2 } else { 0 })
@@ -22060,7 +22027,7 @@ impl<'a> Engine<'a> {
                     use std::os::unix::fs::MetadataExt;
                     let metadata = if args[1].is_true() { std::fs::metadata(&path) } else { std::fs::symlink_metadata(&path) };
                     match metadata {
-                        Err(error) => Value::tuple(vec![Value::Small(error.raw_os_error().unwrap_or(5) as i64), Value::text(error.to_string().split(" (os error").next().unwrap_or("I/O error"))]),
+                        Err(error) => Self::os_error_pair(&error),
                         Ok(m) => {
                             let integers = [m.mode() as i64, m.ino() as i64, m.dev() as i64, m.nlink() as i64, m.uid() as i64, m.gid() as i64, m.size() as i64, m.atime(), m.mtime(), m.ctime()];
                             let mut row: Vec<Value> = integers.into_iter().map(Value::Small).collect();
@@ -22284,15 +22251,7 @@ impl<'a> Engine<'a> {
                 let sp = self.wording();
                 let program = self.lang.bytes_of(&args[0].display(&sp));
                 let mut asked = std::process::Command::new(std::ffi::OsStr::from_bytes(&program));
-                for word in one_after_another(&args[1]) {
-                    let word = self.lang.bytes_of(&word.display(&sp));
-                    asked.arg(std::ffi::OsStr::from_bytes(&word));
-                }
-                for (name, worth) in named_pairs(&args[2]) {
-                    let name = self.lang.bytes_of(&name.display(&sp));
-                    let worth = self.lang.bytes_of(&worth.display(&sp));
-                    asked.env(std::ffi::OsStr::from_bytes(&name), std::ffi::OsStr::from_bytes(&worth));
-                }
+                self.fill_command(&mut asked, one_after_another(&args[1]).into_iter(), &args[2]);
                 let begun = asked
                     .stdin(std::process::Stdio::null())
                     .stdout(std::process::Stdio::null())
@@ -22310,14 +22269,7 @@ impl<'a> Engine<'a> {
             Builtin::RunEnd => {
                 arity(1)?;
                 let which = as_index(&args[0])? as i64;
-                match self.beside.borrow_mut().remove(&which) {
-                    None => Value::Flag(false),
-                    Some(mut kept) => {
-                        let _ = kept.child.kill();
-                        let _ = kept.child.wait();
-                        Value::Flag(true)
-                    }
-                }
+                self.end_beside(which)
             }
             // The host's signals, one step at a time: give a number
             // the handler it answers with (0), answering the one it had;
@@ -22483,15 +22435,7 @@ impl<'a> Engine<'a> {
                             None => return Err(format!("{}() needs a program to run", name)),
                         };
                         let mut asked = std::process::Command::new(std::ffi::OsStr::from_bytes(&program));
-                        for word in words {
-                            let word = self.lang.bytes_of(&word.display(&sp));
-                            asked.arg(std::ffi::OsStr::from_bytes(&word));
-                        }
-                        for (name, worth) in named_pairs(&args[2]) {
-                            let name = self.lang.bytes_of(&name.display(&sp));
-                            let worth = self.lang.bytes_of(&worth.display(&sp));
-                            asked.env(std::ffi::OsStr::from_bytes(&name), std::ffi::OsStr::from_bytes(&worth));
-                        }
+                        self.fill_command(&mut asked, words, &args[2]);
                         let stdin_mode = as_index(&args[3])?;
                         let stdout_mode = as_index(&args[4])?;
                         let stderr_mode = as_index(&args[5])?;
@@ -22524,10 +22468,7 @@ impl<'a> Engine<'a> {
                         match kept.get_mut(&which) {
                             Some(Beside { in_pipe: Some(pipe), .. }) => match pipe.write_all(&data).and_then(|_| pipe.flush()) {
                                 Ok(()) => Value::Small(data.len() as i64),
-                                Err(fault) => Value::tuple(vec![
-                                    Value::Small(fault.raw_os_error().unwrap_or(5) as i64),
-                                    Value::text(fault.to_string().split(" (os error").next().unwrap_or("I/O error")),
-                                ]),
+                                Err(fault) => Self::os_error_pair(&fault),
                             },
                             _ => Value::tuple(vec![Value::Small(9), Value::text("Bad file descriptor")]),
                         }
@@ -22590,14 +22531,7 @@ impl<'a> Engine<'a> {
                     6 => {
                         arity(2)?;
                         let which = as_index(&args[1])? as i64;
-                        match self.beside.borrow_mut().remove(&which) {
-                            None => Value::Flag(false),
-                            Some(mut kept) => {
-                                let _ = kept.child.kill();
-                                let _ = kept.child.wait();
-                                Value::Flag(true)
-                            }
-                        }
+                        self.end_beside(which)
                     }
                     7 => {
                         arity(3)?;
@@ -23089,8 +23023,7 @@ impl<'a> Engine<'a> {
                     } else {
                         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |since| since.as_secs_f64())
                     };
-                    let mut told = crate::value::real_of(gone, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
-                    if let Value::Real(real) = &mut told { Rc::make_mut(real).floating = true; }
+                    let told = self.real_floating(gone, true);
                     return Ok(told);
                 }
                 arity(0)?;
@@ -23114,8 +23047,7 @@ impl<'a> Engine<'a> {
                     let variance = spread * spread;
                     let difference = x - mean;
                     let answer = (difference * difference / (-2.0 * variance)).exp() / (std::f64::consts::TAU * variance).sqrt();
-                    let mut real = crate::value::real_of(answer, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
-                    if let Value::Real(number) = &mut real { Rc::make_mut(number).floating = self.lang.math_floating; }
+                    let real = self.real_floating(answer, self.lang.math_floating);
                     return Ok(real);
                 }
                 if working == "normal_dist_inv_cdf" {
@@ -23124,8 +23056,7 @@ impl<'a> Engine<'a> {
                     let mu = self.math_operand(&args[2])?;
                     let sigma = self.math_operand(&args[3])?;
                     let answer = crate::statistics::inverse(p, mu, sigma)?;
-                    let mut real = crate::value::real_of(answer, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
-                    if let Value::Real(number) = &mut real { Rc::make_mut(number).floating = self.lang.math_floating; }
+                    let real = self.real_floating(answer, self.lang.math_floating);
                     return Ok(real);
                 }
                 if working == "sqrt_frac_rto" {
@@ -23157,8 +23088,7 @@ impl<'a> Engine<'a> {
                             let word = u32::try_from(bits).map_err(|_| "OverflowError: float bit pattern is out of range")?;
                             f64::from(f32::from_bits(word))
                         } else { f64::from_bits(bits) };
-                        let mut result = crate::value::real_of(number, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
-                        if let Value::Real(real) = &mut result { Rc::make_mut(real).floating = true; }
+                        let result = self.real_floating(number, true);
                         return Ok(result);
                     }
                     let value = args[1].contents();
@@ -23192,8 +23122,7 @@ impl<'a> Engine<'a> {
                         Ok(number)
                     });
                     let sum = arith::expansion_sum(converted)?;
-                    let mut result = crate::value::real_of(sum, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
-                    if let Value::Real(real) = &mut result { Rc::make_mut(real).floating = self.lang.math_floating; }
+                    let result = self.real_floating(sum, self.lang.math_floating);
                     return Ok(result);
                 }
                 let wants = match working.as_str() {
@@ -23401,8 +23330,7 @@ impl<'a> Engine<'a> {
                         let mantissa = f64::from_bits((bits & 0x800fffffffffffff) | 0x3fe0000000000000);
                         (mantissa, exponent)
                     };
-                    let mut number = crate::value::real_of(mantissa, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
-                    if let Value::Real(real) = &mut number { Rc::make_mut(real).floating = self.lang.math_floating; }
+                    let number = self.real_floating(mantissa, self.lang.math_floating);
                     return Ok(Value::tuple(vec![number, Value::Small(exponent)]));
                 }
                 // A floor answers with a whole number, not a real: the
@@ -23422,8 +23350,7 @@ impl<'a> Engine<'a> {
                 if working == "fma" {
                     let z = given(3)?;
                     let got = arith::fused(x, y, z)?;
-                    let mut value = crate::value::real_of(got, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
-                    if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = self.lang.math_floating; }
+                    let value = self.real_floating(got, self.lang.math_floating);
                     return Ok(value);
                 }
                 let got = match working.as_str() {
@@ -23511,8 +23438,7 @@ impl<'a> Engine<'a> {
                 if got.is_infinite() && bounded && !matches!(working.as_str(), "fdiv" | "nextafter" | "ulp") {
                     return Err("OverflowError: math range error".to_string());
                 }
-                let mut value = crate::value::real_of(got, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
-                if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = self.lang.math_floating; }
+                let value = self.real_floating(got, self.lang.math_floating);
                 value
             }
             // The Mersenne Twister stream the library lends its chance
@@ -23602,6 +23528,19 @@ impl<'a> Engine<'a> {
                 // The place the stream stands at, told as a whole
                 // number a library can hand back.
                 let whole_arg = |at: usize| -> Option<BigInt> { arith::whole_of(&args[at].contents()) };
+                fn stream_arg(miss: &str, args: &[Value], n: usize) -> Res<usize> {
+                    if args.len() != n { return Err(miss.to_string()); }
+                    arith::whole_of(&args[1].contents()).and_then(|number| number.to_usize()).ok_or_else(|| miss.to_string())
+                }
+                fn with_stream<R, F>(miss: &str, under: usize, f: F) -> Res<R>
+                where
+                    F: FnOnce(&mut Stream) -> R,
+                {
+                    LENT.with(|held| match held.borrow_mut().get_mut(under) {
+                        Some(stream) => Ok(f(stream)),
+                        None => Err(miss.to_string()),
+                    })
+                }
                 let Some(working) = args.first().map(|v| v.display(&sp)) else {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
@@ -23619,61 +23558,37 @@ impl<'a> Engine<'a> {
                         Value::Small(under as i64)
                     }
                     "seed" => {
-                        if args.len() != 3 { return Err(self.lang.module_helper_amiss.clone()); }
-                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
-                            return Err(self.lang.module_helper_amiss.clone());
-                        };
+                        let under = stream_arg(&self.lang.module_helper_amiss, args, 3)?;
                         let Some(number) = whole_arg(2) else { return Err(self.lang.module_helper_amiss.clone()); };
                         // The number is split into words from its right
                         // end, the way the key is read; nothing at all
                         // still makes a key of one empty word.
                         let mut key = number.magnitude().to_u32_digits();
                         if key.is_empty() { key.push(0); }
-                        LENT.with(|held| match held.borrow_mut().get_mut(under) {
-                            Some(stream) => { stream.planted_from_key(&key); Ok(Value::Null) }
-                            None => Err(self.lang.module_helper_amiss.clone()),
-                        })?
+                        with_stream(&self.lang.module_helper_amiss, under, |stream| { stream.planted_from_key(&key); Value::Null })?
                     }
                     "entropy" => {
-                        if args.len() != 2 { return Err(self.lang.module_helper_amiss.clone()); }
-                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
-                            return Err(self.lang.module_helper_amiss.clone());
-                        };
+                        let under = stream_arg(&self.lang.module_helper_amiss, args, 2)?;
                         match read_disorder(2496).map(|bytes| bytes.chunks_exact(4)
                                 .map(|four| u32::from_le_bytes([four[0], four[1], four[2], four[3]])).collect::<Vec<u32>>()) {
-                            Ok(key) => LENT.with(|held| match held.borrow_mut().get_mut(under) {
-                                Some(stream) => { stream.planted_from_key(&key); Ok(Value::Flag(true)) }
-                                None => Err(self.lang.module_helper_amiss.clone()),
-                            })?,
+                            Ok(key) => with_stream(&self.lang.module_helper_amiss, under, |stream| { stream.planted_from_key(&key); Value::Flag(true) })?,
                             Err(_) => Value::Flag(false),
                         }
                     }
                     "next" => {
-                        if args.len() != 2 { return Err(self.lang.module_helper_amiss.clone()); }
-                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
-                            return Err(self.lang.module_helper_amiss.clone());
-                        };
-                        let (high, low) = LENT.with(|held| match held.borrow_mut().get_mut(under) {
-                            Some(stream) => Ok((stream.word() >> 5, stream.word() >> 6)),
-                            None => Err(self.lang.module_helper_amiss.clone()),
-                        })?;
+                        let under = stream_arg(&self.lang.module_helper_amiss, args, 2)?;
+                        let (high, low) = with_stream(&self.lang.module_helper_amiss, under, |stream| (stream.word() >> 5, stream.word() >> 6))?;
                         let drawn = (high as f64 * 67108864.0 + low as f64) * (1.0 / 9007199254740992.0);
-                        let mut value = crate::value::real_of(drawn, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
-                        if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = self.lang.math_floating; }
-                        value
+                        self.real_floating(drawn, self.lang.math_floating)
                     }
                     "bits" => {
-                        if args.len() != 3 { return Err(self.lang.module_helper_amiss.clone()); }
-                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
-                            return Err(self.lang.module_helper_amiss.clone());
-                        };
+                        let under = stream_arg(&self.lang.module_helper_amiss, args, 3)?;
                         let Some(count) = whole_arg(2).and_then(|n| n.to_u64()) else {
                             return Err("OverflowError: Python int too large to convert to C uint64_t".into());
                         };
                         if count <= 32 {
-                            let drawn = LENT.with(|held| match held.borrow_mut().get_mut(under) {
-                                Some(stream) => Ok(if count == 0 { 0 } else { stream.word() >> (32 - count) }),
-                                None => Err(self.lang.module_helper_amiss.clone()),
+                            let drawn = with_stream(&self.lang.module_helper_amiss, under, |stream| {
+                                if count == 0 { 0 } else { stream.word() >> (32 - count) }
                             })?;
                             Value::Small(drawn as i64)
                         } else {
@@ -23683,41 +23598,29 @@ impl<'a> Engine<'a> {
                             // whole words beneath it, and its excess is
                             // dropped before it is laid in place.
                             let top = (count - 1) % 32 + 1;
-                            let drawn = LENT.with(|held| match held.borrow_mut().get_mut(under) {
-                                Some(stream) => {
-                                    let mut limbs: Vec<u32> = Vec::new();
-                                    limbs.try_reserve_exact(words).map_err(|_| "MemoryError: ".to_string())?;
-                                    for at in 0..words {
-                                        let mut word = stream.word();
-                                        if at == words - 1 { word >>= 32 - top; }
-                                        limbs.push(word);
-                                    }
-                                    Ok(limbs)
+                            let drawn = with_stream(&self.lang.module_helper_amiss, under, |stream| {
+                                let mut limbs: Vec<u32> = Vec::new();
+                                limbs.try_reserve_exact(words).map_err(|_| "MemoryError: ".to_string())?;
+                                for at in 0..words {
+                                    let mut word = stream.word();
+                                    if at == words - 1 { word >>= 32 - top; }
+                                    limbs.push(word);
                                 }
-                                None => Err(self.lang.module_helper_amiss.clone()),
-                            })?;
+                                Ok::<Vec<u32>, String>(limbs)
+                            })??;
                             Value::of_big(BigInt::from(num_bigint::BigUint::new(drawn)))
                         }
                     }
                     "state" => {
-                        if args.len() != 2 { return Err(self.lang.module_helper_amiss.clone()); }
-                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
-                            return Err(self.lang.module_helper_amiss.clone());
-                        };
-                        LENT.with(|held| match held.borrow().get(under) {
-                            Some(stream) => {
-                                let mut told: Vec<Value> = stream.words.iter().map(|w| Value::Small(*w as i64)).collect();
-                                told.push(Value::Small(stream.place as i64));
-                                Ok(Value::tuple(told))
-                            }
-                            None => Err(self.lang.module_helper_amiss.clone()),
+                        let under = stream_arg(&self.lang.module_helper_amiss, args, 2)?;
+                        with_stream(&self.lang.module_helper_amiss, under, |stream| {
+                            let mut told: Vec<Value> = stream.words.iter().map(|w| Value::Small(*w as i64)).collect();
+                            told.push(Value::Small(stream.place as i64));
+                            Value::tuple(told)
                         })?
                     }
                     "restore" => {
-                        if args.len() != 3 { return Err(self.lang.module_helper_amiss.clone()); }
-                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
-                            return Err(self.lang.module_helper_amiss.clone());
-                        };
+                        let under = stream_arg(&self.lang.module_helper_amiss, args, 3)?;
                         let row = args[2].contents();
                         let (Value::Array(parts) | Value::Tuple(parts)) = &row else {
                             return Err("TypeError: state vector must be a tuple".into());
@@ -23739,16 +23642,14 @@ impl<'a> Engine<'a> {
                             return Err("TypeError: an integer is required".into());
                         };
                         if !(0..=624).contains(&place) { return Err("ValueError: invalid state".into()); }
-                        LENT.with(|held| match held.borrow_mut().get_mut(under) {
-                            Some(stream) => { stream.words = words.to_vec(); stream.place = place as usize; Ok(Value::Null) }
-                            None => Err(self.lang.module_helper_amiss.clone()),
+                        with_stream(&self.lang.module_helper_amiss, under, |stream| {
+                            stream.words = words.to_vec();
+                            stream.place = place as usize;
+                            Value::Null
                         })?
                     }
                     "bytes" => {
-                        if args.len() != 2 { return Err(self.lang.module_helper_amiss.clone()); }
-                        let Some(want) = whole_arg(1).and_then(|n| n.to_usize()) else {
-                            return Err(self.lang.module_helper_amiss.clone());
-                        };
+                        let want = stream_arg(&self.lang.module_helper_amiss, args, 2)?;
                         // Account for CPython's variable-object header,
                         // cached hash, and terminating zero in a bytes value.
                         let overhead = 4 * std::mem::size_of::<usize>() + 1;
@@ -23767,22 +23668,15 @@ impl<'a> Engine<'a> {
                 arity(0)?;
                 Value::Flag(self.written_out.get())
             }
-            Builtin::Untaken => {
+            Builtin::Untaken | Builtin::Profile | Builtin::Complainer => {
                 let put = args.first().cloned().unwrap_or(Value::Null);
                 let held = matches!(put, Value::Null | Value::Blank);
-                *self.untaken.borrow_mut() = if held { None } else { Some(put) };
-                Value::Flag(true)
-            }
-            Builtin::Profile => {
-                let put = args.first().cloned().unwrap_or(Value::Null);
-                let held = matches!(put, Value::Null | Value::Blank);
-                *self.profiler.borrow_mut() = if held { None } else { Some(put) };
-                Value::Flag(true)
-            }
-            Builtin::Complainer => {
-                let put = args.first().cloned().unwrap_or(Value::Null);
-                let held = matches!(put, Value::Null | Value::Blank);
-                *self.complainer.borrow_mut() = if held { None } else { Some(put) };
+                let slot = match builtin {
+                    Builtin::Untaken => &self.untaken,
+                    Builtin::Profile => &self.profiler,
+                    _ => &self.complainer,
+                };
+                *slot.borrow_mut() = if held { None } else { Some(put) };
                 Value::Flag(true)
             }
             // A routine to run when the run is over, with whatever else
@@ -30795,6 +30689,48 @@ impl Engine<'_> {
         body.held.clear();
         body.enclosed.clear();
         body
+    }
+}
+
+
+impl Engine<'_> {
+    fn os_error_pair(fault: &std::io::Error) -> Value {
+        let words = fault.to_string();
+        let head = words.split(" (os error").next().unwrap_or(words.as_str());
+        Value::tuple(vec![Value::Small(fault.raw_os_error().unwrap_or(5) as i64), Value::text(head)])
+    }
+
+    fn real_floating(&self, x: f64, floating: bool) -> Value {
+        let mut value = crate::value::real_of(x, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+        if let Value::Real(real) = &mut value {
+            Rc::make_mut(real).floating = floating;
+        }
+        value
+    }
+
+    fn end_beside(&self, which: i64) -> Value {
+        match self.beside.borrow_mut().remove(&which) {
+            None => Value::Flag(false),
+            Some(mut kept) => {
+                let _ = kept.child.kill();
+                let _ = kept.child.wait();
+                Value::Flag(true)
+            }
+        }
+    }
+
+    fn fill_command(&self, cmd: &mut std::process::Command, words: impl Iterator<Item = Value>, env: &Value) {
+        use std::os::unix::ffi::OsStrExt as _;
+        let sp = self.wording();
+        for word in words {
+            let word = self.lang.bytes_of(&word.display(&sp));
+            cmd.arg(std::ffi::OsStr::from_bytes(&word));
+        }
+        for (name, worth) in named_pairs(env) {
+            let name = self.lang.bytes_of(&name.display(&sp));
+            let worth = self.lang.bytes_of(&worth.display(&sp));
+            cmd.env(std::ffi::OsStr::from_bytes(&name), std::ffi::OsStr::from_bytes(&worth));
+        }
     }
 }
 
