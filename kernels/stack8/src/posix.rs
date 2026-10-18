@@ -71,8 +71,10 @@ fn integer(value: &Value) -> Result<i64, String> {
         _ => Err("TypeError: an integer is required".into()),
     }
 }
+// Read the current operating-system error, with the existing fallback.
+fn errno() -> i32 { std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO) }
 fn status(result: i64) -> Result<Value, i32> {
-    if result < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+    if result < 0 { Err(errno()) }
     else { Ok(Value::Small(result)) }
 }
 fn stat_fields(info: libc::stat) -> Value {
@@ -172,7 +174,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
 
         "socket_hostname" => {
             let mut buffer = vec![0u8; 256];
-            if libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) != 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            if libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) != 0 { Err(errno()) }
             else { let length = buffer.iter().position(|byte| *byte == 0).unwrap_or(buffer.len()); buffer.truncate(length); Ok(bytes(buffer)) }
         },
         "socket_hostbyaddr" => Ok(host_by_address(&a[0])?),
@@ -195,7 +197,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
         "times" => {
             let mut spent: libc::tms = std::mem::zeroed();
             let clock = libc::times(&mut spent);
-            if clock < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            if clock < 0 { Err(errno()) }
             else {
                 let rate = libc::sysconf(libc::_SC_CLK_TCK) as f64;
                 let rate = if rate > 0.0 { rate } else { 100.0 };
@@ -290,7 +292,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
                 if ready >= 0 {
                     break Ok(Value::tuple(vec![awake(&rfds, &reads), awake(&wfds, &writes), awake(&efds, &extras)]));
                 }
-                let fault = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+                let fault = errno();
                 if fault != libc::EINTR { break Err(fault); }
                 check_signals()?;
                 if let Some(limit) = deadline {
@@ -379,7 +381,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
             let mut data = vec![0u8; 256];
             loop {
                 let size = libc::readlinkat(number(1)? as i32, p.as_ptr(), data.as_mut_ptr().cast(), data.len());
-                if size < 0 { break Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)); }
+                if size < 0 { break Err(errno()); }
                 if (size as usize) < data.len() { data.truncate(size as usize); break Ok(bytes(data)); }
                 data.resize(data.len()*2, 0);
             }
@@ -406,7 +408,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
                     dir
                 }
             } else {libc::opendir(pathname(0)?.as_ptr())};
-            if directory.is_null() {Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO))}
+            if directory.is_null() {Err(errno())}
             else {Ok(DIRECTORIES.with(|held| {let mut held = held.borrow_mut(); held.0 += 1; let key = held.0; held.1.insert(key, Directory(directory, from_fd)); Value::Small(key)}))}
         },
         "scandir_next" => {
@@ -477,7 +479,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
         "get_inheritable" | "set_inheritable" => {
             let fd = number(0)? as i32;
             let flags = libc::fcntl(fd, libc::F_GETFD);
-            if flags < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            if flags < 0 { Err(errno()) }
             else if op.as_ref() == "get_inheritable" { Ok(Value::Flag(flags & libc::FD_CLOEXEC == 0)) }
             else {
                 let next = if a[1].is_true() { flags & !libc::FD_CLOEXEC } else { flags | libc::FD_CLOEXEC };
@@ -487,7 +489,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
         "get_blocking" | "set_blocking" => {
             let fd = number(0)? as i32;
             let flags = libc::fcntl(fd, libc::F_GETFL);
-            if flags < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            if flags < 0 { Err(errno()) }
             else if op.as_ref() == "get_blocking" { Ok(Value::Flag(flags & libc::O_NONBLOCK == 0)) }
             else {
                 let next = if a[1].is_true() { flags & !libc::O_NONBLOCK } else { flags | libc::O_NONBLOCK };
@@ -546,7 +548,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
         "socketpair" => {
             let mut fds = [0; 2];
             if libc::socketpair(number(0)? as _, number(1)? as i32 | libc::SOCK_CLOEXEC, number(2)? as _, fds.as_mut_ptr()) < 0 {
-                Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO))
+                Err(errno())
             } else { Ok(Value::tuple(fds.into_iter().map(|fd| Value::Small(fd.into())).collect())) }
         },
         "socket_shutdown" => status(libc::shutdown(number(0)? as _, number(1)? as _) as i64),
