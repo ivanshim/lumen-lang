@@ -1576,6 +1576,12 @@ fn name_like(s: &str, unicode: bool, prefix: Option<char>) -> bool {
     }
 }
 
+/// Order of `ext.system.kind.brief`: the place a kind's short word
+/// occupies in that list.
+const IN_ORDER: [Sort; 7] = [
+    Sort::Integer, Sort::Rational, Sort::Real, Sort::Text, Sort::Boolean, Sort::Array, Sort::Null,
+];
+
 impl Lang {
     /// Text of a number with the digit separators taken out, or nothing
     /// where one of them stands anywhere but between two figures. Text
@@ -3309,9 +3315,6 @@ impl Lang {
     /// The word this language names a value's kind by, the shorter one
     /// where it has one.
     pub fn kind_word(&self, v: &crate::value::Value) -> String {
-        use crate::value::Sort;
-        const IN_ORDER: [Sort; 7] =
-            [Sort::Integer, Sort::Rational, Sort::Real, Sort::Text, Sort::Boolean, Sort::Array, Sort::Null];
         let Some(kind) = v.sort() else { return "value".to_string() };
         let at = IN_ORDER.iter().position(|k| *k == kind);
         match at.and_then(|i| self.brief_kinds.get(i)).filter(|word| *word != "-") {
@@ -3324,9 +3327,6 @@ impl Lang {
     /// kind with or by the shorter word it complains with. Nothing where
     /// the word names no kind of the language's.
     pub fn kind_of_word(&self, word: &str) -> Option<crate::value::Sort> {
-        use crate::value::Sort;
-        const IN_ORDER: [Sort; 7] =
-            [Sort::Integer, Sort::Rational, Sort::Real, Sort::Text, Sort::Boolean, Sort::Array, Sort::Null];
         if let Some((_, kind)) = self.sort_bindings.iter().find(|(n, _)| n == word) {
             return Some(*kind);
         }
