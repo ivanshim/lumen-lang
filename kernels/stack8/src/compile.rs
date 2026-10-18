@@ -12065,12 +12065,7 @@ impl<'a> Compiler<'a> {
                 self.read(owner);
                 self.act(Action::Grab(Rc::from(member)), 1);
                 if let Some(call) = lang.calling.as_ref().filter(|call| self.at_symbol(&call.open)) {
-                    let method = self.gensym("shadowed_member");
-                    self.write(&method);
-                    self.pass_token();
-                    let argc = self.arguments_of(member, &call)?;
-                    self.read(&method);
-                    self.let_go(&method);
+                    let argc = self.call_held("shadowed_member", Some(member), call)?;
                     self.act(Action::Invoke(Rc::from(member)), argc + 1);
                 }
             }
@@ -13055,6 +13050,20 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// What is about to be called, held aside while its arguments are
+    /// read and brought back above them, then let go of: how many
+    /// arguments were read. `named` is the callee's own name, where the
+    /// arguments are read as that name's.
+    fn call_held(&mut self, stem: &str, named: Option<&str>, pair: &Brackets) -> Res<usize> {
+        let held = self.gensym(stem);
+        self.write(&held);
+        self.pass_token();
+        let argc = match named { Some(called) => self.arguments_of(called, pair)?, None => self.arguments(pair)? };
+        self.read(&held);
+        self.let_go(&held);
+        Ok(argc)
+    }
+
     /// `expr[i]`, `expr->member` and `expr::member`, repeatable.
     /// A value standing in a group may be called outright: `(f)(x)`,
     /// and one call after another, `(f)(x)(y)`. What is called is held
@@ -13063,12 +13072,7 @@ impl<'a> Compiler<'a> {
     fn called_on_value(&mut self, origin: Option<usize>) -> Res<()> {
         let Some(call) = self.lang.calling.as_ref() else { return Ok(()) };
         while self.at_symbol(&call.open) {
-            let callee = self.gensym("callee");
-            self.write(&callee);
-            self.pass_token();
-            let argc = self.arguments(&call)?;
-            self.read(&callee);
-            self.let_go(&callee);
+            let argc = self.call_held("callee", None, call)?;
             if !self.lang.trace_fields.is_empty() { if let Some(start) = origin { self.put(self.expression_location(start)); } }
             self.act(Action::Invoke(Rc::from("the value the group came to")), argc + 1);
         }
@@ -13315,12 +13319,7 @@ impl<'a> Compiler<'a> {
                 if let Some(brackets) = &call {
                     if !lang.trace_fields.is_empty() { self.put(member_range.clone()); }
                     self.act(Action::Grab(named.as_str().into()), 1);
-                    let callee = self.gensym("method_value");
-                    self.write(&callee);
-                    self.pass_token();
-                    let argc = self.arguments_of(&named, brackets)?;
-                    self.read(&callee);
-                    self.let_go(&callee);
+                    let argc = self.call_held("method_value", Some(named.as_str()), brackets)?;
                     if !lang.trace_fields.is_empty() { self.put(self.expression_location(origin)); }
                     self.act(Action::Invoke(named.as_str().into()), argc + 1);
                 } else { if !lang.trace_fields.is_empty() { self.put(member_range.clone()); } self.act(Action::Grab(named.as_str().into()), 1); }
@@ -13332,12 +13331,7 @@ impl<'a> Compiler<'a> {
                     self.let_go(&held);
                     self.act(Action::BindValueMethod(Rc::from(operation.as_str())), 1);
                     if let Some(brackets) = &call {
-                        let callable = self.gensym("value_member");
-                        self.write(&callable);
-                        self.pass_token();
-                        let argc = self.arguments_of(&named, brackets)?;
-                        self.read(&callable);
-                        self.let_go(&callable);
+                        let argc = self.call_held("value_member", Some(named.as_str()), brackets)?;
                         self.act(Action::Invoke(named.as_str().into()), argc + 1);
                     }
                     self.land(finish);
@@ -13515,12 +13509,7 @@ impl<'a> Compiler<'a> {
         // wants what it calls above them.
         if let Some(call) = self.lang.calling.as_ref() {
             if stepped && self.at_symbol(&call.open) {
-                let callee = self.gensym("callee");
-                self.write(&callee);
-                self.pass_token();
-                let argc = self.arguments(&call)?;
-                self.read(&callee);
-                self.let_go(&callee);
+                let argc = self.call_held("callee", None, call)?;
                 self.act(Action::Invoke(Rc::from("the value a look came to")), argc + 1);
                 return self.indexing(from, origin);
             }
