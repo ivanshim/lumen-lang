@@ -10312,16 +10312,7 @@ impl<'a> Engine<'a> {
                     // the hash they share before the worth road answers.
                     let alike: Vec<Value> = {
                         let set = cell.borrow();
-                        match set.protocol {
-                            0 => Vec::new(),
-                            _ => match a.core_hash() {
-                                Some(hash) => {
-                                    let opening = format!("object:{hash}:");
-                                    set.row.iter().filter(|key| key.starts_with(&opening)).map(|key| set.held[key].clone()).collect()
-                                }
-                                None => Vec::new(),
-                            },
-                        }
+                        Self::alike_members(&set, a)
                     };
                     for held in alike {
                         if self.special_keys_equal(&held, a)? { return Ok(Value::Flag(matches!(op, Action::Contains))); }
@@ -12389,29 +12380,12 @@ impl<'a> Engine<'a> {
                         ))
                     }
                     Value::Map(pairs) => {
-                        let placed = match at.member_key() {
-                            Ok(keytext) => match pairs.locate(&keytext) {
-                                Placement::AtRow(_) => Some(true),
-                                Placement::NotThere => Some(false),
-                                Placement::Uncertain => None,
-                            },
-                            Err(_) => None,
-                        };
-                        let present = match placed {
-                            Some(present) => present,
-                            None => pairs.iter().any(|(k, _)| self.keys_alike(k, &at)),
-                        };
+                        let present = self.key_present(&pairs, &at);
                         if !self.lang.del_words.is_empty() && !present {
                             return Err(if self.lang.exceptions.is_empty() { self.lang.del_unrun.clone() } else { self.key_absent(&at) }.into());
                         }
                         if present { if let Value::Text(name) = &at { mirror_cell = Some((cell.clone(), name.to_string())); } }
-                        let slots = pairs.slots_synced();
-                        let mut kept_rows = Vec::new();
-                        let mut kept_slots = Vec::new();
-                        for (i, (k, _)) in pairs.iter().enumerate() {
-                            if !self.keys_alike(k, &at) { kept_rows.push(pairs[i].clone()); kept_slots.push(slots[i]); }
-                        }
-                        Value::Map(Rc::new(KeyedPairs::kept(kept_rows, kept_slots, pairs.span, pairs.clear_epoch, pairs.entry_budget)))
+                        self.map_without(&pairs, &at)
                     },
                     v => return Err(format!("Cannot take a place out of {}", v.plain()).into()),
                 };
@@ -16298,7 +16272,7 @@ impl<'a> Engine<'a> {
                 };
                 if let Some(whole) = whole {
                     let next = match &item {
-                        Value::Real(r) if r.places > 0 => Some((if r.p.is_zero() && r.below && !r.q.is_zero() { -0.0 } else { crate::value::as_binary(&r.p, &r.q) }, None)),
+                        Value::Real(r) if r.places > 0 => Some((Self::product_sum_float(&Value::Real(Rc::clone(r))).unwrap(), None)),
                         Value::Complex(z) => Some((z.real, Some(z.imag))),
                         _ => None,
                     };
@@ -16311,7 +16285,7 @@ impl<'a> Engine<'a> {
         }
         if running.is_none() {
             *running = match total {
-                Value::Real(r) if r.places > 0 => Some(((if r.p.is_zero() && r.below && !r.q.is_zero() { -0.0 } else { crate::value::as_binary(&r.p, &r.q) }, 0.0), None)),
+                Value::Real(r) if r.places > 0 => Some(((Self::product_sum_float(&Value::Real(Rc::clone(r))).unwrap(), 0.0), None)),
                 Value::Complex(z) => Some(((z.real, 0.0), Some((z.imag, 0.0)))),
                 _ => None,
             };
@@ -16321,7 +16295,7 @@ impl<'a> Engine<'a> {
                 Value::Small(n) => Some((*n as f64, None)),
                 Value::Huge(n) => Some((n.to_f64().filter(|v| v.is_finite()).ok_or_else(|| "OverflowError: int too large to convert to float".to_string())?, None)),
                 Value::Flag(b) => Some((f64::from(u8::from(*b)), None)),
-                Value::Real(r) if r.places > 0 => Some((if r.p.is_zero() && r.below && !r.q.is_zero() { -0.0 } else { crate::value::as_binary(&r.p, &r.q) }, None)),
+                Value::Real(r) if r.places > 0 => Some((Self::product_sum_float(&Value::Real(Rc::clone(r))).unwrap(), None)),
                 Value::Complex(z) if imag.is_some() => Some((z.real, Some(z.imag))),
                 Value::Object(o) => {
                     let kind = Self::kind_beneath(&o.class_now());
@@ -16478,16 +16452,7 @@ impl<'a> Engine<'a> {
         let mut partials: Vec<f64> = Vec::new();
         let (mut special, mut infinities) = (0.0_f64, 0.0_f64);
         while let Some(item) = self.core_step(&walk)? {
-            let item = item.contents();
-            let mut x = match Self::product_sum_float(&item) {
-                Some(x) => x,
-                None if matches!(item, Value::Huge(_)) => return Err("OverflowError: int too large to convert to float".into()),
-                None if matches!(item, Value::Object(_)) => {
-                    let converted = self.builtin(Builtin::AsReal, "float", &mut vec![item.clone()])?;
-                    Self::product_sum_float(&converted).ok_or_else(|| format!("TypeError: must be real number, not {}", item.core_kind()))?
-                }
-                None => return Err(format!("TypeError: must be real number, not {}", item.core_kind())),
-            };
+            let mut x = self.math_operand(&item)?;
             let original = x;
             let mut kept = 0;
             for position in 0..partials.len() {
@@ -17005,18 +16970,7 @@ impl<'a> Engine<'a> {
         if !self.lang.exceptions.is_empty() {
             if let Value::Map(pairs) = target {
                 if let Some(told) = self.unkeyable(at) { return Err(told); }
-                let placed = match at.member_key() {
-                    Ok(keytext) => match pairs.locate(&keytext) {
-                        Placement::AtRow(_) => Some(true),
-                        Placement::NotThere => Some(false),
-                        Placement::Uncertain => None,
-                    },
-                    Err(_) => None,
-                };
-                let present = match placed {
-                    Some(present) => present,
-                    None => pairs.iter().any(|(key, _)| self.keys_alike(key, at)),
-                };
+                let present = self.key_present(pairs, at);
                 if !present { return Err(self.key_absent(at)); }
             }
         }
@@ -17571,16 +17525,7 @@ impl<'a> Engine<'a> {
             // share, the member already there is the one kept.
             let alike: Vec<Value> = {
                 let set = cell.borrow();
-                match set.protocol {
-                    0 => Vec::new(),
-                    _ => match value.core_hash() {
-                        Some(hash) => {
-                            let opening = format!("object:{hash}:");
-                            set.row.iter().filter(|key| key.starts_with(&opening)).map(|key| set.held[key].clone()).collect()
-                        }
-                        None => Vec::new(),
-                    },
-                }
+                Self::alike_members(&set, &value)
             };
             for held in alike {
                 if self.special_keys_equal(&held, &value)? { return Ok(()); }
@@ -24402,13 +24347,7 @@ impl<'a> Engine<'a> {
                         if !self.lang.del_words.is_empty() && !pairs.iter().any(|(k, _)| self.keys_alike(k, &at)) {
                             return Err(if self.lang.exceptions.is_empty() { self.lang.del_unrun.clone() } else { self.key_absent(&at) });
                         }
-                        let slots = pairs.slots_synced();
-                        let mut kept_rows = Vec::new();
-                        let mut kept_slots = Vec::new();
-                        for (i, (k, _)) in pairs.iter().enumerate() {
-                            if !self.keys_alike(k, &at) { kept_rows.push(pairs[i].clone()); kept_slots.push(slots[i]); }
-                        }
-                        Value::Map(Rc::new(KeyedPairs::kept(kept_rows, kept_slots, pairs.span, pairs.clear_epoch, pairs.entry_budget)))
+                        self.map_without(&pairs, &at)
                     }
                     v => return Err(format!("{}() cannot take a place out of {}", name, v.plain())),
                 }
@@ -30732,6 +30671,48 @@ impl Engine<'_> {
             cmd.env(std::ffi::OsStr::from_bytes(&name), std::ffi::OsStr::from_bytes(&worth));
         }
     }
+
+    fn key_present(&self, pairs: &KeyedPairs, at: &Value) -> bool {
+        let placed = match at.member_key() {
+            Ok(keytext) => match pairs.locate(&keytext) {
+                Placement::AtRow(_) => Some(true),
+                Placement::NotThere => Some(false),
+                Placement::Uncertain => None,
+            },
+            Err(_) => None,
+        };
+        match placed {
+            Some(present) => present,
+            None => pairs.iter().any(|(key, _)| self.keys_alike(key, at)),
+        }
+    }
+
+    fn map_without(&self, pairs: &KeyedPairs, at: &Value) -> Value {
+        let slots = pairs.slots_synced();
+        let mut kept_rows = Vec::new();
+        let mut kept_slots = Vec::new();
+        for (i, (key, _)) in pairs.iter().enumerate() {
+            if !self.keys_alike(key, at) {
+                kept_rows.push(pairs[i].clone());
+                kept_slots.push(slots[i]);
+            }
+        }
+        Value::Map(Rc::new(KeyedPairs::kept(kept_rows, kept_slots, pairs.span, pairs.clear_epoch, pairs.entry_budget)))
+    }
+
+    fn alike_members(set: &crate::value::Members, value: &Value) -> Vec<Value> {
+        match set.protocol {
+            0 => Vec::new(),
+            _ => match value.core_hash() {
+                Some(hash) => {
+                    let opening = format!("object:{hash}:");
+                    set.row.iter().filter(|key| key.starts_with(&opening)).map(|key| set.held[key].clone()).collect()
+                }
+                None => Vec::new(),
+            },
+        }
+    }
+
 }
 
 #[cfg(test)]
