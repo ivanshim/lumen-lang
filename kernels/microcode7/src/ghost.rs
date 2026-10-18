@@ -154,12 +154,8 @@ const G_STIRRED: u8 = 1;
 const G_POLL: u8 = 2;
 const G_ANCHOR: u8 = 4;
 
-fn ghost_raise(mask: u8) {
-    let _ = GHOST_STATE.try_with(|s| s.set(s.get() | mask));
-}
-fn ghost_drop(mask: u8) {
-    let _ = GHOST_STATE.try_with(|s| s.set(s.get() & !mask));
-}
+fn ghost_raise(mask: u8) { ghost_set(mask, true); }
+fn ghost_drop(mask: u8) { ghost_set(mask, false); }
 fn ghost_set(mask: u8, on: bool) {
     let _ = GHOST_STATE.try_with(|s| s.set(if on { s.get() | mask } else { s.get() & !mask }));
 }
@@ -392,7 +388,6 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
     let ready = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         let (ready, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|item| Rc::strong_count(item) == 1);
-        ghost_set(G_ANCHOR, !kept.is_empty());
         *all = kept;
         ghost_set(G_ANCHOR, !all.is_empty());
         ready
