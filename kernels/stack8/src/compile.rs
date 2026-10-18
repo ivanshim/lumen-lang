@@ -9821,6 +9821,29 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// `p op= e` where the place is read with one action and written
+    /// back with another: what holds it is worked out once and kept,
+    /// the member read from there, taken with the value, and what comes
+    /// of it written into the same place.
+    fn compound_member(&mut self, rest: Vec<Instr>, read: Action, write: Action, op: Action, keep: Option<&str>) -> Res<()> {
+        let holder = self.gensym("holder");
+        self.piece().instrs.extend(rest);
+        self.write(&holder);
+        self.read(&holder);
+        self.act(read, 1);
+        self.stood_before();
+        self.addend()?;
+        self.compound_act(op);
+        self.kept(keep);
+        let value = self.gensym("value");
+        self.write(&value);
+        self.read(&holder);
+        self.read(&value);
+        self.act(write, 2);
+        self.put_away();
+        Ok(())
+    }
+
     /// The store itself, the sign that asked for it already read.
     fn store_into(&mut self, from: usize, keep: Option<&str>, compound: Option<Action>, assign: &str) -> Res<()> {
         let name_origin = self.pos.saturating_sub(2);
@@ -10134,67 +10157,19 @@ impl<'a> Compiler<'a> {
             // written back into the same place.
             [rest @ .., Instr::Act(Action::Grab(member), 1)] if compound.is_some() => {
                 let (member, rest) = (member.clone(), rest.to_vec());
-                let op = compound.expect("the operation");
-                let holder = self.gensym("holder");
-                self.piece().instrs.extend(rest);
-                self.write(&holder);
-                self.read(&holder);
-                self.act(Action::Grab(member.clone()), 1);
-                self.stood_before();
-                self.addend()?;
-                self.compound_act(op);
-                self.kept(keep);
-                let value = self.gensym("value");
-                self.write(&value);
-                self.read(&holder);
-                self.read(&value);
-                self.act(Action::Plant(member), 2);
-                self.put_away();
-                Ok(())
+                self.compound_member(rest, Action::Grab(member.clone()), Action::Plant(member), compound.expect("the operation"), keep)
             }
             // The same for a class's own value.
             [rest @ .., Instr::Act(Action::Reach(member), 1)] if compound.is_some() => {
                 let (member, rest) = (member.clone(), rest.to_vec());
-                let op = compound.expect("the operation");
-                let holder = self.gensym("holder");
-                self.piece().instrs.extend(rest);
-                self.write(&holder);
-                self.read(&holder);
-                self.act(Action::Reach(member.clone()), 1);
-                self.stood_before();
-                self.addend()?;
-                self.compound_act(op);
-                self.kept(keep);
-                let value = self.gensym("value");
-                self.write(&value);
-                self.read(&holder);
-                self.read(&value);
-                self.act(Action::Sow(member), 2);
-                self.put_away();
-                Ok(())
+                self.compound_member(rest, Action::Reach(member.clone()), Action::Sow(member), compound.expect("the operation"), keep)
             }
             // `$$x op= e`: the name is worked out once and kept, the
             // binding it spells read under that name, taken with the
             // value, and what comes of it written back under it.
             [rest @ .., Instr::Act(Action::Named, 1)] if compound.is_some() => {
                 let rest = rest.to_vec();
-                let op = compound.expect("the operation");
-                let spelling = self.gensym("spelling");
-                self.piece().instrs.extend(rest);
-                self.write(&spelling);
-                self.read(&spelling);
-                self.act(Action::Named, 1);
-                self.stood_before();
-                self.addend()?;
-                self.compound_act(op);
-                self.kept(keep);
-                let value = self.gensym("value");
-                self.write(&value);
-                self.read(&spelling);
-                self.read(&value);
-                self.act(Action::WriteNamed, 2);
-                self.put_away();
-                Ok(())
+                self.compound_member(rest, Action::Named, Action::WriteNamed, compound.expect("the operation"), keep)
             }
             _ if compound.is_some() => Err(format!("'{}' needs a plain variable on its left", assign)),
             // `$GLOBALS['n'][] = v`: the binding the name spells is read
