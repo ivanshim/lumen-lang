@@ -4242,6 +4242,13 @@ impl<'a> Engine<'a> {
         })
     }
 
+    fn over_reach(&self) -> Res<()> {
+        if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
+            if self.calls.len() + self.reaching >= limit { return Err(format!("\0{}", words)); }
+        }
+        Ok(())
+    }
+
     /// One step further into a call a thing answers with its own call
     /// member: counted as a frame would be counted, and refused in the
     /// words the language gives once the calls standing reach the
@@ -4249,9 +4256,7 @@ impl<'a> Engine<'a> {
     /// routine calling itself for ever raises. What is counted here is
     /// let go again by `answered`.
     pub(super) fn reaching_further(&mut self) -> Flow<()> {
-        if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
-            if self.calls.len() + self.reaching >= limit { return Err(format!("\0{}", words).into()); }
-        }
+        self.over_reach().map_err(Fault::from)?;
         self.reaching += 1;
         Ok(())
     }
@@ -4691,9 +4696,7 @@ impl<'a> Engine<'a> {
         // beneath the limit. The outermost body is no call and is not
         // counted.
         if !program.body_of_all {
-            if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
-                if self.calls.len() + self.reaching >= limit { return Err(format!("\0{}", words).into()); }
-            }
+            self.over_reach().map_err(Fault::from)?;
         }
         let n = if let Some(rules) = &program.parameter_rules {
             let given = self.drop_many(n)?;
@@ -7678,9 +7681,7 @@ impl<'a> Engine<'a> {
     /// `mapping_equality`; only a map's own keys need the interpreter
     /// to compare them.
     fn maps_equal(&mut self, one: &crate::value::KeyedPairs, other: &crate::value::KeyedPairs) -> Res<bool> {
-        if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
-            if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
-        }
+        self.over_reach()?;
         self.reaching += 1;
         let result = (|| {
             if one.len() != other.len() { return Ok(false); }
@@ -9170,9 +9171,7 @@ impl<'a> Engine<'a> {
     fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
         let container = matches!(value, Value::Map(_) | Value::Array(_) | Value::Tuple(_) | Value::Set(_));
         if container {
-            if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
-                if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
-            }
+            self.over_reach()?;
             self.reaching += 1;
         }
         let result = self.special_text_inner(value, representation);
@@ -9255,9 +9254,7 @@ impl<'a> Engine<'a> {
                 return Ok(if alike { whole.representation(&words) } else { self.render(std::slice::from_ref(&whole)) });
             }
             if matches!(&held, Value::Array(row) if row.iter().any(|item| matches!(item.contents(), Value::Object(_)))) {
-                if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
-                    if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
-                }
+                self.over_reach()?;
                 self.reaching += 1;
                 let written = crate::value::members_once(&held, || {
                     let mut words = Vec::new();
@@ -9940,9 +9937,7 @@ impl<'a> Engine<'a> {
     }
 
     fn sequence_comparison(&mut self, op: &Action, left: &Value, right: &Value) -> Res<Value> {
-        if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
-            if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
-        }
+        self.over_reach()?;
         self.reaching += 1;
         let answer = (|| {
             let mut at = 0;
