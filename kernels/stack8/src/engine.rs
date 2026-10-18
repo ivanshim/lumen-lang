@@ -8936,21 +8936,33 @@ impl<'a> Engine<'a> {
         self.lang.special_amiss.first().cloned().unwrap_or_default()
     }
 
+    fn settle<T>(&mut self, flow: Flow<T>) -> Res<T> {
+        match flow {
+            Ok(value) => Ok(value),
+            Err(Fault::Note(words)) => Err(words),
+            Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+        }
+    }
+
+    fn settle_quiet<T>(&mut self, flow: Flow<T>) -> Res<T> {
+        match flow {
+            Ok(value) => Ok(value),
+            Err(Fault::Note(words)) => Err(words),
+            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+        }
+    }
+
     fn special_call(&mut self, value: &Value, place: usize, args: Vec<Value>) -> Res<Option<Value>> {
         if matches!(value, Value::Object(object) if matches!(Self::own_kind(&object.class_now()).as_deref(), Some("TypeAliasType" | "TypeVarTuple"))) {
-            match self.type_alias_protocol(value, place, &args) {
-                Ok(Some(answer)) => return Ok(Some(answer)),
-                Ok(None) => {}
-                Err(Fault::Note(words)) => return Err(words),
-                Err(fault) => { self.carried = Some(fault); return Err(self.special_fault()); }
+            let flow = self.type_alias_protocol(value, place, &args);
+            if let Some(answer) = self.settle(flow)? {
+                return Ok(Some(answer));
             }
         }
         if matches!(value, Value::Object(object) if Self::own_kind(&object.class_now()).as_deref() == Some("Union")) {
-            match self.union_protocol(value, place, &args) {
-                Ok(Some(answer)) => return Ok(Some(answer)),
-                Ok(None) => {}
-                Err(Fault::Note(words)) => return Err(words),
-                Err(fault) => { self.carried = Some(fault); return Err(self.special_fault()); }
+            let flow = self.union_protocol(value, place, &args);
+            if let Some(answer) = self.settle(flow)? {
+                return Ok(Some(answer));
             }
         }
         if place == 15 && self.lang.type_parameters {
@@ -8974,10 +8986,7 @@ impl<'a> Engine<'a> {
             // The inherited native hash slot must use the class identity fallback.
             if place == 8 && matches!(&method, Value::Adapter(slot) if slot.0 == 29) { return Ok(None); }
             let answer = self.bind_class_value(method, Some(value.clone()), maker).and_then(|bound| self.class_apply(bound, args));
-            return match answer {
-                Ok(held) => Ok(Some(held)), Err(Fault::Note(words)) => Err(words),
-                Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
-            };
+            return Ok(Some(self.settle(answer)?));
         }
         let selected = self.special_value(value, place);
         self.invoke_resolved_special(value, place, selected, args)
@@ -8995,11 +9004,8 @@ impl<'a> Engine<'a> {
         let method = match selected {
             None => return Ok(None),
             Some(Value::Adapter(wrapped)) if wrapped.0 == 4 => {
-                return match self.class_apply(wrapped.1[0].clone(), args) {
-                    Ok(answer) => Ok(Some(answer)),
-                    Err(Fault::Note(words)) => Err(words),
-                    Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
-                };
+                let flow = self.class_apply(wrapped.1[0].clone(), args);
+                return Ok(Some(self.settle(flow)?));
             }
             Some(Value::Routine(routine)) => routine,
             Some(member) => {
@@ -9015,22 +9021,14 @@ impl<'a> Engine<'a> {
                         Err(fault) => Err(fault),
                     }
                 };
-                return match result {
-                    Ok(answer) => Ok(Some(answer)), Err(Fault::Note(words)) => Err(words),
-                    Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
-                };
+                return Ok(Some(self.settle(result)?));
             }
         };
         let mut given = vec![value.clone()];
         given.extend(args);
-        match self.invoke(&method, given) {
-            Ok(()) => Ok(Some(self.drop_top().map_err(|_| self.special_fault())?)),
-            Err(Fault::Note(words)) => Err(words),
-            Err(other) => {
-                self.carried = Some(other);
-                Err(self.special_fault())
-            }
-        }
+        let flow = self.invoke(&method, given);
+        self.settle(flow)?;
+        Ok(Some(self.drop_top().map_err(|_| self.special_fault())?))
     }
 
     /// The two places a hinting alias answers of its own: reading it at
@@ -9334,11 +9332,8 @@ impl<'a> Engine<'a> {
                 },
                 None => {
                     if self.module_holding(value).is_some() || Self::kind_beneath(&object.class_now()).as_deref() == Some("module") {
-                        return match self.module_repr_value(value.clone()) {
-                            Ok(text) => Ok(text.plain()),
-                            Err(Fault::Note(message)) => Err(message),
-                            Err(raised) => { self.carried = Some(raised); Err(String::new()) },
-                        };
+                        let flow = self.module_repr_value(value.clone());
+                        return Ok(self.settle_quiet(flow)?.plain());
                     }
                     let module = self.class_word("main");
                     Ok(if object.class_now().base().is_none() && object.class_now().name == "object" { "<object object at 0x1>".to_owned() }
@@ -9479,23 +9474,14 @@ impl<'a> Engine<'a> {
     fn bool_invert_warning(&mut self) -> Res<()> {
         if self.lang.bool_result.is_none() { return Ok(()); }
         let Some(category) = self.native_exceptions.get("DeprecationWarning").cloned() else { return Ok(()); };
-        let module = match self.import_module("warnings") {
-            Ok(value) => value,
-            Err(Fault::Note(message)) => return Err(message),
-            Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
-        };
-        let callback = match self.class_get(module, "warn_explicit", false) {
-            Ok(value) => value.contents(),
-            Err(Fault::Note(message)) => return Err(message),
-            Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
-        };
+        let flow = self.import_module("warnings");
+        let module = self.settle_quiet(flow)?;
+        let flow = self.class_get(module, "warn_explicit", false);
+        let callback = self.settle_quiet(flow)?.contents();
         let arguments = vec![Value::text("~ on an instance of bool is deprecated"), category,
             Value::text("<string>"), Value::Small(1), Value::text("__main__")];
-        match self.class_apply(callback, arguments) {
-            Ok(_) => Ok(()),
-            Err(Fault::Note(message)) => Err(message),
-            Err(raised) => { self.carried = Some(raised); Err(String::new()) }
-        }
+        let flow = self.class_apply(callback, arguments);
+        self.settle_quiet(flow).map(|_| ())
     }
 
     fn special_truth(&mut self, value: &Value) -> Res<bool> {
@@ -9763,22 +9749,13 @@ impl<'a> Engine<'a> {
         let [module_name, teller_name] = self.lang.syntax_warning_words.as_slice() else { return Ok(()) };
         let (module_name, teller_name) = (module_name.clone(), teller_name.clone());
         let Some(category) = self.native_exceptions.get(category_name).cloned() else { return Ok(()) };
-        let module = match self.import_module(&module_name) {
-            Ok(module) => module,
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-        };
-        let teller = match self.class_get(module, &teller_name, false) {
-            Ok(teller) => teller.contents(),
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-        };
+        let flow = self.import_module(&module_name);
+        let module = self.settle_quiet(flow)?;
+        let flow = self.class_get(module, &teller_name, false);
+        let teller = self.settle_quiet(flow)?.contents();
         let handed = vec![Value::text(message), category, Value::text("<string>"), Value::Small(1)];
-        match self.class_apply(teller, handed) {
-            Ok(_) => Ok(()),
-            Err(Fault::Note(told)) => Err(told),
-            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
-        }
+        let flow = self.class_apply(teller, handed);
+        self.settle_quiet(flow).map(|_| ())
     }
 
     /// The complex constructor's road for calls that carry no keyword:
@@ -10278,11 +10255,8 @@ impl<'a> Engine<'a> {
                 if matches!(kind, Builtin::List | Builtin::Tuple | Builtin::Dict | Builtin::Set | Builtin::Frozen)
                     && matches!(name.as_ref(), "list" | "tuple" | "dict" | "set" | "frozenset") {
                     let maker = Value::Class(self.kind_class("GenericAlias"));
-                    return match self.class_apply(maker.contents(), vec![a.clone(), b.clone()]) {
-                        Ok(alias) => Ok(alias),
-                        Err(Fault::Note(words)) => Err(words),
-                        Err(escape) => { self.carried = Some(escape); Err(self.special_fault()) }
-                    };
+                    let flow = self.class_apply(maker.contents(), vec![a.clone(), b.clone()]);
+                    return self.settle(flow);
                 }
             }
         }
@@ -10323,30 +10297,17 @@ impl<'a> Engine<'a> {
                 let asked = if matches!(&hook, Value::Adapter(w) if w.0 == 5) {
                     match self.bind_class_value(hook, None, c.clone()) { Ok(bound) => self.class_apply(bound, vec![b.clone()]), Err(fault) => Err(fault) }
                 } else { self.class_apply(hook, vec![a.clone(), b.clone()]) };
-                return match asked {
-                    Ok(answer) => Ok(answer),
-                    Err(Fault::Note(words)) => Err(words),
-                    Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
-                };
+                return self.settle(asked);
             } else if self.exception_class(c) {
                 // A group class is parameterisable, as the reference's is;
                 // the other fault kinds are not subscriptable at all.
                 if c.has_public_field("\0group") {
-                    let module = match self.import_module("types") {
-                        Ok(module) => module,
-                        Err(Fault::Note(words)) => return Err(words),
-                        Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
-                    };
-                    let maker = match self.class_get(module, "GenericAlias", false) {
-                        Ok(maker) => maker,
-                        Err(Fault::Note(words)) => return Err(words),
-                        Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
-                    };
-                    return match self.class_apply(maker.contents(), vec![a.clone(), b.clone()]) {
-                        Ok(alias) => Ok(alias),
-                        Err(Fault::Note(words)) => Err(words),
-                        Err(escape) => { self.carried = Some(escape); Err(self.special_fault()) }
-                    };
+                    let flow = self.import_module("types");
+                    let module = self.settle(flow)?;
+                    let flow = self.class_get(module, "GenericAlias", false);
+                    let maker = self.settle(flow)?;
+                    let flow = self.class_apply(maker.contents(), vec![a.clone(), b.clone()]);
+                    return self.settle(flow);
                 }
                 return Err(format!("TypeError: type '{}' is not subscriptable", c.name).into());
             }
@@ -10600,11 +10561,8 @@ impl<'a> Engine<'a> {
                     // gives way, so the handler that catches it sees the
                     // very object with its own arguments and not the
                     // words the class and its message would spell.
-                    return match self.bind_class_value(method, Some(a.clone()), o.class_now()).and_then(|bound| self.class_apply(bound, vec![b.clone()])) {
-                        Ok(value) => Ok(value),
-                        Err(Fault::Note(words)) => Err(words),
-                        Err(fled) => { self.carried = Some(fled); Err(String::new()) }
-                    };
+                    let flow = self.bind_class_value(method, Some(a.clone()), o.class_now()).and_then(|bound| self.class_apply(bound, vec![b.clone()]));
+                    return self.settle_quiet(flow);
                 }
             }
             let outcome = self.special_dyad(op, left.as_ref().unwrap_or(a), right.as_ref().unwrap_or(b));
@@ -10768,11 +10726,8 @@ impl<'a> Engine<'a> {
             if let (Some(Value::Map(rows)), Some(handler)) = (Self::worth_of(target).map(|value| value.contents()), self.lang.missing_key.as_ref().and_then(|name| self.class_value(&object.class_now(), name))) {
                 let (position, _) = self.map_locate(&rows, Some(&rows), key)?;
                 if let Some(position) = position { return Ok(Some(rows[position].1.clone())); }
-                return match self.class_apply(handler, vec![target.clone(), key.clone()]) {
-                    Ok(answer) => Ok(Some(answer)),
-                    Err(Fault::Note(words)) => Err(words),
-                    Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
-                };
+                let flow = self.class_apply(handler, vec![target.clone(), key.clone()]);
+                return Ok(Some(self.settle(flow)?));
             }
         }
         let first = args.first();
@@ -11250,8 +11205,7 @@ impl<'a> Engine<'a> {
             // members of another walk meets those words when that walk
             // ends, and the walk it is the method of ends there too.
             Err(Fault::Note(words)) if self.lang.special_stop.iter().any(|n| words == *n || words.starts_with(&format!("{}:", n))) => Ok(None),
-            Err(Fault::Note(words)) => Err(words),
-            Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+            Err(fault) => self.settle(Err(fault)),
         }
     }
 
@@ -11555,10 +11509,8 @@ impl<'a> Engine<'a> {
             Ok(Self::delegate_returned(&walk))
         })();
         match outcome {
-            Ok(item) => Ok(Some(item)),
             Err(fault) if self.async_exhausted(&fault) => Ok(None),
-            Err(Fault::Note(words)) => Err(words),
-            Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+            other => self.settle(other).map(Some),
         }
     }
 
@@ -15886,11 +15838,8 @@ impl<'a> Engine<'a> {
         // another union; but at least one side must itself be a kind or
         // an already-built union; `None` on both sides is no union.
         if matches!(op, Action::BitEither) && self.union_member(a) && self.union_member(b) && (self.union_anchor(a) || self.union_anchor(b)) {
-            return match self.join_types(a, b) {
-                Ok(union) => Ok(union),
-                Err(Fault::Note(words)) => Err(words),
-                Err(fault) => { self.carried = Some(fault); Err(String::new()) }
-            };
+            let flow = self.join_types(a, b);
+            return self.settle_quiet(flow);
         }
         // Rows, tuples and text as a language of sequences works them:
         // adding joins two of one kind, multiplying repeats one a whole
