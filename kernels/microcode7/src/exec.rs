@@ -1364,10 +1364,7 @@ impl<'a> Machine<'a> {
             alternate = !alternate;
         }
         let mut holds = thing.holds.borrow_mut();
-        match holds.iter_mut().find(|(k, _)| k == key) {
-            Some((_, slot)) => *slot = Value::Thing(handled),
-            None => holds.push((key.to_string(), Value::Thing(handled))),
-        }
+        Self::change_entry(&mut holds, key, Some(Value::Thing(handled)));
     }
 
     /// A fault of the kernel's own, met where exceptions are furnished,
@@ -1672,10 +1669,7 @@ impl<'a> Machine<'a> {
                     Value::Vector(crate::tuples::Sequence::plain(entries)).keep(false)
                 }
             };
-            match target.iter_mut().find(|(k, _)| k == key) {
-                Some(entry) => entry.1 = held,
-                None => target.push((key.to_string(), held)),
-            }
+            Self::change_entry(&mut target, key, Some(held));
         }
     }
 
@@ -1696,10 +1690,7 @@ impl<'a> Machine<'a> {
         let mut fields = thing.holds.borrow_mut();
         for (at, name) in self.table.strings("ext.builtin.exceptions.syntax").iter().skip(1).take(6).enumerate() {
             let value = parts.get(at).cloned().unwrap_or(Value::Nil);
-            match fields.iter_mut().find(|(key, _)| key == name) {
-                Some(entry) => entry.1 = value,
-                None => fields.push((name.clone(), value)),
-            }
+            Self::change_entry(&mut fields, name, Some(value));
         }
     }
 
@@ -3680,10 +3671,7 @@ impl<'a> Machine<'a> {
             ("line", Value::Small(self.row as i64)),
         ];
         for (key, value) in carried {
-            match holds.iter_mut().find(|(k, _)| k == key) {
-                Some(place) => place.1 = value,
-                None => holds.push((key.to_string(), value)),
-            }
+            Self::change_entry(&mut holds, key, Some(value));
         }
         Some(Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),  of, holds: RefCell::new(holds), turn: self.made })))
     }
@@ -5480,10 +5468,7 @@ impl<'a> Machine<'a> {
                         if let Some(key) = self.table.single(label) {
                             let carried = if label.ends_with("suppress") { Value::Flag(true) } else { original.clone() };
                             let mut entries = thing.holds.borrow_mut();
-                            match entries.iter_mut().find(|entry| entry.0 == key) {
-                                Some(entry) => entry.1 = carried,
-                                None => entries.push((key.to_owned(), carried)),
-                            }
+                            Self::change_entry(&mut entries, key, Some(carried));
                         }
                     }
                 }
@@ -6427,10 +6412,7 @@ impl<'a> Machine<'a> {
             }
             let mut kept = item.holds.borrow_mut();
             kept[3].1 = exposed;
-            match kept.iter_mut().find(|entry| entry.0 == "\0gathered-shadows") {
-                Some(entry) => entry.1 = Value::tuple(temporary_names),
-                None => kept.push((String::from("\0gathered-shadows"), Value::tuple(temporary_names))),
-            }
+            Self::change_entry(&mut kept, "\0gathered-shadows", Some(Value::tuple(temporary_names)));
             return;
         }
         let Value::Bound(body, environment) = &kept[5].1 else { return };
@@ -8034,9 +8016,7 @@ impl<'a> Machine<'a> {
                             let mut holds = thing.holds.borrow_mut();
                             for (label, worth) in [("ext.builtin.exceptions.cause", cause), ("ext.builtin.exceptions.suppress", Value::Flag(true))] {
                                 let Some(key) = self.table.single(label) else { continue };
-                                match holds.iter_mut().find(|(k, _)| k == key) {
-                                    Some((_, value)) => *value = worth, None => holds.push((key.into(), worth)),
-                                }
+                                Self::change_entry(&mut holds, key, Some(worth));
                             }
                         }
                     }
