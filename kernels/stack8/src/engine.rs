@@ -3072,13 +3072,7 @@ impl<'a> Engine<'a> {
                 own.len() - 1
             }
         };
-        if let Value::Bond(shared) = &own[at].1 {
-            return shared.clone();
-        }
-        let was = std::mem::replace(&mut own[at].1, Value::Null);
-        let shared = Rc::new(RefCell::new(was));
-        own[at].1 = Value::Bond(shared.clone());
-        shared
+        bond_in(&mut own[at].1)
     }
 
     /// The method a class answers with for a property the thing does
@@ -14063,17 +14057,9 @@ impl<'a> Engine<'a> {
                                 held.len() - 1
                             }
                         };
-                        if let Value::Bond(shared) = &held[at].1 {
-                            let shared = shared.clone();
-                            drop(held);
-                            Value::Bond(shared)
-                        } else {
-                            let was = std::mem::replace(&mut held[at].1, Value::Null);
-                            let shared = Rc::new(RefCell::new(was));
-                            held[at].1 = Value::Bond(shared.clone());
-                            drop(held);
-                            Value::Bond(shared)
-                        }
+                        let shared = bond_in(&mut held[at].1);
+                        drop(held);
+                        Value::Bond(shared)
                     }
                     v => return Err(format!("Cannot share property '{}' of {}", name, v.plain()).into()),
                 }
@@ -25548,6 +25534,16 @@ fn set_field(fields: &mut Vec<(String, Value)>, key: &str, value: Value) {
         None => fields.push((key.to_owned(), value)),
     }
 }
+
+fn bond_in(place: &mut Value) -> Rc<RefCell<Value>> {
+    if let Value::Bond(shared) = place {
+        return shared.clone();
+    }
+    let shared = Rc::new(RefCell::new(std::mem::replace(place, Value::Null)));
+    *place = Value::Bond(shared.clone());
+    shared
+}
+
 /// The place an array holds, made a shared cell so that a name fastened
 /// to it writes into the array itself.
 fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
@@ -25561,12 +25557,7 @@ fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
         let Some((_, place)) = fields.get_mut(i) else {
             return Err(format!("Array index {} out of bounds (length: {})", i, reach));
         };
-        if let Value::Bond(shared) = place {
-            return Ok(shared.clone());
-        }
-        let shared = Rc::new(RefCell::new(std::mem::replace(place, Value::Null)));
-        *place = Value::Bond(shared.clone());
-        return Ok(shared);
+        return Ok(bond_in(place));
     }
     let place: &mut Value = match held {
         Value::Array(items) | Value::Tuple(items) => {
@@ -25590,12 +25581,7 @@ fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
         }
         _ => return Err("Cannot walk a value that is not an array".to_string()),
     };
-    if let Value::Bond(shared) = place {
-        return Ok(shared.clone());
-    }
-    let shared = Rc::new(RefCell::new(std::mem::replace(place, Value::Null)));
-    *place = Value::Bond(shared.clone());
-    Ok(shared)
+    Ok(bond_in(place))
 }
 
 /// The cell of the place a chain of keys names, the arrays and places
@@ -25611,12 +25597,7 @@ fn shared_deep(held: &mut Value, keys: &[Value], makes: bool) -> Res<Rc<RefCell<
         spot = place_within(spot, k, makes)?;
     }
     let place = place_within(spot, last, makes)?;
-    if let Value::Bond(shared) = place {
-        return Ok(shared.clone());
-    }
-    let shared = Rc::new(RefCell::new(std::mem::replace(place, Value::Null)));
-    *place = Value::Bond(shared.clone());
-    Ok(shared)
+    Ok(bond_in(place))
 }
 
 fn place_within<'a>(held: &'a mut Value, at: &Value, makes: bool) -> Res<&'a mut Value> {
