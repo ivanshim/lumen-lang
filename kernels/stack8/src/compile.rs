@@ -9844,6 +9844,20 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// A read of a place turned into a write of it: what was read
+    /// stays where it is (put back from `from`, or as it stands), the
+    /// value follows, and the writing action takes them all.
+    fn write_through(&mut self, rest: Vec<Instr>, from: Option<usize>, write: Action, argc: usize, keep: Option<&str>) -> Res<()> {
+        match from {
+            Some(from) => self.replay(rest, from),
+            None => self.piece().instrs.extend(rest),
+        }
+        self.value_written(keep)?;
+        self.act(write, argc);
+        self.put_away();
+        Ok(())
+    }
+
     /// The store itself, the sign that asked for it already read.
     fn store_into(&mut self, from: usize, keep: Option<&str>, compound: Option<Action>, assign: &str) -> Res<()> {
         let name_origin = self.pos.saturating_sub(2);
@@ -10206,34 +10220,14 @@ impl<'a> Compiler<'a> {
                 self.put_away();
                 Ok(())
             }
-            [rest @ .., Instr::Act(Action::Named, 1)] if compound.is_none() => {
-                self.piece().instrs.extend_from_slice(rest);
-                self.value_written(keep)?;
-                self.act(Action::WriteNamed, 2);
-                self.put_away();
-                Ok(())
-            }
+            [rest @ .., Instr::Act(Action::Named, 1)] if compound.is_none() => self.write_through(rest.to_vec(), None, Action::WriteNamed, 2, keep),
             // The read of a class's own value named by a value turns
             // into a write of it, the class and the name staying put.
-            [rest @ .., Instr::Act(Action::ReachNamed, 2)] => {
-                let rest = rest.to_vec();
-                self.replay(rest, from);
-                self.value_written(keep)?;
-                self.act(Action::SowNamed, 3);
-                self.put_away();
-                Ok(())
-            }
+            [rest @ .., Instr::Act(Action::ReachNamed, 2)] => self.write_through(rest.to_vec(), Some(from), Action::SowNamed, 3, keep),
             // The read of a member named by a value turns into a write
             // of it: what it belongs to and the name both stay where
             // they are, and the value follows them.
-            [rest @ .., Instr::Act(Action::GrabNamed, 2)] => {
-                let rest = rest.to_vec();
-                self.replay(rest, from);
-                self.value_written(keep)?;
-                self.act(Action::PlantNamed, 3);
-                self.put_away();
-                Ok(())
-            }
+            [rest @ .., Instr::Act(Action::GrabNamed, 2)] => self.write_through(rest.to_vec(), Some(from), Action::PlantNamed, 3, keep),
             // The read of a member turns into a write of it.
             [rest @ .., Instr::Act(Action::Grab(member), 1)] => {
                 if !self.lang.syntax_members.is_empty() && member.as_ref() == "__debug__" {
@@ -10248,21 +10242,9 @@ impl<'a> Compiler<'a> {
                         if place.ident.as_ref() == "self" { self.gathering().attributes.insert(member.to_string()); }
                     }
                 }
-                let (member, rest) = (member.clone(), rest.to_vec());
-                self.piece().instrs.extend(rest);
-                self.value_written(keep)?;
-                self.act(Action::Plant(member), 2);
-                self.put_away();
-                Ok(())
+                self.write_through(rest.to_vec(), None, Action::Plant(member.clone()), 2, keep)
             }
-            [rest @ .., Instr::Act(Action::Reach(member), 1)] => {
-                let (member, rest) = (member.clone(), rest.to_vec());
-                self.piece().instrs.extend(rest);
-                self.value_written(keep)?;
-                self.act(Action::Sow(member), 2);
-                self.put_away();
-                Ok(())
-            }
+            [rest @ .., Instr::Act(Action::Reach(member), 1)] => self.write_through(rest.to_vec(), None, Action::Sow(member.clone()), 2, keep),
             // `$o->a[i] = v` and `$o->a[] = v`: the property is read, the
             // array within it rewritten, and the property written back.
             [Instr::Read(slot), Instr::Act(Action::Grab(member), 1), index @ ..]
