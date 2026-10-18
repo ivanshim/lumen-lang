@@ -1651,29 +1651,10 @@ impl<'a> Engine<'a> {
             allocation_depth: if lang.allocation_trace.is_empty() { 0 } else { std::env::var("LUMEN_TRACE_FRAMES").ok().and_then(|s| s.parse().ok()).unwrap_or(0) }, allocation_sites: HashMap::new(),
             warning_revision: 0, warning_lock_depth: 0, warning_module: None, warning_bound: None, finder_active: std::collections::HashSet::new(), has_nonstring_class_keys: false,
             member_words: [
-                lang.class_details.get("name").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("qualified").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("module").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("kind").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("get").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("set").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("remove").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("call").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("namespace").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("root").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("allocate").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("descriptor.get").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("descriptor.set").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("descriptor.delete").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("doc").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("defaults").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("base").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("bases").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("mro").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("order").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("receiver").and_then(|list| list.first()).map_or("", String::as_str),
-                lang.class_details.get("unready").and_then(|list| list.first()).map_or("", String::as_str),
-            ],
+                "name", "qualified", "module", "kind", "get", "set", "remove", "call", "namespace", "root",
+                "allocate", "descriptor.get", "descriptor.set", "descriptor.delete", "doc", "defaults",
+                "base", "bases", "mro", "order", "receiver", "unready",
+            ].map(|key| lang.class_details.get(key).and_then(|list| list.first()).map_or("", String::as_str)),
             lang,
             world,
             data: Vec::new(),
@@ -3568,19 +3549,15 @@ impl<'a> Engine<'a> {
     fn both<'f>(&'f self, a: &'f Operand, b: &'f Operand, at: &'f Option<Value>, bt: &'f Option<Value>, frame: &'f [Value]) -> Res<(&'f Value, &'f Value)> {
         // A value worked out beforehand stands for the operand: what was
         // popped for a stack operand, or what a shared cell holds.
-        let av: &Value = match (at, a) {
-            (Some(v), _) => v,
-            (None, Operand::Const(v)) => v,
-            (None, Operand::Cell(s)) => self.peek_cell(s, frame)?,
-            (None, Operand::Top) => return Err("Stack underflow".to_string()),
+        let read = |ready: &'f Option<Value>, operand: &'f Operand| -> Res<&'f Value> {
+            match (ready, operand) {
+                (Some(v), _) => Ok(v),
+                (None, Operand::Const(v)) => Ok(v),
+                (None, Operand::Cell(s)) => self.peek_cell(s, frame),
+                (None, Operand::Top) => Err("Stack underflow".to_string()),
+            }
         };
-        let bv: &Value = match (bt, b) {
-            (Some(v), _) => v,
-            (None, Operand::Const(v)) => v,
-            (None, Operand::Cell(s)) => self.peek_cell(s, frame)?,
-            (None, Operand::Top) => return Err("Stack underflow".to_string()),
-        };
-        Ok((av, bv))
+        Ok((read(at, a)?, read(bt, b)?))
     }
 
     fn peek_cell_mut<'f>(&'f mut self, slot: &Cell, frame: &'f mut [Value]) -> Res<&'f mut Value> {
@@ -6209,15 +6186,10 @@ impl<'a> Engine<'a> {
         if let Some(handle) = self.frame_codes.get(&key).and_then(Weak::upgrade) {
             return Value::Adapter(handle);
         }
+        let body = Self::stripped_body(program);
         if !program.enclosed.is_empty() {
-            let mut body = (**program).clone();
-            body.held.clear();
-            body.enclosed.clear();
             return Self::adapter(7, vec![Value::Routine(Rc::new(body)), Value::Routine(program.clone())]);
         }
-        let mut body = (**program).clone();
-        body.held.clear();
-        body.enclosed.clear();
         let handle = Rc::new((7, vec![Value::Routine(Rc::new(body)), Value::Routine(program.clone())]));
         self.frame_codes.insert(key, Rc::downgrade(&handle));
         Value::Adapter(handle)
@@ -6829,18 +6801,7 @@ impl<'a> Engine<'a> {
                             // given a cell of its own holding the same,
                             // so a write the text makes is the text's
                             // alone, as the reference has it.
-                            let mine: Vec<Value> = frame.iter().map(|held| match held {
-                                Value::Binding(cell) => Value::Binding(Rc::new(RefCell::new(cell.borrow().clone()))),
-                                other => other.clone(),
-                            }).collect();
-                            let saved_book = self.text_caller_book.take();
-                            let book = match self.names_about(program, frame, Builtin::OuterNames)? { Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell, value => Rc::new(RefCell::new(value)) };
-                            self.text_caller_book = Some(book);
-                            let held = std::mem::replace(&mut self.text_within, Some((program.idents.clone(), mine)));
-                            let done = self.perform(op, *argc);
-                            self.text_within = held;
-                            self.text_caller_book = saved_book;
-                            done
+                            self.perform_within_text(program, frame, op, *argc)
                         }
                         // The names standing where the call is made are
                         // only to be seen from here, where the frame is.
@@ -6857,18 +6818,7 @@ impl<'a> Engine<'a> {
                         }
                         Action::Invoke(_) if !program.body_of_all && !self.lang.compile_modes.is_empty()
                             && self.data.last().is_some_and(|held| matches!(self.what_it_spells(held.clone()), Value::Native(Builtin::Eval | Builtin::RunText, _))) => {
-                            let copied = frame.iter().map(|value| match value {
-                                Value::Binding(cell) => Value::Binding(Rc::new(RefCell::new(cell.borrow().clone()))),
-                                value => value.clone(),
-                            }).collect();
-                            let earlier_book = self.text_caller_book.take();
-                            let book = match self.names_about(program, frame, Builtin::OuterNames)? { Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell, value => Rc::new(RefCell::new(value)) };
-                            self.text_caller_book = Some(book);
-                            let preceding = self.text_within.replace((program.idents.clone(), copied));
-                            let result = self.perform(op, *argc);
-                            self.text_within = preceding;
-                            self.text_caller_book = earlier_book;
-                            result
+                            self.perform_within_text(program, frame, op, *argc)
                         }
                         Action::Invoke(_) if *argc == 1 && !self.lang.class_builder.is_empty()
                             && self.data.last().is_some_and(|held| matches!(self.what_it_spells(held.clone()), Value::Native(Builtin::ClassTool(8) | Builtin::NearNames | Builtin::Vars | Builtin::OuterNames, _))) => {
@@ -7048,16 +6998,13 @@ impl<'a> Engine<'a> {
                         }
                     }
                 }
-                Instr::Mute(quiet) => {
-                    let deep = self.muted.get();
-                    self.muted.set(match quiet {
-                        true => deep + 1,
-                        false => deep.saturating_sub(1),
-                    });
-                }
-                Instr::Hush(quiet) => {
-                    let deep = self.hushed.get();
-                    self.hushed.set(match quiet {
+                Instr::Mute(quiet) | Instr::Hush(quiet) => {
+                    let cell = match &instrs[pc] {
+                        Instr::Mute(_) => &self.muted,
+                        _ => &self.hushed,
+                    };
+                    let deep = cell.get();
+                    cell.set(match quiet {
                         true => deep + 1,
                         false => deep.saturating_sub(1),
                     });
@@ -12008,27 +11955,22 @@ impl<'a> Engine<'a> {
 
     fn perform(&mut self, op: &Action, argc: usize) -> Flow<()> {
         if let Action::HasMember(member) = op {
-            if let Some(window @ Value::View(_)) = self.data.last().and_then(Self::view_in) {
-                if matches!(&window, Value::View(v) if v.1 == "mapping") {
-                    self.drop_top()?;
-                    let read = self.class_get(window, member, false);
-                    let present = match read { Ok(_) => true, Err(fault) if self.attribute_fault(&fault) => false, Err(fault) => return Err(fault) };
-                    self.data.push(Value::Flag(present));
-                    return Ok(());
-                }
+            if let Some(window) = self.mapping_view_top() {
+                self.drop_top()?;
+                let read = self.class_get(window, member, false);
+                let present = match read { Ok(_) => true, Err(fault) if self.attribute_fault(&fault) => false, Err(fault) => return Err(fault) };
+                self.data.push(Value::Flag(present));
+                return Ok(());
             }
         }
 
 
         if let Action::Grab(member) = op {
-
-            if let Some(window @ Value::View(_)) = self.data.last().and_then(Self::view_in) {
-                if matches!(&window, Value::View(v) if v.1 == "mapping") {
-                    self.drop_top()?;
-                    let value = self.class_get(window, member, false)?;
-                    self.data.push(value);
-                    return Ok(());
-                }
+            if let Some(window) = self.mapping_view_top() {
+                self.drop_top()?;
+                let value = self.class_get(window, member, false)?;
+                self.data.push(value);
+                return Ok(());
             }
         }
 
@@ -12187,9 +12129,7 @@ impl<'a> Engine<'a> {
             // other, and this is how it is asked for.
             Action::BondNamed => {
                 let spelled = self.drop_top()?;
-                let name = self.name_spelled(&spelled);
-                let at = self.registry.slot(&name);
-                self.world.resize(self.registry.idents.len(), Value::Blank);
+                let (_, at) = self.named_slot(&spelled);
                 if let Value::Bond(shared) = &self.world[at] {
                     Value::Bond(shared.clone())
                 } else {
@@ -12204,9 +12144,7 @@ impl<'a> Engine<'a> {
             }
             Action::Named => {
                 let spelled = self.drop_top()?;
-                let name = self.name_spelled(&spelled);
-                let at = self.registry.slot(&name);
-                self.world.resize(self.registry.idents.len(), Value::Blank);
+                let (name, at) = self.named_slot(&spelled);
                 match &self.world[at] {
                     Value::Bond(shared) => shared.borrow().clone(),
                     Value::Blank if self.warns_about(&name) => {
@@ -12220,9 +12158,7 @@ impl<'a> Engine<'a> {
             Action::WriteNamed => {
                 let value = self.drop_top()?;
                 let spelled = self.drop_top()?;
-                let name = self.name_spelled(&spelled);
-                let at = self.registry.slot(&name);
-                self.world.resize(self.registry.idents.len(), Value::Blank);
+                let (_, at) = self.named_slot(&spelled);
                 match &self.world[at] {
                     Value::Bond(shared) => *shared.borrow_mut() = value,
                     _ => self.world[at] = value,
@@ -12231,17 +12167,13 @@ impl<'a> Engine<'a> {
             }
             Action::ForgetNamed => {
                 let spelled = self.drop_top()?;
-                let name = self.name_spelled(&spelled);
-                let at = self.registry.slot(&name);
-                self.world.resize(self.registry.idents.len(), Value::Blank);
+                let (_, at) = self.named_slot(&spelled);
                 self.world[at] = Value::Blank;
                 Value::Null
             }
             Action::ReadyNamed => {
                 let spelled = self.drop_top()?;
-                let name = self.name_spelled(&spelled);
-                let at = self.registry.slot(&name);
-                self.world.resize(self.registry.idents.len(), Value::Blank);
+                let (_, at) = self.named_slot(&spelled);
                 if matches!(self.world[at], Value::Blank) {
                     self.world[at] = Value::Null;
                 }
@@ -14028,43 +13960,37 @@ impl<'a> Engine<'a> {
             // is under it, with any arguments under that.
             Action::GrabNamed => {
                 let spelled = self.drop_top()?;
-                let sp = self.wording();
-                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                let name = self.named_rc(&spelled);
                 return self.perform(&Action::Grab(name), 1);
             }
             Action::PlantNamed => {
                 let value = self.drop_top()?;
                 let spelled = self.drop_top()?;
-                let sp = self.wording();
-                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                let name = self.named_rc(&spelled);
                 self.data.push(value);
                 return self.perform(&Action::Plant(name), 2);
             }
             Action::ReachNamed => {
                 let spelled = self.drop_top()?;
-                let sp = self.wording();
-                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                let name = self.named_rc(&spelled);
                 return self.perform(&Action::Reach(name), 1);
             }
             Action::SummonNamed(count) => {
                 let spelled = self.drop_top()?;
-                let sp = self.wording();
-                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                let name = self.named_rc(&spelled);
                 return self.perform(&Action::Summon(name), count + 2);
             }
             Action::SowNamed => {
                 let value = self.drop_top()?;
                 let spelled = self.drop_top()?;
-                let sp = self.wording();
-                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                let name = self.named_rc(&spelled);
                 self.data.push(value);
                 return self.perform(&Action::Sow(name), 2);
             }
             Action::SendNamed(count) => {
                 self.call_site.set(true);
                 let spelled = self.drop_top()?;
-                let sp = self.wording();
-                let name: Rc<str> = Rc::from(spelled.display(&sp).as_str());
+                let name = self.named_rc(&spelled);
                 return self.perform(&Action::Send(name), count + 1);
             }
             Action::Send(name) => {
@@ -30821,6 +30747,54 @@ impl Engine<'_> {
             Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, source)),
         };
         Ok((file, tokens))
+    }
+}
+
+
+impl Engine<'_> {
+    fn named_slot(&mut self, spelled: &Value) -> (String, usize) {
+        let name = self.name_spelled(spelled);
+        let at = self.registry.slot(&name);
+        self.world.resize(self.registry.idents.len(), Value::Blank);
+        (name, at)
+    }
+
+    fn named_rc(&self, spelled: &Value) -> Rc<str> {
+        let sp = self.wording();
+        Rc::from(spelled.display(&sp).as_str())
+    }
+
+    fn mapping_view_top(&self) -> Option<Value> {
+        let window = self.data.last().and_then(Self::view_in)?;
+        match &window {
+            Value::View(view) if view.1 == "mapping" => Some(window),
+            _ => None,
+        }
+    }
+
+    fn perform_within_text(&mut self, program: &Rc<Routine>, frame: &[Value], op: &Action, argc: usize) -> Flow<()> {
+        let copied: Vec<Value> = frame.iter().map(|held| match held {
+            Value::Binding(cell) => Value::Binding(Rc::new(RefCell::new(cell.borrow().clone()))),
+            other => other.clone(),
+        }).collect();
+        let saved_book = self.text_caller_book.take();
+        let book = match self.names_about(program, frame, Builtin::OuterNames)? {
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell,
+            value => Rc::new(RefCell::new(value)),
+        };
+        self.text_caller_book = Some(book);
+        let held = self.text_within.replace((program.idents.clone(), copied));
+        let done = self.perform(op, argc);
+        self.text_within = held;
+        self.text_caller_book = saved_book;
+        done
+    }
+
+    fn stripped_body(program: &Rc<Routine>) -> Routine {
+        let mut body = (**program).clone();
+        body.held.clear();
+        body.enclosed.clear();
+        body
     }
 }
 
