@@ -321,6 +321,17 @@ impl<'a> Machine<'a> {
     /// member write of the program's can reach it: the class takes no
     /// member writes and stands as no base.
     pub(super) fn sealed(b:&Blueprint)->bool {b.sealed.get()}
+    fn name_list(mut names: Vec<String>) -> Value {
+        names.sort();
+        names.dedup();
+        Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|word| Value::text(word)).collect()))
+    }
+    fn class_tool_names(&self, into: &mut Vec<String>) {
+        into.extend(["kind", "get", "set", "remove", "allocate", "subclass", "doc"].iter().map(|key| self.detail(key).to_owned()).filter(|word| !word.is_empty()));
+        into.extend(self.rules.words_ext_stmt_class_constructor.iter().cloned());
+        into.extend(self.rules.words_ext_stmt_class_detail_root_members.iter().cloned());
+        into.extend(self.rules.specials.get(72).cloned());
+    }
     // The root method gathers the same names as the ordinary builtin
     // path; an appointed directory hook is called by the caller instead.
     pub(super) fn ordinary_directory(&self, item: &Value) -> Value {
@@ -339,8 +350,7 @@ impl<'a> Machine<'a> {
                 if !word.is_empty() { names.push(word.to_string()); }
             }
             names.extend(self.routine_holding_names(&routine));
-            names.sort();names.dedup();
-            return Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|s|Value::text(s)).collect()));
+            return Self::name_list(names);
         }
             if matches!(item, Value::Wrapped(62 | 64, _)) {
                 let mut names = Vec::new();
@@ -349,8 +359,7 @@ impl<'a> Machine<'a> {
                 for label in ["ext.stmt.yield.send", "ext.stmt.yield.throw", "ext.stmt.yield.close"] {
                     names.extend(self.table.strings(label).iter().cloned());
                 }
-                names.sort(); names.dedup();
-                return Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|name| Value::text(name)).collect()));
+                return Self::name_list(names);
             }
         // A walk over a routine's own body lists the walking pair it
         // answers to (through the mark below) and the few names a
@@ -360,14 +369,12 @@ impl<'a> Machine<'a> {
                 if self.native_coroutine(item) {
                     names.extend(self.table.strings("ext.stmt.async.coroutine.fields").iter().cloned());
                     names.extend(self.rules.words_ext_stmt_async_generator_methods.get(3).cloned());
-                    names.sort(); names.dedup();
-                    return Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|word| Value::text(word)).collect()));
+                    return Self::name_list(names);
                 }
                 if self.is_async_generator(item) {
                     names.extend(self.rules.words_ext_stmt_async_generator_methods.iter().take(3).cloned());
                     names.extend(self.table.strings("ext.stmt.async.generator.fields").iter().cloned());
-                    names.sort(); names.dedup();
-                    return Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|s|Value::text(s)).collect()));
+                    return Self::name_list(names);
                 }
             for label in ["ext.stmt.yield.close","ext.stmt.yield.send","ext.stmt.yield.throw","ext.stmt.yield.running"] {
                 if let Some(w)=self.table.strings(label).first() { names.push(w.clone()); }
@@ -375,8 +382,7 @@ impl<'a> Machine<'a> {
             for word in [14, 15, 21, 24].iter().filter_map(|i| self.rules.trace_words.get(*i).cloned()).filter(|word| !word.is_empty()) {
                 if !word.is_empty() { names.push(word); }
             }
-            names.sort();names.dedup();
-            return Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|s|Value::text(s)).collect()));
+            return Self::name_list(names);
         }
         // A native kind, named as the kind itself or held as a value
         // of one, answers the members a value of that kind has: the
@@ -384,14 +390,11 @@ impl<'a> Machine<'a> {
         if let Some(sample)=self.directory_stand_in(item) {
             let mut named=self.native_directory(&sample);
             if self.table.has_any("ext.stmt.class.builder") && !matches!(sample, Value::Backtrace(_)) {
-                named.extend(["kind","get","set","remove","allocate","subclass","doc"].iter().map(|key|self.detail(key).to_owned()).filter(|word|!word.is_empty()));
-                named.extend(self.rules.words_ext_stmt_class_constructor.iter().cloned());
-                named.extend(self.rules.words_ext_stmt_class_detail_root_members.iter().cloned());
-                named.extend(self.rules.specials.get(72).cloned());
+                self.class_tool_names(&mut named);
                 let kind = sample.settled().kind_word();
                 let hook = self.detail("getitem");
                 if !hook.is_empty() && self.native_declares_protocol(&kind, hook) { named.push(hook.to_owned()); }
-                named.sort_unstable(); named.dedup();
+                return Self::name_list(named);
             }
             return Value::Vector(crate::tuples::Sequence::plain(named.iter().map(|word|Value::text(word)).collect()));
         }
@@ -425,9 +428,7 @@ impl<'a> Machine<'a> {
         }
         else{names.extend(self.routine_holding_names(item));}
         if let Some(class) = class.as_ref().filter(|_| !matches!(item, Value::Thing(_)) || !names.iter().any(|name| name == self.detail("kind"))) {
-            for part in ["doc", "kind", "get", "set", "remove", "allocate", "subclass"] {
-                let name = self.detail(part); if !name.is_empty() { names.push(name.to_owned()); }
-            }
+            self.class_tool_names(&mut names);
             // A metaclass answers besides for the order and the names of
             // a class it makes, as the reference lists them among its own.
             if self.builder_kind.as_ref().is_some_and(|k| Rc::ptr_eq(k, class)) {
@@ -436,22 +437,14 @@ impl<'a> Machine<'a> {
                     if !word.is_empty() { names.push(word.to_owned()); }
                 }
             }
-            if let Some(name) = self.rules.words_ext_stmt_class_constructor.first().map(String::as_str) { names.push(name.to_owned()); }
             if self.allowed_slot(class, self.detail("namespace")) { names.push(self.detail("namespace").to_owned()); }
             if !self.rules.words_ext_builtin_weak_get.is_empty() && self.admits_weak(class) { names.push("__weakref__".to_owned()); }
-            names.extend(self.rules.words_ext_stmt_class_detail_root_members.iter().cloned());
-            names.extend(self.rules.specials.get(72).cloned());
-            let doc = self.detail("doc"); if !doc.is_empty() { names.push(doc.to_owned()); }
         }
         if class.as_ref().is_some_and(|kind| Self::native_beneath(kind).as_deref() == Some("GenericAlias")) { names.push(String::from("__parameters__")); }
         if class.is_none() && !matches!(item, Value::Thing(_)) && self.table.has_any("ext.stmt.class.builder") {
-            let inherited=["kind","get","set","remove","allocate","subclass","doc"].iter().map(|field|self.detail(field)).filter(|word|!word.is_empty());
-            names.extend(inherited.map(str::to_owned));
-            names.extend(self.rules.words_ext_stmt_class_constructor.iter().cloned());
-            names.extend(self.rules.words_ext_stmt_class_detail_root_members.iter().cloned());
-            names.extend(self.rules.specials.get(72).cloned());
+            self.class_tool_names(&mut names);
         }
-        names.sort_unstable();names.dedup();Value::Vector(crate::tuples::Sequence::plain(names.iter().map(|s|Value::text(s)).collect()))
+        Self::name_list(names)
     }
 
     /// The value whose kind a directory should describe: an empty value
