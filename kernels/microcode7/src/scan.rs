@@ -461,24 +461,35 @@ pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)>
     Ok(read)
 }
 
-/// The base a number was read in when a keyword stands written straight
-/// against it, as the reference warns, else None.
-fn invalid_literal_base(run: &str, table: &Table) -> Option<&'static str> {
-    if check_numeral(run, table).is_ok() { return None; }
+/// A keyword written straight against a number, when that number reads
+/// on its own and none of the three refused spellings is the one written.
+/// The second word is the keyword.
+fn keyword_suffix<'a>(run: &'a str, table: &Table) -> Option<(&'a str, &'static str)> {
     for word in ["else", "not", "and", "or", "in", "if", "is", "for"] {
         if let Some(prefix) = run.strip_suffix(word) {
             if !prefix.is_empty() && check_numeral(prefix, table).is_ok()
                 && !(prefix == "0" && word == "or")
                 && !((prefix.starts_with("0x") || prefix.starts_with("0X")) && matches!(word, "and" | "else")) {
-                return Some(if prefix.starts_with("0b") || prefix.starts_with("0B") { "binary" }
-                    else if prefix.starts_with("0o") || prefix.starts_with("0O") { "octal" }
-                    else if prefix.starts_with("0x") || prefix.starts_with("0X") { "hexadecimal" }
-                    else if prefix.ends_with(table.letters("ext.lexical.number.imaginary").as_slice()) { "imaginary" }
-                    else { "decimal" });
+                return Some((prefix, word));
             }
         }
     }
     None
+}
+
+/// The base a number was read in when a keyword stands written straight
+/// against it, as the reference warns, else None.
+fn invalid_literal_base(run: &str, table: &Table) -> Option<&'static str> {
+    if check_numeral(run, table).is_ok() { return None; }
+    let prefix = match keyword_suffix(run, table) {
+        Some((prefix, _)) => prefix,
+        None => return None,
+    };
+    Some(if prefix.starts_with("0b") || prefix.starts_with("0B") { "binary" }
+        else if prefix.starts_with("0o") || prefix.starts_with("0O") { "octal" }
+        else if prefix.starts_with("0x") || prefix.starts_with("0X") { "hexadecimal" }
+        else if prefix.ends_with(table.letters("ext.lexical.number.imaginary").as_slice()) { "imaginary" }
+        else { "decimal" })
 }
 
 /// Read the numeric candidate once for tokenization and warning collection.
@@ -558,6 +569,11 @@ fn numeral_end(src: &[char], pos: usize, table: &Table) -> usize {
     k
 }
 
+/// Whether one of the line-comment marks opens at `at`.
+fn comment_opens(table: &Table, letters: &[char], at: usize) -> bool {
+    table.scanner.strings_lexical_comment_line.as_slice().iter().any(|mark| letters[at..].starts_with(&mark.chars().collect::<Vec<_>>()))
+}
+
 pub fn escape_notices(source: &str, table: &Table) -> Vec<(String, u32)> {
     if !table.scanner.has_any_ext_lexical_escape_warning { return vec![]; }
     // A reading that stops short on a fault later in the text still
@@ -571,7 +587,7 @@ pub fn escape_notices(source: &str, table: &Table) -> Vec<(String, u32)> {
     let mut notices: Vec<(String, u32)> = Vec::new();
     let (mut pos, mut row) = (0usize, 1u32);
     while pos < src.len() {
-        if table.scanner.strings_lexical_comment_line.as_slice().iter().any(|m| src[pos..].starts_with(&m.chars().collect::<Vec<_>>())) {
+        if comment_opens(table, &src, pos) {
             while pos < src.len() && src[pos] != '\n' { pos += 1; }
             continue;
         }
@@ -1052,9 +1068,7 @@ impl Quotation<'_, '_> {
                 whitespace.push('\n');
                 continue;
             }
-            let comment = self.table.scanner.strings_lexical_comment_line.as_slice().iter().any(|word|
-                self.source[self.next..].starts_with(&word.chars().collect::<Vec<_>>()));
-            if !comment { break; }
+            if !comment_opens(self.table, self.source, self.next) { break; }
             while self.here().map_or(false, |c| c != '\n') { self.forward(1); }
         }
         whitespace
@@ -1099,7 +1113,7 @@ impl Quotation<'_, '_> {
                 continue;
             }
             if let Some(said) = prefix_conflict(self.source, self.next, self.table) { return Err(said); }
-            if self.table.scanner.strings_lexical_comment_line.as_slice().iter().any(|s| self.source[self.next..].starts_with(&s.chars().collect::<Vec<_>>())) {
+            if comment_opens(self.table, self.source, self.next) {
                 let begins = self.next;
                 while self.here().map_or(false, |c| c != '\n') { self.forward(1); }
                 comments.push(begins..self.next);
@@ -1336,7 +1350,7 @@ fn scan_code_from<'a>(source: &str, table: &'a Table, first: u32, ended: &mut (u
             }
             let line_end = src[k..].iter().position(|c| *c == '\n').map_or(src.len(), |p| k + p);
             if src[k..line_end].iter().all(|c| c.is_ascii_whitespace() || !table.syntax_exceptions && c.is_whitespace())
-                || table.scanner.strings_lexical_comment_line.as_slice().iter().any(|mark| src[k..].starts_with(&mark.chars().collect::<Vec<_>>())) {
+                || comment_opens(table, &src, k) {
                 if line_end < src.len() {
                     row += 1;
                 }
@@ -1350,7 +1364,7 @@ fn scan_code_from<'a>(source: &str, table: &'a Table, first: u32, ended: &mut (u
         column.set(at_column(pos));
         ended.1 = column.get();
         if !table.scanner.strings_ext_lexical_string_long.as_slice().is_empty() {
-            if table.scanner.strings_lexical_comment_line.as_slice().iter().any(|m| src[pos..].starts_with(&m.chars().collect::<Vec<_>>())) {
+            if comment_opens(table, &src, pos) {
                 while pos < src.len() && src[pos] != '\n' { pos += 1; }
                 continue;
             }
@@ -1511,17 +1525,11 @@ fn scan_code_from<'a>(source: &str, table: &'a Table, first: u32, ended: &mut (u
             let mut k = numeral_end(&src, pos, table);
             let mut spelling: String = src[pos..k].iter().collect();
             if strict && check_numeral(&spelling, table).is_err() && table.syntax_exceptions {
-                for word in ["else", "not", "and", "or", "in", "if", "is", "for"] {
-                    if let Some(beginning) = spelling.strip_suffix(word) {
-                        if !beginning.is_empty() && check_numeral(beginning, table).is_ok()
-                            && !(beginning == "0" && word == "or")
-                            && !((beginning.starts_with("0x") || beginning.starts_with("0X")) && matches!(word, "and" | "else")) {
-                            let kept = beginning.len();
-                            k -= word.len();
-                            spelling.truncate(kept);
-                            break;
-                        }
-                    }
+                if let Some((kept, width)) = keyword_suffix(&spelling, table)
+                    .map(|(beginning, word)| (beginning.len(), word.len()))
+                {
+                    k -= width;
+                    spelling.truncate(kept);
                 }
             }
             if strict {
