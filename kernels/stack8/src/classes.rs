@@ -3883,25 +3883,26 @@ impl<'a> Engine<'a> {
                 return Err(format!("TypeError: cannot create '{}' instances", word).into());
             }
             let mut initial = args.clone();
+            let has_init = self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some();
             match self.lang.builtins.get(word) {
                 Some(Builtin::Set) => initial.clear(),
                 // Mutable dictionary allocation precedes the subclass initializer;
                 // its arguments belong to that initializer, not dict.update.
-                Some(Builtin::Dict) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => initial.clear(),
-                Some(Builtin::AsReal) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
+                Some(Builtin::Dict) if has_init => initial.clear(),
+                Some(Builtin::AsReal) if has_init => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).take(1).collect();
                 }
                 // A mutable container takes its members in its own
                 // `__init__`; where the class writes one, the builtin is
                 // asked only to allocate the empty thing and the class's
                 // method is handed the arguments itself.
-                Some(Builtin::List | Builtin::Dict | Builtin::Bytes(1)) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
+                Some(Builtin::List | Builtin::Dict | Builtin::Bytes(1)) if has_init => {
                     initial.clear();
                 }
-                Some(Builtin::Filter) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
+                Some(Builtin::Filter) if has_init => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
                 }
-                Some(Builtin::Frozen | Builtin::Tuple) if self.lang.constructor.as_deref().and_then(|name| self.class_value(&c, name)).is_some() => {
+                Some(Builtin::Frozen | Builtin::Tuple) if has_init => {
                     initial = self.call_items(initial)?.into_iter().filter_map(|(key, value)| key.is_none().then_some(value)).collect();
                 }
                 _ => (),
