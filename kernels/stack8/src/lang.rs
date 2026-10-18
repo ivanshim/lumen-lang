@@ -1471,6 +1471,16 @@ impl<'a> Reader<'a> {
         }
     }
 
+    /// Nothing where the label lists no words, and its two words where
+    /// it lists exactly two. Any other count is the error `{key} {what}`.
+    fn pair(&self, key: &str, what: &str) -> Result<Option<(String, String)>, String> {
+        match self.strings(key)?.as_slice() {
+            [] => Ok(None),
+            [before, after] => Ok(Some((before.clone(), after.clone()))),
+            _ => Err(format!("{key} {what}")),
+        }
+    }
+
     fn letters(&self, key: &str) -> Result<Vec<char>, String> {
         self.strings(key)?
             .into_iter()
@@ -2850,11 +2860,7 @@ impl Lang {
             default_words: r.strings("ext.stmt.default")?,
             case_marks: r.strings("ext.stmt.case.mark")?,
             case_mark_instead: r.head("ext.stmt.case.mark.instead")?,
-            ternary: match r.strings("ext.op.ternary")?.as_slice() {
-                [] => None,
-                [q, m] => Some((q.clone(), m.clone())),
-                _ => return Err("ext.op.ternary takes exactly two signs, the question and the mark".to_string()),
-            },
+            ternary: r.pair("ext.op.ternary", "takes exactly two signs, the question and the mark")?,
             lone_stmt: r.flag("ext.block.lone_statement")?,
             hoisted: r.flag("ext.stmt.function.hoisted")?,
             routines_outermost: r.flag("ext.stmt.function.outermost")?,
@@ -3013,11 +3019,7 @@ impl Lang {
             walk_onward: r.head("ext.op.walk.onward")?,
             giver_class: r.head("ext.op.walk.giver.class")?,
             walk_giver: r.head("ext.op.walk.giver")?,
-            giver_unwalkable: match r.strings("ext.op.walk.giver.unwalkable")?.as_slice() {
-                [] => None,
-                [before, after] => Some((before.clone(), after.clone())),
-                _ => return Err("ext.op.walk.giver.unwalkable takes exactly two pieces, what is said before the name and what is said after".to_string()),
-            },
+            giver_unwalkable: r.pair("ext.op.walk.giver.unwalkable", "takes exactly two pieces, what is said before the name and what is said after")?,
             walk_no_cell: r.head("ext.op.walk.no_cell")?,
             walk_key_no_cell: r.head("ext.op.walk.key.no_cell")?,
             walk_alive: r.flag("ext.op.walk.live")?,
@@ -3093,11 +3095,7 @@ impl Lang {
             parameters_amiss: r.strings("ext.stmt.function.parameters.amiss")?,
             parameters_duplicate: r.strings("ext.stmt.function.parameters.duplicate")?,
 
-            short_function: match r.strings("ext.stmt.function.short")?.as_slice() {
-                [] => None,
-                [word, mark] => Some((word.clone(), mark.clone())),
-                _ => return Err("ext.stmt.function.short takes exactly two words, the one it opens with and the mark before its body".to_string()),
-            },
+            short_function: r.pair("ext.stmt.function.short", "takes exactly two words, the one it opens with and the mark before its body")?,
             lambda_name: r.strings("ext.stmt.function.anonymous")?,
             uses_alias: r.strings("ext.stmt.class.uses.alias")?,
             interface_words: r.strings("ext.stmt.class.interface")?,
