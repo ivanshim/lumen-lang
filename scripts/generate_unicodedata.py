@@ -167,7 +167,7 @@ def normalization(current, historic, exclusions):
     assert len(corrections) == 5
     (OUT / 'normalization-3.2.tsv').write_text(''.join(corrections))
 
-# Generate predicates and full case mappings in each kernel's existing format.
+# Generate predicates and full case mappings for the shared lumen-unicode crate.
 def string_tables(current):
     masks = [0] * LIMIT
     for cp, row in enumerate(current):
@@ -219,24 +219,16 @@ def string_tables(current):
             if last_mask:
                 runs.append((start, cp - 1, last_mask))
             start, last_mask = cp, flag
-    stack = 'static PROPERTIES: &[(u32, u32, u16)] = &[\n'
-    stack += ''.join(f'    (0x{a:x}, 0x{b:x}, {mask}),\n' for a, b, mask in runs) + '];\n\n'
-    stack += 'static CASES: &[(u32, [&str; 4])] = &[\n'
-    stack += ''.join(f'    (0x{cp:x}, [{", ".join(mapping)}]),\n' for cp, mapping in changes) + '];'
-    micro = 'static RANGES: &[u64] = &[\n'
+    body = 'static RANGES: &[u64] = &[\n'
     packed = [f'0x{a << 37 | b << 16 | mask:x}' for a, b, mask in runs]
-    micro += ''.join('    ' + ', '.join(packed[i:i+6]) + ',\n' for i in range(0, len(packed), 6)) + '];\n\n'
-    micro += 'static CHANGES: &[(u32, &str, &str, &str, &str)] = &[\n'
-    micro += ''.join(f'    ({cp}, {", ".join(mapping)}),\n' for cp, mapping in changes) + '];'
-    for kernel, first, last, body in (
-        ('stack8', 'static PROPERTIES:', 'static CASES:', stack),
-        ('microcode7', 'static RANGES:', 'static CHANGES:', micro),
-    ):
-        path = ROOT / 'kernels' / kernel / 'src/unicode.rs'
-        text = path.read_text()
-        begin = text.index(first)
-        end = text.index('\n];', text.index(last)) + len('\n];')
-        path.write_text(text[:begin] + body + text[end:])
+    body += ''.join('    ' + ', '.join(packed[i:i+6]) + ',\n' for i in range(0, len(packed), 6)) + '];\n\n'
+    body += 'static CASES: &[(u32, [&str; 4])] = &[\n'
+    body += ''.join(f'    (0x{cp:x}, [{", ".join(mapping)}]),\n' for cp, mapping in changes) + '];'
+    path = ROOT / 'native' / 'unicode' / 'lib.rs'
+    text = path.read_text()
+    begin = text.index('static RANGES:')
+    end = text.index('\n];', text.index('static CASES:')) + len('\n];')
+    path.write_text(text[:begin] + body + text[end:])
 
 # Produce deterministic files and verify structural invariants.
 def main():
