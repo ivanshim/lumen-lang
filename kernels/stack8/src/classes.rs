@@ -8271,6 +8271,11 @@ impl<'a> Engine<'a> {
         };
         self.lang.builtins.iter().find(|(_,b)|**b==target).map(|(n,_)|n.clone()).unwrap_or_default()
     }
+    fn ordered_names(&mut self, answer: &Value) -> Flow<Value> {
+        let names = self.special_items(answer).map_err(Fault::Note)?;
+        let ordered = self.steady_order(names, &Value::Null, false).map_err(Fault::Note)?;
+        Ok(Value::array(ordered))
+    }
     pub(super) fn class_work(&mut self,which:u8,mut args:Vec<Value>)->Flow<Value> {
         if which == 30 && !self.lang.partial_call_words.is_empty() {
             let mut supplied = Vec::new();
@@ -8511,9 +8516,7 @@ impl<'a> Engine<'a> {
                             if let Some(method)=self.class_value(&maker,&word) {
                                 let bound=self.bind_class_value(method,Some(one.clone()),maker)?;
                                 let answer=self.class_apply(bound,Vec::new())?;
-                                let names=self.special_items(&answer).map_err(Fault::Note)?;
-                                let ordered=self.steady_order(names,&Value::Null,false).map_err(Fault::Note)?;
-                                return Ok(Value::array(ordered));
+                                return self.ordered_names(&answer);
                             }
                         }
                     }
@@ -8540,9 +8543,7 @@ impl<'a> Engine<'a> {
                                     return Err(self.core_fault("core.uncallable",&hook.core_kind()).into());
                                 }
                                 let answer=self.class_apply(hook,Vec::new())?;
-                                let names=self.special_items(&answer).map_err(Fault::Note)?;
-                                let ordered=self.steady_order(names,&Value::Null,false).map_err(Fault::Note)?;
-                                return Ok(Value::array(ordered));
+                                return self.ordered_names(&answer);
                             }
                         }
                         let names = entries.into_iter().map(|(key, _)| key).collect();
@@ -8554,9 +8555,7 @@ impl<'a> Engine<'a> {
                 // it, and the names it gives are put in order.
                 if matches!(&one,Value::Object(_)) {
                     if let Some(answer)=self.special_call(&one,75,vec![]).map_err(Fault::Note)? {
-                        let names=self.special_items(&answer).map_err(Fault::Note)?;
-                        let ordered=self.steady_order(names,&Value::Null,false).map_err(Fault::Note)?;
-                        return Ok(Value::array(ordered));
+                        return self.ordered_names(&answer);
                     }
                 }
                 // The kind primitive stands for the class of the kind
