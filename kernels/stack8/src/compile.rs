@@ -4267,31 +4267,7 @@ impl<'a> Compiler<'a> {
                         // it does when the row is only read; the
                         // expression reader itself steps over a
                         // lambda's parameter commas.
-                        if self.on_any(&self.lang.array_spread) {
-                            self.act(Action::MakeArray, 0);
-                            loop {
-                                let spread = self.index_part(&pair.close, comma.as_deref())?;
-                                self.act(Action::GatherItem { map: false, spread }, 2);
-                                if comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) {
-                                    self.pass_token();
-                                    if self.at_symbol(&pair.close) { break; }
-                                } else { break; }
-                            }
-                            self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
-                        } else {
-                            self.slice_part(&pair.close, comma.as_deref())?;
-                            if comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) {
-                                self.act(Action::MakeArray, 1);
-                                loop {
-                                    self.pass_token();
-                                    if self.at_symbol(&pair.close) { break; }
-                                    let spread = self.index_part(&pair.close, comma.as_deref())?;
-                                    self.act(Action::GatherItem { map: false, spread }, 2);
-                                    if !comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) { break; }
-                                }
-                                self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
-                            }
-                        }
+                        self.spread_index(&pair.close, comma.as_deref())?;
                     } else {
                         self.slice_part(&pair.close, comma.as_deref())?;
                         let mut parts = 1;
@@ -12497,6 +12473,40 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// The key of a subscript where a row may hold a starred place: a
+    /// row with a star, or more than one place, becomes a tuple; one
+    /// place and no star stays that place. Each place is read by the
+    /// expression reader itself, so a comma within a lambda's parameter
+    /// list is no separator and a star within one is no starred place.
+    fn spread_index(&mut self, close: &str, sep: Option<&str>) -> Res<()> {
+        if self.on_any(&self.lang.array_spread) {
+            self.act(Action::MakeArray, 0);
+            loop {
+                let spread = self.index_part(close, sep)?;
+                self.act(Action::GatherItem { map: false, spread }, 2);
+                if sep.map_or(false, |s| self.at_symbol(s)) {
+                    self.pass_token();
+                    if self.at_symbol(close) { break; }
+                } else { break; }
+            }
+            self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
+        } else {
+            self.slice_part(close, sep)?;
+            if sep.map_or(false, |s| self.at_symbol(s)) {
+                self.act(Action::MakeArray, 1);
+                loop {
+                    self.pass_token();
+                    if self.at_symbol(close) { break; }
+                    let spread = self.index_part(close, sep)?;
+                    self.act(Action::GatherItem { map: false, spread }, 2);
+                    if !sep.map_or(false, |s| self.at_symbol(s)) { break; }
+                }
+                self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
+            }
+        }
+        Ok(())
+    }
+
     fn indexing(&mut self, from: usize, origin: usize) -> Res<()> {
         let lang = self.lang;
         if lang.chained_calls || !lang.lambda_words.is_empty() { self.called_on_value(Some(origin))?; }
@@ -12742,31 +12752,7 @@ impl<'a> Compiler<'a> {
                 // the expression reader itself, so a comma within a
                 // lambda's parameter list is no separator and a star
                 // within one is no starred place.
-                if self.on_any(&self.lang.array_spread) {
-                    self.act(Action::MakeArray, 0);
-                    loop {
-                        let spread = self.index_part(&index.close, separator.as_deref())?;
-                        self.act(Action::GatherItem { map: false, spread }, 2);
-                        if separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
-                            self.pass_token();
-                            if self.at_symbol(&index.close) { break; }
-                        } else { break; }
-                    }
-                    self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
-                } else {
-                    self.slice_part(&index.close, separator.as_deref())?;
-                    if separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
-                        self.act(Action::MakeArray, 1);
-                        loop {
-                            self.pass_token();
-                            if self.at_symbol(&index.close) { break; }
-                            let spread = self.index_part(&index.close, separator.as_deref())?;
-                            self.act(Action::GatherItem { map: false, spread }, 2);
-                            if !separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) { break; }
-                        }
-                        self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
-                    }
-                }
+                self.spread_index(&index.close, separator.as_deref())?;
             } else {
                 self.slice_part(&index.close, separator.as_deref())?;
                 if !self.lang.slice_marks.is_empty() && separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
