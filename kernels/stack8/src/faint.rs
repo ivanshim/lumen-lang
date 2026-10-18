@@ -106,6 +106,20 @@ impl Hold {
             Hold::Lasts(_) => false,
         }
     }
+
+    /// Where the held value lives, for the kinds one pointer identifies.
+    fn address(&self) -> Option<usize> {
+        Some(match self {
+            Hold::Object(w) => w.as_ptr() as usize,
+            Hold::Container(w) => w.as_ptr() as usize,
+            Hold::Class(w) => w.as_ptr() as usize,
+            Hold::Generator(w) => w.as_ptr() as usize,
+            Hold::Set(w) => w.as_ptr() as usize,
+            Hold::Routine(w) => w.as_ptr() as usize,
+            Hold::Code(w) => w.as_ptr() as usize,
+            Hold::Native(..) | Hold::Octets(..) | Hold::Method(..) | Hold::Lasts(_) => return None,
+        })
+    }
 }
 
 /// Collect only identities relevant to live callbacks, including the
@@ -113,22 +127,15 @@ impl Hold {
 fn observe(reference: &Faint, addresses: &mut HashSet<usize, BuildHasherDefault<PlaceHasher>>) {
     addresses.insert(reference.bearer.as_ptr() as usize);
     match &reference.hold {
-        Hold::Object(target) => { addresses.insert(target.as_ptr() as usize); }
-        Hold::Class(target) => { addresses.insert(target.as_ptr() as usize); }
-        Hold::Routine(target) => { addresses.insert(target.as_ptr() as usize); }
-        Hold::Code(target) => { addresses.insert(target.as_ptr() as usize); }
         Hold::Method(receiver, body, identity) => {
             addresses.insert(receiver.as_ptr() as usize);
             addresses.insert(body.as_ptr() as usize);
             addresses.insert(identity.as_ptr() as usize);
         }
-        Hold::Generator(target) => {
-            if let Some(live) = target.upgrade() { addresses.insert(live.as_ptr() as usize); }
-        }
-        Hold::Set(target) => {
-            if let Some(live) = target.upgrade() { addresses.insert(live.as_ptr() as usize); }
-        }
-        Hold::Native(..) | Hold::Octets(..) | Hold::Container(_) | Hold::Lasts(_) => {}
+        // A container is never watched; a walk or set already gone has nothing left to watch.
+        Hold::Container(_) => {}
+        Hold::Generator(_) | Hold::Set(_) if reference.hold.gone() => {}
+        held => { if let Some(at) = held.address() { addresses.insert(at); } }
     }
 }
 
@@ -218,16 +225,8 @@ thread_local! {
 pub fn clear_group(group: &[Value]) -> Vec<(Value, Value)> {
     let places: HashSet<usize> = group.iter().filter_map(place_of).collect();
     let lost = |hold: &Hold| match hold {
-        Hold::Container(target) => places.contains(&(target.as_ptr() as usize)),
-        Hold::Native(..) | Hold::Octets(..) => false,
-        Hold::Object(w) => places.contains(&(w.as_ptr() as usize)),
-        Hold::Class(w) => places.contains(&(w.as_ptr() as usize)),
-        Hold::Generator(w) => places.contains(&(w.as_ptr() as usize)),
-        Hold::Set(w) => places.contains(&(w.as_ptr() as usize)),
-        Hold::Routine(w) => places.contains(&(w.as_ptr() as usize)),
-        Hold::Code(w) => places.contains(&(w.as_ptr() as usize)),
         Hold::Method(o, r, _) => places.contains(&(o.as_ptr() as usize)) || places.contains(&(r.as_ptr() as usize)),
-        Hold::Lasts(_) => false,
+        _ => hold.address().is_some_and(|at| places.contains(&at)),
     };
     let _ = REFERENCES.try_with(|all| {
         all.borrow_mut().retain(|weak| {
