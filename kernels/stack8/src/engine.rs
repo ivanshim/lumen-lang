@@ -960,10 +960,7 @@ impl<'a> Engine<'a> {
             alternate = !alternate;
         }
         let mut fields = object.fields.borrow_mut();
-        match fields.iter_mut().find(|(n, _)| n == name) {
-            Some((_, held)) => *held = Value::Object(handling),
-            None => fields.push((name.clone(), Value::Object(handling))),
-        }
+        set_field(&mut *fields, name, Value::Object(handling));
     }
     fn chain_context(&self, raised: &Value) {
         let Some(name) = &self.lang.exception_context else { return };
@@ -1273,10 +1270,7 @@ impl<'a> Engine<'a> {
                     _ => continue,
                 }
             } else { held.clone() };
-            match target.iter_mut().find(|(n, _)| n == key) {
-                Some(place) => place.1 = held,
-                None => target.push((key.clone(), held)),
-            }
+            set_field(&mut *target, key, held);
         }
     }
 
@@ -1327,8 +1321,7 @@ impl<'a> Engine<'a> {
             let Value::Object(fresh) = self.exception_instance(object.class_now().clone(), args.to_vec(), Value::Null) else { unreachable!() };
             let mut fields = object.fields.borrow_mut();
             for (key, value) in fresh.fields.borrow().iter().filter(|(k, _)| ["msg", "name", "path", "name_from", "\0arguments"].contains(&k.as_str()) || self.lang.exception_args.as_ref() == Some(k)) {
-                if let Some(entry) = fields.iter_mut().find(|(n, _)| n == key) { entry.1 = value.clone(); }
-                else { fields.push((key.clone(), value.clone())); }
+                set_field(&mut *fields, key, value.clone());
             }
             return Ok(Value::Null);
         }
@@ -1339,8 +1332,7 @@ impl<'a> Engine<'a> {
             let mut fields = object.fields.borrow_mut();
             for (key, value) in fresh.fields.borrow().iter() {
                 if (self.lang.syntax_members.contains(key) && (args.len() == 2 || self.lang.syntax_members.first() == Some(key))) || key == "\0arguments" || self.lang.exception_args.as_ref() == Some(key) {
-                    if let Some(entry) = fields.iter_mut().find(|(n, _)| n == key) { entry.1 = value.clone(); }
-                    else { fields.push((key.clone(), value.clone())); }
+                    set_field(&mut *fields, key, value.clone());
                 }
             }
             return Ok(Value::Null);
@@ -1351,8 +1343,7 @@ impl<'a> Engine<'a> {
                 let mut fields = object.fields.borrow_mut();
                 for (key, value) in fresh.fields.borrow().iter() {
                     if self.lang.os_members.contains(key) || ["filename2", "\0shown", "\0arguments"].contains(&key.as_str()) || self.lang.exception_args.as_ref() == Some(key) {
-                        if let Some(entry) = fields.iter_mut().find(|(n, _)| n == key) { entry.1 = value.clone(); }
-                        else { fields.push((key.clone(), value.clone())); }
+                        set_field(&mut *fields, key, value.clone());
                     }
                 }
                 return Ok(Value::Null);
@@ -1521,8 +1512,7 @@ impl<'a> Engine<'a> {
             let mut fields = object.fields.borrow_mut();
             for (name, value) in [(&self.lang.exception_cause, stopped.clone()), (&self.lang.exception_context, stopped), (&self.lang.exception_suppress, Value::Flag(true))] {
                 if let Some(key) = name {
-                    if let Some((_, slot)) = fields.iter_mut().find(|(n, _)| n == key) { *slot = value; }
-                    else { fields.push((key.clone(), value)); }
+                    set_field(&mut *fields, key, value);
                 }
             }
         }
@@ -2914,10 +2904,7 @@ impl<'a> Engine<'a> {
             ("file", Value::text(&self.source)),
             ("line", Value::Small(self.line as i64)),
         ] {
-            match fields.iter_mut().find(|(n, _)| n == named) {
-                Some(place) => place.1 = held,
-                None => fields.push((named.to_string(), held)),
-            }
+            set_field(&mut fields, named, held);
         }
         Some(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(fields), mark: self.made })))
     }
@@ -14146,9 +14133,7 @@ impl<'a> Engine<'a> {
                             };
                             let mut fields = o.fields.borrow_mut();
                             for key in [name.as_ref(), "\0arguments"] {
-                                match fields.iter_mut().find(|(n, _)| n == key) {
-                                    Some((_, value)) => *value = row.clone(), None => fields.push((key.into(), row.clone())),
-                                }
+                                set_field(&mut *fields, key, row.clone());
                             }
                             self.data.push(Value::Null);
                             return Ok(());
@@ -14375,10 +14360,7 @@ impl<'a> Engine<'a> {
                     Value::Class(c) => {
                         let holder = c.holder(&name).unwrap_or_else(||c.clone());
                         let mut shared = holder.shared.borrow_mut();
-                        match shared.iter_mut().find(|(n, _)| n == name.as_ref()) {
-                            Some(place) => place.1 = value,
-                            None => shared.push((name.to_string(), value)),
-                        }
+                        set_field(&mut *shared, name.as_ref(), value);
                         Value::Null
                     }
                     v => {
@@ -14575,8 +14557,7 @@ impl<'a> Engine<'a> {
                     let mut fields = object.fields.borrow_mut();
                     for (name, worth) in [(&self.lang.exception_cause, cause), (&self.lang.exception_suppress, Value::Flag(true))] {
                         let Some(name) = name else { continue };
-                        if let Some((_, held)) = fields.iter_mut().find(|(n, _)| n == name) { *held = worth; }
-                        else { fields.push((name.clone(), worth)); }
+                        set_field(&mut *fields, name, worth);
                     }
                 }
                 if let (Value::Trace(prior), Some(frame), Value::Object(object), Some(key)) = (self.trace_of(&value), &self.trace_frame, &value, &self.lang.traceback_member) {
@@ -25561,6 +25542,12 @@ fn lies_at(walked: &Value, cell: &Rc<RefCell<Value>>, was: usize) -> Option<usiz
     held.iter().position(same)
 }
 
+fn set_field(fields: &mut Vec<(String, Value)>, key: &str, value: Value) {
+    match fields.iter_mut().find(|(name, _)| name == key) {
+        Some((_, held)) => *held = value,
+        None => fields.push((key.to_owned(), value)),
+    }
+}
 /// The place an array holds, made a shared cell so that a name fastened
 /// to it writes into the array itself.
 fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
