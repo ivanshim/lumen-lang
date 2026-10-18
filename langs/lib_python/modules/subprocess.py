@@ -324,8 +324,9 @@ class Popen:
         return (out, err)
 
     def kill(self):
-        _subprocess(6, self._handle)
-        self.returncode = -9
+        if self.poll() is None:
+            _subprocess(6, self._handle)
+            self.returncode = -9
 
     # Deliver termination using its documented signal rather than SIGKILL.
     def terminate(self):
