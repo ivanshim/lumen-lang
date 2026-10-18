@@ -5654,7 +5654,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.bytes.concat` | - | - | `TypeError: can't concat ` ` to ` | - | - | - | - | - | - | - |
 | `ext.system.bytes.decode` | - | - | `UnicodeDecodeError: ` | - | - | - | - | - | - | - |
 | `ext.system.bytes.encode` | - | - | `UnicodeEncodeError: ` | - | - | - | - | - | - | - |
-| `ext.system.bytes.encodings` | - | - | `utf-8 utf-8 utf8` `ascii ascii us-ascii` `latin-1 latin-1 latin1 iso-8859-1` `rawunicodeescape raw-unicode-escape` | - | - | - | - | - | - | - |
+| `ext.system.bytes.encodings` | - | - | `utf-8 utf-8 utf8` `ascii ascii us-ascii` `latin-1 latin-1 latin1 iso-8859-1 iso8859-1` `rawunicodeescape raw-unicode-escape` | - | - | - | - | - | - | - |
 | `ext.system.bytes.hex` | - | - | `ValueError: non-hexadecimal number found in fromhex() arg at position ` | - | - | - | - | - | - | - |
 | `ext.system.bytes.immutable` | - | - | `TypeError: 'bytes' object does not support item assignment` | - | - | - | - | - | - | - |
 | `ext.system.bytes.index` | - | - | `IndexError: index out of range` `IndexError: pop index out of range` `IndexError: pop from empty bytearray` | - | - | - | - | - | - | - |
