@@ -894,29 +894,42 @@ impl Table {
         it.next().map_or("Error".to_string(), |c| format!("{}{}Error", c.to_uppercase(), it.as_str()))
     }
 
-    pub fn begins_name(&self, c: char) -> bool {
-        match c { 'a'..='z' | 'A'..='Z' | '_' => return true, '\0'..='\u{7f}' => return false, _ => {} }
-        if self.syntax_exceptions { return c == '_' || crate::unicode::property(c, 4); }
+    fn name_letter(&self, c: char, first: bool) -> bool {
+        let head = if first {
+            matches!(c, 'a'..='z' | 'A'..='Z' | '_')
+        } else {
+            matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '_')
+        };
+        if head { return true; }
+        if matches!(c, '\0'..='\u{7f}') { return false; }
+        if self.syntax_exceptions {
+            return if first { c == '_' || crate::unicode::property(c, 4) } else { crate::unicode::property(c, 8) };
+        }
         // A language keeping text as bytes spells its names in bytes as
         // well, so any byte above the plain seven-bit ones may stand in
         // one, whatever letter it would otherwise be part of.
         let a_byte = self.flag("ext.system.text.bytes");
         let far = a_byte && self.flag("identifier.unicode") && c >= '\u{80}';
         if a_byte {
-            return c == '_' || c.is_ascii_alphabetic() || far;
+            let ascii = if first { c.is_ascii_alphabetic() } else { c.is_ascii_alphanumeric() };
+            return c == '_' || ascii || far;
         }
-        c == '_' || if self.flag("identifier.unicode") { c.is_alphabetic() } else { c.is_ascii_alphabetic() }
+        let unicode = self.flag("identifier.unicode");
+        c == '_' || if unicode {
+            if first { c.is_alphabetic() } else { c.is_alphanumeric() }
+        } else if first {
+            c.is_ascii_alphabetic()
+        } else {
+            c.is_ascii_alphanumeric()
+        }
+    }
+
+    pub fn begins_name(&self, c: char) -> bool {
+        self.name_letter(c, true)
     }
 
     pub fn extends_name(&self, c: char) -> bool {
-        match c { 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => return true, '\0'..='\u{7f}' => return false, _ => {} }
-        if self.syntax_exceptions { return crate::unicode::property(c, 8); }
-        let a_byte = self.flag("ext.system.text.bytes");
-        let far = a_byte && self.flag("identifier.unicode") && c >= '\u{80}';
-        if a_byte {
-            return c == '_' || c.is_ascii_alphanumeric() || far;
-        }
-        c == '_' || if self.flag("identifier.unicode") { c.is_alphanumeric() } else { c.is_ascii_alphanumeric() }
+        self.name_letter(c, false)
     }
 
     /// What a piece of text comes to as bytes. Where the language keeps
