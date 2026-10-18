@@ -128,6 +128,9 @@ pub struct Engine<'a> {
     finder_active: std::collections::HashSet<String>,
     has_nonstring_class_keys: bool,
     trace_frame: Option<Rc<Instance>>,
+    /// Index of the instruction the running frame is on. The frame
+    /// object stores a copy of it only while some other frame is running.
+    step_at: i64,
     /// Routines whose frames a frame walk hides, as C routines are
     /// absent from a Python frame chain in the reference.
     native_frame_routines: std::collections::HashSet<usize, crate::value::FxBuildHasher>,
@@ -1661,6 +1664,7 @@ impl<'a> Engine<'a> {
             made: 0,
             line: 0,
             trace_frame: None,
+            step_at: -1,
             native_frame_routines: std::collections::HashSet::with_hasher(crate::value::FxBuildHasher::default()),
             trace_hook: Value::Null,
             coroutine_depth: 0,
@@ -3562,8 +3566,13 @@ impl<'a> Engine<'a> {
                 if let Value::Binding(cell) = &frame[s] {
                     let cell = cell.clone();
                     *cell.borrow_mut() = value;
-                    self.globals_sync_written(&cell);
-                    self.globals_mirror_binding(slot.far, &cell);
+                    // A function-local cell is not a module dictionary.
+                    // Only a module-level name has to refresh a globals()
+                    // dict that was already handed out.
+                    if self.registry.idents.get(slot.far).is_some_and(|word| word.starts_with("\0module:")) {
+                        self.globals_sync_written(&cell);
+                        self.globals_mirror_binding(slot.far, &cell);
+                    }
                     return Ok(());
                 }
             }
@@ -4714,8 +4723,10 @@ impl<'a> Engine<'a> {
             let was = std::mem::replace(&mut self.source, place);
             (was, self.line)
         });
+        self.plant_step();
         let caller_frame = self.trace_frame.take();
         self.trace_frame = if program.ident == "<comprehension>" { caller_frame.clone() } else { self.make_frame(program, &frame, caller_frame.clone()) };
+        self.lift_step();
         let surrounding_comp = self.inline_comp.clone();
         let previous_comp = std::mem::replace(&mut self.inline_comp, if program.ident == "<comprehension>" {
             caller_frame.as_ref().map(|owner| (Rc::as_ptr(owner) as usize, program.idents.clone(), frame.clone()))
@@ -4777,7 +4788,9 @@ impl<'a> Engine<'a> {
             let namespace = match body_namespace { Some(namespace) => namespace, None => self.names_about(program, &frame, Builtin::NearNames)? };
             if let Some((_, captured)) = &mut self.class_body_capture { *captured = Some(namespace); }
         }
+        self.plant_step();
         self.trace_frame = caller_frame;
+        self.lift_step();
         self.inline_comp = previous_comp;
         self.refresh_observed_frame();
         self.location = caller_location;
@@ -4865,7 +4878,7 @@ impl<'a> Engine<'a> {
     }
 
     fn run_instrs(&mut self, program: &Rc<Routine>, frame: &mut [Value]) -> Flow<()> {
-        if self.trace_frame.is_none() { self.trace_frame = self.make_frame(program, frame, None); }
+        if self.trace_frame.is_none() { self.trace_frame = self.make_frame(program, frame, None); self.lift_step(); }
         let instrs = &program.instrs;
         // A raised value leaves the marks that end a quiet piece unrun,
         // so how much quiet stood when the piece began is what stands
@@ -4968,13 +4981,15 @@ impl<'a> Engine<'a> {
             if let Err(Fault::Thrown(raised)) = &ending { self.hold_exception(raised.clone()); }
             let body_line = self.line;
             let body_location = self.location;
-            let body_instruction = self.trace_frame.as_ref().map(Self::frame_instruction).unwrap_or(-1);
+            let body_instruction = if self.trace_frame.is_some() { self.step_at } else { -1 };
             if !self.lang.trace_fields.is_empty() {
                 self.line = context_line;
                 self.location = context_location;
                 // The implicit exit call belongs to the with instruction, not its body.
+                self.step_at = at as i64;
+                let marked = self.step_at;
                 if let Some(frame) = &self.trace_frame {
-                    if let Some((_, slot)) = frame.fields.borrow_mut().iter_mut().find(|(name, _)| name == "\0instruction") { *slot = Value::Small(at as i64); }
+                    if let Some((_, slot)) = frame.fields.borrow_mut().iter_mut().find(|(name, _)| name == "\0instruction") { *slot = Value::Small(marked); }
                 }
                 if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
             }
@@ -4992,8 +5007,10 @@ impl<'a> Engine<'a> {
             if left.is_ok() && !self.lang.trace_fields.is_empty() {
                 self.line = body_line;
                 self.location = body_location;
+                self.step_at = body_instruction;
+                let marked = self.step_at;
                 if let Some(frame) = &self.trace_frame {
-                    if let Some((_, slot)) = frame.fields.borrow_mut().iter_mut().find(|(name, _)| name == "\0instruction") { *slot = Value::Small(body_instruction); }
+                    if let Some((_, slot)) = frame.fields.borrow_mut().iter_mut().find(|(name, _)| name == "\0instruction") { *slot = Value::Small(marked); }
                 }
                 if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
             }
@@ -5717,11 +5734,15 @@ impl<'a> Engine<'a> {
         if !self.is_coroutine(&Value::Generator(parent.clone())) { return self.class_apply(member, arguments); }
         let state = parent.try_borrow_mut().map_err(|_| self.lang.coroutine_errors[2].clone())?;
         let active = state.trace_frame.clone();
+        self.plant_step();
         let caller = std::mem::replace(&mut self.trace_frame, active.clone());
+        self.lift_step();
         if let Some(frame) = &active { frame.fields.borrow_mut()[2].1 = caller.clone().map_or(Value::Null, Value::Object); }
         let answer = self.class_apply(member, arguments);
         if let Some(frame) = active { frame.fields.borrow_mut()[2].1 = Value::Null; }
+        self.plant_step();
         self.trace_frame = caller;
+        self.lift_step();
         answer
     }
 
@@ -5825,9 +5846,13 @@ impl<'a> Engine<'a> {
                                 // body's frame behind it, so the reference's
                                 // stack has the delegating generator in it.
                                 let parent = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?.trace_frame.clone();
+                                self.plant_step();
                                 let before = std::mem::replace(&mut self.trace_frame, parent);
+                                self.lift_step();
                                 let applied = self.throw_through_coroutine(held, member, if given.is_empty() { vec![value] } else { given.to_vec() });
+                                self.plant_step();
                                 self.trace_frame = before;
+                                self.lift_step();
                                 match applied.map_err(|fault| self.delegated_fault(fault)) {
                                 Ok(item) => {
                                     if self.async_generators.contains_key(&(Rc::as_ptr(held) as usize)) {
@@ -5856,7 +5881,9 @@ impl<'a> Engine<'a> {
                     let before = self.trace_frame.clone();
                     let native = self.is_coroutine(&Value::Generator(held.clone()));
                     if !closing {
+                        self.plant_step();
                         self.trace_frame = parent.clone();
+                        self.lift_step();
                         if native { if let Some(frame) = &parent { frame.fields.borrow_mut()[2].1 = before.clone().map_or(Value::Null, Value::Object); } }
                     }
                     let busy = if native { Some(held.try_borrow_mut().map_err(|_| self.lang.coroutine_errors[2].clone())?) } else { None };
@@ -5867,7 +5894,9 @@ impl<'a> Engine<'a> {
                     };
                     let stepped = if python { stepped.map_err(|fault| self.delegated_fault(fault)) } else { stepped };
                     if native && !closing { if let Some(frame) = parent { frame.fields.borrow_mut()[2].1 = Value::Null; } }
+                    self.plant_step();
                     self.trace_frame = before;
+                    self.lift_step();
                     drop(busy);
                     let mut state = held.try_borrow_mut().map_err(|_| self.lang.yield_busy[0].clone())?;
                     match stepped {
@@ -5900,9 +5929,13 @@ impl<'a> Engine<'a> {
                         // that is what the reference hands it.
                         (Some(thing), Some(method)) => {
                             let parent = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?.trace_frame.clone();
+                            self.plant_step();
                             let before = std::mem::replace(&mut self.trace_frame, parent);
+                            self.lift_step();
                             let invoked = self.invoke(&method, std::iter::once(thing).chain(if given.is_empty() { vec![value] } else { given.to_vec() }).collect());
+                            self.plant_step();
                             self.trace_frame = before;
+                            self.lift_step();
                             match invoked {
                             Ok(()) => return Ok(Some(self.drop_top()?)),
                             Err(Fault::Thrown(raised)) if matches!(&raised, Value::Object(o) if self.stop_class(&o.class_now())) => {
@@ -6037,7 +6070,9 @@ impl<'a> Engine<'a> {
         if let Some(place) = &program.written_in { self.source = place.clone(); }
         else if self.fuller_classes() { self.source = self.root_source.clone(); }
         self.inside.push(program.within.clone());
+        self.plant_step();
         let caller_frame = std::mem::replace(&mut self.trace_frame, kept.trace_frame.take());
+        self.lift_step();
         if let Some(active) = &self.trace_frame { active.fields.borrow_mut()[2].1 = caller_frame.clone().map_or(Value::Null, Value::Object); }
         let caller_position = self.location.take();
         let previous_routine = self.running_routine.replace(program.clone());
@@ -6074,7 +6109,9 @@ impl<'a> Engine<'a> {
         self.running_routine = previous_routine;
         self.location = caller_position;
         self.refresh_observed_frame();
+        self.plant_step();
         kept.trace_frame = std::mem::replace(&mut self.trace_frame, caller_frame);
+        self.lift_step();
         if let Some(active) = &kept.trace_frame { active.fields.borrow_mut()[2].1 = Value::Null; }
         // The exhaustion class raised inside the body is a fault of the
         // generator, not the end of its walk.
@@ -6369,6 +6406,21 @@ impl<'a> Engine<'a> {
         Value::Null
     }
 
+    /// Write the running index into the frame that is about to stop being current.
+    fn plant_step(&mut self) {
+        let marked = self.step_at;
+        let Some(active) = self.trace_frame.clone() else { return };
+        let mut fields = active.fields.borrow_mut();
+        if let Some(pair) = fields.get_mut(8) {
+            pair.1 = Value::Small(marked);
+        }
+    }
+
+    /// Take the running index from whichever frame just became current.
+    fn lift_step(&mut self) {
+        self.step_at = self.trace_frame.as_ref().map(Self::frame_instruction).unwrap_or(-1);
+    }
+
     fn frame_instruction(frame: &Rc<Instance>) -> i64 {
         // The private position is fixed by make_frame; no namespace search is needed.
         match frame.fields.borrow().get(8) {
@@ -6393,7 +6445,7 @@ impl<'a> Engine<'a> {
         if matches!(prior, Value::Null) {
             crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(object)));
         }
-        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame).saturating_mul(2), location: self.location, line: self.line as i64, frame, next: RefCell::new(prior) }));
+        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: self.step_at.saturating_mul(2), location: self.location, line: self.line as i64, frame, next: RefCell::new(prior) }));
         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
     }
 
@@ -6403,7 +6455,7 @@ impl<'a> Engine<'a> {
 
     fn run_portion(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize), suspended: Option<&mut Generator>) -> Flow<Passage> {
         let previous_book_source = std::mem::replace(&mut self.book_source, program.written_in.clone());
-        if self.trace_frame.is_none() { self.trace_frame = self.make_frame(program, frame, None); }
+        if self.trace_frame.is_none() { self.trace_frame = self.make_frame(program, frame, None); self.lift_step(); }
         let result = self.run_portion_inner(program, frame, instrs, span, suspended);
         self.refresh_observed_frame();
         self.book_source = previous_book_source;
@@ -6522,12 +6574,9 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
-            if let Some(active) = &self.trace_frame {
-                // make_frame keeps the private instruction position in slot 8.
-                if let Some((_, Value::Small(position))) = active.fields.borrow_mut().get_mut(8) {
-                    *position = pc as i64;
-                }
-            }
+            // The running index stays beside the frame. Copying it into
+            // the frame on every word dominated straight-line code.
+            self.step_at = pc as i64;
             match &instrs[pc] {
                 Instr::Const(Value::Routine(program)) if self.lang.closes_over && (!self.lang.class_special.is_empty() || !program.enclosing.is_empty() || program.annotation.is_some()) => {
                     let mut closed = (**program).clone();
@@ -14200,7 +14249,7 @@ impl<'a> Engine<'a> {
                 }
                 if let (Value::Trace(prior), Some(frame), Value::Object(object), Some(key)) = (self.trace_of(&value), &self.trace_frame, &value, &self.lang.traceback_member) {
                     if Rc::ptr_eq(&prior.frame, frame) {
-                        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: Self::frame_instruction(&frame).saturating_mul(2), location: self.location, line: self.line as i64, frame: frame.clone(), next: RefCell::new(Value::Trace(prior)) }));
+                        let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: self.step_at.saturating_mul(2), location: self.location, line: self.line as i64, frame: frame.clone(), next: RefCell::new(Value::Trace(prior)) }));
                         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
                     }
                 }
@@ -29918,9 +29967,13 @@ impl Engine<'_> {
         let (was_written_in, was_on) = (self.source.clone(), self.line);
         self.source = file;
         let base = self.data.len();
+        self.plant_step();
         let prior_frame = self.trace_frame.take();
+        self.step_at = -1;
         let ran = self.run_instrs(&program, &mut mine);
+        self.plant_step();
         self.trace_frame = prior_frame;
+        self.lift_step();
         self.source = was_written_in;
         self.line = was_on;
         match ran {

@@ -665,8 +665,10 @@ pub enum Form {
     /// An operation of two operands, evaluated without a vector
     /// of arguments.
     Dyad { op: Prim, name: Rc<str>, a: Input, b: Input },
-    /// `x = x + k`, the binding stepped in place.
-    Bump { slot: Address, by: i64 },
+    /// `x = x + k`, or `x += k` when `inplace` is set. A plain integer
+    /// steps either way. Anything else uses ordinary addition, or the
+    /// in-place method when the write asked for one.
+    Bump { slot: Address, by: i64, inplace: bool },
     /// A class declaration: what is known while building, and a value
     /// for each property, kept value and constant the plan names.
     Class { plan: Rc<Plan>, values: Vec<Form> },
