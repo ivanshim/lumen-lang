@@ -4856,61 +4856,8 @@ impl<'a> Builder<'a> {
                 if self.grammar.has_any_ext_stmt_class_special && self.grammar.has_any_ext_op_index_slice {
                     let end = self.grammar.single_op_index_close.unwrap().to_owned();
                     let separator = self.grammar.single_syntax_call_separator.map(str::to_owned);
-                    let key = if self.grammar.has_any_ext_syntax_array_spread {
-                        // A row with a starred place becomes a tuple, as
-                        // it does when the row is only read; the
-                        // expression reader itself steps over a
-                        // lambda's parameter commas.
-                        if self.on_any("ext.syntax.array.spread") {
-                            let mut row = prim_call(Prim::MakeArray, vec![]);
-                            loop {
-                                let (part, spread) = self.bracket_item(&end, separator.as_deref())?;
-                                row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
-                                if separator.as_ref().map_or(false, |word| self.sign(word)) {
-                                    self.move_past();
-                                    if self.sign(&end) { break; }
-                                } else { break; }
-                            }
-                            self.need_sign(&end, "after the index")?;
-                            prim_call(Prim::Tupling, vec![row])
-                        } else {
-                            let first = self.bracket_part(&end, separator.as_deref())?;
-                            if separator.as_ref().map_or(false, |word| self.sign(word)) {
-                                let mut row = prim_call(Prim::MakeArray, vec![first]);
-                                loop {
-                                    self.move_past();
-                                    if self.sign(&end) { break; }
-                                    let (part, spread) = self.bracket_item(&end, separator.as_deref())?;
-                                    row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
-                                    if !separator.as_ref().map_or(false, |word| self.sign(word)) { break; }
-                                }
-                                self.need_sign(&end, "after the index")?;
-                                prim_call(Prim::Tupling, vec![row])
-                            } else {
-                                self.need_sign(&end, "after the index")?;
-                                first
-                            }
-                        }
-                    } else {
-                        let mut keys = vec![self.bracket_part(&end, separator.as_deref())?];
-                        let mut several = false;
-                        while separator.as_ref().map_or(false, |word| self.sign(word)) {
-                            several = true;
-                            self.move_past();
-                            if self.sign(&end) { break; }
-                            keys.push(self.bracket_part(&end, separator.as_deref())?);
-                        }
-                        self.need_sign(&end, "after the index")?;
-                        // Places written with commas between are one key
-                        // holding them all, where the table has slice
-                        // values; elsewhere no such place can be written to.
-                        if several && self.grammar.has_any_ext_builtin_slice {
-                            prim_call(Prim::MakeTuple, keys)
-                        } else {
-                            if several { self.unsupported_place = true; }
-                            keys.swap_remove(0)
-                        }
-                    };
+                    let key = self.index_key(&end, separator.as_deref(), true)?;
+                    self.need_sign(&end, "after the index")?;
                     place = prim_call(Prim::At, vec![place, key]);
                     continue;
                 }
@@ -12293,6 +12240,67 @@ impl<'a> Builder<'a> {
         Ok(result)
     }
 
+    /// The key inside `[...]`, up to but not past the closing sign: one
+    /// place, or a row of them as a tuple. A key being written or deleted
+    /// that has several places without slice values cannot be written to.
+    fn index_key(&mut self, close: &str, separator: Option<&str>, writing: bool) -> Res<Form> {
+        let key = if self.grammar.has_any_ext_syntax_array_spread {
+            // A row with a starred place becomes a tuple; one place
+            // and no star stays that place. Each place is read by
+            // the expression reader itself, so a comma within a
+            // lambda's parameter list is no separator and a star
+            // within one is no starred place.
+            if self.on_any("ext.syntax.array.spread") {
+                let mut row = prim_call(Prim::MakeArray, vec![]);
+                loop {
+                    let (part, spread) = self.bracket_item(close, separator)?;
+                    row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
+                    if separator.map_or(false, |word| self.sign(word)) {
+                        self.move_past();
+                        if self.sign(close) { break; }
+                    } else { break; }
+                }
+                prim_call(Prim::Tupling, vec![row])
+            } else {
+                let first = self.bracket_part(close, separator)?;
+                if separator.map_or(false, |word| self.sign(word)) {
+                    let mut row = prim_call(Prim::MakeArray, vec![first]);
+                    loop {
+                        self.move_past();
+                        if self.sign(close) { break; }
+                        let (part, spread) = self.bracket_item(close, separator)?;
+                        row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
+                        if !separator.map_or(false, |word| self.sign(word)) { break; }
+                    }
+                    prim_call(Prim::Tupling, vec![row])
+                } else { first }
+            }
+        } else {
+            let mut keys = vec![self.bracket_part(close, separator)?];
+            let several = self.grammar.has_any_ext_op_index_slice && separator.map_or(false, |word| self.sign(word));
+            if several {
+                while separator.map_or(false, |word| self.sign(word)) {
+                    self.move_past();
+                    if self.sign(close) { break; }
+                    keys.push(self.bracket_part(close, separator)?);
+                }
+            }
+            match (several, self.grammar.has_any_ext_builtin_slice) {
+                (true, true) => prim_call(Prim::MakeTuple, keys),
+                (true, false) if writing => {
+                    // Places written with commas between are one key
+                    // holding them all, where the table has slice
+                    // values; elsewhere no such place can be written to.
+                    self.unsupported_place = true;
+                    keys.swap_remove(0)
+                }
+                (true, false) => prim_call(Prim::SliceRefused, keys),
+                _ => keys.pop().expect("one key"),
+            }
+        };
+        Ok(key)
+    }
+
     fn subscript(&mut self, mut node: Form, origin: usize) -> Res<Form> {
         if self.grammar.flag_ext_syntax_call_chained || self.grammar.has_any_ext_op_lambda {
             node = self.called_on_value(node, Some(origin))?;
@@ -12325,53 +12333,7 @@ impl<'a> Builder<'a> {
                 if incomplete { return Err(String::from("SyntaxError: Invalid star expression")); }
             }
             let separator = self.grammar.single_syntax_call_separator;
-            let key = if self.grammar.has_any_ext_syntax_array_spread {
-                // A row with a starred place becomes a tuple; one place
-                // and no star stays that place. Each place is read by
-                // the expression reader itself, so a comma within a
-                // lambda's parameter list is no separator and a star
-                // within one is no starred place.
-                if self.on_any("ext.syntax.array.spread") {
-                    let mut row = prim_call(Prim::MakeArray, vec![]);
-                    loop {
-                        let (part, spread) = self.bracket_item(close, separator)?;
-                        row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
-                        if separator.map_or(false, |word| self.sign(word)) {
-                            self.move_past();
-                            if self.sign(close) { break; }
-                        } else { break; }
-                    }
-                    prim_call(Prim::Tupling, vec![row])
-                } else {
-                    let first = self.bracket_part(close, separator)?;
-                    if separator.map_or(false, |word| self.sign(word)) {
-                        let mut row = prim_call(Prim::MakeArray, vec![first]);
-                        loop {
-                            self.move_past();
-                            if self.sign(close) { break; }
-                            let (part, spread) = self.bracket_item(close, separator)?;
-                            row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
-                            if !separator.map_or(false, |word| self.sign(word)) { break; }
-                        }
-                        prim_call(Prim::Tupling, vec![row])
-                    } else { first }
-                }
-            } else {
-                let mut keys = vec![self.bracket_part(close, separator)?];
-                let several = self.grammar.has_any_ext_op_index_slice && separator.map_or(false, |word| self.sign(word));
-                if several {
-                    while separator.map_or(false, |word| self.sign(word)) {
-                        self.move_past();
-                        if self.sign(close) { break; }
-                        keys.push(self.bracket_part(close, separator)?);
-                    }
-                }
-                match (several, self.grammar.has_any_ext_builtin_slice) {
-                    (true, true) => prim_call(Prim::MakeTuple, keys),
-                    (true, false) => prim_call(Prim::SliceRefused, keys),
-                    _ => keys.pop().expect("one key"),
-                }
-            };
+            let key = self.index_key(close, separator, false)?;
             self.need_sign(close, "after array index")?;
             node = prim_call(Prim::At, vec![node, key]);
             // Reads carry the complete subscription; targets keep their raw
