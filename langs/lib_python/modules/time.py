@@ -1,9 +1,16 @@
-# Host primitives used by class bodies need non-private module bindings.
-_host_clock = __clock
+# Keep native bridges in the retained namespace when source loaders reload us.
+try:
+    _host_clock
+except NameError:
+    _host_clock = __clock
+try:
+    _host_wait
+except NameError:
+    _host_wait = __wait
 
 # Wall time comes from the system clock.
 def time():
-    return __clock(False)
+    return _host_clock(False)
 
 # Wait on the host and allow signal handlers to interrupt the wait.
 def sleep(seconds):
@@ -11,14 +18,15 @@ def sleep(seconds):
         raise 'ValueError: sleep length must be non-negative'
     if type(seconds) != type(0) and type(seconds) != type(0.0):
         raise 'TypeError: a number is required'
-    return __wait(int(seconds * 1000000))
+    return _host_wait(int(seconds * 1000000))
 
 # A steady clock counts elapsed seconds from a fixed origin.
 def perf_counter():
-    return __clock(True)
+    return _host_clock(True)
 
+# Read elapsed seconds from the steady clock.
 def monotonic():
-    return __clock(True)
+    return _host_clock(True)
 
 class _ClockInfo:
     def __init__(self, steady):
@@ -36,13 +44,15 @@ def get_clock_info(name):
 
 # Integer nanoseconds from the same host clocks, without a float round trip.
 def time_ns():
-    return __clock(False, False)
+    return _host_clock(False, False)
 
+# Return the monotonic clock without a float conversion.
 def monotonic_ns():
-    return __clock(True, False)
+    return _host_clock(True, False)
 
+# Return high-resolution elapsed time in integer nanoseconds.
 def perf_counter_ns():
-    return __clock(True, False)
+    return _host_clock(True, False)
 
 _STRUCT_TM_ITEMS = 11
 struct_time = _host_clock('struct_time')
