@@ -430,7 +430,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
         let operation = crate::form::Prim::UnicodeField { query, historic: integer(historical)? != 0 };
         return Ok(Value::Intrinsic(operation, Rc::from(*label)));
     }
-    if action == 6 { return Ok(Value::text(character_category(integer(&input[1])? as u32))); }
+    if action == 6 { return Ok(Value::text(lumen_unicode::general_category(integer(&input[1])? as u32))); }
     if action == 5 {
         return match input.get(1) {
             Some(Value::Text(label)) => crate::unicode::name_value(label).map(|word| Value::text(&word)).ok_or_else(|| String::from("KeyError: undefined character name")),
@@ -584,30 +584,8 @@ fn control(n: u32) -> bool { n < 32 || (127..160).contains(&n) }
 fn surrogate(n: u32) -> bool { (55296..57344).contains(&n) }
 fn private(n: u32) -> bool { matches!(n, 57344..=63743 | 983040..=1048573 | 1048576..=1114109) }
 
-fn character_category(number: u32) -> &'static str {
-    static CATEGORY: std::sync::OnceLock<Vec<(std::ops::RangeInclusive<u32>, &'static str)>> = std::sync::OnceLock::new();
-    let entries = CATEGORY.get_or_init(|| {
-        let mut rows = Vec::new();
-        let mut opening = None;
-        for record in include_str!("../../../unicode-data/UnicodeData.txt").split('\n') {
-            let pieces: Vec<_> = record.split(';').take(3).collect();
-            if pieces.len() != 3 { continue; }
-            let Ok(codepoint) = u32::from_str_radix(pieces[0], 16) else { continue };
-            if pieces[1].ends_with(", First>") { opening = Some(codepoint); continue; }
-            let start = opening.take().unwrap_or(codepoint);
-            rows.push((start..=codepoint, pieces[2]));
-        }
-        rows
-    });
-    let found = entries.binary_search_by(|(range, _)| {
-        if number < *range.start() { std::cmp::Ordering::Greater }
-        else if number > *range.end() { std::cmp::Ordering::Less }
-        else { std::cmp::Ordering::Equal }
-    });
-    found.map_or("Cn", |position| entries[position].1)
-}
 
-fn alphabetic(n: u32) -> bool { matches!(character_category(n), "Lu" | "Ll" | "Lt" | "Lm" | "Lo") }
+fn alphabetic(n: u32) -> bool { matches!(lumen_unicode::general_category(n), "Lu" | "Ll" | "Lt" | "Lm" | "Lo") }
 fn white(n: u32) -> bool { matches!(n, 28..=31) || char::from_u32(n).is_some_and(char::is_whitespace) }
 
 // Return the database mapping for one Unicode character, including surrogate halves.
