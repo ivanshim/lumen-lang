@@ -18667,11 +18667,8 @@ impl<'a> Machine<'a> {
         let namespace = self.load_namespace(&words[0])?;
         let teller = self.namespace_item(&namespace, &words[0], &words[1])?;
         let handed = vec![Value::text(message), category, Value::text("<string>"), Value::Small(1)];
-        match self.apply_class_member(teller, handed) {
-            Ok(_) => Ok(()),
-            Err(Escape::Error(said)) => Err(said),
-            Err(away) => { self.got_away = Some(away); Err(self.bad_answer()) }
-        }
+        let owned = self.apply_class_member(teller, handed);
+        owned.map(|_| ()).map_err(|away| self.away_words(away))
     }
 
     /// The constructor's road for calls without keywords: none is
@@ -18999,11 +18996,8 @@ impl<'a> Machine<'a> {
                 // again by the caller, so a handler catches the object
                 // itself with the arguments it was made with.
                 let called = self.member_binding(method, Some(subject.clone()), t.blueprint());
-                return match called.and_then(|bound| self.apply_class_member(bound, vec![key.clone()])) {
-                    Ok(value) => Ok(Some(value)),
-                    Err(Escape::Error(words)) => Err(words),
-                    Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
-                };
+                let owned = called.and_then(|bound| self.apply_class_member(bound, vec![key.clone()]));
+                return owned.map(Some).map_err(|escape| self.away_words(escape));
             }
         }
         if let (Prim::At, [target @ Value::Thing(t), index]) = (operation, operands) {
@@ -19370,18 +19364,12 @@ impl<'a> Machine<'a> {
                 if self.appointment(&plain, 85).is_none() { return Err(self.manager_declined(&thing.blueprint().name, true, "__aenter__", plain_protocol)); }
                 if leaving {
                     let word = self.rules.specials[86].clone();
-                    match self.read_class_member(plain.clone(), &word, true) {
-                        Ok(bound) => bound,
-                        Err(Escape::Error(told)) => return Err(told),
-                        Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
-                    }
+                    let owned = self.read_class_member(plain.clone(), &word, true);
+                    owned.map_err(|escape| self.away_words(escape))?
                 } else {
                     let value = self.ask_special(&plain, 85, &[])?.ok_or_else(|| self.bad_answer())?;
-                    match self.context_iterator(value, "__aenter__") {
-                        Ok(answer) => answer,
-                        Err(Escape::Error(told)) => return Err(told),
-                        Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
-                    }
+                    let owned = self.context_iterator(value, "__aenter__");
+                    owned.map_err(|escape| self.away_words(escape))?
                 }
             }
             (Prim::BindLeaving, [manager]) => {
@@ -22361,11 +22349,8 @@ impl<'a> Machine<'a> {
                     // clause around the import may take it: an escape
                     // that is not plain words is put by to be raised
                     // once the call returns.
-                    match self.apply_held(importer, vec![Value::text(&path), globals, locals, fromlist, Value::Small(0)]) {
-                        Ok(got) => got,
-                        Err(Escape::Error(words)) => return Err(words),
-                        Err(away) => { self.got_away = Some(away); return Err(self.bad_answer()); }
-                    }
+                    let owned = self.apply_held(importer, vec![Value::text(&path), globals, locals, fromlist, Value::Small(0)]);
+                    owned.map_err(|escape| self.away_words(escape))?
                 }
             }
             Prim::ImportMember => {
