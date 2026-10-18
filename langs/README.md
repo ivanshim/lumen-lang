@@ -6108,7 +6108,7 @@ class itself and is not inherited by Python subclasses.
 
 `ext.builtin.math.fsum` enables native expansion summation for ordinary Python numeric lists and tuples. Conversion and accumulation preserve input order and the final rounding correction; custom numeric objects and iterators retain the library protocol path.
 
-`ext.builtin.struct_native` supplies the canonical native binary layouts, packing and unpacking for the unchanged CPython struct wrapper. The separate implementations in structpack.rs and byteformat.rs follow CPython v3.14.8 Modules/_struct.c; the Python interface acquires contiguous buffers and applies object conversion protocols.
+`ext.builtin.struct_native` supplies the canonical native binary layouts, packing and unpacking for the unchanged CPython struct wrapper. The separate implementations in structpack.rs and byteformat.rs follow CPython v3.14.8 Modules/_struct.c; the Python interface acquires contiguous buffers and applies object conversion protocols. Operation 10 attempts integer-only packing without conversion and returns None for formats or values that need the adapter's ordinary conversion path.
 
 `ext.builtin.bytes.escape_decode` names the Python-only byte escape decoder, following CPython v3.14.8 Objects/bytesobject.c and Modules/_codecsmodule.c. It preserves consumed buffer length and reports invalid escapes for the warning adapter.
 `ext.stmt.class.detail.mro.entries` names the non-type base substitution hook; `ext.stmt.class.detail.original.bases` names the retained original base tuple. Module-load helpers accept a false second argument to query source availability without importing and a true second argument to return its source path.

@@ -218,7 +218,11 @@ class _UnpackIterator:
 def calcsize(format):
     return _get(format).size
 
+# Ask the native packer first when no object conversion is required.
 def pack(format, *values):
+    packed = _call(10, format, values)
+    if packed is not None:
+        return packed
     return _get(format).pack(*values)
 
 def unpack(format, buffer):

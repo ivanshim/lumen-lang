@@ -118,10 +118,26 @@ fn reorder(row: &mut [u8], complex: bool) {
     if complex {let size=row.len()/2;row[..size].reverse();row[size..].reverse();} else {row.reverse();}
 }
 pub fn perform(given: &[Value]) -> Result<Value,String> {
+    let mut task = given[0].settled();
+    // Let the adapter retain formats and objects that require conversion.
+    if matches!(task, Value::Small(10)) {
+        let Value::Text(spelling) = &given[1] else { return Ok(Value::Nil); };
+        let Some(Value::Tuple(arguments)) = given.get(2).map(Value::settled) else { return Ok(Value::Nil); };
+        for letter in spelling.bytes() {
+            if !letter.is_ascii_digit() && !letter.is_ascii_whitespace()
+                && !b"@=<>!xbBhHiIlLqQnNP".contains(&letter) { return Ok(Value::Nil); }
+        }
+        for argument in arguments.iter() {
+            match argument.settled() {
+                Value::Small(_) | Value::Huge(_) | Value::Flag(_) => (),
+                _ => return Ok(Value::Nil),
+            }
+        }
+        task = Value::Small(1);
+    }
     let Value::Text(spelling)=&given[1] else {return Err("TypeError: Struct() argument 1 must be a str or bytes object".to_owned());};
-    if matches!(given[0].settled(), Value::Small(4)) { SAVED.with(|saved| saved.borrow_mut().clear()); return Ok(Value::Nil); }
+    if matches!(task, Value::Small(4)) { SAVED.with(|saved| saved.borrow_mut().clear()); return Ok(Value::Nil); }
     let (size, reverse, pieces)=arrangement(spelling)?;
-    let task=given[0].settled();
     if matches!(task, Value::Small(0)) {
         let descriptions=pieces.iter().map(|Piece(c,_,n,_)| Value::tuple(vec![Value::text(&char::from(*c).to_string()),Value::Small(*n as i64)])).collect();
         return Ok(Value::tuple(vec![Value::Small(size as i64),Value::tuple(descriptions)]));

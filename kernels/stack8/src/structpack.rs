@@ -93,7 +93,19 @@ fn unpack_float(data: &[u8]) -> f64 {
     }
 }
 pub fn apply(args: &[Value]) -> Result<Value,String> {
-    let Value::Small(action)=args[0] else { return Err(complaint("invalid struct operation")); };
+    let Value::Small(mut action)=args[0] else { return Err(complaint("invalid struct operation")); };
+    // Integer-only inputs need no Python conversion hooks before packing.
+    if action == 10 {
+        let ready = match (&args[1], args.get(2).map(Value::contents)) {
+            (Value::Text(text), Some(Value::Tuple(items))) => {
+                text.bytes().all(|code| b"@=<>!0123456789 \t\n\r\x0b\x0cxbBhHiIlLqQnNP".contains(&code))
+                    && items.iter().all(|item| matches!(item.contents(), Value::Small(_) | Value::Huge(_) | Value::Flag(_)))
+            }
+            _ => false,
+        };
+        if !ready { return Ok(Value::Null); }
+        action = 1;
+    }
     let Value::Text(text)=&args[1] else { return Err("TypeError: Struct() argument 1 must be a str or bytes object".into()); };
     if action==4 { FORMATS.with(|cache| cache.borrow_mut().clear()); return Ok(Value::Null); }
     let format=compile(text)?;
