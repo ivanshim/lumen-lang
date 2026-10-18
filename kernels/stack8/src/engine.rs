@@ -17929,19 +17929,13 @@ impl<'a> Engine<'a> {
                 if let Some(method) = self.class_value(&maker, name) {
                     let receiver = Value::Class(class.clone());
                     let answer = self.bind_class_value(method, Some(receiver), maker).and_then(|bound| self.class_apply(bound, Vec::new()));
-                    return match answer {
-                        Ok(walk) => Ok(Some(walk)), Err(Fault::Note(words)) => Err(words),
-                        Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
-                    };
+                    return Ok(Some(self.settle(answer)?));
                 }
             }
         }
         let Some(handing) = self.lang.class_walked.as_deref().and_then(|word| self.class_value(class, word)) else { return Ok(None) };
-        match self.class_apply(handing, vec![Value::Class(class.clone())]) {
-            Ok(yielded) => Ok(Some(yielded)),
-            Err(Fault::Note(words)) => Err(words),
-            Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
-        }
+        let flow = self.class_apply(handing, vec![Value::Class(class.clone())]);
+        Ok(Some(self.settle(flow)?))
     }
 
     fn spread_members(&mut self, next: &Value) -> Res<Vec<Value>> {
@@ -18281,11 +18275,8 @@ impl<'a> Engine<'a> {
 
     /// Preserve a handler's raised Python value across a native builtin boundary.
     fn signal_checkpoint(&mut self) -> Res<()> {
-        match self.deliver_signals() {
-            Ok(()) => Ok(()),
-            Err(Fault::Note(words)) => Err(words),
-            Err(raised) => { self.carried = Some(raised); Err(self.special_fault()) }
-        }
+        let flow = self.deliver_signals();
+        self.settle(flow)
     }
 
     fn native_call_items<F>(&mut self, callable: Value, items: Vec<(Option<Value>, Value)>, invoke: F) -> Res<Value>
@@ -18635,10 +18626,8 @@ impl<'a> Engine<'a> {
             return Err(format!("TypeError: expected 1 or 2 arguments, got {}",args.len()));
         }
         if operation == "classmethod_bind" {
-            return match self.explicit_classmethod(receiver, args, named) {
-                Ok(value) => Ok(value), Err(Fault::Note(message)) => Err(message),
-                Err(fault) => { self.carried = Some(fault); Err(String::new()) }
-            };
+            let flow = self.explicit_classmethod(receiver, args, named);
+            return self.settle_quiet(flow);
         }
         if operation == "__typing_subst__" && self.lang.type_parameters {
             if !named.is_empty() { return Err("TypeError: TypeVarTuple.__typing_subst__() takes no keyword arguments".into()); }
@@ -18651,7 +18640,7 @@ impl<'a> Engine<'a> {
             let number = self.special_index(&args[0])?.unwrap_or_else(|| args[0].contents());
             number.as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?;
             let answer = self.class_get(receiver.clone(), "__reduce__", false).and_then(|method| self.class_apply(method, Vec::new()));
-            return match answer { Ok(result) => Ok(result), Err(Fault::Note(message)) => Err(message), Err(raised) => { self.carried = Some(raised); Err(String::new()) } };
+            return self.settle_quiet(answer);
         }
         if matches!(operation, "descriptor_reduce" | "descriptor_reduce_ex") {
             let expected = usize::from(operation.ends_with("_ex"));
@@ -18695,11 +18684,7 @@ impl<'a> Engine<'a> {
                 let mut inputs = vec![receiver.clone()]; inputs.extend(args);
                 self.root_work(&name, inputs)
             };
-            return match answer {
-                Ok(value) => Ok(value),
-                Err(Fault::Note(words)) => Err(words),
-                Err(thrown) => { self.carried = Some(thrown); Err(String::new()) }
-            };
+            return self.settle_quiet(answer);
         }
         let window = Self::view_in(receiver);
         let receiver = window.as_ref().unwrap_or(receiver);
@@ -19066,10 +19051,7 @@ impl<'a> Engine<'a> {
             let called = self.perform(&Action::Send(Rc::from(operation)), self.data.len() - floor);
             let answer = match called { Ok(()) => self.drop_top().map_err(Fault::Note), Err(fault) => Err(fault) };
             self.data.truncate(floor);
-            return match answer {
-                Ok(value) => Ok(value), Err(Fault::Note(words)) => Err(words),
-                Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
-            };
+            return self.settle(answer);
         }
         if operation == "__buffer__" || operation == "__release_buffer__" {
             if args.len() != 1 || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
@@ -19183,11 +19165,8 @@ impl<'a> Engine<'a> {
                 return Ok(Value::Flag(self.truth(&result)));
             }
             if let Value::Class(class) = receiver {
-                return match self.class_make(class.clone(), vec![result]) {
-                    Ok(v) => Ok(v),
-                    Err(Fault::Note(message)) => Err(message),
-                    Err(raised) => { self.carried = Some(raised); Err(String::new()) }
-                };
+                let flow = self.class_make(class.clone(), vec![result]);
+                return self.settle_quiet(flow);
             }
             return Ok(result);
         }
@@ -19341,13 +19320,9 @@ impl<'a> Engine<'a> {
         if let Value::Object(object) = &contents {
             if self.exception_class(&object.class_now()) {
                 if !named.is_empty() { return Err(self.lang.exception_unready.clone().unwrap_or_default()); }
-                return match self.exception_method(object.clone(), operation, &args) {
-                    Ok(answer) => Ok(answer),
-                    Err(Fault::Note(words)) => Err(words),
-                    // A value raised on the way is carried out past the
-                    // words this answer may hold.
-                    Err(fled) => { self.carried = Some(fled); Err(String::new()) }
-                };
+                // A value raised on the way is carried out past the words this answer may hold.
+                let flow = self.exception_method(object.clone(), operation, &args);
+                return self.settle_quiet(flow);
             }
         }
         if let Value::Slice(bounds) = &contents {
@@ -19568,22 +19543,16 @@ impl<'a> Engine<'a> {
                 _ => None,
             };
             if let Some(c) = maker.filter(|c| Self::kind_beneath(c).is_some()) {
-                let made = match self.class_apply(Value::Class(c.clone()), Vec::new()) {
-                    Ok(made) => made,
-                    Err(Fault::Note(words)) => return Err(words),
-                    Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-                };
+                let flow = self.class_apply(Value::Class(c.clone()), Vec::new());
+                let made = self.settle_quiet(flow)?;
                 let copy = Self::frozen_beneath(&made);
                 let mut working = if copy { self.frozen_rows(&made)? } else { made };
                 for key in self.comprehension_items(&target)? {
                     self.mapping_write(&mut working, key, filling.clone())?;
                 }
                 if copy {
-                    return match self.class_apply(Value::Class(c), vec![working]) {
-                        Ok(made) => Ok(made),
-                        Err(Fault::Note(words)) => Err(words),
-                        Err(fled) => { self.carried = Some(fled); Err(String::new()) }
-                    };
+                    let flow = self.class_apply(Value::Class(c), vec![working]);
+                    return self.settle_quiet(flow);
                 }
                 return Ok(working);
             }
@@ -19667,21 +19636,14 @@ impl<'a> Engine<'a> {
         let hooks = self.lang.buffer_hooks.clone();
         if hooks.len() != 2 { return Ok(None); }
         let Some(getter) = self.class_value(&object.class_now(), &hooks[0]) else { return Ok(None); };
-        let view = match self.class_apply(getter, vec![value.clone(), Value::Small(0)]) {
-            Ok(view) => view,
-            Err(Fault::Note(words)) => return Err(words),
-            Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
-        };
+        let flow = self.class_apply(getter, vec![value.clone(), Value::Small(0)]);
+        let view = self.settle_quiet(flow)?;
         let content = self.bytes_argument(&view);
         let pending = self.carried.take();
         if let Some(release) = self.class_value(&object.class_now(), &hooks[1]) {
             let released = self.class_apply(release, vec![value.clone(), view]);
             if content.is_ok() {
-                match released {
-                    Ok(_) => (),
-                    Err(Fault::Note(words)) => return Err(words),
-                    Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
-                }
+                self.settle_quiet(released)?;
             }
         }
         if pending.is_some() { self.carried = pending; }
@@ -20373,11 +20335,8 @@ impl<'a> Engine<'a> {
             Value::Bytes(row, ..) => Ok(Some(row.borrow().to_vec())),
             Value::Object(object) => {
                 let Some(method) = self.class_value(&object.class_now(), "__bytes__") else { return Ok(None); };
-                let result = match self.class_apply(method, vec![value.clone()]) {
-                    Ok(answer) => answer,
-                    Err(Fault::Note(words)) => return Err(words),
-                    Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
-                };
+                let flow = self.class_apply(method, vec![value.clone()]);
+                let result = self.settle_quiet(flow)?;
                 match result {
                     Value::Bytes(row, false, _) => Ok(Some(row.borrow().to_vec())),
                     _ => Ok(None),
@@ -20821,11 +20780,8 @@ impl<'a> Engine<'a> {
             Value::Bytes(row, ..) => row.borrow().clone(),
             Value::Object(obj) if obj.class_now().name == "memoryview" => {
                 let method = self.class_value(&obj.class_now(), "__bytes__").ok_or_else(|| self.byte_fault("arguments"))?;
-                let source = match self.class_apply(method, vec![args[0].clone()]) {
-                    Ok(bytes) => bytes,
-                    Err(Fault::Note(message)) => return Err(message),
-                    Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
-                };
+                let flow = self.class_apply(method, vec![args[0].clone()]);
+                let source = self.settle_quiet(flow)?;
                 self.byte_row(&source, false)?
             }
             Value::Text(_) => return Err(part(0)),
@@ -21146,10 +21102,8 @@ impl<'a> Engine<'a> {
             };
         }
         if task == 63 {
-            return match self.pickle_buffer_work(args) {
-                Ok(value) => Ok(value), Err(Fault::Note(message)) => Err(message),
-                Err(exception) => { self.carried = Some(exception); Err(String::new()) },
-            };
+            let flow = self.pickle_buffer_work(args);
+            return self.settle_quiet(flow);
         }
         if task == 61 {
             if args.len() != 2 { return Err("TypeError: escape_decode requires a buffer and an error policy".into()); }
@@ -21257,11 +21211,8 @@ impl<'a> Engine<'a> {
             let source = &args[0];
             let converted = if let Value::Object(object) = source {
                 if let Some(method) = self.class_value(&object.class_now(), "__bytes__") {
-                    let result = match self.class_apply(method, vec![source.clone()]) {
-                        Ok(v) => v,
-                        Err(Fault::Note(message)) => return Err(message),
-                        Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
-                    };
+                    let flow = self.class_apply(method, vec![source.clone()]);
+                    let result = self.settle_quiet(flow)?;
                     if !matches!(result, Value::Bytes(_, false, _)) { return Err(self.byte_fault("arguments")); }
                     result
                 } else if let Some(bytes) = self.buffer_exported(source)? {
@@ -22154,11 +22105,7 @@ impl<'a> Engine<'a> {
                         if let Some(method) = self.class_value(&object.class_now(), "__bytes__") {
                             let called = self.bind_class_value(method, Some(args[0].clone()), object.class_now().clone())
                                 .and_then(|bound| self.class_apply(bound, Vec::new()));
-                            let answer = match called {
-                                Ok(value) => value,
-                                Err(Fault::Note(message)) => return Err(message),
-                                Err(escape) => { self.carried = Some(escape); return Err(String::new()); }
-                            };
+                            let answer = self.settle_quiet(called)?;
                             let raw = Self::worth_of(&answer).unwrap_or_else(|| answer.contents());
                             if !matches!(raw, Value::Bytes(_, false, _)) {
                                 return Err(format!("TypeError: __bytes__ returned non-bytes (type {})", Self::type_argument_kind(&answer)));
