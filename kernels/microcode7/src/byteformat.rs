@@ -248,6 +248,18 @@ pub fn perform(given: &[Value]) -> Result<Value,String> {
             b'x'=>continue,
             b's'=>{results.push(octets(&input[start..start+repeat]));continue;},
             b'p'=>{let length=if repeat==0 {0} else {usize::from(input[start]).min(repeat-1)};let beginning=start+usize::from(repeat>0);results.push(octets(&input[beginning..beginning+length]));continue;},
+            // One-byte repeats do not need a reversed temporary.
+            b'B' | b'b' if width == 1 => {
+                let end = start + repeat;
+                let mut cursor = start;
+                while cursor < end {
+                    let unit = input[cursor];
+                    let number = if symbol == b'b' { i64::from(unit as i8) } else { i64::from(unit) };
+                    results.push(Value::Small(number));
+                    cursor += 1;
+                }
+                continue;
+            }
             _=>(),
         }
         for offset in (start..start+repeat*width).step_by(width) {

@@ -195,6 +195,18 @@ pub fn apply(args: &[Value]) -> Result<Value,String> {
     for field in &format.fields {
         if field.code==b'x' {continue;}
         if matches!(field.code,b's'|b'p') {let start=field.at+usize::from(field.code==b'p' && field.count>0);let count=if field.code==b'p' {if field.count==0 {0} else {(data[field.at] as usize).min(field.count-1)}} else {field.count};values.push(bytes(data[start..start+count].to_vec()));continue;}
+        // A repeated byte is already one machine word: copying each
+        // one into a fresh buffer dominated archives full of 'B' fields.
+        if field.width == 1 && matches!(field.code, b'B' | b'b') {
+            let from = field.at;
+            let upto = from + field.count;
+            let negative = field.code == b'b';
+            for byte in &data[from..upto] {
+                let number = if negative { *byte as i8 as i64 } else { i64::from(*byte) };
+                values.push(Value::Small(number));
+            }
+            continue;
+        }
         for j in 0..field.count {
             let start=field.at+j*field.width;let mut raw=data[start..start+field.width].to_vec();
             if !format.little {if matches!(field.code,b'F'|b'D') {let half=raw.len()/2;raw[..half].reverse();raw[half..].reverse();} else {raw.reverse();}}
