@@ -961,36 +961,7 @@ impl<'a> Engine<'a> {
         }
     }
     fn chain_context(&self, raised: &Value) {
-        let Some(name) = &self.lang.exception_context else { return };
-        let Value::Object(object) = raised.contents() else { return };
-        let Some(Value::Object(handling)) = self.caught.last().map(Value::contents) else { return };
-        if Rc::ptr_eq(&handling, &object) { return; }
-        let behind = |link: &Rc<Instance>| link.fields.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.contents());
-        let mut link = handling.clone();
-        // A chain already standing behind `handling` may loop back on
-        // itself without ever passing through the value being raised
-        // (a program may set `__context__` to whatever it likes). A
-        // hare run beside the walk, advanced every other step, meets
-        // the walk again if that is so, so the search still ends.
-        let mut hare = handling.clone();
-        let mut alternate = false;
-        while let Some(Value::Object(further)) = behind(&link) {
-            if Rc::ptr_eq(&further, &object) {
-                if let Some((_, held)) = link.fields.borrow_mut().iter_mut().find(|(n, _)| n == name) { *held = Value::Null; }
-                break;
-            }
-            link = further;
-            if Rc::ptr_eq(&link, &hare) { break; }
-            if alternate {
-                if let Some(Value::Object(ahead)) = behind(&hare) { hare = ahead; }
-            }
-            alternate = !alternate;
-        }
-        let mut fields = object.fields.borrow_mut();
-        match fields.iter_mut().find(|(n, _)| n == name) {
-            Some((_, held)) => *held = Value::Object(handling),
-            None => fields.push((name.clone(), Value::Object(handling))),
-        }
+        self.chain_context_from(raised, 0);
     }
 
     /// A fault of the kernel's own, met where exceptions are furnished,
@@ -5106,13 +5077,8 @@ impl<'a> Engine<'a> {
             let body_location = self.location;
             let body_instruction = self.trace_frame.as_ref().map(Self::frame_instruction).unwrap_or(-1);
             if !self.lang.trace_fields.is_empty() {
-                self.line = context_line;
-                self.location = context_location;
                 // The implicit exit call belongs to the with instruction, not its body.
-                if let Some(frame) = &self.trace_frame {
-                    if let Some((_, slot)) = frame.fields.borrow_mut().iter_mut().find(|(name, _)| name == "\0instruction") { *slot = Value::Small(at as i64); }
-                }
-                if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
+                self.restore_trace_point(context_line, context_location, at as i64);
             }
             let left = self.class_apply(object, args).and_then(|answer| {
                 self.data.push(answer);
@@ -5126,12 +5092,7 @@ impl<'a> Engine<'a> {
             });
             let left = self.raised_of_note(left);
             if left.is_ok() && !self.lang.trace_fields.is_empty() {
-                self.line = body_line;
-                self.location = body_location;
-                if let Some(frame) = &self.trace_frame {
-                    if let Some((_, slot)) = frame.fields.borrow_mut().iter_mut().find(|(name, _)| name == "\0instruction") { *slot = Value::Small(body_instruction); }
-                }
-                if let Some(frame) = &self.trace_frame { frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64); }
+                self.restore_trace_point(body_line, body_location, body_instruction);
             }
             if left.is_ok() && leaving_bound && suspended.is_some() {
                 let value = self.drop_top()?;
@@ -5156,16 +5117,7 @@ impl<'a> Engine<'a> {
         }
                 match ending {
                     Ok(Passage::Along(mark)) if mark == plan.body.1 => match plan.otherwise {
-                        Some(span) => {
-                            let ran = self.run_portion(program, frame, instrs, span, suspended.as_deref_mut());
-                            if matches!(ran, Ok(Passage::Suspended)) {
-                                return self.gave_way(suspended, at, depth, active, Phase::Else);
-                            }
-                            ran.map(|end| match end {
-                                Passage::Along(mark) if mark == span.1 => Passage::Along(plan.after),
-                                other => other,
-                            })
-                        }
+                        Some(span) => self.run_else(program, frame, instrs, span, &mut suspended, at, depth, active, plan.after),
                         None => Ok(Passage::Along(plan.after)),
                     },
                     Err(Fault::Thrown(raised)) if plan.clauses.iter().any(|arm| arm.grouped) => {
@@ -5185,14 +5137,7 @@ impl<'a> Engine<'a> {
             }
             Phase::Else => {
                 let span = plan.otherwise.expect("the part run when nothing was raised");
-                let ran = self.run_portion(program, frame, instrs, span, suspended.as_deref_mut());
-                if matches!(ran, Ok(Passage::Suspended)) {
-                    return self.gave_way(suspended, at, depth, active, Phase::Else);
-                }
-                ran.map(|end| match end {
-                    Passage::Along(mark) if mark == span.1 => Passage::Along(plan.after),
-                    other => other,
-                })
+                self.run_else(program, frame, instrs, span, &mut suspended, at, depth, active, plan.after)
             }
             Phase::Arm(index, raised) => self.attempt_clauses(program, frame, instrs, plan, at, suspended.as_deref_mut(), raised, Some(index), depth, active),
             Phase::ContextExit(left, walk, saved) => {
@@ -15094,10 +15039,7 @@ impl<'a> Engine<'a> {
             let shown = if conversion == "r" || conversion == "a" {
                 let mut shown = crate::strings::repr(&value, &words);
                 if conversion == "a" {
-                    shown = shown.chars().map(|c| if c.is_ascii() { c.to_string() }
-                        else if c as u32 <= 255 { format!("\\x{:02x}", c as u32) }
-                        else if c as u32 <= 65535 { format!("\\u{:04x}", c as u32) }
-                        else { format!("\\U{:08x}", c as u32) }).collect();
+                    shown = shown.chars().map(|c| if c.is_ascii() { c.to_string() } else { Self::escaped_point(c as u32) }).collect();
                 }
                 Value::text(&shown).string_field(&words, &spec, "")
             } else { value.string_field(&words, &spec, conversion) };
@@ -20484,7 +20426,7 @@ impl<'a> Engine<'a> {
                 let stop = at + letters[at..].iter().take_while(|c| **c as u32 > top).count();
                 let which = if stop == at + 1 {
                     let c = letters[at] as u32;
-                    let escaped = if c <= 255 { format!("\\x{:02x}", c) } else if c <= 65535 { format!("\\u{:04x}", c) } else { format!("\\U{:08x}", c) };
+                    let escaped = Self::escaped_point(c);
                     format!("character '{}' in position {}", escaped, at)
                 } else { format!("characters in position {}-{}", at, stop - 1) };
                 return Err(format!("{}'{}' codec can't encode {}: ordinal not in range({})", self.byte_fault("encode"), self.byte_codec_name(codec), which, top + 1));
@@ -20549,12 +20491,7 @@ impl<'a> Engine<'a> {
         let failure = if codec == Self::CODEC_SEVEN {
             row.iter().position(|b| !b.is_ascii()).map(|at| (at, 1, "ordinal not in range(128)"))
         } else {
-            std::str::from_utf8(row).err().map(|bad| {
-                let at = bad.valid_up_to();
-                let reason = if bad.error_len().is_none() { "unexpected end of data" }
-                    else if !(0xc2..=0xf4).contains(&row[at]) { "invalid start byte" } else { "invalid continuation byte" };
-                (at, bad.error_len().unwrap_or(row.len() - at), reason)
-            })
+            Self::utf8_fault(row)
         };
         if let Some((at, count, reason)) = failure {
             return Err(self.byte_decode_fault(codec, row, at, at + count - 1, reason));
@@ -20673,12 +20610,7 @@ impl<'a> Engine<'a> {
                 if codec == Self::CODEC_SEVEN {
                     tail.iter().position(|b| *b >= 128).map(|i| (i, 1, "ordinal not in range(128)"))
                 } else {
-                    std::str::from_utf8(tail).err().map(|e| {
-                        let i = e.valid_up_to();
-                        let why = if e.error_len().is_none() { "unexpected end of data" }
-                            else if (194..=244).contains(&tail[i]) { "invalid continuation byte" } else { "invalid start byte" };
-                        (i, e.error_len().unwrap_or(tail.len() - i), why)
-                    })
+                    Self::utf8_fault(tail)
                 }
             };
             let Some((valid, count, why)) = failure else {
@@ -29251,21 +29183,18 @@ impl Engine<'_> {
             .unwrap_or((fallback, generic.split_once(": ").map(|(_, msg)| msg).unwrap_or(&generic)));
         if let Some(Value::Class(class)) = self.native_exceptions.get(kind).cloned() {
             if message == "source code string cannot contain null bytes" {
-                let raised = self.exception_instance(class, vec![Value::text(message)], Value::Null);
-                self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                self.carry_raised(class, vec![Value::text(message)]);
                 return String::new();
             }
             if row == 0 && mode != 0 && source.is_empty() {
                 let positions = vec![Value::text(file), Value::Small(0), Value::Small(0), Value::text(""), Value::Small(0), Value::Small(0)];
-                let raised = self.exception_instance(class, vec![Value::text(message), Value::tuple(positions)], Value::Null);
-                self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                self.carry_raised(class, vec![Value::text(message), Value::tuple(positions)]);
                 return String::new();
             }
             if row == 0 {
                 let bom_conflict = message.starts_with("encoding problem:") && message.ends_with(" with BOM");
                 let details = Value::tuple(vec![Value::text(file), Value::Small(if bom_conflict { 1 } else { 0 }), Value::Small(if bom_conflict { 0 } else { -1 }), Value::Null]);
-                let raised = self.exception_instance(class, vec![Value::text(message), details], Value::Null);
-                self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                self.carry_raised(class, vec![Value::text(message), details]);
                 return String::new();
             }
             let row = row.max(1);
@@ -29335,9 +29264,7 @@ impl Engine<'_> {
                 std::fs::read_to_string(file).ok().and_then(|contents| contents.replace("\r\n", "\n").replace('\r', "\n").split_inclusive('\n').nth(row - 1).map(Value::text)).unwrap_or(Value::Null)
             } else { Value::text(&text) };
             let details = vec![Value::text(file), Value::Small(row as i64), Value::Small(col), line_text, Value::Small(end_row as i64), Value::Small(finish)];
-            let raised = self.exception_instance(class, vec![Value::text(&message), Value::tuple(details)], Value::Null);
-            self.chain_context(&raised);
-            self.carried = Some(Fault::Thrown(raised));
+            self.carry_raised(class, vec![Value::text(&message), Value::tuple(details)]);
             return String::new();
         }
         said
@@ -29663,9 +29590,7 @@ impl Engine<'_> {
         let (row, column, end_row, end_column) = place;
         let text = if row == 0 { String::new() } else { source.split_inclusive('\n').nth(row - 1).unwrap_or("").to_owned() };
         let details = vec![Value::text(file), Value::Small(row as i64), Value::Small(column as i64), Value::text(&text), Value::Small(end_row as i64), Value::Small(end_column)];
-        let raised = self.exception_instance(class, vec![Value::text(message), Value::tuple(details)], Value::Null);
-        self.chain_context(&raised);
-        self.carried = Some(Fault::Thrown(raised));
+        self.carry_raised(class, vec![Value::text(message), Value::tuple(details)]);
         Some(String::new())
     }
 
@@ -29679,9 +29604,7 @@ impl Engine<'_> {
         let (row, _, _, _) = Self::ran_out_place(source);
         let text = if row == 0 { String::new() } else { source.split_inclusive('\n').nth(row - 1).unwrap_or("").trim_end_matches('\n').to_owned() };
         let details = vec![Value::text(file), Value::Small(row as i64), Value::Small(0), Value::text(&text), Value::Small(row as i64), Value::Small(0)];
-        let raised = self.exception_instance(class, vec![Value::text("invalid syntax"), Value::tuple(details)], Value::Null);
-        self.chain_context(&raised);
-        self.carried = Some(Fault::Thrown(raised));
+        self.carry_raised(class, vec![Value::text("invalid syntax"), Value::tuple(details)]);
         String::new()
     }
 
@@ -30500,11 +30423,7 @@ impl Engine<'_> {
             }
             return self.run_text_booked(source, file, mode, globals, None, top_await, replacements, optimization, positions);
         }
-        let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
-        let tokens = match self.text_tokens(source, mode) {
-            Ok(tokens) => tokens,
-            Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
-        };
+        let (file, tokens) = self.text_file_tokens(source, file, mode)?;
         self.registry.optimize = optimization;
         let (program, shown) = self.text_program(source, &tokens, &file, mode, None, top_await, None, positions)?;
         let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
@@ -30520,11 +30439,7 @@ impl Engine<'_> {
     /// makes is gone once the text is done.
     fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64, positions: &[[u32; 8]]) -> Res<Value> {
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
-        let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
-        let tokens = match self.text_tokens(source, mode) {
-            Ok(tokens) => tokens,
-            Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
-        };
+        let (file, tokens) = self.text_file_tokens(source, file, mode)?;
         // Text read inside a method is read as standing in that method's
         // class, as text read where a language has no manners of reading
         // already is.
@@ -30569,11 +30484,7 @@ impl Engine<'_> {
     /// Text run in dictionaries of its own: its names are given slots
     /// of their own in the world, and a book is kept for them.
     fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64, positions: &[[u32; 8]]) -> Res<Value> {
-        let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
-        let tokens = match self.text_tokens(source, mode) {
-            Ok(tokens) => tokens,
-            Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, &source)),
-        };
+        let (file, tokens) = self.text_file_tokens(source, file, mode)?;
         let offset = self.registry.idents.len();
         let mut local = crate::compile::Registry::with_outside_slots(offset);
         local.optimize = optimization;
@@ -30848,6 +30759,68 @@ impl Engine<'_> {
         self.made += 1;
         let class = self.code_class();
         Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made })))
+    }
+}
+
+
+impl Engine<'_> {
+    fn carry_raised(&mut self, class: Rc<Class>, args: Vec<Value>) {
+        let raised = self.exception_instance(class, args, Value::Null);
+        self.chain_context(&raised);
+        self.carried = Some(Fault::Thrown(raised));
+    }
+
+    fn restore_trace_point(&mut self, line: u32, location: Option<(u32, u32, u32, u32)>, instruction: i64) {
+        self.line = line;
+        self.location = location;
+        if let Some(frame) = &self.trace_frame {
+            if let Some((_, slot)) = frame.fields.borrow_mut().iter_mut().find(|(name, _)| name == "\0instruction") {
+                *slot = Value::Small(instruction);
+            }
+        }
+        if let Some(frame) = &self.trace_frame {
+            frame.fields.borrow_mut()[0].1 = Value::Small(self.line as i64);
+        }
+    }
+
+    fn run_else(&mut self, program: &Rc<Routine>, frame: &mut [Value], instrs: &[Instr], span: (usize, usize), suspended: &mut Option<&mut Generator>, at: usize, depth: usize, active: usize, after: usize) -> Flow<Passage> {
+        let ran = self.run_portion(program, frame, instrs, span, suspended.as_deref_mut());
+        if matches!(ran, Ok(Passage::Suspended)) {
+            return self.gave_way(suspended.as_deref_mut(), at, depth, active, Phase::Else);
+        }
+        ran.map(|end| match end {
+            Passage::Along(mark) if mark == span.1 => Passage::Along(after),
+            other => other,
+        })
+    }
+
+    fn utf8_fault(row: &[u8]) -> Option<(usize, usize, &'static str)> {
+        std::str::from_utf8(row).err().map(|bad| {
+            let at = bad.valid_up_to();
+            let reason = if bad.error_len().is_none() {
+                "unexpected end of data"
+            } else if !(0xc2..=0xf4).contains(&row[at]) {
+                "invalid start byte"
+            } else {
+                "invalid continuation byte"
+            };
+            (at, bad.error_len().unwrap_or(row.len() - at), reason)
+        })
+    }
+
+    fn escaped_point(c: u32) -> String {
+        if c <= 255 { format!("\\x{:02x}", c) }
+        else if c <= 65535 { format!("\\u{:04x}", c) }
+        else { format!("\\U{:08x}", c) }
+    }
+
+    fn text_file_tokens(&mut self, source: &str, file: Option<String>, mode: usize) -> Res<(Rc<str>, Vec<crate::lex::Token>)> {
+        let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
+        let tokens = match self.text_tokens(source, mode) {
+            Ok(tokens) => tokens,
+            Err((said, row, col)) => return Err(self.text_syntax(mode, said, &file, row, col, None, source)),
+        };
+        Ok((file, tokens))
     }
 }
 
