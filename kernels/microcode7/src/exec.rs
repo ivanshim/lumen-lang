@@ -27473,10 +27473,7 @@ impl<'a> Machine<'a> {
             if let Some(entry) = entry {
                 let callable = self.member_binding(entry, Some(Value::Blueprint(kind.clone())), builder);
                 let result = callable.and_then(|method| self.apply_class_member(method, vec![]));
-                return match result {
-                    Ok(iterator) => Ok(Some(iterator)), Err(Escape::Error(message)) => Err(message),
-                    Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
-                };
+                return result.map(Some).map_err(|escape| self.away_words(escape));
             }
         }
         let Some(handing) = self.table.strings("ext.stmt.class.walked").first().map(String::as_str).and_then(|word| self.inherited_entry(kind, word)) else { return Ok(None) };
@@ -30430,11 +30427,8 @@ impl<'a> Machine<'a> {
                         _ => match asked("__spec__") {
                             Some(found) if !matches!(found, Value::Nil) => None,
                             _ => {
-                                match self.warn_like(31, "can't resolve package from __spec__ or __package__, falling back on __name__ and __path__") {
-                                    Ok(()) => {}
-                                    Err(Escape::Error(told)) => return Err(told),
-                                    Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
-                                }
+                                let owned = self.warn_like(31, "can't resolve package from __spec__ or __package__, falling back on __name__ and __path__");
+                                owned.map_err(|escape| self.away_words(escape))?;
                                 match asked("__name__") {
                                     Some(Value::Text(named)) => Some(if asked("__path__").is_some() { named.to_string() } else { named.rsplit_once('.').map(|(head, _)| head.to_string()).unwrap_or_default() }),
                                     _ => None,
@@ -31060,11 +31054,8 @@ impl<'a> Machine<'a> {
             let settling = if flags & 32768 != 0 {
                 match v.get(5).map(Value::settled) { Some(Value::Small(n)) if n >= 0 => n, _ => 0 }
             } else { -1 };
-            return match self.apply_class_member(reader, vec![Value::text(&source), Value::text(&file), Value::text(&manner), Value::Small(comments), Value::Small(settling)]) {
-                Ok(tree) => Ok(tree),
-                Err(Escape::Error(told)) => Err(told),
-                Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
-            };
+            let owned = self.apply_class_member(reader, vec![Value::text(&source), Value::text(&file), Value::text(&manner), Value::Small(comments), Value::Small(settling)]);
+            return owned.map_err(|escape| self.away_words(escape));
         }
         let top_await = flags & 8192 != 0;
         // The future flags in force: those the call names, and — unless
@@ -31138,19 +31129,13 @@ impl<'a> Machine<'a> {
             // PyCF_ONLY_AST: the value handed back is the library's
             // syntax tree of the text rather than a code value.
             let space = self.load_namespace("ast")?;
-            let parse = match self.read_class_member(space, "_parse_for_compile", true) {
-                Ok(parse) => parse.settled(),
-                Err(Escape::Error(told)) => return Err(told),
-                Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
-            };
+            let owned = self.read_class_member(space, "_parse_for_compile", true);
+            let parse = owned.map_err(|escape| self.away_words(escape))?.settled();
             let manner = self.table.strings("ext.builtin.compile.modes")[mode].clone();
             let type_comments = i64::from(flags & 0x1000 != 0);
             let optimize = match v.get(5).map(Value::settled) { Some(Value::Small(n)) => n, _ => -1 };
-            return match self.apply_class_member(parse, vec![Value::Text(source.clone()), Value::Text(file.clone()), Value::text(&manner), Value::Small(type_comments), Value::Small(optimize), Value::Flag(flags & 0x8000 != 0)]) {
-                Ok(tree) => Ok(tree),
-                Err(Escape::Error(told)) => Err(told),
-                Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
-            };
+            let owned = self.apply_class_member(parse, vec![Value::Text(source.clone()), Value::Text(file.clone()), Value::text(&manner), Value::Small(type_comments), Value::Small(optimize), Value::Flag(flags & 0x8000 != 0)]);
+            return owned.map_err(|escape| self.away_words(escape));
         }
         let kind = self.code_blueprint();
         let bits = (if built.program.generator { 128 } else { 0 }) | built.future_bits;
@@ -31191,11 +31176,8 @@ impl<'a> Machine<'a> {
         let Some(category) = self.fault_kinds.get(&kind_name).cloned() else { return Ok(()) };
         let module = self.load_namespace(&module_name)?;
         // The module keeps its names in cells; the function is the cell's content.
-        let teller = match self.read_class_member(module, &teller_name, true) {
-            Ok(teller) => teller.settled(),
-            Err(Escape::Error(told)) => return Err(told),
-            Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
-        };
+        let owned = self.read_class_member(module, &teller_name, true);
+        let teller = owned.map_err(|escape| self.away_words(escape))?.settled();
         let mut handed = vec![Value::text(message), category, Value::text(file), Value::Small(i64::from(row))];
         match module_hint { Some(owner) => handed.push(Value::text(owner)), None => {} }
         match self.apply_class_member(teller, handed) {
