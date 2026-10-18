@@ -2378,6 +2378,17 @@ impl<'a> Machine<'a> {
         }
         Ok(())
     }
+    fn get_arity(&self, name: &str, count: usize) -> Res<()> {
+        match count {
+            0 => Err(format!("TypeError: {name} expected at least 1 argument, got 0").into()),
+            1 | 2 => Ok(()),
+            _ => Err(format!("TypeError: {name} expected at most 2 arguments, got {count}").into()),
+        }
+    }
+    fn kept_callable(&self, values: &[Value]) -> Res<Value> {
+        let Some(Value::Thing(thing)) = values.first() else { return Err(self.class_unready()) };
+        thing.holds.borrow().iter().find(|(key, _)| key == "\0callable").map(|(_, held)| held.clone()).ok_or_else(|| self.class_unready())
+    }
     pub(crate) fn apply_class_member(&mut self,f:Value,mut values:Vec<Value>)->Res {
         if let Some(fault) = self.symbolic_access(&f) { return Err(fault.into()); }
         if let Value::Blueprint(class)=&f { self.check_constructor_expansion(class, &values)?; }
@@ -2386,11 +2397,7 @@ impl<'a> Machine<'a> {
             Value::Wrapped(186, payload) => {
                 let (arguments, options) = self.open_arguments(values)?;
                 if !options.is_empty() { return Err("TypeError: wrapper __get__() takes no keyword arguments".to_owned().into()); }
-                match arguments.len() {
-                    0 => return Err("TypeError: __get__ expected at least 1 argument, got 0".to_owned().into()),
-                    1 | 2 => {},
-                    count => return Err(format!("TypeError: __get__ expected at most 2 arguments, got {count}").into()),
-                }
+                self.get_arity("__get__", arguments.len())?;
                 let Value::Wrapped(185, slot) = &payload[0] else { return Err(self.class_unready()); };
                 let target = arguments[0].settled();
                 if matches!(target, Value::Nil) {
@@ -3147,8 +3154,7 @@ impl<'a> Machine<'a> {
                         // classmethod.__get__: the kept callable is
                         // bound to the class the read came through, as
                         // the reference binds it, never to nothing.
-                        let Some(Value::Thing(t))=values.first() else{return Err(self.class_unready())};
-                        let Some(callable)=t.holds.borrow().iter().find(|(k,_)|k=="\0callable").map(|(_,v)|v.clone()) else{return Err(self.class_unready())};
+                        let callable = self.kept_callable(&values)?;
                         let bound=values[1..].iter().find_map(|v| match v { c @ Value::Blueprint(_) => Some(c.clone()), _ => None })
                             .unwrap_or_else(|| values.get(1).cloned().unwrap_or(Value::Nil));
                         Ok(Self::wrap(3,vec![callable,bound]))
@@ -3156,8 +3162,7 @@ impl<'a> Machine<'a> {
                     203 => {
                         // staticmethod.__get__: the kept callable
                         // itself, unbound.
-                        let Some(Value::Thing(t))=values.first() else{return Err(self.class_unready())};
-                        let Some(callable)=t.holds.borrow().iter().find(|(k,_)|k=="\0callable").map(|(_,v)|v.clone()) else{return Err(self.class_unready())};
+                        let callable = self.kept_callable(&values)?;
                         Ok(callable)
                     }
                     207 if !values.is_empty() => {
@@ -3467,8 +3472,8 @@ impl<'a> Machine<'a> {
                             return Err(format!("TypeError: wrapper {}() takes no keyword arguments", self.detail("descriptor.get")).into());
                         }
                         let count = values.len().saturating_sub(1);
-                        if count == 0 { return Err(format!("TypeError: {} expected at least 1 argument, got 0", self.detail("descriptor.get")).into()); }
-                        if count > 2 { return Err(format!("TypeError: {} expected at most 2 arguments, got {}", self.detail("descriptor.get"), count).into()); }
+                        let spelled = self.detail("descriptor.get").to_owned();
+                        self.get_arity(&spelled, count)?;
                         let [descriptor, instance, rest @ ..] = values.as_slice() else { return Err(self.class_unready()); };
                         let supplied = rest.first().filter(|owner| !matches!(owner.settled(), Value::Nil));
                         if matches!(instance.settled(), Value::Nil) && supplied.is_none() { return Err("TypeError: __get__(None, None) is invalid".to_owned().into()); }
@@ -3536,11 +3541,7 @@ impl<'a> Machine<'a> {
                         let genuine = matches!(&function, Value::Routine(_) | Value::Bound(..)) || matches!(&function, Value::Wrapped(122 | 130, _));
                         if !genuine { return Err(format!("TypeError: descriptor '__get__' requires a 'function' object but received a '{}'", function.kind_word()).into()); }
                         let total = positional.len() - 1;
-                        match total {
-                            0 => return Err(String::from("TypeError: __get__ expected at least 1 argument, got 0").into()),
-                            1 | 2 => {},
-                            _ => return Err(format!("TypeError: __get__ expected at most 2 arguments, got {total}").into()),
-                        }
+                        self.get_arity("__get__", total)?;
                         let instance = positional.remove(1);
                         if matches!(instance.settled(), Value::Nil) {
                             let absent = positional.get(1).map_or(true, |owner| matches!(owner.settled(), Value::Nil));
@@ -4128,11 +4129,7 @@ impl<'a> Machine<'a> {
     pub(super) fn get_native_classmethod(&mut self, entry: &Value, input: Vec<Value>, options: Vec<(String, Value)>) -> Res {
         let count = input.len();
         if options.len() != 0 { return Err(String::from("TypeError: wrapper __get__() takes no keyword arguments").into()); }
-        match count {
-            0 => return Err(String::from("TypeError: __get__ expected at least 1 argument, got 0").into()),
-            1 | 2 => (),
-            _ => return Err(format!("TypeError: __get__ expected at most 2 arguments, got {count}").into()),
-        }
+        self.get_arity("__get__", count)?;
         let candidate = input.get(1).map(Value::settled).unwrap_or(Value::Nil);
         let target = if matches!(candidate, Value::Nil) {
             if matches!(input[0].settled(), Value::Nil) { return Err(String::from("TypeError: __get__(None, None) is invalid").into()); }
