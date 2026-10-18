@@ -9018,19 +9018,12 @@ impl<'a> Builder<'a> {
         let between = table.single("syntax.call.separator").map(str::to_string);
         self.need_sign(open, "after the word for what a routine takes away")?;
         let mut names = Vec::new();
-        while !self.sign(close) {
-            if self.exhausted() {
-                return Err(format!("Expected '{}'", close));
-            }
-            let by_cell = self.skip_reference();
-            let named = self.need_word("as a name to take away")?;
+        self.separated_until(close, between.as_deref(), |this| {
+            let by_cell = this.skip_reference();
+            let named = this.need_word("as a name to take away")?;
             names.push((named, by_cell));
-            if let Some(sep) = &between {
-                if self.sign(sep) {
-                    self.move_past();
-                }
-            }
-        }
+            Ok(())
+        })?;
         self.need_sign(close, "after what a routine takes away")?;
         Ok(names)
     }
@@ -11860,18 +11853,11 @@ impl<'a> Builder<'a> {
         let close = table.single("syntax.call.close").unwrap().to_string();
         let sep = table.single("syntax.call.separator").map(str::to_string);
         let mut asked = Vec::new();
-        while !self.sign(&close) {
-            if self.exhausted() {
-                return Err(format!("Expected '{}'", close));
-            }
-            let one = self.expr(0)?;
+        self.separated_until(&close, sep.as_deref(), |this| {
+            let one = this.expr(0)?;
             asked.push(Form::Muted(Box::new(glancing(one))));
-            if let Some(s) = &sep {
-                if self.sign(s) {
-                    self.move_past();
-                }
-            }
-        }
+            Ok(())
+        })?;
         self.move_past();
         if asked.is_empty() {
             return Err("Nothing was asked about".to_string());
@@ -12238,6 +12224,24 @@ impl<'a> Builder<'a> {
             } else { keys.pop().expect("one key") }
         };
         Ok(result)
+    }
+
+    /// Read items up to the closing sign, which is left unread: each item
+    /// is read by `item`, and one separator
+    /// after it is stepped over.
+    fn separated_until(&mut self, close: &str, separator: Option<&str>, mut item: impl FnMut(&mut Self) -> Res<()>) -> Res<()> {
+        while !self.sign(close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", close));
+            }
+            item(self)?;
+            if let Some(word) = separator {
+                if self.sign(word) {
+                    self.move_past();
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The key inside `[...]`, up to but not past the closing sign: one
@@ -12799,35 +12803,28 @@ impl<'a> Builder<'a> {
         let sep = self.table.single(sep_key).map(str::to_string);
         let mark = self.grammar.single_syntax_map_pair.map(str::to_string);
         let mut items = Vec::new();
-        while !self.sign(&close) {
-            if self.exhausted() {
-                return Err(format!("Expected '{}'", close));
-            }
+        self.separated_until(&close, sep.as_deref(), |this| {
             // `[&$a]`: the place holds the binding's own cell, so a
             // write through either name is a write the other sees.
-            let tied = self.grammar.single_ext_op_reference.map_or(false, |m| self.sign(m));
+            let tied = this.grammar.single_ext_op_reference.map_or(false, |m| this.sign(m));
             let item = if tied {
-                self.move_past();
-                let named = self.need_word("as the name to share a cell with")?;
-                let slot = self.address_to_write(&named);
+                this.move_past();
+                let named = this.need_word("as the name to share a cell with")?;
+                let slot = this.address_to_write(&named);
                 Form::Share(slot)
             } else {
-                self.expr(0)?
+                this.expr(0)?
             };
             items.push(match &mark {
-                Some(m) if self.sign(m) => {
-                    self.move_past();
-                    let value = self.expr(0)?;
+                Some(m) if this.sign(m) => {
+                    this.move_past();
+                    let value = this.expr(0)?;
                     prim_call(Prim::Couple, vec![item, value])
                 }
                 _ => item,
             });
-            if let Some(s) = &sep {
-                if self.sign(s) {
-                    self.move_past();
-                }
-            }
-        }
+            Ok(())
+        })?;
         self.move_past();
         Ok(items)
     }
