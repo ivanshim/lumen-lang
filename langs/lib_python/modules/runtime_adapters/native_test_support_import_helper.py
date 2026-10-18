@@ -314,3 +314,12 @@ def make_legacy_pyc(source):
     legacy_pyc = source + 'c'
     shutil.move(pyc_file, legacy_pyc)
     return legacy_pyc
+
+
+# Preserve registration state while the decorated callable runs.
+def mock_register_at_fork(func):
+    # bpo-30599: Mock os.register_at_fork() when importing the random module,
+    # since this function doesn't allow to unregister callbacks and would leak
+    # memory.
+    from unittest import mock
+    return mock.patch('os.register_at_fork', create=True)(func)

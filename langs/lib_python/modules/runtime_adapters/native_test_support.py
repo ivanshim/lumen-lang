@@ -935,6 +935,12 @@ def load_package_tests(pkg_dir, loader, standard_tests, pattern):
     # Reference packages live in the interpreter's versioned test directory.
     if not os.path.abspath(pkg_dir).startswith(os.path.abspath(top_dir).rstrip('/') + '/'):
         top_dir = os.path.dirname(pkg_dir)
+        # Keep regular package ancestors in names used by relative imports.
+        while os.path.isfile(os.path.join(top_dir, '__init__.py')):
+            parent = os.path.dirname(top_dir)
+            if parent == top_dir:
+                break
+            top_dir = parent
     try:
         package_tests = loader.discover(start_dir=pkg_dir,
                                         top_level_dir=top_dir,
