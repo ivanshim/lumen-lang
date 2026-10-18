@@ -22433,10 +22433,7 @@ impl<'a> Machine<'a> {
                         };
                         if let Some(Value::Thing(module)) = owner {
                             let mut entries = module.holds.borrow_mut();
-                            match entries.iter_mut().find(|(word, _)| word == &name) {
-                                Some((_, value)) => *value = saved,
-                                None => entries.push((name.clone(), saved)),
-                            }
+                            Self::change_entry(&mut entries, &name, Some(saved));
                         }
                         // Ordinary imported names already use their shared global slots.
                         if self.rules.names_shadow_builtins && self.table.prims.contains_key(&name) {
@@ -22915,10 +22912,7 @@ impl<'a> Machine<'a> {
                 if self.rules.member_pipes {
                     if let Value::Blueprint(class) = &v[0] {
                         let mut own = class.shared.borrow_mut();
-                        match own.iter_mut().find(|(n, _)| n == &called) {
-                            Some((_, value)) => *value = v[2].clone(),
-                            None => own.push((called, v[2].clone())),
-                        }
+                        Self::change_entry(&mut own, &called, Some(v[2].clone()));
                         return Ok(Value::Nil);
                     }
                 }
@@ -22988,10 +22982,7 @@ impl<'a> Machine<'a> {
                     Value::Blueprint(class) => {
                         let keeper = class.keeper(&called).unwrap_or_else(||class.clone());
                         let mut shared = keeper.shared.borrow_mut();
-                        match shared.iter_mut().find(|(k, _)| *k == called) {
-                            Some(place) => place.1 = v[2].clone(),
-                            None => shared.push((called, v[2].clone())),
-                        }
+                        Self::change_entry(&mut shared, &called, Some(v[2].clone()));
                         Value::Nil
                     }
                     other => return Err(self.class_lacking(other).unwrap_or_else(|| format!("Cannot write '{}' in {}", called, other.bare()))),
