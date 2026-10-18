@@ -3216,6 +3216,12 @@ impl<'a> Compiler<'a> {
         })
     }
 
+    /// The expression kind a type-parameter scope refuses at `item`,
+    /// the scope's expression beginning at `begin`.
+    fn type_scope_refuses(&self, begin: usize, item: usize) -> Option<&'static str> {
+        match self.tokens[item].spelling() { ":=" => Some("named"), "yield" => Some("yield"), "await" if !self.await_in_comprehension_body(begin, item) => Some("await"), _ => None }
+    }
+
     fn python_type_scope_problem(&self) -> Option<String> {
         if self.lang.syntax_members.is_empty() { return None; }
         let spelling = |at: usize| self.tokens.get(at).map_or("", |token| token.spelling());
@@ -3298,7 +3304,7 @@ impl<'a> Compiler<'a> {
                             if let Some((_, body)) = lambdas.iter_mut().rev().find(|(level, body)| *level == nesting && !body) { *body = true; }
                         }
                         if !lambdas.iter().any(|(_, body)| *body) {
-                            let kind = match word { ":=" => Some("named"), "yield" => Some("yield"), "await" if !self.await_in_comprehension_body(begin, item) => Some("await"), _ => None };
+                            let kind = self.type_scope_refuses(begin, item);
                             if let Some(kind) = kind { return Some(format!("SyntaxError: {kind} expression cannot be used within a {scope}")); }
                         }
                         if matches!(word, "(" | "[" | "{") { nesting += 1; }
@@ -3328,8 +3334,7 @@ impl<'a> Compiler<'a> {
             for item in at + 1..self.tokens.len() {
                 let token = &self.tokens[item];
                 if depth == 0 && (matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || token.lexeme == ";") { break; }
-                let kind = match token.spelling() { ":=" => "named", "yield" => "yield", "await" if !self.await_in_comprehension_body(at + 1, item) => "await", _ => "" };
-                if !kind.is_empty() { return Some(format!("SyntaxError: {kind} expression cannot be used within a type alias")); }
+                if let Some(kind) = self.type_scope_refuses(at + 1, item) { return Some(format!("SyntaxError: {kind} expression cannot be used within a type alias")); }
                 match token.lexeme.as_str() {
                     "(" | "[" | "{" => depth += 1,
                     ")" | "]" | "}" => depth = depth.saturating_sub(1),
