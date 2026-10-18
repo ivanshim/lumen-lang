@@ -27334,7 +27334,7 @@ impl Engine<'_> {
         *object.fields.borrow_mut() = fields;
         let module = Value::Object(object);
         self.module_books.retain(|(name, _)| name != path);
-        self.modules.insert(path.to_string(), module.clone()); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear();
+        self.module_set(path, Some(module.clone()));
         let embedded = self.lang.module_path.is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
         self.embedded_names.remove(path);
         if embedded { self.embedded_names.insert(path.to_string()); }
@@ -27347,7 +27347,7 @@ impl Engine<'_> {
         self.data.truncate(saved_depth);
         if let Err(fault) = result {
             self.importing.remove(path); self.embedded_names.remove(path);
-            self.modules.remove(path); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear(); self.refresh_module_cache(path); return Err(fault);
+            self.module_set(path, None); self.refresh_module_cache(path); return Err(fault);
         }
         if self.lang.module_path.is_some() {
             let maker = self.modules.get("sys").cloned()
@@ -27365,7 +27365,7 @@ impl Engine<'_> {
         // Module code may replace its own entry in the Python import cache.
         // CPython returns that replacement after the module body completes.
         let module = self.module_cache_value(path).unwrap_or(module);
-        self.modules.insert(path.to_string(), module.clone()); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear();
+        self.module_set(path, Some(module.clone()));
         if let Some((above, name)) = parent {
             if let Some(owner) = self.modules.get(above).cloned() {
                 self.class_write(owner, name, Some(module.clone()), true)?;
@@ -27382,7 +27382,7 @@ impl Engine<'_> {
                 if !self.lang.weak_refused.is_empty() { class.weak_storage.set(Some(true)); }
                 let main = Value::Object(Rc::new(Instance { class, replacement_class: RefCell::new(None),
                     fields: RefCell::new(vec![("\0namespace".into(), Value::Bond(book))]), mark: self.made }));
-                self.modules.insert(name, main); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear();
+                self.module_set(&name, Some(main));
             }
         }
         // Register real source modules while their embedded parent initializes.
@@ -27397,7 +27397,7 @@ impl Engine<'_> {
                     Ok(loaded) => loaded,
                     Err(fault) => {
                         self.importing.remove(path); self.embedded_names.remove(path);
-                        self.modules.remove(path); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear(); self.refresh_module_cache(path); return Err(fault);
+                        self.module_set(path, None); self.refresh_module_cache(path); return Err(fault);
                     },
                 };
                 // A cached alias must also be bound on this newly initialized parent.
@@ -30713,6 +30713,14 @@ impl Engine<'_> {
         }
     }
 
+    fn module_set(&mut self, path: &str, module: Option<Value>) {
+        match module {
+            Some(module) => { self.modules.insert(path.to_string(), module); }
+            None => { self.modules.remove(path); }
+        }
+        self.module_addresses_ready.set(false);
+        self.changed_module_positions.borrow_mut().clear();
+    }
 }
 
 #[cfg(test)]
