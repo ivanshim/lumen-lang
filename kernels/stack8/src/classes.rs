@@ -176,8 +176,6 @@ impl<'a> Engine<'a> {
             if let Some(init) = &self.lang.constructor {
                 c.shared.borrow_mut().push((init.clone(), Self::adapter(2, vec![Value::text("module")])));
             }
-        }
-        if word == "module" && !self.class_word("kind").is_empty() {
             c.shared.borrow_mut().push((self.class_word("namespace").to_string(), Self::adapter(16,
                 vec![Value::text(self.class_word("namespace")), Value::Class(c.clone()), Value::text("\0module-namespace")])));
             if let Some(repr) = self.lang.class_special.get(1) {
@@ -1611,8 +1609,7 @@ impl<'a> Engine<'a> {
     /// Whether a value read as a class names the property class: the
     /// builtin's word, read before anything was written to that name.
     pub(super) fn names_property_class(&self, value: &Value) -> bool {
-        let word = match value { Value::Native(_, word) => word.as_ref(), Value::Adapter(w) if w.0 == 8 => match &w.1[0] { Value::Text(t) => t.as_ref(), _ => return false }, _ => return false };
-        self.lang.builtins.get(word) == Some(&Builtin::ClassTool(11))
+        self.names_wrapper_class(value, 11)
     }
     fn property_accessor(property: &Instance, place: &str) -> Option<Value> {
         property.fields.borrow().iter().find(|(n, _)| n == place).map(|(_, v)| v.clone()).filter(|v| !matches!(v, Value::Null))
@@ -7859,9 +7856,7 @@ impl<'a> Engine<'a> {
     /// The operands accepted by the native union constructor: classes,
     /// existing union values and None, which denotes NoneType.
     pub(super) fn union_member(&self,value:&Value)->bool {
-        matches!(value,Value::Null)
-            ||self.stands_for_kind(value)
-            ||matches!(value, Value::Object(o) if Self::kind_beneath(&o.class_now()).is_some_and(|kind| matches!(kind.as_str(), "Union" | "GenericAlias" | "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType")))
+        matches!(value, Value::Null) || self.union_anchor(value)
     }
     /// At least one operand must provide the union operator. None alone
     /// supplies no such operator.
