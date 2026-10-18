@@ -10,6 +10,7 @@ class BZ2Compressor:
         level = _index(compresslevel)
         if not 1 <= level <= 9:
             raise ValueError('compresslevel must be between 1 and 9')
+        self._release()
         self._handle = _codec(32, 0, b'', level, 0, 0, 0, 0)[5]
         self._flushed = False
 
@@ -24,8 +25,16 @@ class BZ2Compressor:
             raise ValueError('Repeated call to flush()')
         self._flushed = True
         packed = _codec(34, self._handle, b'', 0, 0, 0, 0, 0)[1]
-        _codec(38, self._handle, b'', 0, 0, 0, 0, 0)
+        self._release()
         return packed
+
+    def _release(self):
+        handle = self.__dict__.pop('_handle', None)
+        if handle is not None:
+            _codec(38, handle, b'', 0, 0, 0, 0, 0)
+
+    def __del__(self):
+        self._release()
 
     def __reduce__(self):
         raise TypeError("cannot pickle '_bz2.BZ2Compressor' object")
@@ -63,13 +72,22 @@ class BZ2Decompressor:
         if status:
             self._failed = True
             self._needs_input = False
+            self._release()
             raise OSError(text)
         if ended:
             self._eof = True
             self._unused = _codec(37, self._handle, b'', 0, 0, 0, 0, 0)[1]
-            _codec(38, self._handle, b'', 0, 0, 0, 0, 0)
+            self._release()
         self._needs_input = bool(stalled) and not ended
         return output
+
+    def _release(self):
+        handle = self.__dict__.pop('_handle', None)
+        if handle is not None:
+            _codec(38, handle, b'', 0, 0, 0, 0, 0)
+
+    def __del__(self):
+        self._release()
 
     def __reduce__(self):
         raise TypeError("cannot pickle '_bz2.BZ2Decompressor' object")
