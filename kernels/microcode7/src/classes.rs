@@ -5988,6 +5988,17 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn add_hash_entry(&self, value: &Value, pairs: &mut Vec<(Value, Value)>) {
+        // A class whose things no key can hold says so in its own
+        // dictionary: the hash stands there as nothing.
+        if let Some(hash) = self.rules.specials.get(8) {
+            if !pairs.iter().any(|(name, _)| name.bare() == *hash) {
+                if let Some(member) = self.carried_by_kind(value, hash) {
+                    pairs.push((Value::text(hash), member));
+                }
+            }
+        }
+    }
     fn seek_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
         if matches!(&value,Value::Thing(_)) && key!=self.detail("kind") {
             if let Some(native @ Value::Wrapped(9,_))=Self::underlying(&value) {
@@ -6233,15 +6244,7 @@ impl<'a> Machine<'a> {
                         pairs.push((Value::text(key), member.clone()));
                     }
                 }
-                // A class whose things no key can hold says so in its own
-                // dictionary: the hash stands there as nothing.
-                if let Some(hash) = self.rules.specials.get(8) {
-                    if !pairs.iter().any(|(name, _)| name.bare() == *hash) {
-                        if let Some(member) = self.carried_by_kind(&value, hash) {
-                            pairs.push((Value::text(hash), member));
-                        }
-                    }
-                }
+                self.add_hash_entry(&value, &mut pairs);
                 return Ok(Value::Window(Rc::new(Value::Dict(Rc::new(pairs.into()))),'m'));
             }
         }
@@ -6402,15 +6405,7 @@ impl<'a> Machine<'a> {
                         let member = self.carried_by_kind(&value, &name)?;
                         Some((Value::text(&name), member))
                     }).collect();
-                    // A class whose things no key can hold says so in its
-                    // own dictionary: the hash stands there as nothing.
-                    if let Some(hash) = self.rules.specials.get(8) {
-                        if !members.iter().any(|(name, _)| name.bare() == *hash) {
-                            if let Some(member) = self.carried_by_kind(&value, hash) {
-                                members.push((Value::text(hash), member));
-                            }
-                        }
-                    }
+                    self.add_hash_entry(&value, &mut members);
                     return Ok(Value::Window(Rc::new(Value::Dict(Rc::new(members.into()))),'m'));
                 }
                 // Read as a class the kind stands on the root and on
@@ -7457,6 +7452,19 @@ impl<'a> Machine<'a> {
             if let Some(v)=replacement{entries[i].1=v;}else{entries.remove(i);}true
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
+    fn require_annotate_callable(&mut self, value: &Value) -> Res<()> {
+        if !self.work_on_class(2, vec![value.clone()])?.is_true() {
+            return Err(String::from("TypeError: __annotate__ must be callable or None").into());
+        }
+        Ok(())
+    }
+    fn descriptor_write(&mut self, entry: &Value, subject: &Value, replacement: Option<Value>, missing: Escape) -> Res {
+        let part = if replacement.is_some() { "descriptor.set" } else { "descriptor.delete" };
+        let hook = self.protocol_entry(entry, part).ok_or(missing)?;
+        let mut given = vec![subject.clone()];
+        given.extend(replacement);
+        self.through_descriptor(entry, hook, given)
+    }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
         // Bindings of blueprints and instances forward attribute writes
         // to that value; callable and collection wrappers remain intact.
@@ -7722,7 +7730,7 @@ impl<'a> Machine<'a> {
                         match replacement.as_ref() {
                             None => return Err(String::from("TypeError: cannot delete __annotate__ attribute").into()),
                             Some(value) if !matches!(value.settled(), Value::Nil) => {
-                                if !self.work_on_class(2, vec![value.clone()])?.is_true() { return Err(String::from("TypeError: __annotate__ must be callable or None").into()); }
+                                self.require_annotate_callable(value)?;
                                 if let Some(annotation) = self.rules.words_ext_stmt_class_annotations.first().map(String::as_str) {
                                     t.holds.borrow_mut().retain(|entry| entry.0 != annotation);
                                     let book = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").map(|entry| entry.1.clone());
@@ -7787,14 +7795,9 @@ impl<'a> Machine<'a> {
                         // not, as CPython keeps them read-only.
                         Value::Wrapped(58,parts)=>{
                             let place=parts.first().map_or(String::new(),|p|p.bare());
-                            if place=="\0doc" {
-                                let mut holds=t.holds.borrow_mut();
-                                Self::change_entry(&mut holds,"\0doc",replacement);
-                                return Ok(Value::Nil);
-                            }
-                            if place=="\0name" {
-                                let mut holds=t.holds.borrow_mut();
-                                Self::change_entry(&mut holds,"\0name",replacement);
+                            if place == "\0doc" || place == "\0name" {
+                                let mut holds = t.holds.borrow_mut();
+                                Self::change_entry(&mut holds, place.as_str(), replacement);
                                 return Ok(Value::Nil);
                             }
                             return Err(self.detail("property.readonly").to_owned().into());
@@ -7802,10 +7805,8 @@ impl<'a> Machine<'a> {
                         _=>{}
                     }
                     if self.writes_too(&entry) {
-                        let part=if replacement.is_some(){"descriptor.set"}else{"descriptor.delete"};
-                        let hook=self.protocol_entry(&entry,part).ok_or_else(||self.absent_attribute(&subject,key))?;
-                        let mut given=vec![subject.clone()];given.extend(replacement);
-                        self.through_descriptor(&entry,hook,given)?;
+                        let missing = self.absent_attribute(&subject, key);
+                        self.descriptor_write(&entry, &subject, replacement, missing)?;
                         return Ok(Value::Nil);
                     }
                 }
@@ -7964,9 +7965,8 @@ impl<'a> Machine<'a> {
                         if let Some(entry) = self.inherited_entry(&builder, key).filter(|entry| self.writes_too(entry)) {
                             if let Value::Wrapped(180,record)=&entry {return self.write_type_metadata(subject.clone(),&record[0].bare(),replacement);}
                             let part = if replacement.is_some() { "descriptor.set" } else { "descriptor.delete" };
-                            let hook = self.protocol_entry(&entry, part).ok_or_else(|| Escape::Error(format!("AttributeError: {}", self.detail(part))))?;
-                            let mut values = vec![subject.clone()]; values.extend(replacement);
-                            self.through_descriptor(&entry, hook, values)?;
+                            let missing = Escape::Error(format!("AttributeError: {}", self.detail(part)));
+                            self.descriptor_write(&entry, &subject, replacement, missing)?;
                             return Ok(Value::Nil);
                         }
                     }
@@ -8002,10 +8002,8 @@ impl<'a> Machine<'a> {
                 if !self.detail("base").is_empty()&&key==self.detail("base") {
                     if let Some(entry)=Self::builder_over(b).and_then(|owner|self.inherited_entry(&owner,key)) {
                         if self.writes_too(&entry) {
-                            let action=if replacement.is_some(){"descriptor.set"}else{"descriptor.delete"};
-                            let method=self.protocol_entry(&entry,action).ok_or_else(||self.absent_attribute(&subject,key))?;
-                            let mut handed=vec![subject.clone()];handed.extend(replacement);
-                            return self.through_descriptor(&entry,method,handed);
+                            let missing = self.absent_attribute(&subject, key);
+                            return self.descriptor_write(&entry, &subject, replacement, missing);
                         }
                         if !Self::change_entry(&mut b.shared.borrow_mut(),key,replacement){return Err(self.absent_attribute(&subject,key));}
                         return Ok(Value::Nil);
@@ -8023,7 +8021,7 @@ impl<'a> Machine<'a> {
                     match replacement.as_ref() {
                         None => return Err(String::from("TypeError: cannot delete __annotate__ attribute").into()),
                         Some(value) if !matches!(value.settled(), Value::Nil) => {
-                            if !self.work_on_class(2, vec![value.clone()])?.is_true() { return Err(String::from("TypeError: __annotate__ must be callable or None").into()); }
+                            self.require_annotate_callable(value)?;
                             if let Some(annotation) = self.rules.words_ext_stmt_class_annotations.first().map(String::as_str) { b.shared.borrow_mut().retain(|entry| entry.0 != annotation); }
                         }
                         _ => {},
@@ -8067,9 +8065,7 @@ impl<'a> Machine<'a> {
                 let evaluator_key = self.rules.words_ext_stmt_class_detail_code_fields.get(10).cloned().unwrap_or_default();
                 if !evaluator_key.is_empty() && key == evaluator_key {
                     let incoming = match replacement { Some(v) => v, None => return Err("TypeError: __annotate__ cannot be deleted".to_owned().into()) };
-                    if !matches!(incoming.settled(), Value::Nil) && !self.work_on_class(2, vec![incoming.clone()])?.is_true() {
-                        return Err("TypeError: __annotate__ must be callable or None".to_owned().into());
-                    }
+                    if !matches!(incoming.settled(), Value::Nil) { self.require_annotate_callable(&incoming)?; }
                     let index = self.routine_storage(&subject);
                     let mut holds = self.routine_members[index].1.holds.borrow_mut();
                     if !matches!(incoming.settled(), Value::Nil) {
