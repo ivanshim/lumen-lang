@@ -1445,6 +1445,18 @@ impl<'a> Reader<'a> {
         Ok(self.strings(key)?.into_iter().next())
     }
 
+    /// Names that have a head word, in the order given, each with that
+    /// word. A name whose label has no word is left out.
+    fn heads<K: Clone>(&self, named: &[(K, &str)]) -> Result<Vec<(K, String)>, String> {
+        let mut found = Vec::new();
+        for (kind, tag) in named {
+            if let Some(word) = self.head(tag)? {
+                found.push((kind.clone(), word));
+            }
+        }
+        Ok(found)
+    }
+
     /// A label whose words stand on either side of what the kernel puts
     /// between them: the first word before it, the second after. One
     /// word alone leaves the kernel nothing to close with, so it is
@@ -2598,21 +2610,12 @@ impl Lang {
             assign_gives_value: r.flag("ext.op.assign.value")?,
             plain_keys: r.flag("ext.op.index.plain_keys")?,
             loose_equality: tells_same && r.strings("ext.op.identical.negated")?.is_empty(),
-            complaint_words: {
-                let named = [
-                    (Complaint::Warning, "ext.system.complaint.warning"),
-                    (Complaint::Notice, "ext.system.complaint.notice"),
-                    (Complaint::Deprecated, "ext.system.complaint.deprecated"),
-                    (Complaint::Fatal, "ext.system.complaint.fatal"),
-                ];
-                let mut found = Vec::new();
-                for (kind, tag) in named {
-                    if let Some(word) = r.head(tag)? {
-                        found.push((kind, word));
-                    }
-                }
-                found
-            },
+            complaint_words: r.heads(&[
+                (Complaint::Warning, "ext.system.complaint.warning"),
+                (Complaint::Notice, "ext.system.complaint.notice"),
+                (Complaint::Deprecated, "ext.system.complaint.deprecated"),
+                (Complaint::Fatal, "ext.system.complaint.fatal"),
+            ])?,
             markup_setting: r.head("ext.system.complaint.markup.setting")?,
             markup_kind: r.about_two("ext.system.complaint.markup.kind")?,
             markup_place: r.around("ext.system.complaint.markup.place")?,
@@ -2693,16 +2696,11 @@ impl Lang {
             step_down_text: r.head("ext.op.decrement.text")?,
             warns_of_unwritten: r.head("ext.system.complaint.warning")?.is_some(),
             tells_place: tells_complaints,
-            source_bindings: {
-                let named = [("file", "ext.system.source.file"), ("directory", "ext.system.source.directory"), ("runner", "ext.system.runner")];
-                let mut found = Vec::new();
-                for (part, tag) in named {
-                    if let Some(word) = r.head(tag)? {
-                        found.push((part.to_string(), word));
-                    }
-                }
-                found
-            },
+            source_bindings: r.heads(&[
+                ("file", "ext.system.source.file"),
+                ("directory", "ext.system.source.directory"),
+                ("runner", "ext.system.runner"),
+            ])?.into_iter().map(|(part, word)| (part.to_string(), word)).collect(),
             debug_binding: r.head("ext.system.debug")?,
             ellipsis_words: r.strings("ext.literal.ellipsis")?,
             ellipsis_unready: r.head("ext.literal.ellipsis.unready")?,
@@ -2873,21 +2871,12 @@ impl Lang {
             static_read_in: r.flag("ext.stmt.static.read_in")?,
             body_binding: r.head("ext.system.request.body")?,
             amiss_binding: r.head("ext.system.request.amiss")?,
-            amiss_words: {
-                let kinds = [
-                    ("boundary", "ext.system.request.amiss.boundary"),
-                    ("boundary.wrong", "ext.system.request.amiss.boundary.wrong"),
-                    ("part", "ext.system.request.amiss.part"),
-                    ("body.large", "ext.system.request.amiss.body.large"),
-                ];
-                let mut said = Vec::new();
-                for (kind, tag) in kinds {
-                    if let Some(words) = r.head(tag)? {
-                        said.push((kind, words));
-                    }
-                }
-                said
-            },
+            amiss_words: r.heads(&[
+                ("boundary", "ext.system.request.amiss.boundary"),
+                ("boundary.wrong", "ext.system.request.amiss.boundary.wrong"),
+                ("part", "ext.system.request.amiss.part"),
+                ("body.large", "ext.system.request.amiss.body.large"),
+            ])?,
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
             imaginary_unrun: r.head("ext.lexical.number.imaginary.unrun")?.unwrap_or_default(),
             plus_words: r.strings("ext.op.plus")?,
@@ -3132,21 +3121,16 @@ impl Lang {
             absent_index: r.flag("ext.op.index.absent")?,
             scalar_index: r.head("ext.op.index.scalar")?,
             nothing_index: r.head("ext.op.index.nothing")?,
-            request_bindings: {
-                let groups = [
-                    ("GET", "ext.system.request.query"), ("POST", "ext.system.request.form"),
-                    ("COOKIE", "ext.system.request.cookies"), ("SERVER", "ext.system.request.server"),
-                    ("ENV", "ext.system.request.env"), ("FILES", "ext.system.request.files"),
-                    ("ALL", "ext.system.request.all"), ("SETTINGS", "ext.system.request.settings"),
-                ];
-                let mut named = Vec::new();
-                for (group, tag) in groups {
-                    if let Some(name) = r.head(tag)? {
-                        named.push((group.to_string(), name));
-                    }
-                }
-                named
-            },
+            request_bindings: r.heads(&[
+                ("GET", "ext.system.request.query"),
+                ("POST", "ext.system.request.form"),
+                ("COOKIE", "ext.system.request.cookies"),
+                ("SERVER", "ext.system.request.server"),
+                ("ENV", "ext.system.request.env"),
+                ("FILES", "ext.system.request.files"),
+                ("ALL", "ext.system.request.all"),
+                ("SETTINGS", "ext.system.request.settings"),
+            ])?.into_iter().map(|(group, name)| (group.to_string(), name)).collect(),
         };
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
