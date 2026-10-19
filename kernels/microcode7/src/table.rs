@@ -834,7 +834,7 @@ impl Table {
     pub fn spells(&self, key: &str, lexeme: &str) -> bool {
         let spellings = self.strings(key);
         if spellings.len() == 1 { return spellings[0] == lexeme; }
-        spellings.iter().any(|w| w == lexeme)
+        spellings.iter().any(|w| w.len() == lexeme.len() && w == lexeme)
     }
 
     pub fn flag(&self, key: &str) -> bool {

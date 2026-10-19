@@ -1070,14 +1070,9 @@ def _line_diff(first, second):
     return text
 
 
+# Order module names through the builtin Unicode string comparison.
 def _ordered(values):
-    result = []
-    for value in values:
-        at = 0
-        while at < len(result) and _word_before(result[at], value):
-            at += 1
-        result = [*result[:at], value, *result[at:]]
-    return result
+    return sorted(values)
 
 
 class TextTestRunner:
@@ -1318,15 +1313,6 @@ def _only_classes():
     return names.split(',')
 
 
-def _word_before(left, right):
-    index = 0
-    while index < len(left) and index < len(right):
-        a = ord(left[index])
-        b = ord(right[index])
-        if a != b:
-            return a < b
-        index += 1
-    return len(left) < len(right)
 
 
 class _TestProgram:

@@ -26,6 +26,8 @@ def text_encoding(encoding, stacklevel=2):
 def _index(value):
     if type(value) is int:
         return value
+    if type(value) is bool:
+        return int(value)
     if not hasattr(type(value), '__index__'):
         raise TypeError("'" + type(value).__name__ + "' object cannot be interpreted as an integer")
     return operator.index(value)
@@ -810,6 +812,14 @@ class TextIOWrapper(_TextIOBase):
         buffer = self._buffer
         if buffer is None or not self._initialized:
             self._unattached()
+        kind = type(buffer)
+        if kind is BufferedWriter or kind is BufferedReader or kind is BufferedRandom:
+            impl = buffer._live
+            if impl is not None:
+                checked = impl.raw
+                if not checked._owned:
+                    return True
+                return checked.raw._closed if checked._plain else checked.raw.closed
         return buffer.closed
     def _writeflush(self):
         pending = self._pending
@@ -849,7 +859,7 @@ class TextIOWrapper(_TextIOBase):
         data = encoder.encode(text)
         if not isinstance(data, bytes):
             raise TypeError("encoder should return a bytes object, not '%s'" % type(data).__name__)
-        chunk = self._CHUNK_SIZE
+        chunk = self._chunk_size
         # A write that would take the waiting data past a chunk sends what
         # waits first, and goes again in case that call wrote something.
         while self._pending and self._pending_count + len(data) > chunk:
@@ -899,17 +909,18 @@ class TextIOWrapper(_TextIOBase):
             self._unattached()
         return buffer.seekable()
     def flush(self):
-        if self._buffer is None or not self._initialized:
+        buffer = self._buffer
+        if buffer is None or not self._initialized:
             self._unattached()
         if self._pending:
             self._writeflush()
-        function = _TEXT.get('flush') or _text_function('flush')
-        return function(self)
+        # The reference flushes the buffer and then marks telling possible.
+        buffer.flush()
+        self._telling = self._seekable
     # Close the backing stream even when finalization warning lookup fails.
     def close(self):
         if self._buffer is None or not self._initialized:
             self._unattached()
-        function = _TEXT.get('close') or _text_function('close')
         attached = self._buffer
         try:
             if self._finalizing and not attached.closed:
@@ -918,7 +929,14 @@ class TextIOWrapper(_TextIOBase):
                     warn(self)
         finally:
             try:
-                result = function(self)
+                # The reference's own close: flush, then close the buffer,
+                # unless there is none or it is closed already.
+                result = None
+                if self.buffer is not None and not self.closed:
+                    try:
+                        self.flush()
+                    finally:
+                        self.buffer.close()
             except Exception:
                 # A buffer detached inside its closed check needs no closure.
                 if attached is not None and self._buffer is None and self._initialized:
@@ -1458,9 +1476,10 @@ def _buffered_impl(kind):
             def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
                 base.__init__(self, raw, buffer_size)
                 self.raw = raw
-                if hasattr(self, '_read_lock'):
+                held = vars(self)
+                if '_read_lock' in held:
                     self._read_lock = _BufferedLock()
-                if hasattr(self, '_write_lock'):
+                if '_write_lock' in held:
                     self._write_lock = _BufferedLock()
             @property
             def closed(self):
@@ -1489,7 +1508,7 @@ class BufferedReader(_BufferedIOBase):
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
         self._initialize(_buffered_impl('BufferedReader'), raw, buffer_size)
     def _initialize(self, factory, raw, size):
-        previous = getattr(self, '_implementation', None)
+        previous = self.__dict__.get('_implementation')
         if previous is not None and previous.raw is not None:
             previous.raw._owned = False
         self._live = None
@@ -1585,7 +1604,12 @@ class BufferedReader(_BufferedIOBase):
         impl = self._live
         if impl is None:
             impl = self._impl
-        return impl.closed
+            return impl.closed
+        # The checked raw's own answer, read without its property call.
+        checked = impl.raw
+        if not checked._owned:
+            return True
+        return checked.raw._closed if checked._plain else checked.raw.closed
     def _dealloc_warn(self, source):
         raw = getattr(self, '_raw', None)
         warn = getattr(raw, '_dealloc_warn', None)
@@ -1607,21 +1631,22 @@ class BufferedReader(_BufferedIOBase):
         if impl is None:
             impl = self._impl
         return impl.flush()
+    # The reference's reader answers readable and seekable with the raw
+    # stream's own answer, so a usable stream asks the raw stream directly;
+    # writable is the base answer unless the kind says otherwise.
     def readable(self):
-        impl = self._live
-        if impl is None:
-            impl = self._impl
-        return impl.readable()
+        if self._live is None:
+            return self._impl.readable()
+        return self._raw.readable()
     def writable(self):
         impl = self._live
         if impl is None:
             impl = self._impl
         return impl.writable()
     def seekable(self):
-        impl = self._live
-        if impl is None:
-            impl = self._impl
-        return impl.seekable()
+        if self._live is None:
+            return self._impl.seekable()
+        return self._raw.seekable()
     def seek(self, pos, whence=0):
         impl = self._live
         if impl is None:
@@ -1653,16 +1678,50 @@ class BufferedReader(_BufferedIOBase):
 class BufferedWriter(BufferedReader):
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
         self._initialize(_buffered_impl('BufferedWriter'), raw, buffer_size)
+    # The reference's writer answers writable with the raw stream's own
+    # answer and readable with the base answer.
+    def readable(self):
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.readable()
+    def writable(self):
+        if self._live is None:
+            return self._impl.writable()
+        return self._raw.writable()
 
 class BufferedRandom(BufferedReader):
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
         self._initialize(_buffered_impl('BufferedRandom'), raw, buffer_size)
+    writable = BufferedWriter.writable
 
 class BufferedRWPair(BufferedReader):
     def __init__(self, reader, writer, buffer_size=DEFAULT_BUFFER_SIZE):
         _pyio = _text_runtime()
         self._implementation = _pyio.BufferedRWPair(reader, writer, buffer_size)
         self._live = self._implementation
+    # A pair has no single checked raw stream: its implementation answers.
+    def readable(self):
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.readable()
+    def writable(self):
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.writable()
+    def seekable(self):
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.seekable()
+    @property
+    def closed(self):
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.closed
     # Forward resource warnings to each actual raw stream of the pair.
     def _dealloc_warn(self, source):
         implementation = getattr(self, '_implementation', None)

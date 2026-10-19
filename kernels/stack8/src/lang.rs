@@ -421,8 +421,8 @@ pub struct Lang {
     /// Nothing is shown as no text at all, rather than as the word a
     /// program writes for it: how PHP shows it.
     pub null_silent: bool,
-    pub dyadic: HashMap<String, Operator>,
-    pub monadic: HashMap<String, Operator>,
+    pub dyadic: HashMap<String, Operator, crate::value::FxBuildHasher>,
+    pub monadic: HashMap<String, Operator, crate::value::FxBuildHasher>,
     pub pipe_words: Vec<String>,
     pub range_marks: Vec<String>,
     pub precedence: HashMap<String, u32>,
@@ -461,7 +461,7 @@ pub struct Lang {
     pub quote_open: Vec<String>,
     pub quote_close: Vec<String>,
 
-    pub builtins: HashMap<String, Builtin>,
+    pub builtins: HashMap<String, Builtin, crate::value::FxBuildHasher>,
     pub builtin_tails: std::rc::Rc<HashMap<String, Vec<String>>>,
     /// The one word each builtin answers by, in the order the labels
     /// name them: a map by word cannot say which of several came first.
@@ -759,7 +759,7 @@ pub struct Lang {
     pub foreach_as_words: Vec<String>,
     pub c_for_words: Vec<String>,
     /// `x op= e` for every binary operator, when the switch is on.
-    pub compound: HashMap<String, Action>,
+    pub compound: HashMap<String, Action, crate::value::FxBuildHasher>,
     pub static_words: Vec<String>,
     pub class_bases_open: Vec<String>,
     pub class_bases_close: Vec<String>,
@@ -1825,7 +1825,7 @@ impl Lang {
             let at = if from_top { tiers.iter().rposition(hit) } else { tiers.iter().position(hit) };
             at.map(|i| i as u32 + 1)
         };
-        let mut binary = HashMap::new();
+        let mut binary = HashMap::default();
         for (tag, op) in [
             ("ext.op.contains", Action::Contains), ("op.add", Action::Add), ("op.sub", Action::Sub), ("op.mul", Action::Mul), ("op.div", div),
             ("op.quot", Action::IntDiv), ("op.rem", Action::Mod), ("op.pow", Action::Power), ("op.eq", Action::Eq),
@@ -1843,7 +1843,7 @@ impl Lang {
                 }
             }
         }
-        let mut unary = HashMap::new();
+        let mut unary = HashMap::default();
         for (tag, op) in [("op.not", Action::Not), ("op.negate", Action::Negate), ("ext.op.bit.not", Action::BitTurn)] {
             for lex in r.strings(tag)? {
                 let tier = tier_of(&lex, true).ok_or_else(|| format!("'{lex}' ({tag}) does not appear in op.precedence"))?;
@@ -1925,7 +1925,7 @@ impl Lang {
         let mut stack_lists = stack_lists.into_iter();
         let mut next_list = || stack_lists.next().expect("eight stack lists");
 
-        let mut natives = HashMap::new();
+        let mut natives = HashMap::default();
         let mut first_words: Vec<(Builtin, String)> = Vec::new();
         for (tag, native) in [
             ("ext.builtin.complex", Builtin::Complex),
@@ -2733,7 +2733,7 @@ impl Lang {
             foreach_words: r.strings("stmt.foreach")?,
             foreach_as_words: r.strings("stmt.foreach.as")?,
             c_for_words: r.strings("ext.stmt.for.c")?,
-            compound: HashMap::new(),
+            compound: HashMap::default(),
             static_words: r.strings("ext.stmt.static")?,
             class_bases_open: r.strings("ext.stmt.class.bases.open")?,
             class_bases_close: r.strings("ext.stmt.class.bases.close")?,
@@ -3164,7 +3164,7 @@ impl Lang {
             // Every binary operator followed by the assignment sign, unless
             // that spelling is already an operator (`<=`) or the operator
             // itself ends in the sign (`==`, whose `===` is another operator).
-            let mut compound = HashMap::new();
+            let mut compound = HashMap::default();
             for (lex, op) in &lang.dyadic {
                 if matches!(op.action, Action::Contains) { continue; }
                 for assign in &lang.assign_words {
@@ -3292,7 +3292,7 @@ impl Lang {
         match list {
             [] => false,
             [single] => single == word,
-            rest => rest.iter().any(|w| w == word),
+            rest => rest.iter().any(|w| w.len() == word.len() && w == word),
         }
     }
 

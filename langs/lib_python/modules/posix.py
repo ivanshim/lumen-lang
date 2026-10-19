@@ -256,6 +256,10 @@ def stat(path, *, dir_fd=None, follow_symlinks=True):
         if '\0' in path:
             raise ValueError('embedded null character')
         original = path
+        if dir_fd is None and type(follow_symlinks) is bool:
+            return _host('stat_native', stat_result, path, follow_symlinks)
+    elif type(path) is bytes and dir_fd is None and type(follow_symlinks) is bool:
+        return _host('stat_native', stat_result, _path(path), follow_symlinks)
     elif _is_fd_path(path):
         if dir_fd is not None:
             raise ValueError("stat: can't specify dir_fd without matching path")

@@ -318,7 +318,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("genericpath", include_str!("genericpath.py"), "genericpath.py"),
     ("getopt", include_str!("getopt.py"), "getopt.py"),
     ("getpass", include_str!("getpass.py"), "getpass.py"),
-    ("gettext", include_str!("gettext.py"), "gettext.py"),
+    ("gettext", concat!(include_str!("gettext.py"), "\n", include_str!("runtime_adapters/gettext.py")), "gettext.py"),
     ("glob", include_str!("glob.py"), "glob.py"),
     ("graphlib", include_str!("graphlib.py"), "graphlib.py"),
     ("grp", include_str!("grp.py"), "grp.py"),

@@ -6101,6 +6101,15 @@ class itself and is not inherited by Python subclasses.
 
 `ext.builtin.posix` supplies host stat/lstat metadata, directory removal, readlink, access, host ABI open flags and file descriptors for the Python POSIX adapter. Descriptor operations include read, write, seek, truncate, status flags and terminal checks; read and write retry interrupted calls. It returns a value and an optional errno/message pair; the adapter raises ordinary Python OS exceptions.
 
+The gettext runtime adapter uses the same bridge for guarded catalog discovery.
+It reads live environment data, expands locale components, and checks current
+filesystem metadata without caching missing catalogs. Changed dependencies,
+custom inputs, custom environment readers, module types, import hooks, and active
+tracing retain the release implementation and their observable calls.
+A bounded private memo stores locale normalization strings while all helper
+code and alias-table revisions remain unchanged; catalog existence stays live.
+
+
 `ext.stmt.class.bases.resolve` names the Python base substitution hook and the attribute retaining the original bases. Both full kernels consult it when constructing a class; other language tables leave it absent.
 
 `ext.stmt.fn.defaults.enclosing` hides formal parameter names while the full kernels compile default expressions, so Python defaults resolve names in the enclosing scope. Tables without this flag retain their parameter bindings during default lookup.
