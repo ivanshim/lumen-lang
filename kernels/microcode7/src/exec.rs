@@ -27383,7 +27383,7 @@ impl<'a> Machine<'a> {
                 let step = as_index(&v[0])?;
                 match step {
                     0 => {
-                        if v.len() != 6 { return Err(format!("{}() expects 6 arguments, got {}", name, v.len())); }
+                        if v.len() != 6 && v.len() != 7 { return Err(format!("{}() expects 6 or 7 arguments, got {}", name, v.len())); }
                         use std::os::unix::ffi::OsStrExt as _;
                         let w = self.wording();
                         let mut raising;
@@ -27407,6 +27407,10 @@ impl<'a> Machine<'a> {
                                 let worth = self.table.raw_of(&worth.render(w));
                                 raising.env(std::ffi::OsStr::from_bytes(&called), std::ffi::OsStr::from_bytes(&worth));
                             }
+                        }
+                        if let Some(folder) = v.get(6) {
+                            let folder = self.table.raw_of(&folder.render(w));
+                            raising.current_dir(std::ffi::OsStr::from_bytes(&folder));
                         }
                         let in_mode = as_index(&v[3])?;
                         let out_mode = as_index(&v[4])?;

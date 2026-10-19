@@ -26161,7 +26161,7 @@ impl<'a> Engine<'a> {
                 let step = as_index(&args[0])?;
                 match step {
                     0 => {
-                        arity(6)?;
+                        if args.len() != 6 { arity(7)?; }
                         use std::os::unix::ffi::OsStrExt as _;
                         let sp = self.wording();
                         let mut words = one_after_another(&args[1]).into_iter();
@@ -26178,6 +26178,10 @@ impl<'a> Engine<'a> {
                             let name = self.lang.bytes_of(&name.display(&sp));
                             let worth = self.lang.bytes_of(&worth.display(&sp));
                             asked.env(std::ffi::OsStr::from_bytes(&name), std::ffi::OsStr::from_bytes(&worth));
+                        }
+                        if let Some(dir) = args.get(6) {
+                            let dir = self.lang.bytes_of(&dir.display(&sp));
+                            asked.current_dir(std::ffi::OsStr::from_bytes(&dir));
                         }
                         let stdin_mode = as_index(&args[3])?;
                         let stdout_mode = as_index(&args[4])?;

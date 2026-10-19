@@ -447,6 +447,52 @@ def ftruncate(fd, length, /):
     _call('ftruncate', _cint(fd), _fd(length))
 
 
+def sendfile(out_fd, in_fd, offset, count):
+    out, source = _cint(out_fd), _cint(in_fd)
+    if offset is None:
+        return _call('sendfile', out, source, 0, 0, _fd(count))
+    return _call('sendfile', out, source, 1, _fd(offset), _fd(count))
+
+
+def copy_file_range(src, dst, count, offset_src=None, offset_dst=None):
+    return _call('copy_file_range', _cint(src), _cint(dst), _fd(count),
+                 int(offset_src is not None), 0 if offset_src is None else _fd(offset_src),
+                 int(offset_dst is not None), 0 if offset_dst is None else _fd(offset_dst))
+
+
+XATTR_CREATE = 1
+XATTR_REPLACE = 2
+XATTR_SIZE_MAX = 65536
+
+
+def _xattr(verb, name, path, attribute, value, flags, follow_symlinks):
+    if _is_fd_path(path):
+        if not follow_symlinks:
+            raise ValueError(name + ': cannot use fd and follow_symlinks together')
+        target, kind = _cint(path), 2
+    else:
+        target, kind = _path(path), 0 if follow_symlinks else 1
+    label = b'' if attribute is None else _path(attribute)
+    return _call('xattr', verb, target, label, value, kind, flags, filename=None if kind == 2 else target)
+
+
+def getxattr(path, attribute, *, follow_symlinks=True):
+    return _xattr(0, 'getxattr', path, attribute, b'', 0, follow_symlinks)
+
+
+def setxattr(path, attribute, value, flags=0, *, follow_symlinks=True):
+    _xattr(1, 'setxattr', path, attribute, bytes(value), _cint(flags), follow_symlinks)
+
+
+def listxattr(path=None, *, follow_symlinks=True):
+    names = _xattr(2, 'listxattr', '.' if path is None else path, None, b'', 0, follow_symlinks)
+    return [_decode(name) for name in names.split(b'\0') if name]
+
+
+def removexattr(path, attribute, *, follow_symlinks=True):
+    _xattr(3, 'removexattr', path, attribute, b'', 0, follow_symlinks)
+
+
 def readlink(path, *, dir_fd=None):
     original = _path(path)
     error, result = _host('readlink', original, -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd))

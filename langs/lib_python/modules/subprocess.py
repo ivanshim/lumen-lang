@@ -154,9 +154,14 @@ class Popen:
         self._text = self.text_mode
         self._encoding = self.encoding or 'utf-8'
         self._errors = self.errors
-        handle = _subprocess(0, argv, env, in_mode, out_mode, err_mode)
+        # The directory is the seventh word of the begin step, sent only when asked for.
+        where = ()
+        if cwd is not None:
+            cwd = os.fsdecode(cwd)
+            where = (cwd,)
+        handle = _subprocess(0, argv, env, in_mode, out_mode, err_mode, *where)
         if handle is False:
-            raise OSError(2, 'No such file or directory', argv[0])
+            raise OSError(2, 'No such file or directory', cwd if cwd is not None and not os.path.isdir(cwd) else argv[0])
         self._handle = handle
         self._stderr_to_stdout = stderr == STDOUT
         self.args = args
