@@ -1252,11 +1252,31 @@ def doModuleCleanups():
         raise errors[0]
 
 
+def _reference_doctest_module(module):
+    if module is not None and module != '__main__':
+        return module
+    names = _host_program_namespace()
+    if '__test__' not in names or 'load_tests' not in names:
+        return module
+    import sys
+    directory, _, filename = names.get('__file__', '').rpartition('/')
+    version = '.'.join(str(part) for part in sys.version_info[:3])
+    if ('/tests/' not in directory or not directory.endswith('/python-' + version)
+            or not filename.startswith('test_') or not filename.endswith('.py')):
+        return module
+    # CPython's regrtest imports reference doctests under test.test_x.
+    # The direct-file checker must collect that same module identity.
+    import test
+    if directory not in test.__path__:
+        test.__path__.insert(0, directory)
+    return _host_load_module('test.' + filename[:-3])
+
+
 def _main(module=None, exit=True, verbosity=1, argv=None, testRunner=None):
     if argv is not None and len(argv) > 1:
         raise 'NotImplementedError: selecting tests from command arguments is not supported'
     loader = TestLoader()
-    suite = loader.loadTestsFromModule(module)
+    suite = loader.loadTestsFromModule(_reference_doctest_module(module))
     only = _only_classes()
     if only is not None:
         namespace = suite.module_namespace
