@@ -1312,11 +1312,33 @@ impl<'a> Machine<'a> {
         let shown=entries.iter().find(|(k,_)|k==self.detail("qualified")).map_or(title.clone(),|(_,v)|v.bare());
         // Keep the allocation decision separate from the writable slot
         // declaration: editing that declaration cannot resize a class.
-        let storage = entries.iter().find(|entry| entry.0 == self.detail("slots")).map(|entry| {
-            let declared = match entry.1.settled() { Value::Tuple(items) | Value::Vector(items) => items.as_ref().clone(), one => vec![one] };
-            declared.into_iter().any(|item| match item { Value::Text(name) => name.as_ref() != "__dict__" && name.as_ref() != "__weakref__", _ => true })
-        }).unwrap_or(false);
+        let declared_slots = entries.iter().find(|entry| entry.0 == self.detail("slots")).map(|entry| entry.1.clone());
+        let mut walked_names: Option<Vec<Value>> = None;
+        let storage = if let Some(value) = declared_slots {
+            let offered = value.settled();
+            // Strings and the containers a class body usually writes can be
+            // read twice. Every other iterable is spent by the first reading.
+            let replayable = Self::slot_letters(&offered).is_some()
+                || matches!(offered, Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Set(_));
+            if replayable {
+                let declared = match &offered {
+                    Value::Tuple(items) | Value::Vector(items) => items.as_ref().clone(),
+                    one => vec![one.clone()],
+                };
+                declared.into_iter().any(|item| !matches!(Self::slot_letters(&item).as_deref(), Some("__dict__") | Some("__weakref__")))
+            } else {
+                let items = self.drain_slot_walk(&offered)?;
+                let keeps_room = items.iter().any(|item| !matches!(Self::slot_letters(item).as_deref(), Some("__dict__") | Some("__weakref__")));
+                walked_names = Some(items);
+                keeps_room
+            }
+        } else {
+            false
+        };
         let mut fixed = Vec::new();
+        if let Some(items) = walked_names {
+            fixed.push((String::from("\0slot-walk"), Value::tuple(items)));
+        }
         if let Some(name) = native_name { fixed.push(("\0native-name".to_string(), name)); }
         if let Some(owner) = builder { fixed.push(("\0metaclass".to_owned(), Value::Blueprint(owner))); }
         let module = entries.iter().find(|(key, _)| key == self.detail("module")).map(|(_, held)| held.bare()).unwrap_or_default();
@@ -1419,7 +1441,13 @@ impl<'a> Machine<'a> {
     /// same slot keeps its own.
     fn name_slots(&mut self,class:&Rc<Blueprint>)->Result<(),Escape> {
         if !self.protocol_spelled(){return Ok(());}
-        class.weak_slot.set(Some(self.admits_weak(class)));
+        if let Some(saved) = Self::recalled_slots(class) {
+            let here = saved.iter().any(|item| Self::slot_letters(item).as_deref() == Some("__weakref__"));
+            let above = class.parents().iter().any(|parent| self.admits_weak(parent));
+            class.weak_slot.set(Some(here || above));
+        } else {
+            class.weak_slot.set(Some(self.admits_weak(class)));
+        }
         let Some(declared)=Self::own_entry(class,self.detail("slots")) else {
             if !self.rules.words_ext_builtin_weak_get.is_empty() && self.admits_weak(class) && class.parents().iter().all(|parent| !self.admits_weak(parent)) {
                 let read = Self::wrap(32, vec![Value::text("__weakref__"), Value::Blueprint(class.clone())]);
@@ -1427,18 +1455,23 @@ impl<'a> Machine<'a> {
             }
             return Ok(());
         };
-        let words=match declared.settled(){
-            Value::Tuple(items)|Value::Vector(items)=>items.as_ref().clone(),
-            // A mapping stands a name at each key; the worth a key
-            // holds is documentation for the slot, nothing a layout reads.
-            Value::Dict(mapping)=>mapping.pairs().iter().map(|(key,_)|key.clone()).collect(),
-            // A set stands its members as the names, in its own order.
-            Value::Set(store)=>store.borrow().entries.iter().map(|(_,value)|value.clone()).collect(),
-            alone @ Value::Text(_)=>vec![alone],
-            iterable=>self.object_members(&iterable)?};
+        let words = if let Some(saved) = Self::recalled_slots(class) {
+            saved
+        } else {
+            match declared.settled() {
+                Value::Tuple(items)|Value::Vector(items)=>items.as_ref().clone(),
+                // A mapping stands a name at each key; the worth a key
+                // holds is documentation for the slot, nothing a layout reads.
+                Value::Dict(mapping)=>mapping.pairs().iter().map(|(key,_)|key.clone()).collect(),
+                // A set stands its members as the names, in its own order.
+                Value::Set(store)=>store.borrow().entries.iter().map(|(_,value)|value.clone()).collect(),
+                alone @ Value::Text(_) => vec![alone],
+                iterable => self.object_members(&iterable)?,
+            }
+        };
         let words: Vec<Value> = words.into_iter().map(|name| {
             let source=match name {Value::Keyed(key,_)=>key.as_ref().clone(),plain=>plain};
-            match Self::underlying(&source) {Some(value)=>value.settled(),None=>source.settled()}
+            source.settled()
         }).collect();
         let native = Self::native_beneath(class);
         if !words.is_empty() && matches!(native.as_deref(), Some("tuple" | "bytes" | "int")) {
@@ -1451,10 +1484,11 @@ impl<'a> Machine<'a> {
         // stands for one layout a thing may carry, not several.
         let mut dict_seen=0u32;
         let mut weakref_seen=0u32;
+        let mut spelled=Vec::with_capacity(words.len());
         for word in &words {
-            let Value::Text(name)=word else{return Err("TypeError: __slots__ items must be strings".to_owned().into())};
-            if !Self::valid_slot_name(name){return Err("TypeError: __slots__ items must be identifiers".to_owned().into());}
-            match name.as_ref() {"__dict__"=>dict_seen+=1,"__weakref__"=>weakref_seen+=1,_=>{}}
+            let name=Self::slot_spelling(word)?;
+            match name.as_ref(){"__dict__"=>dict_seen+=1,"__weakref__"=>weakref_seen+=1,_=>{}}
+            spelled.push(name);
         }
         if dict_seen>1{return Err("TypeError: __dict__ slot disallowed: we already got one".to_owned().into());}
         if weakref_seen>1{return Err("TypeError: __weakref__ slot disallowed: we already got one".to_owned().into());}
@@ -1476,8 +1510,7 @@ impl<'a> Machine<'a> {
                 return Err(format!("TypeError: {which} slot disallowed: we already got one").into());
             }
         }
-        for word in words {
-            let Value::Text(name)=word else{unreachable!()};
+        for name in spelled {
             let name = Rc::<str>::from(crate::build::member_spelling(&class.name, &name));
             if name.as_ref()==self.detail("namespace"){continue;}
             if Self::own_entry(class,&name).is_some(){return Err(format!("ValueError: '{name}' in __slots__ conflicts with class variable").into());}
@@ -1486,16 +1519,52 @@ impl<'a> Machine<'a> {
         }
         Ok(())
     }
-    /// Whether a slot's own name could follow `self.` in this language:
-    /// not empty, opening on a letter or an underscore, and holding
-    /// nothing after but letters, figures and underscores.
-    fn valid_slot_name(word:&str)->bool {
-        let mut letters=word.chars();
-        match letters.next() {
-            Some(c) if c=='_'||c.is_alphabetic() => {}
-            _ => return false,
+    /// Pull every name out of an iterable that cannot be read twice.
+    fn drain_slot_walk(&mut self, offered: &Value) -> Result<Vec<Value>, Escape> {
+        let walk = self.iterated_value(offered).map_err(|words| self.got_away.take().unwrap_or_else(|| words.into()))?;
+        let mut gathered = Vec::new();
+        loop {
+            match self.next_value(&walk) {
+                Ok(Some(item)) => gathered.push(item),
+                Ok(None) => return Ok(gathered),
+                Err(words) => return Err(self.got_away.take().unwrap_or_else(|| words.into())),
+            }
         }
-        letters.all(|c|c=='_'||c.is_alphanumeric())
+    }
+    /// Names saved from that single walk, when the declaration was spent.
+    fn recalled_slots(blueprint: &Blueprint) -> Option<Vec<Value>> {
+        let saved = blueprint.constants.iter().find(|entry| entry.0 == "\0slot-walk")?;
+        match saved.1.settled() {
+            Value::Tuple(items) => Some(items.as_ref().clone()),
+            _ => None,
+        }
+    }
+    /// The characters a slot contributes, when it is a string or a
+    /// subclass of one. Other values contribute none.
+    fn slot_letters(item:&Value)->Option<Rc<str>> {
+        match item.settled() {
+            Value::Text(name)=>Some(name),
+            Value::Thing(held) if Self::native_beneath(&held.blueprint()).as_deref()==Some("str") => {
+                Self::underlying(item).and_then(|kept| match kept.settled() { Value::Text(name)=>Some(name), _=>None })
+            }
+            _=>None,
+        }
+    }
+    fn slot_spelling(item:&Value)->Result<Rc<str>,Escape> {
+        match Self::slot_letters(item) {
+            Some(name) if Self::valid_slot_name(&name) => Ok(name),
+            Some(_) => Err("TypeError: __slots__ must be identifiers".to_owned().into()),
+            None => Err(format!("TypeError: __slots__ items must be strings, not '{}'", item.settled().kind_word()).into()),
+        }
+    }
+    /// An identifier: the first character a letter or `_`, and each
+    /// character after one that may continue an identifier.
+    fn valid_slot_name(word:&str)->bool {
+        let mut cursor=word.chars();
+        match cursor.next() {
+            Some(head) if head=='_' || unicode_ident::is_xid_start(head) => cursor.all(unicode_ident::is_xid_continue),
+            _ => false,
+        }
     }
     /// The key a slot's worth is kept under in a thing. A thing not of
     /// the declaring blueprint's line has no such key, and is told so.
@@ -1582,8 +1651,13 @@ impl<'a> Machine<'a> {
         let Value::Thing(t)=thing else{return Err(self.class_unready())};
         if parts.get(2).is_some_and(|part|part.bare()=="\0instance-book" || matches!(part, Value::Small(-2))){return self.replace_instance_book(t,replacement);}
         if parts[0].bare() == "__weakref__" && !self.rules.words_ext_builtin_weak_get.is_empty() { return Err(format!("AttributeError: attribute '__weakref__' of '{}' objects is not writable", t.blueprint().name).into()); }
-        if !Self::change_entry(&mut t.holds.borrow_mut(),&key,replacement.map(|held|held.keep(true))){return Err(self.absent_attribute(thing,&parts[0].bare()));}
-        Ok(Value::Nil)
+        let incoming=replacement.map(|held| held.keep(true));
+        if Self::change_entry(&mut t.holds.borrow_mut(), &key, incoming) {
+            Ok(Value::Nil)
+        } else {
+            // Clearing a slot before it held anything reports that name alone.
+            Err(format!("AttributeError: {}", parts[0].bare()).into())
+        }
     }
     /// The blueprint of every property, made once. It holds the
     /// workings of the protocol as its entries -- reading, writing and
@@ -6852,17 +6926,19 @@ impl<'a> Machine<'a> {
         let normalized = |blueprint: &Blueprint| -> Vec<String> {
             let mut slots = Vec::new();
             if let Some(value) = Self::own_entry(blueprint, self.detail("slots")) {
-                let entries = match value.settled() {
-                    Value::Dict(map) => map.pairs().iter().map(|(key, _)| key.clone()).collect(),
-                    Value::Vector(items) | Value::Tuple(items) => items.as_ref().clone(),
-                    item => vec![item],
+                let entries = if let Some(saved) = Self::recalled_slots(blueprint) {
+                    saved
+                } else {
+                    match value.settled() {
+                        Value::Dict(map) => map.pairs().iter().map(|(key, _)| key.clone()).collect(),
+                        Value::Vector(items) | Value::Tuple(items) => items.as_ref().clone(),
+                        item => vec![item],
+                    }
                 };
                 for entry in entries {
-                    if let Value::Text(word) = entry {
-                        if !matches!(word.as_ref(), "__weakref__" | "__dict__") {
-                            slots.push(crate::build::member_spelling(&blueprint.name, &word));
-                        }
-                    }
+                    let Some(word) = Self::slot_letters(&entry) else { continue };
+                    if matches!(word.as_ref(), "__weakref__" | "__dict__") { continue; }
+                    slots.push(crate::build::member_spelling(&blueprint.name, &word));
                 }
             }
             slots.sort_unstable(); slots
@@ -6881,19 +6957,26 @@ impl<'a> Machine<'a> {
             None => {}
         }
         let Some(storage) = Self::own_entry(b, self.detail("slots")) else { return true; };
-        let has_slot = match storage.settled() {
-            Value::Tuple(items) | Value::Vector(items) => items.iter().any(|v| matches!(v, Value::Text(s) if &**s == "__weakref__")),
-            Value::Text(name) => &*name == "__weakref__",
-            _ => false
+        let listed = match storage.settled() {
+            Value::Tuple(items) | Value::Vector(items) => items.as_ref().clone(),
+            other => vec![other],
         };
+        let has_slot = listed.iter().any(|item| Self::slot_letters(item).is_some_and(|word| word.as_ref()=="__weakref__"));
         has_slot || b.parents().iter().any(|parent| self.admits_weak(parent))
     }
     fn allowed_slot(&self,b:&Blueprint,key:&str)->bool {
         if self.table.has_any("ext.stmt.class.builder") && self.ancestor.as_ref().is_some_and(|root| std::ptr::eq(root.as_ref(),b)) { return false; }
         if matches!(Self::native_word(b).as_deref(), Some("SimpleNamespace" | "module")) { return true; }
         let Some(declared)=Self::own_entry(b,self.detail("slots"))else{return !(b.under().is_none() && b.name==self.detail("root")) && Self::native_word(b).is_none();};
+        if let Some(saved) = Self::recalled_slots(b) {
+            let book = self.detail("namespace");
+            let matching = |item: &Value| Self::slot_letters(item).is_some_and(|word| word.as_ref() == key || word.as_ref() == book);
+            if saved.iter().any(matching) { return true; }
+            return b.parents().iter().any(|parent| parent.name != self.detail("root") && self.allowed_slot(parent, key));
+        }
         let slots=declared.settled();
-        let matching=|x:&Value|matches!(x,Value::Text(s) if s.as_ref()==key||s.as_ref()==self.detail("namespace"));
+        let book=self.detail("namespace");
+        let matching=|x:&Value| Self::slot_letters(x).is_some_and(|word| word.as_ref()==key || word.as_ref()==book);
         if match &slots{Value::Tuple(s)|Value::Vector(s)=>s.iter().any(matching),v=>matching(v)}{return true;}
         b.parents().iter().any(|p|p.name!=self.detail("root")&&self.allowed_slot(p,key))
     }

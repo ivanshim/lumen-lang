@@ -1181,10 +1181,32 @@ impl<'a> Engine<'a> {
         let display=members.iter().find(|(n,_)|n==self.class_word("qualified")).map(|(_,v)|v.plain()).unwrap_or_else(||name.clone());
         // Slot storage is fixed when the class is made, independently of
         // later replacement or mutation of its public declaration.
-        let owns_storage = members.iter().find(|(key, _)| key == self.class_word("slots")).is_some_and(|(_, value)| {
-            let slots = match value.contents() { Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(), single => vec![single] };
-            slots.iter().any(|slot| !matches!(slot, Value::Text(key) if key.as_ref() == "__dict__" || key.as_ref() == "__weakref__"))
-        });
+        let declared_slots = members.iter().find(|(key, _)| key == self.class_word("slots")).map(|(_, value)| value.clone());
+        let mut walked_slots: Option<Vec<Value>> = None;
+        let owns_storage = if let Some(value) = declared_slots {
+            let offered = value.contents();
+            // A tuple, list, map, set or string can be read again. Anything
+            // else is asked for its names once, the way a sequence is.
+            let replayable = Self::slot_text(&offered).is_some()
+                || matches!(offered, Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Set(_));
+            if replayable {
+                let slots = match &offered {
+                    Value::Tuple(items) | Value::Array(items) => items.as_ref().clone(),
+                    single => vec![single.clone()],
+                };
+                slots.iter().any(|slot| !matches!(Self::slot_text(slot).as_deref(), Some("__dict__" | "__weakref__")))
+            } else {
+                let items = self.special_items(&offered).map_err(|words| self.carried.take().unwrap_or_else(|| words.into()))?;
+                let keeps = items.iter().any(|slot| !matches!(Self::slot_text(slot).as_deref(), Some("__dict__" | "__weakref__")));
+                walked_slots = Some(items);
+                keeps
+            }
+        } else {
+            false
+        };
+        if let Some(items) = walked_slots {
+            constants.push(("\0slot-copy".to_string(), Value::tuple(items)));
+        }
         let module = members.iter().find(|(key, _)| key == self.class_word("module")).map(|(_, value)| value.plain()).unwrap_or_default();
         // A routine written under one of the three names the language
         // wraps on the way into a class is kept wrapped, once, as the
@@ -1274,7 +1296,13 @@ impl<'a> Engine<'a> {
     /// so that two classes of one line naming the same slot keep two.
     fn furnish_slots(&mut self, c: &Rc<Class>) -> Flow<()> {
         if self.class_word("descriptor.get").is_empty() { return Ok(()); }
-        c.weak_storage.set(Some(self.weak_layout(c)));
+        if let Some(saved) = Self::copied_slots(c) {
+            let named_weak = saved.iter().any(|item| Self::slot_text(item).is_some_and(|word| word.as_ref() == "__weakref__"));
+            let inherited = c.direct().iter().any(|base| self.weak_layout(base));
+            c.weak_storage.set(Some(named_weak || inherited));
+        } else {
+            c.weak_storage.set(Some(self.weak_layout(c)));
+        }
         let Some(slots) = Self::own_class_value(c, self.class_word("slots")) else {
             if !self.lang.weak_refused.is_empty() && self.weak_layout(c) && !c.direct().iter().any(|base| self.weak_layout(base)) {
                 c.shared.borrow_mut().push(("__weakref__".into(), Self::adapter(16, vec![Value::text("__weakref__"), Value::Class(c.clone())])));
@@ -1283,12 +1311,16 @@ impl<'a> Engine<'a> {
         };
         // The names may come from a row, a mapping's keys, a set's
         // members or a single name, as the reference reads them.
-        let named: Vec<Value> = match slots.contents() {
-            Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(),
-            Value::Map(v) => v.iter().map(|(key, _)| key.clone()).collect(),
-            Value::Set(v) => v.borrow().items(),
-            single @ Value::Text(_) => vec![single],
-            iterable => self.special_items(&iterable).map_err(|words| self.carried.take().unwrap_or_else(|| words.into()))?,
+        let named: Vec<Value> = if let Some(saved) = Self::copied_slots(c) {
+            saved
+        } else {
+            match slots.contents() {
+                Value::Tuple(v) | Value::Array(v) => v.as_ref().clone(),
+                Value::Map(v) => v.iter().map(|(key, _)| key.clone()).collect(),
+                Value::Set(v) => v.borrow().items(),
+                single @ Value::Text(_) => vec![single],
+                iterable => self.special_items(&iterable).map_err(|words| self.carried.take().unwrap_or_else(|| words.into()))?,
+            }
         };
         let named: Vec<Value> = named.into_iter().map(|slot| Self::worth_of(&slot).unwrap_or_else(|| slot.contents())).collect();
         if let Some(kind @ ("int" | "tuple" | "bytes")) = Self::kind_beneath(c).as_deref() {
@@ -1303,10 +1335,15 @@ impl<'a> Engine<'a> {
         // stands for one layout a thing may carry, not several.
         let mut dict_seen = 0u32;
         let mut weakref_seen = 0u32;
+        let mut accepted = Vec::new();
         for slot in &named {
-            let Value::Text(word) = slot else { return Err("TypeError: __slots__ items must be strings".to_string().into()) };
-            if !Self::valid_slot_name(word) { return Err("TypeError: __slots__ items must be identifiers".to_string().into()); }
-            match word.as_ref() { "__dict__" => dict_seen += 1, "__weakref__" => weakref_seen += 1, _ => {} }
+            let word = Self::slot_characters(slot)?;
+            match word.as_ref() {
+                "__dict__" => dict_seen += 1,
+                "__weakref__" => weakref_seen += 1,
+                _ => {}
+            }
+            accepted.push(word);
         }
         if dict_seen > 1 { return Err("TypeError: __dict__ slot disallowed: we already got one".to_string().into()); }
         if weakref_seen > 1 { return Err("TypeError: __weakref__ slot disallowed: we already got one".to_string().into()); }
@@ -1329,8 +1366,7 @@ impl<'a> Engine<'a> {
                 return Err(format!("TypeError: {which} slot disallowed: we already got one").into());
             }
         }
-        for slot in named {
-            let Value::Text(word) = slot else { unreachable!() };
+        for word in accepted {
             let word: Rc<str> = Rc::from(crate::compile::private_name(&c.name, &word));
             if word.as_ref() == self.class_word("namespace") { continue; }
             if Self::own_class_value(c, &word).is_some() { return Err(format!("ValueError: '{word}' in __slots__ conflicts with class variable").into()); }
@@ -1338,16 +1374,41 @@ impl<'a> Engine<'a> {
         }
         Ok(())
     }
-    /// Whether a slot's own name could follow `self.` in this language:
-    /// not empty, opening on a letter or an underscore, and holding
-    /// nothing after but letters, figures and underscores.
-    fn valid_slot_name(word: &str) -> bool {
-        let mut letters = word.chars();
-        match letters.next() {
-            Some(c) if c == '_' || c.is_alphabetic() => {}
-            _ => return false,
+    /// Names taken from a one-shot iterable, kept after that iterable
+    /// has been spent. Absent when the declaration can be read again.
+    fn copied_slots(c: &Class) -> Option<Vec<Value>> {
+        let saved = c.constants.iter().find(|(key, _)| key == "\0slot-copy")?;
+        match saved.1.contents() {
+            Value::Tuple(items) => Some(items.as_ref().clone()),
+            _ => None,
         }
-        letters.all(|c| c == '_' || c.is_alphanumeric())
+    }
+    /// Characters of a slot name: the string itself, or the text kept by
+    /// a subclass of str. Nothing, when the value is not a string.
+    fn slot_text(slot: &Value) -> Option<Rc<str>> {
+        let offered = slot.contents();
+        match offered {
+            Value::Text(word) => Some(word),
+            Value::Object(thing) if Self::kind_beneath(&thing.class_now()).as_deref() == Some("str") => {
+                Self::worth_of(slot).and_then(|kept| match kept.contents() { Value::Text(word) => Some(word), _ => None })
+            }
+            _ => None,
+        }
+    }
+    fn slot_characters(slot: &Value) -> Flow<Rc<str>> {
+        match Self::slot_text(slot) {
+            Some(word) if Self::valid_slot_name(&word) => Ok(word),
+            Some(_) => Err("TypeError: __slots__ must be identifiers".to_string().into()),
+            None => Err(format!("TypeError: __slots__ items must be strings, not '{}'", slot.contents().core_kind()).into()),
+        }
+    }
+    /// Whether those characters could follow `self.`: an opening letter
+    /// or underscore, then letters, figures, underscores and the other
+    /// continuing marks an identifier may hold.
+    fn valid_slot_name(word: &str) -> bool {
+        let mut marks = word.chars();
+        let Some(opening) = marks.next() else { return false };
+        (opening == '_' || unicode_ident::is_xid_start(opening)) && marks.all(unicode_ident::is_xid_continue)
     }
     /// Where a slot's value is kept in a thing: under the slot's name and
     /// the class that declared it. A thing not of that class has no such
@@ -1437,7 +1498,12 @@ impl<'a> Engine<'a> {
         let Value::Object(o) = thing else { return Err(self.class_refusal()) };
         if parts.get(2).is_some_and(|part|part.plain()=="\0instance-namespace") {return self.namespace_write(o,value);}
         if parts[0].plain() == "__weakref__" && !self.lang.weak_refused.is_empty() { return Err(format!("AttributeError: attribute '__weakref__' of '{}' objects is not writable", o.class_now().name).into()); }
-        Self::write_members(&mut o.fields.borrow_mut(), &place, value.map(|held|held.held(true)), false).map_err(|_| self.missing_member(thing, &parts[0].plain()))?;
+        // A slot that was never filled, cleared, names only itself.
+        // Filling a missing slot cannot reach this complaint.
+        let placed = value.map(|held| held.held(true));
+        if Self::write_members(&mut o.fields.borrow_mut(), &place, placed, false).is_err() {
+            return Err(format!("AttributeError: {}", parts[0].plain()).into());
+        }
         Ok(Value::Null)
     }
     /// The class every property is a thing of, made once. Its members
@@ -7023,14 +7089,19 @@ impl<'a> Engine<'a> {
             || self.slots_allow(first, self.class_word("namespace")) != self.slots_allow(second, self.class_word("namespace")) { return false; }
         let names = |class: &Class| {
             let declared = Self::own_class_value(class, self.class_word("slots")).map(|v| v.contents());
-            let fields = match declared {
-                Some(Value::Tuple(row) | Value::Array(row)) => row.to_vec(),
-                Some(Value::Map(row)) => row.iter().map(|(name, _)| name.clone()).collect(),
-                Some(value) => vec![value], None => Vec::new(),
+            let fields = if let Some(saved) = Self::copied_slots(class) {
+                saved
+            } else {
+                match declared {
+                    Some(Value::Tuple(row) | Value::Array(row)) => row.to_vec(),
+                    Some(Value::Map(row)) => row.iter().map(|(name, _)| name.clone()).collect(),
+                    Some(value) => vec![value], None => Vec::new(),
+                }
             };
-            let mut keys = fields.into_iter().filter_map(|field| match field {
-                Value::Text(word) if word.as_ref() != "__dict__" && word.as_ref() != "__weakref__" => Some(crate::compile::private_name(&class.name, &word)),
-                _ => None,
+            let mut keys = fields.into_iter().filter_map(|field| {
+                let word = Self::slot_text(&field)?;
+                if matches!(word.as_ref(), "__dict__" | "__weakref__") { return None; }
+                Some(crate::compile::private_name(&class.name, &word))
             }).collect::<Vec<_>>();
             keys.sort(); keys
         };
@@ -7047,7 +7118,7 @@ impl<'a> Engine<'a> {
             None => true,
             Some(slots) => {
                 let names = slots.contents();
-                let weak = |v: &Value| matches!(v, Value::Text(s) if s.as_ref() == "__weakref__");
+                let weak = |v: &Value| Self::slot_text(v).is_some_and(|word| word.as_ref() == "__weakref__");
                 let declared = match &names { Value::Tuple(v) | Value::Array(v) => v.iter().any(weak), v => weak(v) };
                 declared || c.direct().iter().any(|base| self.weak_layout(base))
             }
@@ -7058,8 +7129,15 @@ impl<'a> Engine<'a> {
         if matches!(Self::own_kind(c).as_deref(), Some("SimpleNamespace" | "module")) { return true; }
         let own=Self::own_class_value(c,self.class_word("slots"));
         let Some(own)=own else{return !(c.base().is_none() && c.name==self.class_word("root")) && Self::own_kind(c).map_or(true, |word| word == "module");};
+        if let Some(saved) = Self::copied_slots(c) {
+            let namespace = self.class_word("namespace");
+            let allows = |item: &Value| Self::slot_text(item).is_some_and(|word| word.as_ref() == name || word.as_ref() == namespace);
+            if saved.iter().any(allows) { return true; }
+            return c.direct().iter().filter(|base| base.name != self.class_word("root")).any(|base| self.slots_allow(base, name));
+        }
         let slots=own.contents();
-        let allows=|v:&Value|match v {Value::Text(s)=>s.as_ref()==name||s.as_ref()==self.class_word("namespace"),_=>false};
+        let namespace = self.class_word("namespace");
+        let allows=|v:&Value| Self::slot_text(v).is_some_and(|word| word.as_ref()==name || word.as_ref()==namespace);
         let fits=match &slots {Value::Array(v)|Value::Tuple(v)=>v.iter().any(allows),v=>allows(v)};
         fits||c.direct().iter().filter(|b|b.name!=self.class_word("root")).any(|b|self.slots_allow(b,name))
     }
