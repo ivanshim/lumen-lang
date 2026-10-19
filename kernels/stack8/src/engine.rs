@@ -228,6 +228,10 @@ pub struct Engine<'a> {
     /// Whether each definition reached makes a function of its own,
     /// which a language that tells values apart by identity wants.
     fresh_routines: bool,
+    /// Whether the definition asks after kinds at all (the instance-of builtin).
+    kinds_asked: bool,
+    /// The kind builtin's answer for each plain value, made once.
+    sort_answers: Vec<(Builtin, Value)>,
     pub module_sources: HashMap<String, String>,
     pub library_root: Option<String>,
     pub module_files: HashMap<String, String>,
@@ -1826,6 +1830,8 @@ impl<'a> Engine<'a> {
             archived_text: None,
             native_names: RefCell::new(std::collections::BTreeMap::new()),
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
+            kinds_asked: lang.builtins.values().any(|b| *b == Builtin::InstanceOf),
+            sort_answers: Vec::new(),
             module_sources: HashMap::new(),
             library_root: None,
             module_files: HashMap::new(),
@@ -25722,7 +25728,7 @@ impl<'a> Engine<'a> {
                         return Ok(Self::maker_beneath(&class).map_or_else(|| self.kind_maker_word(), Value::Class));
                     }
                 }
-                if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) {
+                if self.kinds_asked {
                     // A value that stands for a kind is itself of the
                     // kind builtin's kind, whatever kind it stands for.
                     if self.stands_for_kind(&args[0]) { return Ok(self.kind_maker_word()); }
@@ -25742,7 +25748,14 @@ impl<'a> Engine<'a> {
                         // are a dictionary as far as the program can tell.
                         Value::Fields(_) => Some(Builtin::Dict), _ => None,
                     };
-                    if let Some(b) = which { if let Some((_, word)) = self.lang.builtin_words.iter().find(|(v, _)| *v == b) { return Ok(Value::Native(b, Rc::from(word.as_str()))); } }
+                    if let Some(b) = which {
+                        if let Some((_, answer)) = self.sort_answers.iter().find(|(v, _)| *v == b) { return Ok(answer.clone()); }
+                        if let Some((_, word)) = self.lang.builtin_words.iter().find(|(v, _)| *v == b) {
+                            let answer = Value::Native(b, Rc::from(word.as_str()));
+                            self.sort_answers.push((b, answer.clone()));
+                            return Ok(answer);
+                        }
+                    }
                 }
                 if let Value::Bytes(_, mutable, _) = &args[0] { return Ok(self.byte_kind(*mutable)); }
                 // A trace is of no kind the core knows either; a language
@@ -25768,7 +25781,7 @@ impl<'a> Engine<'a> {
                 // kinds at all is answered with the class named for it:
                 // the bare kind value carries no name of its own, and a
                 // class stands where the reference has a class.
-                if self.lang.builtins.values().any(|b| *b == Builtin::InstanceOf) { return Ok(self.named_kind(&args[0])); }
+                if self.kinds_asked { return Ok(self.named_kind(&args[0])); }
                 let Some(kind) = args[0].sort() else {
                     return Err(format!("{}(): unknown value type", name));
                 };
