@@ -5596,7 +5596,6 @@ impl<'a> Machine<'a> {
                         state.owed.push(Owed::Find(*inner));
                     }
                     Form::OnLine(row, at, body) => {
-                        if crate::ghost::anchored_lone() { self.attend_to_gone(); }
                         self.stand_at_instruction(at as i64);
                         self.row = row;
                         if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(row as i64); }
@@ -7520,7 +7519,6 @@ impl<'a> Machine<'a> {
         match node {
             Form::OnLine(row, at, inner)
             => {
-                if crate::ghost::anchored_lone() { self.attend_to_gone(); }
                 self.user_source_started |= self.written_in == self.entry_file;
                 self.stand_at_instruction(*at as i64);
                 self.extent = None;
@@ -7708,7 +7706,6 @@ impl<'a> Machine<'a> {
         let outcome = if p.generator && self.rules.suspends {
             self.named_generator(callable, &p, callee)
         } else { self.drive(p, callee) };
-        if crate::ghost::anchored_lone() { self.attend_to_gone(); }
         if let Some(world) = annotation_world { self.world_book = world; }
         self.leave_function_globals(previous);
         if let Some(scopes) = paused_names { self.annotation_scopes = scopes; }

@@ -145,9 +145,6 @@ thread_local! {
     // Addresses already anchored, so a repeat anchor does not walk the vector.
     // Membership, not a second owner.
     static ANCHORED_ADDRS: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
-    // Length of ANCHORED, so a short list can skip the statement-edge walk
-    // without borrowing the vector.
-    static ANCHOR_COUNT: Cell<usize> = const { Cell::new(0) };
     // The addresses of the things a listener is on. A thing leaving
     // sets the lost flag only where its address is one of these.
     static WATCHED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
@@ -227,7 +224,6 @@ pub fn anchor(thing: &Rc<Thing>) {
             return false;
         }
         all.push(thing.clone());
-        let _ = ANCHOR_COUNT.try_with(|count| count.set(all.len()));
         true
     }).unwrap_or(false);
     if added {
@@ -246,7 +242,6 @@ pub fn release_anchor(thing: &Rc<Thing>) {
     let _ = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         all.retain(|item| !Rc::ptr_eq(item, thing));
-        let _ = ANCHOR_COUNT.try_with(|count| count.set(all.len()));
         ghost_set(G_ANCHOR, !all.is_empty());
     });
 }
@@ -254,18 +249,14 @@ pub fn release_anchor(thing: &Rc<Thing>) {
 pub fn release_all_anchors() {
     let _ = ANCHORED.try_with(|all| all.borrow_mut().clear());
     let _ = ANCHORED_ADDRS.try_with(|book| book.borrow_mut().clear());
-    let _ = ANCHOR_COUNT.try_with(|count| count.set(0));
     ghost_drop(G_ANCHOR);
 }
 
-/// The newest anchored things are the ones a tight stretch drops.
-/// Walking only that tail keeps a long list of still-living things off
-/// the path taken before every value. An older one that has been left
-/// alone is noticed when a statement begins, or when a call returns.
-const ANCHOR_TAIL: usize = 64;
-
-fn scan_lone(pending: &[Rc<Thing>]) -> bool {
-    let mut pending = pending;
+fn anchor_ready(anchored: &RefCell<Vec<Rc<Thing>>>) -> bool {
+    let all = anchored.borrow();
+    // Avoid an iterator callback per retained owner at every interpreter step.
+    // Every anchored object is checked here, not only the newest tail.
+    let mut pending = all.as_slice();
     while let [a, b, c, d, rest @ ..] = pending {
         if Rc::strong_count(a) == 1 || Rc::strong_count(b) == 1
             || Rc::strong_count(c) == 1 || Rc::strong_count(d) == 1 { return true; }
@@ -273,28 +264,6 @@ fn scan_lone(pending: &[Rc<Thing>]) -> bool {
     }
     pending.iter().any(|item| Rc::strong_count(item) == 1)
 }
-
-fn anchor_ready(anchored: &RefCell<Vec<Rc<Thing>>>) -> bool {
-    let all = anchored.borrow();
-    // The short walk is the original check, in place, so a tight
-    // stretch with few farewells pays nothing extra. A longer list
-    // looks only at the newest farewells here; anchored_lone walks
-    // the rest when a statement begins or a call returns.
-    if all.len() <= ANCHOR_TAIL {
-        return scan_lone(all.as_slice());
-    }
-    let start = all.len() - ANCHOR_TAIL;
-    scan_lone(&all[start..])
-}
-
-/// Whether any anchored thing is held by its anchor alone.
-/// A short list was already walked before the value, so the extra look
-/// runs only after the list outgrows the tail.
-#[inline(always)]
-pub fn anchored_lone() -> bool {
-    let long = ANCHOR_COUNT.try_with(|count| count.get() > ANCHOR_TAIL).unwrap_or(false);
-    if !long { return false; }
-    ANCHORED.try_with(|all| scan_lone(&all.borrow())).unwrap_or(false)
 }
 
 /// The method a class bids farewell with, where the language has one.
@@ -462,7 +431,6 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
         let mut all = all.borrow_mut();
         let (ready, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|item| Rc::strong_count(item) == 1);
         *all = kept;
-        let _ = ANCHOR_COUNT.try_with(|count| count.set(all.len()));
         ghost_set(G_ANCHOR, !all.is_empty());
         ready
     }).unwrap_or_default();
