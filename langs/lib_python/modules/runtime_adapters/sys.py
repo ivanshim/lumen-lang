@@ -36,9 +36,19 @@ def is_finalizing():
     return __program_namespace()['__program_finalizing']
 
 # Startup flags read the host environment without a late module import.
+# What each name read so far stood as; posix.putenv and unsetenv empty it,
+# since those are the only ways the program changes the environment.
+_environment_values = {}
+
 def _environment(name):
+    try:
+        return _environment_values[name]
+    except KeyError:
+        pass
     environment = _host_environment('environ')[1]
     value = environment.get(name)
     if value is None:
         value = environment.get(name.encode())
-    return value.decode() if isinstance(value, bytes) else value
+    value = value.decode() if isinstance(value, bytes) else value
+    _environment_values[name] = value
+    return value

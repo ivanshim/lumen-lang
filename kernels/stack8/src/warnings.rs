@@ -362,8 +362,21 @@ impl Engine<'_> {
         let spec_type = self.modules.get("importlib._bootstrap").and_then(|module| match module {
             Value::Object(owner) => owner.fields.borrow().iter().find(|(key, _)| key == "ModuleSpec").map(|(_, value)| value.contents()), _ => None,
         });
+        let origin = match &namespace {
+            Value::Object(owner) => owner.fields.borrow().iter().find(|(key, _)| key == "__file__").map(|(_, held)| held.contents()).unwrap_or(Value::Null),
+            _ => Value::Null,
+        };
         let specification = if let Some(constructor @ Value::Class(_)) = spec_type {
-            self.call_held(constructor, vec![Value::text(name), loader.clone()])?
+            let made = self.call_held(constructor, vec![Value::text(name), loader.clone()])?;
+            if let Value::Object(owner) = &made {
+                let mut fields = owner.fields.borrow_mut();
+                let located = !matches!(origin, Value::Null);
+                for (key, value) in [("origin", origin), ("_set_fileattr", Value::Flag(located))] {
+                    if let Some(field) = fields.iter_mut().find(|(word, _)| word == key) { field.1 = value; }
+                    else { fields.push((key.to_string(), value)); }
+                }
+            }
+            made
         } else { Value::Null };
         if let Value::Object(owner) = namespace {
             for (key, value) in [("__loader__", loader), ("__spec__", specification)] {

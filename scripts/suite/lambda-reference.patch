@@ -1,0 +1,55 @@
+--- a/handler.py
++++ b/handler.py
+@@ -106,13 +106,23 @@
+                     "err": clip(r.stderr.decode("utf-8", "replace")), "timeout": False}
+         except subprocess.TimeoutExpired:
+             return {"rc": -1, "out": "", "err": "", "timeout": True}
+-    staged, stage = staged_reference(prog)
++    arguments, stage = None, None
++    entry = os.path.join(ROOT, "scripts", "suite", "reference_entry.py")
++    if os.path.isfile(entry):
++        import sys
++        sys.path.insert(0, os.path.dirname(entry))
++        from reference_layout import staged_reference as imported_reference
++        arguments, stage = imported_reference(ROOT, prog, VERSIONS)
++    prepared = arguments is not None
++    if not prepared:
++        staged, stage = staged_reference(prog)
++        arguments = [staged if staged else f"{BUILT_AT}/{prog}"]
+     try:
+-        res = again(["--kernel", kernel, staged if staged else f"{BUILT_AT}/{prog}"])
++        res = again(["--kernel", kernel] + arguments)
+         # An executable test package whose entry imports its siblings relatively
+         # cannot stand as a plain file; it is then run by its own name, the way a
+         # `-m` run of it does, which is what its reference entry expects.
+-        if (not res["timeout"] and res["rc"] != 0 and only is None and prog.endswith("/__main__.py")
++        if (not prepared and not res["timeout"] and res["rc"] != 0 and only is None and prog.endswith("/__main__.py")
+                 and "relative imports require a package context" in res["err"]):
+             package = prog.rsplit("/", 2)[-2]
+             res = again(["--kernel", kernel, "-m", f"test.{package}"])
+--- a/lverify.sh
++++ b/lverify.sh
+@@ -56,6 +56,10 @@
+ strip -o $d/lumen-lang $wt/target/debug/lumen-lang
+ for l in /lib/ld-linux-aarch64.so.1 $(ldd $d/lumen-lang | grep -oE "/[^ ]+\.so[^ ]*"); do cp -L $l $d/sys/; done
+ cp $B/handler-lv-$rid.py $d/handler.py; rm -f $B/handler-lv-$rid.py
++if [ -f "$wt/scripts/suite/reference_entry.py" ]; then
++  mkdir -p "$d/scripts/suite"
++  cp "$wt/scripts/suite/reference_entry.py" "$wt/scripts/suite/reference_layout.py" "$wt/scripts/suite/python_tests.py" "$d/scripts/suite/"
++fi
+ # the reference suite directory: tests/python, or (versioned layout) the newest release's "tests" in langs/python/versions.json
+ td=tests/python; [ -d $wt/tests/python ] || td=$(python3 -c "import json;v=json.load(open('$wt/langs/python/versions.json'))['versions'];print(max(v.values(),key=lambda e:tuple(map(int,e['release'].split('.'))))['tests'])")
+ echo $td > $B/lvpkg-$rid.td
+--- a/lrun.sh
++++ b/lrun.sh
+@@ -41,6 +41,10 @@
+ strip -o $d/lumen-lang $wt/target/debug/lumen-lang
+ for l in /lib/ld-linux-aarch64.so.1 $(ldd $d/lumen-lang | grep -oE "/[^ ]+\.so[^ ]*"); do cp -L $l $d/sys/; done
+ cp $B/handler-lr-$rid.py $d/handler.py; rm -f $B/handler-lr-$rid.py
++if [ -f "$wt/scripts/suite/reference_entry.py" ]; then
++  mkdir -p "$d/scripts/suite"
++  cp "$wt/scripts/suite/reference_entry.py" "$wt/scripts/suite/reference_layout.py" "$wt/scripts/suite/python_tests.py" "$d/scripts/suite/"
++fi
+ cp -r $wt/langs $d/ && mkdir -p $d/$(dirname $td) && cp -r $wt/$td $d/$td
+ (cd $d && rm -f $B/lrpkg-$rid.zip && zip -q -r -9 $B/lrpkg-$rid.zip .)
+ rm -rf $d

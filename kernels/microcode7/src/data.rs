@@ -35,6 +35,10 @@ pub struct Env {
     pub capture_slots: RefCell<CaptureSlots>,
     pub outer: Option<Rc<Env>>,
     pub weak_callback_frame: Cell<bool>,
+    /// Names a proxy over this frame has put aside: names the code
+    /// reserved no slot for, kept here so every reading of the frame,
+    /// `locals()` among them, sees them.
+    pub extra: RefCell<Vec<(Value, Value)>>,
 }
 
 impl Drop for Env {
@@ -43,7 +47,7 @@ impl Drop for Env {
 
 impl Env {
     pub fn make(size: usize, parent: Option<Rc<Env>>) -> Rc<Env> {
-        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(CaptureSlots::default()), outer: parent, weak_callback_frame: Cell::new(false) })
+        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(CaptureSlots::default()), outer: parent, weak_callback_frame: Cell::new(false), extra: RefCell::new(Vec::new()) })
     }
 }
 
@@ -503,7 +507,11 @@ impl MapStore {
     /// Cache positions only; every read still observes the current value.
     pub fn namespace_slot_position(&self, slot: usize, name: &str) -> Result<Option<usize>, ()> {
         if let Some(Some((word, at))) = self.namespace_slots.borrow().get(slot) {
-            if word.as_ref() == name { return Ok(Some(*at)); }
+            // The address only holds while the pair it names still
+            // stands there with this spelling; a stale one falls back to
+            // a fresh search instead of reading past the end.
+            let holds = word.as_ref() == name && self.pairs.get(*at).is_some_and(|(key, _)| key.bare() == name);
+            if holds { return Ok(Some(*at)); }
         }
         let found = self.namespace_position(name)?;
         if let Some(at) = found {
@@ -1666,6 +1674,9 @@ impl Value {
             (Value::Dict(x), Value::Dict(y)) => Rc::ptr_eq(x, y),
             (Value::Backtrace(x), Value::Backtrace(y)) => Rc::ptr_eq(x, y),
             (Value::Thing(x), Value::Thing(y)) => Rc::ptr_eq(x, y),
+            // A truth is held by worth alone, not by an allocation,
+            // so one worth is the one place.
+            (Value::Flag(a), Value::Flag(b)) => a == b,
             (Value::Small(x), Value::Small(y)) => x == y,
             (Value::Nil, Value::Nil) => true,
             _ => false,

@@ -13,6 +13,34 @@ thread_local! {
     static NEXT_DIR: std::cell::Cell<i64> = const {std::cell::Cell::new(1)};
 }
 
+/// Step an open directory stream to its next entry, passing over the ones
+/// for the directory and its parent: the name, the inode number and the
+/// kind of file, or none when the stream has run out.
+pub fn step_stream(token: i64) -> Result<Option<(Vec<u8>, u64, u8)>, i32> {
+    OPEN_DIRS.with(|streams| {
+        let streams = streams.borrow();
+        let stream = streams.get(&token).ok_or(libc::EBADF)?;
+        let mut found = None;
+        let mut failed = 0;
+        unsafe {
+            loop {
+                *libc::__errno_location() = 0;
+                let next = libc::readdir(stream.pointer);
+                if next.is_null() { failed = errno(); break; }
+                let name = CStr::from_ptr((*next).d_name.as_ptr()).to_bytes();
+                if name == b"." || name == b".." { continue; }
+                found = Some((name.to_vec(), (*next).d_ino as u64, (*next).d_type));
+                break;
+            }
+        }
+        if found.is_none() && failed != 0 { Err(failed) } else { Ok(found) }
+    })
+}
+/// The row the stream's `scandir_next` operation answers with.
+pub fn stream_row(name: Vec<u8>, inode: u64, kind: u8) -> Value {
+    Value::tuple(vec![octets(name), Value::from_big(BigInt::from(inode)), Value::Small(kind as i64)])
+}
+
 fn octets(part: impl Into<Vec<u8>>) -> Value {
     Value::Octets { cell: Rc::new(RefCell::new(part.into())), changeable: false, lead: "b".into() }
 }
@@ -47,10 +75,15 @@ fn data_of(item: &Value) -> Result<Vec<u8>, String> {
 fn record(s: &libc::stat) -> Value {
     let initial = [s.st_mode as u64, s.st_ino, s.st_dev, u64::from(s.st_nlink)];
     let mut fields: Vec<Value> = initial.into_iter().map(|unsigned| Value::from_big(BigInt::from(unsigned))).collect();
-    let signed = [i64::from(s.st_uid), i64::from(s.st_gid), s.st_size, s.st_atime,
-        s.st_mtime, s.st_ctime, s.st_atime_nsec, s.st_mtime_nsec, s.st_ctime_nsec,
-        i64::from(s.st_blksize), s.st_blocks];
+    let signed = [i64::from(s.st_uid), i64::from(s.st_gid), s.st_size, s.st_atime, s.st_mtime, s.st_ctime];
     for amount in signed {fields.push(Value::Small(amount));}
+    // Each clock twice over, seconds with their fraction and then whole
+    // nanoseconds, so the module has nothing left to compute per call.
+    let clocks = [(s.st_atime, s.st_atime_nsec), (s.st_mtime, s.st_mtime_nsec), (s.st_ctime, s.st_ctime_nsec)];
+    for (seconds, nanos) in clocks { fields.push(crate::data::worth_of_binary(seconds as f64 + nanos as f64 / 1e9, crate::math::DEFAULT_PLACES)); }
+    for (seconds, nanos) in clocks { fields.push(Value::from_big(BigInt::from(seconds) * 1_000_000_000 + nanos)); }
+    fields.push(Value::Small(i64::from(s.st_blksize)));
+    fields.push(Value::Small(s.st_blocks));
     fields.push(Value::from_big(BigInt::from(s.st_rdev)));
     Value::tuple(fields)
 }

@@ -537,6 +537,8 @@ pub struct Compiler<'a> {
     registry: &'a mut Registry,
     pieces: Vec<Piece>,
     counter: usize,
+    /// Call temporaries must not renumber the identities of nested code.
+    call_temporaries: usize,
     yield_operand: bool,
     forbids_await: bool,
     awkward_place: bool,
@@ -998,7 +1000,7 @@ fn compile_pass(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let future_bits = table.future_bits;
-    let mut a = Compiler { image_modes: i64::from(wants_value) | (i64::from(interactive) << 1) | (i64::from(table.allow_top_level_await) << 2) | (table.optimize.clamp(0, 2) << 8), source_content: Rc::new(std::cell::OnceCell::new()), source_tokens: if discovering { Rc::from([]) } else { Rc::from(tokens) }, reading_annotation: false, class_annotation_read: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, finally_loop_bases: Vec::new(), except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, ast_expression_starts: AST_POSITIONS.with(|entries| (!entries.borrow().is_empty()).then(Vec::new)), spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decorated_at: None, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { call_temporaries: 0, image_modes: i64::from(wants_value) | (i64::from(interactive) << 1) | (i64::from(table.allow_top_level_await) << 2) | (table.optimize.clamp(0, 2) << 8), source_content: Rc::new(std::cell::OnceCell::new()), source_tokens: if discovering { Rc::from([]) } else { Rc::from(tokens) }, reading_annotation: false, class_annotation_read: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, finally_loop_bases: Vec::new(), except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, ast_expression_starts: AST_POSITIONS.with(|entries| (!entries.borrow().is_empty()).then(Vec::new)), spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decorated_at: None, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1461,6 +1463,23 @@ impl<'a> Compiler<'a> {
         self.note_seen(name, SEEN_READ);
         let renamed = self.comprehension_names.iter().rev().find(|(n, _)| n == name).map(|(_, own)| own.clone());
         let name = renamed.as_deref().unwrap_or(name);
+        // Text read inside a routine stands where its caller stands: the
+        // caller's own locals answer before the caller's globals, as the
+        // reference reads a frame's locals before its globals, unless the
+        // text itself declared the name `global`. A name the text hands
+        // over as one of the caller's globals is told from that by its
+        // module slot, so a caller local of the same spelling still wins.
+        if self.lang.closes_over && !self.discovering {
+            let unit = self.pieces.last().expect("a unit");
+            let given_global = unit.globals.iter().any(|(n, to)| n == name && to.starts_with("\0module:"));
+            let said_global = unit.globals.iter().any(|(n, to)| n == name && !to.starts_with("\0module:"));
+            if given_global && !said_global {
+                if let Some(at) = Self::unblocked(unit, name) {
+                    let far = self.registry.slot(name);
+                    return Cell { free: false, ident: Rc::from(name), near: LocalSlots::Single(at), far, moving };
+                }
+            }
+        }
         if let Some(cell) = self.global_cell(name) {
             return Cell { moving, ..cell };
         }
@@ -9215,6 +9234,41 @@ impl<'a> Compiler<'a> {
     /// a call. The last comma may stand before a closing mark or line.
     fn tuple_value(&mut self) -> Res<()> { self.tuple_read(true) }
 
+    /// What a parenthesised star is. 0: an ordinary group, parsed as
+    /// written. 1: one starred expression (`(*a)`, `(*lambda: 1)`).
+    /// 2: a colon at this depth that does not open a lambda body
+    /// (`(*b:*b)`), which is not a starred expression at all.
+    fn starred_group(&self) -> u8 {
+        if self.lang.unpack_rest.is_empty() || !self.on_any(&self.lang.unpack_rest) { return 0; }
+        let Some(close) = self.lang.grouping.as_ref().map(|pair| pair.close.as_str()) else { return 0; };
+        let mut depth = 0i32;
+        let mut lambda_depth: Vec<i32> = Vec::new();
+        for tok in self.tokens.iter().skip(self.pos + 1) {
+            if tok.shape == Shape::Instr && Lang::spells(&self.lang.lambda_words, &tok.spelling()) {
+                lambda_depth.push(depth);
+            }
+            if tok.shape != Shape::Sign { continue; }
+            match tok.lexeme.as_str() {
+                "(" | "[" | "{" => depth += 1,
+                ")" | "]" | "}" => {
+                    if depth == 0 { return u8::from(tok.lexeme == close); }
+                    depth -= 1;
+                    lambda_depth.retain(|opened| *opened <= depth);
+                }
+                ":" => {
+                    if let Some(found) = lambda_depth.iter().rposition(|opened| *opened == depth) {
+                        lambda_depth.remove(found);
+                    } else if depth == 0 {
+                        return 2;
+                    }
+                }
+                _ if depth == 0 && Lang::spells(&self.lang.tuple_marks, &tok.spelling()) => return 0,
+                _ => {}
+            }
+        }
+        0
+    }
+
     fn tuple_read(&mut self, writable: bool) -> Res<()> {
         let first_spreads = self.tuple_piece(writable)?;
         if !self.on_any(&self.lang.tuple_marks) {
@@ -9376,6 +9430,14 @@ impl<'a> Compiler<'a> {
     fn tuple_piece(&mut self, writable: bool) -> Res<bool> {
         let spread = !self.lang.tuple_marks.is_empty() && self.on_any(&self.lang.unpack_rest);
         if spread { self.take(); }
+        // A starred element of a tuple is grown like a list display, so a
+        // value that will not walk says so the way a list's star does.
+        if spread && !self.lang.syntax_members.is_empty() {
+            self.act(Action::MakeArray, 0);
+            self.expr_at(0, writable)?;
+            self.act(Action::GatherItem { map: false, spread: true }, 2);
+            return Ok(true);
+        }
         self.expr_at(0, writable)?;
         if spread {
             self.act(Action::Unpack(1, Some(0)), 1);
@@ -9446,6 +9508,7 @@ impl<'a> Compiler<'a> {
             if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind}")); }
         }
         let mut listed = false;
+        let mut peeled_group = false;
         loop {
             let bracket = [&self.lang.grouping, &self.lang.array_brackets].into_iter().flatten()
                 .find(|p| self.tokens[begin].shape == Shape::Sign && p.open == self.tokens[begin].lexeme).cloned();
@@ -9463,7 +9526,9 @@ impl<'a> Compiler<'a> {
                 let kind = if self.lang.array_brackets.as_ref().map_or(false, |p| p.open == pair.open) { "list comprehension here. Maybe you meant '==' instead of '='?" } else { "generator expression" };
                 return Err(format!("SyntaxError: cannot assign to {kind}"));
             }
-            listed |= self.lang.array_brackets.as_ref().map_or(false, |p| p.open == pair.open);
+            let opened_list = self.lang.array_brackets.as_ref().map_or(false, |p| p.open == pair.open);
+            listed |= opened_list;
+            if !opened_list { peeled_group = true; }
             begin += 1;
             end -= 1;
             if begin == end { listed = true; break; }
@@ -9482,6 +9547,14 @@ impl<'a> Compiler<'a> {
         }
         let (commas, _) = self.outer_marks(begin, end, &self.lang.tuple_marks);
         listed |= !commas.is_empty();
+        if !listed && !self.lang.syntax_members.is_empty() {
+            let head = &self.tokens[begin];
+            if head.shape == Shape::Sign && Lang::spells(&self.lang.unpack_rest, &head.spelling()) {
+                let said = if peeled_group { "SyntaxError: cannot use starred expression here" }
+                    else { "SyntaxError: starred assignment target must be in a list or tuple" };
+                return Err(said.into());
+            }
+        }
         if !listed {
             if !self.lang.syntax_members.is_empty() && self.tokens[begin].shape == Shape::Sign
                 && Lang::spells(&self.lang.unpack_rest, &self.tokens[begin].lexeme) {
@@ -9545,13 +9618,23 @@ impl<'a> Compiler<'a> {
             left = right + 1;
         }
         let mut rest = None;
+        let span_count = spans.len();
         for (i, (a, _)) in spans.iter_mut().enumerate() {
             if self.tokens[*a].shape == Shape::Sign && Lang::spells(&self.lang.unpack_rest, &self.tokens[*a].spelling()) {
-                if !self.lang.syntax_members.is_empty() {
-                    if rest.is_some() { return Err("SyntaxError: multiple starred expressions in assignment".into()); }
-                    if i >= 1 << 8 { return Err("SyntaxError: too many expressions in star-unpacking assignment".into()); }
+                if rest.is_some() {
+                    if !self.lang.syntax_members.is_empty() {
+                        return Err("SyntaxError: multiple starred expressions in assignment".into());
+                    }
+                    return Err(amiss.clone());
                 }
-                if rest.replace(i).is_some() { return Err(amiss.clone()); }
+                if !self.lang.syntax_members.is_empty() {
+                    let after = span_count.saturating_sub(i + 1);
+                    // 256 names before the star, or the after-star count past the packed limit.
+                    if i >= 256 || after >= (2147483647usize >> 8) {
+                        return Err("SyntaxError: too many expressions in star-unpacking assignment".into());
+                    }
+                }
+                rest = Some(i);
                 *a += 1;
             }
         }
@@ -9673,6 +9756,9 @@ impl<'a> Compiler<'a> {
             if self.look().shape == Shape::Sign && Lang::spells(&self.lang.unpack_rest, &self.look().lexeme)
                 && self.outer_marks(self.pos, self.tokens.len(), &self.lang.tuple_marks).0.is_empty()
                 && self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.is_empty() {
+                if self.second_assign_ahead().is_some_and(|at| self.lang.compound.contains_key(self.tokens[at].spelling())) {
+                    return Err("SyntaxError: 'starred' is an illegal expression for augmented assignment".into());
+                }
                 return Err("SyntaxError: can't use starred expression here".into());
             }
             if self.look().spelling() == "None" && self.lang.compound.contains_key(self.look_ahead(1).spelling()) {
@@ -9794,7 +9880,19 @@ impl<'a> Compiler<'a> {
             let target = self.cell_to_write(&named);
             self.put(Instr::Read(target));
             Ok(())
-        } else { self.expr_at(0, false) };
+        } else {
+            // `*a` and `*1` as a statement are starred expressions. A
+            // star inside a slice, a test or a lambda body is not read
+            // from here, and the ordinary reader calls it invalid syntax.
+            if !self.lang.syntax_members.is_empty() && self.on_any(&self.lang.unpack_rest) {
+                let compound = self.second_assign_ahead().is_some_and(|at| self.lang.compound.contains_key(self.tokens[at].spelling()));
+                if compound {
+                    return Err("SyntaxError: 'starred' is an illegal expression for augmented assignment".into());
+                }
+                return Err("SyntaxError: can't use starred expression here".into());
+            }
+            self.expr_at(0, false)
+        };
         self.annotation_target = outer_annotation;
         self.writing_place = saved_place;
         expression?;
@@ -10968,8 +11066,9 @@ impl<'a> Compiler<'a> {
                     // property, a class's own value, a place in an array
                     // or what a call gave back is put in a holding place
                     // as it stands, and a write cannot reach it there.
+                    // Python's global mapping hooks run before the right operand.
                     let named = match self.piece().instrs[from..] {
-                        [Instr::Read(ref cell)] if !cell.moving => Some(cell.clone()),
+                        [Instr::Read(ref cell)] if !cell.moving && !lang.shadow_builtins => Some(cell.clone()),
                         _ => None,
                     };
                     if named.is_some() {
@@ -11235,6 +11334,16 @@ impl<'a> Compiler<'a> {
             }
             Shape::StringBegin => {
                 let template = token.lexeme.chars().next().is_some_and(|prefix| self.lang.template_prefixes.contains(&prefix));
+                // A formatted literal holding only literal text is that text.
+                let literal_only = self.tokens[self.pos..].iter().position(|t| t.shape == Shape::StringEnd)
+                    .filter(|&len| self.tokens[self.pos..self.pos + len].iter().all(|t| t.shape == Shape::Quote));
+                if let (false, Some(len)) = (template, literal_only) {
+                    let whole: String = self.tokens[self.pos..self.pos + len].iter().map(|t| t.lexeme.as_str()).collect();
+                    self.constant(Value::text(&whole));
+                    self.pos += len;
+                    self.pass_token();
+                    return Ok(());
+                }
                 if !template { self.constant(Value::text("")); }
                 let mut count = 0;
                 while self.look().shape != Shape::StringEnd {
@@ -11814,7 +11923,23 @@ impl<'a> Compiler<'a> {
                             // spelled the same, where the language says so.
                             let bound = self.builtin_shadowed(&tok.lexeme);
                             let native = if bound { None } else { lang.builtins.get(&tok.lexeme).copied() };
-                            if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
+                            if lang.shadow_builtins && native.is_none() {
+                                self.call_temporaries += 1;
+                                let name = format!("#callee{}", self.call_temporaries);
+                                let saved = self.cell_to_write(&name);
+                                if !lang.trace_fields.is_empty() {
+                                    let row = (tok.row as u32).saturating_sub(self.before);
+                                    let stop = if tok.end_column == 0 { tok.byte_column.max(tok.column) + tok.lexeme.len() } else { tok.byte_end_column.max(tok.end_column) };
+                                    self.put(Instr::Location(row, tok.byte_column.max(tok.column).saturating_sub(1) as u32, row, stop.saturating_sub(1) as u32));
+                                }
+                                self.read_callee(&tok.lexeme);
+                                self.put(Instr::SaveCallable(saved.clone()));
+                                let argc = self.arguments_of(&tok.lexeme, &call)?;
+                                self.read(&name);
+                                self.put(Instr::Forget(saved));
+                                if !lang.trace_fields.is_empty() { self.put(self.expression_location(origin)); }
+                                self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), argc + 1);
+                            } else if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
                                 // push(arr, v), put(arr, i, v): the array is named.
                                 let target = match self.look().shape {
                                     Shape::Instr => self.take().lexeme,
@@ -11882,6 +12007,14 @@ impl<'a> Compiler<'a> {
                                     }
                                 }
                             } else {
+                                let saved = if lang.shadow_builtins && self.pieces.last().is_some_and(|unit| !unit.outermost)
+                                    && !self.in_class_body() && !matches!(native, Some(Builtin::Text(_))) {
+                                    self.call_temporaries += 1;
+                                    let name = format!("#builtin{}", self.call_temporaries);
+                                    let cell = self.cell_to_write(&name);
+                                    self.put(Instr::PrepareBuiltin(cell.clone(), Rc::from(tok.lexeme.as_str())));
+                                    Some(cell)
+                                } else { None };
                                 let argc = self.arguments_of(&tok.lexeme, &call)?;
                                 if matches!(native, Some(Builtin::Bytes(_))) && self.arg_names.contains_key(&tok.lexeme) {
                                     self.read_callee(&tok.lexeme);
@@ -11898,6 +12031,12 @@ impl<'a> Compiler<'a> {
                                         if !lang.trace_fields.is_empty() { self.put(self.expression_location(origin)); }
                                         self.call(&tok.lexeme, argc)?;
                                     }
+                                }
+                                if let Some(cell) = saved {
+                                    if let Some(Instr::Act(action @ Action::Builtin(..), count)) = self.piece().instrs.last().cloned() {
+                                        self.piece().instrs.pop();
+                                        self.put(Instr::PreparedAct(action, count, cell));
+                                    } else { self.put(Instr::Forget(cell)); }
                                 }
                             }
                         }
@@ -11947,6 +12086,9 @@ impl<'a> Compiler<'a> {
                     if tok.lexeme == group.open {
                         self.pass_token();
                         if self.yield_operand && self.comprehension_ahead().is_none() {
+                            if !lang.syntax_members.is_empty() && self.starred_group() == 1 {
+                                return Err("SyntaxError: cannot use starred expression here".into());
+                            }
                             let mut count = 0;
                             let mut tuple = self.at_symbol(&group.close);
                             while !self.at_symbol(&group.close) {
@@ -11966,7 +12108,16 @@ impl<'a> Compiler<'a> {
                                 if lang.builtins.values().any(|b| *b == Builtin::Tuple) { self.constant(Value::tuple(Vec::new())); }
                                 else { self.scope_fault(&lang.scope_unready.clone()); }
                             } else if lang.tuple_marks.is_empty() { self.expr(0)?; }
-                            else { self.scope_value()?; }
+                            else {
+                                if !lang.syntax_members.is_empty() {
+                                    match self.starred_group() {
+                                        1 => return Err("SyntaxError: cannot use starred expression here".into()),
+                                        2 => return Err("SyntaxError: invalid syntax".into()),
+                                        _ => {}
+                                    }
+                                }
+                                self.scope_value()?;
+                            }
                             if !lang.syntax_members.is_empty()
                                 && matches!(self.look().shape, Shape::Instr | Shape::Numeral) {
                                 return Err("SyntaxError: invalid syntax. Perhaps you forgot a comma?".into());
@@ -12157,9 +12308,12 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
             } else { match named.as_slice() {
                 [Instr::Read(slot)] => {
-                    if targets { self.put(Instr::Read(slot.clone())); self.discard(); }
                     let held = self.cell_to_write(&slot.ident.to_string());
-                    self.put(Instr::Forget(held));
+                    if targets && !self.lang.class_builder.is_empty() { self.put(Instr::DeleteName(held)); }
+                    else {
+                        if targets { self.put(Instr::Read(slot.clone())); self.discard(); }
+                        self.put(Instr::Forget(held));
+                    }
                 }
                 [.., Instr::Act(Action::At, 2)] if targets && !self.lang.class_builder.is_empty() && self.in_class_body() => {
                     // A computed object supplied by the class book is already
@@ -14434,7 +14588,7 @@ fn word_alone(w: &Instr) -> bool {
     };
     match w {
         Instr::Const(_) | Instr::Read(_) | Instr::Glance(_) | Instr::Write(_) | Instr::Skip(_)
-        | Instr::Missing(_) | Instr::Unwritten(_) | Instr::Line(_) | Instr::Location(..) | Instr::Forget(_)
+        | Instr::Missing(_) | Instr::Unwritten(_) | Instr::Line(_) | Instr::Location(..) | Instr::Forget(_) | Instr::SaveCallable(_)
         | Instr::Emptied(_) | Instr::Shed | Instr::Nothing | Instr::Ready(_) | Instr::Bump { .. } => true,
         Instr::Act(op, _) => quiet(op),
         Instr::Dyad { op, .. } | Instr::SkipCmp { op, .. } => quiet(op),
@@ -14805,7 +14959,7 @@ fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String], pytho
                 let name = cell.ident.to_string();
                 if !name.starts_with('#') && !locals.contains(&name) && !names.contains(&name) { names.push(name); }
             }
-            Instr::Act(Action::Grab(name) | Action::Plant(name), _) | Instr::Act(Action::Builtin(_, name), _) if !name.is_empty() => {
+            Instr::Act(Action::Grab(name) | Action::Plant(name), _) | Instr::Act(Action::Builtin(_, name), _) | Instr::PreparedAct(Action::Builtin(_, name), _, _) if !name.is_empty() => {
                 if !names.iter().any(|n| n == name.as_ref()) { names.push(name.to_string()); }
             }
             _ => {}

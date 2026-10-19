@@ -108,7 +108,7 @@ class Struct:
                 try:
                     if not isinstance(value, float):
                         value = float(value)
-                except (TypeError, ValueError):
+                except BaseException:
                     raise error('required argument is not a float')
             elif code in 'FD':
                 if not isinstance(value, (int, float, complex)) and not hasattr(type(value), '__complex__') and not hasattr(type(value), '__float__') and not hasattr(type(value), '__index__'):
@@ -219,9 +219,18 @@ def calcsize(format):
     return _get(format).size
 
 def pack(format, *values):
+    # Exact builtin arguments need no Python conversion hooks.
+    if type(format) is str and format.isascii():
+        packed = _call(10, format, values)
+        if packed is not None:
+            return packed
     return _get(format).pack(*values)
 
 def unpack(format, buffer):
+    # Native layouts already validate bounds and cache parsed formats.
+    if (type(format) is str and type(buffer) in (bytes, bytearray)
+            and format.isascii() and 'F' not in format and 'D' not in format):
+        return _call(2, format, buffer)
     return _get(format).unpack(buffer)
 
 def pack_into(format, buffer, offset, *values):

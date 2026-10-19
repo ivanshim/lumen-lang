@@ -1,28 +1,32 @@
-#!/usr/bin/env python3
-"""Stage stock reference files beside the runtime library on Lambda."""
-import os
+"""Stage the registered reference suite with its real library layout."""
+from pathlib import Path
 import shutil
 import tempfile
 
-# Return interpreter arguments and the disposable stage for a reference source.
-def staged_reference(root, prog, versions):
-    tests = next((v['tests'] for v in versions.values()
-                  if prog == v['tests'] or prog.startswith(v['tests'] + '/')), None)
-    if tests is None:
+from python_tests import python_test_module
+
+
+def staged_reference(root, program, versions):
+    root = Path(root).resolve()
+    source = (root / program).resolve()
+    for version in versions.values():
+        suite = (root / version['tests']).resolve()
+        try:
+            relative = source.relative_to(suite)
+        except ValueError:
+            continue
+        break
+    else:
         return None, None
-    suite = os.path.join(root, tests)
-    relative = os.path.relpath(os.path.join(root, prog), suite)
-    stage = tempfile.mkdtemp()
-    libroot = os.path.join(stage, 'tests')
-    os.mkdir(libroot)
-    library = os.path.join(root, 'langs', 'lib_python', 'modules')
-    for name in os.listdir(library):
-        os.symlink(os.path.join(library, name), os.path.join(libroot, name))
-    staged_suite = os.path.join(libroot, os.path.basename(tests))
-    shutil.copytree(suite, staged_suite)
-    path = os.path.join(staged_suite, relative)
-    if relative in ('test_patma.py', 'test_tabnanny.py', 'test_type_aliases.py', 'test_extcall.py', 'test_type_params.py', 'test_unpack_ex.py'):
-        return [os.path.join(root, 'scripts', 'suite', 'reference_entry.py'), path], stage
-    if relative.endswith('/__main__.py'):
-        return [os.path.join(root, 'scripts', 'suite', 'reference_entry.py'), path], stage
-    return [path], stage
+
+    stage = Path(tempfile.mkdtemp(prefix='lumen-reference-'))
+    library = stage / 'tests'
+    library.mkdir()
+    for member in (root / 'langs/lib_python/modules').iterdir():
+        (library / member.name).symlink_to(member)
+    copied = library / suite.name
+    shutil.copytree(suite, copied)
+    module = python_test_module(source)
+    entry = copied / '_lumen_reference_entry.py'
+    shutil.copyfile(root / 'scripts/suite/reference_entry.py', entry)
+    return [str(entry), str(copied), module, str(copied / relative)], str(stage)

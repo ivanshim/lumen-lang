@@ -36,6 +36,7 @@ def register(search_function):
 def unregister(search_function):
     _searches[:] = [f for f in _searches if f is not search_function]
     _registry_cache.clear()
+    _registry_spelled.clear()
 
 def register_error(name, handler):
     if not isinstance(name, str):
@@ -361,12 +362,19 @@ class CodecInfo(tuple):
         self.incrementaldecoder = incrementaldecoder
 
 _registry_cache = {}
+# The same entries by the spelling they were asked for with, so that a
+# name looked up again skips the validation and the normalizing.
+_registry_spelled = {}
 _registry_started = False
 _registry_normalizer = None
 
 # Resolve normalized codec names through registered search functions.
 def lookup(encoding):
     global _registry_started, _registry_normalizer
+    if type(encoding) is str:
+        found = _registry_spelled.get(encoding)
+        if found is not None:
+            return found
     if not isinstance(encoding, str):
         raise TypeError('encoding must be str, not ' + type(encoding).__name__)
     encoding.encode('utf-8')
@@ -377,6 +385,8 @@ def lookup(encoding):
         _registry_normalizer = _normalize_encoding
     name = _registry_normalizer(encoding).lower()
     if name in _registry_cache:
+        if type(encoding) is str:
+            _registry_spelled[encoding] = _registry_cache[name]
         return _registry_cache[name]
     if not _registry_started:
         _registry_started = True
@@ -387,6 +397,8 @@ def lookup(encoding):
             if not isinstance(found, tuple) or len(found) != 4:
                 raise TypeError('codec search functions must return 4-tuples')
             _registry_cache[name] = found
+            if type(encoding) is str:
+                _registry_spelled[encoding] = found
             return found
     raise LookupError('unknown encoding: ' + encoding)
 

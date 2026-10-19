@@ -927,6 +927,14 @@ pub enum Instr {
     BondPlace(Cell, usize),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Cell),
+    /// Delete a user name with local/global namespace semantics.
+    DeleteName(Cell),
+    /// Save a callable value before its arguments run.
+    SaveCallable(Cell),
+    /// Resolve a builtin in supplied globals without changing ordinary calls.
+    PrepareBuiltin(Cell, Rc<str>),
+    /// Apply a builtin using the callable saved before its arguments.
+    PreparedAct(Action, usize, Cell),
     /// Put nothing at all in this binding, letting go of whatever it
     /// held. The slot a routine keeps its running result in is emptied
     /// this way at the head of a statement, so that what the statement

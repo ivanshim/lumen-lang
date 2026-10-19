@@ -7,6 +7,7 @@ impl<'a> Machine<'a> {
         match key {
             "defaults" => self.rules.detail_defaults,
             "call" => self.rules.detail_call,
+            "code" => self.rules.detail_code,
             "descriptor.delete" => self.rules.detail_descriptor_delete,
             "descriptor.set" => self.rules.detail_descriptor_set,
             "remove" => self.rules.detail_delete,
@@ -1311,11 +1312,33 @@ impl<'a> Machine<'a> {
         let shown=entries.iter().find(|(k,_)|k==self.detail("qualified")).map_or(title.clone(),|(_,v)|v.bare());
         // Keep the allocation decision separate from the writable slot
         // declaration: editing that declaration cannot resize a class.
-        let storage = entries.iter().find(|entry| entry.0 == self.detail("slots")).map(|entry| {
-            let declared = match entry.1.settled() { Value::Tuple(items) | Value::Vector(items) => items.as_ref().clone(), one => vec![one] };
-            declared.into_iter().any(|item| match item { Value::Text(name) => name.as_ref() != "__dict__" && name.as_ref() != "__weakref__", _ => true })
-        }).unwrap_or(false);
+        let declared_slots = entries.iter().find(|entry| entry.0 == self.detail("slots")).map(|entry| entry.1.clone());
+        let mut walked_names: Option<Vec<Value>> = None;
+        let storage = if let Some(value) = declared_slots {
+            let offered = value.settled();
+            // Strings and the containers a class body usually writes can be
+            // read twice. Every other iterable is spent by the first reading.
+            let replayable = Self::slot_letters(&offered).is_some()
+                || matches!(offered, Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Set(_));
+            if replayable {
+                let declared = match &offered {
+                    Value::Tuple(items) | Value::Vector(items) => items.as_ref().clone(),
+                    one => vec![one.clone()],
+                };
+                declared.into_iter().any(|item| !matches!(Self::slot_letters(&item).as_deref(), Some("__dict__") | Some("__weakref__")))
+            } else {
+                let items = self.drain_slot_walk(&offered)?;
+                let keeps_room = items.iter().any(|item| !matches!(Self::slot_letters(item).as_deref(), Some("__dict__") | Some("__weakref__")));
+                walked_names = Some(items);
+                keeps_room
+            }
+        } else {
+            false
+        };
         let mut fixed = Vec::new();
+        if let Some(items) = walked_names {
+            fixed.push((String::from("\0slot-walk"), Value::tuple(items)));
+        }
         if let Some(name) = native_name { fixed.push(("\0native-name".to_string(), name)); }
         if let Some(owner) = builder { fixed.push(("\0metaclass".to_owned(), Value::Blueprint(owner))); }
         let module = entries.iter().find(|(key, _)| key == self.detail("module")).map(|(_, held)| held.bare()).unwrap_or_default();
@@ -1418,7 +1441,13 @@ impl<'a> Machine<'a> {
     /// same slot keeps its own.
     fn name_slots(&mut self,class:&Rc<Blueprint>)->Result<(),Escape> {
         if !self.protocol_spelled(){return Ok(());}
-        class.weak_slot.set(Some(self.admits_weak(class)));
+        if let Some(saved) = Self::recalled_slots(class) {
+            let here = saved.iter().any(|item| Self::slot_letters(item).as_deref() == Some("__weakref__"));
+            let above = class.parents().iter().any(|parent| self.admits_weak(parent));
+            class.weak_slot.set(Some(here || above));
+        } else {
+            class.weak_slot.set(Some(self.admits_weak(class)));
+        }
         let Some(declared)=Self::own_entry(class,self.detail("slots")) else {
             if !self.rules.words_ext_builtin_weak_get.is_empty() && self.admits_weak(class) && class.parents().iter().all(|parent| !self.admits_weak(parent)) {
                 let read = Self::wrap(32, vec![Value::text("__weakref__"), Value::Blueprint(class.clone())]);
@@ -1426,18 +1455,23 @@ impl<'a> Machine<'a> {
             }
             return Ok(());
         };
-        let words=match declared.settled(){
-            Value::Tuple(items)|Value::Vector(items)=>items.as_ref().clone(),
-            // A mapping stands a name at each key; the worth a key
-            // holds is documentation for the slot, nothing a layout reads.
-            Value::Dict(mapping)=>mapping.pairs().iter().map(|(key,_)|key.clone()).collect(),
-            // A set stands its members as the names, in its own order.
-            Value::Set(store)=>store.borrow().entries.iter().map(|(_,value)|value.clone()).collect(),
-            alone @ Value::Text(_)=>vec![alone],
-            iterable=>self.object_members(&iterable)?};
+        let words = if let Some(saved) = Self::recalled_slots(class) {
+            saved
+        } else {
+            match declared.settled() {
+                Value::Tuple(items)|Value::Vector(items)=>items.as_ref().clone(),
+                // A mapping stands a name at each key; the worth a key
+                // holds is documentation for the slot, nothing a layout reads.
+                Value::Dict(mapping)=>mapping.pairs().iter().map(|(key,_)|key.clone()).collect(),
+                // A set stands its members as the names, in its own order.
+                Value::Set(store)=>store.borrow().entries.iter().map(|(_,value)|value.clone()).collect(),
+                alone @ Value::Text(_) => vec![alone],
+                iterable => self.object_members(&iterable)?,
+            }
+        };
         let words: Vec<Value> = words.into_iter().map(|name| {
             let source=match name {Value::Keyed(key,_)=>key.as_ref().clone(),plain=>plain};
-            match Self::underlying(&source) {Some(value)=>value.settled(),None=>source.settled()}
+            source.settled()
         }).collect();
         let native = Self::native_beneath(class);
         if !words.is_empty() && matches!(native.as_deref(), Some("tuple" | "bytes" | "int")) {
@@ -1450,10 +1484,11 @@ impl<'a> Machine<'a> {
         // stands for one layout a thing may carry, not several.
         let mut dict_seen=0u32;
         let mut weakref_seen=0u32;
+        let mut spelled=Vec::with_capacity(words.len());
         for word in &words {
-            let Value::Text(name)=word else{return Err("TypeError: __slots__ items must be strings".to_owned().into())};
-            if !Self::valid_slot_name(name){return Err("TypeError: __slots__ items must be identifiers".to_owned().into());}
-            match name.as_ref() {"__dict__"=>dict_seen+=1,"__weakref__"=>weakref_seen+=1,_=>{}}
+            let name=Self::slot_spelling(word)?;
+            match name.as_ref(){"__dict__"=>dict_seen+=1,"__weakref__"=>weakref_seen+=1,_=>{}}
+            spelled.push(name);
         }
         if dict_seen>1{return Err("TypeError: __dict__ slot disallowed: we already got one".to_owned().into());}
         if weakref_seen>1{return Err("TypeError: __weakref__ slot disallowed: we already got one".to_owned().into());}
@@ -1475,8 +1510,7 @@ impl<'a> Machine<'a> {
                 return Err(format!("TypeError: {which} slot disallowed: we already got one").into());
             }
         }
-        for word in words {
-            let Value::Text(name)=word else{unreachable!()};
+        for name in spelled {
             let name = Rc::<str>::from(crate::build::member_spelling(&class.name, &name));
             if name.as_ref()==self.detail("namespace"){continue;}
             if Self::own_entry(class,&name).is_some(){return Err(format!("ValueError: '{name}' in __slots__ conflicts with class variable").into());}
@@ -1485,16 +1519,52 @@ impl<'a> Machine<'a> {
         }
         Ok(())
     }
-    /// Whether a slot's own name could follow `self.` in this language:
-    /// not empty, opening on a letter or an underscore, and holding
-    /// nothing after but letters, figures and underscores.
-    fn valid_slot_name(word:&str)->bool {
-        let mut letters=word.chars();
-        match letters.next() {
-            Some(c) if c=='_'||c.is_alphabetic() => {}
-            _ => return false,
+    /// Pull every name out of an iterable that cannot be read twice.
+    fn drain_slot_walk(&mut self, offered: &Value) -> Result<Vec<Value>, Escape> {
+        let walk = self.iterated_value(offered).map_err(|words| self.got_away.take().unwrap_or_else(|| words.into()))?;
+        let mut gathered = Vec::new();
+        loop {
+            match self.next_value(&walk) {
+                Ok(Some(item)) => gathered.push(item),
+                Ok(None) => return Ok(gathered),
+                Err(words) => return Err(self.got_away.take().unwrap_or_else(|| words.into())),
+            }
         }
-        letters.all(|c|c=='_'||c.is_alphanumeric())
+    }
+    /// Names saved from that single walk, when the declaration was spent.
+    fn recalled_slots(blueprint: &Blueprint) -> Option<Vec<Value>> {
+        let saved = blueprint.constants.iter().find(|entry| entry.0 == "\0slot-walk")?;
+        match saved.1.settled() {
+            Value::Tuple(items) => Some(items.as_ref().clone()),
+            _ => None,
+        }
+    }
+    /// The characters a slot contributes, when it is a string or a
+    /// subclass of one. Other values contribute none.
+    fn slot_letters(item:&Value)->Option<Rc<str>> {
+        match item.settled() {
+            Value::Text(name)=>Some(name),
+            Value::Thing(held) if Self::native_beneath(&held.blueprint()).as_deref()==Some("str") => {
+                Self::underlying(item).and_then(|kept| match kept.settled() { Value::Text(name)=>Some(name), _=>None })
+            }
+            _=>None,
+        }
+    }
+    fn slot_spelling(item:&Value)->Result<Rc<str>,Escape> {
+        match Self::slot_letters(item) {
+            Some(name) if Self::valid_slot_name(&name) => Ok(name),
+            Some(_) => Err("TypeError: __slots__ must be identifiers".to_owned().into()),
+            None => Err(format!("TypeError: __slots__ items must be strings, not '{}'", item.settled().kind_word()).into()),
+        }
+    }
+    /// An identifier: the first character a letter or `_`, and each
+    /// character after one that may continue an identifier.
+    fn valid_slot_name(word:&str)->bool {
+        let mut cursor=word.chars();
+        match cursor.next() {
+            Some(head) if head=='_' || unicode_ident::is_xid_start(head) => cursor.all(unicode_ident::is_xid_continue),
+            _ => false,
+        }
     }
     /// The key a slot's worth is kept under in a thing. A thing not of
     /// the declaring blueprint's line has no such key, and is told so.
@@ -1581,8 +1651,13 @@ impl<'a> Machine<'a> {
         let Value::Thing(t)=thing else{return Err(self.class_unready())};
         if parts.get(2).is_some_and(|part|part.bare()=="\0instance-book" || matches!(part, Value::Small(-2))){return self.replace_instance_book(t,replacement);}
         if parts[0].bare() == "__weakref__" && !self.rules.words_ext_builtin_weak_get.is_empty() { return Err(format!("AttributeError: attribute '__weakref__' of '{}' objects is not writable", t.blueprint().name).into()); }
-        if !Self::change_entry(&mut t.holds.borrow_mut(),&key,replacement.map(|held|held.keep(true))){return Err(self.absent_attribute(thing,&parts[0].bare()));}
-        Ok(Value::Nil)
+        let incoming=replacement.map(|held| held.keep(true));
+        if Self::change_entry(&mut t.holds.borrow_mut(), &key, incoming) {
+            Ok(Value::Nil)
+        } else {
+            // Clearing a slot before it held anything reports that name alone.
+            Err(format!("AttributeError: {}", parts[0].bare()).into())
+        }
     }
     /// The blueprint of every property, made once. It holds the
     /// workings of the protocol as its entries -- reading, writing and
@@ -2700,7 +2775,10 @@ impl<'a> Machine<'a> {
                     }
                     122 => {
                         if !values.is_empty() { return Err(String::from("TypeError: function takes no arguments").into()); }
-                        self.prim(Prim::Weigh, "eval", &[kept[0].clone(), kept[1].clone()]).map_err(Escape::from)
+                        let saved = self.module_function_builtins.replace(kept[6].clone());
+                        let result = self.text_performed(true, "eval", &kept[..2]);
+                        self.module_function_builtins = saved;
+                        result.map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)))
                     }
                     143 => {
                         if !values.is_empty() { return Err(String::from("TypeError: this code object takes no arguments").into()); }
@@ -3406,7 +3484,10 @@ impl<'a> Machine<'a> {
                 };
                 if recognized {
                     let namespace = options[1].clone().ok_or_else(|| String::from("TypeError: function() missing required argument 'globals'"))?;
-                    if !matches!(namespace.settled(), Value::Dict(_)) { return Err(String::from("TypeError: function() argument 'globals' must be dict").into()); }
+                    if !matches!(namespace.settled(), Value::Dict(_))
+                        && !Self::underlying(&namespace).is_some_and(|worth| matches!(worth.settled(), Value::Dict(_))) {
+                        return Err(String::from("TypeError: function() argument 'globals' must be dict").into());
+                    }
                     let title = match options[2].as_ref().map(Value::settled) {
                         Some(title @ Value::Text(_)) => title,
                         None | Some(Value::Nil) => Value::text("<module>"),
@@ -3425,13 +3506,20 @@ impl<'a> Machine<'a> {
                     }
                     let keyword_defaults = options[5].as_ref().map(Value::settled).unwrap_or(Value::Nil);
                     match keyword_defaults { Value::Nil | Value::Dict(_) => {}, _ => return Err("TypeError: arg 6 (kwdefaults) must be None or dict".to_owned().into()) }
-                    return Ok(Self::wrap(122, vec![value, namespace, title, defaults, closure, keyword_defaults]));
+                    let builtin_word = self.table.strings("ext.system.module.builtins").first().cloned().unwrap_or_default();
+                    let stored = self.builtin_entry(&Rc::new(RefCell::new(namespace.clone())), &builtin_word)?;
+                    let captured = match stored { Some(value) => value, None => self.builtins_here() };
+                    let natives = self.builtin_dictionary(captured)?;
+                    return Ok(Self::wrap(122, vec![value, namespace, title, defaults, closure, keyword_defaults, natives]));
                 }
             }
             let Some(Value::Wrapped(7, body)) = options[0].as_ref().map(Value::settled) else { return Err(String::from("TypeError: function() argument 'code' must be code").into()); };
             let Some(Value::Routine(origin) | Value::Bound(origin, _)) = body.first() else { return Err(String::from("TypeError: function() argument 'code' must be code").into()); };
             let Some(globals) = options[1].clone() else { return Err(String::from("TypeError: function() missing required argument 'globals'").into()); };
-            if !matches!(globals.settled(), Value::Dict(_)) { return Err(String::from("TypeError: function() argument 'globals' must be dict").into()); }
+            if !matches!(globals.settled(), Value::Dict(_))
+                && !Self::underlying(&globals).is_some_and(|worth| matches!(worth.settled(), Value::Dict(_))) {
+                return Err(String::from("TypeError: function() argument 'globals' must be dict").into());
+            }
             let mut fresh = (**origin).clone();
             fresh.globals_rebound = true;
             fresh.doc = fresh.literals.first().filter(|_| fresh.flags & (1 << 26) != 0)
@@ -3489,7 +3577,7 @@ impl<'a> Machine<'a> {
             };
             fresh.globe = Some(globals.clone());
             let word = self.table.strings("ext.system.module.builtins").first().cloned().unwrap_or_default();
-            fresh.born = Some(match self.mapping_read(&globals, &word)? {
+            fresh.born = Some(match self.builtin_entry(&Rc::new(RefCell::new(globals.clone())), &word)? {
                 Some(value) => value,
                 None => self.builtins_here(),
             });
@@ -3991,17 +4079,15 @@ impl<'a> Machine<'a> {
         if let Some(entry)=self.written_over.get(&Self::written_key(value,&self.outermost)) {return entry.4.clone();}
         match value {Value::Bound(code,_)|Value::Routine(code)|Value::Method(code, _, _)=>code.clone(),_=>unreachable!("only a routine runs code")}
     }
-    /// The builtins a routine reaches its unbound names through: what
-    /// the dictionary it was handed keeps under that name, else the
-    /// builtins in force where it was made, else the kernel's own
-    /// dictionary.
+    /// Expose the creation-time builtins, retaining that namespace when
+    /// the program changes its globals' __builtins__ entry.
     fn routine_builtins(&mut self,code:&Routine)->Res {
+        if let Some(born) = &code.born { return self.builtin_dictionary(born.clone()); }
         if let Some(word)=self.table.strings("ext.system.module.builtins").first().map(String::as_str).map(str::to_owned) {
             if let Some(globe)=&code.globe {
-                if let Some(held)=self.mapping_read(globe,&word)?{return Ok(held);}
+                if let Some(held) = self.builtin_entry(&Rc::new(RefCell::new(globe.clone())), &word)? { return self.builtin_dictionary(held); }
             }
         }
-        if let Some(born)=&code.born{return Ok(born.clone());}
         Ok(Value::Mutable(self.natives_kept(),true))
     }
     /// What a routine holds of its own under a name: its name, full name
@@ -4750,6 +4836,7 @@ impl<'a> Machine<'a> {
         None
     }
 
+
     fn annotation_entry(&mut self, worth: Value, symbolic: bool, declaring: Option<Rc<Blueprint>>) -> Res {
         let spelling = match &worth { Value::Routine(code) | Value::Bound(code, _) => code.annotation_spelling.clone(), _ => None };
         let outer_symbolic = self.symbolic_annotation.take();
@@ -4782,8 +4869,15 @@ impl<'a> Machine<'a> {
         let reading = self.armed_names.take();
         let mut pairs=Vec::new();
         // The entry is kept in a cell, as the blueprint's members are; keys
-        // and routines alternate along it.
-        if let Some(Value::Vector(row))=Self::own_entry(b,crate::data::ANNOTATE_WORD).map(|kept|kept.settled()) {
+        // and routines alternate along it. A blueprint rebuilt from its own
+        // namespace keeps only the public adapter, so the row is read from
+        // that as well.
+        let row=Self::own_entry(b,crate::data::ANNOTATE_WORD).map(|kept|kept.settled())
+            .or_else(|| Self::own_entry(b, "__annotate_func__").and_then(|kept| match kept.settled() {
+                Value::Wrapped(44, contents) => contents.first().map(|first| first.settled()),
+                _ => None,
+            }));
+        if let Some(Value::Vector(row))=row {
             for pair in row.chunks(2) {
                 let [key,worth]=pair else{break};
                 let worth = worth.settled();
@@ -5019,6 +5113,10 @@ impl<'a> Machine<'a> {
         if source_module {
             if let Some(directory) = self.directory_attribute(&value, key) { return Ok(directory); }
         }
+        if let Some(proxy) = self.locals_proxy(&value) {
+            if Self::locals_member(key) { return Ok(Value::Member(Rc::new(Value::Thing(proxy)), key.to_owned())); }
+        }
+        if let Some(answer) = self.coroutine_attribute(&value.settled(), key)? { return Ok(answer); }
         if self.table.spells("ext.stmt.class.detail.text_signature", key) {
             if let Some(text) = self.builtin_text_signature(&value) { return Ok(Value::text(text)); }
         }
@@ -5111,6 +5209,10 @@ impl<'a> Machine<'a> {
                         (name == key && !matches!(held.settled(), Value::Unset)).then(|| held.clone())
                     });
                     if let Some(stored) = stored { return Ok(stored); }
+                    if inherited.is_none() && self.from_the_root(key, true, &owner).is_none() {
+                        self.sought_in_vain = Some((String::from(key), value.clone()));
+                        return self.complete_member_read(&value, key, direct, Err(self.absent_attribute(&value, key)));
+                    }
                     if let Some(inherited) = inherited { let sought = self.member_binding(inherited, Some(value.clone()), owner); return self.complete_member_read(&value, key, direct, sought); }
                 }
             }
@@ -5148,6 +5250,7 @@ impl<'a> Machine<'a> {
             let selected = match key {
                 "__code__" => Some(fields[0].clone()),
                 "__globals__" => Some(fields[1].clone()),
+                "__builtins__" => Some(fields[6].clone()),
                 "__name__" => Some(fields[2].clone()),
                 "__qualname__" => Some(Value::text("<module>")),
                 "__defaults__" => Some(fields[3].clone()),
@@ -6823,17 +6926,19 @@ impl<'a> Machine<'a> {
         let normalized = |blueprint: &Blueprint| -> Vec<String> {
             let mut slots = Vec::new();
             if let Some(value) = Self::own_entry(blueprint, self.detail("slots")) {
-                let entries = match value.settled() {
-                    Value::Dict(map) => map.pairs().iter().map(|(key, _)| key.clone()).collect(),
-                    Value::Vector(items) | Value::Tuple(items) => items.as_ref().clone(),
-                    item => vec![item],
+                let entries = if let Some(saved) = Self::recalled_slots(blueprint) {
+                    saved
+                } else {
+                    match value.settled() {
+                        Value::Dict(map) => map.pairs().iter().map(|(key, _)| key.clone()).collect(),
+                        Value::Vector(items) | Value::Tuple(items) => items.as_ref().clone(),
+                        item => vec![item],
+                    }
                 };
                 for entry in entries {
-                    if let Value::Text(word) = entry {
-                        if !matches!(word.as_ref(), "__weakref__" | "__dict__") {
-                            slots.push(crate::build::member_spelling(&blueprint.name, &word));
-                        }
-                    }
+                    let Some(word) = Self::slot_letters(&entry) else { continue };
+                    if matches!(word.as_ref(), "__weakref__" | "__dict__") { continue; }
+                    slots.push(crate::build::member_spelling(&blueprint.name, &word));
                 }
             }
             slots.sort_unstable(); slots
@@ -6852,19 +6957,26 @@ impl<'a> Machine<'a> {
             None => {}
         }
         let Some(storage) = Self::own_entry(b, self.detail("slots")) else { return true; };
-        let has_slot = match storage.settled() {
-            Value::Tuple(items) | Value::Vector(items) => items.iter().any(|v| matches!(v, Value::Text(s) if &**s == "__weakref__")),
-            Value::Text(name) => &*name == "__weakref__",
-            _ => false
+        let listed = match storage.settled() {
+            Value::Tuple(items) | Value::Vector(items) => items.as_ref().clone(),
+            other => vec![other],
         };
+        let has_slot = listed.iter().any(|item| Self::slot_letters(item).is_some_and(|word| word.as_ref()=="__weakref__"));
         has_slot || b.parents().iter().any(|parent| self.admits_weak(parent))
     }
     fn allowed_slot(&self,b:&Blueprint,key:&str)->bool {
         if self.table.has_any("ext.stmt.class.builder") && self.ancestor.as_ref().is_some_and(|root| std::ptr::eq(root.as_ref(),b)) { return false; }
         if matches!(Self::native_word(b).as_deref(), Some("SimpleNamespace" | "module")) { return true; }
         let Some(declared)=Self::own_entry(b,self.detail("slots"))else{return !(b.under().is_none() && b.name==self.detail("root")) && Self::native_word(b).is_none();};
+        if let Some(saved) = Self::recalled_slots(b) {
+            let book = self.detail("namespace");
+            let matching = |item: &Value| Self::slot_letters(item).is_some_and(|word| word.as_ref() == key || word.as_ref() == book);
+            if saved.iter().any(matching) { return true; }
+            return b.parents().iter().any(|parent| parent.name != self.detail("root") && self.allowed_slot(parent, key));
+        }
         let slots=declared.settled();
-        let matching=|x:&Value|matches!(x,Value::Text(s) if s.as_ref()==key||s.as_ref()==self.detail("namespace"));
+        let book=self.detail("namespace");
+        let matching=|x:&Value| Self::slot_letters(x).is_some_and(|word| word.as_ref()==key || word.as_ref()==book);
         if match &slots{Value::Tuple(s)|Value::Vector(s)=>s.iter().any(matching),v=>matching(v)}{return true;}
         b.parents().iter().any(|p|p.name!=self.detail("root")&&self.allowed_slot(p,key))
     }
@@ -6939,6 +7051,32 @@ impl<'a> Machine<'a> {
                 };
             }
             return Err(format!("AttributeError: 'traceback' object attribute '{key}' is read-only").into());
+        }
+        if let Value::Thing(frame) = &subject {
+            if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.blueprint())) {
+                match key {
+                    "f_trace" => {
+                        Self::change_entry(&mut frame.holds.borrow_mut(), key, Some(replacement.unwrap_or(Value::Nil)));
+                        return Ok(Value::Nil);
+                    }
+                    "f_trace_lines" | "f_trace_opcodes" => {
+                        let Some(held) = replacement else {
+                            if key == "f_trace_lines" { return Err(String::from("TypeError: can't delete numeric/char attribute").into()); }
+                            return Err(format!("AttributeError: attribute '{key}' of 'frame' objects cannot be deleted").into());
+                        };
+                        if !matches!(held.settled(), Value::Flag(_)) { return Err(String::from("TypeError: attribute value type must be bool").into()); }
+                        Self::change_entry(&mut frame.holds.borrow_mut(), key, Some(held));
+                        return Ok(Value::Nil);
+                    }
+                    "f_lineno" => {
+                        if replacement.is_none() { return Err(String::from("AttributeError: attribute 'f_lineno' of 'frame' objects cannot be deleted").into()); }
+                    }
+                    "f_code" | "f_locals" | "f_globals" | "f_builtins" | "f_back" | "f_lasti" => {
+                        return Err(format!("AttributeError: attribute '{key}' of 'frame' objects is not writable").into());
+                    }
+                    _ => {}
+                }
+            }
         }
         // Native lowering must still honor namespace changes made after import.
         if self.rules.names_shadow_builtins && self.table.prims.contains_key(key) {
@@ -7417,6 +7555,7 @@ impl<'a> Machine<'a> {
                 // through are read off it, never written over.
                 if self.table.strings("ext.system.module.builtins").iter().any(|word| word==key){return Err(self.detail("property.readonly").to_owned().into());}
                 if key==self.detail("code")||key==self.detail("defaults")||key==self.detail("keywords"){
+                    self.revised_code_seen(key == self.detail("code"));
                     self.write_routine_over(&subject,key,replacement)?;
                     return Ok(Value::Nil);
                 }
@@ -7717,7 +7856,16 @@ impl<'a> Machine<'a> {
             _ => None,
         };
         if let Some(owner) = concrete_module { return Value::Blueprint(owner); }
-        let word=if matches!(value, Value::Intrinsic(Prim::Textual(_), name) if name.contains('.')) { "method_descriptor".to_owned() } else if self.is_async_generator(value) { String::from("async_generator") } else { match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()} };
+        // A slot a class declares is a data member carried by the class,
+        // named as the reference names it, so that a reader asking
+        // whether a field has a default finds a descriptor, not a value.
+        let slot_word = match value {
+            Value::Wrapped(32, fields) if matches!(fields.get(1), Some(Value::Blueprint(_))) => {
+                Some(if matches!(fields.get(2), Some(Value::Small(-2))) { "getset_descriptor" } else { "member_descriptor" })
+            }
+            _ => None,
+        };
+        let word=if let Some(slot)=slot_word { slot.to_owned() } else if matches!(value, Value::Intrinsic(Prim::Textual(_), name) if name.contains('.')) { "method_descriptor".to_owned() } else if self.is_async_generator(value) { String::from("async_generator") } else { match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()} };
         // A table spelling that very kind answers with its intrinsic
         // word, so that the kind asked for and the kind answered with
         // are one value: `type(enumerate(r)) is enumerate`.

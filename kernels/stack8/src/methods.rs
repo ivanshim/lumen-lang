@@ -555,12 +555,16 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 "replace" => { arity(2,3)?; let n = a.get(2).map(|v| integer(v,fault)).transpose()?.unwrap_or(-1); s.replacen(&text(&a[0],fault)?, &text(&a[1],fault)?, if n < 0 { usize::MAX } else { n as usize }) }
                 "find" | "rfind" | "index" | "rindex" | "count" | "startswith" | "endswith" => {
                     arity(1,3)?;
-                    let chars: Vec<char> = s.chars().collect();
+                    // Positions are counted in characters; the search itself
+                    // runs over the text's own bytes, with no copy made.
+                    let plain = s.is_ascii();
+                    let total = if plain { s.len() } else { s.chars().count() };
                     let raw = a.get(1).filter(|v| !matches!(v,Value::Null)).map(|v| integer(v,fault)).transpose()?.unwrap_or(0);
-                    let start = bound(raw,chars.len());
-                    let stop = a.get(2).filter(|v| !matches!(v,Value::Null)).map(|v| integer(v,fault)).transpose()?.map_or(chars.len(), |n| bound(n,chars.len()));
-                    let valid = raw <= chars.len() as i64 && start <= stop;
-                    let piece: String = chars[start..stop.max(start)].iter().collect();
+                    let start = bound(raw,total);
+                    let stop = a.get(2).filter(|v| !matches!(v,Value::Null)).map(|v| integer(v,fault)).transpose()?.map_or(total, |n| bound(n,total));
+                    let valid = raw <= total as i64 && start <= stop;
+                    let offset = |n: usize| -> usize { if plain { n } else { s.char_indices().nth(n).map_or(s.len(), |(byte, _)| byte) } };
+                    let piece: &str = &s[offset(start)..offset(stop.max(start))];
                     if matches!(op,"startswith"|"endswith") {
                         let patterns = match &a[0] { Value::Tuple(row) => row.as_ref().clone(), v => vec![v.clone()] };
                         for pattern in patterns { let t=text(&pattern,fault)?; if valid && if op == "startswith" { piece.starts_with(&t) } else { piece.ends_with(&t) } { return Ok(Value::Flag(true)); } }

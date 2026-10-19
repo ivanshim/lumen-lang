@@ -29,7 +29,8 @@ impl<'a> Engine<'a> {
         for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let (near, outer) = near.map_or((outer.clone(), None), |near| (near, Some(outer)));
-        self.text_books.push(TextBook { near, outer, from: offset, upto: offset + names.len(), declared: registry.declared_outer });
+        let builtins = registry.born.clone().unwrap_or_else(|| self.native_dict());
+        self.text_books.push(TextBook { builtins, near, outer, from: offset, upto: offset + names.len(), declared: registry.declared_outer });
         let previous = self.reading_in.replace(self.text_books.len() - 1);
         let file = original.written_in.clone().unwrap_or_else(|| Rc::from("<string>"));
         let result = self.text_finished(&Rc::new(program), &file, false);
@@ -143,7 +144,7 @@ impl<'a> Engine<'a> {
             match word {
                 Instr::Read(cell) | Instr::Write(cell) | Instr::Glance(cell) if global_cell(cell) && !member_calls.contains(pc) => { globals.insert(cell.ident.to_string()); }
                 Instr::Const(Value::Native(_, name)) if self.lang.builtins.contains_key(name.as_ref()) => { globals.insert(name.to_string()); }
-                Instr::Act(Action::Builtin(kind, name), _) if !matches!(kind, Builtin::Raise) && self.lang.builtins.contains_key(name.as_ref()) && !member_calls.contains(pc) => { globals.insert(name.to_string()); }
+                Instr::Act(Action::Builtin(kind, name), _) | Instr::PreparedAct(Action::Builtin(kind, name), _, _) if !matches!(kind, Builtin::Raise) && self.lang.builtins.contains_key(name.as_ref()) && !member_calls.contains(pc) => { globals.insert(name.to_string()); }
                 Instr::Act(Action::HasMember(name) | Action::Grab(name) | Action::Plant(name), _) => { attrs.insert(name.to_string()); }
                 Instr::Dyad { a, b, .. } | Instr::SkipCmp { a, b, .. } => {
                     for operand in [a, b] { if let crate::code::Operand::Cell(cell) = operand {
