@@ -1137,10 +1137,13 @@ def _native_ordered_dict(base):
 
 
 def __getattr__(name):
+    # The name is bound with a global statement: writing it through globals()
+    # makes every later global read in this module slower on microcode7.
+    global OrderedDict
     if name == 'OrderedDict':
         from collections import OrderedDict as pure
         built = _native_ordered_dict(pure)
-        globals()['OrderedDict'] = built
+        OrderedDict = built
         return built
     raise AttributeError('module %r has no attribute %r' % (__name__, name))
 
