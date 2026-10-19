@@ -7,6 +7,7 @@ impl<'a> Machine<'a> {
         match key {
             "defaults" => self.rules.detail_defaults,
             "call" => self.rules.detail_call,
+            "code" => self.rules.detail_code,
             "descriptor.delete" => self.rules.detail_descriptor_delete,
             "descriptor.set" => self.rules.detail_descriptor_set,
             "remove" => self.rules.detail_delete,
@@ -5134,6 +5135,10 @@ impl<'a> Machine<'a> {
                         (name == key && !matches!(held.settled(), Value::Unset)).then(|| held.clone())
                     });
                     if let Some(stored) = stored { return Ok(stored); }
+                    if inherited.is_none() && self.from_the_root(key, true, &owner).is_none() {
+                        self.sought_in_vain = Some((String::from(key), value.clone()));
+                        return self.complete_member_read(&value, key, direct, Err(self.absent_attribute(&value, key)));
+                    }
                     if let Some(inherited) = inherited { let sought = self.member_binding(inherited, Some(value.clone()), owner); return self.complete_member_read(&value, key, direct, sought); }
                 }
             }
@@ -7467,6 +7472,7 @@ impl<'a> Machine<'a> {
                 // through are read off it, never written over.
                 if self.table.strings("ext.system.module.builtins").iter().any(|word| word==key){return Err(self.detail("property.readonly").to_owned().into());}
                 if key==self.detail("code")||key==self.detail("defaults")||key==self.detail("keywords"){
+                    self.revised_code_seen(key == self.detail("code"));
                     self.write_routine_over(&subject,key,replacement)?;
                     return Ok(Value::Nil);
                 }

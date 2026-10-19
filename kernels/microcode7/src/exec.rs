@@ -527,6 +527,7 @@ struct ExecutionRules<'a> {
     detail_descriptor_set: &'a str,
     detail_descriptor_delete: &'a str,
     detail_call: &'a str,
+    detail_code: &'a str,
     detail_defaults: &'a str,
     class_builder: bool,
     weak_members: bool,
@@ -588,6 +589,7 @@ pub struct Machine<'a> {
     coroutine_bodies: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<Routine>, Option<Weak<Thing>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>)>,
     delegated_answers: std::collections::HashSet<usize>,
+    code_observers: Vec<(Weak<RefCell<Value>>, bool)>,
     pub(super) code_handles: HashMap<usize, Weak<Vec<Value>>>,
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
@@ -2109,6 +2111,7 @@ impl<'a> Machine<'a> {
                 detail_descriptor_set: table.single("ext.stmt.class.detail.descriptor.set").unwrap_or(""),
                 detail_descriptor_delete: table.single("ext.stmt.class.detail.descriptor.delete").unwrap_or(""),
                 detail_call: table.single("ext.stmt.class.detail.call").unwrap_or(""),
+                detail_code: table.single("ext.stmt.class.detail.code").unwrap_or(""),
                 detail_defaults: table.single("ext.stmt.class.detail.defaults").unwrap_or(""),
                 class_builder: table.has_any("ext.stmt.class.builder"),
                 weak_members: table.has_any("ext.builtin.weak.get"),
@@ -2216,7 +2219,7 @@ impl<'a> Machine<'a> {
             coroutine_bodies: HashMap::new(),
             async_generators: HashMap::new(),
             delegated_answers: std::collections::HashSet::new(),
-            code_handles: HashMap::new(),
+            code_observers: Vec::new(), code_handles: HashMap::new(),
             holding_fault: Vec::new(),
             holding_below: 0,
             asking_presence: false,
@@ -5537,6 +5540,10 @@ impl<'a> Machine<'a> {
                         }
                         state.owed.push(Owed::Find(*body));
                     }
+                    // Expressions without a suspension use the ordinary evaluator.
+                    plain @ (Form::Write(..) | Form::Dyad { .. } | Form::Assert { .. }) if !suspension_within(&plain) => {
+                        state.found.push(self.value_of(&plain, &frame)?);
+                    }
                     Form::Write(place, body) => { state.owed.push(Owed::Store(place)); state.owed.push(Owed::Find(*body)); }
                     Form::Apply(Callee::Prim(Prim::Seq, _), parts) => {
                         if parts.is_empty() { state.found.push(Value::Nil); }
@@ -5580,6 +5587,9 @@ impl<'a> Machine<'a> {
                         let right = parts.pop().expect("right operand");
                         state.owed.push(Owed::Truth(op, right));
                         state.owed.push(Owed::Find(parts.remove(0)));
+                    }
+                    plain @ Form::Apply(..) if !suspension_within(&plain) => {
+                        state.found.push(self.value_of(&plain, &frame)?);
                     }
                     Form::Apply(Callee::Code(target), args) => {
                         state.owed.push(Owed::Call(args.len()));
@@ -16654,7 +16664,215 @@ impl<'a> Machine<'a> {
         Ok(output)
     }
 
+    // Gather a small batch of fields without invoking Python stream methods.
+    fn gather_octet_fields(&self, given: &[Value]) -> Result<Value, String> {
+        if given.len() != 5 { return Err("TypeError: invalid memory field arguments".to_owned()); }
+        let (cell, index, table, closed) = match (&given[0], &given[1], &given[2], &given[3]) {
+            (Value::Octets { cell, .. }, Value::Small(index), Value::Tuple(table), Value::Flag(closed)) => (cell, *index, table, *closed),
+            _ => return Err("TypeError: invalid memory field arguments".to_owned()),
+        };
+        if closed { return Err("ValueError: I/O operation on closed file.".to_owned()); }
+        let mut at = usize::try_from(index).map_err(|_| String::from("ValueError: negative memory stream position"))?;
+        let source = cell.borrow();
+        let mut batch = Vec::new();
+        for _ in 0..1024 {
+            let begin = at;
+            let Some(byte) = source.get(begin).copied() else { break };
+            let format = match table.get(usize::from(byte)) { Some(Value::Small(n)) if (0..512).contains(n) => *n, _ => break };
+            let layout = format % 256;
+            at += 1;
+            let item;
+            if layout == 0 {
+                item = Value::Nil;
+            } else if layout == 24 || layout == 25 {
+                item = Value::Flag(layout == 24);
+            } else if (18..=19).contains(&layout) || (21..=23).contains(&layout) {
+                let Some(line_length) = source[at..].iter().position(|b| b == &10) else { break };
+                if line_length > 4096 { break; }
+                let line = &source[at..at + line_length];
+                at += line_length + 1;
+                if layout < 20 {
+                    if layout == 18 && (line == b"00" || line == b"01") {
+                        item = Value::Flag(line[1] == b'1');
+                    } else {
+                        let decimal = if layout == 19 && line.last() == Some(&b'L') { &line[..line.len() - 1] } else { line };
+                        let mut digits = decimal;
+                        if matches!(digits.first(), Some(b'-' | b'+')) { digits = &digits[1..]; }
+                        if decimal.len() > 32 || digits.len() == 0 || digits.iter().any(|b| !b.is_ascii_digit()) { break; }
+                        match BigInt::parse_bytes(decimal, 10) { Some(n) => item = Value::from_big(n), None => break }
+                    }
+                } else if layout == 21 {
+                    if line.iter().any(|b| *b == 92) { break; }
+                    let text: String = line.iter().map(|b| char::from(*b)).collect();
+                    item = Value::text(&text);
+                } else {
+                    if line.contains(&92) { break; }
+                    let Ok(left) = std::str::from_utf8(line) else { break };
+                    if layout == 22 { item = Value::text(left); }
+                    else {
+                        let Some(n) = source[at..].iter().position(|b| *b == 10) else { break };
+                        if n > 4096 { break; }
+                        let right_bytes = &source[at..at + n];
+                        if right_bytes.contains(&92) { break; }
+                        let Ok(right) = std::str::from_utf8(right_bytes) else { break };
+                        let mut text = left.to_owned(); text.push(' '); text.push_str(right);
+                        item = Value::text(&text);
+                        at += n + 1;
+                    }
+                }
+            } else if (1..=5).contains(&layout) {
+                let size = if layout < 3 { layout as usize } else if layout < 5 { 4 } else { 8 };
+                let Some(raw) = source.get(at..at + size) else { break };
+                let mut number = 0u64;
+                for (shift, digit) in raw.iter().enumerate() { number |= u64::from(*digit) << (shift * 8); }
+                item = if layout == 3 { Value::Small(i64::from(number as u32 as i32)) } else { Value::from_big(BigInt::from(number)) };
+                at += size;
+            } else if (7..=17).contains(&layout) {
+                let prefix_size = if matches!(layout, 7 | 11 | 14 | 16) { 1 } else if matches!(layout, 8 | 12 | 15 | 17) { 4 } else { 8 };
+                let Some(prefix) = source.get(at..at + prefix_size) else { break };
+                if (layout == 15 || layout == 17) && prefix[prefix_size - 1] >= 128 { break; }
+                let amount = prefix.iter().rev().fold(0u64, |n, digit| (n << 8) | u64::from(*digit));
+                if amount > 4096 { break; }
+                at += prefix_size;
+                let stop = at + amount as usize;
+                let Some(raw) = source.get(at..stop) else { break };
+                if layout <= 10 { item = self.octets(raw.to_vec(), layout == 10); }
+                else if layout <= 13 {
+                    let Ok(text) = std::str::from_utf8(raw) else { break };
+                    item = Value::text(text);
+                } else if layout <= 15 { item = Value::from_big(BigInt::from_signed_bytes_le(raw)); }
+                else {
+                    let letters: String = raw.iter().map(|n| char::from(*n)).collect();
+                    item = Value::text(&letters);
+                }
+                at = stop;
+            } else { break; }
+            let record = vec![Value::Small(byte.into()), item, Value::Small(begin as i64), Value::Small(at as i64)];
+            batch.push(Value::tuple(record));
+            if format >= 256 { break; }
+        }
+        Ok(Value::Vector(crate::tuples::Sequence::plain(batch)))
+    }
+
+    // An unchanged function answers its cached code handle. Replacements
+    // take the full member path, including an explicitly assigned handle.
+    fn octet_fingerprint_equal(&mut self, subject: &Value, field: &Value, saved: &Value) -> Result<bool, String> {
+        let Value::Text(attribute_name) = field else { return Err(String::from("TypeError: invalid memory field path")); };
+        let code_name = self.rules.detail_code;
+        if !code_name.is_empty() && attribute_name.as_ref() == code_name {
+            let function = match subject {
+                Value::Bound(program, room) => Some((program.clone(), room.clone())),
+                Value::Routine(program) => Some((program.clone(), self.outermost.clone())),
+                _ => None,
+            };
+            if let Some((mut program, room)) = function {
+                let key = (Rc::as_ptr(&program) as usize, Rc::as_ptr(&room) as usize);
+                if !self.written_over.contains_key(&key) {
+                    while let Some(definition) = program.definition.clone() { program = definition; }
+                    let address = Rc::as_ptr(&program) as usize;
+                    if let Some(parts) = self.code_handles.get(&address).and_then(Weak::upgrade) {
+                        return Ok(matches!(saved, Value::Wrapped(7, expected) if Rc::ptr_eq(&parts, expected)));
+                    }
+                }
+            }
+        }
+        let current = self.member_text(subject.clone(), attribute_name)?;
+        Ok(match (&current, saved) {
+            (Value::Wrapped(kind, a), Value::Wrapped(other, b)) => kind == other && Rc::ptr_eq(a, b),
+            _ => current.one_place(saved),
+        })
+    }
+
+    pub(super) fn revised_code_seen(&mut self, code: bool) {
+        let mut kept = Vec::new();
+        for (observer, defaults) in self.code_observers.drain(..) {
+            if let Some(state) = observer.upgrade() {
+                if code || defaults { state.replace(Value::Vector(crate::tuples::Sequence::plain(vec![Value::Flag(false)]))); }
+                kept.push((observer, defaults));
+            }
+        }
+        self.code_observers = kept;
+    }
+
+    fn observe_octet_readers(&mut self, input: &[Value]) -> Result<Value, String> {
+        if input.len() != 5 { return Err(String::from("TypeError: invalid memory code watch arguments")); }
+        let (functions, snapshots, defaults) = match (&input[0], &input[1], &input[3]) {
+            (Value::Tuple(functions), Value::Tuple(snapshots), Value::Flag(defaults)) => (functions, snapshots, *defaults),
+            _ => return Err(String::from("TypeError: invalid memory code watch arguments")),
+        };
+        if functions.len() != snapshots.len() { return Err(String::from("ValueError: code watch length mismatch")); }
+        let mut valid = true;
+        for position in 0..functions.len() {
+            valid &= self.octet_fingerprint_equal(&functions[position], &input[2], &snapshots[position])?;
+        }
+        let shared = Rc::new(RefCell::new(Value::Vector(crate::tuples::Sequence::plain(vec![Value::Flag(valid)]))));
+        self.code_observers.push((Rc::downgrade(&shared), defaults));
+        Ok(Value::Mutable(shared, true))
+    }
+
+    // Keep memory-stream transfers proportional to the bytes requested or supplied.
+    fn memory_octets(&mut self, supplied: &[Value]) -> Result<Value, String> {
+        let operation = match supplied.last() { Some(Value::Small(number)) => *number, _ => -1 };
+        match operation {
+            6 => return self.observe_octet_readers(supplied),
+            5 => {
+                if supplied.len() != 5 { return Err(String::from("TypeError: invalid memory fingerprint arguments")); }
+                let Value::Flag(inverted) = supplied[3] else { return Err(String::from("TypeError: invalid memory fingerprint arguments")); };
+                let equal = self.octet_fingerprint_equal(&supplied[0], &supplied[2], &supplied[1])?;
+                return Ok(Value::Flag(equal ^ inverted));
+            }
+            3 => return self.gather_octet_fields(supplied),
+            _ => {}
+        }
+        if supplied.len() != 5 { return Err("TypeError: invalid memory stream arguments".to_owned()); }
+        let (buffer, cursor, closed, action) = match (&supplied[0], &supplied[1], &supplied[3], &supplied[4]) {
+            (Value::Octets { cell, changeable: true, .. }, Value::Small(at), Value::Flag(shut), Value::Small(action)) =>
+                (cell, usize::try_from(*at).map_err(|_| String::from("ValueError: negative memory stream position"))?, *shut, *action),
+            _ => return Err(String::from("TypeError: invalid memory stream arguments")),
+        };
+        match action {
+            0 | 1 => {
+                let requested = match &supplied[2] {
+                    Value::Small(n) => *n,
+                    Value::Huge(n) => n.to_i64().ok_or_else(|| String::from("OverflowError: cannot fit 'int' into an index-sized integer"))?,
+                    _ => return Err(String::from("TypeError: memory stream read requires an integer")),
+                };
+                if closed { return Err(String::from("ValueError: I/O operation on closed file.")); }
+                let bytes = buffer.borrow();
+                let available = bytes.len().saturating_sub(cursor);
+                let mut count = if requested < 0 { available } else { available.min(requested as usize) };
+                if action == 1 && count > 0 {
+                    count = bytes[cursor..cursor + count].iter().position(|n| *n == 10).map_or(count, |n| n + 1);
+                }
+                let selected = if count == 0 { Vec::new() } else { bytes[cursor..cursor + count].to_vec() };
+                Ok(Value::tuple(vec![self.octets(selected, false), Value::Small((cursor + count) as i64)]))
+            }
+            2 => {
+                let Value::Octets { cell: incoming, changeable: false, .. } = &supplied[2] else {
+                    return Err(String::from("TypeError: memory stream write requires bytes"));
+                };
+                if closed { return Err(String::from("ValueError: I/O operation on closed file.")); }
+                if OctetLease::held(buffer) { return Err(String::from("BufferError: Existing exports of data: object cannot be re-sized")); }
+                let bytes = incoming.borrow();
+                let stop = cursor.checked_add(bytes.len()).filter(|n| *n <= i64::MAX as usize)
+                    .ok_or_else(|| String::from("OverflowError: new position too large"))?;
+                if bytes.len() > 0 {
+                    let mut target = buffer.borrow_mut();
+                    if stop > target.len() {
+                        let extra = stop - target.len();
+                        target.try_reserve(extra).map_err(|_| String::from("MemoryError: "))?;
+                        target.resize(stop, 0);
+                    }
+                    target[cursor..stop].copy_from_slice(&bytes);
+                }
+                Ok(Value::tuple(vec![Value::Small(bytes.len() as i64), Value::Small(stop as i64)]))
+            }
+            _ => Err(String::from("ValueError: invalid memory stream operation")),
+        }
+    }
+
     fn octet_work(&mut self, operation: u8, values: &[Value], negative_allowed: bool) -> Result<Value, String> {
+        if operation == 65 { return self.memory_octets(values); }
         if operation == 2 { return self.convert_text(true, &[], values, true); }
         if operation == 64 {
             if values.len() != 1 { return Err("TypeError: intern() takes exactly one argument".to_owned()); }
@@ -27818,6 +28036,12 @@ impl<'a> Machine<'a> {
             let numbers = cell.borrow();
             return match at {
                 Value::Span(bounds) => {
+                    let (limits, _, adjacent) = self.span_edges(bounds, numbers.len())?;
+                    if adjacent {
+                        let first = limits[0] as usize;
+                        let last = (limits[1] as usize).max(first);
+                        return Ok(self.octets(numbers[first..last].to_vec(), *changeable));
+                    }
                     let (_, chosen, _) = self.span_selection(bounds, numbers.len())?;
                     Ok(self.octets(chosen.iter().map(|&i| numbers[i]).collect(), *changeable))
                 }
@@ -27834,6 +28058,12 @@ impl<'a> Machine<'a> {
                     Value::Huge(i) => i.to_i64().ok_or_else(||crate::text::complaint(self.table,"index"))?,
                     _ => return Err(crate::text::complaint(self.table,"integer")),
                 };
+                if Value::ascii_letters(word) {
+                    let position = if number >= 0 { number } else { number.saturating_add(word.len() as i64) };
+                    let letter = usize::try_from(position).ok().and_then(|position| word.as_bytes().get(position));
+                    return letter.map(|byte| Value::text(&char::from(*byte).to_string()))
+                        .ok_or_else(|| crate::text::complaint(self.table, "index"));
+                }
                 let place = if number < 0 {(crate::text::extent_of_string(word) as i64).saturating_add(number)} else {number};
                 return crate::text::scalar_at(word, place as usize).map(|c|Value::text(&String::from(c))).ok_or_else(||crate::text::complaint(self.table,"index"));
             }

@@ -153,6 +153,7 @@ pub struct Engine<'a> {
     coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>)>,
     delegated_tokens: std::collections::HashSet<usize>,
+    code_watches: Vec<(Weak<RefCell<Value>>, bool)>,
     frame_codes: HashMap<usize, Weak<(u8, Vec<Value>)>>,
     class_root: Option<Rc<Class>>,
     /// The class every metaclass stands on, made once when one is asked for.
@@ -1748,7 +1749,7 @@ impl<'a> Engine<'a> {
             coroutines: HashMap::new(),
             async_generators: HashMap::new(),
             delegated_tokens: std::collections::HashSet::new(),
-            frame_codes: HashMap::new(),
+            code_watches: Vec::new(), frame_codes: HashMap::new(),
             source: Rc::from(""),
             root_source: Rc::from(""),
             main_started: false,
@@ -11040,10 +11041,8 @@ impl<'a> Engine<'a> {
                 // A value that could be no key of a map is in no map,
                 // and the language says so rather than answering no.
                 if let Some(told) = self.unkeyable(a) { return Err(told); }
-                let wanted = self.special_key(a)?;
-                let mut found = false;
-                for (key, _) in entries.iter() { if self.special_keys_equal(key, &wanted)? { found = true; break; } }
-                return Ok(Value::Flag(found != matches!(op, Action::Lacks)));
+                let (found, _) = self.map_locate(entries, Some(entries), a)?;
+                return Ok(Value::Flag(found.is_some() != matches!(op, Action::Lacks)));
             }
             // A class that sets the membership name to nothing has said
             // there is no membership in its things: the question stops
@@ -17977,6 +17976,11 @@ impl<'a> Engine<'a> {
         match target {
             Value::Bytes(row, mutable, _) => {
                 let row = row.borrow();
+                let (begin, end, stride) = self.slice_edges(parts, row.len())?;
+                if stride == 1 {
+                    let begin = begin as usize;
+                    return Ok(self.byte_make(row[begin..(end as usize).max(begin)].to_vec(), *mutable));
+                }
                 let (_, _, _, places) = self.slice_places(parts, row.len())?;
                 Ok(self.byte_make(places.into_iter().map(|i| row[i]).collect(), *mutable))
             }
@@ -18078,6 +18082,12 @@ impl<'a> Engine<'a> {
                     return Err(self.sequence_subscript_fault(target, at));
                 }
                 let index = match at { Value::Small(n) => *n, Value::Flag(b) => i64::from(*b), Value::Huge(n) => n.to_i64().ok_or_else(||crate::strings::fault(self.lang,"index"))?, _ => return Err(crate::strings::fault(self.lang,"integer")) };
+                // ASCII character positions are byte positions, including negative indices.
+                if Value::text_ascii(s) {
+                    let offset = if index < 0 { index.saturating_add(s.len() as i64) } else { index };
+                    return usize::try_from(offset).ok().and_then(|at| s.get(at..at + 1))
+                        .map(Value::text).ok_or_else(|| crate::strings::fault(self.lang, "index"));
+                }
                 let offset = if index < 0 { index.saturating_add(crate::strings::character_length(s) as i64) } else { index };
                 return crate::strings::character_at(s, offset as usize).map(|c|Value::text(&c.to_string())).ok_or_else(||crate::strings::fault(self.lang,"index"));
             }
@@ -21838,7 +21848,191 @@ impl<'a> Engine<'a> {
         Ok(result)
     }
 
+    // Decode bounded opcode fields using a caller-supplied layout table.
+    fn byte_fields(&self, args: &[Value]) -> Res<Value> {
+        let [Value::Bytes(storage, _, _), Value::Small(origin), Value::Tuple(layouts), Value::Flag(closed), Value::Small(3)] = args else {
+            return Err("TypeError: invalid memory field arguments".into());
+        };
+        if *closed { return Err("ValueError: I/O operation on closed file.".into()); }
+        let mut position = usize::try_from(*origin).map_err(|_| "ValueError: negative memory stream position")?;
+        let bytes = storage.borrow();
+        let mut records = Vec::new();
+        while records.len() < 1024 {
+            let start = position;
+            let Some(&code) = bytes.get(start) else { break };
+            let Some(Value::Small(marked)) = layouts.get(code as usize) else { break };
+            if !(0..=511).contains(marked) { break; }
+            let tag = &(marked & 255);
+            position = start + 1;
+            let argument = match *tag {
+                0 => Value::Null,
+                24 => Value::Flag(true),
+                25 => Value::Flag(false),
+                1..=5 => {
+                    let width = match tag { 1 => 1, 2 => 2, 3 | 4 => 4, _ => 8 };
+                    let Some(part) = bytes.get(position..position + width) else { break };
+                    position += width;
+                    let mut little = [0u8; 8];
+                    little[..width].copy_from_slice(part);
+                    let number = u64::from_le_bytes(little);
+                    if *tag == 3 { Value::Small(number as u32 as i32 as i64) }
+                    else { Value::of_big(BigInt::from(number)) }
+                }
+                7..=17 => {
+                    let width = match tag { 7 | 11 | 14 | 16 => 1, 8 | 12 | 15 | 17 => 4, _ => 8 };
+                    let Some(prefix) = bytes.get(position..position + width) else { break };
+                    if matches!(tag, 15 | 17) && prefix[width - 1] & 128 != 0 { break; }
+                    let mut little = [0u8; 8];
+                    little[..width].copy_from_slice(prefix);
+                    let length = u64::from_le_bytes(little);
+                    if length > 4096 { break; }
+                    position += width;
+                    let end = position + length as usize;
+                    let Some(part) = bytes.get(position..end) else { break };
+                    let value = match tag {
+                        7..=10 => self.byte_make(part.to_vec(), *tag == 10),
+                        11..=13 => {
+                            let Ok(text) = std::str::from_utf8(part) else { break };
+                            Value::text(text)
+                        }
+                        14 | 15 => Value::of_big(BigInt::from_signed_bytes_le(part)),
+                        _ => Value::text(&part.iter().copied().map(char::from).collect::<String>()),
+                    };
+                    position = end;
+                    value
+                }
+                18 | 19 | 21..=23 => {
+                    let Some(offset) = bytes[position..].iter().position(|b| *b == b'\n') else { break };
+                    if offset > 4096 { break; }
+                    let part = &bytes[position..position + offset];
+                    position += offset + 1;
+                    match tag {
+                        18 | 19 => {
+                            if *tag == 18 && matches!(part, b"00" | b"01") { Value::Flag(part == b"01") }
+                            else {
+                                let number = if *tag == 19 { part.strip_suffix(b"L").unwrap_or(part) } else { part };
+                                let digits = number.strip_prefix(b"-").or_else(|| number.strip_prefix(b"+")).unwrap_or(number);
+                                if number.len() > 32 || digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) { break; }
+                                let Some(number) = BigInt::parse_bytes(number, 10) else { break };
+                                Value::of_big(number)
+                            }
+                        }
+                        21 => {
+                            if part.contains(&b'\\') { break; }
+                            Value::text(&part.iter().copied().map(char::from).collect::<String>())
+                        }
+                        22 | 23 => {
+                            if part.contains(&b'\\') { break; }
+                            let Ok(first) = std::str::from_utf8(part) else { break };
+                            if *tag == 22 { Value::text(first) }
+                            else {
+                                let Some(count) = bytes[position..].iter().position(|b| *b == b'\n') else { break };
+                                if count > 4096 { break; }
+                                let second = &bytes[position..position + count];
+                                if second.contains(&b'\\') { break; }
+                                let Ok(second) = std::str::from_utf8(second) else { break };
+                                position += count + 1;
+                                Value::text(&format!("{first} {second}"))
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                _ => break,
+            };
+            records.push(Value::tuple(vec![Value::Small(i64::from(code)), argument, Value::Small(start as i64), Value::Small(position as i64)]));
+            if marked & 256 != 0 { break; }
+        }
+        Ok(Value::array(records))
+    }
+
+    // The ordinary code getter uses this same weak handle cache. A revised
+    // routine takes the full attribute road, including assigned code objects.
+    fn byte_fingerprint_matches(&mut self, subject: &Value, field: &Value, saved: &Value) -> Res<bool> {
+        if let (Value::Routine(program), Value::Text(name)) = (subject, field) {
+            let code_word = self.class_word("code");
+            if !code_word.is_empty() && name.as_ref() == code_word && program.revised.borrow().is_none() {
+                let address = Rc::as_ptr(&program.instrs) as usize;
+                if let Some(handle) = self.frame_codes.get(&address).and_then(Weak::upgrade) {
+                    return Ok(matches!(saved, Value::Adapter(expected) if Rc::ptr_eq(&handle, expected)));
+                }
+            }
+        }
+        let actual = self.builtin(Builtin::GetAttr, "getattr", &mut vec![subject.clone(), field.clone()])?;
+        Ok(actual.same_place(saved))
+    }
+
+    pub(super) fn invalidate_code_watches(&mut self, code_changed: bool) {
+        self.code_watches.retain(|(weak, defaults_too)| {
+            let Some(cell) = weak.upgrade() else { return false };
+            if code_changed || *defaults_too { *cell.borrow_mut() = Value::array(vec![Value::Flag(false)]); }
+            true
+        });
+    }
+
+    fn watch_byte_reader_code(&mut self, args: &[Value]) -> Res<Value> {
+        let [Value::Tuple(functions), Value::Tuple(bodies), field, Value::Flag(defaults_too), Value::Small(6)] = args else { return Err("TypeError: invalid memory code watch arguments".into()); };
+        if functions.len() != bodies.len() { return Err("ValueError: code watch length mismatch".into()); }
+        let mut approved = true;
+        for (function, body) in functions.iter().zip(bodies.iter()) {
+            if !self.byte_fingerprint_matches(function, field, body)? { approved = false; }
+        }
+        let cell = Rc::new(RefCell::new(Value::array(vec![Value::Flag(approved)])));
+        self.code_watches.push((Rc::downgrade(&cell), *defaults_too));
+        Ok(Value::Collection(cell, false))
+    }
+
+    // Read or write bounded memory-stream storage without intermediate Python slices.
+    fn byte_memory(&mut self, args: &[Value]) -> Res<Value> {
+        match args.last() {
+            Some(Value::Small(3)) => return self.byte_fields(args),
+            Some(Value::Small(6)) => return self.watch_byte_reader_code(args),
+            Some(Value::Small(5)) => {
+                let [subject, saved, field, Value::Flag(invert), Value::Small(5)] = args else { return Err("TypeError: invalid memory fingerprint arguments".into()); };
+                return Ok(Value::Flag(self.byte_fingerprint_matches(subject, field, saved)? != *invert));
+            }
+            _ => {}
+        }
+        let [Value::Bytes(storage, true, _), Value::Small(position), input, Value::Flag(closed), Value::Small(mode)] = args else {
+            return Err("TypeError: invalid memory stream arguments".into());
+        };
+        let position = usize::try_from(*position).map_err(|_| "ValueError: negative memory stream position")?;
+        if *mode == 2 {
+            let Value::Bytes(source, false, _) = input else { return Err("TypeError: memory stream write requires bytes".into()); };
+            if *closed { return Err("ValueError: I/O operation on closed file.".into()); }
+            if ByteExport::active(storage) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
+            let source = source.borrow();
+            let next = position.checked_add(source.len()).filter(|n| *n <= i64::MAX as usize).ok_or("OverflowError: new position too large")?;
+            if !source.is_empty() {
+                let mut data = storage.borrow_mut();
+                if next > data.len() {
+                    let extra = next - data.len();
+                    data.try_reserve(extra).map_err(|_| "MemoryError: ")?;
+                    data.resize(next, 0);
+                }
+                data[position..next].copy_from_slice(&source);
+            }
+            return Ok(Value::tuple(vec![Value::Small(source.len() as i64), Value::Small(next as i64)]));
+        }
+        if !matches!(mode, 0 | 1) { return Err("ValueError: invalid memory stream operation".into()); }
+        let size = match input {
+            Value::Small(n) => *n,
+            Value::Huge(n) => n.to_i64().ok_or("OverflowError: cannot fit 'int' into an index-sized integer")?,
+            _ => return Err("TypeError: memory stream read requires an integer".into()),
+        };
+        if *closed { return Err("ValueError: I/O operation on closed file.".into()); }
+        let data = storage.borrow();
+        let mut end = if size < 0 { data.len() } else { position.saturating_add(size as usize).min(data.len()) };
+        if end <= position { end = position; }
+        else if *mode == 1 {
+            if let Some(offset) = data[position..end].iter().position(|byte| *byte == b'\n') { end = position + offset + 1; }
+        }
+        let bytes = if end == position { Vec::new() } else { data[position..end].to_vec() };
+        Ok(Value::tuple(vec![self.byte_make(bytes, false), Value::Small(end as i64)]))
+    }
+
     fn byte_work(&mut self, task: u8, args: &[Value], signed: bool) -> Res<Value> {
+        if task == 65 { return self.byte_memory(args); }
         if task == 64 {
             let [text] = args else { return Err("TypeError: intern() takes exactly one argument".into()); };
             return match text {

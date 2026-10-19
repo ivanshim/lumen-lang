@@ -4368,6 +4368,11 @@ impl<'a> Engine<'a> {
                     let own = object.fields.borrow().iter().find(|(key, held)| key == name && !matches!(held.contents(), Value::Blank)).map(|(_, held)| held.clone());
                     if let Some(own) = own { return Ok(own); }
                     if let Some(member) = member { let answer = self.bind_class_value(member, Some(subject.clone()), class); return self.finish_attribute_read(&subject, name, plain, answer); }
+                    if self.root_member(name, Some(&class)).is_none() {
+                        self.absent_member = Some((name.to_owned(), subject.clone()));
+                        let absent = Err(self.missing_member(&subject, name));
+                        return self.finish_attribute_read(&subject, name, plain, absent);
+                    }
                 }
             }
         }
@@ -6830,6 +6835,7 @@ impl<'a> Engine<'a> {
                 if self.lang.module_builtins.iter().any(|word| word == name) {return Err(self.class_word("property.readonly").to_string().into());}
                 if name==self.class_word("defaults") || name==self.class_word("keywords") || name==self.class_word("code") {
                     let Value::Routine(f)=&subject else {return Err(self.class_refusal())};
+                    self.invalidate_code_watches(name == self.class_word("code"));
                     if name==self.class_word("code") && Self::code_kind_differs(f, value.as_ref()) {
                         let told=self.lang.class_details.get("code.mismatch").and_then(|w| w.first()).cloned().unwrap_or_default();
                         self.warn_like(26,&told)?;

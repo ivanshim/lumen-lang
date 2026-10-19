@@ -4,6 +4,7 @@
 import operator
 import sys
 from builtins import _buffer_view
+_memory = __bytes_memory__
 
 DEFAULT_BUFFER_SIZE = 128 * 1024
 BlockingIOError = BlockingIOError
@@ -34,9 +35,12 @@ def _size(value):
         return value
     if value is None:
         return -1
-    if not hasattr(type(value), '__index__'):
-        raise TypeError("argument should be integer or None, not '" + type(value).__name__ + "'")
-    result = _index(value)
+    if type(value) is int:
+        result = value
+    else:
+        if not hasattr(type(value), '__index__'):
+            raise TypeError("argument should be integer or None, not '" + type(value).__name__ + "'")
+        result = _index(value)
     if result > _MAXSIZE or result < _MINSIZE:
         raise OverflowError("cannot fit '" + type(value).__name__ + "' into an index-sized integer")
     return result
@@ -95,7 +99,7 @@ class _IOBase:
         return None
     def _checkClosed(self):
         if self.closed:
-            raise ValueError('I/O operation on closed file.')
+            raise ValueError('I/O operation on closed file')
     def _checkReadable(self):
         if not self.readable():
             raise UnsupportedOperation('File or stream is not readable.')
@@ -294,8 +298,10 @@ class BytesIO(_BufferedIOBase):
     writable = readable
     seekable = readable
     def read(self, size=-1):
-        if type(size) is not int or size > _MAXSIZE or size < _MINSIZE:
-            size = _size(size)
+        if type(size) is int:
+            result, self._pos = _memory(self._data, self._pos, size, self._closed, 0)
+            return result
+        size = _size(size)
         if self._closed:
             raise ValueError('I/O operation on closed file')
         end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
@@ -319,6 +325,9 @@ class BytesIO(_BufferedIOBase):
             return len(data)
     readinto1 = readinto
     def readline(self, size=-1):
+        if type(size) is int:
+            result, self._pos = _memory(self._data, self._pos, size, self._closed, 1)
+            return result
         size = _size(size)
         if self._closed:
             raise ValueError('I/O operation on closed file')
@@ -326,13 +335,17 @@ class BytesIO(_BufferedIOBase):
         start = self._pos
         if end <= start:
             return b''
-        data = bytes(self._data[start:end])
-        at = data.find(b'\n')
+        at = self._data.find(b'\n', start, end)
         if at >= 0:
-            data = data[:at + 1]
-        self._pos += len(data)
+            end = at + 1
+        data = bytes(self._data[start:end])
+        self._pos = end
         return data
     def write(self, b):
+        # Immutable exact bytes need no temporary export or snapshot.
+        if type(b) is bytes:
+            n, self._pos = _memory(self._data, self._pos, b, self._closed, 2)
+            return n
         kind = type(b)
         if kind is bytes or kind is bytearray:
             if self._closed:
@@ -375,7 +388,7 @@ class BytesIO(_BufferedIOBase):
             pos += len(self._data)
         else:
             raise ValueError('invalid whence (' + str(whence) + ', should be 0, 1 or 2)')
-        if pos > sys.maxsize:
+        if pos > _MAXSIZE:
             raise OverflowError('new position too large')
         self._pos = max(0, pos)
         return self._pos

@@ -4586,6 +4586,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.bytes.join` | - | - | `join` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.lower` | - | - | `lower` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.maketrans` | - | - | `bytes.maketrans` `bytearray.maketrans` | - | - | - | - | - | - | - |
+| `ext.builtin.bytes.memory` | - | - | `__bytes_memory__` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.replace` | - | - | `replace` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.resize` | - | - | `resize` | - | - | - | - | - | - | - |
 | `ext.builtin.bytes.signed` | - | - | `signed` | - | - | - | - | - | - | - |
@@ -6282,3 +6283,7 @@ storage report that limitation instead of inventing a count.
 Python text methods validate named error policies in development mode (`-X dev`). Private `__codec_encode` and `__codec_decode` spellings reuse the bytes encode/decode labels for low-level registry conversion, where unused policies remain lazy.
 
 `ext.builtin.multibyte` names the Python native CJK mapping primitive. It provides complete CJK character mappings, prefix validation, GB18030 ranges, and Unicode 16.0/3.2 normalization data to the Python codec state machines. Other languages do not register it.
+
+`ext.builtin.bytes.memory` supplies bounded byte-storage reads, newline reads and exact-bytes writes for memory streams. Its read-only field mode accepts immutable or writable byte storage and decodes bounded batches from a caller-supplied opcode layout table; unsupported or incomplete fields remain for the caller to parse. Layout bit 8 ends a batch after the field, leaving protocol termination under caller control. Its metadata predicate can compare code fingerprints through the ordinary code caches. A code-watch operation returns a live invalidation flag, cleared when function code is rewritten; callers retain the canonical path once that flag is cleared. It checks index-sized bounds, closed storage and outstanding exports before changing bytes, returning the result and next position. Python adapters keep conversion hooks and subclass dispatch.
+
+The struct adapter can request direct packing for exact integer, boolean and immutable bytes arguments; layouts requiring float or complex conversion and custom objects use the conversion-protocol path. Exact contiguous byte inputs also unpack directly unless a complex result needs wrapping.

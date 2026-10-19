@@ -733,5 +733,6 @@ def load(file, /, *, allow_code=True):
     return _In(b'', file.read).get(0)
 
 
+# Report absent globals so callers can continue looking in other modules.
 def __getattr__(name):
     raise AttributeError("module 'marshal' has no attribute '" + name + "'")
