@@ -144,7 +144,7 @@ impl<'a> Engine<'a> {
             match word {
                 Instr::Read(cell) | Instr::Write(cell) | Instr::Glance(cell) if global_cell(cell) && !member_calls.contains(pc) => { globals.insert(cell.ident.to_string()); }
                 Instr::Const(Value::Native(_, name)) if self.lang.builtins.contains_key(name.as_ref()) => { globals.insert(name.to_string()); }
-                Instr::Act(Action::Builtin(kind, name), _) if !matches!(kind, Builtin::Raise) && self.lang.builtins.contains_key(name.as_ref()) && !member_calls.contains(pc) => { globals.insert(name.to_string()); }
+                Instr::Act(Action::Builtin(kind, name), _) | Instr::PreparedAct(Action::Builtin(kind, name), _, _) if !matches!(kind, Builtin::Raise) && self.lang.builtins.contains_key(name.as_ref()) && !member_calls.contains(pc) => { globals.insert(name.to_string()); }
                 Instr::Act(Action::HasMember(name) | Action::Grab(name) | Action::Plant(name), _) => { attrs.insert(name.to_string()); }
                 Instr::Dyad { a, b, .. } | Instr::SkipCmp { a, b, .. } => {
                     for operand in [a, b] { if let crate::code::Operand::Cell(cell) = operand {

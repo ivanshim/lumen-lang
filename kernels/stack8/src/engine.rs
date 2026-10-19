@@ -19700,10 +19700,7 @@ impl<'a> Engine<'a> {
                         if unawaited {
                             if let Err(fault) = self.warn_unawaited_coroutine(&walk) { self.ignore_fault(fault, &Value::Generator(walk.clone()), "coroutine"); }
                             let mut state = walk.borrow_mut();
-                            for local in &mut state.frame {
-                                if let Value::Binding(cell) = local { *cell.borrow_mut() = Value::Blank; }
-                                else { *local = Value::Blank; }
-                            }
+                            for local in &mut state.frame { *local = Value::Blank; }
                         } else {
                             if let Err(fault) = self.close_generator(&walk) {
                                 self.carried = Some(fault);
@@ -19712,15 +19709,8 @@ impl<'a> Engine<'a> {
                             return Ok(Value::Null);
                         }
                     }
-                    {
-                        let fields = frame.fields.borrow();
-                        if let (Value::Routine(body), Value::Tuple(slots)) = (&fields[6].1, &fields[5].1) {
-                            for (at, slot) in slots.iter().enumerate() {
-                                if body.enclosed.iter().any(|(freed, _)| *freed == at) { continue; }
-                                if let Value::Binding(cell) = slot { *cell.borrow_mut() = Value::Blank; }
-                            }
-                        }
-                    }
+                    // Release this frame's references without emptying cells
+                    // that a surviving closure still owns.
                     let mut fields = frame.fields.borrow_mut();
                     fields[5].1 = Value::tuple(Vec::new());
                     fields[3].1 = Value::Null;

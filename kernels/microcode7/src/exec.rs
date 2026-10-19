@@ -12144,18 +12144,11 @@ impl<'a> Machine<'a> {
                         let needs_notice = { let suspended = walk.borrow(); !suspended.begun && suspended.of.as_ref().is_some_and(|code| code.flags & 128 != 0) };
                         if needs_notice {
                             if let Err(away) = self.warn_unstarted(&walk) { self.report_unraisable(away, &Value::Generator(walk.clone()), "coroutine"); }
-                            for place in walk.borrow().frame.cells.borrow_mut().iter_mut() {
-                                if let Value::Shared(cell) = place { *cell.borrow_mut() = Value::Unset; }
-                                *place = Value::Unset;
-                            }
+                            for place in walk.borrow().frame.cells.borrow_mut().iter_mut() { *place = Value::Unset; }
                         } else { self.shut_generator(&walk)?; return Ok(Value::Nil); }
                     }
-                    if let Value::Bound(_, environment) = &item.holds.borrow()[5].1 {
-                        for place in environment.cells.borrow_mut().iter_mut() {
-                            if let Value::Shared(cell) = place { *cell.borrow_mut() = Value::Unset; }
-                            *place = Value::Unset;
-                        }
-                    }
+                    // Drop the frame's environment, not the contents of shared
+                    // cells: closures and module namespaces may still own them.
                     let code = {
                         let holds = item.holds.borrow();
                         match (&holds[1].1, &holds[5].1) {
@@ -29493,7 +29486,9 @@ fn unwrapped_arm(form: Form) -> Form {
 
 fn suspension_within(form: &Form) -> bool {
     match form {
-        Form::Apply(Callee::Prim(Prim::Suspend | Prim::Delegate | Prim::AwaitResult | Prim::AsyncWalk, _), _) => true,
+        // Advancing a traversal can await __anext__; its yields must pass
+        // through Owed::WalkNext instead of the synchronous evaluator.
+        Form::Apply(Callee::Prim(Prim::Suspend | Prim::Delegate | Prim::AwaitResult | Prim::AsyncWalk | Prim::MoreYet, _), _) => true,
         Form::Apply(Callee::Prim(_, _), args) => args.iter().any(suspension_within),
         Form::Apply(Callee::Code(target), args) => suspension_within(target) || args.iter().any(suspension_within),
         Form::Const(Value::Routine(body)) if body.frameless => suspension_within(&body.body),

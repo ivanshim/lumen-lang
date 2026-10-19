@@ -11927,11 +11927,17 @@ impl<'a> Compiler<'a> {
                                 self.call_temporaries += 1;
                                 let name = format!("#callee{}", self.call_temporaries);
                                 let saved = self.cell_to_write(&name);
+                                if !lang.trace_fields.is_empty() {
+                                    let row = (tok.row as u32).saturating_sub(self.before);
+                                    let stop = if tok.end_column == 0 { tok.byte_column.max(tok.column) + tok.lexeme.len() } else { tok.byte_end_column.max(tok.end_column) };
+                                    self.put(Instr::Location(row, tok.byte_column.max(tok.column).saturating_sub(1) as u32, row, stop.saturating_sub(1) as u32));
+                                }
                                 self.read_callee(&tok.lexeme);
                                 self.put(Instr::SaveCallable(saved.clone()));
                                 let argc = self.arguments_of(&tok.lexeme, &call)?;
                                 self.read(&name);
                                 self.put(Instr::Forget(saved));
+                                if !lang.trace_fields.is_empty() { self.put(self.expression_location(origin)); }
                                 self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), argc + 1);
                             } else if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
                                 // push(arr, v), put(arr, i, v): the array is named.
@@ -14953,7 +14959,7 @@ fn code_metadata(words: &[Instr], doc: &Option<String>, locals: &[String], pytho
                 let name = cell.ident.to_string();
                 if !name.starts_with('#') && !locals.contains(&name) && !names.contains(&name) { names.push(name); }
             }
-            Instr::Act(Action::Grab(name) | Action::Plant(name), _) | Instr::Act(Action::Builtin(_, name), _) if !name.is_empty() => {
+            Instr::Act(Action::Grab(name) | Action::Plant(name), _) | Instr::Act(Action::Builtin(_, name), _) | Instr::PreparedAct(Action::Builtin(_, name), _, _) if !name.is_empty() => {
                 if !names.iter().any(|n| n == name.as_ref()) { names.push(name.to_string()); }
             }
             _ => {}
