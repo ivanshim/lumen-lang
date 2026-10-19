@@ -11123,7 +11123,12 @@ impl<'a> Builder<'a> {
         }
         let keeps_fields = start.lexeme.chars().next().is_some_and(|lead| self.table.spells("ext.lexical.string.prefix.template", &lead.to_string()));
         let mut fragments = Vec::new();
+        let mut bare_text = Some(String::new());
         while self.look().shape != Shape::WovenEnd {
+            match (self.look().shape, bare_text.as_mut()) {
+                (Shape::Quote, Some(so_far)) => so_far.push_str(&self.look().lexeme),
+                _ => bare_text = None,
+            }
             let fragment = if self.look().shape == Shape::Field {
                 let conversion = self.advance().lexeme;
                 let expression = self.advance().lexeme;
@@ -11137,6 +11142,8 @@ impl<'a> Builder<'a> {
         }
         self.move_past();
         if keeps_fields { return Ok(prim_call(Prim::TemplateParts, fragments)); }
+        // A formatted literal holding only literal text is that text.
+        if let Some(whole) = bare_text { return Ok(constant(Value::text(&whole))); }
         Ok(fragments.into_iter().fold(constant(Value::text("")), |text, fragment| prim_call(Prim::Join, vec![text, fragment])))
     }
 

@@ -11334,6 +11334,16 @@ impl<'a> Compiler<'a> {
             }
             Shape::StringBegin => {
                 let template = token.lexeme.chars().next().is_some_and(|prefix| self.lang.template_prefixes.contains(&prefix));
+                // A formatted literal holding only literal text is that text.
+                let literal_only = self.tokens[self.pos..].iter().position(|t| t.shape == Shape::StringEnd)
+                    .filter(|&len| self.tokens[self.pos..self.pos + len].iter().all(|t| t.shape == Shape::Quote));
+                if let (false, Some(len)) = (template, literal_only) {
+                    let whole: String = self.tokens[self.pos..self.pos + len].iter().map(|t| t.lexeme.as_str()).collect();
+                    self.constant(Value::text(&whole));
+                    self.pos += len;
+                    self.pass_token();
+                    return Ok(());
+                }
                 if !template { self.constant(Value::text("")); }
                 let mut count = 0;
                 while self.look().shape != Shape::StringEnd {
