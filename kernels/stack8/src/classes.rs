@@ -6220,7 +6220,7 @@ impl<'a> Engine<'a> {
     /// account of itself as the program wrote them over, the namespace
     /// handed to it, or an entry of whichever namespace it keeps.
     fn routine_member(&self, subject: &Value, name: &str) -> Option<Value> {
-        let (_,members)=self.function_members.iter().find(|(v,_)| v.revive().map_or(false, |key| key.equals(subject)))?;
+        let (_,members)=&self.function_members[self.function_row(subject)?];
         let fields=members.fields.borrow();
         {
             let own=format!("\0{name}");
@@ -6237,7 +6237,8 @@ impl<'a> Engine<'a> {
     }
     /// The names a routine's own namespace holds, for its directory.
     fn routine_member_names(&self, subject: &Value) -> Vec<String> {
-        let Some((_,members))=self.function_members.iter().find(|(v,_)| v.revive().map_or(false, |key| key.equals(subject))) else {return Vec::new()};
+        let Some(at)=self.function_row(subject) else {return Vec::new()};
+        let (_,members)=&self.function_members[at];
         let fields=members.fields.borrow();
         if let Some((_,book))=fields.iter().find(|(n,_)| n==Self::HANDED_BOOK) {
             let Value::Map(pairs)=book.contents() else {return Vec::new()};
@@ -6290,22 +6291,96 @@ impl<'a> Engine<'a> {
         self.function_members[at].1.fields.borrow_mut().push((own,fresh.clone()));
         fresh
     }
+    /// The addresses a function value answers to in the row index: a
+    /// routine's own, a method's receiver and routine together, an
+    /// object's or class's own; nothing for a kind the index leaves to
+    /// the full search.
+    fn function_address(function: &Value) -> Option<(usize, usize)> {
+        match function.contents() {
+            Value::Routine(code) => Some((Rc::as_ptr(&code) as usize, 0)),
+            Value::Method(receiver, code, _) => Some((Rc::as_ptr(&receiver) as usize, Rc::as_ptr(&code) as usize)),
+            Value::Object(instance) => Some((Rc::as_ptr(&instance) as usize, usize::MAX)),
+            Value::Class(class) => Some((Rc::as_ptr(&class) as usize, usize::MAX - 1)),
+            _ => None,
+        }
+    }
+    /// The same addresses read off a weak hold, which still names them
+    /// after what it held has gone, so a dead row's key can be dropped.
+    fn hold_address(held: &crate::faint::Hold) -> Option<(usize, usize)> {
+        use crate::faint::Hold;
+        match held {
+            Hold::Routine(code) => Some((code.as_ptr() as usize, 0)),
+            Hold::Method(receiver, code, _) => Some((receiver.as_ptr() as usize, code.as_ptr() as usize)),
+            Hold::Object(instance) => Some((instance.as_ptr() as usize, usize::MAX)),
+            Hold::Class(class) => Some((class.as_ptr() as usize, usize::MAX - 1)),
+            _ => None,
+        }
+    }
+    /// The row of `function_members` that is this function's, through
+    /// the index where it has an address, else by searching the rows.
+    /// A row the index names is believed only while its weak hold
+    /// still revives to this very function.
+    fn function_row(&self, function: &Value) -> Option<usize> {
+        let same = |at: &usize| self.function_members.get(*at).is_some_and(|(held, _)| held.revive().is_some_and(|value| value.equals(function)));
+        match Self::function_address(function) {
+            Some(address) => self.function_rows.borrow().get(&address).filter(|at| same(at)).copied(),
+            None => (0..self.function_members.len()).find(same),
+        }
+    }
+    /// The row index built afresh once rows have been dropped or moved.
+    pub(super) fn reindex_function_rows(&self) {
+        let rows = self.function_members.iter().enumerate()
+            .filter_map(|(at, (held, _))| Self::function_address(&held.revive()?).map(|address| (address, at)))
+            .collect();
+        *self.function_rows.borrow_mut() = rows;
+    }
+    /// A routine's name or full name as a generator made from it is to
+    /// carry: whatever the program wrote over it, else the routine's
+    /// own, read without filing a row for a function nothing was
+    /// written on.
+    pub(super) fn routine_title(&self, function: &Value, word: &str) -> String {
+        let name = self.class_word(word).to_string();
+        if let Some(written) = self.routine_member(function, &name) { return written.plain(); }
+        let Value::Routine(code) = function else { return String::new() };
+        let code = Self::routine_now(code);
+        if word == "name" { code.ident.clone() } else { code.qualified.clone() }
+    }
     pub(super) fn function_storage(&mut self, function: &Value) -> usize {
-        if let Some(at) = self.function_members.iter().position(|(v, _)| v.revive().map_or(false, |key| key.equals(function))) { return at; }
+        if let Some(at) = self.function_row(function) { return at; }
         let class = self.root_class();
         self.made += 1;
         let fields = Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(Vec::new()), mark: self.made });
         let entry = (crate::faint::hold_of(function).expect("function has a weak identity"), fields);
         // Reclaim dead metadata without moving live indices held across
         // annotation callbacks. Repeated short-lived functions must not
-        // leave an ever-growing lookup table behind.
-        if let Some(vacant) = self.function_members.iter().position(|(key, _)| key.gone()) {
+        // leave an ever-growing lookup table behind; the search for a
+        // dead row is a short walk resumed where the last one ended,
+        // so a fresh function never pays for the whole table.
+        let count = self.function_members.len();
+        let mut vacant = None;
+        if count > 0 {
+            let mut at = self.function_sweep % count;
+            for _ in 0..count.min(32) {
+                if self.function_members[at].0.gone() { vacant = Some(at); break; }
+                at = (at + 1) % count;
+            }
+            self.function_sweep = at;
+        }
+        let at = if let Some(vacant) = vacant {
+            // The departed occupant's key goes with it, so the index
+            // never keeps a key for a row that answers for someone else.
+            if let Some(old) = Self::hold_address(&self.function_members[vacant].0) {
+                let mut rows = self.function_rows.borrow_mut();
+                if rows.get(&old) == Some(&vacant) { rows.remove(&old); }
+            }
             self.function_members[vacant] = entry;
             vacant
         } else {
             self.function_members.push(entry);
             self.function_members.len() - 1
-        }
+        };
+        if let Some(address) = Self::function_address(function) { self.function_rows.borrow_mut().insert(address, at); }
+        at
     }
     /// The annotations a class carries: its own, worked out the first
     /// time they are asked for from the routines its body kept and held

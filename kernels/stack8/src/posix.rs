@@ -17,6 +17,32 @@ thread_local! {
 fn bytes(data: Vec<u8>) -> Value {
     Value::Bytes(Rc::new(RefCell::new(data)), false, Rc::from("b"))
 }
+/// The name, inode number and type of the next entry of an open directory
+/// stream, the entries for the directory itself and its parent passed over;
+/// nothing once the stream is spent.
+pub fn next_directory_entry(handle: i64) -> Result<Option<(Vec<u8>, u64, u8)>, i32> {
+    DIRECTORIES.with(|held| {
+        let held = held.borrow();
+        let Some(directory) = held.1.get(&handle) else { return Err(libc::EBADF) };
+        loop {
+            let entry = unsafe {
+                *libc::__errno_location() = 0;
+                libc::readdir(directory.0)
+            };
+            if entry.is_null() {
+                let error = unsafe { *libc::__errno_location() };
+                return if error == 0 { Ok(None) } else { Err(error) };
+            }
+            let entry = unsafe { &*entry };
+            let name = unsafe { CStr::from_ptr(entry.d_name.as_ptr()) }.to_bytes();
+            if name != b"." && name != b".." { return Ok(Some((name.to_vec(), entry.d_ino as u64, entry.d_type))); }
+        }
+    })
+}
+/// An entry as the `scandir_next` operation hands it over.
+pub fn directory_record(name: Vec<u8>, inode: u64, kind: u8) -> Value {
+    Value::tuple(vec![bytes(name), Value::of_big(inode.into()), Value::Small(kind.into())])
+}
 fn raw(value: &Value) -> Result<Vec<u8>, String> {
     match value.contents() {
         Value::Text(s) => Ok(s.as_bytes().to_vec()),
@@ -53,9 +79,14 @@ fn stat_fields(info: libc::stat) -> Value {
     let mut row = vec![Value::Small(info.st_mode.into()), Value::of_big(info.st_ino.into()),
         Value::of_big(info.st_dev.into()), Value::of_big(info.st_nlink.into())];
     row.extend([info.st_uid as i64, info.st_gid as i64, info.st_size, info.st_atime,
-        info.st_mtime, info.st_ctime, info.st_atime_nsec, info.st_mtime_nsec,
-        info.st_ctime_nsec, info.st_blksize as i64, info.st_blocks].into_iter().map(Value::Small));
-    row.push(Value::of_big(info.st_rdev.into()));
+        info.st_mtime, info.st_ctime].into_iter().map(Value::Small));
+    // The three moments again as seconds with their fraction, then as
+    // whole nanoseconds: the shapes the module's stat_result carries,
+    // worked out here once instead of in the module on every call.
+    let moments = [(info.st_atime, info.st_atime_nsec), (info.st_mtime, info.st_mtime_nsec), (info.st_ctime, info.st_ctime_nsec)];
+    row.extend(moments.iter().map(|(whole, part)| crate::value::real_of(*whole as f64 + *part as f64 / 1e9, crate::arith::DEFAULT_PLACES)));
+    row.extend(moments.iter().map(|(whole, part)| Value::of_big(num_bigint::BigInt::from(*whole) * 1_000_000_000 + *part)));
+    row.extend([Value::Small(info.st_blksize as i64), Value::Small(info.st_blocks), Value::of_big(info.st_rdev.into())]);
     Value::tuple(row)
 }
 // Preserve the account strings before the next database call replaces them.

@@ -171,6 +171,11 @@ pub struct Engine<'a> {
     kind_classes: Vec<(String, Rc<Class>)>,
     kind_descriptors: RefCell<Vec<(String, String, Value)>>,
     function_members: Vec<(crate::faint::Hold, Rc<Instance>)>,
+    /// Where each function of `function_members` stands, by the
+    /// addresses it answers to, so a reading finds its row at once.
+    function_rows: RefCell<HashMap<(usize, usize), usize>>,
+    /// Where the last short walk for a dead row of `function_members` ended.
+    function_sweep: usize,
     collecting_cycles: bool,
     kind_names: RefCell<HashMap<String, Vec<String>>>,
     member_words: [&'a str; 24],
@@ -1688,7 +1693,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
+            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
             contexts: crate::context::ContextStore::default(),
@@ -2462,6 +2467,7 @@ impl<'a> Engine<'a> {
         self.collecting_cycles = true;
         // Dead weak keys must release their attributes before ordering finalizers.
         self.function_members.retain(|(function, _)| function.revive().is_some());
+        self.reindex_function_rows();
         self.settle_departed();
         let mut graph = self.cycle_graph(&[]);
         let mut group = graph.unreached();
@@ -2469,6 +2475,7 @@ impl<'a> Engine<'a> {
         // heap is the same afterwards and the first walk still stands.
         if group.is_empty() {
             self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !graph.unowned(&function)));
+            self.reindex_function_rows();
             drop(graph);
             self.settle_departed();
             self.collecting_cycles = false;
@@ -2502,6 +2509,7 @@ impl<'a> Engine<'a> {
         let unreached = after.still_unreached(group);
         let count = unreached.len();
         self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !after.unowned(&function)));
+        self.reindex_function_rows();
 
         let grave = crate::faint::Graph::sever(&unreached);
         drop(unreached);
@@ -4890,8 +4898,8 @@ impl<'a> Engine<'a> {
             generator.walked = if program.code_flags & 512 != 0 { Some(Rc::from("async_generator")) }
                 else if program.code_flags & 128 != 0 { Some(Rc::from("coroutine")) } else { None };
             let function = Value::Routine(program.clone());
-            generator.name = self.class_get(function.clone(), &self.class_word("name").to_string(), true)?.plain();
-            generator.qualified = self.class_get(function, &self.class_word("qualified").to_string(), true)?.plain();
+            generator.name = self.routine_title(&function, "name");
+            generator.qualified = self.routine_title(&function, "qualified");
             generator.trace_frame = self.make_frame(program, &generator.frame, None);
             let walk = Rc::new(RefCell::new(generator));
             if !self.lang.coroutine_fields.is_empty() && program.code_flags & 128 != 0 {
@@ -5984,12 +5992,12 @@ impl<'a> Engine<'a> {
         // A body on the stack may not be entered again: it is marked for
         // as long as the step lasts, so a reentrant call is refused, and
         // the reference's reading of the running member is answered too.
-        let busy = if self.coroutines.contains_key(&(Rc::as_ptr(held) as usize)) {
-            self.lang.coroutine_errors[2].clone()
-        } else { self.lang.yield_busy[0].clone() };
+        let busy = |engine: &Self| if engine.coroutines.contains_key(&(Rc::as_ptr(held) as usize)) {
+            engine.lang.coroutine_errors[2].clone()
+        } else { engine.lang.yield_busy[0].clone() };
         {
-            let mut state = held.try_borrow_mut().map_err(|_| busy.clone())?;
-            if state.running { return Err(busy.into()); }
+            let mut state = held.try_borrow_mut().map_err(|_| busy(self))?;
+            if state.running { return Err(busy(self).into()); }
             state.running = true;
         }
         let outcome = self.step_generator_mode(held, sent, hurled, given, true);
@@ -23644,6 +23652,32 @@ impl<'a> Engine<'a> {
                         self.made += 1;
                         Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None), class,
                             fields: RefCell::new(vec![("\0worth".into(), payload), ("\0structseq".into(), extra)]), mark: self.made }))
+                    }
+                    // The next entry of an open directory stream, made as a
+                    // copy of the sample entry given where its name can be
+                    // read as text, the places of the sample taking the
+                    // new values in turn; otherwise the record the stream's
+                    // own `scandir_next` hands over, left for the module.
+                    Some(Value::Text(op)) if op.as_ref() == "scandir_entry" => {
+                        arity(5)?;
+                        let Value::Small(handle) = args[1].contents() else { return Err("TypeError: an integer is required".into()); };
+                        let reply = |code: i32, found: Value| Ok(Value::tuple(vec![Value::Small(code.into()), found]));
+                        let (name, inode, kind) = match crate::posix::next_directory_entry(handle) {
+                            Err(code) => return reply(code, Value::Null),
+                            Ok(None) => return reply(0, Value::Null),
+                            Ok(Some(found)) => found,
+                        };
+                        let sample = match args[2].contents() { Value::Object(sample) if sample.fields.borrow().len() == 7 => Some(sample), _ => None };
+                        let (Some(sample), Ok(spelled)) = (sample, String::from_utf8(name.clone())) else {
+                            return reply(0, crate::posix::directory_record(name, inode, kind));
+                        };
+                        let path = match args[3].contents() { Value::Text(before) => format!("{before}{spelled}"), _ => spelled.clone() };
+                        let mut places = sample.fields.borrow().clone();
+                        for (place, held) in places.iter_mut().zip([Value::text(&spelled), Value::text(&path), Value::of_big(inode.into()),
+                            Value::Small(kind.into()), args[4].clone(), Value::Null, Value::Null]) { place.1 = held; }
+                        self.made += 1;
+                        return reply(0, Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None), class: sample.class.clone(),
+                            fields: RefCell::new(places), mark: self.made})));
                     }
                     Some(Value::Text(op)) if op.as_ref() == "structseq_get" => {
                         arity(3)?;

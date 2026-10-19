@@ -971,6 +971,30 @@ _finalizer_warnings = None
 _finalizer_collector = None
 _finalizer_os = None
 
+def _file_plans():
+    # What each plain mode string works out to: readable, writable, the
+    # mode the stream reports, the open flags and whether it appends. The
+    # general road below derives the same from any spelling.
+    import os
+    plans = {}
+    for letters in ('r', 'w', 'a', 'x', 'r+', 'w+', 'a+', 'x+', '+r', '+w', '+a', '+x', 'rb', 'wb', 'ab', 'xb', 'r+b', 'w+b', 'a+b', 'x+b', 'rb+', 'wb+', 'ab+', 'xb+', 'br', 'bw', 'ba', 'bx', 'b+r', 'b+w', 'b+a', 'b+x', 'br+', 'bw+', 'ba+', 'bx+', '+rb', '+wb', '+ab', '+xb', '+br', '+bw', '+ba', '+bx'):
+        letter = [one for one in letters if one in 'rwax'][0]
+        plus = '+' in letters
+        flags = os.O_RDWR if plus else os.O_RDONLY if letter == 'r' else os.O_WRONLY
+        if letter != 'r':
+            flags |= os.O_CREAT
+        if letter == 'w':
+            flags |= os.O_TRUNC
+        if letter == 'x':
+            flags |= os.O_EXCL
+        if letter == 'a':
+            flags |= os.O_APPEND
+        reported = ('ab+' if letter == 'a' else 'xb+' if letter == 'x' else 'rb+') if plus else ('ab' if letter == 'a' else 'xb' if letter == 'x' else 'rb' if letter == 'r' else 'wb')
+        plans[letters] = (letter == 'r' or plus, letter != 'r' or plus, reported, flags | os.O_CLOEXEC, letter == 'a')
+    return plans
+
+_FILE_PLANS = {}
+
 class FileIO(_RawIOBase):
     # What a stream whose __init__ never finished stands as, the way the C
     # stream stands with no descriptor: closed, and owing nothing.
@@ -983,6 +1007,13 @@ class FileIO(_RawIOBase):
     _appending = False
     _finalizing_state = False
     def __init__(self, file, mode='r', closefd=True, opener=None):
+        if type(file) is str and type(mode) is str and closefd is True and opener is None:
+            if not _FILE_PLANS:
+                _FILE_PLANS.update(_file_plans())
+            plan = _FILE_PLANS.get(mode)
+            if plan is not None:
+                self._init_named(file, plan)
+                return
         import os
         if getattr(self, '_fd', -1) >= 0:
             self.close()
@@ -1072,6 +1103,52 @@ class FileIO(_RawIOBase):
                 except OSError:
                     pass
             raise
+    def _init_named(self, file, plan):
+        # The common case of __init__: a path given as text, a plain mode.
+        global _finalizer_warnings, _finalizer_collector, _finalizer_os
+        os = _finalizer_os
+        if os is None:
+            import os, warnings, gc
+            if _finalizer_warnings is None:
+                _finalizer_warnings, _finalizer_collector, _finalizer_os = warnings, gc, os
+        if self._fd >= 0:
+            self.close()
+        self._fd = -1
+        self._closed = True
+        self._finalizing_state = False
+        self._readable, self._writable, reported, flags, appending = plan
+        self._created = reported[0] == 'x'
+        self._appending = appending
+        self._closefd = True
+        fd = -1
+        try:
+            fd = os.open(file, flags, 438)
+            try:
+                file_mode = os.fstat(fd).st_mode
+            except OSError as exc:
+                if exc.errno == 9:
+                    raise
+            else:
+                if file_mode & 61440 == 16384:
+                    raise IsADirectoryError(21, 'Is a directory', file)
+            self.name = file
+            self._fd = fd
+            self._closed = False
+            if appending:
+                try:
+                    self.seek(0, 2)
+                except OSError as exc:
+                    if exc.errno != 29:
+                        raise
+        except BaseException:
+            self._fd = -1
+            self._closed = True
+            if fd >= 0:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            raise
     def _dealloc_warn(self, source):
         if getattr(self, '_fd', -1) >= 0 and getattr(self, '_closefd', False):
             if sys.is_finalizing() and _finalizer_warnings is not None:
@@ -1151,10 +1228,11 @@ class FileIO(_RawIOBase):
         return 'wb'
 
     def fileno(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         return self._fd
     def close(self):
-        if not self.closed:
+        if not self._closed:
             if _finalizer_os is not None:
                 os = _finalizer_os
             else:
@@ -1170,13 +1248,16 @@ class FileIO(_RawIOBase):
                 finally:
                     self._fd = -1
     def readable(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         return self._readable
     def writable(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         return self._writable
     def seekable(self):
-        self._checkClosed()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
         try:
             self.seek(0, 1)
         except OSError:
@@ -1186,19 +1267,23 @@ class FileIO(_RawIOBase):
         import os
         return os.isatty(self.fileno())
     def read(self, size=-1):
-        self._checkClosed()
-        self._checkReadable()
-        size = _size(size)
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
+        if not self._readable:
+            raise UnsupportedOperation('File or stream is not readable.')
+        if type(size) is not int or size > _MAXSIZE or size < _MINSIZE:
+            size = _size(size)
         if size < 0:
             return self.readall()
-        import os
         try:
-            return os.read(self._fd, size)
+            return _finalizer_os.read(self._fd, size)
         except BlockingIOError:
             return None
     def readall(self):
-        self._checkClosed()
-        self._checkReadable()
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
+        if not self._readable:
+            raise UnsupportedOperation('File or stream is not readable.')
         chunks = []
         while True:
             chunk = self.read(DEFAULT_BUFFER_SIZE)
@@ -1217,23 +1302,18 @@ class FileIO(_RawIOBase):
             view.cast('B')[:len(data)] = data
             return len(data)
     def write(self, buffer):
-        self._checkClosed()
-        self._checkWritable()
-        if _finalizer_os is not None:
-            os = _finalizer_os
-        else:
-            import os
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
+        if not self._writable:
+            raise UnsupportedOperation('File or stream is not writable.')
         try:
-            return os.write(self._fd, _buffer(buffer))
+            return _finalizer_os.write(self._fd, buffer if type(buffer) is bytes else _buffer(buffer))
         except BlockingIOError:
             return None
     def seek(self, offset, whence=0):
-        self._checkClosed()
-        if _finalizer_os is not None:
-            os = _finalizer_os
-        else:
-            import os
-        return os.lseek(self._fd, _ssize(offset), _whence(whence))
+        if self._closed:
+            raise ValueError('I/O operation on closed file.')
+        return _finalizer_os.lseek(self._fd, offset if type(offset) is int and _MINSIZE <= offset <= _MAXSIZE else _ssize(offset), whence if type(whence) is int and -2147483648 <= whence <= 2147483647 else _whence(whence))
     def truncate(self, size=None):
         self._checkClosed()
         self._checkWritable()
@@ -1384,7 +1464,12 @@ def _buffered_impl(kind):
                     self._write_lock = _BufferedLock()
             @property
             def closed(self):
-                return self.raw.closed
+                # The checked raw stream's own answer, without its call
+                # for the streams it knows to be plain.
+                raw = self.raw
+                if raw is not None and raw._plain:
+                    return not raw._owned or raw.raw._closed
+                return raw.closed
             def detach(self):
                 result = base.detach(self)
                 self.raw = None
@@ -1590,25 +1675,32 @@ class BufferedRWPair(BufferedReader):
     def close(self):
         return self._impl.close()
 
+# Mode strings open() has found well formed: the checks depend on the
+# text of the mode alone.
+_GOOD_MODES = set()
+
 class _Open:
     __name__ = 'open'
     def __call__(self, file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None):
-        if not isinstance(mode, str):
-            raise TypeError('open() argument 2 must be str, not ' + type(mode).__name__)
-        letters = set(mode)
-        if not letters <= set('axrwb+t') or len(mode) != len(letters):
-            raise ValueError('invalid mode: ' + repr(mode))
-        if 't' in letters and 'b' in letters:
-            raise ValueError("can't have text and binary mode at once")
-        if len(letters & set('axrw')) != 1:
-            raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
-        if encoding is None and sys.flags.warn_default_encoding and isinstance(mode, str) and 'b' not in mode:
+        if type(mode) is not str or mode not in _GOOD_MODES:
+            if not isinstance(mode, str):
+                raise TypeError('open() argument 2 must be str, not ' + type(mode).__name__)
+            letters = set(mode)
+            if not letters <= set('axrwb+t') or len(mode) != len(letters):
+                raise ValueError('invalid mode: ' + repr(mode))
+            if 't' in letters and 'b' in letters:
+                raise ValueError("can't have text and binary mode at once")
+            if len(letters & set('axrw')) != 1:
+                raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
+            if type(mode) is str:
+                _GOOD_MODES.add(mode)
+        if encoding is None and 'b' not in mode and sys.flags.warn_default_encoding:
             # The warning is aimed at the line that called open().
             encoding = text_encoding(None)
             if encoding == 'locale' and type(file) is str and opener is None and 'r' not in mode:
                 encoding = None
         if type(file) is not str or opener is not None or encoding is not None or errors is not None or newline is not None or 'b' in mode or 'r' in mode:
-            if not isinstance(file, int) and not hasattr(type(file), '__index__') and not isinstance(file, float):
+            if type(file) is not str and not isinstance(file, int) and not hasattr(type(file), '__index__') and not isinstance(file, float):
                 import os
                 file = os.fspath(file)
             binary = 'b' in mode
@@ -1628,7 +1720,7 @@ class _Open:
                 size = DEFAULT_BUFFER_SIZE if buffering < 0 or buffering == 1 else _index(buffering)
                 if '+' in mode:
                     buffer = BufferedRandom(raw, size)
-                elif raw.readable():
+                elif raw._readable:
                     buffer = BufferedReader(raw, size)
                 else:
                     buffer = BufferedWriter(raw, size)
