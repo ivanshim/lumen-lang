@@ -3839,6 +3839,45 @@ impl<'a> Builder<'a> {
     /// Read a value whose following commas may gather a tuple.
     fn comma_value(&mut self) -> Res<Form> { self.comma_expression(true) }
 
+    /// The parenthesis is already consumed. 1 when the group is only a
+    /// starred expression, 2 when a colon at the same depth is a slice
+    /// mark rather than a lambda body, and 0 when the group is ordinary.
+    fn paren_star_fate(&self) -> i32 {
+        if !self.on_any("ext.stmt.unpack.rest") { return 0; }
+        let Some(close) = self.grammar.single_syntax_group_close else { return 0; };
+        let mut nest = 0i32;
+        let mut owed = [0u8; 48];
+        let mut cursor = self.pos + 1;
+        while let Some(tok) = self.tokens.get(cursor) {
+            if tok.shape == Shape::Bare && self.table.spells("ext.op.lambda", &tok.spelling()) {
+                let slot = nest.max(0) as usize;
+                if slot < owed.len() { owed[slot] = owed[slot].saturating_add(1); }
+            }
+            if tok.shape == Shape::Sign {
+                let mark = tok.lexeme.as_str();
+                if mark == "(" || mark == "[" || mark == "{" {
+                    nest += 1;
+                } else if mark == ")" || mark == "]" || mark == "}" {
+                    if nest == 0 { return if mark == close { 1 } else { 0 }; }
+                    let leaving = nest.max(0) as usize;
+                    if leaving < owed.len() { owed[leaving] = 0; }
+                    nest -= 1;
+                } else if mark == ":" {
+                    let slot = nest.max(0) as usize;
+                    if slot < owed.len() && owed[slot] > 0 {
+                        owed[slot] -= 1;
+                    } else if nest == 0 {
+                        return 2;
+                    }
+                } else if nest == 0 && self.table.spells("ext.op.tuple", &tok.spelling()) {
+                    return 0;
+                }
+            }
+            cursor += 1;
+        }
+        0
+    }
+
     fn comma_expression(&mut self, writes: bool) -> Res<Form> {
         let (first, spreads) = self.comma_part(writes)?;
         if !self.on_any("ext.op.tuple") {
@@ -9344,7 +9383,10 @@ impl<'a> Builder<'a> {
         let star = self.grammar.single_ext_op_tuple.is_some() && self.on_any("ext.stmt.unpack.rest");
         if star { self.advance(); }
         let value = self.expr_at(0, writes)?;
-        let gathered = if star {
+        let gathered = if star && self.grammar.has_any_ext_builtin_exceptions_syntax {
+            // Grown the way a list display grows, so the refusal matches one.
+            prim_call(Prim::ExtendLiteral(false, true), vec![prim_call(Prim::MakeArray, Vec::new()), value])
+        } else if star {
             let partition = prim_call(Prim::Partition(1, Some(0)), vec![value]);
             prim_call(Prim::Apart, vec![partition, constant(Value::Small(0))])
         } else { value };
@@ -9523,17 +9565,24 @@ impl<'a> Builder<'a> {
             previous = boundary + 1;
         }
         let mut starred = None;
+        let syntax = self.grammar.has_any_ext_builtin_exceptions_syntax;
+        let piece_count = pieces.len();
         for (number, piece) in pieces.iter_mut().enumerate() {
             let lead = &self.tokens[piece.start];
-            if lead.shape == Shape::Sign && self.table.spells("ext.stmt.unpack.rest", &lead.spelling()) {
-                if self.table.has_any("ext.builtin.exceptions.syntax") {
-                    if starred.is_some() { return Err(String::from("SyntaxError: multiple starred expressions in assignment")); }
-                    if number >= 256 { return Err(String::from("SyntaxError: too many expressions in star-unpacking assignment")); }
-                }
-                if starred.is_some() { return Err(bad); }
-                starred = Some(number);
-                piece.start += 1;
+            let star_mark = lead.shape == Shape::Sign && self.table.spells("ext.stmt.unpack.rest", &lead.spelling());
+            if !star_mark { continue; }
+            if starred.is_some() {
+                return Err(if syntax { String::from("SyntaxError: multiple starred expressions in assignment") } else { bad });
             }
+            if syntax {
+                let tail = piece_count.saturating_sub(number.saturating_add(1));
+                let crowded = number >= (1usize << 8) || tail >= ((i32::MAX as usize) >> 8);
+                if crowded {
+                    return Err(String::from("SyntaxError: too many expressions in star-unpacking assignment"));
+                }
+            }
+            starred = Some(number);
+            piece.start += 1;
         }
         let held = self.gensym("partition").ident.to_string();
         let input = self.read(source);
@@ -9770,6 +9819,9 @@ impl<'a> Builder<'a> {
             if self.look().shape == Shape::Sign && self.table.spells("ext.stmt.unpack.rest", &self.look().lexeme)
                 && self.divided_at(self.pos, self.tokens.len(), "ext.op.tuple").is_empty()
                 && self.divided_at(self.pos, self.tokens.len(), "stmt.assign").is_empty() {
+                if self.second_sign_ahead().is_some_and(|at| self.table.compound.contains_key(self.tokens[at].spelling())) {
+                    return Err(String::from("SyntaxError: 'starred' is an illegal expression for augmented assignment"));
+                }
                 return Err(String::from("SyntaxError: can't use starred expression here"));
             }
             if self.look().spelling() == "None" && self.table.compound.contains_key(&self.glance(1).lexeme) {
@@ -9872,7 +9924,17 @@ impl<'a> Builder<'a> {
             let name = self.advance().lexeme;
             self.claim(&name);
             Ok(Form::Read(self.address_to_write(&name)))
-        } else { self.expr_at(0, false) };
+        } else if self.grammar.has_any_ext_builtin_exceptions_syntax && self.on_any("ext.stmt.unpack.rest") {
+            // The statement is itself a starred expression. Conditions,
+            // slice bounds and lambda bodies are read by expr, not here.
+            let augmented = self.second_sign_ahead().is_some_and(|at| self.table.compound.contains_key(self.tokens[at].spelling()));
+            if augmented {
+                return Err(String::from("SyntaxError: 'starred' is an illegal expression for augmented assignment"));
+            }
+            return Err(String::from("SyntaxError: can't use starred expression here"));
+        } else {
+            self.expr_at(0, false)
+        };
         self.kind_mark = enclosing_mark;
         self.place_depth -= usize::from(writing);
         let mut expr = read?;
@@ -11633,6 +11695,9 @@ impl<'a> Builder<'a> {
                 if table.single("syntax.group.open") == Some(t.lexeme.as_str()) {
                     self.move_past();
                     let inner = if self.reading_yield && self.ahead_in_item("ext.op.comprehension.for").is_none() {
+                        if table.has_any("ext.builtin.exceptions.syntax") && self.paren_star_fate() == 1 {
+                            return Err(String::from("SyntaxError: cannot use starred expression here"));
+                        }
                         let mut values = Vec::new();
                         let mut tuple = self.on_any("syntax.group.close");
                         while !self.on_any("syntax.group.close") {
@@ -11652,7 +11717,13 @@ impl<'a> Builder<'a> {
                                 else if self.on_any("syntax.group.close") {
                                 if table.has_any("ext.builtin.tuple") { constant(Value::tuple(Vec::new())) } else { self.scope_unrun("ext.system.scope.unready") }
                             }
-                                else { self.comma_value()? };
+                                else if table.has_any("ext.builtin.exceptions.syntax") {
+                                    match self.paren_star_fate() {
+                                        1 => return Err(String::from("SyntaxError: cannot use starred expression here")),
+                                        2 => return Err(String::from("SyntaxError: invalid syntax")),
+                                        _ => self.comma_value()?,
+                                    }
+                                } else { self.comma_value()? };
                             if table.has_any("ext.builtin.exceptions.syntax")
                                 && matches!(self.look().shape, Shape::Bare | Shape::Numeral) {
                                 return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));

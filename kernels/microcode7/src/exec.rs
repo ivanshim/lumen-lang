@@ -9453,7 +9453,16 @@ impl<'a> Machine<'a> {
                         if grown && values.len() == 2 {
                             let item = values.pop().expect("literal item");
                             let source = values.pop().expect("growing literal");
-                            let extra = if expanded { Some(self.literal_members(&item)?) } else { None };
+                            let extra = if expanded {
+                                match self.literal_members(&item) {
+                                    Ok(members) => Some(members),
+                                    Err(note) if self.python_numbers => match Self::row_star_complaint(&note) {
+                                        Some(told) => return Err(told.into()),
+                                        None => return Err(note.into()),
+                                    },
+                                    Err(note) => return Err(note.into()),
+                                }
+                            } else { None };
                             match source {
                                 Value::Vector(mut prior) => {
                                     match extra { Some(more) => Rc::make_mut(&mut prior).extend(more), None => Rc::make_mut(&mut prior).push(item) }
@@ -14122,8 +14131,8 @@ impl<'a> Machine<'a> {
                     match expanded {
                         Value::Dict(entries) => {
                             for (k, v) in entries.iter() {
+                                self.note_keyword(&mut folded, k, shown)?;
                                 let k = match k { Value::Keyed(inner, _) => inner.as_ref().clone(), other => other.clone() };
-                                self.note_keyword(&mut folded, &k, shown)?;
                                 names.push((k, v.clone()));
                             }
                         }
@@ -14198,6 +14207,10 @@ impl<'a> Machine<'a> {
         }
         Ok(keys)
     }
+
+
+
+
 
     /// The word a keyword is written under. Only text stands; anything
     /// else is the reference's own complaint, with no naming over it.
@@ -23229,7 +23242,17 @@ impl<'a> Machine<'a> {
                 } else if !dictionary {
                     let Value::Vector(prior) = &v[0] else { unreachable!() };
                     let mut next = prior.to_vec();
-                    next.extend(if expanded { self.literal_members(&v[1])? } else { vec![v[1].clone()] });
+                    let extra = if expanded {
+                        match self.literal_members(&v[1]) {
+                            Ok(members) => members,
+                            Err(note) if self.python_numbers => {
+                                if let Some(told) = Self::row_star_complaint(&note) { return Err(told); }
+                                return Err(note);
+                            }
+                            Err(note) => return Err(note),
+                        }
+                    } else { vec![v[1].clone()] };
+                    next.extend(extra);
                     Value::Vector(crate::tuples::Sequence::plain(next))
                 } else {
                     // The fast pre-check above the general dispatch takes
@@ -28571,13 +28594,21 @@ impl<'a> Machine<'a> {
     }
 
     fn literal_members(&mut self, offered: &Value) -> Result<Vec<Value>, String> {
-        let named = offered.kind_word();
-        let regular = format!("TypeError: '{named}' object is not iterable");
-        self.gathered_members(offered).map_err(|fault| match fault == regular {
-            true => format!("TypeError: Value after * must be an iterable, not {named}"),
-            false => fault,
-        })
+        // Displays report the ordinary iteration fault. Calls keep a
+        // separate sentence for a spread that will not walk.
+        self.gathered_members(offered)
     }
+
+    /// List and tuple stars use this sentence. Sets leave the walk's own.
+    fn row_star_complaint(note: &str) -> Option<String> {
+        let marker = "' object is not iterable";
+        if !note.starts_with("TypeError: '") || !note.ends_with(marker) { return None; }
+        let kind = &note["TypeError: '".len()..note.len() - marker.len()];
+        if kind.chars().any(|letter| letter == '\'') { return None; }
+        Some(format!("TypeError: Value after * must be an iterable, not {kind}"))
+    }
+
+
 
     pub(super) fn gathered_members(&mut self, source: &Value) -> Result<Vec<Value>, String> {
         if let Some(Value::Window(owner, 'm')) = Self::window_inside(source) { if matches!(owner.settled(), Value::Thing(_)) { return self.gathered_members(&owner.settled()); } }

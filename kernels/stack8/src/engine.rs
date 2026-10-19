@@ -3915,8 +3915,9 @@ impl<'a> Engine<'a> {
         match held.contents() {
             Value::Map(entries) => {
                 for (key, value) in entries.iter() {
+                    // Preserve a concrete dictionary key's stored hash during duplicate checks.
+                    self.note_keyword(folded, key, shown)?;
                     let key = match key { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
-                    self.note_keyword(folded, &key, shown)?;
                     pairs.push((Some(key), value.clone()));
                 }
             }
@@ -13750,7 +13751,17 @@ impl<'a> Engine<'a> {
                     // item joins in one push rather than a clone of
                     // everything gathered so far for every item added.
                     let mut items = match gathered_so_far { Value::Array(a) | Value::Tuple(a) => a, _ => unreachable!() };
-                    if *spread { Rc::make_mut(&mut items).extend(self.spread_members(&next)?); } else { Rc::make_mut(&mut items).push(next); }
+                    if *spread {
+                        let walked = match self.spread_members(&next) {
+                            Ok(members) => members,
+                            Err(note) if self.lang.python_numbers => match Self::display_star_note(&note) {
+                                Some(told) => return Err(told.into()),
+                                None => return Err(note.into()),
+                            },
+                            Err(note) => return Err(note.into()),
+                        };
+                        Rc::make_mut(&mut items).extend(walked);
+                    } else { Rc::make_mut(&mut items).push(next); }
                     Value::Array(items)
                 }
             }
@@ -18633,12 +18644,21 @@ impl<'a> Engine<'a> {
     }
 
     fn spread_members(&mut self, next: &Value) -> Res<Vec<Value>> {
-        let kind = next.core_kind();
-        let ordinary = format!("TypeError: '{kind}' object is not iterable");
-        self.comprehension_items(next).map_err(|why| {
-            if why == ordinary { format!("TypeError: Value after * must be an iterable, not {kind}") } else { why }
-        })
+        // A display spread walks like any other iteration. A call keeps
+        // its own wording for a value that will not walk.
+        self.comprehension_items(next)
     }
+
+    /// A list or tuple star says this when the value will not walk.
+    /// A set keeps the ordinary iteration sentence.
+    fn display_star_note(note: &str) -> Option<String> {
+        let Some(body) = note.strip_prefix("TypeError: '") else { return None };
+        let Some(kind) = body.strip_suffix("' object is not iterable") else { return None };
+        if kind.contains('\'') { return None; }
+        Some(format!("TypeError: Value after * must be an iterable, not {kind}"))
+    }
+
+
 
     fn comprehension_items(&mut self, value: &Value) -> Res<Vec<Value>> {
         if let Some(Value::View(v)) = Self::view_in(value) { if v.1 == "mapping" && matches!(v.0.contents(), Value::Object(_)) { return self.comprehension_items(&v.0.contents()); } }

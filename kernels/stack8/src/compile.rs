@@ -9234,6 +9234,41 @@ impl<'a> Compiler<'a> {
     /// a call. The last comma may stand before a closing mark or line.
     fn tuple_value(&mut self) -> Res<()> { self.tuple_read(true) }
 
+    /// What a parenthesised star is. 0: an ordinary group, parsed as
+    /// written. 1: one starred expression (`(*a)`, `(*lambda: 1)`).
+    /// 2: a colon at this depth that does not open a lambda body
+    /// (`(*b:*b)`), which is not a starred expression at all.
+    fn starred_group(&self) -> u8 {
+        if self.lang.unpack_rest.is_empty() || !self.on_any(&self.lang.unpack_rest) { return 0; }
+        let Some(close) = self.lang.grouping.as_ref().map(|pair| pair.close.as_str()) else { return 0; };
+        let mut depth = 0i32;
+        let mut lambda_depth: Vec<i32> = Vec::new();
+        for tok in self.tokens.iter().skip(self.pos + 1) {
+            if tok.shape == Shape::Instr && Lang::spells(&self.lang.lambda_words, &tok.spelling()) {
+                lambda_depth.push(depth);
+            }
+            if tok.shape != Shape::Sign { continue; }
+            match tok.lexeme.as_str() {
+                "(" | "[" | "{" => depth += 1,
+                ")" | "]" | "}" => {
+                    if depth == 0 { return u8::from(tok.lexeme == close); }
+                    depth -= 1;
+                    lambda_depth.retain(|opened| *opened <= depth);
+                }
+                ":" => {
+                    if let Some(found) = lambda_depth.iter().rposition(|opened| *opened == depth) {
+                        lambda_depth.remove(found);
+                    } else if depth == 0 {
+                        return 2;
+                    }
+                }
+                _ if depth == 0 && Lang::spells(&self.lang.tuple_marks, &tok.spelling()) => return 0,
+                _ => {}
+            }
+        }
+        0
+    }
+
     fn tuple_read(&mut self, writable: bool) -> Res<()> {
         let first_spreads = self.tuple_piece(writable)?;
         if !self.on_any(&self.lang.tuple_marks) {
@@ -9395,6 +9430,14 @@ impl<'a> Compiler<'a> {
     fn tuple_piece(&mut self, writable: bool) -> Res<bool> {
         let spread = !self.lang.tuple_marks.is_empty() && self.on_any(&self.lang.unpack_rest);
         if spread { self.take(); }
+        // A starred element of a tuple is grown like a list display, so a
+        // value that will not walk says so the way a list's star does.
+        if spread && !self.lang.syntax_members.is_empty() {
+            self.act(Action::MakeArray, 0);
+            self.expr_at(0, writable)?;
+            self.act(Action::GatherItem { map: false, spread: true }, 2);
+            return Ok(true);
+        }
         self.expr_at(0, writable)?;
         if spread {
             self.act(Action::Unpack(1, Some(0)), 1);
@@ -9465,6 +9508,7 @@ impl<'a> Compiler<'a> {
             if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind}")); }
         }
         let mut listed = false;
+        let mut peeled_group = false;
         loop {
             let bracket = [&self.lang.grouping, &self.lang.array_brackets].into_iter().flatten()
                 .find(|p| self.tokens[begin].shape == Shape::Sign && p.open == self.tokens[begin].lexeme).cloned();
@@ -9482,7 +9526,9 @@ impl<'a> Compiler<'a> {
                 let kind = if self.lang.array_brackets.as_ref().map_or(false, |p| p.open == pair.open) { "list comprehension here. Maybe you meant '==' instead of '='?" } else { "generator expression" };
                 return Err(format!("SyntaxError: cannot assign to {kind}"));
             }
-            listed |= self.lang.array_brackets.as_ref().map_or(false, |p| p.open == pair.open);
+            let opened_list = self.lang.array_brackets.as_ref().map_or(false, |p| p.open == pair.open);
+            listed |= opened_list;
+            if !opened_list { peeled_group = true; }
             begin += 1;
             end -= 1;
             if begin == end { listed = true; break; }
@@ -9501,6 +9547,14 @@ impl<'a> Compiler<'a> {
         }
         let (commas, _) = self.outer_marks(begin, end, &self.lang.tuple_marks);
         listed |= !commas.is_empty();
+        if !listed && !self.lang.syntax_members.is_empty() {
+            let head = &self.tokens[begin];
+            if head.shape == Shape::Sign && Lang::spells(&self.lang.unpack_rest, &head.spelling()) {
+                let said = if peeled_group { "SyntaxError: cannot use starred expression here" }
+                    else { "SyntaxError: starred assignment target must be in a list or tuple" };
+                return Err(said.into());
+            }
+        }
         if !listed {
             if !self.lang.syntax_members.is_empty() && self.tokens[begin].shape == Shape::Sign
                 && Lang::spells(&self.lang.unpack_rest, &self.tokens[begin].lexeme) {
@@ -9564,13 +9618,23 @@ impl<'a> Compiler<'a> {
             left = right + 1;
         }
         let mut rest = None;
+        let span_count = spans.len();
         for (i, (a, _)) in spans.iter_mut().enumerate() {
             if self.tokens[*a].shape == Shape::Sign && Lang::spells(&self.lang.unpack_rest, &self.tokens[*a].spelling()) {
-                if !self.lang.syntax_members.is_empty() {
-                    if rest.is_some() { return Err("SyntaxError: multiple starred expressions in assignment".into()); }
-                    if i >= 1 << 8 { return Err("SyntaxError: too many expressions in star-unpacking assignment".into()); }
+                if rest.is_some() {
+                    if !self.lang.syntax_members.is_empty() {
+                        return Err("SyntaxError: multiple starred expressions in assignment".into());
+                    }
+                    return Err(amiss.clone());
                 }
-                if rest.replace(i).is_some() { return Err(amiss.clone()); }
+                if !self.lang.syntax_members.is_empty() {
+                    let after = span_count.saturating_sub(i + 1);
+                    // 256 names before the star, or the after-star count past the packed limit.
+                    if i >= 256 || after >= (2147483647usize >> 8) {
+                        return Err("SyntaxError: too many expressions in star-unpacking assignment".into());
+                    }
+                }
+                rest = Some(i);
                 *a += 1;
             }
         }
@@ -9692,6 +9756,9 @@ impl<'a> Compiler<'a> {
             if self.look().shape == Shape::Sign && Lang::spells(&self.lang.unpack_rest, &self.look().lexeme)
                 && self.outer_marks(self.pos, self.tokens.len(), &self.lang.tuple_marks).0.is_empty()
                 && self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.is_empty() {
+                if self.second_assign_ahead().is_some_and(|at| self.lang.compound.contains_key(self.tokens[at].spelling())) {
+                    return Err("SyntaxError: 'starred' is an illegal expression for augmented assignment".into());
+                }
                 return Err("SyntaxError: can't use starred expression here".into());
             }
             if self.look().spelling() == "None" && self.lang.compound.contains_key(self.look_ahead(1).spelling()) {
@@ -9813,7 +9880,19 @@ impl<'a> Compiler<'a> {
             let target = self.cell_to_write(&named);
             self.put(Instr::Read(target));
             Ok(())
-        } else { self.expr_at(0, false) };
+        } else {
+            // `*a` and `*1` as a statement are starred expressions. A
+            // star inside a slice, a test or a lambda body is not read
+            // from here, and the ordinary reader calls it invalid syntax.
+            if !self.lang.syntax_members.is_empty() && self.on_any(&self.lang.unpack_rest) {
+                let compound = self.second_assign_ahead().is_some_and(|at| self.lang.compound.contains_key(self.tokens[at].spelling()));
+                if compound {
+                    return Err("SyntaxError: 'starred' is an illegal expression for augmented assignment".into());
+                }
+                return Err("SyntaxError: can't use starred expression here".into());
+            }
+            self.expr_at(0, false)
+        };
         self.annotation_target = outer_annotation;
         self.writing_place = saved_place;
         expression?;
@@ -11991,6 +12070,9 @@ impl<'a> Compiler<'a> {
                     if tok.lexeme == group.open {
                         self.pass_token();
                         if self.yield_operand && self.comprehension_ahead().is_none() {
+                            if !lang.syntax_members.is_empty() && self.starred_group() == 1 {
+                                return Err("SyntaxError: cannot use starred expression here".into());
+                            }
                             let mut count = 0;
                             let mut tuple = self.at_symbol(&group.close);
                             while !self.at_symbol(&group.close) {
@@ -12010,7 +12092,16 @@ impl<'a> Compiler<'a> {
                                 if lang.builtins.values().any(|b| *b == Builtin::Tuple) { self.constant(Value::tuple(Vec::new())); }
                                 else { self.scope_fault(&lang.scope_unready.clone()); }
                             } else if lang.tuple_marks.is_empty() { self.expr(0)?; }
-                            else { self.scope_value()?; }
+                            else {
+                                if !lang.syntax_members.is_empty() {
+                                    match self.starred_group() {
+                                        1 => return Err("SyntaxError: cannot use starred expression here".into()),
+                                        2 => return Err("SyntaxError: invalid syntax".into()),
+                                        _ => {}
+                                    }
+                                }
+                                self.scope_value()?;
+                            }
                             if !lang.syntax_members.is_empty()
                                 && matches!(self.look().shape, Shape::Instr | Shape::Numeral) {
                                 return Err("SyntaxError: invalid syntax. Perhaps you forgot a comma?".into());
