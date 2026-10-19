@@ -6,7 +6,18 @@ def _run():
     import test
     import unittest
 
-    directory, name, filename = sys.argv[1:4]
+    if len(sys.argv) == 2:
+        # The on-box checker passes a filename; staged_reference supplies
+        # the directory and canonical module name as separate arguments.
+        filename = sys.argv[1]
+        directory, _, leaf = filename.rpartition('/')
+        if leaf == '__main__.py':
+            directory, _, leaf = directory.rpartition('/')
+            name = 'test.' + leaf
+        else:
+            name = 'test.' + leaf[:-3]
+    else:
+        directory, name, filename = sys.argv[1:4]
     sys.argv = [filename]
     test.__path__.insert(0, directory)
     module = importlib.import_module(name)
