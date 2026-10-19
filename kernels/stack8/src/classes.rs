@@ -27,6 +27,8 @@ impl<'a> Engine<'a> {
             "order" => self.member_words[19],
             "receiver" => self.member_words[20],
             "unready" => self.member_words[21],
+            "subclass" => self.member_words[22],
+            "text_signature" => self.member_words[23],
             _ => self.lang.class_details.get(part).and_then(|v| v.first()).map_or("", String::as_str),
         }
     }
@@ -1987,7 +1989,7 @@ impl<'a> Engine<'a> {
             // A method bound to a value of a builtin kind, reached as a
             // value in its own right and then called.
             Value::ValueMethod(bound) => {
-                if self.lang.class_details.get("native.protocols").is_some_and(|names| !names.is_empty()) {
+                if self.lang.native_protocols {
                     let mut positional = Vec::new(); let mut named = Vec::new();
                     for (key, value) in self.call_items(args)? {
                         match key { Some(key) => named.push((key, value)), None => positional.push(value) }
@@ -6131,7 +6133,7 @@ impl<'a> Engine<'a> {
     /// account of itself as the program wrote them over, the namespace
     /// handed to it, or an entry of whichever namespace it keeps.
     fn routine_member(&self, subject: &Value, name: &str) -> Option<Value> {
-        let (_,members)=self.function_members.iter().find(|(v,_)| v.revive().map_or(false, |key| key.equals(subject)))?;
+        let (_,members)=&self.function_members[self.function_slot(subject)?];
         let fields=members.fields.borrow();
         {
             let own=format!("\0{name}");
@@ -6148,7 +6150,8 @@ impl<'a> Engine<'a> {
     }
     /// The names a routine's own namespace holds, for its directory.
     fn routine_member_names(&self, subject: &Value) -> Vec<String> {
-        let Some((_,members))=self.function_members.iter().find(|(v,_)| v.revive().map_or(false, |key| key.equals(subject))) else {return Vec::new()};
+        let Some(at)=self.function_slot(subject) else {return Vec::new()};
+        let members=&self.function_members[at].1;
         let fields=members.fields.borrow();
         if let Some((_,book))=fields.iter().find(|(n,_)| n==Self::HANDED_BOOK) {
             let Value::Map(pairs)=book.contents() else {return Vec::new()};
@@ -6202,7 +6205,7 @@ impl<'a> Engine<'a> {
         fresh
     }
     pub(super) fn function_storage(&mut self, function: &Value) -> usize {
-        if let Some(at) = self.function_members.iter().position(|(v, _)| v.revive().map_or(false, |key| key.equals(function))) { return at; }
+        if let Some(at) = self.function_slot(function) { return at; }
         let class = self.root_class();
         self.made += 1;
         let fields = Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(Vec::new()), mark: self.made });
@@ -6210,12 +6213,34 @@ impl<'a> Engine<'a> {
         // Reclaim dead metadata without moving live indices held across
         // annotation callbacks. Repeated short-lived functions must not
         // leave an ever-growing lookup table behind.
-        if let Some(vacant) = self.function_members.iter().position(|(key, _)| key.gone()) {
+        let at = if let Some(vacant) = self.function_members.iter().rposition(|(key, _)| key.gone()) {
             self.function_members[vacant] = entry;
             vacant
         } else {
             self.function_members.push(entry);
             self.function_members.len() - 1
+        };
+        if let (Value::Routine(code), Some(table)) = (function, self.function_index.get_mut().as_mut()) { table.insert(Rc::as_ptr(code) as usize, at); }
+        at
+    }
+    /// Where a routine's storage sits among the function members. A
+    /// routine is found by its address; anything else is looked for one
+    /// by one, as a routine's wrappers can stand for it.
+    fn function_slot(&self, subject: &Value) -> Option<usize> {
+        let Value::Routine(code) = subject else {
+            return self.function_members.iter().position(|(v, _)| v.revive().map_or(false, |key| key.equals(subject)));
+        };
+        let mut index = self.function_index.borrow_mut();
+        let table = index.get_or_insert_with(|| {
+            self.function_members.iter().enumerate().filter_map(|(at, (hold, _))| match hold {
+                crate::faint::Hold::Routine(weak) if weak.strong_count() > 0 => Some((weak.as_ptr() as usize, at)),
+                _ => None,
+            }).collect()
+        });
+        let at = *table.get(&(Rc::as_ptr(code) as usize))?;
+        match self.function_members.get(at)?.0.revive() {
+            Some(Value::Routine(held)) if Rc::ptr_eq(&held, code) => Some(at),
+            _ => None,
         }
     }
     /// The annotations a class carries: its own, worked out the first

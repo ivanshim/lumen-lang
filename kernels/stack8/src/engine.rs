@@ -169,9 +169,14 @@ pub struct Engine<'a> {
     kind_classes: Vec<(String, Rc<Class>)>,
     kind_descriptors: RefCell<Vec<(String, String, Value)>>,
     function_members: Vec<(crate::faint::Hold, Rc<Instance>)>,
+    /// Where each routine's storage sits in `function_members`, by the
+    /// routine's address; left empty after the list is cut and rebuilt
+    /// on the next asking. An entry whose routine has died may linger,
+    /// so a hit is checked against the routine before it is believed.
+    function_index: RefCell<Option<HashMap<usize, usize, crate::value::FxBuildHasher>>>,
     collecting_cycles: bool,
     kind_names: RefCell<HashMap<String, Vec<String>>>,
-    member_words: [&'a str; 22],
+    member_words: [&'a str; 24],
     opened_descriptors: HashMap<i32, std::fs::File>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
@@ -1682,7 +1687,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
+            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_index: RefCell::new(None), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
             contexts: crate::context::ContextStore::default(),
@@ -1712,6 +1717,8 @@ impl<'a> Engine<'a> {
                 lang.class_details.get("order").and_then(|list| list.first()).map_or("", String::as_str),
                 lang.class_details.get("receiver").and_then(|list| list.first()).map_or("", String::as_str),
                 lang.class_details.get("unready").and_then(|list| list.first()).map_or("", String::as_str),
+                lang.class_details.get("subclass").and_then(|list| list.first()).map_or("", String::as_str),
+                lang.class_details.get("text_signature").and_then(|list| list.first()).map_or("", String::as_str),
             ],
             lang,
             world,
@@ -2457,6 +2464,7 @@ impl<'a> Engine<'a> {
         self.collecting_cycles = true;
         // Dead weak keys must release their attributes before ordering finalizers.
         self.function_members.retain(|(function, _)| function.revive().is_some());
+        *self.function_index.borrow_mut() = None;
         self.settle_departed();
         let mut graph = self.cycle_graph(&[]);
         let mut group = graph.unreached();
@@ -2464,6 +2472,7 @@ impl<'a> Engine<'a> {
         // heap is the same afterwards and the first walk still stands.
         if group.is_empty() {
             self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !graph.unowned(&function)));
+            *self.function_index.borrow_mut() = None;
             drop(graph);
             self.settle_departed();
             self.collecting_cycles = false;
@@ -2497,6 +2506,7 @@ impl<'a> Engine<'a> {
         let unreached = after.still_unreached(group);
         let count = unreached.len();
         self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !after.unowned(&function)));
+        *self.function_index.borrow_mut() = None;
 
         let grave = crate::faint::Graph::sever(&unreached);
         drop(unreached);
@@ -8698,7 +8708,7 @@ impl<'a> Engine<'a> {
                 else { self.async_generator_awaitable(receiver.clone(), 0, Value::Null).map_err(|fault| { self.carried = Some(fault); self.special_fault() })? });
         }
         let original = receiver;
-        let underlying = Self::worth_of(original).filter(|_| self.lang.class_details.get("native.protocols").is_some_and(|names| !names.is_empty()));
+        let underlying = Self::worth_of(original).filter(|_| self.lang.native_protocols);
         let receiver = underlying.as_ref().unwrap_or(original);
         let mut args = args;
         if matches!(place, 2 | 3) && matches!(receiver.contents(), Value::Map(_)) {
@@ -19382,7 +19392,7 @@ impl<'a> Engine<'a> {
         // kind. Each hands its work to the builtin or the sign that
         // already does it, so that the answer and the refusal are the
         // ones the plain form gives.
-        let underlying = Self::worth_of(receiver).filter(|_| self.lang.class_details.get("native.protocols").is_some_and(|names| !names.is_empty()));
+        let underlying = Self::worth_of(receiver).filter(|_| self.lang.native_protocols);
         if let Some(place) = self.native_place(underlying.as_ref().unwrap_or(receiver), operation) {
             return self.native_member_call(receiver, operation, place, args, named);
         }
