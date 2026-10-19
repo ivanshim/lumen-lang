@@ -40,7 +40,14 @@ impl Layout<'_> {
             let required = if inserts[1] == "an integer or a unicode character" { "an int or a unicode character" } else { inserts[1] };
             return format!("TypeError: %c requires {}, not {}", required, inserts[2]);
         }
-        if self.table.flag("ext.op.arithmetic.python_numbers") && matches!(label, "ext.op.rem.format.number" | "ext.op.rem.format.real") && inserts.len() == 3 {
+        if self.table.flag("ext.op.arithmetic.python_numbers") {
+            match (label, inserts) {
+                ("ext.op.rem.format.character.range", [_, maximum]) => return format!("OverflowError: %c arg not in range({maximum})"),
+                ("ext.op.rem.format.real", [_, _, kind]) => return format!("TypeError: float argument required, not {}", kind.rsplit('.').next().unwrap_or(kind)),
+                _ => {}
+            }
+        }
+        if self.table.flag("ext.op.arithmetic.python_numbers") && label == "ext.op.rem.format.number" && inserts.len() == 3 {
             let kind = inserts[2].rsplit('.').next().unwrap_or(inserts[2]);
             return format!("TypeError: %{} format: a real number is required, not {}", inserts[1], kind);
         }
@@ -747,9 +754,24 @@ impl Layout<'_> {
         let value = &supplied[*used];
         *used += 1;
         match value {
-            Value::Flag(_) | Value::Small(_) | Value::Huge(_) => value.as_big()?.to_i64()
-                .filter(|n| measure != "width" || (-1_000_000..=1_000_000).contains(n))
-                .ok_or_else(|| self.complain("ext.op.rem.format.star.big", &[&used.to_string(), measure])),
+            Value::Flag(_) | Value::Small(_) | Value::Huge(_) => {
+                let amount = value.as_big()?.to_i64()
+                    .ok_or_else(|| self.complain("ext.op.rem.format.star.big", &[&used.to_string(), measure]))?;
+                if measure == "width" {
+                    // A negative width that overflows C negation contributes no padding.
+                    if self.table.flag("ext.op.arithmetic.python_numbers") && amount.checked_abs().is_none() {
+                        return Ok(0);
+                    }
+                    // A full signed-size field leaves no room for the terminator.
+                    if self.table.flag("ext.op.arithmetic.python_numbers") && amount.unsigned_abs() >= (usize::MAX >> 1) as u64 {
+                        return Err(String::from("MemoryError: "));
+                    }
+                    if !(-1_000_000..=1_000_000).contains(&amount) {
+                        return Err(self.complain("ext.op.rem.format.star.big", &[&used.to_string(), measure]));
+                    }
+                }
+                Ok(amount)
+            },
             _ => Err(self.complain("ext.op.rem.format.star", &[&used.to_string(), self.typename(value)])),
         }
     }

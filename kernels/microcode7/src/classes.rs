@@ -3042,18 +3042,6 @@ impl<'a> Machine<'a> {
                         // the entry as before.
                         let of_own_kind=self.table.prims.get(word.as_str()).copied().filter(Self::names_a_kind)
                             .map_or_else(||word==receiver.kind_word(),|op|self.kind_covers(&op,&word,&receiver.settled()));
-                        let is_initializer=self.rules.words_ext_stmt_class_constructor.first().is_some_and(|name|name==&entry);
-                        if of_own_kind && word=="bytearray" && is_initializer {
-                            if let Value::Octets{cell,changeable:true,..}=receiver.settled() {
-                                if OctetLease::held(&cell){return Err("BufferError: Existing exports of data: object cannot be re-sized".to_owned().into());}
-                                let answer=self.apply_class_member(Value::Intrinsic(Prim::Octets(1),Rc::from(word.as_str())),values)?;
-                                if let Value::Octets{cell:source,..}=answer {
-                                    let bytes=source.borrow().to_vec();cell.borrow_mut().clear();cell.borrow_mut().extend(bytes);
-                                    return Ok(Value::Nil);
-                                }
-                            }
-                            return Err(self.class_unready());
-                        }
                         if word == "type" && self.stands_for_a_kind(&receiver) {
                             let slots = self.rules.specials;
                             let calls = slots.get(17).map_or(false, |name| name == &entry);
@@ -5268,6 +5256,9 @@ impl<'a> Machine<'a> {
             if let Some(found) = self.attribute(&value, key) { return Ok(found); }
         }
         if let Value::Octets { changeable, .. } = value.settled() {
+            if self.native_place(&value, key).is_some() || Self::octet_plain_member(&value, key) {
+                return Ok(Value::Member(Rc::new(value.clone()), key.to_string()));
+            }
             if let Some(method) = self.octet_member(key, changeable) {
                 return Ok(Value::Member(Rc::new(value.clone()), method.to_owned()));
             }

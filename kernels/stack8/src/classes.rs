@@ -2868,15 +2868,6 @@ impl<'a> Engine<'a> {
                     // still reaches the member as before.
                     let of_own_kind = self.lang.builtins.get(word.as_str()).copied().filter(Self::kind_builtin)
                         .map_or_else(|| receiver.core_kind() == word, |op| self.kind_holds(&op, &word, &receiver.contents()));
-                    if of_own_kind && word=="bytearray" && self.lang.constructor.as_deref()==Some(member.as_str()) {
-                        let Value::Bytes(storage,true,_) = receiver.contents() else {return Err(self.class_refusal())};
-                        if ByteExport::active(&storage) {return Err("BufferError: Existing exports of data: object cannot be re-sized".into());}
-                        let fresh=self.class_apply(Value::Native(Builtin::Bytes(1),Rc::from(word.as_str())),args)?;
-                        let Value::Bytes(content,..)=fresh else {return Err(self.class_refusal())};
-                        let replacement=content.borrow().clone();
-                        *storage.borrow_mut()=replacement;
-                        return Ok(Value::Null);
-                    }
                     if word == "type" && self.stands_for_kind(&receiver) {
                         if self.lang.class_special.get(17).map_or(false, |slot| slot == &member) {
                             // type.__call__ performs construction directly; routing
@@ -5066,6 +5057,9 @@ impl<'a> Engine<'a> {
         }
         // Attribute reads through getattr and hasattr share the bytes method inventory.
         if let Value::Bytes(_, mutable, _) = subject.contents() {
+            if self.native_special(&subject, name) {
+                return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_owned()))));
+            }
             if let Some(operation) = self.byte_member(name, mutable) {
                 return Ok(Value::ValueMethod(Rc::new((subject.clone(), operation.to_string()))));
             }

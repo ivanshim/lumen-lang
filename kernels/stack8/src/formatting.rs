@@ -45,7 +45,13 @@ impl Writer<'_> {
             let required = if pieces[1] == "an integer or a unicode character" { "an int or a unicode character" } else { pieces[1] };
             return format!("TypeError: %c requires {}, not {}", required, pieces[2]);
         }
-        if self.lang.python_numbers && matches!(key, "ext.op.rem.format.number" | "ext.op.rem.format.real") && pieces.len() == 3 {
+        if self.lang.python_numbers && key == "ext.op.rem.format.character.range" && pieces.len() == 2 {
+            return format!("OverflowError: %c arg not in range({})", pieces[1]);
+        }
+        if self.lang.python_numbers && key == "ext.op.rem.format.real" && pieces.len() == 3 {
+            return format!("TypeError: float argument required, not {}", pieces[2].rsplit('.').next().unwrap_or(pieces[2]));
+        }
+        if self.lang.python_numbers && key == "ext.op.rem.format.number" && pieces.len() == 3 {
             let kind = pieces[2].rsplit('.').next().unwrap_or(pieces[2]);
             return format!("TypeError: %{} format: a real number is required, not {}", pieces[1], kind);
         }
@@ -817,7 +823,17 @@ impl Writer<'_> {
         let v = args[*used];
         *used += 1;
         if !matches!(v, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err(self.fault("ext.op.rem.format.star", &[&used.to_string(), self.kind(v)])); }
-        v.as_big()?.to_i64().filter(|n| measure != "width" || n.unsigned_abs() <= 1_000_000)
+        let number = v.as_big()?.to_i64()
+            .ok_or_else(|| self.fault("ext.op.rem.format.star.big", &[&used.to_string(), measure]))?;
+        // Preserve C signed-width negation: its wrapped minimum leaves the field unpadded.
+        if self.lang.python_numbers && measure == "width" && number < 0 && number.wrapping_neg() < 0 {
+            return Ok(0);
+        }
+        // The formatted allocation must also hold its terminating byte.
+        if self.lang.python_numbers && measure == "width" && number.unsigned_abs() >= isize::MAX as u64 {
+            return Err("MemoryError: ".to_string());
+        }
+        Some(number).filter(|n| measure != "width" || n.unsigned_abs() <= 1_000_000)
             .ok_or_else(|| self.fault("ext.op.rem.format.star.big", &[&used.to_string(), measure]))
     }
 }
