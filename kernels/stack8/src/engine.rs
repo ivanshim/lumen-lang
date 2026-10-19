@@ -6555,6 +6555,12 @@ impl<'a> Engine<'a> {
                     continue;
                 }
             }
+            // The word just run may have released a temporary. Its
+            // farewell is said before the next word, which may read
+            // what that farewell changed.
+            if crate::faint::pending() {
+                self.settle_departed();
+            }
             counted = counted.wrapping_add(1);
             if counted % 4096 == 0 {
                 if let Some(over) = self.out_of_time() {
@@ -6979,8 +6985,9 @@ impl<'a> Engine<'a> {
                     if self.source == self.root_source { self.main_started = true; }
                     self.location = None;
                     self.line = *row;
-                    // Whatever went away during the last statement is seen
-                    // to between statements, never in the middle of one.
+                    // A statement edge still settles farewells. Each
+                    // word inside the statement settles its own before
+                    // the next word reads.
                     if crate::faint::pending() {
                         self.settle_departed();
                     }

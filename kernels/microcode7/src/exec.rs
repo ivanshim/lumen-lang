@@ -6531,6 +6531,12 @@ impl<'a> Machine<'a> {
         if self.any_unheard.get() {
             self.hand_over_unheard()?;
         }
+        // A temporary let go by the previous part of this expression
+        // may still owe a farewell. Say it before this part runs, so
+        // a later part of the same expression can see what it did.
+        if crate::ghost::stirred() {
+            self.attend_to_gone();
+        }
         match node {
             Form::Const(Value::Routine(p)) => Ok(self.bind_program(p, frame)),
             Form::Const(Value::OctetKind { changeable, .. }) if self.has_wildcard_imports() => {
@@ -6649,8 +6655,9 @@ impl<'a> Machine<'a> {
                 self.extent = None;
                 self.row = *row;
                 if let Some(active) = &self.active_trace { active.holds.borrow_mut()[0].1 = Value::Small(*row as i64); }
-                // Farewells owed by the statement just finished are
-                // taken up on this edge, not inside every expression.
+                // A statement edge takes up farewells too. Entering
+                // an expression does the same, so one let go in the
+                // middle of an expression is seen by its next part.
                 if crate::ghost::stirred() {
                     self.attend_to_gone();
                 }
