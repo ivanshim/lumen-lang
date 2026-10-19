@@ -431,6 +431,7 @@ struct Alongside {
     in_pipe: Option<std::process::ChildStdin>,
     out_pipe: Option<std::process::ChildStdout>,
     err_pipe: Option<std::process::ChildStderr>,
+    collecting: [Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>; 2],
 }
 
 /// Rules fixed by the table for the entire execution. Reading them once
@@ -27836,7 +27837,7 @@ impl<'a> Machine<'a> {
                     Err(_) => Value::Flag(false),
                     Ok(begun) => {
                         let mark = begun.id() as i64;
-                        self.alongside.insert(mark, Alongside { child: begun, in_pipe: None, out_pipe: None, err_pipe: None });
+                        self.alongside.insert(mark, Alongside { child: begun, in_pipe: None, out_pipe: None, err_pipe: None, collecting: [None, None] });
                         Value::Small(mark)
                     }
                 }
@@ -28057,7 +28058,7 @@ impl<'a> Machine<'a> {
                                 let in_pipe = if in_mode == 1 { begun.stdin.take() } else { None };
                                 let out_pipe = if out_mode == 1 { begun.stdout.take() } else { None };
                                 let err_pipe = if err_mode == 1 || err_mode == 3 { begun.stderr.take() } else { None };
-                                self.alongside.insert(mark, Alongside { child: begun, in_pipe, out_pipe, err_pipe });
+                                self.alongside.insert(mark, Alongside { child: begun, in_pipe, out_pipe, err_pipe, collecting: [None, None] });
                                 Value::Small(mark)
                             }
                         }
@@ -28097,9 +28098,12 @@ impl<'a> Machine<'a> {
                         let mut piped = false;
                         {
                             if let Some(kept) = self.alongside.get_mut(&mark) {
-                                match which {
-                                    0 => empty_pipe(&mut kept.out_pipe, &mut all, &mut piped, &mut broken),
-                                    _ => empty_pipe(&mut kept.err_pipe, &mut all, &mut piped, &mut broken),
+                                let slot = usize::from(which != 0);
+                                match kept.collecting[slot].take().map(|worker| worker.join()) {
+                                    Some(Ok(Ok(data))) => { all.extend(data); piped = true; }
+                                    Some(_) => broken = true,
+                                    None if slot == 0 => empty_pipe(&mut kept.out_pipe, &mut all, &mut piped, &mut broken),
+                                    None => empty_pipe(&mut kept.err_pipe, &mut all, &mut piped, &mut broken),
                                 }
                             } else {
                                 broken = true;
@@ -28150,6 +28154,19 @@ impl<'a> Machine<'a> {
                             if stderr { kept.err_pipe.take(); } else { kept.out_pipe.take(); }
                             Value::Flag(true)
                         } else { Value::Flag(false) }
+                    }
+                    // Begin output collection while stdin and process status remain usable.
+                    8 => {
+                        n(2)?;
+                        let id = as_index(&v[1])? as i64;
+                        match self.alongside.get_mut(&id) {
+                            None => Value::Flag(false),
+                            Some(job) => {
+                                job.collecting[0] = job.out_pipe.take().map(read_capture).or_else(|| job.collecting[0].take());
+                                job.collecting[1] = job.err_pipe.take().map(read_capture).or_else(|| job.collecting[1].take());
+                                Value::Flag(true)
+                            }
+                        }
                     }
                     _ => return Err(format!("{}() unknown step {}", name, step)),
                 }
@@ -32563,6 +32580,16 @@ impl<'a> Machine<'a> {
         }
         v.iter().map(argument).collect::<Vec<_>>().join(" ")
     }
+}
+
+/// Collect a child's output independently of writes and waits in its parent.
+fn read_capture<P>(pipe: P) -> std::thread::JoinHandle<std::io::Result<Vec<u8>>>
+where P: std::io::Read + Send + 'static {
+    std::thread::spawn(move || {
+        let mut source = pipe;
+        let mut result = Vec::<u8>::new();
+        source.read_to_end(&mut result).map(|_| result)
+    })
 }
 
 /// Empty a pipe of all it has to say, into `into`. `had_pipe` records
