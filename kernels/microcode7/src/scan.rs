@@ -1203,10 +1203,23 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
     }
     let mut tokens: Vec<Token> = Vec::new();
     let line_beginnings: Vec<usize> = std::iter::once(0).chain(src.iter().enumerate().filter_map(|(i, c)| (*c == '\n').then_some(i + 1))).collect();
-    let at_column = |index| index - line_beginnings[line_beginnings.partition_point(|start| *start <= index) - 1] + 1;
+    // Most column requests stay on one line; quoted fields may also look backwards.
+    let recent_line = std::cell::Cell::new((0usize, 0usize));
+    let at_column = |index| {
+        let (begin, limit) = recent_line.get();
+        if begin <= index && index < limit { return index - begin + 1; }
+        let line = line_beginnings.partition_point(|start| *start <= index) - 1;
+        let begin = line_beginnings[line];
+        recent_line.set((begin, line_beginnings.get(line + 1).copied().unwrap_or(usize::MAX)));
+        index - begin + 1
+    };
     let column = std::cell::Cell::new(1usize);
     let tok = |kind: Shape, text: String, row: u32| Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: column.get(), shape: kind, lexeme: text, raw: None, span: 0, row: row };
     let tok_spelled = |kind: Shape, text: String, raw: Option<String>, row: u32| Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: column.get(), shape: kind, lexeme: text, raw, span: 0, row: row };
+    // A configured marker beginning with a blank must retain the full scanner path.
+    let ordinary_blanks = table.quoted_ascii & ((1u128 << 32) | (1u128 << 9)) == 0
+        && comment_marks.iter().chain(&continuation_marks).all(|mark|
+            mark.first().is_some_and(|c| *c != ' ' && *c != '\t'));
     let (mut pos, mut row, mut at_bol) = (0usize, first, true);
     while pos < src.len() {
         // The row the reading has reached is kept where the caller can
@@ -1238,6 +1251,14 @@ fn scan_code_from(source: &str, table: &Table, first: u32, ended: &mut (u32, usi
         }
         column.set(at_column(pos));
         ended.1 = column.get();
+        if ordinary_blanks && matches!(src[pos], ' ' | '\t') {
+            loop {
+                pos += 1;
+                if pos == src.len() || !matches!(src[pos], ' ' | '\t') { break; }
+            }
+            ended.1 = at_column(pos - 1);
+            continue;
+        }
         if long_strings {
             if comment_marks.iter().any(|mark| src[pos..].starts_with(mark)) {
                 while pos < src.len() && src[pos] != '\n' { pos += 1; }

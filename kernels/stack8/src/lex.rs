@@ -1419,12 +1419,24 @@ impl<'a> Cursor<'a> {
     /// Tokens to the end of the text.
     fn run(&mut self, mut at_line_start: bool) -> Result<(), String> {
         let lang = self.lang;
+        // Skip a run only when blanks cannot begin a string, comment or continuation.
+        let blank_run = self.lead & ((1u128 << 9) | (1u128 << 32)) == 0
+            && !lang.line_comments.iter().chain(&lang.line_continuations).any(|mark|
+                mark.is_empty() || mark.starts_with(' ') || mark.starts_with('\t'));
         while self.at < self.text.len() {
             if at_line_start {
                 at_line_start = self.indentation();
                 if at_line_start {
                     continue;
                 }
+            }
+            if blank_run && (self.text[self.at] == ' ' || self.text[self.at] == '\t') {
+                let beginning = self.at;
+                while self.at < self.text.len() && (self.text[self.at] == ' ' || self.text[self.at] == '\t') {
+                    self.at += 1;
+                }
+                self.column += self.at - beginning;
+                continue;
             }
             if !lang.long_quotes.is_empty() {
                 if lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
