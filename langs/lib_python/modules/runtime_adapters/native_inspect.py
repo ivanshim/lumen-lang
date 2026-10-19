@@ -21,6 +21,8 @@ CO_NOFREE = 64
 CO_COROUTINE = 128
 CO_ITERABLE_COROUTINE = 256
 CO_ASYNC_GENERATOR = 512
+CO_HAS_DOCSTRING = 1 << 26
+CO_METHOD = 1 << 27
 
 # The four words a generator's state is named by, and the same four for
 # a coroutine.
@@ -354,7 +356,7 @@ _is_coroutine_mark = object()
 def __getattr__(name):
     if name.startswith('__'):
         raise AttributeError("module 'inspect' has no attribute '" + name + "'")
-    raise 'NotImplementedError: inspect.' + name + ' needs to read a compiled body, which this runtime does not hand out'
+    raise AttributeError("module 'inspect' has no attribute '" + name + "'")
 
 
 # A signature reconstructed from the code fields the runtime exposes,
@@ -706,3 +708,10 @@ def signature(obj, *, follow_wrapped=True, globals=None, locals=None,
                                    globals=globals, locals=locals,
                                    eval_str=eval_str,
                                    annotation_format=annotation_format)
+def isawaitable(object):
+    """Return true if object can be passed to an ``await`` expression."""
+    import collections.abc
+    return (isinstance(object, types.CoroutineType) or
+            isinstance(object, types.GeneratorType) and
+                bool(object.gi_code.co_flags & CO_ITERABLE_COROUTINE) or
+            isinstance(object, collections.abc.Awaitable))

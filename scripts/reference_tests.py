@@ -76,7 +76,7 @@ def where_tests_stand():
 RUN_FROM = where_tests_stand()
 
 
-def run(kernel, args, source, suffix, request=None, beside=None, given=()):
+def run(kernel, args, source, suffix, request=None, beside=None, given=(), directory=None):
     # php-src's run-tests.php writes the program next to the .phpt it came
     # from, so a test naming a file beside itself finds it. Where a test
     # says where it belongs, put it there; otherwise anywhere will do.
@@ -101,7 +101,7 @@ def run(kernel, args, source, suffix, request=None, beside=None, given=()):
     body = (request or {}).get("body", "")
     try:
         p = subprocess.run([str(BINARY), "--kernel", kernel] + args + [path] + list(given), input=body, capture_output=True,
-                           encoding=BYTEWISE, timeout=TIMEOUT, env=bytewise_env(setting), cwd=RUN_FROM)
+                           encoding=BYTEWISE, timeout=TIMEOUT, env=bytewise_env(setting), cwd=directory if directory is not None else RUN_FROM)
         return p.returncode, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return 124, "", "timeout"
@@ -282,9 +282,11 @@ def run_phpt(path, kernel):
 
 # ---------------------------------------------------------------- python
 
+# Isolate files left behind when a reference test times out before teardown.
 def run_python(path, kernel, version):
     source = path.read_text(encoding=BYTEWISE)
-    code, out, err = run(kernel, ["--python", version["release"]], source, ".py")
+    with tempfile.TemporaryDirectory(prefix="lumen-python-") as directory:
+        code, out, err = run(kernel, ["--python", version["release"]], source, ".py", directory=directory)
     if code == 0:
         return "differs", "ran to the end without asserting anything"
     return "error", reason_of(code, out, err, "PythonError")

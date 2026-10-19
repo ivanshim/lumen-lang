@@ -24,19 +24,26 @@
     "_collections_abc": "runtime_adapters/_collections_abc.py",
     "importlib": "runtime_adapters/importlib.py",
     "abc": "runtime_adapters/abc.py",
+    "test.support": "runtime_adapters/code_test_support.py",
     "codecs": "runtime_adapters/codecs.py",
-    "ast": "runtime_adapters/ast.py",
     "sys": "runtime_adapters/sys.py",
     "_py_warnings": "runtime_adapters/warnings.py",
     "importlib._bootstrap": "runtime_adapters/importlib_bootstrap.py",
     "unittest": "runtime_adapters/unittest_bindings.py",
     "builtins": "runtime_adapters/builtins.py",
-    "unicodedata": "runtime_adapters/unicodedata.py",
     "traceback": "runtime_adapters/traceback.py",
     "io": "runtime_adapters/io.py",
     "importlib.metadata": "runtime_adapters/metadata.py",
     "importlib.resources._common": "runtime_adapters/resources.py",
-    "pathlib": "runtime_adapters/pathlib.py"
+    "pathlib": "runtime_adapters/pathlib.py",
+    "_py_abc": "runtime_adapters/_py_abc.py",
+    "marshal": "runtime_adapters/marshal.py",
+    "test.encoded_modules": "runtime_adapters/encoded_modules.py"
+  },
+  "data": {
+    "_codec_sjis": {
+      "_mapping_source": "../../lib_php/native/mbstring.php"
+    }
   },
   "replacements": {
     "annotationlib": "runtime_adapters/native_annotationlib.py",
@@ -54,7 +61,9 @@
     "test.support.script_helper": "runtime_adapters/native_test_support_script_helper.py",
     "threading": "runtime_adapters/native_threading.py",
     "unittest.mock": "runtime_adapters/native_unittest_mock.py",
-    "tracemalloc": "runtime_adapters/native_tracemalloc.py"
+    "tracemalloc": "runtime_adapters/native_tracemalloc.py",
+    "doctest": "runtime_adapters/native_doctest.py",
+    "ast": "runtime_adapters/native_ast.py"
   },
   "names": {
     "runtime_sources/unittest_case.py": "unittest.case",

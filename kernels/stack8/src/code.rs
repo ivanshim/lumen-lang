@@ -18,6 +18,7 @@ use crate::value::Value;
 /// A watched body and its arms, as spans in the same routine. Keeping
 /// them in that routine leaves their bindings and outward leaps whole.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Attempt {
     pub context: Option<Cell>,
     pub async_context: bool,
@@ -29,6 +30,7 @@ pub struct Attempt {
 }
 
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Taking {
     pub line: u32,
     pub reraise_position: Option<usize>,
@@ -60,6 +62,7 @@ impl Attempt {
 
 /// Local lookup slots usually contain just one index.
 #[derive(Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum LocalSlots {
     Single(usize),
     Several(Vec<usize>),
@@ -106,6 +109,7 @@ impl<'a> IntoIterator for &'a LocalSlots {
 /// a value and falls through to the global; a store writes the first
 /// local, or the global when there is none.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Cell {
     pub free: bool,
     pub ident: Rc<str>,
@@ -119,6 +123,7 @@ pub struct Cell {
 
 /// A case's test, with bindings gathered only after the whole fits.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Pattern {
     Any,
     Literal(Value),
@@ -198,6 +203,7 @@ pub const ANNOTATE_WORD: &str = "\0annotate";
 /// for a plain or aliased import, the star for `from m import *`, or
 /// the names a from-import takes out together.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum ImportStyle {
     Plain,
     Star,
@@ -206,6 +212,7 @@ pub enum ImportStyle {
 
 /// Kernel operations a language can spell. `Apply` names one of these.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Action {
     ByteAssign(bool),
     /// A pattern and its binding order; the flag marks a tuple subject,
@@ -511,6 +518,7 @@ pub enum Action {
 
 /// Builtins a definition names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Builtin {
     /// Ask the reader the definition routes to for a line of input.
     Ask,
@@ -559,6 +567,7 @@ pub enum Builtin {
     Multibyte,
     Sre,
     UnicodeDecomposition,
+    UnicodeQuery(u8, bool),
     ModuleLoad,
     MemberSet,
     MemberGet,
@@ -632,6 +641,7 @@ pub enum Builtin {
     /// Text read ahead of time and kept as a code value for a later
     /// reading to run (ext.builtin.compile).
     ReadyText,
+    CodeCache,
     /// A module fetched by its name, as the import statement would
     /// fetch it (ext.builtin.import).
     Summon,
@@ -799,6 +809,11 @@ pub enum Builtin {
     /// telling it in its own words (ext.builtin.uncaught). Giving
     /// nothing takes the routine away again.
     Untaken,
+    /// A routine to be told of each call and return of the routines the
+    /// program writes, with the frame, a word for the event and the
+    /// value returned (ext.builtin.profile). Giving nothing takes it
+    /// away again.
+    Profile,
     /// The calls under way, innermost first, each an array telling the
     /// name called, the class it was written in where it was written in
     /// one, the file and line the call itself stands on, and what it was
@@ -857,6 +872,7 @@ pub enum Builtin {
 
 /// An operand a fused word reads without the stack: a binding or a constant.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Operand {
     Cell(Cell),
     Const(Value),
@@ -865,6 +881,7 @@ pub enum Operand {
 }
 
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Instr {
     /// Push a constant.
     Const(Value),
@@ -978,7 +995,13 @@ impl Builtin {
 
 /// A compiled program.
 #[derive(Clone, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Routine {
+    /// Reuse code-only snapshots while the compiled function remains alive.
+    #[serde(skip)]
+    pub globals_rebound: bool,
+    #[serde(skip)]
+    pub code_snapshot: std::cell::OnceCell<Rc<Routine>>,
     pub postponed_annotation: bool,
     pub annotation_source: Option<String>,
     pub checks_annotation_format: bool,
@@ -987,19 +1010,29 @@ pub struct Routine {
     pub reads_annotation: bool,
     /// The live class namespace slot and, when used by methods, its class cell.
     pub class_namespace: Option<(String, Option<String>, bool)>,
+    #[serde(serialize_with = "crate::cache::save_optional", deserialize_with = "crate::cache::load_optional")]
     pub annotation: Option<Rc<Routine>>,
     pub code_constants: Vec<Value>,
+    #[serde(serialize_with = "crate::cache::write_origin", deserialize_with = "crate::cache::read_origin")]
     pub source_tokens: Rc<[crate::lex::Token]>,
+    #[serde(skip)]
     pub source_content: Rc<std::cell::OnceCell<Rc<str>>>,
+    pub code_identity: Rc<()>,
     pub source_end: usize,
     pub embedded_integers: Option<Vec<bool>>,
     pub code_names: Vec<String>,
     pub local_names: Vec<String>,
+    pub cell_names: Vec<String>,
     pub code_flags: i64,
     /// The future flags in force where the text was read, as the
     /// reference's code objects carry them in co_flags.
     pub future_bits: i64,
     pub lineless: bool,
+    pub location_bytes: Option<Value>,
+    pub declared_stack: Option<i64>,
+    pub instruction_image: Option<Value>,
+    pub image_origin: (usize, u32, i64),
+    pub exception_image: Option<Value>,
     pub generator: bool,
     pub doc: Option<String>,
     pub qualified: String,
@@ -1040,15 +1073,18 @@ pub struct Routine {
     /// The dictionary of outermost names a routine built by hand was
     /// handed, where one was. Nothing for every routine the program
     /// wrote out under a name, whose names stand where it was read.
+    #[serde(skip, default = "crate::cache::globals")]
     pub globe: Option<Value>,
     /// The builtins in force where such a routine was built, kept for
     /// the case that its own dictionary names none of its own.
+    #[serde(skip, default = "crate::cache::builtins")]
     pub born: Option<Value>,
     /// The name of the namespace a routine read from text handed a
     /// dictionary was made in, caught when it was made: its module, as
     /// the reference takes a function's module from the globals it was
     /// made with. The inner Nothing where that namespace named nothing;
     /// the outer for every routine a file or the run itself wrote.
+    #[serde(skip, default = "crate::cache::home")]
     pub home: Option<Option<Rc<str>>>,
     /// The line the program was written on, which a fault raised on the
     /// way into it names: such a fault belongs where the program is
@@ -1068,12 +1104,14 @@ pub struct Routine {
     /// What a call of this very routine runs instead, once the program
     /// has written its spare arguments or its code over: nothing until
     /// then. A copy of the routine starts out with nothing here again.
+    #[serde(skip)]
     pub revised: RefCell<Option<Rc<Routine>>>,
 }
 
 /// What a class declaration comes to: everything about the class that is
 /// known while compiling. What it stands on is looked up when it runs.
 #[derive(Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Plan {
     pub name: String,
     /// How many classes of method names only stand after the one this
@@ -1087,6 +1125,7 @@ pub struct Plan {
     pub field_reach: Vec<crate::value::Reach>,
     pub shared_names: Vec<String>,
     pub constant_names: Vec<String>,
+    #[serde(serialize_with = "crate::cache::save_methods", deserialize_with = "crate::cache::load_methods")]
     pub methods: Vec<(String, Rc<Routine>)>,
     /// Whether a class to stand on is given first.
     pub extends: bool,
@@ -1113,15 +1152,16 @@ impl Drop for Routine {
 
 impl Routine {
     pub fn replacing_constants(&self, supplied: &[Value]) -> Result<Self, String> {
-        if supplied.len() != self.code_constants.len() {
-            return Err("NotImplementedError: changing the constant table length is unavailable".into());
-        }
         let replacements: Vec<Value> = supplied.iter().map(|value| match value.contents() {
             Value::Adapter(parts) if parts.0 == 7 => parts.1[0].clone(),
             other => other,
         }).collect();
-        let embedded = self.embedded_integers.clone().unwrap_or_else(|| self.code_constants.iter()
-            .map(|value| matches!(value, Value::Small(number) if (0..=255).contains(number))).collect());
+        let mut embedded = self.embedded_integers.clone().unwrap_or_else(|| self.code_constants.iter()
+            .map(|value| matches!(value, Value::Small(0..=255))).collect());
+        if embedded.iter().skip(supplied.len()).any(|immediate| !immediate) {
+            return Err("NotImplementedError: removing native constant operands is unavailable".into());
+        }
+        embedded.resize(embedded.len().max(supplied.len()), false);
         for left in 0..self.code_constants.len() {
             if self.code_constants[left + 1..].iter().any(|right|
                 std::mem::discriminant(right) == std::mem::discriminant(&self.code_constants[left])
@@ -1158,8 +1198,9 @@ impl Routine {
         };
         let mut result = self.clone();
         let mut instructions = self.instrs.as_ref().clone();
-        for instruction in &mut instructions {
+        for (offset, instruction) in instructions.iter_mut().enumerate() {
             match instruction {
+                Instr::Const(Value::Flag(false)) if matches!(self.instrs.get(offset + 1), Some(Instr::Skip(_))) => {},
                 Instr::Const(value) => *value = swap(value)?,
                 Instr::Bump { by, .. } => {
                     let updated = swap(by)?;
@@ -1179,10 +1220,90 @@ impl Routine {
         result.instrs = Rc::new(instructions);
         result.code_constants = replacements;
         result.embedded_integers = Some(embedded);
-        result.doc = result.code_constants.first().and_then(|value| match value {
-            Value::Text(text) => Some(text.to_string()), _ => None,
-        });
+        result.doc = if result.code_flags & 0x4000000 == 0 { None } else {
+            result.code_constants.first().and_then(|value| match value { Value::Text(text) => Some(text.to_string()), _ => None })
+        };
         result.revised = RefCell::new(None);
         Ok(result)
+    }
+}
+
+impl Routine {
+    // A replacement table governs saved frames as well as code inspection.
+    pub fn mapped_line(&self, instruction: i64) -> Option<Option<i64>> {
+        let Value::Bytes(storage, ..) = self.location_bytes.as_ref()? else { return None };
+        let bytes = storage.borrow();
+        fn number(bytes: &[u8], cursor: &mut usize) -> Option<i64> {
+            let mut result = 0i64;
+            for shift in (0..63).step_by(6) {
+                let byte = *bytes.get(*cursor)?;
+                *cursor += 1;
+                result |= i64::from(byte & 63) << shift;
+                if byte & 64 == 0 { return Some(result); }
+            }
+            None
+        }
+        let mut cursor = 0;
+        let mut offset = 0i64;
+        let mut line = i64::from(self.declared_on);
+        while let Some(header) = bytes.get(cursor).copied() {
+            cursor += 1;
+            let kind = (header >> 3) & 15;
+            let length = i64::from(header & 7) + 1;
+            let present = match kind {
+                13 | 14 => {
+                    let Some(delta) = number(&bytes, &mut cursor) else { return Some(None) };
+                    line += if delta & 1 == 0 { delta >> 1 } else { -(delta >> 1) };
+                    if kind == 14 {
+                        for _ in 0..3 { if number(&bytes, &mut cursor).is_none() { return Some(None); } }
+                    }
+                    true
+                }
+                10..=12 => { line += i64::from(kind - 10); cursor += 2; true }
+                15 => false,
+                _ => { cursor += 1; true }
+            };
+            if cursor > bytes.len() { return Some(None); }
+            if instruction >= offset && instruction < offset + length {
+                return Some(if present && line != -1 { Some(line) } else { None });
+            }
+            offset += length;
+        }
+        Some(None)
+    }
+}
+
+impl Routine {
+    // Opcode 1 rebuilds a native routine from scanner records and its body boundary.
+    // This is a native image, not the CPython instruction encoding.
+    pub(crate) fn native_image(&self) -> Vec<u8> {
+        if let Some(Value::Bytes(bytes, ..)) = &self.instruction_image { return bytes.borrow().clone(); }
+        let mut image = vec![1];
+        image.extend(serde_json::json!([self.source_content.get_or_init(|| Rc::from(crate::lex::token_image(&self.source_tokens))).as_ref(), self.source_end, self.image_origin]).to_string().bytes());
+        image
+    }
+
+    pub(crate) fn handler_image(&self) -> Vec<u8> {
+        if let Some(Value::Bytes(bytes, ..)) = &self.exception_image { return bytes.borrow().clone(); }
+        let plans: Vec<_> = self.instrs.iter().enumerate().filter_map(|(at, word)| match word {
+            Instr::Attempt(plan) => Some(serde_json::json!([at, plan.body, plan.after,
+                plan.clauses.iter().map(|clause| (clause.line, &clause.kinds, clause.body, clause.grouped, clause.bare)).collect::<Vec<_>>(),
+                plan.otherwise, plan.last])),
+            Instr::Guard(target) => Some(serde_json::json!([at, target])),
+            _ => None,
+        }).collect();
+        if plans.is_empty() { Vec::new() } else { serde_json::Value::Array(plans).to_string().into_bytes() }
+    }
+
+    pub(crate) fn stack_bound(&self) -> i64 {
+        self.declared_stack.unwrap_or_else(|| self.instrs.iter().map(|word| match word {
+            Instr::Act(_, count) => count.saturating_add(1), _ => 1,
+        }).sum::<usize>().saturating_add(1) as i64)
+    }
+
+    pub(crate) fn invalid_native_opcode(&self) -> Option<u8> {
+        self.instruction_image.as_ref().and_then(|value| match value {
+            Value::Bytes(bytes, ..) => bytes.borrow().first().copied().filter(|opcode| *opcode != 1), _ => None,
+        })
     }
 }

@@ -4,6 +4,17 @@ use num_traits::ToPrimitive;
 use std::{cell::RefCell, rc::Rc};
 fn word(data: &[u8], at: usize) -> u32 { u32::from_le_bytes(data[at..at+4].try_into().unwrap()) }
 fn wide(data: &[u8], at: usize) -> u64 { u64::from_le_bytes(data[at..at+8].try_into().unwrap()) }
+// Build-owned compressed tables are expanded once, retaining their original layout.
+fn expanded_mapping(packed: &'static [u8], cached: &'static std::sync::OnceLock<Option<Vec<u8>>>) -> Option<&'static [u8]> {
+    if !packed.starts_with(b"\xfd7zXZ\0") { return Some(packed); }
+    cached.get_or_init(|| {
+        let (bytes, used) = lumen_lzma::decode_limited(packed, 1, 64 * 1024 * 1024, 64 * 1024 * 1024).ok()?;
+        (used == packed.len()).then_some(bytes)
+    }).as_deref()
+}
+static JP2_MAPPING: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
+static GB18030_MAPPING: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
+static GBK_MAPPING: std::sync::OnceLock<Option<Vec<u8>>> = std::sync::OnceLock::new();
 fn mappings(name: &str) -> Option<&'static [u8]> {
     match name {
         "big5" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/big5.bin")),
@@ -16,15 +27,15 @@ fn mappings(name: &str) -> Option<&'static [u8]> {
         "euc_jisx0213" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/euc_jisx0213.bin")),
         "euc_kr" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/euc_kr.bin")),
         "gb2312" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/gb2312.bin")),
-        "gbk" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/gbk.bin")),
-        "gb18030" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/gb18030.bin")),
+        "gbk" => expanded_mapping(include_bytes!("../../../langs/lib_python/data/multibyte/gbk.bin"), &GBK_MAPPING),
+        "gb18030" => expanded_mapping(include_bytes!("../../../langs/lib_python/data/multibyte/gb18030.bin"), &GB18030_MAPPING),
         "johab" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/johab.bin")),
         "shift_jis" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/shift_jis.bin")),
         "shift_jis_2004" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/shift_jis_2004.bin")),
         "shift_jisx0213" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/shift_jisx0213.bin")),
         "iso2022_jp" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/iso2022_jp.bin")),
         "iso2022_jp_1" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/iso2022_jp_1.bin")),
-        "iso2022_jp_2" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/iso2022_jp_2.bin")),
+        "iso2022_jp_2" => expanded_mapping(include_bytes!("../../../langs/lib_python/data/multibyte/iso2022_jp_2.bin"), &JP2_MAPPING),
         "iso2022_jp_2004" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/iso2022_jp_2004.bin")),
         "iso2022_jp_3" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/iso2022_jp_3.bin")),
         "iso2022_jp_ext" => Some(include_bytes!("../../../langs/lib_python/data/multibyte/iso2022_jp_ext.bin")),

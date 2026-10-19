@@ -53,7 +53,8 @@ def _absolute_search_entry(entry, cwd):
 
 path = [__file__.rsplit('/', 1)[0]]
 _path_host = __host_info()
-_python_path = _path_host[3].get('PYTHONPATH', '')
+_ignore_environment = int(_path_host[3].get('LUMEN_PYTHON_IGNORE_ENV') == '1')
+_python_path = '' if _ignore_environment else _path_host[3].get('PYTHONPATH', '')
 if _python_path:
     _search_paths = []
     for _entry in _python_path.split(':') + path:
@@ -74,13 +75,15 @@ version = '3.14.8 (Lumen) [Rust]'
 _git = ('Lumen', '', '')
 hexversion = 0x030e08f0
 platform = 'linux'
+platlibdir = 'lib'
+copyright = 'Lumen experimental interpreter; Python library sources are licensed by the Python Software Foundation.'
 # Which Python this is. A test that reaches for the internals of the
 # reference implementation asks the name here first, and the honest
 # answer -- not cpython -- is what lets such a test step aside instead
 # of measuring this kernel against machinery it does not have.
 _Implementation = __namespace_type()
 implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
-                                 hexversion=0x000200f0, cache_tag='lumen-314')
+                                 hexversion=0x000200f0, cache_tag=_code_abi()[0])
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
@@ -92,6 +95,8 @@ pycache_prefix = None
 _recursion_limit = 1000
 
 def _environment(name):
+    if _ignore_environment:
+        return None
     import posix
     value = posix.environ.get(name)
     if value is None:
@@ -109,12 +114,12 @@ class _Flags:
     dont_write_bytecode = 1
     no_user_site = 1
     no_site = 1
-    ignore_environment = 0
+    ignore_environment = _ignore_environment
     verbose = 0
     bytes_warning = 0
     quiet = 0
     hash_randomization = 0
-    isolated = 1
+    isolated = 0
     # The options that PYTHONDEVMODE, PYTHONUTF8 and
     # PYTHONWARNDEFAULTENCODING (or -X dev, -X utf8, -X
     # warn_default_encoding, which the helpers that start a second
@@ -181,11 +186,8 @@ def setrecursionlimit(limit):
         raise TypeError("'" + type(limit).__name__ + "' object cannot be interpreted as an integer")
     if limit < 1:
         raise ValueError('recursion limit must be greater or equal than 1')
-    frame = _getframe()
-    depth = 0
-    while frame is not None:
-        depth += 1
-        frame = frame.f_back
+    # Check the same logical call depth that both kernels enforce.
+    depth = __program_namespace('recursion_depth')
     if limit <= depth:
         raise RecursionError('cannot set the recursion limit to ' + str(limit) +
                              ' at the recursion depth ' + str(depth) + ': the limit is too low')
@@ -238,7 +240,12 @@ class _StandardStream:
     def flush(self):
         self._ensure_open()
 
+    def fileno(self):
+        self._ensure_open()
+        return self._fd
+
 class _BinaryInput(_StandardStream):
+    _fd = 0
     def read(self, size=-1):
         self._ensure_open()
         return _host_stream_read(size, False, True)
@@ -255,20 +262,24 @@ class _BinaryInput(_StandardStream):
             raise StopIteration
         return line
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _BinaryOutput(_StandardStream):
     def __init__(self, error=False):
         self.error = error
+        self._fd = 2 if error else 1
     def write(self, data):
         self._ensure_open()
         return _write_standard(data, self.error, True)
     def flush(self):
         self._ensure_open()
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _Output(_StandardStream):
+    _fd = 1
     def __init__(self):
         self.buffer = _BinaryOutput()
     def write(self, *args, **keywords):
@@ -281,9 +292,11 @@ class _Output(_StandardStream):
         self._ensure_open()
 
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _Error(_StandardStream):
+    _fd = 2
     def __init__(self):
         self.buffer = _BinaryOutput(True)
     def write(self, *args, **keywords):
@@ -296,7 +309,8 @@ class _Error(_StandardStream):
         self._ensure_open()
 
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 class _Input(_BinaryInput):
     def __init__(self):
@@ -310,7 +324,8 @@ class _Input(_BinaryInput):
         return _host_stream_read(size, True)
 
     def isatty(self):
-        return False
+        import os
+        return os.isatty(self.fileno())
 
 stdout = _Output()
 stderr = _Error()
@@ -359,7 +374,7 @@ def exit(*args, **kwargs):
 # is warned about, once, and treated as '0' for that call.
 def breakpointhook(*args, **kws):
     import os
-    value = os.environ.get('PYTHONBREAKPOINT')
+    value = None if flags.ignore_environment else os.environ.get('PYTHONBREAKPOINT')
     if value is None or value == '':
         import pdb
         return pdb.set_trace(*args, **kws)
@@ -564,6 +579,35 @@ def _getframe(depth=0):
         raise TypeError('an integer is required')
     return __program_namespace(max(depth, 0) + 1)
 
+# The routine the kernel tells of each call and return stands between it
+# and whatever function the program gave to setprofile.
+_profile_target = [None]
+
+def _profile_dispatch(frame, event, arg):
+    function = _profile_target[0]
+    if function is None:
+        return
+    # setprofile itself is native in the reference, so the routine
+    # standing here for it is not a call the program made.
+    code = frame.f_code
+    if code.co_name == 'setprofile' and code.co_filename == _profile_home[0]:
+        return
+    try:
+        function(frame, event, arg)
+    except BaseException:
+        # A function that fails is taken away, as the reference does.
+        _profile_target[0] = None
+        raise
+
+def setprofile(function):
+    _profile_target[0] = function
+    __profile(_profile_dispatch if function is not None else None)
+
+_profile_home = [setprofile.__code__.co_filename]
+
+def getprofile():
+    return _profile_target[0]
+
 # Native bridge for CPython Python/sysmodule.c at v3.14.8 / 8e6e75d9102e; PSF License.
 _clear_type_descriptors = __clear_type_descriptors
 # Python audit hooks receive explicit runtime audit events in registration order.
@@ -599,6 +643,15 @@ def getfilesystemencodeerrors():
     return "surrogateescape"
 
 
+# Explicit module runs search the working directory before the embedded
+# library. File runs retain the isolated default search path.
+if __program_namespace().get('__spec__') is not None:
+    _cwd_error, _cwd_bytes = __posix('cwd')
+    if _cwd_error:
+        raise OSError(_cwd_error, 'cannot resolve the working directory')
+    path.insert(0, _cwd_bytes.decode('utf-8', 'surrogateescape'))
+    flags.isolated = 0
+    flags.safe_path = False
 
 def gettrace():
     return __trace_native__(0)

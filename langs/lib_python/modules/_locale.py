@@ -1,4 +1,4 @@
-# Stub: the plain C locale is the only locale carried here.
+# Portable C locale with UTF-8 text; C.UTF-8 names the same carried locale.
 
 class Error(Exception):
     pass
@@ -13,7 +13,7 @@ LC_ALL = 6
 CHAR_MAX = 127
 
 # The names the C library accepts for the portable locale.
-_C_LOCALE_NAMES = ('', 'C', 'POSIX')
+_C_LOCALE_NAMES = ('', 'C', 'POSIX', 'C.UTF-8')
 
 def _known_category(category):
     return isinstance(category, int) and 0 <= category <= LC_ALL

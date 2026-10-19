@@ -69,6 +69,7 @@ pub enum Hold {
     Generator(Weak<RefCell<Generator>>),
     Set(Weak<RefCell<Members>>),
     Routine(Weak<Routine>),
+    Code(Weak<(u8, Vec<Value>)>),
     Method(Weak<Instance>, Weak<Routine>, Weak<crate::value::MethodStamp>),
     Lasts(Value),
 }
@@ -85,6 +86,7 @@ impl Hold {
             Hold::Generator(w) => Value::Generator(w.upgrade()?),
             Hold::Set(w) => Value::Set(w.upgrade()?),
             Hold::Routine(w) => Value::Routine(w.upgrade()?),
+            Hold::Code(w) => Value::Adapter(w.upgrade()?),
             Hold::Method(o, r, stamp) => Value::Method(o.upgrade()?, r.upgrade()?, stamp.upgrade()?),
             Hold::Lasts(value) => value.clone(),
         })
@@ -99,6 +101,7 @@ impl Hold {
             Hold::Generator(w) => w.strong_count() == 0,
             Hold::Set(w) => w.strong_count() == 0,
             Hold::Routine(w) => w.strong_count() == 0,
+            Hold::Code(w) => w.strong_count() == 0,
             Hold::Method(o, r, identity) => identity.strong_count() == 0 || o.strong_count() == 0 || r.strong_count() == 0,
             Hold::Lasts(_) => false,
         }
@@ -113,6 +116,7 @@ fn observe(reference: &Faint, addresses: &mut HashSet<usize, BuildHasherDefault<
         Hold::Object(target) => { addresses.insert(target.as_ptr() as usize); }
         Hold::Class(target) => { addresses.insert(target.as_ptr() as usize); }
         Hold::Routine(target) => { addresses.insert(target.as_ptr() as usize); }
+        Hold::Code(target) => { addresses.insert(target.as_ptr() as usize); }
         Hold::Method(receiver, body, identity) => {
             addresses.insert(receiver.as_ptr() as usize);
             addresses.insert(body.as_ptr() as usize);
@@ -221,6 +225,7 @@ pub fn clear_group(group: &[Value]) -> Vec<(Value, Value)> {
         Hold::Generator(w) => places.contains(&(w.as_ptr() as usize)),
         Hold::Set(w) => places.contains(&(w.as_ptr() as usize)),
         Hold::Routine(w) => places.contains(&(w.as_ptr() as usize)),
+        Hold::Code(w) => places.contains(&(w.as_ptr() as usize)),
         Hold::Method(o, r, _) => places.contains(&(o.as_ptr() as usize)) || places.contains(&(r.as_ptr() as usize)),
         Hold::Lasts(_) => false,
     };
@@ -464,6 +469,7 @@ pub fn hold_of(value: &Value) -> Option<Hold> {
         Value::Generator(g) => Some(Hold::Generator(Rc::downgrade(g))),
         Value::Set(s) => Some(Hold::Set(Rc::downgrade(s))),
         Value::Routine(r) => Some(Hold::Routine(Rc::downgrade(r))),
+        Value::Adapter(parts) if parts.0 == 7 => Some(Hold::Code(Rc::downgrade(parts))),
         Value::Method(o, r, stamp) => Some(Hold::Method(Rc::downgrade(o), Rc::downgrade(r), Rc::downgrade(stamp))),
         _ => None,
     }
@@ -671,6 +677,7 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
             }
         }
         Value::Routine(r) => {
+            out.extend(r.code_snapshot.get().map(|image| Value::Routine(image.clone())));
             out.extend(r.annotation.iter().map(|p| Value::Routine(p.clone())));
             out.extend(r.code_constants.iter().cloned());
             out.extend(r.globe.iter().cloned());

@@ -5,7 +5,7 @@
 
 use crate::lang::Lang;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Shape {
     Instr,
     /// A name between name quotes: data for the word after it.
@@ -30,7 +30,7 @@ pub enum Shape {
     Finish,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Token {
     pub shape: Shape,
     pub lexeme: String,
@@ -265,7 +265,10 @@ fn symbol_groups(lang: &Lang) -> std::rc::Rc<std::collections::HashMap<char, Vec
     std::rc::Rc::new(groups)
 }
 
+type NameLoader<'a> = std::rc::Rc<std::cell::RefCell<dyn FnMut() -> Result<(), String> + 'a>>;
+
 struct Cursor<'a> {
+    names: Option<NameLoader<'a>>,
     lang: &'a Lang,
     signs: std::rc::Rc<std::collections::HashMap<char, Vec<&'a str>>>,
     continued: std::rc::Rc<std::collections::HashMap<String, Vec<String>>>,
@@ -279,6 +282,7 @@ struct Cursor<'a> {
     /// The template letter the string being read opened with, so the
     /// beginnings pushed for it name it: none for any other string.
     template: Option<char>,
+    incomplete_format: bool,
 }
 
 /// How many fields deep a string may nest and still be named
@@ -641,12 +645,15 @@ impl<'a> Cursor<'a> {
                     break;
                 }
                 let Some(c) = self.look(0) else {
+                    self.incomplete_format = format || depth > 0;
                     let triple = marker_size > 1;
-                    let named = match (triple, format) {
-                        (false, false) => &self.lang.string_unterminated,
-                        (true, false) => &self.lang.string_unterminated_triple,
-                        (false, true) => &self.lang.fstring_unterminated,
-                        (true, true) => &self.lang.fstring_unterminated_triple,
+                    let named = match (triple, format, self.template.is_some()) {
+                        (false, false, _) => &self.lang.string_unterminated,
+                        (true, false, _) => &self.lang.string_unterminated_triple,
+                        (false, true, false) => &self.lang.fstring_unterminated,
+                        (true, true, false) => &self.lang.fstring_unterminated_triple,
+                        (false, true, true) => &self.lang.tstring_unterminated,
+                        (true, true, true) => &self.lang.tstring_unterminated_triple,
                     };
                     return Err(match named {
                         Some(said) if depth < NESTED_UNTERMINATED_DEPTH => said.clone(),
@@ -765,6 +772,7 @@ impl<'a> Cursor<'a> {
                 if self.look(0) == Some('}') && self.at > begin + 3 {
                     let name: String = self.text[begin + 3..self.at].iter().collect();
                     self.step();
+                    if let Some(load) = &self.names { (load.borrow_mut())()?; }
                     match crate::unicode::named_text(&name) {
                         Some(found) => text.push_str(&found),
                         None if lang.named_unknown.is_some() => {
@@ -825,6 +833,14 @@ impl<'a> Cursor<'a> {
         let mut kept = String::new();
         loop {
             if self.look(0).map_or(false, |c| c.is_whitespace()) { kept.push(self.step()); }
+            else if self.look(0) == Some('\\') && matches!(self.look(1), Some('\n') | Some('\r')) {
+                self.step();
+                let joined = self.look(0);
+                self.step();
+                if joined == Some('\r') && self.look(0) == Some('\n') { self.step(); }
+                kept.push('\\');
+                kept.push('\n');
+            }
             else if self.lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
                 while self.look(0).map_or(false, |c| c != '\n') { self.step(); }
             } else { break; }
@@ -833,7 +849,8 @@ impl<'a> Cursor<'a> {
     }
 
     fn field_error(&self, number: usize) -> String {
-        self.lang.field_errors.get(number).cloned().unwrap_or_else(|| self.string_words())
+        let words = if self.template.is_some() { &self.lang.template_field_errors } else { &self.lang.field_errors };
+        words.get(number).cloned().unwrap_or_else(|| self.string_words())
     }
 
     fn string_field(&mut self, body_start: usize, raw: bool, depth: u32, outer: &str, spec_depth: u32) -> Result<(), String> {
@@ -844,7 +861,7 @@ impl<'a> Cursor<'a> {
         let mut expression = String::new();
         let mut brackets = Vec::new();
         loop {
-            let Some(c) = self.look(0) else { return Err(self.field_error(0)); };
+            let Some(c) = self.look(0) else { self.incomplete_format = true; return Err(self.field_error(14)); };
             // A field is code, so a backslash in it stands exactly as one
             // written outside of any string does: it joins a line ending
             // right after it, and names nothing else. Caught here, before
@@ -856,8 +873,11 @@ impl<'a> Cursor<'a> {
             if let Some((prefix, mark, is_raw, format)) = self.string_open() {
                 let saved = self.out.len();
                 let began = self.at;
+                let saved_template = self.template;
                 let closes_outer = prefix == 0 && mark == outer && brackets.is_empty();
-                if let Err(error) = self.rich_string(prefix, &mark, is_raw, format, depth + 1) {
+                let outcome = self.rich_string(prefix, &mark, is_raw, format, depth + 1);
+                self.template = saved_template;
+                if let Err(error) = outcome {
                     if closes_outer && (self.lang.string_unterminated.as_ref() == Some(&error)
                         || self.lang.string_unterminated_triple.as_ref() == Some(&error)) {
                         return Err(self.field_error(0));
@@ -871,12 +891,12 @@ impl<'a> Cursor<'a> {
             if let Some(said) = self.prefix_conflict() { return Err(said); }
             if self.lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {
                 while self.look(0).map_or(false, |x| x != '\n') { self.step(); }
-                if self.look(0).is_none() { return Err(self.field_error(14)); }
+                if self.look(0).is_none() { self.incomplete_format = true; return Err(self.field_error(14)); }
                 continue;
             }
             if c == '\u{a0}' { return Err(self.field_error(15)); }
-            if !brackets.is_empty() && expression.trim_end().ends_with(['(', '[', '{'])
-                && matches!(c, '>' | '/' | ';') { return Err(self.field_error(3)); }
+            if matches!(c, '>' | '/' | ';') && !brackets.is_empty()
+                && expression.trim_end().ends_with(['(', '[', '{']) { return Err(self.field_error(3)); }
             if brackets.is_empty() {
                 let start = expression.trim();
                 let operand_missing = start.chars().all(|x| x.is_whitespace() || matches!(x, '+' | '-' | '~'));
@@ -932,7 +952,10 @@ impl<'a> Cursor<'a> {
         let mut conversion = String::new();
         if self.look(0) == Some('!') {
             self.step();
-            if self.look(0).is_none() || at_word(&self.text, self.at, outer) { return Err(self.field_error(0)); }
+            if self.look(0).is_none() || at_word(&self.text, self.at, outer) {
+                self.incomplete_format = self.look(0).is_none();
+                return Err(self.field_error(0));
+            }
             let c = self.look(0).unwrap();
             if matches!(c, '}' | ':') { return Err(self.field_error(5)); }
             if c.is_whitespace() { return Err(self.field_error(7)); }
@@ -943,7 +966,10 @@ impl<'a> Cursor<'a> {
             }
             self.field_space();
         } else if debug && self.look(0) != Some(':') { conversion.push('r'); }
-        if self.look(0).is_none() || at_word(&self.text, self.at, outer) { return Err(self.field_error(0)); }
+        if self.look(0).is_none() || at_word(&self.text, self.at, outer) {
+            self.incomplete_format = self.look(0).is_none();
+            return Err(self.field_error(0));
+        }
         if !matches!(self.look(0), Some(':' | '}')) {
             return Err(self.field_error(if conversion.is_empty() || debug { 9 } else { 10 }));
         }
@@ -951,7 +977,7 @@ impl<'a> Cursor<'a> {
         self.push(Shape::StringExpression, expression.clone(), 0, line, col);
         let group = self.lang.grouping.as_ref().ok_or_else(|| self.string_words())?;
         self.push(Shape::Sign, group.open.clone(), 0, line, col);
-        let mut inner = Cursor { lang: self.lang, continued: self.continued.clone(), signs: self.signs.clone(), text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+        let mut inner = Cursor { names: self.names.clone(), lang: self.lang, continued: self.continued.clone(), signs: self.signs.clone(), text: expression.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None, incomplete_format: false };
         if let Err(message) = inner.run(false) {
             self.row = inner.row;
             self.column = inner.column;
@@ -965,14 +991,14 @@ impl<'a> Cursor<'a> {
         if self.look(0) == Some(':') {
             self.step();
             loop {
-                if at_word(&self.text, self.at, outer) { return Err(self.field_error(0)); }
+                if at_word(&self.text, self.at, outer) { return Err(self.field_error(19)); }
                 match self.look(0) {
                     Some('}') => break,
                     Some('\n' | '\r') if outer.len() == 1 => return Err(self.field_error(17)),
                     Some('{') => { self.string_text(&mut text, &mut fault, line, col); self.string_field(body_start, raw, depth, outer, spec_depth + 1)?; warned = false; }
                     Some('\\') => self.rich_escape(body_start, raw, true, false, &mut text, &mut fault, &mut warned)?,
                     Some(_) => text.push(self.step()),
-                    None => return Err(self.field_error(0)),
+                    None => { self.incomplete_format = true; return Err(self.field_error(0)); },
                 }
             }
         }
@@ -1206,7 +1232,7 @@ impl<'a> Cursor<'a> {
                 self.push(Shape::Quote, part, 0, line, col);
                 continue;
             }
-            let mut inner = Cursor { lang, continued: self.continued.clone(), signs: self.signs.clone(), text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+            let mut inner = Cursor { names: self.names.clone(), lang, continued: self.continued.clone(), signs: self.signs.clone(), text: part.chars().collect(), at: 0, row: line, column: col, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None, incomplete_format: false };
             inner.run(false)?;
             self.out.append(&mut inner.out);
         }
@@ -1537,7 +1563,11 @@ pub fn lex_at(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)> 
 const BRACKET_LEVELS: usize = 200;
 
 pub fn lex_position(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, usize)> {
-    let mut tokens = lex_notices(source, lang)?;
+    lex_loaded(source, lang, None)
+}
+
+pub fn lex_loaded<'a>(source: &str, lang: &'a Lang, names: Option<NameLoader<'a>>) -> Result<Vec<Token>, (String, usize, usize)> {
+    let mut tokens = lex_notices(source, lang, names, &mut false)?;
     tokens.retain(|t| t.shape != Shape::EscapeWarning);
     if !lang.trace_fields.is_empty() {
         let columns: Vec<Vec<usize>> = source.split('\n').map(|line| {
@@ -1566,12 +1596,20 @@ pub fn escape_warnings(source: &str, lang: &Lang) -> Vec<(String, usize)> {
     let source = normalized.as_deref().unwrap_or(source);
     if lang.template || (!lang.syntax_members.is_empty() && source.contains('\0')) { return Vec::new(); }
     let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-    let mut cur = Cursor { lang, continued: lang.builtin_tails.clone(), signs: symbol_groups(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
+    let mut cur = Cursor { names: None, lang, continued: lang.builtin_tails.clone(), signs: symbol_groups(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None, incomplete_format: false };
     let _ = cur.run(true);
     cur.out.into_iter().filter(|t| t.shape == Shape::EscapeWarning).map(|t| (t.lexeme, t.row)).collect()
 }
 
-fn lex_notices(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, usize)> {
+/// An EOF inside a formatted literal is resumable under incomplete-input flags.
+/// Keep this separate from the ordinary syntax diagnostic and its source span.
+pub fn format_needs_input(source: &str, lang: &Lang) -> bool {
+    let mut incomplete = false;
+    let _ = lex_notices(source, lang, None, &mut incomplete);
+    incomplete
+}
+
+fn lex_notices<'a>(source: &str, lang: &'a Lang, names: Option<NameLoader<'a>>, incomplete: &mut bool) -> Result<Vec<Token>, (String, usize, usize)> {
     let final_crlf = source.ends_with("\r\n");
     let normalized = (!lang.syntax_members.is_empty() && source.contains('\r'))
         .then(|| source.replace("\r\n", "\n").replace('\r', "\n"));
@@ -1581,8 +1619,9 @@ fn lex_notices(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize, 
         true => woven_source(source, lang).map_err(|(s, r)| (s, r, 1))?,
         false => {
             let text = drop_comments(drop_epilogue(drop_prologue(source, lang), lang), lang);
-            let mut cur = Cursor { lang, continued: lang.builtin_tails.clone(), signs: symbol_groups(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None };
+            let mut cur = Cursor { names: names, lang, continued: lang.builtin_tails.clone(), signs: symbol_groups(lang), text: text.chars().collect(), at: 0, row: 1, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf, template: None, incomplete_format: false };
             if let Err(said) = cur.run(true) {
+                *incomplete = cur.incomplete_format;
                 if !lang.syntax_members.is_empty() && said == "SyntaxError: unexpected EOF while parsing" {
                     let mut opens = Vec::new();
                     for token in &cur.out {
@@ -1776,7 +1815,7 @@ fn woven_source(source: &str, lang: &Lang) -> Result<Vec<Token>, (String, usize)
             None => (after, ""),
         };
         let text = drop_comments(code, lang);
-        let mut cur = Cursor { lang, continued: lang.builtin_tails.clone(), signs: symbol_groups(lang), text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None };
+        let mut cur = Cursor { names: None, lang, continued: lang.builtin_tails.clone(), signs: symbol_groups(lang), text: text.chars().collect(), at: 0, row, column: 1, out: Vec::new(), unpaired: Vec::new(), final_crlf: false, template: None, incomplete_format: false };
         if let Err(said) = cur.run(true) {
             return Err((said, cur.row));
         }
@@ -1902,4 +1941,28 @@ fn number_error_column(word: &str, message: &str) -> usize {
         }
     }
     letters.len().saturating_sub(1)
+}
+
+// Native code images retain the exact scanner input for reconstruction.
+pub(crate) fn token_image(tokens: &[Token]) -> String {
+    let records: Vec<_> = tokens.iter().map(|t| serde_json::json!([
+        t.shape as u8, t.lexeme, t.raw, t.width, t.row, t.column, t.end_column, t.end_row, t.byte_column, t.byte_end_column
+    ])).collect();
+    serde_json::Value::Array(records).to_string()
+}
+
+pub(crate) fn image_tokens(image: &str) -> Result<Vec<Token>, String> {
+    let bad = || "ValueError: invalid native token image".to_string();
+    let records: serde_json::Value = serde_json::from_str(image).map_err(|_| bad())?;
+    let kinds = [Shape::Instr, Shape::Quoted, Shape::Numeral, Shape::Quote, Shape::Bytes, Shape::StringBegin, Shape::StringEnd, Shape::StringField, Shape::StringExpression, Shape::StringFault, Shape::Codepoints, Shape::EscapeWarning, Shape::Sign, Shape::LineEnd, Shape::Lead, Shape::Open, Shape::Close, Shape::Finish];
+    let decoded: Vec<Token> = records.as_array().ok_or_else(bad)?.iter().map(|record| {
+        let a = record.as_array().filter(|a| a.len() == 10).ok_or_else(bad)?;
+        let number = |at: usize| a[at].as_u64().and_then(|n| usize::try_from(n).ok()).ok_or_else(bad);
+        let shape = *kinds.get(number(0)?).ok_or_else(bad)?;
+        let raw = if a[2].is_null() { None } else { Some(a[2].as_str().ok_or_else(bad)?.to_string()) };
+        Ok(Token { shape, lexeme: a[1].as_str().ok_or_else(bad)?.to_string(), raw,
+            width: number(3)?, row: number(4)?, byte_column: number(8)?, byte_end_column: number(9)?, column: number(5)?, end_column: number(6)?, end_row: number(7)? })
+    }).collect::<Result<_, String>>()?;
+    if decoded.last().is_none_or(|token| token.shape != Shape::Finish) { return Err(bad()); }
+    Ok(decoded)
 }

@@ -964,12 +964,18 @@ class FileIO(_RawIOBase):
     _fd = -1
     _closed = True
     _closefd = True
+    _readable = False
+    _writable = False
+    _created = False
+    _appending = False
+    _finalizing_state = False
     def __init__(self, file, mode='r', closefd=True, opener=None):
         import os
         if getattr(self, '_fd', -1) >= 0:
             self.close()
         self._fd = -1
         self._closed = True
+        self._finalizing_state = False
         if not isinstance(mode, str):
             raise TypeError('mode must be a string')
         if any(letter not in 'rwax+b' for letter in mode):
@@ -982,9 +988,14 @@ class FileIO(_RawIOBase):
         self._closefd = bool(closefd)
         self._fd = -1
         self._closed = True
-        self.mode = ('ab+' if base[0] == 'a' else 'xb+' if base[0] == 'x' else 'rb+') if '+' in mode else ('ab' if base[0] == 'a' else 'xb' if base[0] == 'x' else 'rb' if base[0] == 'r' else 'wb')
         if isinstance(file, float):
             raise TypeError('integer argument expected, got float')
+        if isinstance(file, bool):
+            import warnings
+            warnings.warn('bool is used as a file descriptor', RuntimeWarning, stacklevel=2)
+            file = int(file)
+        self._created = base[0] == 'x'
+        self._appending = base[0] == 'a'
         owned = False
         fd = -1
         try:
@@ -1085,9 +1096,47 @@ class FileIO(_RawIOBase):
                 title, name, self.mode, self._closefd)
         finally:
             self._repr_running = False
+
+    @property
+    def _finalizing(self):
+        return self._finalizing_state
+
+    @_finalizing.setter
+    def _finalizing(self, value):
+        if not isinstance(value, bool):
+            raise TypeError('attribute value type must be bool')
+        self._finalizing_state = value
+
+    @_finalizing.deleter
+    def _finalizing(self):
+        raise TypeError("can't delete numeric/char attribute")
+
+    @property
+    def _blksize(self):
+        import os
+        try:
+            st = os.fstat(self._fd)
+        except OSError:
+            return DEFAULT_BUFFER_SIZE
+        blksize = getattr(st, 'st_blksize', 0)
+        if not blksize:
+            return DEFAULT_BUFFER_SIZE
+        return blksize
+
     @property
     def closefd(self):
         return self._closefd
+
+    @property
+    def mode(self):
+        if self._created:
+            return 'xb+' if self._readable else 'xb'
+        if self._appending:
+            return 'ab+' if self._readable else 'ab'
+        if self._readable:
+            return 'rb+' if self._writable else 'rb'
+        return 'wb'
+
     def fileno(self):
         self._checkClosed()
         return self._fd
@@ -1098,7 +1147,7 @@ class FileIO(_RawIOBase):
             else:
                 import os
             try:
-                if self._closefd:
+                if self._closefd and self._fd >= 0:
                     os.close(self._fd)
             finally:
                 self._fd = -1
@@ -1583,6 +1632,11 @@ class _Open:
             binary = 'b' in mode
             if binary and (encoding is not None or errors is not None or newline is not None):
                 raise ValueError("binary mode doesn't take an encoding, errors, or newline argument")
+            if binary and buffering == 1:
+                import warnings
+                warnings.warn("line buffering (buffering=1) isn't supported in "
+                              "binary mode, the default buffer size will be used",
+                              RuntimeWarning, 2)
             raw = FileIO(file, mode.replace('t', ''), closefd, opener)
             try:
                 if buffering == 0:

@@ -654,16 +654,21 @@ only. The extension labels so far, all from PHP:
   either side of the two letters named, read the way `about_two` reads
   it.
 - `ext.lexical.string.unterminated`, `.unterminated.triple`,
-  `ext.lexical.string.prefix.format.unterminated` and
-  `.prefix.format.unterminated.triple`: what the language says of a
-  quoted run (plain or formatted, one mark or the tripled one) that
-  reaches the end of the text before its closing mark. Absent, the
-  reading falls back to `ext.lexical.string.amiss`.
+  `ext.lexical.string.prefix.format.unterminated`,
+  `.prefix.format.unterminated.triple`,
+  `ext.lexical.string.prefix.template.unterminated` and
+  `.prefix.template.unterminated.triple`: what the language says of a
+  quoted run (plain, formatted or templated, one mark or the tripled
+  one) that reaches the end of the text before its closing mark.
+  Absent, the reading falls back to `ext.lexical.string.amiss`.
 - `ext.lexical.string.bytes.unavailable` and
   `ext.lexical.string.value.unready`: diagnostic words retained for
   implementations that cannot hold byte text or render a field. The
   current kernels hold distinct byte values and use the following
   label when a field presentation is unsupported.
+- `ext.lexical.string.template.mixed`: what the reader says of adjacent
+  literals that mix a t-string with a plain, formatted, raw or byte
+  string, which a template cannot be joined to.
 - `ext.lexical.string.format.errors`: ordered reader diagnostics for replacement
   fields: missing closing brace, lone closing brace, empty expression (the `{}`
   slot names its delimiter), invalid expression start, unparenthesized lambda,
@@ -673,6 +678,9 @@ only. The extension labels so far, all from PHP:
   comment field, nonbreaking space, a bare starred expression, and a newline
   in a single-quoted format specification. `{}` slots
   in conversion and bracket diagnostics name the offending text.
+  `ext.lexical.string.template.errors` holds the same diagnostics worded
+  for t-strings, so a template's field names its own kind; the two
+  lists share every entry whose wording names no string kind.
 - `ext.lexical.string.format.unavailable`: what is said when a field's
   value or specification asks for a rendering the run has no rule for.
   The field and its specification are read and worked out before this
@@ -1229,6 +1237,16 @@ only. The extension labels so far, all from PHP:
   value nobody took, rather than the run telling it in its own words.
   Giving nothing takes the routine away again. PHP's
   `set_exception_handler` is written on it.
+- `ext.builtin.profile`: a builtin naming a routine to be told each time a
+  routine the program wrote is entered and left, with the frame, the word
+  `call` or `return`, and the value handed back (nothing for `call`, nor
+  for a `return` left by a fault). It is also told, with the caller's frame
+  and the builtin function or method itself, each time the program calls
+  one (`c_call`, then `c_return` or `c_exception`); what a builtin does
+  inside itself is not told. Calls made while it is being told are not
+  told to it again; a routine that raises is taken away and its fault
+  passes on. Giving nothing takes it away. Python's `sys.setprofile` is
+  written on it.
 - `ext.builtin.calls`: a builtin answering with the calls under way,
   innermost first and the outermost body left out. Each is an array
   saying what was called (`function`), the class it was written in where
@@ -4590,6 +4608,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.classmethod` | - | - | `classmethod` | - | - | - | - | - | - | - |
 | `ext.builtin.clock` | - | - | `__clock` | - | `__clock` | - | - | - | - | - |
 | `ext.builtin.clock.parts` | - | - | `true` | - | - | - | - | - | - | - |
+| `ext.builtin.code.cache` | - | - | `_code_pack` `_code_unpack` `_code_abi` `_code_filename` | - | - | - | - | - | - | - |
 | `ext.builtin.compile` | - | - | `compile` | - | - | - | - | - | - | - |
 | `ext.builtin.compile.incomplete` | - | - | `_IncompleteInputError` `incomplete input` | - | - | - | - | - | - | - |
 | `ext.builtin.compile.kind` | - | - | `code` | - | - | - | - | - | - | - |
@@ -4897,6 +4916,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.print.sep.amiss` | - | - | `TypeError: sep must be None or a string` | - | - | - | - | - | - | - |
 | `ext.builtin.print.separator` | - | - | `sep` | - | - | - | - | - | - | - |
 | `ext.builtin.print_r` | - | - | - | - | `print_r` | - | - | - | - | - |
+| `ext.builtin.profile` | - | - | `__profile` | - | - | - | - | - | - | - |
 | `ext.builtin.program.namespace` | - | - | `__program_namespace` | - | - | - | - | - | - | - |
 | `ext.builtin.property` | - | - | `property` | - | - | - | - | - | - | - |
 | `ext.builtin.random.words` | - | - | `true` | - | - | - | - | - | - | - |
@@ -5161,7 +5181,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.bytes.mixed` | - | - | `SyntaxError: cannot mix bytes and nonbytes literals` | - | - | - | - | - | - | - |
 | `ext.lexical.string.bytes.unavailable` | - | - | `bytes literals are not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.bytes.unready` | - | - | `NotImplementedError: bytes values are not supported` | - | - | - | - | - | - | - |
-| `ext.lexical.string.format.errors` | - | - | `SyntaxError: f-string: expecting '}'` `SyntaxError: f-string: single '}' is not allowed` `SyntaxError: f-string: valid expression required before '{}'` `SyntaxError: f-string: expecting a valid expression after '{'` `SyntaxError: f-string: lambda expressions are not allowed without parentheses` `SyntaxError: f-string: missing conversion character` `SyntaxError: f-string: invalid conversion character` `SyntaxError: f-string: conversion type must come right after the exclamation mark` `SyntaxError: f-string: expecting '=', or '!', or ':', or '}'` `SyntaxError: f-string: expecting '!', or ':', or '}'` `SyntaxError: f-string: expecting ':' or '}'` `SyntaxError: f-string: invalid conversion character '{}': expected 's', 'r', or 'a'` `SyntaxError: f-string: unmatched '{}'` `SyntaxError: closing parenthesis '{}' does not match opening parenthesis '{}'` `SyntaxError: '{' was never closed` `SyntaxError: invalid non-printable character U+00A0` `SyntaxError: can't use starred expression here` `SyntaxError: f-string: newlines are not allowed in format specifiers` `SyntaxError: f-string: expressions nested too deeply` | - | - | - | - | - | - | - |
+| `ext.lexical.string.format.errors` | - | - | `SyntaxError: f-string: expecting '}'` `SyntaxError: f-string: single '}' is not allowed` `SyntaxError: f-string: valid expression required before '{}'` `SyntaxError: f-string: expecting a valid expression after '{'` `SyntaxError: f-string: lambda expressions are not allowed without parentheses` `SyntaxError: f-string: missing conversion character` `SyntaxError: f-string: invalid conversion character` `SyntaxError: f-string: conversion type must come right after the exclamation mark` `SyntaxError: f-string: expecting '=', or '!', or ':', or '}'` `SyntaxError: f-string: expecting '!', or ':', or '}'` `SyntaxError: f-string: expecting ':' or '}'` `SyntaxError: f-string: invalid conversion character '{}': expected 's', 'r', or 'a'` `SyntaxError: f-string: unmatched '{}'` `SyntaxError: closing parenthesis '{}' does not match opening parenthesis '{}'` `SyntaxError: '{' was never closed` `SyntaxError: invalid non-printable character U+00A0` `SyntaxError: can't use starred expression here` `SyntaxError: f-string: newlines are not allowed in format specifiers` `SyntaxError: f-string: expressions nested too deeply` `SyntaxError: f-string: expecting '}', or format specs` | - | - | - | - | - | - | - |
 | `ext.lexical.string.format.unavailable` | - | - | `this formatted value is not supported` | - | - | - | - | - | - | - |
 | `ext.lexical.string.long` | - | - | `"""` `'''` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.bytes` | - | - | `b` `B` | - | - | - | - | - | - | - |
@@ -5174,6 +5194,10 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.lexical.string.prefix.plain` | - | - | `u` `U` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.raw` | - | - | `r` `R` | - | - | - | - | - | - | - |
 | `ext.lexical.string.prefix.template` | - | - | `t` `T` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.template.unterminated` | - | - | `SyntaxError: unterminated t-string literal` | - | - | - | - | - | - | - |
+| `ext.lexical.string.prefix.template.unterminated.triple` | - | - | `SyntaxError: unterminated triple-quoted t-string literal` | - | - | - | - | - | - | - |
+| `ext.lexical.string.template.errors` | - | - | `SyntaxError: t-string: expecting '}'` `SyntaxError: t-string: single '}' is not allowed` `SyntaxError: t-string: valid expression required before '{}'` `SyntaxError: t-string: expecting a valid expression after '{'` `SyntaxError: t-string: lambda expressions are not allowed without parentheses` `SyntaxError: t-string: missing conversion character` `SyntaxError: t-string: invalid conversion character` `SyntaxError: t-string: conversion type must come right after the exclamation mark` `SyntaxError: t-string: expecting '=', or '!', or ':', or '}'` `SyntaxError: t-string: expecting '!', or ':', or '}'` `SyntaxError: t-string: expecting ':' or '}'` `SyntaxError: t-string: invalid conversion character '{}': expected 's', 'r', or 'a'` `SyntaxError: t-string: unmatched '{}'` `SyntaxError: closing parenthesis '{}' does not match opening parenthesis '{}'` `SyntaxError: '{' was never closed` `SyntaxError: invalid non-printable character U+00A0` `SyntaxError: can't use starred expression here` `SyntaxError: t-string: newlines are not allowed in format specifiers` `SyntaxError: t-string: expressions nested too deeply` `SyntaxError: t-string: expecting '}', or format specs` | - | - | - | - | - | - | - |
+| `ext.lexical.string.template.mixed` | - | - | `SyntaxError: cannot mix t-string literals with string or bytes literals` | - | - | - | - | - | - | - |
 | `ext.lexical.string.unready` | - | - | `NotImplementedError: this string cannot be represented` | - | - | - | - | - | - | - |
 | `ext.lexical.string.unterminated` | - | - | `SyntaxError: unterminated string literal` | - | - | - | - | - | - | - |
 | `ext.lexical.string.unterminated.triple` | - | - | `SyntaxError: unterminated triple-quoted string literal` | - | - | - | - | - | - | - |
@@ -5642,7 +5666,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.syntax.collection.unwalkable` | - | - | `TypeError: 'object' object is not iterable` | - | - | - | - | - | - | - |
 | `ext.syntax.map.resized` | - | - | `RuntimeError: dictionary changed size during iteration` | - | - | - | - | - | - | - |
 | `ext.syntax.map.spread` | - | - | `**` | - | - | - | - | - | - | - |
-| `ext.syntax.map.spread.unmapped` | - | - | `TypeError: value is not a mapping` | - | - | - | - | - | - | - |
+| `ext.syntax.map.spread.unmapped` | - | - | `TypeError: '` `' object is not a mapping` | - | - | - | - | - | - | - |
 | `ext.syntax.map.unhashable` | - | - | `TypeError: cannot use '` `' as a dict key (unhashable type: '` `')` | - | - | - | - | - | - | - |
 | `ext.syntax.map.value_keys` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.syntax.names.shadow_builtins` | - | - | `true` | - | - | - | - | - | - | - |
@@ -6176,6 +6200,39 @@ hierarchy and lookup state. The pure-Python
 `__future__.py` is also carried unchanged from v3.14.8.
 
 
+
+The Python codec search registry also supplies Shift-JIS through `_codec_sjis`.
+Its forward mapping is the committed hexadecimal table in the PHP mbstring
+adapter, embedded once as data rather than copied into a second table. Reverse
+lookups are cached per character; ASCII, half-width katakana, yen, and overline
+follow the codec's single-byte rules. Stateless, incremental, and stream codecs
+share the error-handler registry. The stream base class bodies come unchanged
+from CPython 3.14.8 in `runtime_adapters/codecs.py`.
+
+The `_py_abc` runtime adapter keeps protocol instance and registration searches
+on the underlying ABC path. Runtime protocols can then inspect data attributes
+through typing's unchanged static instance checks, while explicit subclass
+checks retain the restriction on protocols with data members.
+
+Bytes joins read the stored bytes of subclasses, including ZIP extra-field
+records, without invoking an overridden conversion method. Suspended generators
+in microcode7 use Python truth protocols in loops, conditional expressions and
+short-circuit expressions; stack8 already follows the ordinary truth path.
+Actual `-m` runs bind module metadata in both the main namespace and its cells,
+resolve relative imports against the module's parent, and search the working
+directory. File runs retain their isolated import path.
+
+`time.strptime` delegates to the unchanged CPython 3.14.8 `_strptime` source,
+with `struct_time`'s two named fields preserved. The unittest runtime supports
+class cleanup stacks and class context managers, drains cleanups after failed
+setup as well as normal teardown, and records cleanup exceptions as errors.
+
+`ext.builtin.multibyte` names the Python-only CJK mapping primitive used by the multibyte codec state machines. It uses the codec port's released mapping tables; other languages leave it unregistered.
+
+`ext.builtin.code.cache` exposes the Python compiled-code cache writer, reader,
+and ABI identity. Cache payloads preserve stack8 instructions or microcode7
+forms and their binding metadata, with distinct format tags for each kernel.
+They are native Lumen caches and do not claim CPython bytecode compatibility.
 `ext.builtin.abc.instancecheck` supplies the native ABC instance-check boundary: cache lookup uses the standard weak registries, and subclass hooks run without an extra Python frame, as in CPython’s `_abc` accelerator. This lets protocol hooks distinguish checks made by `abc` from direct subclass checks.
 `ext.stmt.class.detail.native.docs` stores native descriptor qualified names and
 their documentation strings in alternating entries, taken from CPython 3.14.8's
@@ -6221,3 +6278,7 @@ storage report that limitation instead of inventing a count.
 
 `ext.builtin.partial.call` supplies native invocation for Python partial objects, merging their stored positional and keyword arguments without adding a Python frame.
 `ext.builtin.lzma_decode` names the Python-only one-stream system liblzma decoder. It returns decoder status, output bytes and consumed input; the Python facade joins concatenated XZ/LZMA streams. Raw filter chains and incremental codec objects are not yet exposed.
+
+Python text methods validate named error policies in development mode (`-X dev`). Private `__codec_encode` and `__codec_decode` spellings reuse the bytes encode/decode labels for low-level registry conversion, where unused policies remain lazy.
+
+`ext.builtin.multibyte` names the Python native CJK mapping primitive. It provides complete CJK character mappings, prefix validation, GB18030 ranges, and Unicode 16.0/3.2 normalization data to the Python codec state machines. Other languages do not register it.

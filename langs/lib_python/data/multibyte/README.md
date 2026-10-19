@@ -8,3 +8,8 @@ mappings_jisx0213_pair.h b01e43c69e8edd8274ba9d6756357bea80a11507b125378927b37c7
 mappings_jp.h 09012ff9eb963073d42a8bce375c05484219537caa0cc2aa74baa63d5f3f1658 09012ff9eb963073d42a8bce375c05484219537caa0cc2aa74baa63d5f3f1658
 mappings_kr.h 334c6ed883d62725094114b1abd10c306d0810bbba8a055ea443bfef13147276 334c6ed883d62725094114b1abd10c306d0810bbba8a055ea443bfef13147276
 mappings_tw.h 5055cd95f8d4a80014d6f3b6650d578eb424d2f9dcc86c5e4f4252fd93cf991c 5055cd95f8d4a80014d6f3b6650d578eb424d2f9dcc86c5e4f4252fd93cf991c
+
+The generated `iso2022_jp_2.bin`, `gb18030.bin`, and `gbk.bin` may carry an XZ
+container. Each kernel expands and caches it once before reading the unchanged
+little-endian mapping layout. Raw generated tables are still accepted. No
+reference-source or mapping entry is changed by this storage representation.

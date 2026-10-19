@@ -48,6 +48,7 @@ impl Env {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Kind {
     Whole,
     Fraction,
@@ -86,6 +87,7 @@ impl Kind {
 /// beneath is answered for where numbers are worked and weighed against
 /// each other and in no other place.
 #[derive(Debug, Clone)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Ratio {
     pub float_style: bool,
     pub above: BigInt,
@@ -929,7 +931,11 @@ impl Value {
                     // A pair whose place is still empty stands for a name
                     // not yet written: a namespace that shows it shows a
                     // name it does not have, so the window passes it by.
-                    if matches!(value.settled(), Value::Unset) { continue; }
+                    let empty = match value {
+                        Value::Shared(cell) | Value::Mutable(cell, _) => matches!(&*cell.borrow(), Value::Unset),
+                        other => matches!(other, Value::Unset),
+                    };
+                    if empty { continue; }
                     let bare = match key { Value::Keyed(thing, _) => thing.as_ref().clone(), other => other.clone() };
                     // A reading of the map itself walks, and is
                     // measured, the very way its keys are: it is asked
@@ -1422,14 +1428,18 @@ impl Value {
     fn program_worth(program: &crate::form::Routine) -> Value {
         let names = |words: &[String]| Value::tuple(words.iter().map(|word| Value::text(word)).collect());
         let kinds = program.taking.as_deref().unwrap_or(&[]).iter().map(|kind| Value::Small(*kind as i64)).collect();
-        let mut attributes = vec![Value::Text(program.origin_content.get_or_init(|| Rc::from(format!("{:?}", program.lexical_origin))).clone()), Value::Small(program.body_boundary as i64)];
+        let mut attributes = vec![Value::Text(program.origin_content.get_or_init(|| Rc::from(crate::scan::save_tokens(&program.lexical_origin))).clone()), Value::Small(program.body_boundary as i64)];
         attributes.extend([
             Value::text(&program.ident), Value::Small(program.declared_on.into()),
-            Value::Small(program.flags), Value::Small(program.future_bits),
-            Value::Flag(program.lineless), Value::Flag(program.generator),
+            Value::Small(program.flags | program.future_bits), Value::Flag(program.lineless),
+            program.locations.clone().unwrap_or(Value::Nil),
+            Value::Octets { cell: Rc::new(RefCell::new(program.body_image())), changeable: false, lead: Rc::from("bytes") },
+            program.encoded_handlers.clone().unwrap_or(Value::Nil),
             names(&program.formals), Value::tuple(kinds),
             program.gather_from.map_or(Value::Nil, |index| Value::Small(index as i64)),
             names(&program.referenced), names(&program.locals), names(&program.idents),
+            names(&program.cells.iter().filter(|word| !program.locals.contains(word)).cloned().collect::<Vec<_>>()),
+            names(&program.reaching.iter().map(|place| place.ident.to_string()).collect::<Vec<_>>()),
             Value::tuple(program.literals.clone()),
         ]);
         Value::tuple(attributes)
@@ -1698,7 +1708,12 @@ impl Value {
             Value::Mutable(cell, false) => within_cell(cell, |inner| inner.render(w)),
             Value::Row(_) => self.repr(&w),
             Value::Window(owner, 'm') => format!("mappingproxy({})", owner.proxy_pairs().repr(&w)),
-            Value::Window(_, portion) => format!("dict_{}({})", match portion { 'k'=>"keys",'v'=>"values",_=>"items" }, self.settled().repr(&w)),
+            Value::Window(owner, portion) => {
+                if !window_entered(owner, *portion) { return String::from("..."); }
+                let body = self.settled().repr(&w);
+                window_left(owner, *portion);
+                format!("dict_{}({})", match portion { 'k'=>"keys",'v'=>"values",_=>"items" }, body)
+            }
             Value::Arguments(row) => Self::argument_text(row, w),
             // A cell that names share is written as what it holds.
             Value::Shared(cell) => within_cell(cell, |inner| inner.render(w)),
@@ -1877,7 +1892,12 @@ impl Value {
             // read from the kind itself is bound to no thing at all and
             // is named with the kind it belongs to instead.
             Value::Member(held, word) => method_written(held, word, Rc::as_ptr(held) as *const u8 as usize),
-            Value::Window(..) => self.settled().bare(),
+            Value::Window(owner, portion) => {
+                if !window_entered(owner, *portion) { return String::from("..."); }
+                let body = self.settled().bare();
+                window_left(owner, *portion);
+                body
+            }
             Value::Row(v) => format!("({})", v.iter().map(Value::bare).collect::<Vec<_>>().join(", ")),
             // A word naming a kind stands for the kind itself, and is
             // written as the reference writes a class; every other
@@ -1979,6 +1999,12 @@ impl Value {
             Value::Wrapped(4, parts) => format!("<staticmethod({})>", match parts[0] {Value::Nil=>String::from("None"),_=>parts[0].bare()}),
             Value::Wrapped(5, parts) => format!("<classmethod({})>", match parts[0] {Value::Nil=>String::from("None"),_=>parts[0].bare()}),
             Value::Wrapped(64, fields) => format!("<coroutine_wrapper object at 0x{:x}>", Rc::as_ptr(fields) as usize),
+            Value::Wrapped(7, payload) => {
+                if let Some(Value::Routine(program) | Value::Bound(program, _)) = payload.first() {
+                    let filename = program.written_in.as_deref().unwrap_or("<string>");
+                    format!("<code object {} at {:p}, file {filename:?}, line {}>", program.ident, Rc::as_ptr(payload), program.declared_on)
+                } else { String::from("<code object>") }
+            },
             Value::Wrapped(..) => "<member wrapper>".into(),
             Value::Tuple(items) => {
                 let among = Among::members(self);
@@ -2146,6 +2172,7 @@ pub fn decimal_string(above: &BigInt, beneath: &BigInt, places: usize) -> String
 /// How far a member of a class is reached from: from anywhere, from the
 /// class and those built on it, or from the class alone.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Reach {
     Everywhere,
     Within,
@@ -2601,6 +2628,11 @@ thread_local! {
     /// is already among them costs the same whether the writing stands
     /// one deep or a hundred thousand deep.
     static AMONG: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+    /// The windows whose members are being written out at this moment,
+    /// each known by the allocation it shows and the part it shows of
+    /// it. A window reached from within its own members is written as
+    /// the ellipsis in its own stead.
+    static WINDOWS: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
     /// Where a language names them, the cells a run keeps its counts of
     /// figures in: how many a real written plainly carries, and how many
     /// one shown with its kind carries. A language that names neither
@@ -2647,6 +2679,26 @@ impl Drop for Among {
             AMONG.with(|notes| { notes.borrow_mut().remove(&address); });
         }
     }
+}
+
+/// The place a window holds among the windows being written out at this
+/// moment: the allocation it shows and the part it shows of it, told
+/// apart from every other window.
+fn window_place(owner: &Rc<Value>, portion: char) -> usize {
+    (Rc::as_ptr(owner) as usize) ^ ((portion as usize).wrapping_mul(0x9e37_79b9))
+}
+
+/// Note that a window's members are being written out, answering whether
+/// that very window is not already being written further up.
+pub fn window_entered(owner: &Rc<Value>, portion: char) -> bool {
+    let place = window_place(owner, portion);
+    WINDOWS.with(|held| held.borrow_mut().insert(place))
+}
+
+/// Take the note away once the writing of that window is done.
+pub fn window_left(owner: &Rc<Value>, portion: char) {
+    let place = window_place(owner, portion);
+    WINDOWS.with(|held| { held.borrow_mut().remove(&place); });
 }
 
 /// Write out a cell's contents by the writer given, or a row's ellipsis

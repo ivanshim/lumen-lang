@@ -11,7 +11,8 @@ from test import support
 # Preserve source strings, filenames, flags and the child's argument order.
 def _to_file_args(args):
     args = list(args)
-    return (args[0], args[1:]) if args else (None, [])
+    return (args[0], args[1:]) if args else ('-', [])
+
 
 
 def _option_env(args):

@@ -14,6 +14,7 @@ verbose = False
 is_wasi = sys.platform == "wasi"
 is_emscripten = sys.platform == "emscripten"
 is_wasm32 = is_emscripten or is_wasi
+TEST_HTTP_URL = "http://www.pythontest.net"
 Py_DEBUG = False
 Py_GIL_DISABLED = False
 MS_WINDOWS = False
@@ -283,6 +284,13 @@ def skip_if_sanitizer(reason=None, **sanitizers):
 import os
 import time
 import re
+# Does strftime() accept glibc extension widths such as '%4Y'?
+has_strftime_extensions = False
+if sys.platform != 'win32':
+    try:
+        has_strftime_extensions = time.strftime('%4Y') != '%4Y'
+    except ValueError:
+        pass
 TEST_HOME_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))), 'tests', 'python-3.14.8')
 REPO_ROOT = os.path.dirname(os.path.dirname(TEST_HOME_DIR))
 _header = 'nP'
@@ -927,7 +935,16 @@ def load_package_tests(pkg_dir, loader, standard_tests, pattern):
     top_dir = STDLIB_DIR
     # Reference packages live in the interpreter's versioned test directory.
     if not os.path.abspath(pkg_dir).startswith(os.path.abspath(top_dir).rstrip('/') + '/'):
-        top_dir = os.path.dirname(pkg_dir)
+        parent = os.path.dirname(pkg_dir)
+        top_dir = os.path.dirname(parent) if os.path.basename(parent) == 'test' else parent
+        import test
+        for root in test.__path__:
+            candidate = os.path.join(root, os.path.basename(pkg_dir))
+            if (os.path.basename(root) == 'test'
+                    and os.path.realpath(candidate) == os.path.realpath(pkg_dir)):
+                pkg_dir = candidate
+                top_dir = os.path.dirname(root)
+                break
     try:
         package_tests = loader.discover(start_dir=pkg_dir,
                                         top_level_dir=top_dir,
@@ -975,6 +992,14 @@ def run_code(code: str, extra_names: dict[str, object] | None = None) -> dict[st
         ns.update(extra_names)
     exec(textwrap.dedent(code), ns)
     return ns
+
+
+def sortdict(dict):
+    "Like repr(dict), but in sorted order."
+    items = sorted(dict.items())
+    reprpairs = ["%r: %r" % pair for pair in items]
+    withcommas = ", ".join(reprpairs)
+    return "{%s}" % withcommas
 
 
 def captured_stdin():
@@ -1548,6 +1573,23 @@ class _LocaleContextDecorator:
         return inner
 
 
+_buggy_ucrt = None
+
+
+def skip_if_buggy_ucrt_strfptime(test):
+    """Skip tests using buggy MSVC UCRT strptime/strftime."""
+    import locale
+    global _buggy_ucrt
+    if _buggy_ucrt is None:
+        if (sys.platform == 'win32' and
+                locale.getencoding() == 'cp65001' and
+                time.localtime().tm_zone == ''):
+            _buggy_ucrt = True
+        else:
+            _buggy_ucrt = False
+    return unittest.skip('buggy MSVC UCRT strptime/strftime')(test) if _buggy_ucrt else test
+
+
 def run_with_locale(catstr, *locales):
     return _LocaleContextDecorator(catstr, locales)
 
@@ -1652,6 +1694,50 @@ def control_characters_c0():
 
 
 
+# From CPython v3.14.8; PSF License.
+def requires_bz2(reason='requires bz2'):
+    try:
+        import bz2
+    except ImportError:
+        bz2 = None
+    return unittest.skipUnless(bz2, reason)
+
+
+# From CPython v3.14.8; PSF License.
+def requires_lzma(reason='requires lzma'):
+    try:
+        import lzma
+    except ImportError:
+        lzma = None
+    return unittest.skipUnless(lzma, reason)
+
+
+# From CPython v3.14.8; PSF License.
+def requires_zstd(reason='requires zstd'):
+    try:
+        from compression import zstd
+    except ImportError:
+        zstd = None
+    return unittest.skipUnless(zstd, reason)
+def get_attribute(obj, name):
+    """Get an attribute, raising SkipTest if AttributeError is raised."""
+    try:
+        attribute = getattr(obj, name)
+    except AttributeError:
+        raise unittest.SkipTest("object %r has no attribute %r" % (obj, name))
+    else:
+        return attribute
+
+# From CPython v3.14.8; PSF License.
+
+
+# From CPython v3.14.8; PSF License.
+
+
+# From CPython v3.14.8; PSF License.
+
+
+# From CPython v3.14.8; PSF License.
 # From CPython v3.14.8 (8e6e75d9102e), Lib/test/support/__init__.py; PSF License.
 def patch(test_instance, object_to_patch, attr_name, new_value):
     """Override 'object_to_patch'.'attr_name' with 'new_value'.
@@ -1870,3 +1956,73 @@ class PythonSymlink:
 
     def call_link(self, *args, returncode=0):
         return self._call(self.link, args, self._env, returncode)
+
+
+def reap_children():
+    """Use this function at the end of test_main() whenever sub-processes
+    are started.  This will help ensure that no extra children (zombies)
+    stick around to hog resources and create problems when looking
+    for refleaks.
+    """
+    # Need os.waitpid(-1, os.WNOHANG): Windows is not supported
+    if not (hasattr(os, 'waitpid') and hasattr(os, 'WNOHANG')):
+        return
+    elif not has_subprocess_support:
+        return
+
+    # Reap all our dead child processes so we don't leave zombies around.
+    # These hog resources and might be causing some of the buildbots to die.
+    while True:
+        try:
+            # Read the exit status of any child process which already completed
+            pid, status = os.waitpid(-1, os.WNOHANG)
+        except OSError:
+            break
+
+        if pid == 0:
+            break
+
+        print_warning(f"reap_children() reaped child process {pid}")
+        set_environment_altered("reaped child process")
+
+
+
+def flush_std_streams():
+    if sys.stdout is not None:
+        sys.stdout.flush()
+    if sys.stderr is not None:
+        sys.stderr.flush()
+
+
+def print_warning(msg):
+    # bpo-45410: Explicitly flush stdout to keep logs in order
+    flush_std_streams()
+    stream = print_warning.orig_stderr
+    for line in msg.splitlines():
+        print(f"Warning -- {line}", file=stream)
+    stream.flush()
+
+# bpo-39983: Store the original sys.stderr at Python startup to be able to
+# log warnings even if sys.stderr is captured temporarily by a test.
+print_warning.orig_stderr = sys.stderr
+
+
+# Flag used by saved_test_environment of test.libregrtest.save_env,
+# to check if a test modified the environment. The flag should be set to False
+# before running a new test.
+#
+# For example, threading_helper.threading_cleanup() sets the flag is the function fails
+# to cleanup threads.
+environment_altered = False
+
+# Short descriptions of what was altered, e.g. "unraisable exception".
+# They are reported by regrtest together with the name of the test.
+environment_altered_reasons = []
+
+
+def set_environment_altered(reason):
+    """Set the environment_altered flag and record why it was set."""
+    global environment_altered
+    environment_altered = True
+    if reason not in environment_altered_reasons:
+        environment_altered_reasons.append(reason)

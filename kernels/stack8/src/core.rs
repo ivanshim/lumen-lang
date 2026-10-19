@@ -207,7 +207,7 @@ impl Value {
             Value::Adapter(w) if w.0 == 15 => if w.1.is_empty() { "wrapper_descriptor" } else { "method-wrapper" },
             Value::Adapter(w) if w.0 == 16 => if w.1.first().is_some_and(|name| matches!(name.plain().as_str(), "__dict__" | "__weakref__")) { "getset_descriptor" } else { "member_descriptor" },
             Value::Adapter(w) if w.0 == 79 => "wrapper_descriptor",
-            Value::Adapter(w) if matches!(w.0, 1 | 2 | 10..=12 | 19 | 30 | 36 | 119 | 235 | 236 | 247 | 248) => "wrapper_descriptor",
+            Value::Adapter(w) if matches!(w.0, 1 | 2 | 10..=12 | 19 | 30 | 36 | 119 | 200 | 202 | 235 | 236 | 247 | 248) => "wrapper_descriptor",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Native(..))) =>
                 if matches!(w.1.get(1), Some(Value::Class(_))) { "method" } else { "builtin_function_or_method" },
             Value::Adapter(w) if w.0 == 3 => if matches!(w.1.first(), Some(Value::Routine(_))) { "method" } else { "method-wrapper" },
@@ -290,6 +290,10 @@ impl Value {
                 };
                 Some(finish(hashed as i64))
             }
+            // A name's cell is no thing of its own: what is kept in it
+            // hashes as the kept value hashes, there being no cell in
+            // the reference's own accounts.
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell.borrow().core_hash(),
             Value::Complex(z) => {
                 if z.real.is_nan() || z.imag.is_nan() { return Some((std::rc::Rc::as_ptr(z) as usize >> 4) as i64); }
                 let a = crate::complex::real(z.real).core_hash()?;

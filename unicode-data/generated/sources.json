@@ -1,0 +1,58 @@
+{
+  "16.0.0/CaseFolding.txt": {
+    "sha256": "6f1f9c588eb4a5c718d9e8f93b782685e5c7fec872cf05e8e6878053599e09bb",
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/CaseFolding.txt"
+  },
+  "16.0.0/CompositionExclusions.txt": {
+    "sha256": "89e83cf9cc8bef6c1f8bf77e42cf6f0341dfa42e66261f4dbe9b492e7a23c8ee",
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/CompositionExclusions.txt"
+  },
+  "16.0.0/DerivedCoreProperties.txt": {
+    "sha256": "39d35161f2954497f69e08bdb9e701493f476a3d30222de20028feda36c1dabd",
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/DerivedCoreProperties.txt"
+  },
+  "16.0.0/DerivedNormalizationProps.txt": {
+    "sha256": "4d4c03892dea9146d674b686e495df2d55a28d071ac474041d73518f887abddc",
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/DerivedNormalizationProps.txt"
+  },
+  "16.0.0/EastAsianWidth.txt": {
+    "sha256": "43adc76c0686a42cb370764eb8cfe2b2a45b10b855e5572a2db4a0eecce15d5b",
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/EastAsianWidth.txt"
+  },
+  "16.0.0/NameAliases.txt": {
+    "sha256": "9953f0fcebf5ea8091c5c581e4df0e43f20d2533c84ccca7987a9bb819a896a8",
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/NameAliases.txt"
+  },
+  "16.0.0/NamedSequences.txt": {
+    "sha256": "4ff660cb922480cd5aab9a689b1a6905d0a54575baf9967d0f1e00ac866f04dd",
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/NamedSequences.txt"
+  },
+  "16.0.0/SpecialCasing.txt": {
+    "sha256": "8d5de354eef79f2395a54c9c7dcebbaf3d30fc962d0f85611ea97aa973a0c451",
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/SpecialCasing.txt"
+  },
+  "16.0.0/UnicodeData.txt": {
+    "sha256": "ff58e5823bd095166564a006e47d111130813dcf8bf234ef79fa51a870edb48f",
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/UnicodeData.txt"
+  },
+  "16.0.0/Unihan.zip": {
+    "sha256": "b8f000df69de7828d21326a2ffea462b04bc7560022989f7cc704f10521ef3e0",
+    "url": "https://www.unicode.org/Public/16.0.0/ucd/Unihan.zip"
+  },
+  "3.2.0/CompositionExclusions.txt": {
+    "sha256": "1d3a450d0f39902710df4972ac4a60ec31fbcb54ffd4d53cd812fc1200c732cb",
+    "url": "https://www.unicode.org/Public/3.2-Update/CompositionExclusions-3.2.0.txt"
+  },
+  "3.2.0/EastAsianWidth.txt": {
+    "sha256": "ce19f35ffca911bf492aab6c0d3f6af3d1932f35d2064cf2fe14e10be29534cb",
+    "url": "https://www.unicode.org/Public/3.2-Update/EastAsianWidth-3.2.0.txt"
+  },
+  "3.2.0/UnicodeData.txt": {
+    "sha256": "5e444028b6e76d96f9dc509609c5e3222bf609056f35e5fcde7e6fb8a58cd446",
+    "url": "https://www.unicode.org/Public/3.2-Update/UnicodeData-3.2.0.txt"
+  },
+  "3.2.0/Unihan.zip": {
+    "sha256": "0582b888c4ebab6e3ce8d340c74788f1a68ca662713a1065b9a007f24bb4fe46",
+    "url": "https://www.unicode.org/Public/3.2-Update/Unihan-3.2.0.zip"
+  }
+}
