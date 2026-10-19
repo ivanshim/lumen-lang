@@ -79,12 +79,20 @@ def localtime(seconds=None):
 
 def gmtime(seconds=None):
     return _host_clock('gmtime', seconds)
-# The host stands in the UTC zone, so the zone's figures are the
-# meridian's own: no offset, no daylight time, one name.
+def tzset():
+    # Publish the four figures the host tzset() just wrote.
+    figures = _host_clock('zone')
+    global timezone, altzone, daylight, tzname
+    timezone = figures[0]
+    altzone = figures[1]
+    daylight = figures[2]
+    tzname = (figures[3], figures[4])
+
 timezone = 0
 altzone = 0
 daylight = 0
 tzname = ('UTC', 'UTC')
+tzset()
 
 _DAY_FULL = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday',
              'Saturday', 'Sunday')
@@ -321,6 +329,11 @@ def strftime(format, fields=None):
     year, month, day, hour, minute, second, weekday, day_of_year, isdst = parts
     zone = getattr(fields, 'tm_zone', None)
     offset = getattr(fields, 'tm_gmtoff', None)
+    # The C and POSIX locales stay with the writer below. Any other
+    # LC_TIME is drawn by the host library, which knows that locale.
+    active = _host_clock('locale', 2)
+    if active and active != 'C' and active != 'POSIX':
+        return _host_clock('picture', format, tuple(parts), zone, offset)
     iso = None
     out = ''
     at = 0
@@ -451,13 +464,14 @@ def strftime(format, fields=None):
         elif ch == 'z':
             out += _field('z', '+0000' if offset is None else _offset_word(offset), flags, digits, 0, ' ')
         elif ch == 'Z':
-            # A broken-down time carrying a zone name keeps it; one made
-            # by hand names the zone when it says it is not in daylight
-            # time, and stands nameless when it cannot say.
+            # A name on the tuple wins. Otherwise the process zone is
+            # used when daylight is known, and nothing when it is not.
             if zone is not None:
                 out += _field('Z', zone, flags, digits, 0, ' ')
-            elif isdst >= 0:
-                out += _field('Z', 'UTC', flags, digits, 0, ' ')
+            elif isdst > 0:
+                out += _field('Z', tzname[1], flags, digits, 0, ' ')
+            elif isdst == 0:
+                out += _field('Z', tzname[0], flags, digits, 0, ' ')
         elif ch == '%':
             out += _field('%', '%', flags, digits, 0, ' ')
         else:

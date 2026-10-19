@@ -25528,6 +25528,9 @@ impl<'a> Machine<'a> {
                             #[cfg(not(target_os = "linux"))]
                             return Err(String::from("OSError: processor time is unavailable"));
                         }
+                        if let Some(answered) = serve_civil_request(operation.as_ref(), v) {
+                            return answered;
+                        }
                     }
                 }
                 // With one flag, where the table allows, the answer is a
@@ -35691,6 +35694,416 @@ mod heap;
 
 #[path = "binascii.rs"]
 mod binascii;
+
+// Host answers for the process locale, the zone, and collation weights.
+fn serve_civil_request(word: &str, given: &[Value]) -> Option<Result<Value, String>> {
+    let outcome = if word == "locale" {
+        read_process_locale(given)
+    } else if word == "zone" {
+        publish_zone_figures(given)
+    } else if word == "picture" {
+        paint_host_picture(given)
+    } else if word == "conv" {
+        snapshot_monetary(given)
+    } else if word == "order" {
+        compare_collation(given)
+    } else if word == "fold" {
+        transform_collation(given)
+    } else {
+        return None;
+    };
+    Some(outcome)
+}
+
+fn expect_text(piece: &Value) -> Result<&str, String> {
+    if let Value::Text(body) = piece {
+        return Ok(body.as_ref());
+    }
+    Err(String::from("TypeError: a string is required"))
+}
+
+fn expect_int(piece: &Value) -> Result<i64, String> {
+    if let Value::Small(number) = piece {
+        return Ok(*number);
+    }
+    match piece.as_big()?.to_i64() {
+        Some(number) => Ok(number),
+        None => Err(String::from("OverflowError: int too large")),
+    }
+}
+
+fn read_process_locale(given: &[Value]) -> Result<Value, String> {
+    let count = given.len();
+    if count != 2 && count != 3 {
+        return Err(String::from("TypeError: locale() takes a category and an optional name"));
+    }
+    let category = match i32::try_from(expect_int(&given[1])?) {
+        Ok(category) => category,
+        Err(_) => return Err(String::from("OverflowError: locale category out of range")),
+    };
+    let mut stored = None;
+    if count == 3 {
+        let name = expect_text(&given[2])?;
+        stored = Some(match std::ffi::CString::new(name) {
+            Ok(kept) => kept,
+            Err(_) => return Err(String::from("ValueError: embedded null character")),
+        });
+    }
+    extern "C" {
+        fn setlocale(category: i32, locale: *const std::ffi::c_char) -> *mut std::ffi::c_char;
+    }
+    let query = match stored.as_ref() {
+        Some(kept) => kept.as_ptr(),
+        None => std::ptr::null(),
+    };
+    let answered = unsafe { setlocale(category, query) };
+    if answered.is_null() {
+        return Ok(Value::Nil);
+    }
+    let found = unsafe { std::ffi::CStr::from_ptr(answered) }.to_string_lossy().into_owned();
+    Ok(Value::text(&found))
+}
+
+fn calendar_offsets(fallback: i64) -> (i64, i64) {
+    #[repr(C)]
+    struct BrokenDown {
+        parts: [i32; 9],
+        shift: i64,
+        label: *const std::ffi::c_char,
+    }
+    extern "C" {
+        fn mktime(when: *mut BrokenDown) -> i64;
+    }
+    let mut winter = fallback;
+    let mut summer: Option<i64> = None;
+    let mut month = 0i32;
+    while month <= 6 {
+        let mut when = BrokenDown {
+            parts: [0; 9],
+            shift: 0,
+            label: std::ptr::null(),
+        };
+        when.parts[2] = 12;
+        when.parts[3] = 15;
+        when.parts[4] = month;
+        when.parts[5] = 124;
+        when.parts[8] = -1;
+        let stamped = unsafe { mktime(&mut when) };
+        if !(stamped == -1 && when.parts[8] < 0) {
+            let west = when.shift.wrapping_neg();
+            if when.parts[8] > 0 {
+                summer = Some(west);
+            } else if when.parts[8] == 0 {
+                winter = west;
+            }
+        }
+        month += 6;
+    }
+    (winter, summer.unwrap_or(winter))
+}
+
+fn publish_zone_figures(given: &[Value]) -> Result<Value, String> {
+    if given.len() != 1 {
+        return Err(String::from("TypeError: tzset() takes no arguments"));
+    }
+    #[allow(non_upper_case_globals)]
+    extern "C" {
+        fn tzset();
+        static timezone: i64;
+        static daylight: i32;
+        static tzname: [*const std::ffi::c_char; 2];
+    }
+    unsafe { tzset() };
+    let west = unsafe { std::ptr::read(std::ptr::addr_of!(timezone)) };
+    let summer = unsafe { std::ptr::read(std::ptr::addr_of!(daylight)) };
+    let table = unsafe { std::ptr::read(std::ptr::addr_of!(tzname)) };
+    let mut labels = [String::new(), String::new()];
+    let mut slot = 0usize;
+    while slot < 2 {
+        let pointer = table[slot];
+        labels[slot] = if pointer.is_null() {
+            String::from("UTC")
+        } else {
+            unsafe { std::ffi::CStr::from_ptr(pointer) }.to_string_lossy().into_owned()
+        };
+        slot += 1;
+    }
+    let (standard, alternate) = calendar_offsets(west);
+    Ok(Value::tuple(vec![
+        Value::Small(standard),
+        Value::Small(alternate),
+        Value::Small(i64::from(summer)),
+        Value::text(&labels[0]),
+        Value::text(&labels[1]),
+    ]))
+}
+
+// Read a category's multibyte string through a temporary thread locale.
+fn bytes_at(pointer: *const std::ffi::c_char, category: i32) -> Result<String, String> {
+    if pointer.is_null() { return Ok(String::new()); }
+    let narrow = unsafe { std::ffi::CStr::from_ptr(pointer) };
+    if narrow.to_bytes().iter().all(|byte| *byte < 128) {
+        return Ok(narrow.to_string_lossy().into_owned());
+    }
+    extern "C" {
+        fn setlocale(kind: i32, value: *const std::ffi::c_char) -> *mut std::ffi::c_char;
+        fn newlocale(bits: i32, value: *const std::ffi::c_char, old: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        fn uselocale(handle: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        fn freelocale(handle: *mut std::ffi::c_void);
+        fn mbstowcs(output: *mut u32, input: *const std::ffi::c_char, capacity: usize) -> usize;
+    }
+    let (handle, saved, mut units, used) = unsafe {
+        let current_name = setlocale(category, std::ptr::null());
+        let handle = newlocale(1 /* LC_CTYPE_MASK */, current_name, std::ptr::null_mut());
+        if handle.is_null() { return Err(String::from("OSError: cannot open locale character set")); }
+        let saved = uselocale(handle);
+        if saved.is_null() {
+            freelocale(handle);
+            return Err(String::from("OSError: cannot select locale character set"));
+        }
+        let capacity = narrow.to_bytes().len() + 1;
+        let mut units = vec![0u32; capacity];
+        let used = mbstowcs(units.as_mut_ptr(), pointer, capacity);
+        (handle, saved, units, used)
+    };
+    unsafe { uselocale(saved); freelocale(handle); }
+    if used == usize::MAX { return Err(String::from("UnicodeError: cannot decode locale text")); }
+    units.truncate(used);
+    let mut decoded = String::new();
+    for code in units {
+        match char::from_u32(code) {
+            Some(letter) => decoded.push(letter),
+            None => return Err(String::from("UnicodeError: invalid locale character")),
+        }
+    }
+    Ok(decoded)
+}
+
+fn grouping_at(pointer: *const u8) -> Value {
+    if pointer.is_null() {
+        return Value::tuple(vec![]);
+    }
+    let mut figures = Vec::new();
+    let mut cursor = 0isize;
+    loop {
+        let byte = unsafe { *pointer.offset(cursor) };
+        if byte == 0 {
+            if figures.is_empty() {
+                return Value::tuple(vec![]);
+            }
+            figures.push(Value::Small(0));
+            return Value::tuple(figures);
+        }
+        figures.push(Value::Small(i64::from(byte)));
+        // 255 is CHAR_MAX where char is unsigned, and it ends the grouping.
+        if byte == 255 || figures.len() > 64 {
+            return Value::tuple(figures);
+        }
+        cursor += 1;
+    }
+}
+
+fn snapshot_monetary(given: &[Value]) -> Result<Value, String> {
+    if given.len() != 1 {
+        return Err(String::from("TypeError: localeconv() takes no arguments"));
+    }
+    extern "C" {
+        fn localeconv() -> *const u8;
+    }
+    let base = unsafe { localeconv() };
+    if base.is_null() {
+        return Err(String::from("OSError: localeconv failed"));
+    }
+    let stride = std::mem::size_of::<*const u8>();
+    let mut words = Vec::new();
+    let mut slot = 0usize;
+    while slot < 10 {
+        let pointer = unsafe { std::ptr::read_unaligned(base.add(slot * stride) as *const *const std::ffi::c_char) };
+        if slot == 2 || slot == 7 {
+            words.push(grouping_at(pointer as *const u8));
+        } else {
+            let category = if slot < 2 { 1 } else { 4 };
+            words.push(Value::text(&bytes_at(pointer, category)?));
+        }
+        slot += 1;
+    }
+    let digits = unsafe { std::slice::from_raw_parts(base.add(10 * stride), 8) };
+    let mut index = 0usize;
+    while index < 8 {
+        words.push(Value::Small(i64::from(digits[index])));
+        index += 1;
+    }
+    Ok(Value::tuple(words))
+}
+
+
+pub(crate) fn numeric_marks() -> (String, String, Vec<i64>) {
+    let row = match snapshot_monetary(&[Value::Nil]) {
+        Ok(Value::Tuple(held)) => held,
+        _ => return (String::from("."), String::new(), Vec::new()),
+    };
+    let mut point = String::from(".");
+    let mut gap = String::new();
+    let mut steps = Vec::new();
+    for (index, piece) in row.iter().enumerate() {
+        match index {
+            0 => { if let Value::Text(held) = piece { point = held.as_ref().to_string(); } }
+            1 => { if let Value::Text(held) = piece { gap = held.as_ref().to_string(); } }
+            2 => {
+                if let Value::Tuple(parts) = piece {
+                    for part in parts.iter() {
+                        if let Value::Small(number) = part { steps.push(*number); }
+                    }
+                }
+            }
+            _ => break,
+        }
+    }
+    (point, gap, steps)
+}
+
+fn wide_units(text: &str) -> Vec<u32> {
+    let mut units = Vec::new();
+    let mut rest = text.chars();
+    while let Some(ch) = rest.next() {
+        units.push(u32::from(ch));
+    }
+    units.push(0);
+    units
+}
+
+fn compare_collation(given: &[Value]) -> Result<Value, String> {
+    if given.len() != 3 {
+        return Err(String::from("TypeError: strcoll() takes exactly two arguments"));
+    }
+    let left = wide_units(expect_text(&given[1])?);
+    let right = wide_units(expect_text(&given[2])?);
+    extern "C" {
+        fn wcscoll(left: *const u32, right: *const u32) -> i32;
+    }
+    Ok(Value::Small(i64::from(unsafe { wcscoll(left.as_ptr(), right.as_ptr()) })))
+}
+
+fn transform_collation(given: &[Value]) -> Result<Value, String> {
+    if given.len() != 2 {
+        return Err(String::from("TypeError: strxfrm() takes exactly one argument"));
+    }
+    let source = wide_units(expect_text(&given[1])?);
+    extern "C" {
+        fn wcsxfrm(dest: *mut u32, src: *const u32, n: usize) -> usize;
+    }
+    let mut room = source.len().saturating_add(8).saturating_mul(2);
+    loop {
+        let mut dest = vec![0u32; room];
+        let need = unsafe { wcsxfrm(dest.as_mut_ptr(), source.as_ptr(), dest.len()) };
+        if need == usize::MAX {
+            return Err(String::from("OSError: strxfrm failed"));
+        }
+        if need < dest.len() {
+            let mut rendered = String::new();
+            let mut index = 0usize;
+            while index < need {
+                match char::from_u32(dest[index]) {
+                    Some(ch) => rendered.push(ch),
+                    None => return Err(String::from("ValueError: strxfrm weight out of range")),
+                }
+                index += 1;
+            }
+            return Ok(Value::text(&rendered));
+        }
+        if need > 1_048_576 {
+            return Err(String::from("OverflowError: strxfrm result too long"));
+        }
+        room = need.saturating_add(1);
+    }
+}
+
+fn paint_host_picture(given: &[Value]) -> Result<Value, String> {
+    if given.len() != 5 {
+        return Err(String::from("TypeError: strftime() picture wants a format, a 9-tuple, a zone and an offset"));
+    }
+    let format = expect_text(&given[1])?;
+    let Value::Tuple(fields) = &given[2] else {
+        return Err(String::from("TypeError: strftime() time must be a tuple"));
+    };
+    if fields.len() != 9 {
+        return Err(format!("TypeError: strftime() argument must be a 9-sequence, not {}-sequence", fields.len()));
+    }
+    let mut numbers = [0i32; 9];
+    let mut at = 0usize;
+    while at < 9 {
+        let wide = expect_int(&fields[at])?;
+        numbers[at] = match i32::try_from(wide) {
+            Ok(number) => number,
+            Err(_) => return Err(String::from("OverflowError: timestamp out of range for platform time_t")),
+        };
+        at += 1;
+    }
+    let zone_owned = if matches!(&given[3], Value::Nil) {
+        None
+    } else {
+        Some(match std::ffi::CString::new(expect_text(&given[3])?) {
+            Ok(kept) => kept,
+            Err(_) => return Err(String::from("ValueError: embedded null character")),
+        })
+    };
+    let east = if matches!(&given[4], Value::Nil) { 0i64 } else { expect_int(&given[4])? };
+    // Nine ints, then the eastward offset and the zone name. Padding follows the C layout.
+    #[repr(C)]
+    struct Painted {
+        parts: [i32; 9],
+        shift: i64,
+        label: *const std::ffi::c_char,
+    }
+    let mut parts = [0i32; 9];
+    parts[0] = numbers[5];
+    parts[1] = numbers[4];
+    parts[2] = numbers[3];
+    parts[3] = numbers[2];
+    parts[4] = numbers[1].wrapping_sub(1);
+    parts[5] = numbers[0].wrapping_sub(1900);
+    parts[6] = numbers[6].wrapping_add(1).rem_euclid(7);
+    parts[7] = numbers[7].wrapping_sub(1);
+    parts[8] = numbers[8];
+    let painted = Painted {
+        parts,
+        shift: east,
+        label: match zone_owned.as_ref() {
+            Some(kept) => kept.as_ptr(),
+            None => std::ptr::null(),
+        },
+    };
+    if format.chars().any(|ch| ch == '\0') {
+        return Err(String::from("ValueError: embedded null character"));
+    }
+    let pattern = wide_units(format);
+    extern "C" {
+        fn wcsftime(out: *mut u32, max: usize, fmt: *const u32, when: *const Painted) -> usize;
+    }
+    let mut room = 256usize;
+    let allowance = 1usize << 22; // widths in the format may ask for megabytes
+    loop {
+        let mut buffer = vec![0u32; room];
+        let count = unsafe { wcsftime(buffer.as_mut_ptr(), buffer.len(), pattern.as_ptr(), &painted) };
+        if count > 0 {
+            let mut rendered = String::new();
+            for &code in buffer.iter().take(count) {
+                let Some(letter) = char::from_u32(code) else {
+                    return Err(String::from("UnicodeError: invalid strftime character"));
+                };
+                rendered.push(letter);
+            }
+            return Ok(Value::text(&rendered));
+        }
+        // A zero write in a buffer below the allowance did not fit.
+        // Only a zero write once that allowance has been tried is empty.
+        if room >= allowance {
+            return Ok(Value::text(""));
+        }
+        let grown = room.saturating_mul(2);
+        room = if grown > room { grown } else { allowance };
+    }
+}
 
 include!("warnings.rs");
 impl Machine<'_> {

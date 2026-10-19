@@ -24841,6 +24841,9 @@ impl<'a> Engine<'a> {
                             #[cfg(not(target_os = "linux"))]
                             return Err("OSError: processor time is unavailable".into());
                         }
+                        if let Some(answered) = host_civil_clock(task.as_ref(), args) {
+                            return answered;
+                        }
                     }
                 }
                 #[cfg(target_os = "linux")]
@@ -32721,4 +32724,431 @@ mod map_write_tests {
         }
     }
 }
+// Locales, zone figures and pictures kept by the host C library.
+fn host_civil_clock(task: &str, args: &[Value]) -> Option<Result<Value, String>> {
+    if task == "locale" {
+        return Some(civil_locale(args));
+    }
+    if task == "zone" {
+        return Some(civil_zone(args));
+    }
+    if task == "picture" {
+        return Some(civil_picture(args));
+    }
+    if task == "conv" {
+        return Some(civil_monetary(args));
+    }
+    if task == "order" {
+        return Some(civil_order(args));
+    }
+    if task == "fold" {
+        return Some(civil_fold(args));
+    }
+    None
+}
+
+fn civil_text(value: &Value) -> Result<&str, String> {
+    match value {
+        Value::Text(held) => Ok(held.as_ref()),
+        _ => Err("TypeError: a string is required".to_string()),
+    }
+}
+
+fn civil_whole(value: &Value) -> Result<i64, String> {
+    match value {
+        Value::Small(number) => Ok(*number),
+        other => other.as_big()?.to_i64().ok_or_else(|| "OverflowError: int too large".to_string()),
+    }
+}
+
+fn civil_locale(args: &[Value]) -> Result<Value, String> {
+    if args.len() != 2 && args.len() != 3 {
+        return Err("TypeError: locale() takes a category and an optional name".to_string());
+    }
+    let category = i32::try_from(civil_whole(&args[1])?)
+        .map_err(|_| "OverflowError: locale category out of range".to_string())?;
+    let owned = if args.len() == 3 {
+        let name = civil_text(&args[2])?;
+        Some(std::ffi::CString::new(name).map_err(|_| "ValueError: embedded null character".to_string())?)
+    } else {
+        None
+    };
+    extern "C" {
+        fn setlocale(category: i32, locale: *const std::ffi::c_char) -> *mut std::ffi::c_char;
+    }
+    let chosen = owned.as_ref().map(|kept| kept.as_ptr()).unwrap_or(std::ptr::null());
+    let answered = unsafe { setlocale(category, chosen) };
+    if answered.is_null() {
+        return Ok(Value::Null);
+    }
+    let found = unsafe { std::ffi::CStr::from_ptr(answered) }.to_string_lossy().into_owned();
+    Ok(Value::text(&found))
+}
+
+fn civil_zone_offsets(fallback: i64) -> (i64, i64) {
+    #[repr(C)]
+    struct CivilWhen {
+        sec: i32,
+        min: i32,
+        hour: i32,
+        mday: i32,
+        mon: i32,
+        year: i32,
+        wday: i32,
+        yday: i32,
+        isdst: i32,
+        gmtoff: i64,
+        zone: *const std::ffi::c_char,
+    }
+    extern "C" {
+        fn mktime(when: *mut CivilWhen) -> i64;
+    }
+    let mut winter: Option<i64> = None;
+    let mut summer: Option<i64> = None;
+    for month in [0i32, 6] {
+        let mut when = CivilWhen {
+            sec: 0,
+            min: 0,
+            hour: 12,
+            mday: 15,
+            mon: month,
+            year: 124,
+            wday: 0,
+            yday: 0,
+            isdst: -1,
+            gmtoff: 0,
+            zone: std::ptr::null(),
+        };
+        let stamped = unsafe { mktime(&mut when) };
+        if stamped == -1 && when.isdst < 0 {
+            continue;
+        }
+        let west = when.gmtoff.wrapping_neg();
+        if when.isdst > 0 {
+            summer = Some(west);
+        } else if when.isdst == 0 {
+            winter = Some(west);
+        }
+    }
+    let standard = winter.unwrap_or(fallback);
+    (standard, summer.unwrap_or(standard))
+}
+
+fn civil_zone(args: &[Value]) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("TypeError: tzset() takes no arguments".to_string());
+    }
+    #[allow(non_upper_case_globals)]
+    extern "C" {
+        fn tzset();
+        static timezone: i64;
+        static daylight: i32;
+        static tzname: [*const std::ffi::c_char; 2];
+    }
+    unsafe { tzset() };
+    let west = unsafe { std::ptr::read(std::ptr::addr_of!(timezone)) };
+    let summer = unsafe { std::ptr::read(std::ptr::addr_of!(daylight)) };
+    let names = unsafe { std::ptr::read(std::ptr::addr_of!(tzname)) };
+    let mut labels = Vec::new();
+    for slot in [0usize, 1] {
+        let pointer = names[slot];
+        let label = if pointer.is_null() {
+            "UTC".to_string()
+        } else {
+            unsafe { std::ffi::CStr::from_ptr(pointer) }.to_string_lossy().into_owned()
+        };
+        labels.push(Value::text(&label));
+    }
+    let (standard, alternate) = civil_zone_offsets(west);
+    Ok(Value::tuple(vec![
+        Value::Small(standard),
+        Value::Small(alternate),
+        Value::Small(i64::from(summer)),
+        labels[0].clone(),
+        labels[1].clone(),
+    ]))
+}
+
+// Decode locale data with its category's character set without changing LC_CTYPE.
+fn civil_c_string(pointer: *const std::ffi::c_char, category: i32) -> Result<String, String> {
+    if pointer.is_null() {
+        return Ok(String::new());
+    }
+    let source = unsafe { std::ffi::CStr::from_ptr(pointer) }.to_bytes();
+    if source.is_ascii() {
+        return Ok(source.iter().map(|&byte| char::from(byte)).collect());
+    }
+    extern "C" {
+        fn setlocale(category: i32, name: *const std::ffi::c_char) -> *mut std::ffi::c_char;
+        fn newlocale(mask: i32, name: *const std::ffi::c_char, base: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        fn uselocale(locale: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        fn freelocale(locale: *mut std::ffi::c_void);
+        fn mbstowcs(dest: *mut u32, source: *const std::ffi::c_char, count: usize) -> usize;
+    }
+    // LC_CTYPE_MASK is 1 on the host ABI, independent of the data category.
+    let name = unsafe { setlocale(category, std::ptr::null()) };
+    let decoder = unsafe { newlocale(1, name, std::ptr::null_mut()) };
+    if decoder.is_null() {
+        return Err("OSError: cannot open locale character set".to_string());
+    }
+    let previous = unsafe { uselocale(decoder) };
+    if previous.is_null() {
+        unsafe { freelocale(decoder) };
+        return Err("OSError: cannot select locale character set".to_string());
+    }
+    let length = source.len();
+    let mut wide = vec![0u32; length + 1];
+    let count = unsafe { mbstowcs(wide.as_mut_ptr(), pointer, wide.len()) };
+    unsafe {
+        uselocale(previous);
+        freelocale(decoder);
+    }
+    if count == usize::MAX {
+        return Err("UnicodeError: cannot decode locale text".to_string());
+    }
+    wide[..count].iter().map(|&unit| char::from_u32(unit)
+        .ok_or_else(|| "UnicodeError: invalid locale character".to_string())).collect()
+}
+
+fn civil_groups(pointer: *const std::ffi::c_char) -> Value {
+    if pointer.is_null() {
+        return Value::tuple(Vec::new());
+    }
+    let mut figures = Vec::new();
+    let mut cursor = 0isize;
+    loop {
+        let byte = unsafe { *pointer.offset(cursor) } as u8;
+        if byte == 0 {
+            if cursor == 0 {
+                return Value::tuple(Vec::new());
+            }
+            figures.push(Value::Small(0));
+            break;
+        }
+        figures.push(Value::Small(i64::from(byte)));
+        // CHAR_MAX on this platform stops a grouping string and is kept.
+        if byte == 255 {
+            break;
+        }
+        cursor += 1;
+        if cursor > 64 {
+            break;
+        }
+    }
+    Value::tuple(figures)
+}
+
+fn civil_monetary(args: &[Value]) -> Result<Value, String> {
+    if args.len() != 1 {
+        return Err("TypeError: localeconv() takes no arguments".to_string());
+    }
+    #[repr(C)]
+    struct Monetary {
+        decimal_point: *const std::ffi::c_char,
+        thousands_sep: *const std::ffi::c_char,
+        grouping: *const std::ffi::c_char,
+        int_curr_symbol: *const std::ffi::c_char,
+        currency_symbol: *const std::ffi::c_char,
+        mon_decimal_point: *const std::ffi::c_char,
+        mon_thousands_sep: *const std::ffi::c_char,
+        mon_grouping: *const std::ffi::c_char,
+        positive_sign: *const std::ffi::c_char,
+        negative_sign: *const std::ffi::c_char,
+        int_frac_digits: u8,
+        frac_digits: u8,
+        p_cs_precedes: u8,
+        p_sep_by_space: u8,
+        n_cs_precedes: u8,
+        n_sep_by_space: u8,
+        p_sign_posn: u8,
+        n_sign_posn: u8,
+    }
+    extern "C" {
+        fn localeconv() -> *const Monetary;
+    }
+    let record = unsafe { localeconv() };
+    if record.is_null() {
+        return Err("OSError: localeconv failed".to_string());
+    }
+    let row = unsafe { &*record };
+    let text = |pointer, category| civil_c_string(pointer, category).map(|s| Value::text(&s));
+    Ok(Value::tuple(vec![
+        text(row.decimal_point, 1)?,
+        text(row.thousands_sep, 1)?,
+        civil_groups(row.grouping),
+        text(row.int_curr_symbol, 4)?,
+        text(row.currency_symbol, 4)?,
+        text(row.mon_decimal_point, 4)?,
+        text(row.mon_thousands_sep, 4)?,
+        civil_groups(row.mon_grouping),
+        text(row.positive_sign, 4)?,
+        text(row.negative_sign, 4)?,
+        Value::Small(i64::from(row.int_frac_digits)),
+        Value::Small(i64::from(row.frac_digits)),
+        Value::Small(i64::from(row.p_cs_precedes)),
+        Value::Small(i64::from(row.p_sep_by_space)),
+        Value::Small(i64::from(row.n_cs_precedes)),
+        Value::Small(i64::from(row.n_sep_by_space)),
+        Value::Small(i64::from(row.p_sign_posn)),
+        Value::Small(i64::from(row.n_sign_posn)),
+    ]))
+}
+
+
+pub(crate) fn locale_number_marks() -> (String, String, Vec<i64>) {
+    let answered = match civil_monetary(std::slice::from_ref(&Value::Null)) {
+        Ok(Value::Tuple(row)) => row,
+        _ => return (String::from("."), String::new(), Vec::new()),
+    };
+    let pull = |slot: usize| match answered.get(slot) {
+        Some(Value::Text(held)) => held.as_ref().to_string(),
+        _ => String::new(),
+    };
+    let groups = match answered.get(2) {
+        Some(Value::Tuple(parts)) => parts.iter().filter_map(|piece| match piece {
+            Value::Small(number) => Some(*number),
+            _ => None,
+        }).collect(),
+        _ => Vec::new(),
+    };
+    (pull(0), pull(1), groups)
+}
+
+fn civil_wide(text: &str) -> Result<Vec<u32>, String> {
+    let mut wide = Vec::with_capacity(text.chars().count() + 1);
+    for ch in text.chars() {
+        wide.push(ch as u32);
+    }
+    wide.push(0);
+    Ok(wide)
+}
+
+fn civil_order(args: &[Value]) -> Result<Value, String> {
+    if args.len() != 3 {
+        return Err("TypeError: strcoll() takes exactly two arguments".to_string());
+    }
+    let left = civil_wide(civil_text(&args[1])?)?;
+    let right = civil_wide(civil_text(&args[2])?)?;
+    extern "C" {
+        fn wcscoll(left: *const u32, right: *const u32) -> i32;
+    }
+    let compared = unsafe { wcscoll(left.as_ptr(), right.as_ptr()) };
+    Ok(Value::Small(i64::from(compared)))
+}
+
+fn civil_fold(args: &[Value]) -> Result<Value, String> {
+    if args.len() != 2 {
+        return Err("TypeError: strxfrm() takes exactly one argument".to_string());
+    }
+    let source = civil_wide(civil_text(&args[1])?)?;
+    extern "C" {
+        fn wcsxfrm(dest: *mut u32, src: *const u32, n: usize) -> usize;
+    }
+    let mut room = source.len().saturating_mul(4).max(8);
+    let folded = loop {
+        let mut dest = vec![0u32; room];
+        let need = unsafe { wcsxfrm(dest.as_mut_ptr(), source.as_ptr(), room) };
+        if need == usize::MAX {
+            return Err("OSError: strxfrm failed".to_string());
+        }
+        if need < room {
+            let mut rendered = String::new();
+            for weight in dest.into_iter().take(need) {
+                let ch = char::from_u32(weight).ok_or_else(|| "ValueError: strxfrm weight out of range".to_string())?;
+                rendered.push(ch);
+            }
+            break rendered;
+        }
+        if need > 1_048_576 {
+            return Err("OverflowError: strxfrm result too long".to_string());
+        }
+        room = need + 1;
+    };
+    Ok(Value::text(&folded))
+}
+
+fn civil_picture(args: &[Value]) -> Result<Value, String> {
+    if args.len() != 5 {
+        return Err("TypeError: strftime() picture wants a format, a 9-tuple, a zone and an offset".to_string());
+    }
+    let format = civil_text(&args[1])?;
+    let Value::Tuple(fields) = &args[2] else {
+        return Err("TypeError: strftime() time must be a tuple".to_string());
+    };
+    if fields.len() != 9 {
+        return Err(format!("TypeError: strftime() argument must be a 9-sequence, not {}-sequence", fields.len()));
+    }
+    let mut numbers = [0i32; 9];
+    for (at, field) in fields.iter().enumerate() {
+        let wide = civil_whole(field)?;
+        numbers[at] = i32::try_from(wide).map_err(|_| "OverflowError: timestamp out of range for platform time_t".to_string())?;
+    }
+    let zone_owned = match &args[3] {
+        Value::Null => None,
+        other => Some(std::ffi::CString::new(civil_text(other)?).map_err(|_| "ValueError: embedded null character".to_string())?),
+    };
+    let east = match &args[4] {
+        Value::Null => 0i64,
+        other => civil_whole(other)?,
+    };
+    #[repr(C)]
+    struct CivilStamp {
+        sec: i32,
+        min: i32,
+        hour: i32,
+        mday: i32,
+        mon: i32,
+        year: i32,
+        wday: i32,
+        yday: i32,
+        isdst: i32,
+        gmtoff: i64,
+        zone: *const std::ffi::c_char,
+    }
+    let stamp = CivilStamp {
+        sec: numbers[5],
+        min: numbers[4],
+        hour: numbers[3],
+        mday: numbers[2],
+        mon: numbers[1].wrapping_sub(1),
+        year: numbers[0].wrapping_sub(1900),
+        wday: numbers[6].wrapping_add(1).rem_euclid(7),
+        yday: numbers[7].wrapping_sub(1),
+        isdst: numbers[8],
+        gmtoff: east,
+        zone: zone_owned.as_ref().map(|kept| kept.as_ptr()).unwrap_or(std::ptr::null()),
+    };
+    if format.contains('\0') {
+        return Err("ValueError: embedded null character".to_string());
+    }
+    let pattern = civil_wide(format)?;
+    extern "C" {
+        fn wcsftime(out: *mut u32, max: usize, fmt: *const u32, when: *const CivilStamp) -> usize;
+    }
+    // Same ceiling for any width the format asks for: padded fields can be megabytes.
+    let allowance = 1usize << 22;
+    let mut room = 256usize;
+    let mut buffer = vec![0u32; room];
+    let written = loop {
+        let count = unsafe {
+            wcsftime(buffer.as_mut_ptr(), room, pattern.as_ptr(), &stamp)
+        };
+        if count > 0 {
+            break count;
+        }
+        // Still short of the allowance: the host refused the buffer, it did not
+        // produce an empty picture. Empty is a zero write at the allowance.
+        if room >= allowance {
+            break 0;
+        }
+        let grown = room.saturating_mul(2);
+        room = if grown > room { grown } else { allowance };
+        buffer.resize(room, 0);
+    };
+    let rendered: Result<String, String> = buffer[..written].iter().map(|&unit|
+        char::from_u32(unit).ok_or_else(|| "UnicodeError: invalid strftime character".to_string())).collect();
+    let rendered = rendered?;
+    Ok(Value::text(&rendered))
+}
+
 include!("warnings.rs");
