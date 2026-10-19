@@ -930,7 +930,7 @@ impl Web {
         }
         let mut lost = Vec::new();
         for strand in self.strands.iter() {
-            if strand.reached { continue; }
+            if strand.reached || blank_cell(&strand.knot) { continue; }
             lost.push(match &strand.knot {
                 Knot::Held(v) => Knot::Held(v.clone()),
                 Knot::Frame(e) => Knot::Frame(e.clone()),
@@ -1086,4 +1086,15 @@ pub fn refs_for(subject: &Value) -> Vec<Value> {
         2
     });
     found
+}
+
+/// A cell that holds nothing: no weak hold names one, it leads nowhere,
+/// and nobody can watch it go, so a web that finds it unowned has found
+/// no news.  Counting it would send every reaping round through a second
+/// weaving of the whole machine.
+fn blank_cell(knot: &Knot) -> bool {
+    match knot {
+        Knot::Held(Value::Shared(cell)) => cell.try_borrow().is_ok_and(|inner| matches!(*inner, Value::Nil)),
+        _ => false,
+    }
 }
