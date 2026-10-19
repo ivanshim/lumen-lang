@@ -445,6 +445,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("tabnanny", include_str!("tabnanny.py"), "tabnanny.py"),
     ("tarfile", include_str!("tarfile.py"), "tarfile.py"),
     ("tempfile", include_str!("tempfile.py"), "tempfile.py"),
+    ("termios", include_str!("termios.py"), "termios.py"),
     ("test", include_str!("test/__init__.py"), "test/__init__.py"),
     ("test._code_definitions", include_str!("test/_code_definitions.py"), "test/_code_definitions.py"),
     ("test.archiver_tests", include_str!("test/archiver_tests.py"), "test/archiver_tests.py"),

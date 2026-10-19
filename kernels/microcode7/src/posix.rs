@@ -214,7 +214,7 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                 }
             }
             "constants" => {
-                let flags = vec![libc::O_RDONLY,libc::O_WRONLY,libc::O_RDWR,libc::O_APPEND,libc::O_CREAT,libc::O_EXCL,libc::O_TRUNC,libc::O_NONBLOCK,libc::O_CLOEXEC,libc::O_DIRECTORY,libc::O_NOFOLLOW,libc::SEEK_SET,libc::SEEK_CUR,libc::SEEK_END,libc::F_OK,libc::R_OK,libc::W_OK,libc::X_OK,libc::O_TMPFILE];
+                let flags = vec![libc::O_RDONLY,libc::O_WRONLY,libc::O_RDWR,libc::O_APPEND,libc::O_CREAT,libc::O_EXCL,libc::O_TRUNC,libc::O_NONBLOCK,libc::O_CLOEXEC,libc::O_DIRECTORY,libc::O_NOFOLLOW,libc::SEEK_SET,libc::SEEK_CUR,libc::SEEK_END,libc::F_OK,libc::R_OK,libc::W_OK,libc::X_OK,libc::O_TMPFILE,libc::O_NOCTTY];
                 Ok(Value::tuple(flags.into_iter().map(|f| Value::Small(i64::from(f))).collect()))
             }
             "environ" => {
@@ -445,6 +445,36 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
             let mut descriptors = [-1; 2];
             checked(libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) as i64)
                 .map(|_| Value::tuple(descriptors.into_iter().map(|fd| Value::Small(fd as i64)).collect()))
+        },
+        "tcgetattr" => {
+            let mut state: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(int(0)? as _, &mut state) == -1 { Err(errno()) } else {
+                let mut parts: Vec<Value> = [state.c_iflag as i64, state.c_oflag as i64, state.c_cflag as i64, state.c_lflag as i64,
+                    libc::cfgetispeed(&state) as i64, libc::cfgetospeed(&state) as i64].into_iter().map(Value::Small).collect();
+                parts.push(octets(state.c_cc.as_slice()));
+                Ok(Value::tuple(parts))
+            }
+        },
+        "tcsetattr" => {
+            let descriptor = int(0)? as libc::c_int;
+            let mut state: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(descriptor, &mut state) == -1 { Err(errno()) } else {
+                state.c_iflag = int(2)? as _; state.c_oflag = int(3)? as _; state.c_cflag = int(4)? as _; state.c_lflag = int(5)? as _;
+                let controls = data_of(&params[8])?;
+                state.c_cc.iter_mut().zip(controls.iter()).for_each(|(slot, byte)| *slot = *byte);
+                let (input, output) = (int(6)? as libc::speed_t, int(7)? as libc::speed_t);
+                if libc::cfsetispeed(&mut state, input) == -1 || libc::cfsetospeed(&mut state, output) == -1 { Err(errno()) }
+                else { checked(libc::tcsetattr(descriptor, int(1)? as _, &state) as i64) }
+            }
+        },
+        "tcflow" => {
+            let (descriptor, argument) = (int(0)? as libc::c_int, int(2)? as libc::c_int);
+            checked(match int(1)? {
+                0 => libc::tcsendbreak(descriptor, argument),
+                1 => libc::tcdrain(descriptor),
+                2 => libc::tcflush(descriptor, argument),
+                _ => libc::tcflow(descriptor, argument),
+            } as i64)
         },
         "isatty" => Ok(Value::Flag(libc::isatty(int(0)? as _) == 1)),
             "terminal" => {
