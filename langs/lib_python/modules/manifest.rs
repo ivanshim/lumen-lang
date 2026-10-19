@@ -407,7 +407,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("random", include_str!("random.py"), "random.py"),
     ("re", include_str!("re/__init__.py"), "re/__init__.py"),
     ("re._casefix", include_str!("re/_casefix.py"), "re/_casefix.py"),
-    ("re._compiler", include_str!("re/_compiler.py"), "re/_compiler.py"),
+    ("re._compiler", concat!(include_str!("re/_compiler.py"), "\n", include_str!("runtime_adapters/re_compiler.py")), "re/_compiler.py"),
     ("re._constants", include_str!("re/_constants.py"), "re/_constants.py"),
     ("re._parser", include_str!("re/_parser.py"), "re/_parser.py"),
     ("reprlib", include_str!("reprlib.py"), "reprlib.py"),

@@ -343,6 +343,25 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         let value = if found.len() == 1 { found.pop().unwrap() } else { Value::tuple(found) };
         return Ok(Value::tuple(vec![value]));
     }
+    // Pattern text goes through the shared native compiler; Null sends the pattern to the Python one.
+    if op == 20 {
+        if args.len() != 4 { return Err("TypeError: invalid SRE compile argument count".into()); }
+        let source = subject_codes(&args[1])?;
+        let case = lumen_sre::Case {
+            lower: &|n| lower(n, false),
+            cased: &|n| char::from_u32(n).is_some_and(|c| crate::unicode::bits(c) & 16 != 0),
+        };
+        let Some(done) = lumen_sre::compile(&source, number(3)? != 0, number(2)?, &case) else { return Ok(Value::Null); };
+        let names = done.names.iter().map(|(name, group)| Value::tuple(vec![Value::text(name), Value::Small(i64::from(*group))])).collect();
+        let slots = done.indexgroup.iter().map(|name| name.as_deref().map_or(Value::Null, Value::text)).collect();
+        return Ok(Value::tuple(vec![
+            Value::Small(done.flags),
+            Value::array(done.code.iter().map(|&word| Value::Small(i64::from(word))).collect()),
+            Value::Small(done.groups as i64),
+            Value::tuple(names),
+            Value::tuple(slots),
+        ]));
+    }
     if op == 9 {
         if args.len() != 4 { return Err("TypeError: invalid SRE bounds argument count".into()); }
         let length = subject_codes(&args[1])?.len() as i64;

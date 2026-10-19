@@ -37,7 +37,8 @@
     "importlib.resources._common": "runtime_adapters/resources.py",
     "_py_abc": "runtime_adapters/_py_abc.py",
     "marshal": "runtime_adapters/marshal.py",
-    "test.encoded_modules": "runtime_adapters/encoded_modules.py"
+    "test.encoded_modules": "runtime_adapters/encoded_modules.py",
+    "re._compiler": "runtime_adapters/re_compiler.py"
   },
   "data": {
     "_codec_sjis": {
