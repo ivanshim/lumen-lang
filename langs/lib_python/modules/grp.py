@@ -55,3 +55,8 @@ def getgrnam(name, /):
     if values is None:
         raise KeyError('getgrnam(): name not found: ' + repr(name))
     return _record(values)
+
+
+# Enumerate actual host groups, copying each native record before advancing.
+def getgrall():
+    return [_record(values) for values in _call('group', 2)]

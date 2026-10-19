@@ -66,6 +66,23 @@ fn passwd_fields(entry: &libc::passwd) -> Value {
         Value::Small(entry.pw_uid.into()), Value::Small(entry.pw_gid.into()),
         text(entry.pw_gecos), text(entry.pw_dir), text(entry.pw_shell)])
 }
+// Copy each group before the next host database lookup reuses its storage.
+fn group_record(group: &libc::group) -> Value {
+    let text = |p: *const libc::c_char| if p.is_null() {Value::Null}
+        else {bytes(unsafe {CStr::from_ptr(p)}.to_bytes().to_vec())};
+    let mut members = Vec::new();
+    if !group.gr_mem.is_null() {
+        let mut index = 0;
+        loop {
+            let member = unsafe { *group.gr_mem.add(index) };
+            if member.is_null() { break; }
+            members.push(text(member));
+            index += 1;
+        }
+    }
+    Value::tuple(vec![text(group.gr_name), text(group.gr_passwd),
+        Value::Small(group.gr_gid.into()), Value::array(members)])
+}
 pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String>) -> Result<Value, String> {
     let Some(Value::Text(op)) = args.first().map(Value::contents) else {
         return Err("TypeError: POSIX operation must be str".into());
@@ -93,20 +110,16 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
             }
         },
         "group" => {
+            if number(0)? == 2 {
+                libc::setgrent();
+                let mut groups = Vec::new();
+                while let Some(group) = libc::getgrent().as_ref() { groups.push(group_record(group)); }
+                libc::endgrent();
+                return Ok(Value::tuple(vec![Value::Small(0), Value::array(groups)]));
+            }
             let entry = if number(0)? == 0 {libc::getgrnam(pathname(1)?.as_ptr())}
                 else {libc::getgrgid(number(1)? as libc::gid_t)};
-            if entry.is_null() {Ok(Value::Null)} else {
-                let entry = &*entry;
-                let mut members = Vec::new();
-                let mut p = entry.gr_mem;
-                if !p.is_null() {while !(*p).is_null() {
-                    members.push(bytes(CStr::from_ptr(*p).to_bytes().to_vec()));
-                    p = p.add(1);
-                }}
-                Ok(Value::tuple(vec![if entry.gr_name.is_null() {Value::Null} else {bytes(CStr::from_ptr(entry.gr_name).to_bytes().to_vec())},
-                    if entry.gr_passwd.is_null() {Value::Null} else {bytes(CStr::from_ptr(entry.gr_passwd).to_bytes().to_vec())},
-                    Value::Small(entry.gr_gid.into()), Value::array(members)]))
-            }
+            match entry.as_ref() { None => Ok(Value::Null), Some(group) => Ok(group_record(group)) }
         },
         "chown" => {
             let p = pathname(0)?;

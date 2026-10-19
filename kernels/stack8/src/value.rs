@@ -1066,7 +1066,11 @@ impl Value {
                     // A pair whose cell stands empty names nothing yet:
                     // a namespace read through a view answers only for
                     // the names written in it so far.
-                    if matches!(v.contents(), Value::Blank | Value::Gap) { return None; }
+                    let empty = match v {
+                        Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => matches!(&*cell.borrow(), Value::Blank | Value::Gap),
+                        other => matches!(other, Value::Blank | Value::Gap),
+                    };
+                    if empty { return None; }
                     let bare = match k { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
                     Some(match view.1.as_str() {
                         // A reading of the map itself walks, and is
@@ -1589,16 +1593,19 @@ impl Value {
     /// replacements change the constants, not that original stream.
     fn routine_content(body: &crate::code::Routine) -> Value {
         Value::tuple(vec![
-            Value::Text(body.source_content.get_or_init(|| Rc::from(format!("{:?}", body.source_tokens))).clone()), Value::Small(body.source_end as i64),
+            Value::Text(body.source_content.get_or_init(|| Rc::from(crate::lex::token_image(&body.source_tokens))).clone()), Value::Small(body.source_end as i64),
             Value::text(&body.ident), Value::Small(body.declared_on as i64),
-            Value::Small(body.code_flags), Value::Small(body.future_bits),
-            Value::Flag(body.generator), Value::Flag(body.lineless),
+            Value::Small(body.code_flags | body.future_bits), Value::Flag(body.lineless),
+            body.location_bytes.clone().unwrap_or(Value::Null),
+            Value::Bytes(Rc::new(RefCell::new(body.native_image())), false, Rc::from("bytes")),
+            Value::tuple(body.handler_image().into_iter().map(|byte| Value::Small(byte as i64)).collect()),
             Value::tuple(body.formals.iter().map(|name| Value::text(name)).collect()),
             Value::tuple(body.parameter_rules.as_deref().unwrap_or_default().iter().map(|rule| Value::Small(*rule as i64)).collect()),
             body.rest_at.map_or(Value::Null, |at| Value::Small(at as i64)),
             Value::tuple(body.code_names.iter().map(|name| Value::text(name)).collect()),
             Value::tuple(body.local_names.iter().map(|name| Value::text(name)).collect()),
             Value::tuple(body.idents.iter().map(|name| Value::text(name)).collect()),
+            Value::tuple(body.cell_names.iter().filter(|name| !body.local_names.contains(name)).map(|name| Value::text(name)).collect()),
             Value::tuple(body.code_constants.clone()),
         ])
     }
@@ -1832,7 +1839,7 @@ impl Value {
         match self {
             Value::Collection(cell, quote) => shown_once(cell, "[...]", |held| if *quote { held.representation(sp) } else { held.display(sp) }),
             Value::View(view) if view.1 == "mapping" => format!("mappingproxy({})", view.0.proxy_dictionary().representation(sp)),
-            Value::View(view) => format!("dict_{}({})", view.1, self.contents().representation(sp)),
+            Value::View(view) => view_written(view, || format!("dict_{}({})", view.1, self.contents().representation(sp))),
             // A cell two names share is written as what it holds: the
             // sharing is between the names and not in the value.
             Value::Bond(shared) | Value::Binding(shared) => shown_once(shared, "[...]", |held| held.display(sp)),
@@ -1991,7 +1998,7 @@ impl Value {
             // is named with the kind it belongs to instead.
             Value::ValueMethod(pair) => method_written(&pair.0, &pair.1, Rc::as_ptr(pair) as *const u8 as usize),
             Value::View(view) if view.1 == "mapping" => format!("mappingproxy({})", view.0.proxy_dictionary().plain()),
-            Value::View(view) => format!("dict_{}({})", view.1, self.contents().plain()),
+            Value::View(view) => view_written(view, || format!("dict_{}({})", view.1, self.contents().plain())),
             // A builtin word naming a kind stands for the kind itself,
             // and is written as the reference writes a class; every
             // other builtin word is written as work to be done.
@@ -2078,6 +2085,11 @@ impl Value {
             Value::Adapter(w) if w.0 == 4 => format!("<staticmethod({})>", if matches!(w.1[0],Value::Null){"None".to_owned()}else{w.1[0].plain()}),
             Value::Adapter(w) if w.0 == 5 => format!("<classmethod({})>", if matches!(w.1[0],Value::Null){"None".to_owned()}else{w.1[0].plain()}),
             Value::Adapter(parts) if parts.0 == 34 => format!("<coroutine_wrapper object at 0x{:x}>", Rc::as_ptr(parts) as usize),
+            Value::Adapter(code) if code.0 == 7 => match code.1.first() {
+                Some(Value::Routine(body)) => format!("<code object {} at {:p}, file {:?}, line {}>",
+                    body.ident, Rc::as_ptr(code), body.written_in.as_deref().unwrap_or("<string>"), body.declared_on),
+                _ => "<code object>".to_string(),
+            },
             Value::Adapter(_) => "<member wrapper>".to_string(),
             Value::Object(o) => o.fields.borrow().iter().find(|(key, _)| key == "\0typing_repr")
                 .map(|(_, value)| value.plain()).unwrap_or_else(|| format!("<object {}>", o.class_now().name)),
@@ -2737,6 +2749,28 @@ pub fn set_once<E>(cell: &Rc<RefCell<Members>>, name: &str, write: impl FnOnce()
     let answer = write();
     forget_members(Some(address));
     answer
+}
+
+/// Note that a view's members are being written out, answering whether
+/// this very view is not already being written further up. Where it is,
+/// it stands as an ellipsis in its own stead, the way the reference's
+/// own note on a view leaves it.
+pub(crate) fn view_entered(view: &Rc<(Value, String)>) -> bool {
+    MEMBERS.with(|held| held.borrow_mut().insert(Rc::as_ptr(view) as usize))
+}
+
+/// Take the note away once the writing of that view is done.
+pub(crate) fn view_left(view: &Rc<(Value, String)>) {
+    MEMBERS.with(|held| { held.borrow_mut().remove(&(Rc::as_ptr(view) as usize)); });
+}
+
+/// Write a view's members out whole, or the ellipsis where the same view
+/// is already being written further out.
+pub(crate) fn view_written(view: &Rc<(Value, String)>, write: impl FnOnce() -> String) -> String {
+    if !view_entered(view) { return String::from("..."); }
+    let written = write();
+    view_left(view);
+    written
 }
 
 /// The same for a walk that always has an answer.

@@ -24,6 +24,7 @@
     "_collections_abc": "runtime_adapters/_collections_abc.py",
     "importlib": "runtime_adapters/importlib.py",
     "abc": "runtime_adapters/abc.py",
+    "test.support": "runtime_adapters/code_test_support.py",
     "codecs": "runtime_adapters/codecs.py",
     "sys": "runtime_adapters/sys.py",
     "_py_warnings": "runtime_adapters/warnings.py",
@@ -35,7 +36,8 @@
     "importlib.metadata": "runtime_adapters/metadata.py",
     "importlib.resources._common": "runtime_adapters/resources.py",
     "_py_abc": "runtime_adapters/_py_abc.py",
-    "marshal": "runtime_adapters/marshal.py"
+    "marshal": "runtime_adapters/marshal.py",
+    "test.encoded_modules": "runtime_adapters/encoded_modules.py"
   },
   "data": {
     "_codec_sjis": {

@@ -1,0 +1,5 @@
+LIT1 TypeError cannot use 'list' as a set element (unhashable type: 'list')
+LIT2 RuntimeError later
+ADD TypeError cannot use 'list' as a set element (unhashable type: 'list')
+COMP TypeError cannot use 'list' as a set element (unhashable type: 'list')
+ROW RuntimeError later
