@@ -213,7 +213,8 @@ class _deque_reverse_iterator:
         return parts[2] + 1 if len(parts) > 2 else 0
 
 
-_MINIMUM = -_sys.maxsize - 1
+_MAXIMUM = _sys.maxsize
+_MINIMUM = -_MAXIMUM - 1
 
 
 # Items of these exact types compare without running any Python code, so a
@@ -433,7 +434,7 @@ class deque:
             del data[:]
             _state_put(self, _state_of(self) + 1)
 
-    def rotate(self=_MISSING, n=1, /, *extra, **keywords):
+    def rotate(self=_MISSING, n=_MISSING, /, *extra, **keywords):
         if extra or keywords:
             _deque_check('rotate', 0, 1, _given(extra, self, n), keywords)
         try:
@@ -441,7 +442,9 @@ class deque:
         except Exception:
             _deque_check('rotate', 0, 1, _given(extra, self, n), keywords)
             raise
-        if type(n) is not int or not _MINIMUM <= n <= _sys.maxsize:
+        if n is _MISSING:
+            n = 1
+        elif type(n) is not int or n > _MAXIMUM or n < _MINIMUM:
             n = _deque_size(n)
         data = core[0]
         size = len(data)
@@ -449,7 +452,9 @@ class deque:
             core[2] += 1
             n %= size
             if n:
-                data[:] = data[-n:] + data[:-n]
+                tail = data[-n:]
+                del data[-n:]
+                data[:0] = tail
 
     @_deque_method('reverse', 0, 0)
     def reverse(self):
