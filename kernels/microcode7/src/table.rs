@@ -673,7 +673,7 @@ impl Table {
     }
 
     pub fn spells(&self, key: &str, lexeme: &str) -> bool {
-        self.strings(key).iter().any(|w| w == lexeme)
+        self.strings(key).iter().any(|w| w.len() == lexeme.len() && w == lexeme)
     }
 
     pub fn flag(&self, key: &str) -> bool {
