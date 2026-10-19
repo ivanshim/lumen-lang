@@ -11062,7 +11062,7 @@ impl<'a> Machine<'a> {
     pub(super) fn native_place(&self, value: &Value, name: &str) -> Option<usize> {
         if matches!(name, "close" | "__enter__" | "__exit__") {
             if let Value::Iterator(state) = value {
-                if state.borrow().walks.as_deref() == Some("posix_scandir_iterator") {
+                if state.borrow().walks.as_deref() == Some("ScandirIterator") {
                     return Some(usize::MAX - 4);
                 }
             }
@@ -11142,6 +11142,7 @@ impl<'a> Machine<'a> {
 
     fn native_member_run(&mut self, receiver: &Value, name: &str, at: usize, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
         if at == usize::MAX - 4 {
+            if !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
             return self.finish_directory_walk(receiver, name, &arguments);
         }
         match at {
@@ -16863,7 +16864,7 @@ impl<'a> Machine<'a> {
         let stored = crate::tuples::Sequence::plain(entries.iter().cloned().collect());
         let walk = Self::cursor_value_walked(
             IteratorKind::Stored { entries: stored, next: 0 },
-            Some(Rc::from("posix_scandir_iterator")),
+            Some(Rc::from("ScandirIterator")),
         );
         Ok(Value::tuple(vec![Value::Small(0), walk]))
     }

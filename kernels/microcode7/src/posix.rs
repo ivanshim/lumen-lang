@@ -974,7 +974,8 @@ pub fn directory_snapshot(subject: &Value) -> Result<(i32, Vec<(Vec<u8>, u64, u8
     let listing = unsafe {
         match descriptor {
             Some(number) => {
-                let duplicated = libc::fcntl(number as libc::c_int, libc::F_DUPFD_CLOEXEC, 0);
+                let Ok(number) = libc::c_int::try_from(number) else { return Err(String::from("OverflowError: Python int too large to convert to C int")) };
+                let duplicated = libc::fcntl(number, libc::F_DUPFD_CLOEXEC, 0);
                 if duplicated < 0 { return Ok((errno(), Vec::new())); }
                 let opened = libc::fdopendir(duplicated);
                 if opened.is_null() {

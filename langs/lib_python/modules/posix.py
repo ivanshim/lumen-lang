@@ -862,8 +862,6 @@ def scandir(path=None):
             raise ValueError('embedded null character')
         prefix = path if not path or path.endswith('/') else path + '/'
         return _walk_ready(path, prefix, -1, path)
-    if type(path) is int:
-        return _walk_ready(path, '', path)
     if _is_fd_path(path):
         fd = _descriptor(path)
         return _walk_ready(fd, '', fd)

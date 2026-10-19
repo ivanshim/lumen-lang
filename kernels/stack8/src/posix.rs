@@ -850,7 +850,8 @@ pub fn taken_names(subject: &Value) -> Result<(i32, Vec<(Vec<u8>, u64, u8)>), St
     let host_error = || std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
     let (stream, rewind) = unsafe {
         if let Some(number) = chosen {
-            let copied = libc::fcntl(number as i32, libc::F_DUPFD_CLOEXEC, 0);
+            let Ok(number) = i32::try_from(number) else { return Err("OverflowError: Python int too large to convert to C int".to_string()) };
+            let copied = libc::fcntl(number, libc::F_DUPFD_CLOEXEC, 0);
             if copied < 0 { return Ok((host_error(), Vec::new())); }
             let stream = libc::fdopendir(copied);
             if stream.is_null() {

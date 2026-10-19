@@ -9738,7 +9738,7 @@ impl<'a> Engine<'a> {
     pub(super) fn native_place(&self, subject: &Value, name: &str) -> Option<usize> {
         if name == "close" || name == "__enter__" || name == "__exit__" {
             if let Value::Cursor(state) = subject {
-                if state.borrow().walked.as_deref() == Some("scandir_walk") {
+                if state.borrow().walked.as_deref() == Some("ScandirIterator") {
                     return Some(usize::MAX - 4);
                 }
             }
@@ -9828,6 +9828,7 @@ impl<'a> Engine<'a> {
 
     fn native_member_call(&mut self, receiver: &Value, operation: &str, place: usize, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         if place == usize::MAX - 4 {
+            if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
             return self.end_scandir_cursor(receiver, operation, &args);
         }
         if place == usize::MAX - 3 {
@@ -22898,7 +22899,7 @@ impl<'a> Engine<'a> {
             return Err("TypeError: scandir entries are not a list".into());
         };
         let stored = crate::tuples::Items::plain(entries.iter().cloned().collect());
-        let walk = Self::core_cursor_walked(CursorSource::Items(stored, 0), Some(Rc::from("scandir_walk")));
+        let walk = Self::core_cursor_walked(CursorSource::Items(stored, 0), Some(Rc::from("ScandirIterator")));
         Ok(Value::tuple(vec![Value::Small(0), walk]))
     }
 
