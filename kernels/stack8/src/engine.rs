@@ -4748,8 +4748,14 @@ impl<'a> Engine<'a> {
             }
         }
         let reading = self.reading_in;
-        if program.globe.is_none() { self.reading_in = None; }
-        let namespace = Self::function_book(program);
+        // Native module helpers must not inherit an exec frame's locals.
+        if program.globe.is_none() || matches!(program.globe.as_ref(), Some(Value::Fields(_))) { self.reading_in = None; }
+        // Module-backed native helpers keep their own globals when invoked
+        // from exec, just as functions with supplied dictionaries do.
+        let namespace = Self::function_book(program).or_else(|| match program.globe.as_ref() {
+            Some(globals @ Value::Fields(_)) => Some(Rc::new(RefCell::new(globals.clone()))),
+            _ => None,
+        });
         let supplied = namespace.is_some();
         let restoring = program.globe.is_none() && !self.function_books.is_empty();
         let earlier = if supplied || restoring {
