@@ -5,6 +5,7 @@ import operator
 import sys
 from builtins import _buffer_view
 _memory = __bytes_memory__
+_memory_cursor = __pickle_buffer_native__
 
 DEFAULT_BUFFER_SIZE = 128 * 1024
 BlockingIOError = BlockingIOError
@@ -300,18 +301,10 @@ class BytesIO(_BufferedIOBase):
     writable = readable
     seekable = readable
     def read(self, size=-1):
-        if type(size) is int:
-            result, self._pos = _memory(self._data, self._pos, size, self._closed, 0)
-            return result
-        size = _size(size)
-        if self._closed:
-            raise ValueError('I/O operation on closed file')
-        end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
-        if end <= self._pos:
-            return b''
-        result = bytes(self._data[self._pos:end])
-        self._pos = end
-        return result
+        data = _memory_cursor(6, self, size)
+        if data is None:
+            data = _memory_cursor(6, self, _size(size))
+        return data
     read1 = read
     def readinto(self, buffer):
         if type(buffer) is bytearray:
@@ -344,17 +337,9 @@ class BytesIO(_BufferedIOBase):
         self._pos = end
         return data
     def write(self, b):
-        # Immutable exact bytes need no temporary export or snapshot.
-        if type(b) is bytes:
-            n, self._pos = _memory(self._data, self._pos, b, self._closed, 2)
-            return n
-        kind = type(b)
-        if kind is bytes or kind is bytearray:
-            if self._closed:
-                raise ValueError('I/O operation on closed file')
-            if _export(self._data, True):
-                raise BufferError('Existing exports of data: object cannot be re-sized')
-            return self._store(b)
+        stored = _memory_cursor(7, self, b)
+        if stored is not None:
+            return stored
         with _get_buffer(b) as view:
             if not view.c_contiguous:
                 raise BufferError('memoryview: underlying buffer is not C-contiguous')
@@ -364,16 +349,7 @@ class BytesIO(_BufferedIOBase):
                 raise BufferError('Existing exports of data: object cannot be re-sized')
             return self._store(view.tobytes())
     def _store(self, data):
-        n = len(data)
-        if not n:
-            return 0
-        if self._pos > sys.maxsize - n:
-            raise OverflowError('new position too large')
-        if self._pos > len(self._data):
-            self._data.extend(b'\0' * (self._pos - len(self._data)))
-        self._data[self._pos:self._pos + n] = data
-        self._pos += n
-        return n
+        return _memory_cursor(7, self, data)
     def seek(self, pos, whence=0):
         if type(pos) is not int or pos > _MAXSIZE or pos < _MINSIZE:
             pos = _ssize(pos)

@@ -2200,6 +2200,8 @@ pub struct TypeNames {
 }
 
 thread_local! { static NAMESPACE_CHANGE: Cell<u64> = const { Cell::new(1) }; }
+/// The current namespace stamp, for a reader keeping something derived from class entries.
+pub fn namespace_change() -> u64 { NAMESPACE_CHANGE.with(|stamp| stamp.get()) }
 
 /// Namespace slots stay ordered; Python lookup may index their spellings.
 /// Mutation invalidates all slot positions before the caller can edit rows.

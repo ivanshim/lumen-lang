@@ -2,35 +2,33 @@
 // belong to classes and routines rather than to their callers.
 use super::*;
 
+const NO_PLACE: usize = usize::MAX;
+
 impl<'a> Engine<'a> {
     pub(super) fn class_word(&self, part: &str) -> &str {
-        match part {
-            "name" => self.member_words[0],
-            "qualified" => self.member_words[1],
-            "module" => self.member_words[2],
-            "kind" => self.member_words[3],
-            "get" => self.member_words[4],
-            "set" => self.member_words[5],
-            "remove" => self.member_words[6],
-            "call" => self.member_words[7],
-            "namespace" => self.member_words[8],
-            "root" => self.member_words[9],
-            "allocate" => self.member_words[10],
-            "descriptor.get" => self.member_words[11],
-            "descriptor.set" => self.member_words[12],
-            "descriptor.delete" => self.member_words[13],
-            "doc" => self.member_words[14],
-            "defaults" => self.member_words[15],
-            "base" => self.member_words[16],
-            "bases" => self.member_words[17],
-            "mro" => self.member_words[18],
-            "order" => self.member_words[19],
-            "receiver" => self.member_words[20],
-            "unready" => self.member_words[21],
-            "subclass" => self.member_words[22],
-            "text_signature" => self.member_words[23],
-            _ => self.lang.class_details.get(part).and_then(|v| v.first()).map_or("", String::as_str),
-        }
+        // Told apart by first letter, then compared with the one or two
+        // words that begin with it, since this is asked many times a step.
+        let place = match part.as_bytes().first() {
+            Some(b'n') => if part == "name" { 0 } else if part == "namespace" { 8 } else { NO_PLACE },
+            Some(b'q') if part == "qualified" => 1,
+            Some(b'm') => if part == "module" { 2 } else if part == "mro" { 18 } else { NO_PLACE },
+            Some(b'k') if part == "kind" => 3,
+            Some(b'g') if part == "get" => 4,
+            Some(b's') => match part { "set" => 5, "subclass" => 22, "slots" => 24, _ => NO_PLACE },
+            Some(b'r') => match part { "remove" => 6, "root" => 9, "receiver" => 20, _ => NO_PLACE },
+            Some(b'c') if part == "call" => 7,
+            Some(b'a') if part == "allocate" => 10,
+            Some(b'd') => match part {
+                "descriptor.get" => 11, "descriptor.set" => 12, "descriptor.delete" => 13, "doc" => 14, "defaults" => 15, _ => NO_PLACE,
+            },
+            Some(b'b') => match part { "base" => 16, "bases" => 17, _ => NO_PLACE },
+            Some(b'o') if part == "order" => 19,
+            Some(b'u') if part == "unready" => 21,
+            Some(b't') if part == "text_signature" => 23,
+            _ => NO_PLACE,
+        };
+        if place != NO_PLACE { return self.member_words[place]; }
+        self.lang.class_details.get(part).and_then(|v| v.first()).map_or("", String::as_str)
     }
     // Read once when the language itself was read, since no program
     // still running can change which words a class stands under: every
@@ -358,6 +356,13 @@ impl<'a> Engine<'a> {
     /// The builtin kind a class stands on, through any of its line.
     pub(super) fn kind_beneath(c: &Class) -> Option<String> {
         std::iter::once(c).chain(c.lineage.borrow().iter().map(Rc::as_ref)).find_map(Self::own_kind)
+    }
+    /// Whether the builtin kind beneath a class is the word named, read
+    /// without writing any class's kind out as a fresh string.
+    pub(super) fn kind_beneath_is(c: &Class, word: &str) -> bool {
+        let own = |held: &Class| held.constants.iter().find(|(n, _)| n == "\0kind")
+            .map(|(_, v)| match v { Value::Text(t) => t.as_ref() == word, other => other.plain() == word });
+        std::iter::once(c).chain(c.lineage.borrow().iter().map(Rc::as_ref)).find_map(own).unwrap_or(false)
     }
 
     /// Whether a class stands on the builtin kind named, through any of
@@ -1416,6 +1421,10 @@ impl<'a> Engine<'a> {
     /// the class that declared it. A thing not of that class has no such
     /// place, and the descriptor says so.
     pub(super) fn slot_place(&self, thing: &Value, parts: &[Value]) -> Flow<String> {
+        // A class's storage layout is settled once the class is made, so the
+        // place a slot word stands at is kept from the first reading; the
+        // members' revision and the class's own identity guard the entry.
+        thread_local! { static SLOT_PLACES: RefCell<std::collections::HashMap<(usize, String), (Weak<Class>, u64, String)>> = RefCell::new(std::collections::HashMap::new()); }
         let Some(Value::Class(owner))=parts.get(1) else{return Err(self.class_refusal())};
         let Value::Object(o)=thing else{return Err(format!("TypeError: descriptor '{}' for '{}' objects doesn't apply to a '{}' object",parts[0].plain(),owner.name,thing.core_kind()).into())};
         let word = parts[0].plain();
@@ -1424,10 +1433,22 @@ impl<'a> Engine<'a> {
             if pieces.len() != 4 { return Err(self.class_refusal()); }
             return Err(format!("{}{word}{}{}{}{}{}", pieces[0], pieces[1], owner.name, pieces[2], o.class_now().name, pieces[3]).into());
         }
+        let revision = crate::value::members_revision();
+        let key = (Rc::as_ptr(owner) as usize, word.clone());
+        let kept = SLOT_PLACES.with(|places| places.borrow().get(&key)
+            .filter(|(class, seen, _)| *seen == revision && class.upgrade().is_some_and(|held| Rc::ptr_eq(&held, owner)))
+            .map(|(_, _, place)| place.clone()));
+        if let Some(place) = kept { return Ok(place); }
         let shape=self.storage_slots(owner);
         let prefix=owner.base().map_or(0,|parent|self.storage_slots(&parent).iter().map(Vec::len).sum::<usize>());
         let own=shape.last().and_then(|names|names.iter().position(|name|name==&word)).unwrap_or(0);
-        Ok(format!("\0slot:{word}:{}",prefix+own))
+        let place = format!("\0slot:{word}:{}",prefix+own);
+        SLOT_PLACES.with(|places| {
+            let mut places = places.borrow_mut();
+            if places.len() >= 4096 { places.clear(); }
+            places.insert(key, (Rc::downgrade(owner), revision, place.clone()));
+        });
+        Ok(place)
     }
     fn namespace_write(&self,o:&Rc<Instance>,value:Option<Value>)->Flow<Value> {
         if Self::kind_beneath(&o.class_now()).as_deref()==Some("module") {return Err("AttributeError: readonly attribute".into());}
@@ -1911,7 +1932,7 @@ impl<'a> Engine<'a> {
             _ => false,
         }
     }
-    fn own_class_value(c: &Class, name: &str) -> Option<Value> {
+    pub(super) fn own_class_value(c: &Class, name: &str) -> Option<Value> {
         if let Some(v) = c.shared.read(name, true) {
             return if matches!(v.contents(), Value::Blank | Value::Gap) { None } else { Some(v) };
         }
@@ -1940,7 +1961,9 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn class_value(&self, c: &Class, name: &str) -> Option<Value> {
-        if self.lang.bind_names && c.shared.mro_misses(name) { return None; }
+        // Namespace revisions alone cannot describe a replaced inheritance order.
+        let keep_missing = self.lang.bind_names && c.base_epoch.get() == 0;
+        if keep_missing && c.shared.mro_misses(name) { return None; }
         let found = Self::ordered_lookup(c, |base| {
             Self::own_class_value(base, name).or_else(|| {
                 if !self.lang.fuller_classes { return None; }
@@ -1956,7 +1979,7 @@ impl<'a> Engine<'a> {
                 Some(self.held_kind_descriptor(&word, name))
             })
         });
-        if self.lang.bind_names && found.is_none() { c.shared.retain_mro_miss(name); }
+        if keep_missing && found.is_none() { c.shared.retain_mro_miss(name); }
         found
     }
     /// Validate a native data descriptor's receiver before invoking its getter.
@@ -2029,6 +2052,7 @@ impl<'a> Engine<'a> {
         }
         Ok(())
     }
+    #[allow(unused_variables)]
     pub(super) fn class_apply(&mut self, callable: Value, mut args: Vec<Value>) -> Flow<Value> {
         if let Some(missing) = self.annotation_operation(&callable) { return Err(missing.into()); }
         if let Value::Class(class)=&callable { self.validate_class_spreads(class, &args)?; }
@@ -2080,9 +2104,235 @@ impl<'a> Engine<'a> {
                 answer
             },
             Value::Class(c) => self.class_make(c,args),
-            Value::Adapter(w) => match w.0 {
+            Value::Adapter(w) => self.class_apply_adapter(w, args),
+            Value::Text(word) => {
+                let Some(op) = self.lang.builtins.get(word.as_ref()).copied() else { return Err(self.class_refusal()); };
+                if let Builtin::ClassTool(i) = op { self.class_work(i,args) }
+                else if op == Builtin::SortOf { self.class_type(args) }
+                else { self.class_apply(Value::Native(op, word), args) }
+            }
+            other => Err(self.core_fault("core.uncallable", &other.core_kind()).into()),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    #[allow(unused_variables)]
+    fn class_apply_adapter(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> { match w.0 {
                 236 => self.super_initialised(args),
-                235 => {
+                235 => { return self.adapter_arm_1(w, args); }
+
+                184 => { return self.adapter_arm_2(w, args); }
+                183 if matches!(w.1.get(1), Some(Value::Text(_))) => { return self.adapter_arm_3(w, args); }
+                182 | 183 => { return self.adapter_arm_4(w, args); }
+                82 => { return self.adapter_arm_5(w, args); }
+                129 => {
+                    if !args.is_empty() { return Err("TypeError: function takes no arguments".into()); }
+                    Ok(self.builtin_call(Builtin::Eval, "eval", w.1.iter().cloned().map(|value| (None, value)).collect())?)
+                }
+                126 if self.lang.type_parameters => self.class_apply(Self::adapter(158, vec![Value::text("union_repr")]), args),
+                126 => { return self.adapter_arm_6(w, args); }
+                140 => { return self.adapter_arm_7(w, args); }
+                124 => self.alias_work(match w.1[0] { Value::Small(mode) => mode, _ => -1 }, args),
+                122 => self.namespace_work(match w.1[0] { Value::Small(mode) => mode, _ => -1 }, args),
+                9 if w.1.is_empty() => self.super_binding(args),
+                247 => { return self.adapter_arm_8(w, args); }
+                248 => {
+                    if !(2..=3).contains(&args.len()){return Err("TypeError: invalid super descriptor arguments".into());}
+                    self.bind_super_object(args[0].clone(),args[1].clone())
+                }
+                // C-only draw methods can read the native stream without
+                // building a Python frame. Other calls use the full reader.
+                63 => { return self.adapter_arm_9(w, args); }
+                // Ordinary binary64 inputs need no Python conversion frame.
+                // Domain edges and custom numeric protocols keep that frame.
+                64 => { return self.adapter_arm_10(w, args); }
+                0 => Ok(w.1[0].clone()),
+                133 => { return self.adapter_arm_11(w, args); },
+                132 => {
+                    if !args.is_empty() { return Err(format!("TypeError: {}.__reduce__() takes no arguments ({} given)", w.1.get(1).map_or_else(|| "builtin_function_or_method".into(), Value::plain), args.len()).into()); }
+                    Ok(w.1[0].clone())
+                },
+                1 => { return self.adapter_arm_12(w, args); }
+                2 if w.1.first().is_some_and(|v| v.plain() == "module") => {
+                    if args.is_empty() { return Err("TypeError: descriptor '__init__' of 'module' object needs an argument".into()); }
+                    let receiver = args.remove(0);
+                    self.initialise_module(receiver, args)
+                    }
+                2 if w.1.first().is_some_and(|v| v.plain() == "__init_subclass__") => {
+                    let given = self.call_items(args)?;
+                    let Some((None, Value::Class(class))) = given.first() else { return Err(self.class_refusal()); };
+                    if given.len() != 1 { return Err(format!("TypeError: {}.__init_subclass__() takes no keyword arguments", class.name).into()); }
+                        Ok(Value::Null)
+                    }
+                2 if !w.1.is_empty() => { return self.adapter_arm_13(w, args); }
+                2 if matches!(args.first(), Some(Value::Object(o)) if self.exception_class(&o.class_now())) => {
+                    let Value::Object(o) = args.remove(0) else { unreachable!() };
+                    let name = self.lang.constructor.clone().unwrap_or_default();
+                    self.exception_method(o, &name, &args)
+                }
+                2 if args.first().is_some_and(|value| matches!(value.contents(), Value::Tuple(_))) => Ok(Value::Null),
+                2 if args.len()==1 => Ok(Value::Null),
+                2 => {
+                    let Some(Value::Object(o)) = args.first() else { return Err(self.class_refusal()); };
+                    self.root_refuses_arguments(&o.class_now(),false)?;
+                    Ok(Value::Null)
+                }
+                45 if !args.is_empty() => {
+                    let alias = self.lazy_type_alias(args.remove(0))?;
+                    if let (Value::Object(instance), Some(parameters)) = (&alias, args.first()) {
+                        if let Some((_, held)) = instance.fields.borrow_mut().iter_mut().find(|(key, _)| key == "__type_params__") { *held = parameters.clone(); }
+                    }
+                    Ok(alias)
+                }
+                74 if matches!(args.len(), 3 | 4) => { return self.adapter_arm_14(w, args); }
+                77 if w.1.first().is_some_and(|v| v.plain() == "#union") && args.len() == 2 => { return self.adapter_arm_15(w, args); }
+                77 if self.lang.type_parameters && args.len() == 2 && matches!(args[0], Value::Class(_)) => {
+                    Ok(args.remove(0))
+                }
+                158 => {
+                    let module = self.import_module("_typing_runtime")?;
+                    let callable = self.class_get(module, &w.1[0].plain(), false)?;
+                    self.class_apply(callable, args)
+                }
+                157 if args.len() == 2 => { return self.adapter_arm_16(w, args); }
+                156 => Err("TypeError: Substitution of bare TypeVarTuple is not supported".into()),
+                155 if args.len() == 1 => { return self.adapter_arm_17(w, args); }
+                154 => {
+                    let module = self.import_module("typing")?;
+                    let function = self.class_get(module, &w.1[0].plain(), false)?;
+                    args.insert(0, w.1[1].clone());
+                    self.class_apply(function, args)
+                }
+                152 | 153 => { return self.adapter_arm_18(w, args); }
+                49 if args.len() == 1 => {
+                    let module = self.import_module("typing")?;
+                    let alias = self.class_get(module.clone(), "_GenericAlias", false)?;
+                    let generic = Value::Class(self.kind_class("Generic"));
+                    let Value::Tuple(parameters) = args[0].contents() else { return Err(self.class_refusal()); };
+                    let mut bases = Vec::new();
+                    for parameter in parameters.iter() {
+                        let parameter = if matches!(parameter.contents(), Value::Object(ref object) if Self::own_kind(&object.class_now()).as_deref() == Some("TypeVarTuple")) {
+                            let unpack = self.class_get(module.clone(), "Unpack", false)?;
+                            let subscript = self.class_get(unpack, "__getitem__", false)?;
+                            self.class_apply(subscript, vec![parameter.clone()])?
+                        } else { parameter.clone() };
+                        bases.push(parameter);
+                    }
+                    self.class_apply(alias.contents(), vec![generic, Value::tuple(bases)])
+                }
+                49 if args.is_empty() => {
+                    self.typing_module();
+                    Ok(Value::Class(self.kind_class("Generic")))
+                }
+                48 => { return self.adapter_arm_19(w, args); }
+                47 => { return self.adapter_arm_20(w, args); }
+                46 if args.len() == 5 => { return self.adapter_arm_21(w, args); }
+                // A member a native forebear carries, read off the
+                // parent walk: it works upon the worth the thing keeps,
+                // reached past the class the walk was made against, as
+                // the parent call of a method spelled out does.
+                44 if w.1.len() == 3 => {
+                    let receiver = w.1[0].clone();
+                    let owner = w.1[1].plain();
+                    let name = w.1[2].plain();
+                    self.class_super(receiver, &owner, &name, args)
+                }
+                44 => { return self.adapter_arm_22(w, args); }
+                78 => self.type_initialiser(args),
+                40 => self.class_from_parts(args),
+                41 => { return self.adapter_arm_23(w, args); }
+                180 => {
+                    if !args.is_empty() { return Err("TypeError: function takes no arguments".into()); }
+                    let previous = self.compiled_builtins.replace(w.1[6].clone());
+                    let result = self.text_run(true, "eval", vec![w.1[0].clone(), w.1[1].clone()]);
+                    self.compiled_builtins = previous;
+                    result.map_err(|words| self.carried.take().unwrap_or_else(|| Fault::Note(words)))
+                }
+                143 => {
+                    if !args.is_empty() { return Err("TypeError: this code object takes no arguments".into()); }
+                    let result = self.text_run(true, "eval", w.1[..2].to_vec());
+                    match result { Ok(value) => Ok(value), Err(message) => Err(self.carried.take().unwrap_or_else(|| message.into())) }
+                }
+                43 => {
+
+                    self.class_apply(w.1[0].clone(), args)
+                }
+                200|202 => { return self.adapter_arm_24(w, args); }
+                201 => { return self.adapter_arm_25(w, args); }
+                203 => {
+                    // staticmethod.__get__: the kept callable itself,
+                    // unbound.
+                    let Some(Value::Object(o)) = args.first() else { return Err(self.class_refusal()) };
+                    let Some(callable) = o.fields.borrow().iter().find(|(n, _)| n == "\0callable").map(|(_, v)| v.clone()) else { return Err(self.class_refusal()) };
+                    Ok(callable)
+                }
+                207 if !args.is_empty() => { return self.adapter_arm_26(w, args); }
+                206 if args.len() == 1 || args.len() == 2 => {
+                    self.native_getset_owner(&w.1, &args[0])?;
+                    let Value::Class(owner) = &w.1[1] else { return Err(self.class_refusal()); };
+                    Err(format!("AttributeError: attribute '{}' of '{}' objects is not writable", w.1[2].plain(), owner.name).into())
+                }
+                251 => { return self.adapter_arm_27(w, args); }
+                204 => { return self.adapter_arm_28(w, args); }
+                42 => Ok(Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))), true)),
+                30 => { return self.adapter_arm_29(w, args); },
+                // The maker of a builtin kind: given the class to make a
+                // thing of and what the kind's builtin takes.
+                233 if args.len() == 1 => self.calendar_repr(&args[0]),
+                234 if args.len() == 1 => self.calendar_reduce(&args[0]),
+                237 => self.calendar_replace(args),
+                238 if args.len() == 2 => {
+                    let row = Self::worth_of(&args[0]).ok_or_else(|| Fault::Note("TypeError: invalid struct_time receiver".into()))?;
+                    self.special_dyad(&crate::code::Action::At, &row, &args[1]).map_err(Fault::Note)
+                },
+                14 if w.1.first().is_some_and(|word| word.plain() == "function") && args.is_empty() => Err("TypeError: function.__new__(): not enough arguments".into()),
+                14 if !args.is_empty() => { return self.adapter_arm_30(w, args); }
+                119 if args.len() == 1 => {
+                    let Value::Small(mode) = w.1[0] else { return Err(self.class_refusal()); };
+                    self.iterator_recipe_next(mode, &args[0])?.ok_or_else(|| self.core_fault("core.exhausted", "").into())
+                }
+                3 | 131 => {
+                    args.insert(0,w.1[1].clone());
+                    self.descriptor_apply(w.1[0].clone(), args)
+                }
+                // A member a builtin kind carries, standing loose: the
+                // first value it is called with is the one it works
+                // upon, and the rest are what the member itself takes.
+                // Called with none at all, it names the kind and itself
+                // as CPython's unbound method does; handed a receiver
+                // of the wrong kind, it names the member, the kind and
+                // the receiver's own, as CPython's descriptor does.
+                29 => { return self.adapter_arm_31(w, args); }
+                79 => { return self.adapter_arm_32(w, args); }
+                80 => { return self.adapter_arm_33(w, args); }
+                4 => self.descriptor_apply(w.1[0].clone(), args),
+                8 => self.class_apply(w.1[0].clone(),args),
+                5 => Err(self.core_fault("core.uncallable", "classmethod").into()),
+                13 if args.len() == 1 => {
+                    let Value::Adapter(property) = &w.1[0] else { return Err(self.class_refusal()); };
+                    let mut members = property.1.clone();
+                    members.resize(2, Value::Null); members[1] = args.remove(0);
+                    Ok(Self::adapter(6, members))
+                }
+                10..=12 => { return self.adapter_arm_34(w, args); }
+                // The reader of a member that binds: given the thing, or
+                // nothing and the class, it answers what a read through
+                // that thing or class would.
+                15 if w.1.is_empty() => { return self.adapter_arm_35(w, args); }
+                15 if !args.is_empty() && args.len() <= 2 => { return self.adapter_arm_36(w, args); }
+                17 if args.len() == 2 => self.slot_write(&args[0], &w.1, Some(args[1].clone())),
+                18 if args.len() == 1 => self.slot_write(&args[0], &w.1, None),
+                19 if args.len() == 2 => { return self.adapter_arm_37(w, args); }
+                20..=27 => self.property_work(w.0, args),
+                _ => Err(self.class_refusal()),
+            } }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_1(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            235
+            => {
                     let items = self.call_items(args)?;
                     let mut positional = Vec::new(); let mut keywords = Vec::new();
                     for (key, value) in items { match key { None => positional.push(value), Some(name) => keywords.push((name, value)) } }
@@ -2092,9 +2342,17 @@ impl<'a> Engine<'a> {
                         return Err(format!("TypeError: descriptor '__get__' requires a 'classmethod_descriptor' object but received a '{}'", descriptor.core_kind()).into());
                     }
                     self.explicit_classmethod(&descriptor, positional, keywords)
-                }
+                },
+            _ => unreachable!(),
+        }
+    }
 
-                184 => {
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_2(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            184
+            => {
                     let items = self.call_items(args)?;
                     if items.iter().any(|(key, _)| key.is_some()) { return Err("TypeError: wrapper __get__() takes no keyword arguments".into()); }
                     if items.is_empty() { return Err("TypeError: __get__ expected at least 1 argument, got 0".into()); }
@@ -2113,8 +2371,17 @@ impl<'a> Engine<'a> {
                     }
                     let mut tied = slot.1.clone(); tied.push(target);
                     Ok(Self::adapter(183, tied))
-                }
-                183 if matches!(w.1.get(1), Some(Value::Text(_))) => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_3(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            183
+            => {
                     let Value::Class(base) = &w.1[0] else { return Err(self.class_refusal()); };
                     let Value::Text(word) = &w.1[1] else { unreachable!() };
                     if let Some(receiver) = w.1.get(2) { args.insert(0, receiver.clone()); }
@@ -2134,8 +2401,17 @@ impl<'a> Engine<'a> {
                     let answer = self.faint_reading(&supplied);
                     if let Some(fault) = self.carried.take() { return Err(fault); }
                     Ok(answer?)
-                }
-                182 | 183 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_4(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            182 | 183
+            => {
                     let Value::Class(base) = &w.1[0] else { return Err(self.class_refusal()); };
                     if w.0 == 183 && w.1.len() == 2 { args.insert(0, w.1[1].clone()); }
                     let items = self.call_items(args)?;
@@ -2168,8 +2444,17 @@ impl<'a> Engine<'a> {
                             self.faint_allocate(label, &given).map_err(Fault::from),
                         factory => self.class_apply(factory.clone(), given),
                     }
-                }
-                82 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_5(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            82
+            => {
                     // A group's own maker: the class to make, then its
                     // heading and exceptions, as the reference's __new__.
                     let Some(receiver) = args.first().map(|value| value.contents()) else {
@@ -2186,13 +2471,17 @@ impl<'a> Engine<'a> {
                         return Err(format!("TypeError: BaseExceptionGroup.__new__({name}): {name} is not a subtype of BaseExceptionGroup").into());
                     }
                     self.exception_allocate(class.clone(), args[1..].to_vec())
-                }
-                129 => {
-                    if !args.is_empty() { return Err("TypeError: function takes no arguments".into()); }
-                    Ok(self.builtin_call(Builtin::Eval, "eval", w.1.iter().cloned().map(|value| (None, value)).collect())?)
-                }
-                126 if self.lang.type_parameters => self.class_apply(Self::adapter(158, vec![Value::text("union_repr")]), args),
-                126 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_6(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            126
+            => {
                     if let Some(Value::Small(place)) = w.1.first() {
                         let name = self.lang.class_special[*place as usize].clone();
                         let Some(subject) = args.first().map(|value| value.contents()) else {
@@ -2219,8 +2508,17 @@ impl<'a> Engine<'a> {
                         }
                     }
                     Ok(Value::text(&parts.join(" | ")))
-                }
-                140 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_7(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            140
+            => {
                     let subscript = args.last().cloned().unwrap_or(Value::Null).contents();
                     let members: Vec<Value> = match subscript { Value::Tuple(row) => row.iter().cloned().collect(), other => vec![other] };
                     if members.is_empty() { return Err("TypeError: Cannot take a Union of no types.".into()); }
@@ -2229,11 +2527,17 @@ impl<'a> Engine<'a> {
                         folded = Some(match folded { None => member, Some(acc) => self.join_types(&acc, &member)? });
                     }
                     Ok(folded.unwrap_or(Value::Null))
-                }
-                124 => self.alias_work(match w.1[0] { Value::Small(mode) => mode, _ => -1 }, args),
-                122 => self.namespace_work(match w.1[0] { Value::Small(mode) => mode, _ => -1 }, args),
-                9 if w.1.is_empty() => self.super_binding(args),
-                247 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_8(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            247
+            => {
                     if args.is_empty(){return Err("TypeError: descriptor '__init__' of 'super' object needs an argument".into());}
                     let receiver=args.remove(0);
                     let binding=self.super_binding(args)?;
@@ -2241,14 +2545,17 @@ impl<'a> Engine<'a> {
                     if !matches!(Self::worth_of(&Value::Object(object.clone())),Some(Value::Adapter(entry)) if entry.0==9){return Err("TypeError: descriptor '__init__' requires a 'super' object".into());}
                     Self::write_members(&mut object.fields.borrow_mut(),"\0worth",Some(binding),false).map_err(|_|self.class_refusal())?;
                     Ok(Value::Null)
-                }
-                248 => {
-                    if !(2..=3).contains(&args.len()){return Err("TypeError: invalid super descriptor arguments".into());}
-                    self.bind_super_object(args[0].clone(),args[1].clone())
-                }
-                // C-only draw methods can read the native stream without
-                // building a Python frame. Other calls use the full reader.
-                63 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_9(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            63
+            => {
                     let bits = w.1[0].plain() == "bits";
                     let valid = args.len() == if bits { 2 } else { 1 }
                         && matches!(args.first().map(|value| value.contents()), Some(Value::Object(_)))
@@ -2265,10 +2572,17 @@ impl<'a> Engine<'a> {
                         }
                     }
                     self.class_apply(w.1[1].clone(), args)
-                }
-                // Ordinary binary64 inputs need no Python conversion frame.
-                // Domain edges and custom numeric protocols keep that frame.
-                64 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_10(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            64
+            => {
                     let operation = w.1[0].plain();
                     if operation == "normal_pdf" && args.len() == 2 {
                         let x = args[1].contents();
@@ -2330,9 +2644,17 @@ impl<'a> Engine<'a> {
                         }
                     }
                     self.class_apply(w.1[1].clone(),args)
-                }
-                0 => Ok(w.1[0].clone()),
-                133 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_11(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            133
+            => {
                     let owner = w.1[0].plain();
                     if args.is_empty() { return Err(format!("TypeError: unbound method {owner}.__reduce__() needs an argument").into()); }
                     let native = Self::worth_of(&args[0]).unwrap_or_else(|| args[0].contents()).contents();
@@ -2346,10 +2668,14 @@ impl<'a> Engine<'a> {
                     if args.len() > 1 { return Err(format!("TypeError: {}.__reduce__() takes no arguments ({} given)", args[0].core_kind(), args.len() - 1).into()); }
                     return self.set_reduction(&args[0]);
                 },
-                132 => {
-                    if !args.is_empty() { return Err(format!("TypeError: {}.__reduce__() takes no arguments ({} given)", w.1.get(1).map_or_else(|| "builtin_function_or_method".into(), Value::plain), args.len()).into()); }
-                    Ok(w.1[0].clone())
-                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_12(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
                 1 => {
                     let Some(Value::Class(c)) = args.first() else { return Err(format!("TypeError: object.__new__(X): X is not a type object ({})", args.first().map_or("NoneType".into(), Value::core_kind)).into()); };
                     if c.shared.borrow().iter().any(|(key, flag)| key == "\0buffer_allocator" && flag.is_true()) {
@@ -2364,19 +2690,17 @@ impl<'a> Engine<'a> {
                     if args.len()!=1 { self.root_refuses_arguments(c,true)?; }
                     self.made += 1;
                     Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None), class:c.clone(),fields:RefCell::new(vec![]),mark:self.made})))
-                }
-                2 if w.1.first().is_some_and(|v| v.plain() == "module") => {
-                    if args.is_empty() { return Err("TypeError: descriptor '__init__' of 'module' object needs an argument".into()); }
-                    let receiver = args.remove(0);
-                    self.initialise_module(receiver, args)
-                    }
-                2 if w.1.first().is_some_and(|v| v.plain() == "__init_subclass__") => {
-                    let given = self.call_items(args)?;
-                    let Some((None, Value::Class(class))) = given.first() else { return Err(self.class_refusal()); };
-                    if given.len() != 1 { return Err(format!("TypeError: {}.__init_subclass__() takes no keyword arguments", class.name).into()); }
-                        Ok(Value::Null)
-                    }
-                2 if !w.1.is_empty() => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_13(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            2
+            => {
                     let word=w.1[0].plain();
                     let Some(Value::Object(object))=args.first().cloned() else { return Err(self.class_refusal()); };
                     args.remove(0);
@@ -2390,26 +2714,15 @@ impl<'a> Engine<'a> {
                     if let Value::Collection(cell,_)|Value::Bond(cell)=&slot.1 { *cell.borrow_mut()=initialized.contents(); }
                     else { slot.1=initialized.held(false); }
                     Ok(Value::Null)
-                }
-                2 if matches!(args.first(), Some(Value::Object(o)) if self.exception_class(&o.class_now())) => {
-                    let Value::Object(o) = args.remove(0) else { unreachable!() };
-                    let name = self.lang.constructor.clone().unwrap_or_default();
-                    self.exception_method(o, &name, &args)
-                }
-                2 if args.first().is_some_and(|value| matches!(value.contents(), Value::Tuple(_))) => Ok(Value::Null),
-                2 if args.len()==1 => Ok(Value::Null),
-                2 => {
-                    let Some(Value::Object(o)) = args.first() else { return Err(self.class_refusal()); };
-                    self.root_refuses_arguments(&o.class_now(),false)?;
-                    Ok(Value::Null)
-                }
-                45 if !args.is_empty() => {
-                    let alias = self.lazy_type_alias(args.remove(0))?;
-                    if let (Value::Object(instance), Some(parameters)) = (&alias, args.first()) {
-                        if let Some((_, held)) = instance.fields.borrow_mut().iter_mut().find(|(key, _)| key == "__type_params__") { *held = parameters.clone(); }
-                    }
-                    Ok(alias)
-                }
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_14(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
                 74 if matches!(args.len(), 3 | 4) => {
                     let reading = self.annotation_scope();
                     if let Some((names, true)) = &reading {
@@ -2425,8 +2738,17 @@ impl<'a> Engine<'a> {
                     let answer = self.class_apply(args[2].clone(), Vec::new());
                     self.armed_names = previous;
                     answer
-                }
-                77 if w.1.first().is_some_and(|v| v.plain() == "#union") && args.len() == 2 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_15(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            77
+            => {
                     let entries = match args[1].contents() { Value::Tuple(row) => row.to_vec(), item => vec![item] };
                     if entries.is_empty() { return Err("TypeError: Cannot take a Union of no types.".into()); }
                     let typing = self.import_module("typing")?;
@@ -2436,16 +2758,17 @@ impl<'a> Engine<'a> {
                     let mut result = checked.remove(0);
                     for item in checked { result = self.join_types(&result, &item)?; }
                     Ok(result)
-                }
-                77 if self.lang.type_parameters && args.len() == 2 && matches!(args[0], Value::Class(_)) => {
-                    Ok(args.remove(0))
-                }
-                158 => {
-                    let module = self.import_module("_typing_runtime")?;
-                    let callable = self.class_get(module, &w.1[0].plain(), false)?;
-                    self.class_apply(callable, args)
-                }
-                157 if args.len() == 2 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_16(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            157
+            => {
                     let variable = matches!(args[0].contents(), Value::Object(ref object) if Self::own_kind(&object.class_now()).as_deref() == Some("TypeVar"));
                     if w.1[0].is_true() { args.swap(0, 1); }
                     if variable {
@@ -2458,48 +2781,57 @@ impl<'a> Engine<'a> {
                     if self.union_member(&args[0]) && self.union_member(&args[1]) {
                         self.join_types(&args[0], &args[1])
                     } else { Ok(Value::Declined(Rc::from("NotImplemented"))) }
-                }
-                156 => Err("TypeError: Substitution of bare TypeVarTuple is not supported".into()),
-                155 if args.len() == 1 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_17(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            155
+            => {
                     let module = self.import_module("typing")?;
                     let unpack = self.class_get(module, "Unpack", false)?;
                     self.data.extend([unpack, args.remove(0)]);
                     self.perform(&Action::At, 2)?;
                     let element = self.drop_top()?;
                     Ok(self.core_iterator(&Value::tuple(vec![element]))?)
-                }
-                154 => {
-                    let module = self.import_module("typing")?;
-                    let function = self.class_get(module, &w.1[0].plain(), false)?;
-                    args.insert(0, w.1[1].clone());
-                    self.class_apply(function, args)
-                }
-                152 | 153 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_18(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            152 | 153
+            => {
+                    if w.0 == 152 {
+                        if let Some(Value::Class(owner)) = args.first() {
+                            if let Some(parameters) = Self::own_class_value(owner, "__type_params__") {
+                                if parameters.is_true() {
+                                    owner.shared.borrow_mut().push(("__parameters__".into(), parameters));
+                                    return Ok(Value::Null);
+                                }
+                            }
+                        }
+                    }
                     let module = self.import_module("typing")?;
                     let word = if w.0 == 152 { "_generic_init_subclass" } else { "_generic_class_getitem" };
                     let function = self.class_get(module, word, false)?;
                     self.class_apply(function, args)
-                }
-                49 if args.len() == 1 => {
-                    let module = self.import_module("typing")?;
-                    let alias = self.class_get(module.clone(), "_GenericAlias", false)?;
-                    let generic = Value::Class(self.kind_class("Generic"));
-                    let Value::Tuple(parameters) = args[0].contents() else { return Err(self.class_refusal()); };
-                    let mut bases = Vec::new();
-                    for parameter in parameters.iter() {
-                        let parameter = if matches!(parameter.contents(), Value::Object(ref object) if Self::own_kind(&object.class_now()).as_deref() == Some("TypeVarTuple")) {
-                            let unpack = self.class_get(module.clone(), "Unpack", false)?;
-                            let subscript = self.class_get(unpack, "__getitem__", false)?;
-                            self.class_apply(subscript, vec![parameter.clone()])?
-                        } else { parameter.clone() };
-                        bases.push(parameter);
-                    }
-                    self.class_apply(alias.contents(), vec![generic, Value::tuple(bases)])
-                }
-                49 if args.is_empty() => {
-                    self.typing_module();
-                    Ok(Value::Class(self.kind_class("Generic")))
-                }
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_19(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
                 48 => {
                     let Some(Value::Object(object)) = args.first().map(Value::contents) else { return Err(self.class_refusal()); };
                     let payload = object.fields.borrow().iter().find(|(key, _)| key == "\0constant").map(|(_, value)| value.clone()).ok_or_else(|| self.class_refusal())?;
@@ -2523,6 +2855,14 @@ impl<'a> Engine<'a> {
                     } else { self.class_apply(render, vec![payload])?.plain() };
                     Ok(Value::text(&text))
                 }
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_20(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
                 47 => {
                     if args.len() > 1 { return Err("TypeError: evaluator takes at most one argument".into()); }
                     let format = args.first().cloned().unwrap_or(Value::Small(1));
@@ -2530,8 +2870,17 @@ impl<'a> Engine<'a> {
                     self.perform(&Action::Gt, 2)?;
                     if self.drop_top()?.is_true() { return Err("NotImplementedError: ".into()); }
                     self.class_apply(w.1[0].clone(), Vec::new())
-                }
-                46 if args.len() == 5 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_21(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            46
+            => {
                     let class = self.kind_class(&args[1].plain());
                     let parameter = self.typing_instance(class, vec![args[0].clone()], true)?;
                     let Value::Object(instance) = &parameter else { unreachable!() };
@@ -2551,18 +2900,17 @@ impl<'a> Engine<'a> {
                     if let Some((_, shown)) = fields.iter_mut().find(|(key, _)| key == "\0typing_repr") { *shown = args[0].clone(); }
                     drop(fields);
                     Ok(parameter)
-                }
-                // A member a native forebear carries, read off the
-                // parent walk: it works upon the worth the thing keeps,
-                // reached past the class the walk was made against, as
-                // the parent call of a method spelled out does.
-                44 if w.1.len() == 3 => {
-                    let receiver = w.1[0].clone();
-                    let owner = w.1[1].plain();
-                    let name = w.1[2].plain();
-                    self.class_super(receiver, &owner, &name, args)
-                }
-                44 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_22(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            44
+            => {
                     if args.len() != 1 { return Err("TypeError: __annotate__() requires one argument".into()); }
                     let forward = matches!(args[0].contents(), Value::Small(3));
                     self.data.extend([args[0].clone(), Value::Small(3)]);
@@ -2588,10 +2936,17 @@ impl<'a> Engine<'a> {
                         }
                         _ => Err(self.class_refusal()),
                     }
-                }
-                78 => self.type_initialiser(args),
-                40 => self.class_from_parts(args),
-                41 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_23(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            41
+            => {
                     let opened = self.call_items(args)?;
                     let mut values: Vec<Value> = opened.into_iter().map(|(key, value)| match key {
                         Some(key) => Value::Tie(Rc::new((Value::text(&key), value))), None => value,
@@ -2601,24 +2956,17 @@ impl<'a> Engine<'a> {
                     if let Value::Class(class) = target { self.class_construct(class, values) }
                     else if self.stands_for_kind(&target) { self.class_apply(target, values) }
                     else { Err(self.class_refusal()) }
-                }
-                180 => {
-                    if !args.is_empty() { return Err("TypeError: function takes no arguments".into()); }
-                    let previous = self.compiled_builtins.replace(w.1[6].clone());
-                    let result = self.text_run(true, "eval", vec![w.1[0].clone(), w.1[1].clone()]);
-                    self.compiled_builtins = previous;
-                    result.map_err(|words| self.carried.take().unwrap_or_else(|| Fault::Note(words)))
-                }
-                143 => {
-                    if !args.is_empty() { return Err("TypeError: this code object takes no arguments".into()); }
-                    let result = self.text_run(true, "eval", w.1[..2].to_vec());
-                    match result { Ok(value) => Ok(value), Err(message) => Err(self.carried.take().unwrap_or_else(|| message.into())) }
-                }
-                43 => {
+                },
+            _ => unreachable!(),
+        }
+    }
 
-                    self.class_apply(w.1[0].clone(), args)
-                }
-                200|202 => {
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_24(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            200|202
+            => {
                     // A wrapper's own making: the callable it is given
                     // is kept under a name no program can spell.
                     let Some(Value::Object(o)) = args.first() else { return Err(self.class_refusal()); };
@@ -2636,8 +2984,17 @@ impl<'a> Engine<'a> {
                     }
                     o.fields.borrow_mut().push(("\0callable".to_string(), callable));
                     Ok(Value::Null)
-                }
-                201 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_25(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            201
+            => {
                     // classmethod.__get__: the kept callable is bound to
                     // the class the read came through, as the reference
                     // binds it, never to nothing.
@@ -2646,28 +3003,34 @@ impl<'a> Engine<'a> {
                     let bound = args[1..].iter().find_map(|v| match v { c @ Value::Class(_) => Some(c.clone()), _ => None })
                         .unwrap_or_else(|| args.get(1).cloned().unwrap_or(Value::Null));
                     Ok(Self::adapter(3, vec![callable, bound]))
-                }
-                203 => {
-                    // staticmethod.__get__: the kept callable itself,
-                    // unbound.
-                    let Some(Value::Object(o)) = args.first() else { return Err(self.class_refusal()) };
-                    let Some(callable) = o.fields.borrow().iter().find(|(n, _)| n == "\0callable").map(|(_, v)| v.clone()) else { return Err(self.class_refusal()) };
-                    Ok(callable)
-                }
-                207 if !args.is_empty() => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_26(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            207
+            => {
                     let descriptor = args.remove(0);
                     let Value::Small(mode) = w.1[0] else { return Err(self.class_refusal()); };
                     let Some(part) = ["descriptor.get", "descriptor.set", "descriptor.delete"].get(mode as usize) else { return Err(self.class_refusal()); };
                     let key = self.class_word(part).to_string();
                     let operation = self.class_get(descriptor, &key, true)?;
                     self.class_apply(operation, args)
-                }
-                206 if args.len() == 1 || args.len() == 2 => {
-                    self.native_getset_owner(&w.1, &args[0])?;
-                    let Value::Class(owner) = &w.1[1] else { return Err(self.class_refusal()); };
-                    Err(format!("AttributeError: attribute '{}' of '{}' objects is not writable", w.1[2].plain(), owner.name).into())
-                }
-                251 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_27(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            251
+            => {
                     let mut positions=Vec::new();
                     for (key,item) in self.call_items(args)? {
                         if key.is_some(){return Err("TypeError: descriptor method takes no keyword arguments".into());}
@@ -2684,8 +3047,17 @@ impl<'a> Engine<'a> {
                         return self.type_field_read(args[0].clone(),&field);
                     }
                     self.type_field_write(args[0].clone(),&field,if operation==self.class_word("descriptor.set"){args.get(1).cloned()}else{None})
-                }
-                204 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_28(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            204
+            => {
                     let Value::Class(c) = &w.1[0] else { return Err(self.class_refusal()); };
                     if !args.is_empty() { return Err(format!("TypeError: {}.__subclasses__() takes no arguments ({} given)", c.name, args.len()).into()); }
                     let mut live = Vec::new();
@@ -2696,9 +3068,17 @@ impl<'a> Engine<'a> {
                     }
                     drop(children);
                     Ok(Value::array(live))
-                }
-                42 => Ok(Value::Collection(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))), true)),
-                30 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_29(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            30
+            => {
                     let operation = w.1[0].plain();
                     // State and reduction answer for the thing itself, not
                     // for the native worth beneath it, so they are given
@@ -2716,17 +3096,16 @@ impl<'a> Engine<'a> {
                     self.answered();
                     result
                 },
-                // The maker of a builtin kind: given the class to make a
-                // thing of and what the kind's builtin takes.
-                233 if args.len() == 1 => self.calendar_repr(&args[0]),
-                234 if args.len() == 1 => self.calendar_reduce(&args[0]),
-                237 => self.calendar_replace(args),
-                238 if args.len() == 2 => {
-                    let row = Self::worth_of(&args[0]).ok_or_else(|| Fault::Note("TypeError: invalid struct_time receiver".into()))?;
-                    self.special_dyad(&crate::code::Action::At, &row, &args[1]).map_err(Fault::Note)
-                },
-                14 if w.1.first().is_some_and(|word| word.plain() == "function") && args.is_empty() => Err("TypeError: function.__new__(): not enough arguments".into()),
-                14 if !args.is_empty() => {
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_30(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            14
+            => {
                     let kind = args.remove(0);
                     let word = w.1[0].plain();
                     if word == "struct_time" { return self.calendar_sequence(kind, args); }
@@ -2777,23 +3156,17 @@ impl<'a> Engine<'a> {
                     }
                     let given = if matches!(self.lang.builtins.get(&word), Some(Builtin::Set | Builtin::List | Builtin::Dict)) { Vec::new() } else { args };
                     self.thing_of_kind(c, &word, given)
-                }
-                119 if args.len() == 1 => {
-                    let Value::Small(mode) = w.1[0] else { return Err(self.class_refusal()); };
-                    self.iterator_recipe_next(mode, &args[0])?.ok_or_else(|| self.core_fault("core.exhausted", "").into())
-                }
-                3 | 131 => {
-                    args.insert(0,w.1[1].clone());
-                    self.descriptor_apply(w.1[0].clone(), args)
-                }
-                // A member a builtin kind carries, standing loose: the
-                // first value it is called with is the one it works
-                // upon, and the rest are what the member itself takes.
-                // Called with none at all, it names the kind and itself
-                // as CPython's unbound method does; handed a receiver
-                // of the wrong kind, it names the member, the kind and
-                // the receiver's own, as CPython's descriptor does.
-                29 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_31(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            29
+            => {
                     let member = w.1[1].plain();
                     let word = w.1[0].plain();
                     if word=="type" && member==self.class_word("order") {return self.default_mro_call(args);}
@@ -2913,8 +3286,17 @@ impl<'a> Engine<'a> {
                             }
                         }
                     }
-                }
-                79 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_32(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            79
+            => {
                     if self.call_items(args.clone())?.iter().any(|(key, _)| key.is_some()) {
                         return Err(format!("TypeError: wrapper {}() takes no keyword arguments", self.class_word("descriptor.get")).into());
                     }
@@ -2934,25 +3316,34 @@ impl<'a> Engine<'a> {
                         }
                         _ => Err(self.class_refusal()),
                     }
-                }
-                80 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_33(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            80
+            => {
                     if args.is_empty() { return Err(self.class_refusal()); }
                     let descriptor = args.remove(0);
                     let held = Self::worth_of(&descriptor).ok_or_else(|| self.class_refusal())?;
                     let Value::Adapter(wrapped) = held else { return Err(self.class_refusal()); };
                     if wrapped.0 != 4 { return Err(self.class_refusal()); }
                     self.descriptor_apply(wrapped.1[0].clone(), args)
-                }
-                4 => self.descriptor_apply(w.1[0].clone(), args),
-                8 => self.class_apply(w.1[0].clone(),args),
-                5 => Err(self.core_fault("core.uncallable", "classmethod").into()),
-                13 if args.len() == 1 => {
-                    let Value::Adapter(property) = &w.1[0] else { return Err(self.class_refusal()); };
-                    let mut members = property.1.clone();
-                    members.resize(2, Value::Null); members[1] = args.remove(0);
-                    Ok(Self::adapter(6, members))
-                }
-                10..=12 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_34(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            10..=12
+            => {
                     let Some(subject) = args.first().cloned() else { return Err(self.class_refusal()); };
                     if w.1.first().is_some_and(|owner| owner.plain() == self.class_word("root")) {
                         let (valid, actual) = self.object_receiver(&subject)?;
@@ -2967,11 +3358,17 @@ impl<'a> Engine<'a> {
                     }
                     if w.0 == 10 { self.class_get(subject,name,true) }
                     else { self.class_write(subject,name,if w.0 == 11 {args.get(2).cloned()} else {None},true) }
-                }
-                // The reader of a member that binds: given the thing, or
-                // nothing and the class, it answers what a read through
-                // that thing or class would.
-                15 if w.1.is_empty() => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_35(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            15
+            => {
                     if self.call_items(args.clone())?.iter().any(|(key, _)| key.is_some()) {
                         return Err("TypeError: wrapper __get__() takes no keyword arguments".into());
                     }
@@ -2990,8 +3387,17 @@ impl<'a> Engine<'a> {
                     let owner = match args.first() { Some(Value::Class(class)) => class.clone(), _ => self.root_class() };
                     if matches!(&function, Value::Routine(_)) { self.bind_class_value(function, Some(instance), owner) }
                     else { Ok(Self::adapter(3, vec![function, instance])) }
-                }
-                15 if !args.is_empty() && args.len() <= 2 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_36(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            15
+            => {
                     if matches!(&w.1[0],Value::Adapter(binding) if binding.0==9){return self.bind_super_object(w.1[0].clone(),args[0].clone());}
                     if matches!(&w.1[0],Value::Method(..)) || matches!(&w.1[0],Value::Adapter(bound) if bound.0==131 || bound.0==3 && matches!(&bound.1[0],Value::Routine(_))) {
                         if matches!(args[0].contents(),Value::Null) && args.get(1).map_or(true,|owner|matches!(owner.contents(),Value::Null)){return Err("TypeError: __get__(None, None) is invalid".into());}
@@ -3018,10 +3424,17 @@ impl<'a> Engine<'a> {
                         (_, None) => return Err(self.class_refusal()),
                     };
                     self.bind_class_value(w.1[0].clone(), thing, owner)
-                }
-                17 if args.len() == 2 => self.slot_write(&args[0], &w.1, Some(args[1].clone())),
-                18 if args.len() == 1 => self.slot_write(&args[0], &w.1, None),
-                19 if args.len() == 2 => {
+                },
+            _ => unreachable!(),
+        }
+    }
+
+    #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
+    fn adapter_arm_37(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
+
+        match w.0 {
+            19
+            => {
                     let spec = match &args[1] {
                         Value::Text(spec) => spec.to_string(),
                         other => match Self::worth_of(other).map(|worth| worth.contents()) {
@@ -3034,19 +3447,12 @@ impl<'a> Engine<'a> {
                     };
                     if spec.is_empty() { self.special_text(&args[0], false).map(|shown| Value::text(&shown)).map_err(Fault::Note) }
                     else { Err(Fault::Note(format!("TypeError: unsupported format string passed to {}.__format__", args[0].core_kind()))) }
-                }
-                20..=27 => self.property_work(w.0, args),
-                _ => Err(self.class_refusal()),
-            },
-            Value::Text(word) => {
-                let Some(op) = self.lang.builtins.get(word.as_ref()).copied() else { return Err(self.class_refusal()); };
-                if let Builtin::ClassTool(i) = op { self.class_work(i,args) }
-                else if op == Builtin::SortOf { self.class_type(args) }
-                else { self.class_apply(Value::Native(op, word), args) }
-            }
-            other => Err(self.core_fault("core.uncallable", &other.core_kind()).into()),
+                },
+            _ => unreachable!(),
         }
     }
+
+
     /// Making a thing of a class. A class made by a metaclass is called
     /// through that metaclass's own call, which decides what comes of it.
     pub(super) fn typing_module(&mut self) -> Value {
@@ -4420,7 +4826,7 @@ impl<'a> Engine<'a> {
                 let class = object.class_now();
                 let ordinary = Self::kind_beneath(&class).as_deref().is_none_or(|word| word == self.class_word("root"))
                     && self.module_holding(&subject).is_none()
-                    && !object.fields.borrow().iter().any(|(key, _)| key.starts_with('\0'));
+                    && !object.fields.borrow().iter().any(|(key, _)| key.as_bytes().first() == Some(&0));
                 if ordinary && (plain || self.class_value(&class, self.class_word("get")).is_none()) {
                     let member = self.class_value(&class, name);
                     if name == self.class_word("kind") {
@@ -4743,7 +5149,7 @@ impl<'a> Engine<'a> {
                 if Self::own_kind(&owner).is_none() && Self::kind_beneath(&owner).map_or(true, |kind| kind == self.class_word("root")) {
                     let own = {
                         let fields = instance.fields.borrow();
-                        if fields.iter().any(|(key, _)| key.starts_with('\0')) { None }
+                        if fields.iter().any(|(key, _)| key.as_bytes().first() == Some(&0)) { None }
                         else { fields.iter().find(|(key, _)| key == name).map(|(_, value)| value.clone()) }
                     };
                     if let Some(held) = own {
@@ -6513,10 +6919,10 @@ impl<'a> Engine<'a> {
             else {return Err(self.missing_member(&subject,name));}
             *storage.borrow_mut()=Value::Map(Rc::new(edited.into()));return Ok(Value::Null);
         }
-        if self.lang.bind_names && !name.starts_with("__") && !name.starts_with('\0') {
+        if self.lang.bind_names && !name.as_bytes().starts_with(b"__") && name.as_bytes().first() != Some(&0) {
             if let Value::Object(object) = &subject {
                 let class = object.class_now();
-                let compact = { let fields = object.fields.borrow(); fields.len() < 30 && !fields.iter().any(|entry| entry.0.starts_with('\0')) };
+                let compact = { let fields = object.fields.borrow(); fields.len() < 30 && !fields.iter().any(|entry| entry.0.as_bytes().first() == Some(&0)) };
                 if compact && Self::kind_beneath(&class).is_none() && self.module_holding(&subject).is_none()
                     && self.slots_allow(&class, name)
                     && (plain || self.class_value(&class, self.class_word(if value.is_some() { "set" } else { "remove" })).is_none())

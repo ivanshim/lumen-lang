@@ -173,7 +173,7 @@ pub struct Table {
     pub dyadic: HashMap<String, Infix>,
     pub monadic: HashMap<String, Infix>,
     pub precedence: HashMap<String, u32>,
-    pub prims: HashMap<String, Prim>,
+    pub prims: HashMap<String, Prim, FxBuildHasher>,
     builtin_continuations: HashMap<String, Vec<String>>,
     /// Method spellings indexed once from the immutable definition.
     pub method_names: HashMap<String, &'static str>,
@@ -618,7 +618,7 @@ impl Table {
             dyadic: HashMap::new(),
             monadic: HashMap::new(),
             precedence: HashMap::new(),
-            prims: HashMap::new(),
+            prims: HashMap::default(),
             builtin_continuations: HashMap::new(),
             method_names: HashMap::new(),
             prim_words: Vec::new(),
