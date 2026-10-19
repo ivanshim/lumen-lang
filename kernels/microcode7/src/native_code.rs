@@ -91,7 +91,8 @@ impl<'a> Machine<'a> {
         self.idents.extend(fresh.iter().map(|word| format!("\0names/{beginning}/{word}")));
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         let (near, outer) = match local { Some(local) => (local, Some(global)), None => (global, None) };
-        self.readings.push(Namebook { near, outer, from: beginning, upto: beginning + fresh.len(), declared: built.outer_aliases.clone() });
+        let builtins = built.program.born.clone().unwrap_or_else(|| Value::Mutable(self.natives_kept(), true));
+        self.readings.push(Namebook { builtins, near, outer, from: beginning, upto: beginning + fresh.len(), declared: built.outer_aliases.clone() });
         let saved = self.reading_now.replace(self.readings.len() - 1);
         let file = code.written_in.as_deref().unwrap_or("<string>");
         let result = self.text_concluded(&built, file, usize::from(flags & 1 != 0), false);

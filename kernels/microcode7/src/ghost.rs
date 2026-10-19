@@ -134,6 +134,7 @@ thread_local! {
     // Every reason to look at the weak holds at a step, in one cell:
     // a step asks once and stands down where none is set.
     static GHOST_STATE: Cell<u8> = const { Cell::new(0) };
+
     static LOST: Cell<bool> = const { Cell::new(false) };
     static FAREWELLS: RefCell<Vec<(Rc<Thing>, Value)>> = const { RefCell::new(Vec::new()) };
     static HALF_WALKS: RefCell<Vec<Rc<RefCell<Suspension>>>> = const { RefCell::new(Vec::new()) };
@@ -561,7 +562,7 @@ pub(crate) fn form_holds(form: &Form, out: &mut Vec<Knot>) {
         }
         Form::Read(_) | Form::Take(_) | Form::Release(_) | Form::Glance(_)
         | Form::Bump { .. } | Form::Again | Form::Missing(_) | Form::Share(_)
-        | Form::Forget(_) | Form::Ready(_) | Form::Remark(..) => {}
+        | Form::Forget(_) | Form::RemoveName(_) | Form::Ready(_) | Form::Remark(..) => {}
     }
 }
 

@@ -74,3 +74,16 @@ It records the provenance path and digest, and refuses to replace an existing
 binding. The inventory is an explicit assertion from the original run's owner;
 its hashes verify the files, not which interpreter produced them. If the
 original release cannot be established, rerun into a new directory instead.
+
+Every reference file is collected the way regrtest collects a test: it is
+imported as the library module `test.<name>` (an executable package as
+`test.<pkg>`) and its tests are loaded through unittest's loader, which honours
+the module's `load_tests` hook (a package's `__init__` included), then run with
+the text runner. The file's own `if __name__ == "__main__"` block never runs,
+and the module keeps the `__name__`, `__file__` and `__spec__` that a regrtest
+import gives it. `reference_entry.py` is the interpreter entry;
+`reference_layout.py` stages the suite beside the library without changing
+reference files or module names. Both count tools use this invocation. The
+Lambda checker uses the same helpers when packaged; `lambda-reference.patch`
+records the coordinator handler and packager update. Older checkouts without
+these helpers retain their old runner.

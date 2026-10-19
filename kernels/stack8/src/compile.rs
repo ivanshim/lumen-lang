@@ -537,6 +537,8 @@ pub struct Compiler<'a> {
     registry: &'a mut Registry,
     pieces: Vec<Piece>,
     counter: usize,
+    /// Call temporaries must not renumber the identities of nested code.
+    call_temporaries: usize,
     yield_operand: bool,
     forbids_await: bool,
     awkward_place: bool,
@@ -998,7 +1000,7 @@ fn compile_pass(
         gives_back.extend(table.gives_back.iter().cloned());
     }
     let future_bits = table.future_bits;
-    let mut a = Compiler { image_modes: i64::from(wants_value) | (i64::from(interactive) << 1) | (i64::from(table.allow_top_level_await) << 2) | (table.optimize.clamp(0, 2) << 8), source_content: Rc::new(std::cell::OnceCell::new()), source_tokens: if discovering { Rc::from([]) } else { Rc::from(tokens) }, reading_annotation: false, class_annotation_read: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, finally_loop_bases: Vec::new(), except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, ast_expression_starts: AST_POSITIONS.with(|entries| (!entries.borrow().is_empty()).then(Vec::new)), spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decorated_at: None, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
+    let mut a = Compiler { call_temporaries: 0, image_modes: i64::from(wants_value) | (i64::from(interactive) << 1) | (i64::from(table.allow_top_level_await) << 2) | (table.optimize.clamp(0, 2) << 8), source_content: Rc::new(std::cell::OnceCell::new()), source_tokens: if discovering { Rc::from([]) } else { Rc::from(tokens) }, reading_annotation: false, class_annotation_read: false, annotation_namespace: None, reading_generic_class: false, generic_class_parameters: Vec::new(), future_annotations: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: table.allow_flufl || future_bits & 0x400000 != 0, syntax_try_nesting: 0, syntax_finally_nesting: 0, finally_loop_bases: Vec::new(), except_star_nesting: 0, in_lazy_from: false, forbids_await: false, module_annotation_marks: HashMap::new(), module_annotations: Vec::new(), pending_annotations: Vec::new(), starred_annotations: Vec::new(), variadic_annotation_sites: std::collections::HashSet::new(), annotation_target: None, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_values: 0, generator_source: None, plans: plans.clone(), discovering, class_names: Vec::new(), default_depth: None, class_globals: Vec::new(), class_seen: Vec::new(), importing: false, gathered: Vec::new(), method_self: None, yield_operand: false, writing_place: false, interactive, awkward_place: false, for_binding: None, uncarried: Vec::new(), lang, tokens, ast_expression_starts: AST_POSITIONS.with(|entries| (!entries.borrow().is_empty()).then(Vec::new)), spelled, pos: 0, registry: table, pieces: vec![top], counter: 0, comprehension_names: Vec::new(), comprehension_targets: Vec::new(), comprehension_sources: 0, bare_named_blocked: false, namedexpr_value: false, string_sum_right: false, declared_at: 0, decorated_at: None, carrying: Vec::new(), pending_types: Vec::new(), opening_doc_span: None, within, class_depth: 0, shared_args, arg_names, gives_back, promoted: Vec::new(), before, in_program: false, keyed: Vec::new(), written_in, read_in, read_statics: Vec::new(), waiting: None, stepping: None, stood: None, giving_cells: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None };
     if wants_value {
         // One expression and nothing after it, left where the reading
         // finds it; the text may open and close with line ends.
@@ -1461,6 +1463,23 @@ impl<'a> Compiler<'a> {
         self.note_seen(name, SEEN_READ);
         let renamed = self.comprehension_names.iter().rev().find(|(n, _)| n == name).map(|(_, own)| own.clone());
         let name = renamed.as_deref().unwrap_or(name);
+        // Text read inside a routine stands where its caller stands: the
+        // caller's own locals answer before the caller's globals, as the
+        // reference reads a frame's locals before its globals, unless the
+        // text itself declared the name `global`. A name the text hands
+        // over as one of the caller's globals is told from that by its
+        // module slot, so a caller local of the same spelling still wins.
+        if self.lang.closes_over && !self.discovering {
+            let unit = self.pieces.last().expect("a unit");
+            let given_global = unit.globals.iter().any(|(n, to)| n == name && to.starts_with("\0module:"));
+            let said_global = unit.globals.iter().any(|(n, to)| n == name && !to.starts_with("\0module:"));
+            if given_global && !said_global {
+                if let Some(at) = Self::unblocked(unit, name) {
+                    let far = self.registry.slot(name);
+                    return Cell { free: false, ident: Rc::from(name), near: LocalSlots::Single(at), far, moving };
+                }
+            }
+        }
         if let Some(cell) = self.global_cell(name) {
             return Cell { moving, ..cell };
         }
@@ -10968,8 +10987,9 @@ impl<'a> Compiler<'a> {
                     // property, a class's own value, a place in an array
                     // or what a call gave back is put in a holding place
                     // as it stands, and a write cannot reach it there.
+                    // Python's global mapping hooks run before the right operand.
                     let named = match self.piece().instrs[from..] {
-                        [Instr::Read(ref cell)] if !cell.moving => Some(cell.clone()),
+                        [Instr::Read(ref cell)] if !cell.moving && !lang.shadow_builtins => Some(cell.clone()),
                         _ => None,
                     };
                     if named.is_some() {
@@ -11814,7 +11834,17 @@ impl<'a> Compiler<'a> {
                             // spelled the same, where the language says so.
                             let bound = self.builtin_shadowed(&tok.lexeme);
                             let native = if bound { None } else { lang.builtins.get(&tok.lexeme).copied() };
-                            if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
+                            if lang.shadow_builtins && native.is_none() {
+                                self.call_temporaries += 1;
+                                let name = format!("#callee{}", self.call_temporaries);
+                                let saved = self.cell_to_write(&name);
+                                self.read_callee(&tok.lexeme);
+                                self.put(Instr::SaveCallable(saved.clone()));
+                                let argc = self.arguments_of(&tok.lexeme, &call)?;
+                                self.read(&name);
+                                self.put(Instr::Forget(saved));
+                                self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), argc + 1);
+                            } else if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace)) {
                                 // push(arr, v), put(arr, i, v): the array is named.
                                 let target = match self.look().shape {
                                     Shape::Instr => self.take().lexeme,
@@ -11882,6 +11912,14 @@ impl<'a> Compiler<'a> {
                                     }
                                 }
                             } else {
+                                let saved = if lang.shadow_builtins && self.pieces.last().is_some_and(|unit| !unit.outermost)
+                                    && !self.in_class_body() && !matches!(native, Some(Builtin::Text(_))) {
+                                    self.call_temporaries += 1;
+                                    let name = format!("#builtin{}", self.call_temporaries);
+                                    let cell = self.cell_to_write(&name);
+                                    self.put(Instr::PrepareBuiltin(cell.clone(), Rc::from(tok.lexeme.as_str())));
+                                    Some(cell)
+                                } else { None };
                                 let argc = self.arguments_of(&tok.lexeme, &call)?;
                                 if matches!(native, Some(Builtin::Bytes(_))) && self.arg_names.contains_key(&tok.lexeme) {
                                     self.read_callee(&tok.lexeme);
@@ -11898,6 +11936,12 @@ impl<'a> Compiler<'a> {
                                         if !lang.trace_fields.is_empty() { self.put(self.expression_location(origin)); }
                                         self.call(&tok.lexeme, argc)?;
                                     }
+                                }
+                                if let Some(cell) = saved {
+                                    if let Some(Instr::Act(action @ Action::Builtin(..), count)) = self.piece().instrs.last().cloned() {
+                                        self.piece().instrs.pop();
+                                        self.put(Instr::PreparedAct(action, count, cell));
+                                    } else { self.put(Instr::Forget(cell)); }
                                 }
                             }
                         }
@@ -12157,9 +12201,12 @@ impl<'a> Compiler<'a> {
                 self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
             } else { match named.as_slice() {
                 [Instr::Read(slot)] => {
-                    if targets { self.put(Instr::Read(slot.clone())); self.discard(); }
                     let held = self.cell_to_write(&slot.ident.to_string());
-                    self.put(Instr::Forget(held));
+                    if targets && !self.lang.class_builder.is_empty() { self.put(Instr::DeleteName(held)); }
+                    else {
+                        if targets { self.put(Instr::Read(slot.clone())); self.discard(); }
+                        self.put(Instr::Forget(held));
+                    }
                 }
                 [.., Instr::Act(Action::At, 2)] if targets && !self.lang.class_builder.is_empty() && self.in_class_body() => {
                     // A computed object supplied by the class book is already
@@ -14434,7 +14481,7 @@ fn word_alone(w: &Instr) -> bool {
     };
     match w {
         Instr::Const(_) | Instr::Read(_) | Instr::Glance(_) | Instr::Write(_) | Instr::Skip(_)
-        | Instr::Missing(_) | Instr::Unwritten(_) | Instr::Line(_) | Instr::Location(..) | Instr::Forget(_)
+        | Instr::Missing(_) | Instr::Unwritten(_) | Instr::Line(_) | Instr::Location(..) | Instr::Forget(_) | Instr::SaveCallable(_)
         | Instr::Emptied(_) | Instr::Shed | Instr::Nothing | Instr::Ready(_) | Instr::Bump { .. } => true,
         Instr::Act(op, _) => quiet(op),
         Instr::Dyad { op, .. } | Instr::SkipCmp { op, .. } => quiet(op),

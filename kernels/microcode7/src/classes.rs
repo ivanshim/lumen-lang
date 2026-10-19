@@ -2700,7 +2700,10 @@ impl<'a> Machine<'a> {
                     }
                     122 => {
                         if !values.is_empty() { return Err(String::from("TypeError: function takes no arguments").into()); }
-                        self.prim(Prim::Weigh, "eval", &[kept[0].clone(), kept[1].clone()]).map_err(Escape::from)
+                        let saved = self.module_function_builtins.replace(kept[6].clone());
+                        let result = self.text_performed(true, "eval", &kept[..2]);
+                        self.module_function_builtins = saved;
+                        result.map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)))
                     }
                     143 => {
                         if !values.is_empty() { return Err(String::from("TypeError: this code object takes no arguments").into()); }
@@ -3406,7 +3409,10 @@ impl<'a> Machine<'a> {
                 };
                 if recognized {
                     let namespace = options[1].clone().ok_or_else(|| String::from("TypeError: function() missing required argument 'globals'"))?;
-                    if !matches!(namespace.settled(), Value::Dict(_)) { return Err(String::from("TypeError: function() argument 'globals' must be dict").into()); }
+                    if !matches!(namespace.settled(), Value::Dict(_))
+                        && !Self::underlying(&namespace).is_some_and(|worth| matches!(worth.settled(), Value::Dict(_))) {
+                        return Err(String::from("TypeError: function() argument 'globals' must be dict").into());
+                    }
                     let title = match options[2].as_ref().map(Value::settled) {
                         Some(title @ Value::Text(_)) => title,
                         None | Some(Value::Nil) => Value::text("<module>"),
@@ -3425,13 +3431,20 @@ impl<'a> Machine<'a> {
                     }
                     let keyword_defaults = options[5].as_ref().map(Value::settled).unwrap_or(Value::Nil);
                     match keyword_defaults { Value::Nil | Value::Dict(_) => {}, _ => return Err("TypeError: arg 6 (kwdefaults) must be None or dict".to_owned().into()) }
-                    return Ok(Self::wrap(122, vec![value, namespace, title, defaults, closure, keyword_defaults]));
+                    let builtin_word = self.table.strings("ext.system.module.builtins").first().cloned().unwrap_or_default();
+                    let stored = self.builtin_entry(&Rc::new(RefCell::new(namespace.clone())), &builtin_word)?;
+                    let captured = match stored { Some(value) => value, None => self.builtins_here() };
+                    let natives = self.builtin_dictionary(captured)?;
+                    return Ok(Self::wrap(122, vec![value, namespace, title, defaults, closure, keyword_defaults, natives]));
                 }
             }
             let Some(Value::Wrapped(7, body)) = options[0].as_ref().map(Value::settled) else { return Err(String::from("TypeError: function() argument 'code' must be code").into()); };
             let Some(Value::Routine(origin) | Value::Bound(origin, _)) = body.first() else { return Err(String::from("TypeError: function() argument 'code' must be code").into()); };
             let Some(globals) = options[1].clone() else { return Err(String::from("TypeError: function() missing required argument 'globals'").into()); };
-            if !matches!(globals.settled(), Value::Dict(_)) { return Err(String::from("TypeError: function() argument 'globals' must be dict").into()); }
+            if !matches!(globals.settled(), Value::Dict(_))
+                && !Self::underlying(&globals).is_some_and(|worth| matches!(worth.settled(), Value::Dict(_))) {
+                return Err(String::from("TypeError: function() argument 'globals' must be dict").into());
+            }
             let mut fresh = (**origin).clone();
             fresh.globals_rebound = true;
             fresh.doc = fresh.literals.first().filter(|_| fresh.flags & (1 << 26) != 0)
@@ -3489,7 +3502,7 @@ impl<'a> Machine<'a> {
             };
             fresh.globe = Some(globals.clone());
             let word = self.table.strings("ext.system.module.builtins").first().cloned().unwrap_or_default();
-            fresh.born = Some(match self.mapping_read(&globals, &word)? {
+            fresh.born = Some(match self.builtin_entry(&Rc::new(RefCell::new(globals.clone())), &word)? {
                 Some(value) => value,
                 None => self.builtins_here(),
             });
@@ -3991,17 +4004,15 @@ impl<'a> Machine<'a> {
         if let Some(entry)=self.written_over.get(&Self::written_key(value,&self.outermost)) {return entry.4.clone();}
         match value {Value::Bound(code,_)|Value::Routine(code)|Value::Method(code, _, _)=>code.clone(),_=>unreachable!("only a routine runs code")}
     }
-    /// The builtins a routine reaches its unbound names through: what
-    /// the dictionary it was handed keeps under that name, else the
-    /// builtins in force where it was made, else the kernel's own
-    /// dictionary.
+    /// Expose the creation-time builtins, retaining that namespace when
+    /// the program changes its globals' __builtins__ entry.
     fn routine_builtins(&mut self,code:&Routine)->Res {
+        if let Some(born) = &code.born { return self.builtin_dictionary(born.clone()); }
         if let Some(word)=self.table.strings("ext.system.module.builtins").first().map(String::as_str).map(str::to_owned) {
             if let Some(globe)=&code.globe {
-                if let Some(held)=self.mapping_read(globe,&word)?{return Ok(held);}
+                if let Some(held) = self.builtin_entry(&Rc::new(RefCell::new(globe.clone())), &word)? { return self.builtin_dictionary(held); }
             }
         }
-        if let Some(born)=&code.born{return Ok(born.clone());}
         Ok(Value::Mutable(self.natives_kept(),true))
     }
     /// What a routine holds of its own under a name: its name, full name
@@ -4750,6 +4761,7 @@ impl<'a> Machine<'a> {
         None
     }
 
+
     fn annotation_entry(&mut self, worth: Value, symbolic: bool, declaring: Option<Rc<Blueprint>>) -> Res {
         let spelling = match &worth { Value::Routine(code) | Value::Bound(code, _) => code.annotation_spelling.clone(), _ => None };
         let outer_symbolic = self.symbolic_annotation.take();
@@ -4782,8 +4794,15 @@ impl<'a> Machine<'a> {
         let reading = self.armed_names.take();
         let mut pairs=Vec::new();
         // The entry is kept in a cell, as the blueprint's members are; keys
-        // and routines alternate along it.
-        if let Some(Value::Vector(row))=Self::own_entry(b,crate::data::ANNOTATE_WORD).map(|kept|kept.settled()) {
+        // and routines alternate along it. A blueprint rebuilt from its own
+        // namespace keeps only the public adapter, so the row is read from
+        // that as well.
+        let row=Self::own_entry(b,crate::data::ANNOTATE_WORD).map(|kept|kept.settled())
+            .or_else(|| Self::own_entry(b, "__annotate_func__").and_then(|kept| match kept.settled() {
+                Value::Wrapped(44, contents) => contents.first().map(|first| first.settled()),
+                _ => None,
+            }));
+        if let Some(Value::Vector(row))=row {
             for pair in row.chunks(2) {
                 let [key,worth]=pair else{break};
                 let worth = worth.settled();
@@ -5019,6 +5038,10 @@ impl<'a> Machine<'a> {
         if source_module {
             if let Some(directory) = self.directory_attribute(&value, key) { return Ok(directory); }
         }
+        if let Some(proxy) = self.locals_proxy(&value) {
+            if Self::locals_member(key) { return Ok(Value::Member(Rc::new(Value::Thing(proxy)), key.to_owned())); }
+        }
+        if let Some(answer) = self.coroutine_attribute(&value.settled(), key)? { return Ok(answer); }
         if self.table.spells("ext.stmt.class.detail.text_signature", key) {
             if let Some(text) = self.builtin_text_signature(&value) { return Ok(Value::text(text)); }
         }
@@ -5148,6 +5171,7 @@ impl<'a> Machine<'a> {
             let selected = match key {
                 "__code__" => Some(fields[0].clone()),
                 "__globals__" => Some(fields[1].clone()),
+                "__builtins__" => Some(fields[6].clone()),
                 "__name__" => Some(fields[2].clone()),
                 "__qualname__" => Some(Value::text("<module>")),
                 "__defaults__" => Some(fields[3].clone()),
@@ -6940,6 +6964,32 @@ impl<'a> Machine<'a> {
             }
             return Err(format!("AttributeError: 'traceback' object attribute '{key}' is read-only").into());
         }
+        if let Value::Thing(frame) = &subject {
+            if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.blueprint())) {
+                match key {
+                    "f_trace" => {
+                        Self::change_entry(&mut frame.holds.borrow_mut(), key, Some(replacement.unwrap_or(Value::Nil)));
+                        return Ok(Value::Nil);
+                    }
+                    "f_trace_lines" | "f_trace_opcodes" => {
+                        let Some(held) = replacement else {
+                            if key == "f_trace_lines" { return Err(String::from("TypeError: can't delete numeric/char attribute").into()); }
+                            return Err(format!("AttributeError: attribute '{key}' of 'frame' objects cannot be deleted").into());
+                        };
+                        if !matches!(held.settled(), Value::Flag(_)) { return Err(String::from("TypeError: attribute value type must be bool").into()); }
+                        Self::change_entry(&mut frame.holds.borrow_mut(), key, Some(held));
+                        return Ok(Value::Nil);
+                    }
+                    "f_lineno" => {
+                        if replacement.is_none() { return Err(String::from("AttributeError: attribute 'f_lineno' of 'frame' objects cannot be deleted").into()); }
+                    }
+                    "f_code" | "f_locals" | "f_globals" | "f_builtins" | "f_back" | "f_lasti" => {
+                        return Err(format!("AttributeError: attribute '{key}' of 'frame' objects is not writable").into());
+                    }
+                    _ => {}
+                }
+            }
+        }
         // Native lowering must still honor namespace changes made after import.
         if self.rules.names_shadow_builtins && self.table.prims.contains_key(key) {
             if let Some(module) = self.namespace_holding(&subject) {
@@ -7717,7 +7767,16 @@ impl<'a> Machine<'a> {
             _ => None,
         };
         if let Some(owner) = concrete_module { return Value::Blueprint(owner); }
-        let word=if matches!(value, Value::Intrinsic(Prim::Textual(_), name) if name.contains('.')) { "method_descriptor".to_owned() } else if self.is_async_generator(value) { String::from("async_generator") } else { match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()} };
+        // A slot a class declares is a data member carried by the class,
+        // named as the reference names it, so that a reader asking
+        // whether a field has a default finds a descriptor, not a value.
+        let slot_word = match value {
+            Value::Wrapped(32, fields) if matches!(fields.get(1), Some(Value::Blueprint(_))) => {
+                Some(if matches!(fields.get(2), Some(Value::Small(-2))) { "getset_descriptor" } else { "member_descriptor" })
+            }
+            _ => None,
+        };
+        let word=if let Some(slot)=slot_word { slot.to_owned() } else if matches!(value, Value::Intrinsic(Prim::Textual(_), name) if name.contains('.')) { "method_descriptor".to_owned() } else if self.is_async_generator(value) { String::from("async_generator") } else { match self.namespace_holding(value) {Some(_)=>String::from("module"),None=>value.kind_word()} };
         // A table spelling that very kind answers with its intrinsic
         // word, so that the kind asked for and the kind answered with
         // are one value: `type(enumerate(r)) is enumerate`.

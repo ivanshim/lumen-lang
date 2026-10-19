@@ -383,7 +383,22 @@ impl Machine<'_> {
         let Some(native_loader @ Value::Blueprint(_)) = self.imported.get("_imp").and_then(|module| read_export(module, "_NativeLoader")) else { return Ok(()); };
         let constructor = self.imported.get("importlib._bootstrap").and_then(|bootstrap| read_export(bootstrap, "ModuleSpec"));
         let spec = match constructor {
-            Some(callable @ Value::Blueprint(_)) => self.core_run(&callable, vec![Value::text(qualified), native_loader.clone()])?,
+            Some(callable @ Value::Blueprint(_)) => {
+                let made = self.core_run(&callable, vec![Value::text(qualified), native_loader.clone()])?;
+                let origin = match value {
+                    Value::Thing(namespace) => namespace.holds.borrow().iter().find(|entry| entry.0 == "__file__").map(|entry| entry.1.settled()).unwrap_or(Value::Nil),
+                    _ => Value::Nil,
+                };
+                if let Value::Thing(specification) = &made {
+                    let located = !matches!(origin, Value::Nil);
+                    let mut holds = specification.holds.borrow_mut();
+                    for (key, setting) in [("origin", origin), ("_set_fileattr", Value::Flag(located))] {
+                        if let Some(entry) = holds.iter_mut().find(|entry| entry.0 == key) { entry.1 = setting; }
+                        else { holds.push((key.to_string(), setting)); }
+                    }
+                }
+                made
+            }
             _ => Value::Nil,
         };
         if let Value::Thing(namespace) = value {

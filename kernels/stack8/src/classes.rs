@@ -2536,7 +2536,10 @@ impl<'a> Engine<'a> {
                 }
                 180 => {
                     if !args.is_empty() { return Err("TypeError: function takes no arguments".into()); }
-                    self.text_run(true, "eval", vec![w.1[0].clone(), w.1[1].clone()]).map_err(Fault::from)
+                    let previous = self.compiled_builtins.replace(w.1[6].clone());
+                    let result = self.text_run(true, "eval", vec![w.1[0].clone(), w.1[1].clone()]);
+                    self.compiled_builtins = previous;
+                    result.map_err(|words| self.carried.take().unwrap_or_else(|| Fault::Note(words)))
                 }
                 143 => {
                     if !args.is_empty() { return Err("TypeError: this code object takes no arguments".into()); }
@@ -3185,6 +3188,12 @@ impl<'a> Engine<'a> {
         Ok(Value::tuple(kept))
     }
     pub(super) fn class_make(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
+        if self.locals_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &c)) {
+            if args.len() != 1 { return Err(format!("TypeError: FrameLocalsProxy expected 1 argument, got {}", args.len()).into()); }
+            let Value::Object(frame) = args[0].contents() else { return Err(format!("TypeError: expect frame, not {}", args[0].core_kind()).into()); };
+            if !self.frame_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.class_now())) { return Err(format!("TypeError: expect frame, not {}", args[0].core_kind()).into()); }
+            return Ok(self.locals_make(&frame));
+        }
         self.validate_class_spreads(&c, &args)?;
         if self.lang.type_parameters && Self::own_kind(&c).as_deref() == Some("Union") {
             return Err("TypeError: cannot create 'typing.Union' instances".into());
@@ -3232,8 +3241,8 @@ impl<'a> Engine<'a> {
                 if let Value::Object(object) = &code {
                     if self.code_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &object.class_now())) {
                         let globals = parts[1].clone().ok_or_else(|| "TypeError: function() missing required argument 'globals'".to_string())?;
-                        if !matches!(globals.contents(), Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
-                        let name = match parts[2].as_ref().map(|value| value.contents()) {
+                        if !matches!(Self::worth_of(&globals.contents()).unwrap_or_else(|| globals.contents()).contents(), Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
+                        let name = match parts[2].as_ref().map(Value::contents) {
                             None | Some(Value::Null) => Value::text("<module>"),
                             Some(name @ Value::Text(_)) => name,
                             _ => return Err("TypeError: arg 3 (name) must be None or string".into()),
@@ -3255,14 +3264,18 @@ impl<'a> Engine<'a> {
                         };
                         let keyword_defaults = parts[5].clone().unwrap_or(Value::Null);
                         if !matches!(keyword_defaults.contents(), Value::Null | Value::Map(_)) { return Err("TypeError: arg 6 (kwdefaults) must be None or dict".into()); }
-                        return Ok(Self::adapter(180, vec![code, globals, name, defaults, closure, keyword_defaults]));
+                        let word = self.lang.module_builtins.first().cloned().unwrap_or_default();
+                        let captured = self.book_builtins(&Rc::new(RefCell::new(globals.clone())), &word)?
+                            .unwrap_or_else(|| self.ambient_builtins());
+                        let builtins = self.as_builtins_dictionary(captured)?;
+                        return Ok(Self::adapter(180, vec![code, globals, name, defaults, closure, keyword_defaults, builtins]));
                     }
                 }
             }
             let Some(Value::Adapter(code)) = parts[0].as_ref().map(|value| value.contents()) else { return Err("TypeError: function() argument 'code' must be code".into()); };
             let (7, Some(Value::Routine(origin))) = (code.0, code.1.first()) else { return Err("TypeError: function() argument 'code' must be code".into()); };
             let Some(globals) = parts[1].clone() else { return Err("TypeError: function() missing required argument 'globals'".into()); };
-            if !matches!(globals.contents(), Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
+            if !matches!(Self::worth_of(&globals.contents()).unwrap_or_else(|| globals.contents()).contents(), Value::Map(_)) { return Err("TypeError: function() argument 'globals' must be dict".into()); }
             let mut made = (**origin).clone();
             made.globals_rebound = true;
             made.doc = if made.code_flags & 0x4000000 != 0 {
@@ -3300,7 +3313,7 @@ impl<'a> Engine<'a> {
             if let Some(named) = self.captured_title(&globals) { made.home = Some(named); }
             made.globe = Some(globals.clone());
             let builtins_word = self.lang.module_builtins.first().cloned().unwrap_or_default();
-            made.born = Some(match self.dyn_lookup(&globals.contents(), &builtins_word)? {
+            made.born = Some(match self.book_builtins(&Rc::new(RefCell::new(globals.clone())), &builtins_word)? {
                 Some(held) => held,
                 None => self.ambient_builtins(),
             });
@@ -4185,6 +4198,10 @@ impl<'a> Engine<'a> {
                 return Ok(Self::adapter(3, vec![member, Value::Class(kind)]));
             }
         }
+        if self.locals_proxy(&subject).is_some()
+            && ["keys", "values", "items", "get", "pop", "setdefault", "update", "copy", "__reversed__", "__getitem__", "__setitem__", "__delitem__", "__contains__", "__iter__", "__len__", "__or__", "__ror__", "__ior__", "__repr__", "__reduce__", "__reduce_ex__"].contains(&name) {
+            return Ok(Value::ValueMethod(Rc::new((subject, name.to_string()))));
+        }
         // A builtin accessor answers for the text signature it announces,
         // the word the reference reads to recover its parameters.
         if !self.class_word("text_signature").is_empty() && name == self.class_word("text_signature") {
@@ -4670,6 +4687,7 @@ impl<'a> Engine<'a> {
                 match name {
                     "__code__" => return Ok(function.1[0].clone()),
                     "__globals__" => return Ok(function.1[1].clone()),
+                    "__builtins__" => return Ok(function.1[6].clone()),
                     "__name__" => return Ok(function.1[2].clone()),
                     "__qualname__" => return Ok(Value::text("<module>")),
                     "__defaults__" => return Ok(function.1[3].clone()),
@@ -6102,16 +6120,14 @@ impl<'a> Engine<'a> {
     /// Where a routine keeps the namespace the program handed it in
     /// place of the one it was made with.
     const HANDED_BOOK: &'static str = "\0 namespace";
-    /// The builtins a routine answers with: what its own dictionary
-    /// keeps under that name where it holds one, else the builtins in
-    /// force where it was built, else the module's own dictionary. A
-    /// module handed there stands for the dictionary it keeps.
+    /// Return the builtins captured when the routine was created, even
+    /// after its globals replace the builtin namespace.
     fn routine_builtins(&mut self, program: &Rc<Routine>) -> Flow<Value> {
         let word = match self.lang.module_builtins.first() { Some(word) => word.clone(), None => return Ok(self.native_dict()) };
-        if let Some(globe) = &program.globe {
-            if let Some(held) = self.dyn_lookup(globe, &word)? { return self.as_builtins_dictionary(held); }
-        }
         if let Some(born) = &program.born { return self.as_builtins_dictionary(born.clone()); }
+        if let Some(globe) = &program.globe {
+            if let Some(held) = self.book_builtins(&Rc::new(RefCell::new(globe.clone())), &word)? { return self.as_builtins_dictionary(held); }
+        }
         Ok(self.native_dict())
     }
     /// A module handed over where a dictionary of builtins is wanted
@@ -6288,8 +6304,14 @@ impl<'a> Engine<'a> {
         self.class_annotation_values(c, false)
     }
     fn class_annotation_values(&mut self, c: &Rc<Class>, forward: bool) -> Flow<Value> {
-        // The entry stands in a cell, as a class's members do.
-        let kept=c.shared.borrow().iter().find(|(n,_)|n==crate::code::ANNOTATE_WORD).map(|(_,v)|v.contents());
+        // The entry stands in a cell, as a class's members do; a class
+        // rebuilt from its own namespace keeps only the public adapter,
+        // so the row is read from that as well.
+        let kept=c.shared.borrow().iter().find(|(n,_)|n==crate::code::ANNOTATE_WORD).map(|(_,v)|v.contents())
+            .or_else(|| c.shared.borrow().iter().find(|(n,_)|n=="__annotate_func__").and_then(|(_,v)| match v.contents() {
+                Value::Adapter(parts) if parts.0 == 44 => parts.1.first().map(|first| first.contents()),
+                _ => None,
+            }));
         let reading = self.armed_names.take();
         let mut pairs=Vec::new();
         if let Some(Value::Array(row))=kept {
@@ -6307,6 +6329,7 @@ impl<'a> Engine<'a> {
         let made=Value::Map(Rc::new(pairs.into()));
         Ok(self.keep_collection(made))
     }
+
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
         if self.module_holding(&subject).is_some() { self.changed_module_positions.borrow_mut().clear(); }
         self.has_nonstring_class_keys |= name == "\0type-keys";
@@ -6370,6 +6393,41 @@ impl<'a> Engine<'a> {
                 };
             }
             return Err("AttributeError: readonly attribute".into());
+        }
+        if let Value::Object(frame) = &subject {
+            if self.frame_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.class_now())) {
+                match name {
+                    "f_trace" => {
+                        let held = value.unwrap_or(Value::Null);
+                        let mut fields = frame.fields.borrow_mut();
+                        match fields.iter_mut().find(|(key, _)| key == "f_trace") {
+                            Some(entry) => entry.1 = held,
+                            None => fields.push(("f_trace".into(), held)),
+                        }
+                        return Ok(Value::Null);
+                    }
+                    "f_trace_lines" | "f_trace_opcodes" => {
+                        let Some(held) = value else {
+                            if name == "f_trace_lines" { return Err("TypeError: can't delete numeric/char attribute".into()); }
+                            return Err(format!("AttributeError: attribute '{name}' of 'frame' objects cannot be deleted").into());
+                        };
+                        if !matches!(held.contents(), Value::Flag(_)) { return Err("TypeError: attribute value type must be bool".into()); }
+                        let mut fields = frame.fields.borrow_mut();
+                        match fields.iter_mut().find(|(key, _)| key == name) {
+                            Some(entry) => entry.1 = held,
+                            None => fields.push((name.to_string(), held)),
+                        }
+                        return Ok(Value::Null);
+                    }
+                    "f_lineno" => {
+                        if value.is_none() { return Err("AttributeError: attribute 'f_lineno' of 'frame' objects cannot be deleted".into()); }
+                    }
+                    "f_code" | "f_locals" | "f_globals" | "f_builtins" | "f_back" | "f_lasti" => {
+                        return Err(format!("AttributeError: attribute '{name}' of 'frame' objects is not writable").into());
+                    }
+                    _ => {}
+                }
+            }
         }
         // A late module binding also replaces a compiled builtin in its code.
         if self.lang.shadow_builtins && self.lang.builtins.contains_key(name) {

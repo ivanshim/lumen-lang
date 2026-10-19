@@ -582,6 +582,8 @@ pub struct Machine<'a> {
     gathering_locals: Option<(usize, Vec<String>, Rc<Env>)>,
     extent: Option<(u32, u32, u32, u32)>,
     activation_kind: Option<Rc<Blueprint>>,
+    locals_kind: Option<Rc<Blueprint>>,
+    locals_showing: RefCell<std::collections::HashSet<usize>>,
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
     coroutine_bodies: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<Routine>, Option<Weak<Thing>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>)>,
@@ -641,6 +643,8 @@ pub struct Machine<'a> {
     /// given, the dictionary its names live in, and the outer one for
     /// what the near one lacks and for its declared globals.
     readings: Vec<Namebook>,
+    // A module-code FunctionType supplies its saved builtins to the text frame.
+    pub(super) module_function_builtins: Option<Value>,
     /// The reading the run stands inside at present, if any.
     reading_now: Option<usize>,
     /// The dictionary of builtin words, and the blueprint of a code
@@ -2161,8 +2165,8 @@ impl<'a> Machine<'a> {
             main_world: None,
             native_frame_routines: std::collections::HashSet::with_hasher(crate::table::FxBuildHasher::default()),
             supplied_books: Vec::new(),
-            shutting_down: false,
             readings: Vec::new(),
+            module_function_builtins: None,
             reading_now: None,
             natives_book: None,
             context_storage: crate::context::Bindings::new(),
@@ -2199,12 +2203,15 @@ impl<'a> Machine<'a> {
             origin_limit: 0,
             symbolic_annotation: None,
             agen_callbacks: (Value::Nil, Value::Nil),
+            shutting_down: false,
             tracing_function: Value::Nil,
             tracing_busy: false,
             omitted_trace_fault: None,
             gathering_locals: None,
             extent: None,
             activation_kind: None,
+            locals_kind: None,
+            locals_showing: RefCell::new(std::collections::HashSet::new()),
             generator_frames: HashMap::new(),
             coroutine_bodies: HashMap::new(),
             async_generators: HashMap::new(),
@@ -3831,7 +3838,7 @@ impl<'a> Machine<'a> {
             names.push(slot.ident.to_string());
             cells.push(apart(source, slot.at));
         }
-        (names, Rc::new(Env { cells: RefCell::new(cells), capture_slots: RefCell::new(Default::default()), outer: under, weak_callback_frame: Cell::new(false) }))
+        (names, Rc::new(Env { cells: RefCell::new(cells), capture_slots: RefCell::new(Default::default()), outer: under, weak_callback_frame: Cell::new(false), extra: RefCell::new(Vec::new()) }))
     }
 
     /// Build source against the globals this run already has and run it
@@ -4268,11 +4275,14 @@ impl<'a> Machine<'a> {
             self.grumble("warning", &format!("Undefined variable {}", slot.ident));
             return Ok(Value::Nil);
         }
+        // A name the builtin namespace holds answers before the lazy
+        // stand-in a class word is given, so a builtin read from text
+        // handed a frame of its own is the real builtin, not a wrapper.
+        if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
         if self.has_class_order() {
             if slot.ident.as_ref()==self.rules.detail_root {if let Some(c)=&self.ancestor{return Ok(Value::Blueprint(c.clone()));}}
             if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::Wrapped(8,Rc::new(vec![Value::text(&slot.ident)]).into()));}
         }
-        if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
         if let Some(symbol) = self.symbolic_name(&slot.ident)? { return Ok(symbol); }
         Err(format!("Undefined variable: {}", slot.ident))
     }
@@ -4333,12 +4343,18 @@ impl<'a> Machine<'a> {
     fn store(&mut self, slot: &Address, frame: &Rc<Env>, value: Value) -> Result<(), String> {
         // A copied annotation namespace owns its global writes.
         if !slot.ident.starts_with('#') && Rc::ptr_eq(ascend(frame, slot.up), &self.outermost)
-            && self.annotation_scope(frame).is_some() && self.frames_named.last().is_some_and(|running| running.globe.is_some()) {
+            && self.annotation_scope(frame).is_some() && self.frames_named.last().is_some_and(|running| replaced_globe(running)) {
             if let Some(book) = self.world_book.clone() {
                 let content = self.collection_cell(value);
                 set_down(&book, &slot.ident, Some(content));
                 return Ok(());
             }
+        }
+        if Rc::ptr_eq(ascend(frame, slot.up), &self.outermost) && Self::visible_name(&slot.ident)
+            && self.frames_named.last().is_some_and(|body| body.flags & 1 != 0 && Self::explicit_globals(body).is_some()) {
+            let held = self.collection_cell(value);
+            if let Some(book) = &self.world_book { set_down_slot(book, &slot.ident, Some(held), Some(slot.at)); }
+            return Ok(());
         }
         if self.names_in_calls {
             let destination = ascend(frame, slot.up);
@@ -6260,6 +6276,44 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// Whether an activation is one of the calls now standing: it is
+    /// reached from the activation at work by following each call's back
+    /// link, which is the same walk the frame reader makes.
+    fn activation_on_walk(&self, item: &Rc<Thing>) -> bool {
+        let target = Rc::as_ptr(item) as usize;
+        let mut current = self.active_trace.clone();
+        while let Some(stand) = current {
+            if Rc::as_ptr(&stand) as usize == target { return true; }
+            current = match stand.holds.borrow().get(2).map(|(_, held)| held.clone()) {
+                Some(Value::Thing(back)) => Some(back),
+                _ => None,
+            };
+        }
+        false
+    }
+
+    /// A frame answers with its own words: the position it stands at,
+    /// the file it came from and the name of the routine it is running.
+    /// No class describes a frame, so the reading is made here.
+    fn activation_repr(&self, thing: &Rc<Thing>) -> Option<String> {
+        let kind = self.activation_kind.as_ref()?;
+        if !Rc::ptr_eq(kind, &thing.blueprint()) { return None; }
+        let holds = thing.holds.borrow();
+        let line = match holds.first().map(|(_, value)| value.settled()) {
+            Some(Value::Small(row)) => row.to_string(),
+            _ => String::from("0"),
+        };
+        let run = holds.iter().find(|(key, _)| key == "\0environment").map(|(_, value)| value.clone());
+        let (name, file) = match run {
+            Some(Value::Bound(body, _)) => {
+                let place = Value::text(body.written_in.as_deref().unwrap_or(self.entry_file.as_ref())).representation(self.wording());
+                (body.ident.clone(), place)
+            }
+            _ => (String::from("<module>"), String::new()),
+        };
+        Some(format!("<frame at 0x{:x}, file {}, line {}, code {}>", Rc::as_ptr(thing) as usize, file, line, name))
+    }
+
     fn activation(&mut self, routine: &Rc<Routine>, environment: &Rc<Env>, parent: Option<Rc<Thing>>) -> Option<Rc<Thing>> {
         let words = self.rules.trace_words;
         if words.len() <= 15 { return None; }
@@ -6316,11 +6370,15 @@ impl<'a> Machine<'a> {
 
     pub(super) fn activation_member(&mut self, value: &Value, key: &str) -> Option<Value> {
         let words = self.rules.trace_words;
-        if matches!(key, "f_trace" | "f_trace_lines") {
+        if matches!(key, "f_trace" | "f_trace_lines" | "f_trace_opcodes") {
             if let Value::Thing(frame) = value {
                 if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.blueprint())) {
                     let stored = frame.holds.borrow().iter().find(|(name, _)| name == key).map(|(_, held)| held.clone());
-                    return Some(stored.unwrap_or_else(|| if key == "f_trace_lines" { Value::Flag(true) } else { Value::Nil }));
+                    return Some(stored.unwrap_or_else(|| match key {
+                        "f_trace_lines" => Value::Flag(true),
+                        "f_trace_opcodes" => Value::Flag(false),
+                        _ => Value::Nil,
+                    }));
                 }
             }
         }
@@ -6328,6 +6386,29 @@ impl<'a> Machine<'a> {
             if let Value::Thing(item) = value {
                 if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
                     return Some(Value::Member(Rc::new(value.clone()), key.to_string()));
+                }
+            }
+        }
+        if key == "f_builtins" {
+            if let Value::Thing(item) = value {
+                if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
+                    return Some(self.builtins_here());
+                }
+            }
+        }
+        if key == "f_lasti" {
+            if let Value::Thing(item) = value {
+                if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
+                    let at = match item.holds.borrow().get(7).map(|(_, held)| held.settled()) { Some(Value::Small(row)) => row, _ => -1 };
+                    return Some(Value::Small(at));
+                }
+            }
+        }
+        if key == "f_generator" {
+            if let Value::Thing(item) = value {
+                if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
+                    let walking = self.generator_frames.get(&(Rc::as_ptr(item) as usize)).and_then(Weak::upgrade);
+                    return Some(walking.map_or(Value::Nil, Value::Generator));
                 }
             }
         }
@@ -6384,8 +6465,7 @@ impl<'a> Machine<'a> {
                     }
                 }
                 if index != 12 { return None; }
-                self.update_activation_locals(item);
-                Some(item.holds.borrow()[3].1.clone())
+                Some(self.locals_make(item))
             }
             _ => None,
         }
@@ -6468,6 +6548,489 @@ impl<'a> Machine<'a> {
         if let Some(item) = self.active_trace.clone() {
             let observed = matches!(item.holds.borrow().get(3).map(|pair| &pair.1), Some(Value::Shared(_)));
             if observed { self.update_activation_locals(&item); }
+        }
+    }
+
+    /// Whether a spelling names one of the mapping members a proxy over
+    /// a frame's names answers.
+    pub(super) fn locals_member(name: &str) -> bool {
+        matches!(name, "keys" | "values" | "items" | "get" | "pop" | "setdefault" | "update" | "copy"
+            | "__reversed__" | "__getitem__" | "__setitem__" | "__delitem__" | "__contains__"
+            | "__iter__" | "__len__" | "__or__" | "__ror__" | "__ior__" | "__repr__" | "__reduce__" | "__reduce_ex__")
+    }
+
+    /// The one blueprint a frame-locals proxy stands on, made when the
+    /// first frame names are asked for and kept for every proxy after.
+    fn locals_kind(&mut self) -> Rc<Blueprint> {
+        if let Some(kind) = self.locals_kind.as_ref() { return kind.clone(); }
+        let kind = Rc::new(Blueprint { type_names: RefCell::new(None), ancestry: RefCell::new(Vec::new()), parents: RefCell::new(Vec::new()),
+            presentation: Some(String::from("<class 'FrameLocalsProxy'>")), name: String::from("FrameLocalsProxy"), under: RefCell::new(None),
+            answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(),
+            shared: crate::data::BlueprintEntries::new(vec![(self.detail("module").to_string(), Value::text("builtins"))]),
+            weak_slot: Cell::new(None), sealed: Cell::new(false), has_slot_storage: false, order_supplied: Cell::new(false),
+            supplied_order: RefCell::new(Vec::new()), mro_place: RefCell::new(vec![0]), mro_ready: Cell::new(true), base_epoch: Cell::new(0) });
+        self.locals_kind = Some(kind.clone());
+        kind
+    }
+
+    /// The proxy standing for a frame's names, where the value is one.
+    pub(super) fn locals_proxy(&self, value: &Value) -> Option<Rc<Thing>> {
+        let Value::Thing(held) = value.settled() else { return None };
+        let known = self.locals_kind.as_ref()?;
+        Rc::ptr_eq(known, &held.blueprint()).then(|| held)
+    }
+
+    fn locals_frame(proxy: &Rc<Thing>) -> Option<Rc<Thing>> {
+        let kept = proxy.holds.borrow();
+        let held = kept.iter().find(|(name, _)| name == "\0frame").map(|(_, value)| value.clone())?;
+        match held.settled() { Value::Thing(frame) => Some(frame), _ => None }
+    }
+
+    fn locals_env(frame: &Rc<Thing>) -> Option<Rc<Env>> {
+        let kept = frame.holds.borrow();
+        let Value::Bound(_, environment) = &kept[5].1 else { return None };
+        Some(environment.clone())
+    }
+
+    fn locals_pairs_in_book(book: &Value) -> Vec<(Value, Value)> {
+        match book.settled() { Value::Dict(entries) => entries.iter().cloned().collect(), _ => Vec::new() }
+    }
+
+    /// A proxy over a frame, made fresh for every asking as the
+    /// reference makes one, so neither side holds the other round.
+    fn locals_make(&mut self, frame: &Rc<Thing>) -> Value {
+        let kind = self.locals_kind();
+        self.made += 1;
+        Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: kind, turn: self.made, holds: RefCell::new(vec![
+            (String::from("\0frame"), Value::Thing(frame.clone())),
+        ]) }))
+    }
+
+    /// The pairs a frame shows as its names: its own slots in order, the
+    /// free names its code reaches for, and any names a gathering body
+    /// has put aside; a class body shows the book it is filling.
+    fn locals_frame_pairs(&self, frame: &Rc<Thing>) -> Vec<(Value, Value)> {
+        let kept = frame.holds.borrow();
+        let Value::Bound(body, environment) = &kept[5].1 else { return Vec::new() };
+        let (body, environment) = (body.clone(), environment.clone());
+        drop(kept);
+        // A class body shows the book it fills, and still shows the
+        // frame's own names beside it: an inlined comprehension's
+        // variable is a name of the frame, not of the book.
+        let mut entries = Vec::new();
+        if let Some((owner, Some(book))) = &self.body_namespace {
+            if Rc::ptr_eq(owner, &body) { entries = Self::locals_pairs_in_book(book); }
+        }
+        for (word, held) in body.idents.iter().zip(environment.cells.borrow().iter()) {
+            let value = held.settled();
+            let shown = if body.ident == "<genexpr>" && body.formals.first() == Some(word) { ".0" } else { word.as_str() };
+            if Self::visible_name(shown) && !matches!(value, Value::Unset)
+                && !entries.iter().any(|(key, _)| key.bare() == shown) {
+                entries.push((Value::text(shown), value));
+            }
+        }
+        for slot in &body.reaching {
+            if !Self::visible_name(&slot.ident) || entries.iter().any(|(word, _)| word.bare() == slot.ident.as_ref()) { continue; }
+            let held = ascend(&environment, slot.up).cells.borrow().get(slot.at).cloned();
+            let value = match held { Some(held) => held.settled(), None => continue };
+            if !matches!(value, Value::Unset) { entries.push((Value::text(&slot.ident), value)); }
+        }
+        if let Some((owner, names, scope)) = &self.gathering_locals {
+            if *owner == Rc::as_ptr(frame) as usize {
+                for (name, held) in names.iter().zip(scope.cells.borrow().iter()) {
+                    let value = held.settled();
+                    if Self::visible_name(name) && !matches!(value, Value::Unset) {
+                        entries.retain(|(word, _)| word.bare() != *name);
+                        entries.push((Value::text(name), value));
+                    }
+                }
+            }
+        }
+        entries
+    }
+
+    fn locals_live_pairs(&self, proxy: &Rc<Thing>) -> Vec<(Value, Value)> {
+        let pairs = match Self::locals_frame(proxy) { Some(frame) => {
+            let base = self.locals_frame_pairs(&frame);
+            match Self::locals_env(&frame) { Some(environment) => {
+                let mut all = base;
+                all.extend(environment.extra.borrow().iter().cloned());
+                all
+            }, None => base }
+        }, None => Vec::new() };
+        pairs
+    }
+
+    /// The book a class body is filling, where this frame is that body.
+    fn locals_class_book(&self, frame: &Rc<Thing>) -> Option<Value> {
+        let kept = frame.holds.borrow();
+        let Value::Bound(body, _) = &kept[5].1 else { return None };
+        let body = body.clone();
+        drop(kept);
+        match &self.body_namespace {
+            Some((owner, Some(book))) if Rc::ptr_eq(owner, &body) => Some(book.clone()),
+            _ => None,
+        }
+    }
+
+    fn locals_slot_of(&mut self, frame: &Rc<Thing>, key: &Value) -> Res<Option<usize>> {
+        let wanted = self.hash_key(key)?;
+        let kept = frame.holds.borrow();
+        let Value::Bound(body, _) = &kept[5].1 else { return Ok(None) };
+        let body = body.clone();
+        drop(kept);
+        for (at, name) in body.idents.iter().enumerate() {
+            if Self::visible_name(name) && self.keys_agree(&Value::text(name), &wanted)? { return Ok(Some(at)); }
+        }
+        Ok(None)
+    }
+
+    /// A name the code reaches for from a frame further out, found by
+    /// the same kind of lookup a slot takes: its depth and place.
+    fn locals_free_slot(&mut self, frame: &Rc<Thing>, key: &Value) -> Res<Option<(usize, usize)>> {
+        let wanted = self.hash_key(key)?;
+        let kept = frame.holds.borrow();
+        let Value::Bound(body, _) = &kept[5].1 else { return Ok(None) };
+        let body = body.clone();
+        drop(kept);
+        for slot in &body.reaching {
+            if Self::visible_name(&slot.ident) && self.keys_agree(&Value::text(&slot.ident), &wanted)? { return Ok(Some((slot.up, slot.at))); }
+        }
+        Ok(None)
+    }
+
+    fn locals_store_free(frame: &Rc<Thing>, up: usize, at: usize, value: Value) {
+        let Some(environment) = Self::locals_env(frame) else { return };
+        let target = ascend(&environment, up);
+        if let Some(Value::Shared(cell)) = target.cells.borrow().get(at).cloned() { *cell.borrow_mut() = value; return; }
+        if at < target.cells.borrow().len() { target.cells.borrow_mut()[at] = value; }
+    }
+
+    fn locals_store_slot(frame: &Rc<Thing>, at: usize, value: Value) {
+        let kept = frame.holds.borrow();
+        let Value::Bound(_, environment) = &kept[5].1 else { return };
+        let environment = environment.clone();
+        drop(kept);
+        // Only a name the code's own closures reach for is kept in a
+        // shared cell; a plain name that merely shares a cell with an
+        // argument passed in is written over in its own frame, so the
+        // callee's name is not changed behind its back.
+        if environment.capture_slots.borrow().contains(&at) {
+            if let Some(Value::Shared(cell)) = environment.cells.borrow().get(at).cloned() { *cell.borrow_mut() = value; return; }
+        }
+        if at < environment.cells.borrow().len() { environment.cells.borrow_mut()[at] = value; }
+    }
+
+    fn locals_extra_locator(&mut self, pairs: &[(Value, Value)], key: &Value) -> Res<Option<usize>> {
+        let wanted = self.hash_key(key)?;
+        for (at, (candidate, _)) in pairs.iter().enumerate() {
+            if self.keys_agree(candidate, &wanted)? { return Ok(Some(at)); }
+        }
+        Ok(None)
+    }
+
+    fn locals_extra_add(&mut self, proxy: &Rc<Thing>, key: &Value, value: Value) -> Res<()> {
+        let wanted = self.hash_key(key)?;
+        let Some(frame) = Self::locals_frame(proxy) else { return Ok(()) };
+        let Some(environment) = Self::locals_env(&frame) else { return Ok(()) };
+        let mut pairs: Vec<(Value, Value)> = environment.extra.borrow().clone();
+        match self.locals_extra_locator(&pairs, &wanted)? {
+            Some(at) => pairs[at].1 = value,
+            None => pairs.push((wanted, value)),
+        }
+        *environment.extra.borrow_mut() = pairs;
+        Ok(())
+    }
+
+    fn locals_write(&mut self, proxy: &Rc<Thing>, key: &Value, value: Value) -> Res<()> {
+        self.hash_key(key)?;
+        let Some(frame) = Self::locals_frame(proxy) else { return Ok(()) };
+        if let Some(book) = self.locals_class_book(&frame) {
+            return self.mapping_write(&book, &key.bare(), Some(value));
+        }
+        match self.locals_slot_of(&frame, key)? {
+            Some(at) => Self::locals_store_slot(&frame, at, value),
+            None => match self.locals_free_slot(&frame, key)? {
+                Some((up, at)) => Self::locals_store_free(&frame, up, at, value),
+                None => self.locals_extra_add(proxy, key, value)?,
+            },
+        }
+        Ok(())
+    }
+
+    fn locals_remove(&mut self, proxy: &Rc<Thing>, key: &Value) -> Res<()> {
+        self.hash_key(key)?;
+        let Some(frame) = Self::locals_frame(proxy) else { return Err(self.absent_key(key).into()) };
+        if self.locals_slot_of(&frame, key)?.is_some() || self.locals_free_slot(&frame, key)?.is_some() { return Err(String::from("ValueError: cannot remove local variables from FrameLocalsProxy").into()); }
+        let Some(environment) = Self::locals_env(&frame) else { return Err(self.absent_key(key).into()) };
+        let mut pairs: Vec<(Value, Value)> = environment.extra.borrow().clone();
+        match self.locals_extra_locator(&pairs, key)? {
+            Some(at) => { pairs.remove(at); *environment.extra.borrow_mut() = pairs; Ok(()) }
+            None => Err(self.absent_key(key).into()),
+        }
+    }
+
+    fn locals_look(&mut self, proxy: &Rc<Thing>, key: &Value) -> Res<Option<(Value, Value)>> {
+        self.hash_key(key)?;
+        let pairs = self.locals_live_pairs(proxy);
+        match self.locals_extra_locator(&pairs, key)? { Some(at) => Ok(Some(pairs[at].clone())), None => Ok(None) }
+    }
+
+    /// Whether two names' values are the same, letting a value of a
+    /// program's own kind answer for itself where a plain comparison
+    /// would only look at where it stands.
+    fn locals_same(&mut self, one: &Value, other: &Value) -> Res<bool> {
+        if one.one_place(other) { return Ok(true); }
+        if !matches!(one.settled(), Value::Thing(_)) && !matches!(other.settled(), Value::Thing(_)) {
+            return Ok(one.equals(other));
+        }
+        let test = self.prim(Prim::Eq, "", &[one.clone(), other.clone()])?;
+        Ok(self.object_truth(&test)?)
+    }
+
+    fn locals_equals(&mut self, proxy: &Rc<Thing>, other: &Value) -> Res<bool> {
+        let mine = self.locals_live_pairs(proxy);
+        let theirs: Vec<(Value, Value)> = match other.settled() {
+            Value::Dict(entries) => entries.iter().cloned().collect(),
+            Value::Thing(thing) => match self.locals_proxy(&Value::Thing(thing.clone())) {
+                Some(other_proxy) => self.locals_live_pairs(&other_proxy),
+                None => return Ok(false),
+            },
+            _ => return Ok(false),
+        };
+        if mine.len() != theirs.len() { return Ok(false); }
+        for (key, value) in &mine {
+            let mut matched = None;
+            for (other_key, other_value) in &theirs {
+                if self.keys_agree(key, other_key)? { matched = Some(other_value.clone()); break; }
+            }
+            match matched {
+                Some(other_value) => { if !self.locals_same(value, &other_value)? { return Ok(false); } }
+                _ => return Ok(false),
+            }
+        }
+        Ok(true)
+    }
+
+    /// A value the proxy hands to a caller on a road that names its
+    /// faults in words: a raised fault is parked where others wait.
+    fn locals_do<T>(&mut self, outcome: Res<T>) -> Result<T, String> {
+        match outcome {
+            Ok(value) => Ok(value),
+            Err(Escape::Error(words)) | Err(Escape::Stopped(words)) => Err(words),
+            Err(escape) => { self.got_away = Some(escape); Err(String::new()) }
+        }
+    }
+
+    fn locals_pair_only(&mut self, source: &Value) -> Res<Option<Vec<(Value, Value)>>> {
+        if let Some(proxy) = self.locals_proxy(source) { return Ok(Some(self.locals_live_pairs(&proxy))); }
+        let held = source.settled();
+        let native = Self::underlying(&held).unwrap_or(held).settled();
+        if let Value::Dict(entries) = native { Ok(Some(entries.iter().cloned().collect())) }
+        else { Ok(None) }
+    }
+
+    /// The workings a proxy over a frame's names answers on the
+    /// primitive road: the mapping protocol and the union of maps.
+    fn locals_operation(&mut self, operation: Prim, operands: &[Value]) -> Res<Option<Value>> {
+        let anchor = match operands.iter().position(|value| self.locals_proxy(value).is_some()) { Some(at) => at, None => return Ok(None) };
+        let proxy = self.locals_proxy(&operands[anchor]).expect("the proxy just found");
+        match operation {
+            Prim::Length if operands.len() == 1 => Ok(Some(Value::Small(self.locals_live_pairs(&proxy).len() as i64))),
+            Prim::Truthful | Prim::AsTruth if operands.len() == 1 => Ok(Some(Value::Flag(!self.locals_live_pairs(&proxy).is_empty()))),
+            Prim::Iterator | Prim::Iterated if operands.len() == 1 => {
+                let keys: Vec<Value> = self.locals_live_pairs(&proxy).into_iter().map(|(key, _)| key).collect();
+                let row = Value::Vector(crate::tuples::Sequence::plain(keys));
+                self.prim(Prim::Iterator, "iter", &[row]).map(Some).map_err(Escape::from)
+            }
+            Prim::Backwards if operands.len() == 1 => {
+                let mut keys: Vec<Value> = self.locals_live_pairs(&proxy).into_iter().map(|(key, _)| key).collect();
+                keys.reverse();
+                Ok(Some(Value::Vector(crate::tuples::Sequence::plain(keys))))
+            }
+            Prim::At | Prim::Fetch if operands.len() == 2 && anchor == 0 => {
+                match self.locals_look(&proxy, &operands[1])? { Some((_, value)) => Ok(Some(value)), None => Err(self.absent_key(&operands[1]).into()) }
+            }
+            Prim::Placed if operands.len() == 3 && anchor == 0 => {
+                self.locals_write(&proxy, &operands[1], operands[2].clone())?;
+                Ok(Some(operands[0].clone()))
+            }
+            Prim::Erase if operands.len() == 2 && anchor == 0 => {
+                self.locals_remove(&proxy, &operands[1])?;
+                Ok(Some(Value::Nil))
+            }
+            Prim::Contains | Prim::Absent if operands.len() == 2 && anchor == 1 => {
+                let found = self.locals_look(&proxy, &operands[0])?.is_some();
+                Ok(Some(Value::Flag(found == (operation == Prim::Contains))))
+            }
+            Prim::Eq | Prim::Ne if operands.len() == 2 => {
+                let other = if anchor == 0 { &operands[1] } else { &operands[0] };
+                let equal = self.locals_equals(&proxy, other)?;
+                Ok(Some(Value::Flag(equal == (operation == Prim::Eq))))
+            }
+            Prim::BitsEither if operands.len() == 2 => {
+                let other = &operands[1 - anchor];
+                // A left dictionary subclass can supply its own forward operator.
+                if anchor == 1 && self.appointed(other, 65).is_some() { return Ok(None); }
+                let Some(other_pairs) = self.locals_pair_only(other)? else { return Ok(None) };
+                let proxy_pairs = self.locals_live_pairs(&proxy);
+                let (mut pairs, incoming) = if anchor == 0 { (proxy_pairs, other_pairs) } else { (other_pairs, proxy_pairs) };
+                for (key, value) in incoming {
+                    match self.locals_extra_locator(&pairs, &key)? { Some(at) => pairs[at].1 = value, None => pairs.push((key, value)) }
+                }
+                Ok(Some(Value::Dict(Rc::new(pairs.into()))))
+            }
+            Prim::SetAssign(0) if operands.len() == 2 && anchor == 0 => {
+                let Some(more) = self.locals_pair_only(&operands[1])? else {
+                    return self.prim(Prim::BitsEither, "|", operands).map(Some).map_err(Escape::from);
+                };
+                for (key, value) in more { self.locals_write(&proxy, &key, value)?; }
+                Ok(Some(operands[0].clone()))
+            }
+            Prim::Dictionary if operands.len() == 1 => Ok(Some(Value::Dict(Rc::new(self.locals_live_pairs(&proxy).into())))),
+            Prim::Listed | Prim::Tupling | Prim::Uniques if operands.len() == 1 => {
+                let keys: Vec<Value> = self.locals_live_pairs(&proxy).into_iter().map(|(key, _)| key).collect();
+                match operation {
+                    Prim::Listed => Ok(Some(Value::Vector(crate::tuples::Sequence::plain(keys)))),
+                    Prim::Tupling => Ok(Some(Value::tuple(keys))),
+                    _ => { let row = Value::Vector(crate::tuples::Sequence::plain(keys)); self.prim(Prim::Uniques, "set", &[row]).map(Some).map_err(Escape::from) }
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn locals_prepend(&mut self, proxy: &Rc<Thing>, source: &Value) -> Res<Value> {
+        let member = self.read_class_member(source.clone(), "keys", false)?;
+        let offered = self.apply_within(member, Vec::new())?;
+        let cursor = self.iterated_value(&offered)?;
+        let mut entries = Vec::new();
+        while let Some(key) = self.next_value(&cursor)? {
+            let held = self.prim(Prim::At, "", &[source.clone(), key.clone()])?;
+            self.map_enter(&mut entries, key, held)?;
+        }
+        for (key, held) in self.locals_live_pairs(proxy) { self.map_enter(&mut entries, key, held)?; }
+        Ok(Value::Dict(Rc::new(entries.into())))
+    }
+
+    fn locals_method(&mut self, proxy: &Rc<Thing>, operation: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        if !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
+        match operation {
+            "keys" | "__reversed__" | "__iter__" => {
+                if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
+                let mut keys: Vec<Value> = self.locals_live_pairs(proxy).into_iter().map(|(key, _)| key).collect();
+                if operation == "__reversed__" { keys.reverse(); }
+                if operation == "__iter__" {
+                    let row = Value::Vector(crate::tuples::Sequence::plain(keys));
+                    return self.prim(Prim::Iterator, "iter", &[row]).map_err(Escape::from);
+                }
+                Ok(Value::Vector(crate::tuples::Sequence::plain(keys)))
+            }
+            "values" => {
+                if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
+                Ok(Value::Vector(crate::tuples::Sequence::plain(self.locals_live_pairs(proxy).into_iter().map(|(_, value)| value).collect())))
+            }
+            "items" => {
+                if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
+                Ok(Value::Vector(crate::tuples::Sequence::plain(self.locals_live_pairs(proxy).into_iter().map(|(key, value)| Value::tuple(vec![key, value])).collect())))
+            }
+            "copy" => {
+                if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
+                Ok(Value::Dict(Rc::new(self.locals_live_pairs(proxy).into())))
+            }
+            "__len__" => {
+                if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
+                Ok(Value::Small(self.locals_live_pairs(proxy).len() as i64))
+            }
+            "__repr__" => {
+                if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
+                let map = Value::Dict(Rc::new(self.locals_live_pairs(proxy).into()));
+                Ok(Value::text(&self.object_words(&map, true)?))
+            }
+            "__getitem__" | "__contains__" => {
+                if arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
+                match self.locals_look(proxy, &arguments[0])? {
+                    Some((_, _)) if operation == "__contains__" => Ok(Value::Flag(true)),
+                    Some((_, value)) => Ok(value),
+                    None if operation == "__contains__" => Ok(Value::Flag(false)),
+                    None => Err(self.absent_key(&arguments[0]).into()),
+                }
+            }
+            "__setitem__" => {
+                if arguments.len() != 2 { return Err(self.method_fault("arguments").into()); }
+                self.locals_write(proxy, &arguments[0], arguments[1].clone())?;
+                Ok(Value::Nil)
+            }
+            "__delitem__" => {
+                if arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
+                self.locals_remove(proxy, &arguments[0])?;
+                Ok(Value::Nil)
+            }
+            "get" => {
+                if arguments.is_empty() || arguments.len() > 2 { return Err(self.method_fault("arguments").into()); }
+                match self.locals_look(proxy, &arguments[0])? {
+                    Some((_, value)) => Ok(value),
+                    None => Ok(arguments.get(1).cloned().unwrap_or(Value::Nil)),
+                }
+            }
+            "setdefault" => {
+                if arguments.is_empty() || arguments.len() > 2 { return Err(self.method_fault("arguments").into()); }
+                let key = arguments[0].clone();
+                match self.locals_look(proxy, &key)? {
+                    Some((_, value)) => Ok(value),
+                    None => { let default = arguments.get(1).cloned().unwrap_or(Value::Nil); self.locals_write(proxy, &key, default.clone())?; Ok(default) }
+                }
+            }
+            "pop" => {
+                if arguments.is_empty() || arguments.len() > 2 { return Err(self.method_fault("arguments").into()); }
+                let key = arguments[0].clone();
+                if let Some(frame) = Self::locals_frame(proxy) {
+                    if self.locals_slot_of(&frame, &key)?.is_some() { return Err(String::from("ValueError: cannot remove local variables from FrameLocalsProxy").into()); }
+                }
+                let extra = Self::locals_frame(proxy).and_then(|frame| Self::locals_env(&frame));
+                let Some(environment) = extra else {
+                    return match arguments.get(1) { Some(default) => Ok(default.clone()), None => Err(self.absent_key(&key).into()) };
+                };
+                let mut pairs: Vec<(Value, Value)> = environment.extra.borrow().clone();
+                match self.locals_extra_locator(&pairs, &key)? {
+                    Some(at) => { let (_, value) = pairs.remove(at); *environment.extra.borrow_mut() = pairs; Ok(value) }
+                    None => match arguments.get(1) { Some(default) => Ok(default.clone()), None => Err(self.absent_key(&key).into()) },
+                }
+            }
+            "update" => {
+                if arguments.len() > 1 { return Err(self.method_fault("arguments").into()); }
+                if let Some(source) = arguments.first() {
+                    match self.locals_pair_only(source)? {
+                        Some(pairs) => { for (key, value) in pairs { self.locals_write(proxy, &key, value)?; } }
+                        None => return Err(String::from("TypeError: update() argument must be dict or another FrameLocalsProxy").into()),
+                    }
+                }
+                Ok(Value::Nil)
+            }
+            "__ror__" => {
+                if arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
+                self.locals_prepend(proxy, &arguments[0])
+            }
+            "__or__" | "__ior__" => {
+                if arguments.len() != 1 { return Err(self.method_fault("arguments").into()); }
+                match self.locals_pair_only(&arguments[0])? {
+                    Some(more) if operation == "__ior__" => {
+                        for (key, held) in more { self.locals_write(proxy, &key, held)?; }
+                        Ok(Value::Thing(proxy.clone()))
+                    }
+                    Some(more) => {
+                        let mut entries = self.locals_live_pairs(proxy);
+                        for (key, held) in more {
+                            if let Some(at) = self.locals_extra_locator(&entries, &key)? { entries[at].1 = held; }
+                            else { entries.push((key, held)); }
+                        }
+                        Ok(Value::Dict(Rc::new(entries.into())))
+                    }
+                    None => Ok(Value::Refusal(Rc::from("NotImplemented"))),
+                }
+            }
+            "__reduce__" | "__reduce_ex__" => Err(String::from("TypeError: cannot pickle 'FrameLocalsProxy' object").into()),
+            _ => Err(self.method_fault("arguments").into()),
         }
     }
 
@@ -6634,7 +7197,15 @@ impl<'a> Machine<'a> {
             self.attend_to_gone();
         }
         match node {
-            Form::Const(Value::Routine(p)) => Ok(self.bind_program(p, frame)),
+            Form::Const(Value::Routine(p)) => self.bind_program(p, frame),
+            Form::Const(Value::OctetKind { changeable, .. }) if self.frames_named.last()
+                .is_some_and(|body| body.flags & 1 != 0 && Self::explicit_globals(body).is_some()) => {
+                let word = self.octet_kind_word(*changeable).to_owned();
+                match self.supplied_name(&word)?.settled() {
+                    Value::Intrinsic(Prim::Octets(kind @ 0..=1), shown) => Ok(Value::OctetKind { changeable: kind != 0, shown }),
+                    value => Ok(value),
+                }
+            }
             Form::Const(Value::OctetKind { changeable, .. }) if self.has_wildcard_imports() => {
                 let held = self.spread_value(self.octet_kind_word(*changeable));
                 match held { Some(value) => Ok(value), None => match node { Form::Const(value) => Ok(value.clone()), _ => unreachable!() } }
@@ -6919,6 +7490,17 @@ impl<'a> Machine<'a> {
 
     #[inline(never)]
     fn extended_value(&mut self, node: &Form, frame: &Rc<Env>) -> Res {
+        let supplied = self.frames_named.last().is_some_and(|body| body.flags & 1 != 0 && Self::explicit_globals(body).is_some());
+        if supplied {
+            if let Form::Apply(Callee::Prim(operation, word), arguments) = node {
+                if self.table.prims.get(word.as_ref()) == Some(operation) {
+                    let target = self.supplied_name(word)?;
+                    if !matches!(&target, Value::Intrinsic(native, _) if native == operation) {
+                        return self.call_form(&Form::Const(target), arguments, frame);
+                    }
+                }
+            }
+        }
         match node {
             Form::Tie(slot, source) => {
                 let cell = self.value_of(source, frame)?;
@@ -7137,10 +7719,44 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Value::Nil)
             }
+            Form::RemoveName(slot) => {
+                let global = Rc::ptr_eq(ascend(frame, slot.up), &self.outermost);
+                if global {
+                    let namespace = match self.book_holding(slot.at) {
+                        Some(Held::Namespace(index)) => self.namespace_book(index).cloned(),
+                        Some(Held::World) => self.world_book.clone(),
+                        Some(Held::Reading(index)) => {
+                            let text = &self.readings[index];
+                            if !text.declared.iter().any(|word| word == slot.ident.as_ref()) {
+                                let locals = text.near.clone();
+                                self.booked_put(&locals, &slot.ident, None)
+                                    .map_err(|_| Escape::Error(format!("Undefined variable: {}", slot.ident)))?;
+                                self.outermost.cells.borrow_mut()[slot.at] = Value::Unset;
+                                return Ok(Value::Nil);
+                            }
+                            Some(text.outer.as_ref().unwrap_or(&text.near).clone())
+                        }
+                        None => None,
+                    };
+                    if let Some(book) = namespace {
+                        if self.builtin_entry(&book, &slot.ident)?.is_none() {
+                            return Err(format!("Undefined variable: {}", slot.ident).into());
+                        }
+                        return self.value_of(&Form::Forget(slot.clone()), frame);
+                    }
+                }
+                self.fetch(slot, frame)?;
+                self.value_of(&Form::Forget(slot.clone()), frame)
+            }
             Form::Forget(slot) => {
                 let f = ascend(frame, slot.up);
+                if Rc::ptr_eq(f, &self.outermost) && Self::visible_name(&slot.ident)
+                    && self.frames_named.last().is_some_and(|body| body.flags & 1 != 0 && Self::explicit_globals(body).is_some()) {
+                    if let Some(book) = &self.world_book { set_down_slot(book, &slot.ident, None, Some(slot.at)); }
+                    return Ok(Value::Nil);
+                }
                 if Rc::ptr_eq(f, &self.outermost) && self.annotation_scope(frame).is_some()
-                    && self.frames_named.last().is_some_and(|routine| routine.globe.is_some()) {
+                    && self.frames_named.last().is_some_and(|routine| replaced_globe(routine)) {
                     if let Some(book) = &self.world_book {
                         set_down(book, &slot.ident, None);
                         return Ok(Value::Nil);
@@ -7217,6 +7833,10 @@ impl<'a> Machine<'a> {
                     let asked = self.ask_special(&target, 13, &[named]);
                     if let Some(away) = self.got_away.take() { return Err(away); }
                     asked?;
+                    return Ok(Value::Nil);
+                }
+                if let Some(proxy) = self.locals_proxy(&target) {
+                    self.locals_remove(&proxy, &named)?;
                     return Ok(Value::Nil);
                 }
                 // A thing whose blueprint appoints no such method parts
@@ -7738,7 +8358,7 @@ impl<'a> Machine<'a> {
                     let mut entries=shared;
                     if changed { entries.push((base_hooks[1].to_owned(), old_bases)); }
                     for (word, body) in plan.methods.iter() {
-                        if entries.iter().all(|(key, _)| key != word) { entries.push((word.to_owned(), self.bind_program(body, frame))); }
+                        if entries.iter().all(|(key, _)| key != word) { entries.push((word.to_owned(), self.bind_program(body, frame)?)); }
                     }
                     // The body's own live namespace, where it made one,
                     // stands last and settles every member it governs:
@@ -7839,7 +8459,7 @@ impl<'a> Machine<'a> {
                 }
                 Ok(Value::Nil)
             }
-            Form::Apply(Callee::Prim(op, name), args) if (self.has_wildcard_imports() || self.world_shadow_applies())
+            Form::Apply(Callee::Prim(op, name), args) if !supplied && (self.has_wildcard_imports() || self.world_shadow_applies())
                 && self.spread_override(name, *op).is_some() => {
                 let target = Box::new(Form::Const(self.spread_override(name, *op).unwrap()));
                 self.value_of(&Form::Apply(Callee::Code(target), args.clone()), frame)
@@ -8330,6 +8950,11 @@ impl<'a> Machine<'a> {
                             }
                         }
                         if readonly_mapping(&original) { return Err(String::from("TypeError: 'mappingproxy' object does not support item assignment").into()); }
+                        if let Some(proxy) = self.locals_proxy(&original) {
+                            let Some(key) = key.clone() else { return Err(self.no_places().into()); };
+                            self.locals_write(&proxy, &key, value.clone())?;
+                            return Ok(Value::Nil);
+                        }
                         // A thing over a native worth is written into
                         // through that worth, where its blueprint has no
                         // method of its own for the writing.
@@ -8412,11 +9037,19 @@ impl<'a> Machine<'a> {
                                 }
                             }
                             if let Some(cell) = cell_here.and_then(|cell| Self::dict_cell(&Value::Shared(cell))) {
+                                // The lookup may run a key's own `__eq__`,
+                                // and that run may reach back and rebuild the
+                                // frame whose dictionary sits in this cell
+                                // with the same entries. Retrying only while
+                                // the entries really differ keeps a mutation
+                                // the comparison made instead of discarding
+                                // it, and lets an equal rebuild settle.
                                 loop {
                                     let Value::Dict(snapshot) = cell.borrow().clone() else { return Err(self.bad_answer().into()); };
                                     let (position, stored_key) = self.map_locate(&snapshot, Some(&snapshot), &key)?;
-                                    if Self::dict_extent(&cell).1 != snapshot.serial { continue; }
-                                    let mut updated = snapshot.clone();
+                                    let fresh = match cell.borrow().clone() { Value::Dict(now) => now, _ => return Err(self.bad_answer().into()) };
+                                    if fresh.serial != snapshot.serial && !Self::same_store(&snapshot, &fresh) { continue; }
+                                    let mut updated = fresh;
                                     if let Some(at) = position {
                                         let rows = Rc::make_mut(&mut updated);
                                         let through = match (&rows[at].1, &value) {
@@ -9946,6 +10579,9 @@ impl<'a> Machine<'a> {
         None
     }
     pub(super) fn attribute(&mut self, value: &Value, name: &str) -> Option<Value> {
+        if let Some(proxy) = self.locals_proxy(value) {
+            if Self::locals_member(name) { return Some(Value::Member(Rc::new(Value::Thing(proxy)), name.to_owned())); }
+        }
         if matches!(value.settled(), Value::Generator(_)) {
             match self.coroutine_attribute(&value.settled(), name) {
                 Ok(Some(answer)) => return Some(answer),
@@ -10321,6 +10957,12 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn make_instance(&mut self, class: Rc<Blueprint>, args: Vec<Value>) -> Res<Value> {
+        if self.locals_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &class)) {
+            if args.len() != 1 { return Err(format!("TypeError: FrameLocalsProxy expected 1 argument, got {}", args.len()).into()); }
+            let Value::Thing(frame) = args[0].settled() else { return Err(format!("TypeError: expect frame, not {}", args[0].kind_word()).into()); };
+            if !self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.blueprint())) { return Err(format!("TypeError: expect frame, not {}", args[0].kind_word()).into()); }
+            return Ok(self.locals_make(&frame));
+        }
         if self.trace_kind.as_ref().map_or(false, |known| Rc::ptr_eq(known, &class)) { return self.traceback_from_parts(args); }
         self.check_constructor_expansion(&class, &args)?;
         if matches!(Self::native_word(&class).as_deref(), Some("range_iterator" | "longrange_iterator" | "dict_keys" | "dict_values" | "dict_items")) {
@@ -10565,7 +11207,7 @@ impl<'a> Machine<'a> {
     /// whether the routine took anything away or not.
     /// Python closures own the cells they capture, rather than all the
     /// unrelated locals in each defining call.
-    fn bind_program(&mut self, program: &Rc<Routine>, defining: &Rc<Env>) -> Value {
+    fn bind_program(&mut self, program: &Rc<Routine>, defining: &Rc<Env>) -> Res<Value> {
         let environment = self.closure_environment(program, defining);
         let lambda = self.rules.words_ext_stmt_function_anonymous.iter().any(|word| word == &program.ident);
         let function = !program.ident.starts_with('#') && (!program.ident.starts_with('<') || lambda);
@@ -10573,10 +11215,29 @@ impl<'a> Machine<'a> {
         // even when its defining environment is the unchanged module root.
         // Its code remains the compiled definition; its attributes belong
         // to this creation, including the globals' name at this instant.
-        let bound = if function && self.rules.closes_over {
+        let bound = if (function || program.generator && !self.rules.builtin_namespace_words.is_empty()) && self.rules.closes_over {
             let mut instance = (**program).clone();
             instance.definition = Some(program.definition.as_ref().unwrap_or(program).clone());
-            let namespace = program.globe.clone().unwrap_or_else(|| Value::Shared(self.book_about(true)));
+            if !self.rules.builtin_namespace_words.is_empty() {
+                if let Some(globe) = self.frames_named.last().filter(|maker| maker.flags & 1 == 1)
+                    .and_then(|maker| maker.globe.clone()) {
+                    instance.globe = Some(globe);
+                }
+                let globals = instance.globe.clone().unwrap_or_else(|| Value::Shared(self.book_about(true)));
+                let entry = self.rules.builtin_namespace_words[0].clone();
+                let found = self.builtin_entry(&Rc::new(RefCell::new(globals.clone())), &entry)?;
+                let born = match found {
+                    None => self.builtins_here(),
+                    Some(value) => {
+                        if instance.globe.is_none() && !self.is_our_natives(&value) { instance.globe = Some(globals); }
+                        if (instance.globe.is_some() || instance.born.is_some()) && self.is_our_natives(&value) {
+                            self.canonical_natives()?
+                        } else { self.builtin_dictionary(value)? }
+                    }
+                };
+                instance.born = Some(born);
+            }
+            let namespace = instance.globe.clone().unwrap_or_else(|| Value::Shared(self.book_about(true)));
             instance.framed_in = None;
             for key in self.rules.words_ext_system_module_name {
                 match self.mapping_read(&namespace, key) {
@@ -10593,10 +11254,20 @@ impl<'a> Machine<'a> {
         } else {
             program.clone()
         };
+        // A routine made while a function runs on replacement globals that
+        // are a dict subclass reads names through those globals as well.
+        let bound = match self.frames_named.last().and_then(|maker| maker.globe.clone()) {
+            Some(book @ Value::Thing(_)) if !matches!((&bound.globe, &book), (Some(Value::Thing(held)), Value::Thing(maker)) if Rc::ptr_eq(held, maker)) => {
+                let mut kept = (*bound).clone();
+                kept.globe = Some(book);
+                Rc::new(kept)
+            }
+            _ => bound,
+        };
         if (!self.rules.specials.is_empty() && !bound.frameless) || crate::ghost::bidding() {
             crate::ghost::note(crate::ghost::Ghost::Bound(Rc::downgrade(&bound), Rc::downgrade(&environment)));
         }
-        Value::Bound(bound, environment)
+        Ok(Value::Bound(bound, environment))
     }
 
     fn frame_for(&self, program: &Rc<Routine>, env: &Rc<Env>) -> Rc<Env> {
@@ -10750,6 +11421,10 @@ impl<'a> Machine<'a> {
             Value::KindOf(kind) => Some(Value::word_for_kind(*kind).to_string()),
             Value::OctetKind { changeable, .. } => Some(self.octet_kind_word(*changeable).to_string()),
             Value::Intrinsic(op, word) if op.names_a_kind() => Some(word.to_string()),
+            // A slot a class declares answers to the descriptor kind the
+            // reference names it by, so a claim made for that kind holds.
+            Value::Wrapped(32, fields) if matches!(fields.get(1), Some(Value::Blueprint(_))) =>
+                Some((if matches!(fields.get(2), Some(Value::Small(-2))) { "getset_descriptor" } else { "member_descriptor" }).to_string()),
             other => self.kind_spelling(other).map(|word| word.to_string()),
         }
     }
@@ -10795,6 +11470,9 @@ impl<'a> Machine<'a> {
     /// bound to the value, save that the parts of a number are members
     /// read rather than methods left standing to be called.
     pub(super) fn method_of_value(&mut self, receiver: Value, operation: &str) -> Result<Value, Escape> {
+        if let Some(proxy) = self.locals_proxy(&receiver) {
+            if Self::locals_member(operation) { return Ok(Value::Member(Rc::new(Value::Thing(proxy)), operation.to_string())); }
+        }
         if operation == "__index__" {
             if self.native_place(&receiver, operation).is_none() {
                 return Err(self.member_missing(&receiver, operation).into());
@@ -11164,6 +11842,9 @@ impl<'a> Machine<'a> {
         if self.has_class_order() && power_method && matches!(receiver.settled(),Value::Small(_)|Value::Huge(_)|Value::Flag(_)) {
             match arguments.len(){1|2=>(),count=>return Err(format!("TypeError: expected 1 or 2 arguments, got {count}").into())}
         }
+        if let Some(proxy) = self.locals_proxy(receiver) {
+            if Self::locals_member(name) { return self.locals_method(&proxy, name, arguments, keywords); }
+        }
         if name == "classmethod_get" { return self.get_native_classmethod(receiver, arguments, keywords); }
         if self.table.flag("ext.stmt.type_parameters") && name == "__typing_subst__" {
             if !keywords.is_empty() { return Err(String::from("TypeError: TypeVarTuple.__typing_subst__() takes no keyword arguments").into()); }
@@ -11421,13 +12102,15 @@ impl<'a> Machine<'a> {
             if let Value::Thing(item) = receiver.settled() {
                 if self.activation_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
                     if !arguments.is_empty() || !keywords.is_empty() { return Err(self.method_fault("arguments").into()); }
-                    let mut ancestor = self.active_trace.clone();
-                    loop {
-                        let Some(current) = ancestor.take() else { break };
-                        if Rc::ptr_eq(&current, &item) { return Err(Escape::Error(String::from("RuntimeError: cannot clear an executing frame"))); }
-                        if let Value::Thing(parent) = current.holds.borrow()[2].1.clone() { ancestor = Some(parent); };
-                    }
+                    if self.activation_on_walk(&item) { return Err(String::from("RuntimeError: cannot clear an executing frame").into()); }
                     if let Some(walk) = self.generator_frames.get(&(Rc::as_ptr(&item) as usize)).and_then(Weak::upgrade) {
+                        // A body asleep in the middle of a step may not
+                        // be emptied: the reference refuses it. A
+                        // coroutine never started is warned about and its
+                        // frame emptied; any other walk still standing
+                        // where it was made is closed as closing it by
+                        // hand does, so stepping it again stops at once.
+                        if walk.borrow().begun && !walk.borrow().ended { return Err(String::from("RuntimeError: cannot clear a suspended frame").into()); }
                         let needs_notice = { let suspended = walk.borrow(); !suspended.begun && suspended.of.as_ref().is_some_and(|code| code.flags & 128 != 0) };
                         if needs_notice {
                             if let Err(away) = self.warn_unstarted(&walk) { self.report_unraisable(away, &Value::Generator(walk.clone()), "coroutine"); }
@@ -11436,6 +12119,12 @@ impl<'a> Machine<'a> {
                                 *place = Value::Unset;
                             }
                         } else { self.shut_generator(&walk)?; return Ok(Value::Nil); }
+                    }
+                    if let Value::Bound(_, environment) = &item.holds.borrow()[5].1 {
+                        for place in environment.cells.borrow_mut().iter_mut() {
+                            if let Value::Shared(cell) = place { *cell.borrow_mut() = Value::Unset; }
+                            *place = Value::Unset;
+                        }
                     }
                     let code = {
                         let holds = item.holds.borrow();
@@ -13575,10 +14264,15 @@ impl<'a> Machine<'a> {
     /// The name the outermost names go by, where the language gives
     /// them one: the namespace a routine written there belongs to.
     pub(super) fn type_parameter_home(&self) -> Value {
-        let namespace = self.reading_now.and_then(|index| self.readings.get(index));
-        match namespace {
-            Some(names) => looked_up(names.outer.as_ref().unwrap_or(&names.near), "__name__").unwrap_or(Value::Nil),
-            None => self.namespace_named().map_or(Value::Nil, |name| Value::text(&name)),
+        if let Some(names) = self.reading_now.and_then(|index| self.readings.get(index)) {
+            return looked_up(names.outer.as_ref().unwrap_or(&names.near), "__name__").unwrap_or(Value::Nil);
+        }
+        // A routine running out of a registered namespace answers with that
+        // namespace's name; only the program's own frames fall to the book.
+        if let Some(name) = self.namespace_named() { return Value::text(&name); }
+        match &self.world_book {
+            Some(book) => looked_up(book, "__name__").unwrap_or(Value::Nil),
+            None => Value::Nil,
         }
     }
 
@@ -14103,14 +14797,49 @@ impl<'a> Machine<'a> {
 
     fn explicit_globals(program: &Routine) -> Option<Rc<RefCell<Value>>> {
         match program.globe.as_ref()? {
-            Value::Shared(cell) | Value::Mutable(cell, _) if matches!(cell.borrow().settled(), Value::Dict(_)) => Some(cell.clone()),
+            Value::Shared(cell) | Value::Mutable(cell, _) => {
+                let settled = cell.borrow().settled();
+                if matches!(settled, Value::Dict(_))
+                    || Self::underlying(&settled).is_some_and(|worth| matches!(worth.settled(), Value::Dict(_))) {
+                    return Some(cell.clone());
+                }
+                None
+            }
             globals @ Value::Dict(_) => Some(Rc::new(RefCell::new(globals.clone()))),
+            globals @ Value::Thing(_) if Self::underlying(globals).is_some_and(|worth| matches!(worth.settled(), Value::Dict(_))) => Some(Rc::new(RefCell::new(globals.clone()))),
             _ => None,
         }
     }
 
+    /// The globals a routine was handed. While a dict subclass's globals are
+    /// being read through, a module's own namespace counts as handed too, so
+    /// that a method of that subclass reads names from its own module.
+    fn handed_globals(&self, program: &Routine) -> Option<Rc<RefCell<Value>>> {
+        if let Some(book) = Self::explicit_globals(program) { return Some(book); }
+        if !self.world_book.as_ref().is_some_and(|world| matches!(&*world.borrow(), Value::Thing(_))) { return None; }
+        match program.globe.as_ref()? {
+            Value::Shared(cell) | Value::Mutable(cell, _) if matches!(&*cell.borrow(), Value::Attributes(_)) => Some(cell.clone()),
+            module @ Value::Attributes(_) => Some(Rc::new(RefCell::new(module.clone()))),
+            _ => None,
+        }
+    }
+
+    /// Resolve a function name using its supplied globals and saved builtins.
+    fn supplied_name(&mut self, word: &str) -> Res {
+        let body = self.frames_named.last().cloned().ok_or_else(|| format!("Undefined variable: {word}"))?;
+        let dictionary = Self::explicit_globals(&body).ok_or_else(|| format!("Undefined variable: {word}"))?;
+        match self.booked_get(&dictionary, word)? {
+            Some(value) => Ok(value),
+            None => {
+                let saved = match body.born.clone() { Some(value) => value, None => self.builtins_here() };
+                let natives = self.builtin_dictionary(saved)?;
+                self.mapping_read(&natives, word)?.ok_or_else(|| Escape::Error(format!("Undefined variable: {word}")))
+            }
+        }
+    }
+
     fn enter_function_globals(&mut self, program: &Routine) -> (bool, Option<Option<Rc<RefCell<Value>>>>) {
-        let explicit = Self::explicit_globals(program);
+        let explicit = self.handed_globals(program);
         let supplied = explicit.is_some();
         let ordinary = program.globe.is_none() && !self.supplied_books.is_empty();
         let previous = if supplied || ordinary {
@@ -14127,7 +14856,7 @@ impl<'a> Machine<'a> {
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
-        let mut handed = match Self::explicit_globals(&program) {
+        let mut handed = match self.handed_globals(&program) {
             Some(namespace) => Some(namespace),
             None if self.armed_names.is_some() => match &program.globe {
                 Some(Value::Shared(binding) | Value::Mutable(binding, _)) => Some(binding.clone()),
@@ -16576,6 +17305,28 @@ impl<'a> Machine<'a> {
     /// which `same_item`, a free function, cannot call — only where
     /// the place itself cannot say. The keyed form of the key comes
     /// back beside the place, ready to store should the key be new.
+    /// Whether two snapshots of a dictionary hold the same entries in
+    /// the same order, by the place each key and value stands rather
+    /// than by any equality a program's own code would run. A frame
+    /// refresh rebuilds the same entries as fresh Rcs, so this tells
+    /// such a refresh from a real write the comparison made.
+    fn same_store(one: &crate::data::MapStore, other: &crate::data::MapStore) -> bool {
+        // A frame refresh rebuilds every name as a fresh text, so a text
+        // key is the same key when it spells the same name. Any other
+        // key is the same only when it is the very thing itself: two
+        // different objects that happen to print alike are not the same
+        // key, and treating them so would keep a position a key's own
+        // __eq__ had already moved.
+        one.len() == other.len() && one.iter().zip(other.iter()).all(|((left, _), (right, _))| {
+            let unwrap = |value: &Value| match value { Value::Keyed(inner, _) => inner.as_ref().clone(), other => other.clone() };
+            let (one_key, other_key) = (unwrap(left), unwrap(right));
+            match (one_key.settled(), other_key.settled()) {
+                (Value::Text(a), Value::Text(b)) => a == b,
+                _ => one_key.one_place(&other_key),
+            }
+        })
+    }
+
     fn map_locate(&mut self, entries: &[(Value, Value)], store: Option<&crate::data::MapStore>, key: &Value) -> Result<(Option<usize>, Value), String> {
         let keyed = self.hash_key(key)?;
         if let (Some(store), Ok(address)) = (store, keyed.hash_address()) {
@@ -17019,6 +17770,45 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn ask_special(&mut self, subject: &Value, index: usize, tail: &[Value]) -> Result<Option<Value>, String> {
+        // A proxy over a frame's names answers the mapping protocol
+        // wherever a working asks after it by the member's own name,
+        // not only where the primitive road reaches it.
+        if let Some(proxy) = self.locals_proxy(subject) {
+            match index {
+                9 => return Ok(Some(Value::Flag(!self.locals_live_pairs(&proxy).is_empty()))),
+                10 => return Ok(Some(Value::Small(self.locals_live_pairs(&proxy).len() as i64))),
+                15 => {
+                    let keys: Vec<Value> = self.locals_live_pairs(&proxy).into_iter().map(|(key, _)| key).collect();
+                    let row = Value::Vector(crate::tuples::Sequence::plain(keys));
+                    return self.prim(Prim::Iterator, "iter", &[row]).map(Some);
+                }
+                11 => {
+                    if let Some(key) = tail.first() {
+                        let key = key.clone();
+                        let found = self.locals_look(&proxy, &key);
+                        let found = self.locals_do(found)?;
+                        return match found { Some((_, value)) => Ok(Some(value)), None => Err(self.absent_key(&key)) };
+                    }
+                }
+                14 => {
+                    if let Some(key) = tail.first() {
+                        let key = key.clone();
+                        let found = self.locals_look(&proxy, &key);
+                        let found = self.locals_do(found)?;
+                        return Ok(Some(Value::Flag(found.is_some())));
+                    }
+                }
+                2 | 3 => {
+                    if let Some(other) = tail.first() {
+                        let other = other.clone();
+                        let equal = self.locals_equals(&proxy, &other);
+                        let equal = self.locals_do(equal)?;
+                        return Ok(Some(Value::Flag(equal == (index == 2))));
+                    }
+                }
+                _ => {}
+            }
+        }
         if index == 15 && self.table.flag("ext.stmt.type_parameters") {
             let reader = self.appointment(subject, index);
             let mut display = None;
@@ -17288,6 +18078,14 @@ impl<'a> Machine<'a> {
     }
 
     fn object_words_inner(&mut self, subject: &Value, quoted: bool) -> Result<String, String> {
+        if let Some(proxy) = self.locals_proxy(subject) {
+            let spot = Rc::as_ptr(&proxy) as usize;
+            if !self.locals_showing.borrow_mut().insert(spot) { return Ok(String::from("{...}")); }
+            let map = Value::Dict(Rc::new(self.locals_live_pairs(&proxy).into()));
+            let outcome = self.object_words(&map, quoted);
+            self.locals_showing.borrow_mut().remove(&spot);
+            return outcome;
+        }
         if let Value::Intrinsic(Prim::UnicodeDecomposition, _) = subject {
             if let Some(title) = self.table.strings("ext.builtin.unicodedata.decomposition.metadata").first() {
                 return Ok(Value::Intrinsic(Prim::UnicodeDecomposition, Rc::from(title.as_str())).repr(&self.wording()));
@@ -17395,6 +18193,7 @@ impl<'a> Machine<'a> {
                 self.object_words(&Value::Dict(Rc::new(pairs.into())), true)
             }
             Value::Thing(t) => {
+                if let Some(shown) = self.activation_repr(t) { return Ok(shown); }
                 if let Some(spelling) = t.holds.borrow().iter().find(|entry| entry.0 == "\0type-display").map(|entry| entry.1.bare()) { return Ok(spelling); }
                 if self.is_fault_kind(&t.blueprint()) && self.appointment(subject, usize::from(quoted)).is_none() {
                     let codec = (43..=45).find(|&n| self.stands_under(&t.blueprint(), n));
@@ -18755,6 +19554,8 @@ impl<'a> Machine<'a> {
     }
 
     fn user_operation(&mut self, operation: Prim, operands: &[Value]) -> Result<Option<Value>, String> {
+        let local_answer = self.locals_operation(operation, operands);
+        if let Some(answer) = self.locals_do(local_answer)? { return Ok(Some(answer)); }
         if let (Prim::At, [Value::Window(owner, 'm'), key]) = (operation, operands) {
             return self.prim(operation, "", &[owner.proxy_pairs(), key.clone()]).map(Some);
         }
@@ -18969,6 +19770,10 @@ impl<'a> Machine<'a> {
             // kind that could, has no working at all: the reference
             // names the sign and both kinds rather than reading the
             // worth beneath.
+            if operation == Prim::BitsEither && self.locals_proxy(right).is_some() {
+                let retained = self.locals_proxy(right).expect("the right operand is a proxy");
+                return self.locals_prepend(&retained, left).map(Some).map_err(|fault| self.suspension_fault(fault));
+            }
             if forward >= 18 && !joining_kinds && declined && !native_side {
                 let sign = self.written_as(&operation);
                 return Err(self.operands_refused(&sign, left, right));
@@ -19817,9 +20622,14 @@ impl<'a> Machine<'a> {
             (Prim::NextItem, [one]) => self.ask_special(one, 16, &[])?.ok_or_else(|| self.bad_answer())?,
             (Prim::Belongs, [one, Value::Blueprint(class)]) => {
                 let named = matches!(one, Value::Thing(t) if t.blueprint().goes_by(&class.name, false) || t.blueprint().ancestry.borrow().iter().any(|parent| parent.name == class.name));
+                // A slot a class declares is a data member, and answers
+                // to the descriptor kind the reference gives it even
+                // though it is carried as a wrapper rather than a thing.
+                let slot = matches!(one, Value::Wrapped(32, fields) if matches!(fields.get(1), Some(Value::Blueprint(_)))
+                    && if matches!(fields.get(2), Some(Value::Small(-2))) { class.name == "getset_descriptor" } else { class.name == "member_descriptor" });
                 // The run's own module objects answer to the native module kind.
                 let module = Self::native_beneath(class).as_deref() == Some("module") && self.namespace_holding(one).is_some();
-                Value::Flag(named || module)
+                Value::Flag(named || slot || module)
             }
             (Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::Hashed | Prim::Ordered | Prim::Iterator | Prim::NextItem | Prim::Belongs, _) => return Err(self.bad_answer()),
             _ => return Ok(None),
@@ -21652,6 +22462,7 @@ impl<'a> Machine<'a> {
     }
 
     #[inline(never)]
+
     pub(super) fn reference_allocating(&mut self, name: &str, v: &[Value]) -> Result<Value, String> {
         Ok({
         if v.len() != 3 { return Err(format!("{name}() expects 3 arguments, got {}", v.len())); }
@@ -21816,6 +22627,8 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn dispatch_primitive(&mut self, op: Prim, name: &str, v: &[Value]) -> Result<Value, String> {
+        let local_answer = self.locals_operation(op, v);
+        if let Some(answer) = self.locals_do(local_answer)? { return Ok(answer); }
         let w = self.wording();
         let n = |k: usize| -> Result<(), String> {
             if v.len() == k { return Ok(()); }
@@ -22762,7 +23575,18 @@ impl<'a> Machine<'a> {
                 }
                 Value::Nil
             }
-            Prim::IsInstance => { n(2)?; Value::Flag(belongs_to(&v[0], &v[1])) }
+            Prim::IsInstance => {
+                n(2)?;
+                let direct = belongs_to(&v[0], &v[1]);
+                // A value carried as a wrapper still answers for the kind
+                // the reference would name it by, so a claim made for
+                // that very kind is honoured.
+                let by_kind = !direct && match (&self.kind_named_after(&v[0]), &v[1]) {
+                    (Value::Blueprint(own), Value::Blueprint(wanted)) => own.name == wanted.name,
+                    _ => false,
+                };
+                Value::Flag(direct || by_kind)
+            }
             Prim::HasMember => {
                 if self.has_class_order() && v.len() == 2 && v[1].bare() == self.detail("allocate") && matches!(v[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) {
                     return Ok(Value::Flag(true));
@@ -28729,9 +29553,13 @@ impl Machine<'_> {
         }
         // The builtins word stands among the module's own names, the
         // same way the world's own dictionary keeps it.
-        let natives = self.natives_kept();
+        let natives = if self.rules.builtin_namespace_words.is_empty() || path == "sys" || path == self.builtin_module() || self.importing.contains(self.builtin_module()) {
+            Value::Shared(self.natives_kept())
+        } else {
+            self.canonical_natives().map_err(|escape| self.carried_native_fault(escape))?
+        };
         for word in self.table.strings("ext.system.module.builtins") {
-            if !members.iter().any(|(name, _)| name == word) { members.push((word.clone(), Value::Shared(natives.clone()))); }
+            if !members.iter().any(|(name, _)| name == word) { members.push((word.clone(), natives.clone())); }
         }
         if !self.rules.words_ext_system_module_name.is_empty() {
             for word in ["__spec__", "__loader__", "__cached__"] {
@@ -29077,6 +29905,7 @@ impl Machine<'_> {
 /// dictionaries: the near one first; then the outer one, which also
 /// takes whatever the text declared global.
 struct Namebook {
+    builtins: Value,
     near: Rc<RefCell<Value>>,
     outer: Option<Rc<RefCell<Value>>>,
     from: usize,
@@ -29087,6 +29916,7 @@ struct Namebook {
 /// Which dictionary a slot's value lives in, when it lives in one.
 #[derive(Clone, Copy)]
 enum Held {
+    Namespace(usize),
     World,
     Reading(usize),
 }
@@ -29104,6 +29934,16 @@ fn spells_key(key: &Value, name: &str) -> bool {
 /// The value a dictionary in a cell keeps under a name.
 fn looked_up(book: &Rc<RefCell<Value>>, name: &str) -> Option<Value> {
     looked_up_slot(book, name, None)
+}
+
+/// Whether a routine runs on globals handed to it, rather than on the
+/// namespace of the module its code was compiled in.
+fn replaced_globe(routine: &Routine) -> bool {
+    match &routine.globe {
+        Some(Value::Shared(cell) | Value::Mutable(cell, _)) => !matches!(&*cell.borrow(), Value::Attributes(_)),
+        Some(Value::Attributes(_)) | None => false,
+        Some(_) => true,
+    }
 }
 
 /// Read through a namespace's structural index when the compiler gave a slot.
@@ -29125,6 +29965,14 @@ fn set_down(book: &Rc<RefCell<Value>>, name: &str, worth: Option<Value>) {
 
 /// Locate a compiled namespace store without retaining the value it replaces.
 fn set_down_slot(book: &Rc<RefCell<Value>>, name: &str, worth: Option<Value>, slot: Option<usize>) {
+    let backing = match &*book.borrow() {
+        Value::Thing(thing) => Machine::underlying(&Value::Thing(thing.clone())),
+        _ => None,
+    };
+    if let Some(Value::Mutable(cell, _) | Value::Shared(cell)) = backing {
+        set_down_slot(&cell, name, worth, slot);
+        return;
+    }
     let Value::Dict(entries) = &mut *book.borrow_mut() else { return };
     let entries = Rc::make_mut(entries);
     let indexed = match slot { Some(at) => entries.namespace_slot_position(at, name), None => entries.namespace_position(name) };
@@ -29149,13 +29997,28 @@ impl<'a> Machine<'a> {
         !word.as_bytes().contains(&0) && word.as_bytes().first() != Some(&b'#')
     }
 
+    // Resolve an imported global slot through the incumbent namespace map.
+    fn namespace_book(&self, at: usize) -> Option<&Rc<RefCell<Value>>> {
+        let word = self.idents.get(at)?.strip_prefix("\0import/")?;
+        let (owner, _) = word.rsplit_once('/')?;
+        self.space_books.get(owner)
+    }
+
     /// The dictionary an outermost slot lives in, if any: that of the
     /// reading it belongs to, else the world's once that has been asked for.
     fn book_holding(&self, at: usize) -> Option<Held> {
         let scoped = self.annotation_scopes.last().is_some_and(|(_, _, _, body)| {
-            self.frames_named.last().is_some_and(|running| running.globe.is_some() && Rc::as_ptr(running) as usize == *body)
+            self.frames_named.last().is_some_and(|running| replaced_globe(running) && Rc::as_ptr(running) as usize == *body)
         });
         if scoped && self.world_book.is_some() { return Some(Held::World); }
+        if self.frames_named.last().is_some_and(|body| body.flags & 1 != 0 && Self::explicit_globals(body).is_some())
+            && self.idents.get(at).is_some_and(|word| Self::visible_name(word.rsplit('/').next().unwrap_or(word))) {
+            return Some(Held::World);
+        }
+        if let Some(word) = self.idents.get(at).and_then(|w| w.strip_prefix("\0import/")) {
+            let (owner, _) = word.rsplit_once('/')?;
+            if self.space_books.contains_key(owner) { return Some(Held::Namespace(at)); }
+        }
         if self.world_book.is_none() && self.readings.is_empty() { return None; }
         let ident = self.idents.get(at)?;
         let bare = ident.rsplit_once('/').map_or(ident.as_str(), |(_, bare)| bare);
@@ -29172,7 +30035,10 @@ impl<'a> Machine<'a> {
                 || self.rules.words_ext_system_module_name.contains(ident)
                 || self.table.strings("ext.system.source.file").contains(ident)
                 || self.table.strings("ext.system.module.doc").contains(ident)
-                || self.world_book.as_ref().is_some_and(|book| looked_up(book, ident).is_some());
+                || self.world_book.as_ref().is_some_and(|book| match &*book.borrow() {
+                    Value::Thing(_) => true,
+                    _ => looked_up(book, ident).is_some(),
+                });
             if self.names_in_calls && !source_member { return None; }
             return Some(Held::World);
         }
@@ -29204,11 +30070,52 @@ impl<'a> Machine<'a> {
     /// means the cell itself is to be read after all.
     fn booked_read(&mut self, at: usize, name: &str) -> Option<Result<Value, String>> {
         match self.book_holding(at)? {
+            Held::Namespace(index) => {
+                if !Self::visible_name(name) { return None; }
+                let found = looked_up_slot(self.namespace_book(index).expect("a namespace slot"), name, Some(at));
+                if let Some(found) = found {
+                    if let Value::Shared(place) = &found {
+                        let world = self.outermost.cells.borrow();
+                        if matches!(world.get(at), Some(Value::Shared(slot)) if Rc::ptr_eq(slot, place)) { return Some(Ok(place.borrow().clone())); }
+                    }
+                    return Some(Ok(found));
+                }
+                let namespace_book = self.namespace_book(index)?.clone();
+                if matches!(&*namespace_book.borrow(), Value::Thing(_)) {
+                    match self.booked_get(&namespace_book, name) {
+                        Ok(Some(worth)) => return Some(Ok(worth)),
+                        Ok(None) => {}
+                        Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
+                    }
+                }
+                let cell = self.outermost.cells.borrow().get(at)?.settled();
+                if self.passed_over(name, &cell) { None } else {
+                    // A name the namespace's own book does not hold is
+                    // looked for among the builtins, as the world book
+                    // looks, before it is called missing.
+                    if let Some(spare) = self.spare_name(name) { return Some(Ok(spare)); }
+                    if let Some(result) = self.symbolic_lookup(name) { return Some(result); }
+                    Some(Err(format!("Undefined variable: {name}")))
+                }
+            }
             Held::World => {
-                let book = self.world_book.as_ref()?;
-                if let Some(worth) = looked_up_slot(book, name, Some(at)) {
+                if self.frames_named.last().is_some_and(|body| body.flags & 1 != 0 && Self::explicit_globals(body).is_some()) {
+                    return Some(self.supplied_name(name).map_err(|escape| self.carried_native_fault(escape)));
+                }
+                let book = self.world_book.clone()?;
+                if let Some(worth) = looked_up_slot(&book, name, Some(at)) {
                     if self.names_the_builtins(name) && self.is_our_natives(&worth) { return Some(self.builtins_stand_in()); }
                     return Some(Ok(worth));
+                }
+                if matches!(&*book.borrow(), Value::Thing(_)) {
+                    match self.booked_get(&book, name) {
+                        Ok(Some(worth)) => {
+                            if self.names_the_builtins(name) && self.is_our_natives(&worth) { return Some(self.builtins_stand_in()); }
+                            return Some(Ok(worth));
+                        }
+                        Ok(None) => {}
+                        Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
+                    }
                 }
                 let cell = self.outermost.cells.borrow()[at].clone();
                 if self.passed_over(name, &cell) { return None; }
@@ -29217,10 +30124,11 @@ impl<'a> Machine<'a> {
                 Some(Err(format!("Undefined variable: {}", name)))
             }
             Held::Reading(which) => {
-                let outer = self.readings[which].outer.clone();
+                let mut outer = self.readings[which].outer.clone();
+                let global = self.readings[which].declared.iter().any(|declared| declared == name);
                 let function_scope = self.frames_named.last().map_or(false, |body| body.flags & 1 == 1);
-                let near = if function_scope {
-                    outer.as_ref().unwrap_or(&self.readings[which].near).clone()
+                let near = if function_scope || global {
+                    outer.take().unwrap_or_else(|| self.readings[which].near.clone())
                 } else { self.readings[which].near.clone() };
                 match self.booked_get(&near, name) {
                     Ok(Some(worth)) => return Some(Ok(worth)),
@@ -29228,7 +30136,9 @@ impl<'a> Machine<'a> {
                     Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
                 }
                 if let Some(outer) = &outer {
-                    match self.booked_get(outer, name) {
+                    let owner = outer.borrow().clone();
+                    let native = Self::underlying(&owner).unwrap_or(owner).settled();
+                    match self.mapping_read(&native, name) {
                         Ok(Some(worth)) => return Some(Ok(worth)),
                         Ok(None) => {}
                         Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
@@ -29239,14 +30149,7 @@ impl<'a> Machine<'a> {
                 // one of its own and so choose what the text can reach.
                 // Such a dictionary need not be a plain one: it is asked
                 // for the very way any other name is.
-                let roots = outer.unwrap_or(near);
-                let named = match self.table.strings("ext.system.module.builtins").first().map(String::as_str) {
-                    Some(word) => match self.builtin_entry(&roots, word) {
-                        Ok(v) => v,
-                        Err(escape) => { self.got_away = Some(escape); return Some(Err(self.bad_answer())); }
-                    },
-                    None => None,
-                };
+                let named = Some(self.readings[which].builtins.clone());
                 // A dictionary of builtins the program put there shuts
                 // the text in; the one the kernel supplied stands for
                 // the ordinary names, and those find the spare namespace
@@ -29289,6 +30192,7 @@ impl<'a> Machine<'a> {
             worth.filter(|value| !matches!(value.settled(), Value::Unset))
         } else { worth };
         match self.book_holding(at) {
+            Some(Held::Namespace(index)) => set_down_slot(self.namespace_book(index).expect("a namespace slot"), name, worth, Some(at)),
             Some(Held::World) => if let Some(book) = &self.world_book { set_down_slot(book, name, worth, Some(at)) },
             Some(Held::Reading(which)) => {
                 let book = &self.readings[which];
@@ -29296,8 +30200,13 @@ impl<'a> Machine<'a> {
                     Some(outer) if book.declared.iter().any(|word| word == name) => outer,
                     _ => &book.near,
                 };
-                let deleting_name = worth.is_none() && !book.declared.iter().any(|word| word == name);
+                let is_global = book.declared.iter().any(|word| word == name);
+                let deleting_name = worth.is_none() && !is_global;
                 let goes_to = goes_to.clone();
+                if is_global {
+                    set_down_slot(&goes_to, name, worth, Some(at));
+                    return;
+                }
                 if let Err(escape) = self.booked_put(&goes_to, name, worth) {
                     // Refusal by the locals mapping means DELETE_NAME
                     // cannot remove that binding. Global/subscript
@@ -29322,6 +30231,8 @@ impl<'a> Machine<'a> {
         let Some(own) = &self.natives_book else { return false };
         match held {
             Value::Shared(cell) | Value::Mutable(cell, _) => Rc::ptr_eq(cell, own),
+            // Module dictionaries may return the settled storage of the marker.
+            Value::Dict(entries) => matches!(&*own.borrow(), Value::Dict(native) if Rc::ptr_eq(entries, native)),
             _ => false,
         }
     }
@@ -29366,14 +30277,31 @@ impl<'a> Machine<'a> {
     /// under way keeps them under, were it handed a dictionary of its
     /// own, else the kernel's own dictionary.
     pub(super) fn builtins_here(&mut self) -> Value {
-        if let Some(which) = self.reading_now {
-            let (near, outer) = (self.readings[which].near.clone(), self.readings[which].outer.clone());
-            let roots = outer.unwrap_or(near);
-            if let Some(word) = self.table.strings("ext.system.module.builtins").first().map(String::as_str).map(str::to_owned) {
-                if let Ok(Some(held)) = self.booked_get(&roots, &word) { return held; }
-            }
+        if let Some(saved) = self.frames_named.last().and_then(|body| body.born.clone()) { return saved; }
+        match self.reading_now {
+            Some(which) => self.readings[which].builtins.clone(),
+            None => Value::Mutable(self.natives_kept(), true),
         }
-        Value::Mutable(self.natives_kept(), true)
+    }
+
+    /// Preserve custom frame builtins when filling a source namespace's missing entry.
+    fn source_natives(&mut self) -> Result<Value, Escape> {
+        let saved = self.builtins_here();
+        if !self.is_our_natives(&saved) { return self.builtin_dictionary(saved); }
+        self.canonical_natives()
+    }
+
+    /// Turn an ordinary native-frame marker into the builtin module namespace.
+    fn canonical_natives(&mut self) -> Result<Value, Escape> {
+        let Some(path) = self.rules.words_ext_system_names_module.first().cloned() else {
+            return Ok(Value::Mutable(self.natives_kept(), true));
+        };
+        // Bootstrap sys before importing the public builtins module, which reads sys.flags.
+        if self.importing.contains("sys") {
+            return Ok(Value::Mutable(self.natives_kept(), true));
+        }
+        let namespace = self.load_namespace(&path)?;
+        self.builtin_dictionary(namespace)
     }
 
     pub(super) fn check_class_builtin(&mut self) -> Result<Value, Escape> {
@@ -29572,6 +30500,15 @@ impl<'a> Machine<'a> {
             entries.retain(|(word, _)| !spells_key(word, self.rules.detail_root));
             entries.push((Value::text(self.rules.detail_root), Value::Blueprint(root)));
         }
+        // The dictionary of builtins goes by the builtins module's name,
+        // as the reference's own dictionary of builtins does, so a class
+        // body run from it still reads `__name__`.
+        if let (Some(word), Some(named)) = (self.table.strings("ext.system.module.name").first().cloned(),
+                                            self.table.strings("ext.system.names.module").first().cloned()) {
+            if !entries.iter().any(|(key, _)| key.bare() == word) {
+                entries.push((Value::text(&word), Value::text(&named)));
+            }
+        }
         // The parent word belongs to every dictionary of builtins: it
         // is read from here wherever the builtins are read from, as the
         // module binding reads it.
@@ -29698,6 +30635,7 @@ impl<'a> Machine<'a> {
         match made_beside {
             Some(Value::Shared(cell)) | Some(Value::Mutable(cell, _)) => cell,
             Some(Value::Dict(entries)) => Rc::new(RefCell::new(Value::Dict(entries))),
+            Some(value @ Value::Thing(_)) if Self::underlying(&value).is_some_and(|base| matches!(base.settled(), Value::Dict(_))) => Rc::new(RefCell::new(value)),
             _ => self.space_book_of().unwrap_or_else(|| self.book_about(true)),
         }
     }
@@ -29975,7 +30913,8 @@ impl<'a> Machine<'a> {
     /// inside a routine, a fresh dictionary of its own names; and for
     /// dir, those names listed in order.
     fn names_here(&mut self, frame: &Rc<Env>, op: Prim) -> Result<Value, String> {
-        if (op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost)) && self.reading_now.is_none() {
+        if (op == Prim::WorldBook || Rc::ptr_eq(frame, &self.outermost)) && self.reading_now.is_none()
+            && !self.frames_named.last().is_some_and(|body| Self::explicit_globals(body).is_some()) {
             let origin = self.frames_named.last().map(|routine| self.routine_home(routine));
             if let Some(origin) = origin.filter(|name| name != self.detail("main")) {
                 if let Some(namespace) = self.imported.get(&origin).cloned() {
@@ -30032,6 +30971,10 @@ impl<'a> Machine<'a> {
                         None => continue,
                     };
                     if !matches!(held, Value::Unset) { entries.push((Value::text(&slot.ident), held)); }
+                }
+                for (key, value) in frame.extra.borrow().iter() {
+                    if entries.iter().any(|(word, _)| word.bare() == key.bare()) { continue; }
+                    entries.push((key.clone(), value.clone()));
                 }
             }
             Rc::new(RefCell::new(Value::Dict(Rc::new(entries.into()))))
@@ -30203,8 +31146,8 @@ impl<'a> Machine<'a> {
 
     // The interpreter obtains a dict subclass's builtin namespace
     // from its storage; its __getitem__ remains active for user names.
-    fn builtin_entry(&mut self, book: &Rc<RefCell<Value>>, word: &str) -> Result<Option<Value>, Escape> {
-        let owner = book.borrow().clone();
+    pub(super) fn builtin_entry(&mut self, book: &Rc<RefCell<Value>>, word: &str) -> Result<Option<Value>, Escape> {
+        let owner = book.borrow().settled();
         if let Some(native) = Self::underlying(&owner) {
             let stored = native.settled();
             if matches!(stored, Value::Dict(_)) { return self.mapping_read(&stored, word); }
@@ -31468,7 +32411,7 @@ impl<'a> Machine<'a> {
         // builtins as well, unless it names a dictionary of its own;
         // such a dictionary of its own is asked for them the very way
         // any other name is asked for, since it need not be a plain one.
-        if let Some(word) = self.table.strings("ext.system.module.builtins").first().map(String::as_str).map(str::to_owned) {
+        if let Some(word) = self.table.strings("ext.system.module.builtins").first().filter(|_| self.module_function_builtins.is_none()).map(String::as_str).map(str::to_owned) {
             let already = match self.builtin_entry(&outer, &word) {
                 Ok(v) => v,
                 Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
@@ -31480,7 +32423,7 @@ impl<'a> Machine<'a> {
                 }
             }
             if already.is_none() {
-                let natives = self.natives_kept();
+                let natives = self.source_natives().map_err(|fault| self.carried_native_fault(fault))?;
                 let value = outer.borrow().clone();
                 if matches!(&value, Value::Thing(_)) && self.appointed(&value, 12).is_none() && Self::underlying(&value).is_none() {
                     let kind = match &value { Value::Thing(t) => t.blueprint().name.clone(), other => other.kind_word() };
@@ -31490,7 +32433,7 @@ impl<'a> Machine<'a> {
                     Some(Value::Shared(cell) | Value::Mutable(cell, _)) if matches!(&*cell.borrow(), Value::Dict(_)) => cell,
                     _ => outer.clone(),
                 };
-                if let Err(escape) = self.booked_put(&destination, &word, Some(Value::Shared(natives))) {
+                if let Err(escape) = self.booked_put(&destination, &word, Some(natives)) {
                     self.got_away = Some(escape);
                     return Err(self.bad_answer());
                 }
@@ -31517,7 +32460,7 @@ impl<'a> Machine<'a> {
             if let Some(key) = self.table.single("ext.system.module.builtins").map(str::to_owned) {
                 let present = self.builtin_entry(&book, &key).map_err(|escape| self.carried_native_fault(escape))?;
                 if present.is_none() {
-                    let defaults = Value::Shared(self.natives_kept());
+                    let defaults = self.source_natives().map_err(|fault| self.carried_native_fault(fault))?;
                     self.booked_put(&book, &key, Some(defaults)).map_err(|escape| self.carried_native_fault(escape))?;
                 }
             }
@@ -31529,7 +32472,10 @@ impl<'a> Machine<'a> {
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
         let seeded = self.idents.clone();
-        let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, None, None, settling, sites)?;
+        let natives = if self.rules.builtin_namespace_words.is_empty() { None } else {
+            Some(self.source_natives().map_err(|escape| self.carried_native_fault(escape))?)
+        };
+        let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, natives, None, settling, sites)?;
         // What the build noted about how the text is written is said
         // once the text stands, each warning through the warnings module.
         for (message, row, column) in built.warnings.clone() {
@@ -31624,6 +32570,7 @@ impl<'a> Machine<'a> {
     /// Text run in dictionaries of its own: its names are given slots
     /// among the outermost cells, and a book kept for them.
     fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, literals: Option<Vec<Value>>, settling: i64, sites: &[[u32; 8]]) -> Result<Value, String> {
+        let captured = self.module_function_builtins.take();
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -31646,11 +32593,18 @@ impl<'a> Machine<'a> {
         // stood when the text was built, not to a later write into the
         // dictionary.
         let framed_in = looked_up(&outer, "__name__").and_then(|held| match held.settled() { Value::Text(named) => Some(named.clone()), _ => None });
-        let born = match self.table.strings("ext.system.module.builtins").first().map(String::as_str).map(str::to_owned) {
-            Some(word) => match self.builtin_entry(&outer, &word) { Ok(Some(held)) => held, _ => Value::Mutable(self.natives_kept(), true) },
-            None => Value::Mutable(self.natives_kept(), true),
+        let born = match captured {
+            Some(builtins) => builtins,
+            None => match self.table.strings("ext.system.module.builtins").first().map(String::as_str).map(str::to_owned) {
+                Some(word) => match self.builtin_entry(&outer, &word) { Ok(Some(held)) => held, _ => Value::Mutable(self.natives_kept(), true) },
+                None => Value::Mutable(self.natives_kept(), true),
+            },
         };
-        let (mut built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born), framed_in.clone(), settling, sites)?;
+        let born = match self.is_our_natives(&born) {
+            true => self.canonical_natives().map_err(|escape| self.carried_native_fault(escape))?,
+            false => born,
+        };
+        let (mut built, shown) = self.text_built(&source, &tokens, &prior, &file, mode, &shadowed, top_await, Some(globe), Some(born.clone()), framed_in.clone(), settling, sites)?;
         // What the build noted about how the text is written is said
         // under the name the handed globals give the text, each warning
         // through the warnings module.
@@ -31665,7 +32619,7 @@ impl<'a> Machine<'a> {
         let (near, outer) = match near { Some(near) => (near, Some(outer)), None => (outer, None) };
         let declarations: std::collections::BTreeSet<_> = built.outer_aliases.iter().cloned()
             .chain(crate::build::text_wide_globals(&tokens, self.table)).collect();
-        self.readings.push(Namebook { near, outer, from: beginning, upto: beginning + fresh.len(), declared: declarations.into_iter().collect() });
+        self.readings.push(Namebook { builtins: born, near, outer, from: beginning, upto: beginning + fresh.len(), declared: declarations.into_iter().collect() });
         let was_reading = self.reading_now.replace(self.readings.len() - 1);
         let answer = self.text_concluded(&built, &file, mode, shown);
         self.reading_now = was_reading;
@@ -31729,6 +32683,15 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
     match kind {
         Value::Vector(choices) => choices.iter().any(|choice| belongs_to(worth, choice)),
         Value::Blueprint(class) => {
+            // A slot a class declares is a data member carried as a
+            // wrapper, and answers to the descriptor kind the
+            // reference names it by.
+            if let Value::Wrapped(32, fields) = worth {
+                if matches!(fields.get(1), Some(Value::Blueprint(_))) {
+                    let kind_name = if matches!(fields.get(2), Some(Value::Small(-2))) { "getset_descriptor" } else { "member_descriptor" };
+                    if class.name == kind_name { return true; }
+                }
+            }
             let Value::Thing(object) = worth else { return false };
             let mut current = object.blueprint().clone();
             loop {
@@ -31777,8 +32740,7 @@ impl Machine<'_> {
         // very way any name is read from it, so a mapping of its own --
         // read-only, raising, or merely short of a name -- is honoured.
         if !self.is_our_natives(&builtins) {
-            return self.mapping_read(&builtins, name)
-                .map_err(|escape| { self.got_away = Some(escape); self.bad_answer() });
+            return self.builtin_dictionary_item(builtins, name);
         }
         self.builtin_from_module(name)
     }
@@ -31796,6 +32758,11 @@ impl Machine<'_> {
             Ok(book) => book,
             Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
         };
+        self.builtin_dictionary_item(dictionary, name)
+    }
+
+    /// Preserve key-comparison callbacks when reading a captured builtin dictionary.
+    fn builtin_dictionary_item(&mut self, dictionary: Value, name: &str) -> Result<Option<Value>, String> {
         match self.user_operation(Prim::At, &[dictionary, Value::text(name)]) {
             Ok(found) => Ok(found.map(|value| value.settled())),
             Err(words) => {

@@ -29,7 +29,8 @@ impl<'a> Engine<'a> {
         for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
         let (near, outer) = near.map_or((outer.clone(), None), |near| (near, Some(outer)));
-        self.text_books.push(TextBook { near, outer, from: offset, upto: offset + names.len(), declared: registry.declared_outer });
+        let builtins = registry.born.clone().unwrap_or_else(|| self.native_dict());
+        self.text_books.push(TextBook { builtins, near, outer, from: offset, upto: offset + names.len(), declared: registry.declared_outer });
         let previous = self.reading_in.replace(self.text_books.len() - 1);
         let file = original.written_in.clone().unwrap_or_else(|| Rc::from("<string>"));
         let result = self.text_finished(&Rc::new(program), &file, false);

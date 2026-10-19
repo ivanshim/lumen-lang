@@ -738,6 +738,8 @@ pub enum Form {
     TieCalled(Box<Form>, Box<Form>),
     /// Leave this binding as though nothing were ever written to it.
     Forget(Address),
+    /// Remove a Python name without a preliminary mapping read.
+    RemoveName(Address),
     /// Make this global ready: where nothing was ever written to it,
     /// nothing is written to it now, so that a name bound to it names
     /// a binding written to and not one never written.

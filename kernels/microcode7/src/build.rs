@@ -1150,6 +1150,9 @@ fn class_spellings<'t>(input: &'t [Token], table: &Table) -> std::borrow::Cow<'t
 }
 
 fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32, written_in: Option<Rc<str>>, globe: Option<Value>, born: Option<Value>, framed_in: Option<Rc<str>>, mark: Option<(&std::cell::Cell<u32>, &std::cell::Cell<bool>, &std::cell::Cell<(usize, usize, u32)>)>, within: Option<Within>, standing_in: Option<(String, Option<String>)>, read_in: bool, words: &mut HashMap<usize, ScopeWords>, survey: bool, value_only: bool, shadowed: &[String], exports: &HashSet<String>, allow_top_await: bool, interactive: bool, settle: i64, aliasing: &[(String, String)], future_bits: i64) -> Res<Built> {
+    // A name the language reserves may not be written to: `async = 1`
+    // and `await = 1` are syntax errors wherever they stand, before the
+    // text is otherwise read.
     let reserved_assignment = tokens.windows(2).any(|adjacent| adjacent[0].shape == Shape::Bare
         && adjacent[1].lexeme == "=" && ["ext.stmt.async", "ext.op.await"].iter().any(|label| table.spells(label, adjacent[0].spelling())));
     if reserved_assignment { return Err(String::from("SyntaxError: invalid syntax")); }
@@ -1906,7 +1909,22 @@ impl<'a> Builder<'a> {
         }
         // The class's kind word where the routine keeps no name of its
         // own for it is the hidden cell a class around closes over.
-        if let Some(slot) = self.class_cell_read(name) { return slot; }
+        if !self.layers.last().map_or(false, |layer| layer.idents.iter().any(|named| named == name)) {
+            if let Some(slot) = self.class_cell_read(name) { return slot; }
+        }
+        // Text read inside a routine stands where its caller stands: the
+        // caller's own locals answer before the caller's globals, as the
+        // reference reads a frame's locals before its globals, unless the
+        // text itself declared the name `global`. A name handed over among
+        // the caller's globals is told from that by its imported slot, so a
+        // caller local of the same spelling still wins.
+        if self.table.flag("ext.stmt.function.closes_over") && !self.survey && self.read_in {
+            let given_global = self.layers[0].aliases.iter().any(|(n, to)| n == name && to.starts_with("\0import/"));
+            let said_global = self.layers[0].aliases.iter().any(|(n, to)| n == name && !to.starts_with("\0import/"));
+            if given_global && !said_global {
+                if let Some(slot) = self.lexical_address(name, false) { return slot; }
+            }
+        }
         if let Some(slot) = self.aliased(name) {
             return slot;
         }
@@ -10890,7 +10908,7 @@ impl<'a> Builder<'a> {
                     // after it, both operands then being addresses the
                     // operation reads for itself.
                     let late = match &left {
-                        Form::Read(slot) if !as_it_stands(&right) => Some(slot.ident.clone()),
+                        Form::Read(slot) if !table.flag("ext.syntax.names.shadow_builtins") && !as_it_stands(&right) => Some(slot.ident.clone()),
                         _ => None,
                     };
                     match late {
@@ -11758,8 +11776,10 @@ impl<'a> Builder<'a> {
                     if targets && table.flag("ext.stmt.function.closes_over") {
                         let own = self.address_to_write(&slot.ident);
                         self.unmet_last_read(&slot.ident);
-                        sequence(vec![Form::Read(own.clone()), Form::Forget(own)])
-                    } else if targets { sequence(vec![self.read(&slot.ident), Form::Forget(slot)]) }
+                        if table.has_any("ext.stmt.class.builder") { Form::RemoveName(own) }
+                        else { sequence(vec![Form::Read(own.clone()), Form::Forget(own)]) }
+                    } else if targets && self.table.has_any("ext.stmt.class.builder") { Form::RemoveName(slot) }
+                    else if targets { sequence(vec![self.read(&slot.ident), Form::Forget(slot)]) }
                     else { Form::Forget(slot) }
                 },
                 Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
