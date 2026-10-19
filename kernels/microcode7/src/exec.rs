@@ -30747,7 +30747,12 @@ impl<'a> Machine<'a> {
         } else { worth };
         match self.book_holding(at) {
             Some(Held::Namespace(index)) => set_down_slot(self.namespace_book(index).expect("a namespace slot"), name, worth, Some(at)),
-            Some(Held::World) => if let Some(book) = &self.world_book { set_down_slot(book, name, worth, Some(at)) },
+            Some(Held::World) => if let Some(book) = self.world_book.clone() {
+                let module_dictionary = matches!(&*book.borrow(), Value::Attributes(_));
+                if module_dictionary {
+                    if let Err(escape) = self.booked_put(&book, name, worth) { self.got_away = Some(escape); }
+                } else { set_down_slot(&book, name, worth, Some(at)); }
+            },
             Some(Held::Reading(which)) => {
                 let book = &self.readings[which];
                 let goes_to = match &book.outer {
@@ -32951,6 +32956,27 @@ impl<'a> Machine<'a> {
             });
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
+            (None, None) if mode != 2 && within.is_some() && self.frames_named.last().is_some_and(|code| code.globe.is_some()) => {
+                let (names, frame) = within.as_ref().expect("the active frame");
+                let local_names = if self.frames_named.last().is_some_and(|code| code.class_namespace.is_some()) {
+                    self.names_here(frame, Prim::HereBook)?
+                } else {
+                    // The saved frame already flattens captured bindings beside
+                    // its locals; its parent is no longer the caller's closure.
+                    let values = frame.cells.borrow();
+                    let entries = names.iter().zip(values.iter()).filter_map(|(name, value)| {
+                        (Self::visible_name(name) && !matches!(value.settled(), Value::Unset))
+                            .then(|| (Value::text(name), value.clone()))
+                    }).collect::<Vec<_>>();
+                    Value::Dict(Rc::new(entries.into()))
+                };
+                let locals = match local_names {
+                    Value::Shared(cell) | Value::Mutable(cell, _) => cell,
+                    names => Rc::new(RefCell::new(names)),
+                };
+                let globals = match caller_book { Some(book) => book, None => self.standing_world() };
+                return self.perform_booked(&source, file, mode, globals, Some(locals), top_await, literals, settling, &sites);
+            }
             (None, None) => return match within.filter(|_| mode != 2) {
                 Some((names, mine)) => self.perform_within(&source, file, mode, names, mine, top_await, literals, settling, &sites),
                 None => self.perform_here(&source, file, mode, top_await, literals, settling, &sites),

@@ -3529,12 +3529,22 @@ impl<'a> Engine<'a> {
         }
         Ok(object)
     }
+    /// Follow the defining allocator's slot; an explicit root allocator keeps
+    /// its primary base's slot, not an unrelated later MRO entry's slot.
+    fn root_allocation_changed(&self, c: &Class) -> bool {
+        Self::ordered_lookup(c, |owner| {
+            let value = Self::own_class_value(owner, self.class_word("allocate"))?;
+            Some(if matches!(value, Value::Adapter(parts) if parts.0 == 1 && parts.1.is_empty()) {
+                owner.base.borrow().as_deref().is_some_and(|base| self.root_allocation_changed(base))
+            } else { true })
+        }).unwrap_or(false)
+    }
     /// The root's making (`allocating`) or constructing, handed more
     /// than the class or the thing: refused as CPython refuses it,
     /// naming the root where the class wrote over the one working and
     /// the class where it wrote over neither.
     fn root_refuses_arguments(&self, c: &Rc<Class>, allocating: bool) -> Flow<()> {
-        let made_own = self.class_value(c,self.class_word("allocate")).is_some();
+        let made_own = self.root_allocation_changed(c);
         let built_own = self.lang.constructor.as_deref().map_or(false,|n| self.class_value(c,n).is_some_and(|f| !matches!(f, Value::Adapter(a) if a.0 == 2 && a.1.is_empty())));
         let (own, other, part) = if allocating {(made_own, built_own, "arguments.new")} else {(built_own, made_own, "arguments.init")};
         let (part, named) = if own {(part, self.class_word("root").to_string())}
