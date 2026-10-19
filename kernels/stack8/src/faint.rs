@@ -551,6 +551,8 @@ pub fn track_container(cell: &Rc<RefCell<Value>>) {
 /// accounts for.
 struct Node {
     held: Value,
+    place: usize,
+    /// Rows of the graph this value holds directly.
     reaches: Vec<usize>,
     inward: usize,
     marked: bool,
@@ -562,8 +564,10 @@ struct Node {
 /// hold, and nothing reaching it from anything that has one, is
 /// unreachable by the program.
 pub struct Graph {
-    order: Vec<usize>,
-    nodes: Places<Node>,
+    /// Every value met, in the order it was met; a hold is followed by
+    /// row rather than by address, so the walk looks nothing up.
+    nodes: Vec<Node>,
+    rows: Places<usize>,
     bookkeeping: Places<usize>,
 }
 
@@ -782,7 +786,7 @@ impl Graph {
     /// The actual owners in this collector snapshot, once per heap identity.
     /// Returning clones retains their existing Python identities.
     pub fn tracked_objects(&self) -> Vec<Value> {
-        self.order.iter().filter_map(|place|self.nodes.get(place)).filter_map(|node| {
+        self.nodes.iter().filter_map(|node| {
             match &node.held {
                 Value::Fields(object)=>Some(Value::Object(object.clone())),
                 Value::Tie(_) | Value::Hashed(_)=>None,
@@ -820,26 +824,32 @@ impl Graph {
     pub fn link_attributes(&mut self, function: &Value, holder: &Value) {
         let function = match function { Value::Method(_, routine, _) => Value::Routine(routine.clone()), other => other.clone() };
         if let (Some(from), Some(to)) = (place_of(&function), place_of(holder)) {
-            if let Some(node) = self.nodes.get_mut(&from) { node.reaches.push(to); }
+            if let (Some(&from), Some(&to)) = (self.rows.get(&from), self.rows.get(&to)) { self.nodes[from].reaches.push(to); }
         }
     }
 
     fn build(roots: Vec<Value>, bookkeeping: Places<usize>) -> Graph {
-        let mut nodes: Places<Node> = Places::default();
-        let mut order = Vec::new();
+        let mut nodes: Vec<Node> = Vec::new();
+        let mut rows: Places<usize> = Places::default();
         let mut open: Vec<usize> = Vec::new();
+        // The row a value stands in, made where it has none yet, with
+        // one more hold from inside the graph counted on it as asked.
+        fn row_of(nodes: &mut Vec<Node>, rows: &mut Places<usize>, open: &mut Vec<usize>, held: Value, place: usize, inward: usize) -> usize {
+            if let Some(&at) = rows.get(&place) { nodes[at].inward += inward; return at; }
+            let at = nodes.len();
+            rows.insert(place, at);
+            nodes.push(Node { held, place, reaches: Vec::new(), inward, marked: false });
+            open.push(at);
+            at
+        }
         for root in roots {
             let Some(place) = place_of(&root) else { continue };
-            if !nodes.contains_key(&place) {
-                nodes.insert(place, Node { held: root, reaches: Vec::new(), inward: 0, marked: false });
-                order.push(place);
-                open.push(place);
-            }
+            row_of(&mut nodes, &mut rows, &mut open, root, place, 0);
         }
         let mut children = Vec::new();
-        while let Some(place) = open.pop() {
+        while let Some(at) = open.pop() {
             children.clear();
-            reaches(&nodes[&place].held, &mut children);
+            reaches(&nodes[at].held, &mut children);
             let mut reached = Vec::with_capacity(children.len());
             for child in children.drain(..) {
                 // A bound method is not a place of its own but two.
@@ -847,22 +857,14 @@ impl Graph {
                     Value::Method(o, r, _) => (Value::Object(o), Some(Value::Routine(r))),
                     other => (other, None),
                 };
-                for part in std::iter::once(first).chain(second) {
-                    let Some(at) = place_of(&part) else { continue };
-                    match nodes.get_mut(&at) {
-                        Some(node) => node.inward += 1,
-                        None => {
-                            nodes.insert(at, Node { held: part, reaches: Vec::new(), inward: 1, marked: false });
-                            order.push(at);
-                            open.push(at);
-                        }
-                    }
-                    reached.push(at);
+                if let Some(place) = place_of(&first) { reached.push(row_of(&mut nodes, &mut rows, &mut open, first, place, 1)); }
+                if let Some(second) = second {
+                    if let Some(place) = place_of(&second) { reached.push(row_of(&mut nodes, &mut rows, &mut open, second, place, 1)); }
                 }
             }
-            nodes.get_mut(&place).unwrap().reaches = reached;
+            nodes[at].reaches = reached;
         }
-        Graph { nodes, bookkeeping, order }
+        Graph { nodes, rows, bookkeeping }
     }
 
     /// Whether this value is now unreachable once the engine's own
@@ -870,7 +872,7 @@ impl Graph {
     pub fn unowned(&self, value: &Value) -> bool {
         match value {
             Value::Method(object, routine, _) => self.unowned(&Value::Object(object.clone())) && self.unowned(&Value::Routine(routine.clone())),
-            other => place_of(other).and_then(|place| self.nodes.get(&place)).is_some_and(|node| !node.marked),
+            other => place_of(other).and_then(|place| self.rows.get(&place)).is_some_and(|&at| !self.nodes[at].marked),
         }
     }
 
@@ -878,27 +880,25 @@ impl Graph {
     /// anything it does hold: the graph's own hold on each is the one
     /// not counted among the program's.
     pub fn unreached(&mut self) -> Vec<Value> {
-        let mut open: Vec<usize> = self.nodes.iter()
-            .filter(|(place, n)| holds_on(&n.held) > n.inward + 1 + self.bookkeeping.get(place).copied().unwrap_or(0))
-            .map(|(place, _)| *place)
-            .collect();
-        for place in &open {
-            self.nodes.get_mut(place).unwrap().marked = true;
-        }
-        while let Some(place) = open.pop() {
-            let reached = self.nodes[&place].reaches.clone();
-            for at in reached {
-                let node = self.nodes.get_mut(&at).unwrap();
-                if !node.marked {
-                    node.marked = true;
-                    open.push(at);
-                }
+        let mut open: Vec<usize> = Vec::new();
+        for (at, node) in self.nodes.iter_mut().enumerate() {
+            if holds_on(&node.held) > node.inward + 1 + self.bookkeeping.get(&node.place).copied().unwrap_or(0) {
+                node.marked = true;
+                open.push(at);
             }
         }
-        self.order.iter().filter_map(|place| {
-            let node = &self.nodes[place];
-            (!node.marked).then(|| node.held.clone())
-        }).collect()
+        while let Some(at) = open.pop() {
+            let reached = std::mem::take(&mut self.nodes[at].reaches);
+            for &to in &reached {
+                let node = &mut self.nodes[to];
+                if !node.marked {
+                    node.marked = true;
+                    open.push(to);
+                }
+            }
+            self.nodes[at].reaches = reached;
+        }
+        self.nodes.iter().filter(|node| !node.marked).map(|node| node.held.clone()).collect()
     }
 
     /// Recheck ownership after finalization, retaining only the original

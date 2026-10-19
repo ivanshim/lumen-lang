@@ -27,6 +27,8 @@ impl<'a> Engine<'a> {
             "order" => self.member_words[19],
             "receiver" => self.member_words[20],
             "unready" => self.member_words[21],
+            "subclass" => self.member_words[22],
+            "text_signature" => self.member_words[23],
             _ => self.lang.class_details.get(part).and_then(|v| v.first()).map_or("", String::as_str),
         }
     }

@@ -608,6 +608,8 @@ pub struct Machine<'a> {
     wildcard_names: HashMap<Rc<str>, HashMap<String, usize, crate::table::FxBuildHasher>, crate::table::FxBuildHasher>,
     wildcard_source: RefCell<Option<(Rc<str>, (bool, bool))>>,
     namespace_places: RefCell<Option<HashMap<usize, String>>>,
+    /// The place the recursion limit was last read from in the system namespace.
+    recursion_place: std::cell::Cell<usize>,
     revised_members: RefCell<HashMap<usize, (usize, HashMap<String, usize, crate::table::FxBuildHasher>)>>,
     revised_namespaces: std::collections::HashSet<Rc<str>>,
     displaced_primitives: std::collections::BTreeSet<String>,
@@ -1402,7 +1404,15 @@ impl<'a> Machine<'a> {
         let [module, binding] = self.rules.words_ext_system_recursion_variable else { return original };
         let Some(Value::Thing(namespace)) = self.imported.get(module) else { return original };
         let held = namespace.holds.borrow();
-        held.iter().find(|(key, _)| key == binding).and_then(|(_, item)| match item.settled() {
+        // Look where it stood last time; walk the namespace only when
+        // that place has since come to hold another name.
+        let place = self.recursion_place.get();
+        let entry = held.get(place).filter(|row| row.0 == *binding).or_else(|| {
+            let at = held.iter().position(|(key, _)| key == binding)?;
+            self.recursion_place.set(at);
+            held.get(at)
+        });
+        entry.and_then(|(_, item)| match item.settled() {
             Value::Small(number) => usize::try_from(number).ok(),
             _ => None,
         }).or(original).map(|number| match original {
@@ -2158,6 +2168,7 @@ impl<'a> Machine<'a> {
             wildcard_names: HashMap::with_hasher(crate::table::FxBuildHasher::default()),
             wildcard_source: RefCell::new(None),
             namespace_places: RefCell::new(None),
+            recursion_place: std::cell::Cell::new(usize::MAX),
             revised_members: RefCell::new(HashMap::new()),
             revised_namespaces: std::collections::HashSet::new(),
             displaced_primitives: std::collections::BTreeSet::new(),
@@ -9405,12 +9416,13 @@ impl<'a> Machine<'a> {
                         match op {
                             Prim::ClassWork(k)=>return self.work_on_class(*k,values),
                             Prim::SortOf if values.len()!=1 || values.first().map_or(false, |v| matches!(v, Value::Thing(_) | Value::Blueprint(_) | Value::Routine(_) | Value::Bound(..) | Value::Wrapped(..))) =>return self.class_from_type(values),
-                            Prim::Of if values.len() == 2 && self.namespace_holding(&values[0]).is_some()
+                            Prim::Of if values.len() == 2
                                 && (self.rules.words_ext_stmt_class_annotations.first().map(String::as_str) == Some(values[1].bare().as_str())
-                                    || self.rules.words_ext_stmt_class_detail_code_fields.get(10).is_some_and(|word| word == &values[1].bare())) => {
+                                    || self.rules.words_ext_stmt_class_detail_code_fields.get(10).is_some_and(|word| word == &values[1].bare()))
+                                && self.namespace_holding(&values[0]).is_some() => {
                                 return self.read_class_member(values[0].clone(), &values[1].bare(), false);
                             },
-                            Prim::Of if values.len() == 2 && values[1].bare() == self.detail("allocate") && matches!(values[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) => {
+                            Prim::Of if values.len() == 2 && matches!(values[0].settled(), Value::Nil | Value::Ellipsis | Value::Refusal(_)) && values[1].bare() == self.detail("allocate") => {
                                 return self.read_class_member(values[0].settled(), &values[1].bare(), false);
                             },
                             Prim::Of if values.len()==2 && (matches!(&values[0], Value::OctetKind { .. }) || matches!(&values[0], Value::Thing(t) if t.blueprint().presentation.is_some()) || matches!(&values[0], Value::Blueprint(c) if c.presentation.is_some() || self.is_fault_kind(c)) || matches!(&values[0], Value::Routine(_) | Value::Method(..) | Value::Bound(..) | Value::Wrapped(..)) || matches!(&values[0], Value::Intrinsic(..)) || matches!(&values[0], Value::Intrinsic(_, word) if self.table.spells("ext.stmt.class.builtin", word))) =>return self.read_class_member(values[0].clone(),&values[1].bare(),false),
@@ -11412,9 +11424,6 @@ impl<'a> Machine<'a> {
         if !class.parents().is_empty() && Self::native_beneath(&class).as_deref() != Some("module") { return None; }
         let saved_name = thing.holds.borrow().iter().find(|row| row.0 == "\0loaded-module").map(|row| row.1.settled());
         if let Some(Value::Text(path)) = saved_name { return Some(path.to_string()); }
-        for (path, held) in &self.imported {
-            if matches!(held, Value::Thing(other) if Rc::ptr_eq(other, thing)) { return Some(path.clone()); }
-        }
         let names = self.rules.words_ext_system_module_name;
         let blueprint = thing.blueprint();
         if blueprint.parents().is_empty() && blueprint.under().is_none() && blueprint.type_names.borrow().is_none() {
@@ -29847,8 +29856,8 @@ impl Machine<'_> {
         // reads all meet in one place.
         *namespace.borrow_mut() = Value::Attributes(match &value { Value::Thing(t) => t.clone(), _ => unreachable!() });
         self.imported.insert(path.into(), value.clone());
-        self.source_namespace_metadata(path, &value)?;
         self.namespace_places.borrow_mut().take(); self.revised_members.borrow_mut().clear();
+        self.source_namespace_metadata(path, &value)?;
         let from_library = self.table.single("ext.system.module.path").is_some() && (from_disk.is_none() || from_disk.as_ref().map(|(file, _)| file) == self.library_module_file(path).as_ref());
         self.library_origins.remove(path);
         if from_library { self.library_origins.insert(path.to_owned()); }

@@ -359,7 +359,7 @@ impl Machine<'_> {
                 if completion.is_err() { self.imported.remove(qualified); }
                 self.namespace_places.borrow_mut().take();
                 let namespace = completion?.settled();
-                self.imported.insert(qualified.to_owned(), namespace.clone());
+                self.imported.insert(qualified.to_owned(), namespace.clone()); self.namespace_places.borrow_mut().take();
                 if let Some((ancestor, member)) = qualified.rsplit_once('.') {
                     if let Some(parent) = self.cached_import(ancestor).or_else(|| self.imported.get(ancestor).cloned()) {
                         self.alter_class_member(parent, member, Some(namespace.clone()), false).map_err(|fault| self.carried_native_fault(fault))?;

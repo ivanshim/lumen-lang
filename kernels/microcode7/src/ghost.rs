@@ -752,18 +752,25 @@ impl Knot {
     /// a bound routine for its frame (the routine itself holds nothing),
     /// a bound method for its thing, a keyed pair for its two values.
     fn parts(self) -> impl Iterator<Item = Knot> {
-        let (first, second) = match self {
+        let (first, second) = self.split();
+        std::iter::once(first).chain(second)
+    }
+
+    /// The same two parts, handed over plainly for the weaving loop.
+    fn split(self) -> (Knot, Option<Knot>) {
+        match self {
             Knot::Held(Value::Bound(body, env)) => (Knot::Held(Value::Routine(body)), Some(Knot::Frame(env))),
             Knot::Held(Value::Method(body, thing, _)) => (Knot::Held(Value::Routine(body)), Some(Knot::Held(Value::Thing(thing)))),
             Knot::Held(Value::Keyed(k, v)) => (Knot::Held((*k).clone()), Some(Knot::Held((*v).clone()))),
             other => (other, None),
-        };
-        std::iter::once(first).chain(second)
+        }
     }
 }
 
 struct Strand {
     knot: Knot,
+    place: usize,
+    /// Positions in the web of the knots this one holds directly.
     onward: Vec<usize>,
     inward: usize,
     reached: bool,
@@ -775,7 +782,9 @@ struct Strand {
 /// and whatever has one, or is reached from something that has one, the
 /// program can still get at. The rest it cannot.
 pub struct Web {
-    strands: HashMap<usize, Strand, crate::table::FxBuildHasher>,
+    strands: Vec<Strand>,
+    /// Which strand stands at an address, asked once per knot met.
+    placed: HashMap<usize, usize, crate::table::FxBuildHasher>,
     bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>,
 }
 
@@ -806,7 +815,7 @@ impl Web {
                 }
             }).collect()
         }).unwrap_or_default();
-        self.strands.values().filter_map(|strand| match &strand.knot {
+        self.strands.iter().filter_map(|strand| match &strand.knot {
             Knot::Held(Value::Couple(_) | Value::Row(_) | Value::Arguments(_))=>None,
             Knot::Held(Value::Vector(_) | Value::Dict(_))=>None,
             Knot::Held(Value::Routine(code))=>functions.get(&(Rc::as_ptr(code) as usize)).cloned(),
@@ -843,39 +852,44 @@ impl Web {
     pub fn link_attributes(&mut self, function: &Value, holder: &Value) {
         let function = match function { Value::Bound(body, _) => Value::Routine(body.clone()), other => other.clone() };
         if let (Some(from), Some(to)) = (Knot::Held(function).place(), Knot::Held(holder.clone()).place()) {
-            if let Some(strand) = self.strands.get_mut(&from) { strand.onward.push(to); }
+            if let (Some(&from), Some(&to)) = (self.placed.get(&from), self.placed.get(&to)) { self.strands[from].onward.push(to); }
         }
     }
 
     fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>) -> Web {
-        let mut strands: HashMap<usize, Strand, crate::table::FxBuildHasher> = HashMap::default();
+        let mut web = Web { strands: Vec::new(), placed: HashMap::default(), bookkeeping };
         let mut frontier: Vec<usize> = Vec::new();
-        for root in roots.into_iter().flat_map(Knot::parts) {
-            if let Some(place) = root.place() {
-                if !strands.contains_key(&place) {
-                    strands.insert(place, Strand { knot: root, onward: Vec::new(), inward: 0, reached: false });
-                    frontier.push(place);
-                }
+        // Each part of a knot is placed once; a hold on a part already
+        // placed is counted on it instead.
+        let place_parts = |web: &mut Web, frontier: &mut Vec<usize>, knot: Knot, inward: usize, onward: Option<&mut Vec<usize>>| {
+            let mut onward = onward;
+            let (first, second) = knot.split();
+            for part in [Some(first), second] {
+                let Some(part) = part else { continue };
+                let Some(at) = part.place() else { continue };
+                let position = match web.placed.get(&at) {
+                    Some(&position) => { web.strands[position].inward += inward; position }
+                    None => {
+                        let position = web.strands.len();
+                        web.placed.insert(at, position);
+                        web.strands.push(Strand { knot: part, place: at, onward: Vec::new(), inward, reached: false });
+                        frontier.push(position);
+                        position
+                    }
+                };
+                if let Some(onward) = onward.as_deref_mut() { onward.push(position); }
             }
-        }
+        };
+        for root in roots { place_parts(&mut web, &mut frontier, root, 0, None); }
         let mut next = Vec::new();
-        while let Some(place) = frontier.pop() {
+        while let Some(position) = frontier.pop() {
             next.clear();
-            strands[&place].knot.onward(&mut next);
+            web.strands[position].knot.onward(&mut next);
             let mut onward = Vec::with_capacity(next.len());
-            for knot in next.drain(..).flat_map(Knot::parts) {
-                let Some(at) = knot.place() else { continue };
-                if let Some(strand) = strands.get_mut(&at) {
-                    strand.inward += 1;
-                } else {
-                    strands.insert(at, Strand { knot, onward: Vec::new(), inward: 1, reached: false });
-                    frontier.push(at);
-                }
-                onward.push(at);
-            }
-            if let Some(strand) = strands.get_mut(&place) { strand.onward = onward; }
+            for knot in next.drain(..) { place_parts(&mut web, &mut frontier, knot, 1, Some(&mut onward)); }
+            web.strands[position].onward = onward;
         }
-        Web { strands, bookkeeping }
+        web
     }
 
     /// Whether a value belongs only to an unreachable round, after
@@ -889,7 +903,7 @@ impl Web {
             other => Knot::Held(other.clone()).parts(),
         };
         parts.all(|part| {
-            part.place().and_then(|place| self.strands.get(&place)).is_some_and(|strand| !strand.reached)
+            part.place().and_then(|place| self.placed.get(&place)).is_some_and(|&position| !self.strands[position].reached)
         })
     }
 
@@ -897,25 +911,25 @@ impl Web {
     /// on each is the one hold not counted among the program's.
     pub fn unreachable(&mut self) -> Vec<Knot> {
         let mut frontier: Vec<usize> = Vec::new();
-        for (place, strand) in self.strands.iter_mut() {
-            if strand.knot.holds() > strand.inward + 1 + self.bookkeeping.get(place).copied().unwrap_or(0) {
+        for (position, strand) in self.strands.iter_mut().enumerate() {
+            if strand.knot.holds() > strand.inward + 1 + self.bookkeeping.get(&strand.place).copied().unwrap_or(0) {
                 strand.reached = true;
-                frontier.push(*place);
+                frontier.push(position);
             }
         }
-        while let Some(place) = frontier.pop() {
-            let onward = self.strands[&place].onward.clone();
-            for at in onward {
-                if let Some(strand) = self.strands.get_mut(&at) {
-                    if !strand.reached {
-                        strand.reached = true;
-                        frontier.push(at);
-                    }
+        while let Some(position) = frontier.pop() {
+            let onward = std::mem::take(&mut self.strands[position].onward);
+            for &at in &onward {
+                let strand = &mut self.strands[at];
+                if !strand.reached {
+                    strand.reached = true;
+                    frontier.push(at);
                 }
             }
+            self.strands[position].onward = onward;
         }
         let mut lost = Vec::new();
-        for strand in self.strands.values() {
+        for strand in self.strands.iter() {
             if strand.reached { continue; }
             lost.push(match &strand.knot {
                 Knot::Held(v) => Knot::Held(v.clone()),
@@ -931,7 +945,7 @@ impl Web {
     pub fn remaining(&mut self, original: Vec<Knot>) -> Vec<Knot> {
         drop(self.unreachable());
         original.into_iter().filter(|knot| {
-            knot.place().and_then(|at| self.strands.get(&at)).is_some_and(|strand| !strand.reached)
+            knot.place().and_then(|at| self.placed.get(&at)).is_some_and(|&position| !self.strands[position].reached)
         }).collect()
     }
 
