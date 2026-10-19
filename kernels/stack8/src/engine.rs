@@ -502,7 +502,8 @@ type Flow<T> = Result<T, Fault>;
 #[derive(Clone, Copy)]
 enum Callee<'a> {
     Unknown,
-    Routine(&'a str),
+    /// A routine whose name is only worked out if a complaint needs it.
+    Code(&'a Routine),
     Builtin(&'a str),
     Other(&'a str),
 }
@@ -512,9 +513,9 @@ impl Callee<'_> {
     /// the parentheses of a callable and the space after them.
     fn shown(self) -> String {
         match self {
-            Callee::Routine(name) | Callee::Builtin(name) => format!("{name}() "),
+            Callee::Builtin(name) => format!("{name}() "),
             Callee::Other(name) => format!("{name} "),
-            Callee::Unknown => String::new(),
+            Callee::Unknown | Callee::Code(_) => String::new(),
         }
     }
 }
@@ -3695,7 +3696,6 @@ impl<'a> Engine<'a> {
     /// reference names the callee for it; a spread among others is
     /// worded as a later one.
     fn call_items_for(&mut self, args: Vec<Value>, callee: Callee) -> Flow<Vec<(Option<String>, Value)>> {
-        let shown = callee.shown();
         let lone = args.iter().filter(|given| !matches!(given, Value::Tie(pair) if matches!(pair.0, Value::Text(_)))).count() == 1;
         let mut items = Vec::new();
         for value in args {
@@ -3708,6 +3708,7 @@ impl<'a> Engine<'a> {
                         match self.expand_spread(&pair.1) {
                             Ok(members) => items.extend(members.into_iter().map(|member| (None, member))),
                             Err(Fault::Note(why)) if why == plain => {
+                                let shown = self.callee_shown(callee);
                                 let told = if lone { self.spread_said(&self.lang.spread_amiss, &shown, &kind) }
                                     else { self.spread_said(&self.lang.spread_later, "", &kind) };
                                 return Err(told.into());
@@ -3715,7 +3716,7 @@ impl<'a> Engine<'a> {
                             Err(other) => return Err(other),
                         }
                     }
-                    Value::Flag(true) => items.extend(self.mapping_pairs(&pair.1, &shown)?),
+                    Value::Flag(true) => items.extend(self.mapping_pairs(&pair.1, callee)?),
                     _ => return Err(self.lang.call_amiss[0].clone().into()),
                 },
                 other => items.push((None, other)),
@@ -3739,7 +3740,15 @@ impl<'a> Engine<'a> {
     /// written under. A map gives its own pairs; any other thing gives
     /// the pairs its `keys` method lists, read back one by one. A key
     /// that is no text is refused as the reference refuses it.
-    fn mapping_pairs(&mut self, source: &Value, shown: &str) -> Flow<Vec<(Option<String>, Value)>> {
+    /// The callee as the words of a complaint open with it.
+    fn callee_shown(&self, callee: Callee) -> String {
+        match callee {
+            Callee::Code(program) => format!("{}() ", self.routine_string(program)),
+            other => other.shown(),
+        }
+    }
+
+    fn mapping_pairs(&mut self, source: &Value, callee: Callee) -> Flow<Vec<(Option<String>, Value)>> {
         let held = match source {
             Value::View(proxy) if proxy.1 == "mapping" => source.proxy_dictionary(),
             _ => match source.contents() {
@@ -3763,7 +3772,7 @@ impl<'a> Engine<'a> {
             }
             Value::Object(_) => {
                 let Some(keys) = self.member_of(held.clone(), "keys")? else {
-                    return Err(self.spread_pairs_said(shown, &kind).into());
+                    return Err(self.spread_pairs_said(&self.callee_shown(callee), &kind).into());
                 };
                 let listed = self.call_held(keys, Vec::new())?;
                 for key in self.core_members(&listed)? {
@@ -3772,7 +3781,7 @@ impl<'a> Engine<'a> {
                     pairs.push((Some(word), value));
                 }
             }
-            _ => return Err(self.spread_pairs_said(shown, &kind).into()),
+            _ => return Err(self.spread_pairs_said(&self.callee_shown(callee), &kind).into()),
         }
         Ok(pairs)
     }
@@ -4058,8 +4067,7 @@ impl<'a> Engine<'a> {
             },
             _ => false,
         }) {
-            let callee_name = self.routine_string(program);
-            self.call_items_for(args, Callee::Routine(&callee_name))?
+            self.call_items_for(args, Callee::Code(program))?
         } else { self.call_items(args)? };
         let mut frame = vec![Value::Blank; rules.len()];
         let slots: Vec<usize> = rules.iter().enumerate().filter_map(|(i, r)| (*r < 2).then_some(i)).collect();
