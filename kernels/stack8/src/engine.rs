@@ -6532,7 +6532,6 @@ impl<'a> Engine<'a> {
             return Err(Fault::Thrown(value));
         }
         let mut counted = 0u32;
-        let farewell = crate::faint::pending_flag();
         // Where a raised value is caught, how deep the stack was when
         // the guard was set, and how much quiet was asked for then.
         let mut guards: Vec<(usize, usize, usize)> = Vec::new();
@@ -6555,16 +6554,6 @@ impl<'a> Engine<'a> {
                     pc = catch;
                     continue;
                 }
-            }
-            // The word just run may have released a temporary. A
-            // volatile load of the farewell flag stays fresh; zero
-            // is the usual case and costs no further call. Anything
-            // else, including an anchor left as the last holder, is
-            // settled before the next word reads.
-            if unsafe { std::ptr::read_volatile(farewell as *const u8) } != 0
-                && crate::faint::pending()
-            {
-                self.settle_departed();
             }
             counted = counted.wrapping_add(1);
             if counted % 4096 == 0 {
@@ -6990,9 +6979,8 @@ impl<'a> Engine<'a> {
                     if self.source == self.root_source { self.main_started = true; }
                     self.location = None;
                     self.line = *row;
-                    // A statement edge still settles farewells. Each
-                    // word inside the statement settles its own before
-                    // the next word reads.
+                    // Whatever went away during the last statement is seen
+                    // to between statements, never in the middle of one.
                     if crate::faint::pending() {
                         self.settle_departed();
                     }

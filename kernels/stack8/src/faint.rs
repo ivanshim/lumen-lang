@@ -299,15 +299,6 @@ pub fn pending() -> bool {
     }
 }
 
-/// Where this thread keeps the farewell flag. The address does not
-/// move, so a word loop can load it without asking the thread store.
-/// Zero means nothing is waiting. Any other value is worth asking
-/// `pending`, which also notices an anchor whose last outside holder
-/// has gone.
-pub fn pending_flag() -> *const Cell<u8> {
-    PENDING.with(|flags| flags as *const Cell<u8>)
-}
-
 fn wake() {
     let _ = PENDING.try_with(|p| p.set(p.get() | 1));
 }
