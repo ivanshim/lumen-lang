@@ -432,6 +432,9 @@ pub struct Lang {
     pub null_silent: bool,
     pub dyadic: HashMap<String, Operator, crate::value::FxBuildHasher>,
     pub monadic: HashMap<String, Operator, crate::value::FxBuildHasher>,
+    /// Index the words that can precede an atom in an expression.
+    pub prefix_words: HashSet<String, crate::value::FxBuildHasher>,
+    pub longest_prefix_word: usize,
     pub pipe_words: Vec<String>,
     pub range_marks: Vec<String>,
     pub precedence: HashMap<String, u32, crate::value::FxBuildHasher>,
@@ -2517,6 +2520,7 @@ impl Lang {
             null_silent: r.flag("literal.null.silent")?,
             dyadic: binary,
             monadic: unary,
+            prefix_words: HashSet::default(), longest_prefix_word: 0,
             method_keywords: [("ext.builtin.method.sort.key", "key"), ("ext.builtin.method.sort.reverse", "reverse"), ("ext.builtin.method.split.sep", "sep"), ("ext.builtin.method.split.maxsplit", "maxsplit")].into_iter().map(|(label, purpose)| Ok((purpose, r.strings(label)?))).collect::<Result<Vec<_>, String>>()?.into_iter().flat_map(|(purpose, words)| words.into_iter().map(move |word| (word, purpose.to_string()))).collect(),
             float_from_number: r.strings("ext.builtin.method.from_number")?,
             float_getformat: r.strings("ext.builtin.method.getformat")?,
@@ -3275,6 +3279,15 @@ impl Lang {
         self.symbols_wide = wide;
         self.symbols = symbols;
         self.keywords = reserved;
+        let mut prefixes: HashSet<String, crate::value::FxBuildHasher> = self.monadic.keys().cloned().collect();
+        prefixes.extend(self.dyadic.iter().filter(|(_, op)| matches!(op.action, Action::Mul)).map(|(word, _)| word.clone()));
+        for words in [&self.await_words, &self.yield_words, &self.special_declined, &self.special_stop,
+            &self.ellipsis_words, &self.unimplemented_words, &self.lambda_words, &self.unpack_words,
+            &self.naming_words, &self.hush_words, &self.plus_words] {
+            prefixes.extend(words.iter().cloned());
+        }
+        self.longest_prefix_word = prefixes.iter().map(|word| word.len()).max().unwrap_or_default();
+        self.prefix_words = prefixes;
         Ok(())
     }
 
