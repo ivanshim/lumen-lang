@@ -59,6 +59,10 @@ def _ssize(value):
 def _whence(value):
     if type(value) is int and -2147483648 <= value <= 2147483647:
         return value
+    if value is False:
+        return 0
+    if value is True:
+        return 1
     value = _index(value)
     if value < -2147483648 or value > 2147483647:
         raise OverflowError('Python int too large to convert to C int')
@@ -984,6 +988,7 @@ def _file_plans():
     return plans
 
 _FILE_PLANS = {}
+_FILEIO_MODES = {}
 
 class FileIO(_RawIOBase):
     # What a stream whose __init__ never finished stands as, the way the C
@@ -1010,15 +1015,22 @@ class FileIO(_RawIOBase):
         self._fd = -1
         self._closed = True
         self._finalizing_state = False
-        if not isinstance(mode, str):
-            raise TypeError('mode must be a string')
-        if any(letter not in 'rwax+b' for letter in mode):
-            raise ValueError('invalid mode: ' + mode)
-        base = [letter for letter in mode if letter in 'rwax']
-        if len(base) != 1 or mode.count('+') > 1:
-            raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
-        self._readable = base[0] == 'r' or '+' in mode
-        self._writable = base[0] != 'r' or '+' in mode
+        # A mode that passed the checks once is remembered by its text.
+        parsed = _FILEIO_MODES.get(mode) if type(mode) is str else None
+        if parsed is None:
+            if not isinstance(mode, str):
+                raise TypeError('mode must be a string')
+            if any(letter not in 'rwax+b' for letter in mode):
+                raise ValueError('invalid mode: ' + mode)
+            base = [letter for letter in mode if letter in 'rwax']
+            if len(base) != 1 or mode.count('+') > 1:
+                raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
+            parsed = (base, base[0] == 'r' or '+' in mode, base[0] != 'r' or '+' in mode)
+            if type(mode) is str:
+                _FILEIO_MODES[mode] = parsed
+        base = parsed[0]
+        self._readable = parsed[1]
+        self._writable = parsed[2]
         self._closefd = bool(closefd)
         self._fd = -1
         self._closed = True
