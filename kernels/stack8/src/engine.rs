@@ -6394,6 +6394,7 @@ impl<'a> Engine<'a> {
         // A body on the stack may not be entered again: it is marked for
         // as long as the step lasts, so a reentrant call is refused, and
         // the reference's reading of the running member is answered too.
+        // The busy-body words are built only when a step is refused.
         let busy = |engine: &Self| if engine.coroutines.contains_key(&(Rc::as_ptr(held) as usize)) {
             engine.lang.coroutine_errors[2].clone()
         } else { engine.lang.yield_busy[0].clone() };
@@ -9735,6 +9736,13 @@ impl<'a> Engine<'a> {
     /// Where among the language's special names this one stands, when a
     /// value of a builtin kind answers to it as a member of its own.
     pub(super) fn native_place(&self, subject: &Value, name: &str) -> Option<usize> {
+        if name == "close" || name == "__enter__" || name == "__exit__" {
+            if let Value::Cursor(state) = subject {
+                if state.borrow().walked.as_deref() == Some("scandir_walk") {
+                    return Some(usize::MAX - 4);
+                }
+            }
+        }
         if name == "__bytes__" && Self::native_family(subject) == Some(Kindred::Bytes(false)) && self.kind_owns_protocol("bytes", name) { return Some(usize::MAX - 3); }
         // Ordinary member names cannot invoke a reduction or special slot.
         if !self.native_slots.contains_key(name) && self.lang.constructor.as_deref() != Some(name)
@@ -9819,6 +9827,9 @@ impl<'a> Engine<'a> {
     }
 
     fn native_member_call(&mut self, receiver: &Value, operation: &str, place: usize, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        if place == usize::MAX - 4 {
+            return self.end_scandir_cursor(receiver, operation, &args);
+        }
         if place == usize::MAX - 3 {
             if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
             return Ok(Self::worth_of(receiver).unwrap_or_else(|| receiver.clone()));
@@ -13745,10 +13756,14 @@ impl<'a> Engine<'a> {
             Action::AsyncContext(leaving) => { return self.perform_arm_53(op, argc); }
             Action::ContextExit => {
                 let manager=self.drop_top()?.contents();
-                let Value::Object(instance)=&manager else{return Err(self.unmanaged(&manager.core_kind()).into())};
-                let asynchronous=self.special_value(&manager,85).is_some() && self.special_value(&manager,86).is_some();
-                let slot=self.special_value(&manager,34).ok_or_else(||self.manager_refused(&instance.class_now().name,false,"__exit__",asynchronous))?;
-                self.bind_class_value(slot,Some(manager.clone()),instance.class_now())?
+                if self.native_place(&manager, "__exit__") == Some(usize::MAX - 4) {
+                    Value::ValueMethod(Rc::new((manager, "__exit__".to_string())))
+                } else {
+                    let Value::Object(instance)=&manager else{return Err(self.unmanaged(&manager.core_kind()).into())};
+                    let asynchronous=self.special_value(&manager,85).is_some() && self.special_value(&manager,86).is_some();
+                    let slot=self.special_value(&manager,34).ok_or_else(||self.manager_refused(&instance.class_now().name,false,"__exit__",asynchronous))?;
+                    self.bind_class_value(slot,Some(manager.clone()),instance.class_now())?
+                }
             }
             Action::ContextEnter => { return self.perform_arm_54(op, argc); }
             Action::SettleObjects => { return self.perform_arm_55(op, argc); }
@@ -16700,7 +16715,9 @@ impl<'a> Engine<'a> {
             => {
                 let object = self.drop_top()?;
                 let held = object.contents();
-                if let Value::Object(o) = &held {
+                if self.native_place(&held, "__enter__") == Some(usize::MAX - 4) {
+                    held
+                } else if let Value::Object(o) = &held {
                     // The leaving method is looked for before the entering
                     // one, as the reference looks; a manager keeping the
                     // asynchronous protocol is told which statement was meant.
@@ -22866,6 +22883,166 @@ impl<'a> Engine<'a> {
         Ok(row.clone())
     }
 
+    /// Copy a sample directory entry for every name from one directory read.
+    /// A name that is not unicode is stored with the surrogateescape bytes.
+    fn scandir_cursor(&mut self, given: &[Value]) -> Result<Value, String> {
+        let packed = self.scandir_filled(given)?;
+        let looked = packed.contents();
+        let Value::Tuple(parts) = &looked else {
+            return Err("TypeError: scandir result is not a pair".into());
+        };
+        if !matches!(parts.first(), Some(Value::Small(0))) {
+            return Ok(packed);
+        }
+        let Some(Value::Array(entries)) = parts.get(1) else {
+            return Err("TypeError: scandir entries are not a list".into());
+        };
+        let stored = crate::tuples::Items::plain(entries.iter().cloned().collect());
+        let walk = Self::core_cursor_walked(CursorSource::Items(stored, 0), Some(Rc::from("scandir_walk")));
+        Ok(Value::tuple(vec![Value::Small(0), walk]))
+    }
+
+    fn end_scandir_cursor(&self, receiver: &Value, operation: &str, args: &[Value]) -> Res<Value> {
+        let Value::Cursor(cell) = receiver else { return Err(self.special_fault()); };
+        if operation == "__enter__" {
+            if !args.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
+            return Ok(receiver.clone());
+        }
+        if operation != "close" && operation != "__exit__" {
+            return Err(self.special_fault());
+        }
+        if operation == "close" && !args.is_empty() {
+            return Err(self.lang.method_errors["arguments"].clone());
+        }
+        let mut state = cell.borrow_mut();
+        state.finished = true;
+        state.pending = None;
+        if let CursorSource::Items(values, place) = &mut state.source {
+            *place = values.len();
+        }
+        Ok(Value::Null)
+    }
+
+    fn scandir_filled(&mut self, given: &[Value]) -> Result<Value, String> {
+        if given.len() != 5 {
+            return Err("TypeError: scandir_filled expects path, sample, prefix, dir_fd".into());
+        }
+        let read = crate::posix::taken_names(&given[1])?;
+        if read.0 != 0 {
+            return Ok(Value::tuple(vec![Value::Small(i64::from(read.0)), Value::Null]));
+        }
+        let Value::Object(sample) = given[2].contents() else {
+            return Err("TypeError: directory entry sample is required".into());
+        };
+        let head = given[3].contents();
+        let stored = match given[4].contents() {
+            Value::Small(number) if number >= 0 => Value::Small(number),
+            Value::Small(_) | Value::Null => Value::Null,
+            _ => return Err("TypeError: dir_fd must be an integer".into()),
+        };
+        let mut entries = Vec::with_capacity(read.1.len());
+        for (bytes, inode, kind) in read.1 {
+            let labeled = Self::label_entry(&head, &bytes)?;
+            let mut fields = sample.fields.borrow().clone();
+            let pairs = [
+                ("_name", labeled.0),
+                ("_path", labeled.1),
+                ("_inode", Value::of_big(num_bigint::BigInt::from(inode))),
+                ("_type", Value::Small(i64::from(kind))),
+                ("_dir_fd", stored.clone()),
+                ("_stat", Value::Null),
+                ("_lstat", Value::Null),
+            ];
+            for (slot, value) in pairs {
+                Self::put_field(&mut fields, slot, value)?;
+            }
+            self.made += 1;
+            entries.push(Value::Object(Rc::new(Instance {
+                replacement_class: RefCell::new(sample.replacement_class.borrow().clone()),
+                class: sample.class.clone(),
+                fields: RefCell::new(fields),
+                mark: self.made,
+            })));
+        }
+        Ok(Value::tuple(vec![Value::Small(0), Value::array(entries)]))
+    }
+
+    fn put_field(fields: &mut Vec<(String, Value)>, slot: &str, value: Value) -> Result<(), String> {
+        let mut index = 0;
+        while index < fields.len() {
+            if let Some(body) = fields[index].0.strip_prefix("\0slot:") {
+                if body.rsplit_once(':').map(|(name, _)| name == slot).unwrap_or(false) {
+                    fields[index].1 = value;
+                    return Ok(());
+                }
+            }
+            index += 1;
+        }
+        Err(format!("TypeError: missing directory entry slot {slot}"))
+    }
+
+    fn label_entry(prefix: &Value, bytes: &[u8]) -> Result<(Value, Value), String> {
+        let absolute = bytes.first() == Some(&b'/');
+        match std::str::from_utf8(bytes) {
+            Ok(clean) => {
+                let name = Value::text(clean);
+                let path = if absolute { name.clone() } else { Self::stick(prefix, clean, None)? };
+                Ok((name, path))
+            }
+            Err(_) => {
+                let name = Value::from_codes(Self::loose_codes(bytes));
+                let path = if absolute { name.clone() } else { Self::stick(prefix, "", Some(bytes))? };
+                Ok((name, path))
+            }
+        }
+    }
+
+    fn stick(prefix: &Value, clean: &str, raw: Option<&[u8]>) -> Result<Value, String> {
+        match prefix {
+            Value::Text(head) if raw.is_none() => {
+                if head.is_empty() { return Ok(Value::text(clean)); }
+                let mut joined = String::with_capacity(head.len() + clean.len());
+                joined.push_str(head);
+                joined.push_str(clean);
+                Ok(Value::text(&joined))
+            }
+            other => {
+                let mut codes = other.text_codes().ok_or_else(|| "TypeError: scandir prefix must be text".to_string())?;
+                if codes.is_empty() {
+                    return Ok(match raw {
+                        Some(bytes) => Value::from_codes(Self::loose_codes(bytes)),
+                        None => Value::text(clean),
+                    });
+                }
+                match raw {
+                    Some(bytes) => codes.extend(Self::loose_codes(bytes)),
+                    None => codes.extend(clean.chars().map(u32::from)),
+                }
+                Ok(Value::from_codes(codes))
+            }
+        }
+    }
+
+    fn loose_codes(bytes: &[u8]) -> Vec<u32> {
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut rest = bytes;
+        while !rest.is_empty() {
+            if let Ok(text) = std::str::from_utf8(rest) {
+                out.extend(text.chars().map(u32::from));
+                break;
+            }
+            let err = match std::str::from_utf8(rest) { Err(err) => err, Ok(_) => break };
+            let good = err.valid_up_to();
+            if good > 0 {
+                out.extend(std::str::from_utf8(&rest[..good]).unwrap().chars().map(u32::from));
+            }
+            let take = err.error_len().unwrap_or(1).max(1).min(rest.len() - good);
+            out.extend(rest[good..good + take].iter().map(|byte| 0xDC00 + u32::from(*byte)));
+            rest = &rest[good + take..];
+        }
+        out
+    }
+
     // Bind constructor arguments without calling source code or changing storage.
     fn byte_constructor_fields(&self, word: &str, args: &[Value], named: Vec<(String, Value)>) -> Res<[Option<Value>; 3]> {
         if args.len() > 3 { return Err(format!("TypeError: {word}() takes at most 3 arguments ({} given)", args.len())); }
@@ -27548,6 +27725,8 @@ impl<'a> Engine<'a> {
                         let Some((_, Value::Tuple(extra))) = fields.iter().find(|(name, _)| name == "\0structseq") else { return Err("TypeError: a struct sequence is required".into()); };
                         extra.get(as_index(&args[2])?).cloned().ok_or_else(|| "IndexError: tuple index out of range".to_string())?
                     }
+                    Some(Value::Text(op)) if op.as_ref() == "scandir_iter" => self.scandir_cursor(args)?,
+                    Some(Value::Text(op)) if op.as_ref() == "scandir_made" => self.scandir_filled(args)?,
                     _ => crate::posix::call(args, || {
                         self.deliver_signals().map_err(|fault| match fault {
                             Fault::Note(words) => words,

@@ -840,15 +840,38 @@ class _ScandirIterator:
         if not self._closed:
             self.close()
 
+_no_filename = object()
+
+
+def _walk_ready(path, prefix, mark, filename=_no_filename):
+    error, walk = _host('scandir_iter', path, _entry_sample, prefix, mark)
+    if error:
+        if filename is _no_filename:
+            _raise(error)
+        _raise(error, filename)
+    return walk
+
+
 def scandir(path=None):
     if path is None:
         path = '.'
+    # A plain string is the walk's path. Building a Python iterator
+    # around the snapshot cost more than reading the directory.
     if type(path) is str:
-        path.encode('utf-8', 'surrogateescape')
         if '\0' in path:
             raise ValueError('embedded null character')
-        return _ScandirIterator(path)
-    return _ScandirIterator(_descriptor(path) if _is_fd_path(path) else _path(path))
+        prefix = path if not path or path.endswith('/') else path + '/'
+        return _walk_ready(path, prefix, -1, path)
+    if type(path) is int:
+        return _walk_ready(path, '', path)
+    if _is_fd_path(path):
+        fd = _descriptor(path)
+        return _walk_ready(fd, '', fd)
+    original = _path(path)
+    if type(original) is str:
+        prefix = original if not original or original.endswith('/') else original + '/'
+        return _walk_ready(original, prefix, -1, original)
+    return _ScandirIterator(original)
 
 
 def get_inheritable(fd, /):
