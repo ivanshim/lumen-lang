@@ -271,9 +271,12 @@ pub enum Prim {
     /// at a time (ext.builtin.subprocess): one word, told which step it
     /// is on. Only a language spelling this may raise a second
     /// interpreter beside itself and read what it writes back.
- AsciiRun,
+    AsciiRun,
     JsonStringScan,
     Subprocess,
+    /// A token read from the scanner record, or none while the
+    /// line still has to be walked by the adapter.
+    PythonAtom,
     /// The host's signals, one word told which step it is on
     /// (ext.builtin.signal): give a number what answers for it, ask
     /// what a number was given, or leave a number to be taken up where

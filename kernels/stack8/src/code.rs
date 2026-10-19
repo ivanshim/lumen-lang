@@ -721,10 +721,12 @@ pub enum Builtin {
     /// word that is told which step it is on. Only a language spelling
     /// this may run a second interpreter beside itself and read its
     /// writing back.
-
     AsciiSpan,
     JsonString,
     Subprocess,
+    /// One buffered tokenizer token, or nothing when the adapter must
+    /// read the next character itself.
+    TokenScan,
     /// The host's own signals, one word told which step it is on
     /// (ext.builtin.signal): give a number the handler it answers with,
     /// ask which handler a number was given, or leave a number pending

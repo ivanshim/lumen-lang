@@ -5103,6 +5103,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_string.object` | - | - | `object` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.undecodable` | - | - | `TypeError: decoding str is not supported` `TypeError: decoding to str: need a bytes-like object, ` ` found` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.unready` | - | - | `TypeError: str() takes at most 3 arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.tokenize.scan` | - | - | `__tokenize_scan` | - | - | - | - | - | - | - |
 | `ext.builtin.trace_native` | - | - | `__trace_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.tuple` | - | - | `tuple` | - | - | - | - | - | - | - |
 | `ext.builtin.type_descriptors.clear` | - | - | `__clear_type_descriptors` | - | - | - | - | - | - | - |
@@ -6153,6 +6154,11 @@ surrogates, permissive controls, and precise error diagnostics.
 character set and returns its ending code-point index. The regular-expression
 adapter uses it for repeated atoms and captured spans, retaining its Unicode
 matching rules when the scan reaches a non-ASCII character.
+
+`ext.builtin.tokenize.scan` fills one decoded physical line into the tokenizer
+buffer and can return several finished tokens from that buffer together.
+Forms the scanner does not recognise, and a buffer that still needs another
+line, stay with the Python tokenizer and its existing diagnostics.
 
 `ext.builtin.re.shortcut` computes the existing regular-expression adapter's
 ASCII atom sets and capture endpoints/groups. Unsupported input shapes

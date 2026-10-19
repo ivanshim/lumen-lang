@@ -23675,6 +23675,7 @@ impl<'a> Machine<'a> {
             // a pipe (1), or inherited (anything else); a third stream
             // told to follow the second is kept a pipe of its own, and
             // the library that asked joins the two later.
+            Prim::PythonAtom => return crate::tokenize::atom(v),
             Prim::AsciiRun => {
                 n(4)?;
                 let offset = as_index(&v[1])?;
