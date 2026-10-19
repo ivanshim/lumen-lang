@@ -562,9 +562,8 @@ struct Node {
 /// hold, and nothing reaching it from anything that has one, is
 /// unreachable by the program.
 pub struct Graph {
-    order: Vec<usize>,
-    nodes: Places<Node>,
-    bookkeeping: Places<usize>,
+    nodes: Vec<Node>,
+    places: Places<usize>,
 }
 
 /// Where a value's pointer stands, for the kinds that live behind one.
@@ -617,24 +616,29 @@ fn holds_on(value: &Value) -> usize {
     }
 }
 
+/// Omit values without graph identities before cloning ownership edges.
+fn is_graph_owner(value: &Value) -> bool {
+    matches!(value, Value::Method(..)) || place_of(value).is_some()
+}
+
 /// The values a value holds directly. A bound method is two holds, on
 /// the object and on the routine, and is listed as both. A cell that is
 /// being written to just now yields nothing: what it holds then counts
 /// as held from outside, which errs on the side of keeping.
 fn reaches(value: &Value, out: &mut Vec<Value>) {
     match value {
-        Value::Faint(r) => out.extend(r.told.borrow().iter().cloned()),
+        Value::Faint(r) => out.extend(r.told.borrow().iter().filter(|v| is_graph_owner(v)).cloned()),
         Value::Object(o) | Value::Fields(o) => {
             out.push(Value::Class(o.class.clone()));
             if let Ok(fields) = o.fields.try_borrow() {
-                out.extend(fields.iter().map(|(_, v)| v.clone()));
+                out.extend(fields.iter().filter(|(_, v)| is_graph_owner(v)).map(|(_, v)| v.clone()));
             }
         }
         Value::Class(c) => {
-            out.extend(c.fields.iter().map(|(_, v)| v.clone()));
-            out.extend(c.constants.iter().map(|(_, v)| v.clone()));
+            out.extend(c.fields.iter().filter(|(_, v)| is_graph_owner(v)).map(|(_, v)| v.clone()));
+            out.extend(c.constants.iter().filter(|(_, v)| is_graph_owner(v)).map(|(_, v)| v.clone()));
             if let Ok(shared) = c.shared.try_borrow() {
-                out.extend(shared.iter().map(|(_, v)| v.clone()));
+                out.extend(shared.iter().filter(|(_, v)| is_graph_owner(v)).map(|(_, v)| v.clone()));
             }
             out.extend(c.methods.iter().map(|(_, p)| Value::Routine(p.clone())));
             out.extend(c.base().iter().map(|b| Value::Class(b.clone())));
@@ -646,14 +650,14 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                 out.push(g.async_finalizer.clone());
                 out.extend(g.trace_frame.iter().map(|f| Value::Object(f.clone())));
                 out.extend(g.program.iter().map(|p| Value::Routine(p.clone())));
-                out.extend(g.frame.iter().cloned());
-                out.extend(g.stack.iter().cloned());
-                out.extend(g.items.iter().cloned());
-                out.extend(g.handed.iter().cloned());
+                out.extend(g.frame.iter().filter(|v| is_graph_owner(v)).cloned());
+                out.extend(g.stack.iter().filter(|v| is_graph_owner(v)).cloned());
+                out.extend(g.items.iter().filter(|v| is_graph_owner(v)).cloned());
+                out.extend(g.handed.iter().filter(|v| is_graph_owner(v)).cloned());
                 out.push(g.returned.clone());
-                out.extend(g.delegate.iter().cloned());
+                out.extend(g.delegate.iter().filter(|v| is_graph_owner(v)).cloned());
                 out.push(g.sent.clone());
-                out.extend(g.current.iter().cloned());
+                out.extend(g.current.iter().filter(|v| is_graph_owner(v)).cloned());
                 out.extend(g.watched.iter().map(|(cell, _)| Value::Bond(cell.clone())));
                 out.extend(g.reversed_walk.iter().map(|(cell, _, _)| Value::Bond(cell.clone())));
                 for step in &g.resume {
@@ -667,8 +671,8 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                         _ => {}
                     }
                 }
-                out.extend(g.held.iter().cloned());
-                out.extend(g.hurled.iter().cloned());
+                out.extend(g.held.iter().filter(|v| is_graph_owner(v)).cloned());
+                out.extend(g.hurled.iter().filter(|v| is_graph_owner(v)).cloned());
             }
         }
         Value::Set(s) | Value::SetWalk(s, _) => {
@@ -679,26 +683,26 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         Value::Routine(r) => {
             out.extend(r.code_snapshot.get().map(|image| Value::Routine(image.clone())));
             out.extend(r.annotation.iter().map(|p| Value::Routine(p.clone())));
-            out.extend(r.code_constants.iter().cloned());
-            out.extend(r.globe.iter().cloned());
-            out.extend(r.born.iter().cloned());
-            out.extend(r.held.iter().cloned());
-            out.extend(r.enclosed.iter().map(|(_, v)| v.clone()));
+            out.extend(r.code_constants.iter().filter(|v| is_graph_owner(v)).cloned());
+            out.extend(r.globe.iter().filter(|v| is_graph_owner(v)).cloned());
+            out.extend(r.born.iter().filter(|v| is_graph_owner(v)).cloned());
+            out.extend(r.held.iter().filter(|v| is_graph_owner(v)).cloned());
+            out.extend(r.enclosed.iter().filter(|(_, v)| is_graph_owner(v)).map(|(_, v)| v.clone()));
             if let Ok(revised) = r.revised.try_borrow() {
                 out.extend(revised.iter().map(|p| Value::Routine(p.clone())));
             }
         }
         Value::Bond(c) | Value::Binding(c) | Value::Collection(c, _) => {
             if let Ok(inner) = c.try_borrow() {
-                out.push(inner.clone());
+                if is_graph_owner(&inner) { out.push(inner.clone()); }
             }
         }
-        Value::Array(a) | Value::Tuple(a) => out.extend(a.iter().cloned()),
-        Value::Slice(parts) => out.extend(parts.iter().cloned()),
+        Value::Array(a) | Value::Tuple(a) => out.extend(a.iter().filter(|v| is_graph_owner(v)).cloned()),
+        Value::Slice(parts) => out.extend(parts.iter().filter(|v| is_graph_owner(v)).cloned()),
         Value::Map(m) => {
             for (k, v) in m.iter() {
-                out.push(k.clone());
-                out.push(v.clone());
+                if is_graph_owner(k) { out.push(k.clone()); }
+                if is_graph_owner(v) { out.push(v.clone()); }
             }
         }
         Value::Hashed(p) | Value::Tie(p) => {
@@ -706,12 +710,12 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
             out.push(p.1.clone());
         }
         Value::ValueMethod(p) | Value::View(p) => out.push(p.0.clone()),
-        Value::Adapter(a) => out.extend(a.1.iter().cloned()),
+        Value::Adapter(a) => out.extend(a.1.iter().filter(|v| is_graph_owner(v)).cloned()),
         Value::Descriptor(d) => match &**d {
             Descriptor::Static(v) | Descriptor::Class(v) => out.push(v.clone()),
             Descriptor::Property(a, b) => {
                 out.push(a.clone());
-                out.extend(b.iter().cloned());
+                out.extend(b.iter().filter(|v| is_graph_owner(v)).cloned());
             }
             Descriptor::Bound(a, b) => {
                 out.push(a.clone());
@@ -721,18 +725,18 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         Value::Walking(w) => {
             if let Ok(w) = w.try_borrow() {
                 out.push(w.0.clone());
-                out.extend(w.1.iter().cloned());
+                out.extend(w.1.iter().filter(|v| is_graph_owner(v)).cloned());
             }
         }
         Value::Walk(w) => {
             if let Ok(w) = w.try_borrow() {
-                out.extend(w.0.iter().cloned());
+                out.extend(w.0.iter().filter(|v| is_graph_owner(v)).cloned());
             }
         }
         Value::Cursor(c) => {
             if let Ok(c) = c.try_borrow() {
-                out.extend(c.pending.iter().cloned());
-                out.extend(c.origin.iter().cloned());
+                out.extend(c.pending.iter().filter(|v| is_graph_owner(v)).cloned());
+                out.extend(c.origin.iter().filter(|v| is_graph_owner(v)).cloned());
                 match &c.source {
                     CursorSource::Items(items, _) => out.push(Value::Tuple(items.clone())),
                     CursorSource::Living(cell, _) => out.push(Value::Bond(cell.clone())),
@@ -744,8 +748,8 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                         if let CursorSource::Called(_, _, Some(v)) = &c.source { out.push(v.clone()); }
                     }
                     CursorSource::Combined(rows, work, _) => {
-                        out.extend(rows.iter().cloned());
-                        out.extend(work.iter().cloned());
+                        out.extend(rows.iter().filter(|v| is_graph_owner(v)).cloned());
+                        out.extend(work.iter().filter(|v| is_graph_owner(v)).cloned());
                     }
                     CursorSource::Counted(..) => {}
                 }
@@ -782,7 +786,7 @@ impl Graph {
     /// The actual owners in this collector snapshot, once per heap identity.
     /// Returning clones retains their existing Python identities.
     pub fn tracked_objects(&self) -> Vec<Value> {
-        self.order.iter().filter_map(|place|self.nodes.get(place)).filter_map(|node| {
+        self.nodes.iter().filter_map(|node| {
             match &node.held {
                 Value::Fields(object)=>Some(Value::Object(object.clone())),
                 Value::Tie(_) | Value::Hashed(_)=>None,
@@ -820,49 +824,51 @@ impl Graph {
     pub fn link_attributes(&mut self, function: &Value, holder: &Value) {
         let function = match function { Value::Method(_, routine, _) => Value::Routine(routine.clone()), other => other.clone() };
         if let (Some(from), Some(to)) = (place_of(&function), place_of(holder)) {
-            if let Some(node) = self.nodes.get_mut(&from) { node.reaches.push(to); }
+            if let (Some(&source), Some(&target)) = (self.places.get(&from), self.places.get(&to)) {
+                self.nodes[source].reaches.push(target);
+            }
         }
     }
 
+    /// Intern graph owners once; subsequent walks use dense node indices.
+    fn locate(value: Value, nodes: &mut Vec<Node>, places: &mut Places<usize>, bookkeeping: &Places<usize>) -> Option<usize> {
+        let place = place_of(&value)?;
+        let next = nodes.len();
+        Some(*places.entry(place).or_insert_with(|| {
+            nodes.push(Node { held: value, reaches: Vec::new(), inward: bookkeeping.get(&place).copied().unwrap_or(0), marked: false });
+            next
+        }))
+    }
+
+    /// Trace each owner without repeated address lookups during marking.
     fn build(roots: Vec<Value>, bookkeeping: Places<usize>) -> Graph {
-        let mut nodes: Places<Node> = Places::default();
-        let mut order = Vec::new();
-        let mut open: Vec<usize> = Vec::new();
+        let mut nodes = Vec::with_capacity(roots.len());
+        let mut places = Places::default();
         for root in roots {
-            let Some(place) = place_of(&root) else { continue };
-            if !nodes.contains_key(&place) {
-                nodes.insert(place, Node { held: root, reaches: Vec::new(), inward: 0, marked: false });
-                order.push(place);
-                open.push(place);
-            }
+            Self::locate(root, &mut nodes, &mut places, &bookkeeping);
         }
         let mut children = Vec::new();
-        while let Some(place) = open.pop() {
+        let mut current = 0;
+        while current < nodes.len() {
             children.clear();
-            reaches(&nodes[&place].held, &mut children);
+            reaches(&nodes[current].held, &mut children);
             let mut reached = Vec::with_capacity(children.len());
             for child in children.drain(..) {
-                // A bound method is not a place of its own but two.
                 let (first, second) = match child {
                     Value::Method(o, r, _) => (Value::Object(o), Some(Value::Routine(r))),
                     other => (other, None),
                 };
                 for part in std::iter::once(first).chain(second) {
-                    let Some(at) = place_of(&part) else { continue };
-                    match nodes.get_mut(&at) {
-                        Some(node) => node.inward += 1,
-                        None => {
-                            nodes.insert(at, Node { held: part, reaches: Vec::new(), inward: 1, marked: false });
-                            order.push(at);
-                            open.push(at);
-                        }
+                    if let Some(at) = Self::locate(part, &mut nodes, &mut places, &bookkeeping) {
+                        nodes[at].inward += 1;
+                        reached.push(at);
                     }
-                    reached.push(at);
                 }
             }
-            nodes.get_mut(&place).unwrap().reaches = reached;
+            nodes[current].reaches = reached;
+            current += 1;
         }
-        Graph { nodes, bookkeeping, order }
+        Graph { nodes, places }
     }
 
     /// Whether this value is now unreachable once the engine's own
@@ -870,7 +876,7 @@ impl Graph {
     pub fn unowned(&self, value: &Value) -> bool {
         match value {
             Value::Method(object, routine, _) => self.unowned(&Value::Object(object.clone())) && self.unowned(&Value::Routine(routine.clone())),
-            other => place_of(other).and_then(|place| self.nodes.get(&place)).is_some_and(|node| !node.marked),
+            other => place_of(other).and_then(|place| self.places.get(&place)).is_some_and(|&at| !self.nodes[at].marked),
         }
     }
 
@@ -878,27 +884,23 @@ impl Graph {
     /// anything it does hold: the graph's own hold on each is the one
     /// not counted among the program's.
     pub fn unreached(&mut self) -> Vec<Value> {
-        let mut open: Vec<usize> = self.nodes.iter()
-            .filter(|(place, n)| holds_on(&n.held) > n.inward + 1 + self.bookkeeping.get(place).copied().unwrap_or(0))
-            .map(|(place, _)| *place)
-            .collect();
-        for place in &open {
-            self.nodes.get_mut(place).unwrap().marked = true;
+        let mut open = Vec::new();
+        for (at, node) in self.nodes.iter_mut().enumerate() {
+            if holds_on(&node.held) > node.inward + 1 {
+                node.marked = true;
+                open.push(at);
+            }
         }
-        while let Some(place) = open.pop() {
-            let reached = self.nodes[&place].reaches.clone();
-            for at in reached {
-                let node = self.nodes.get_mut(&at).unwrap();
-                if !node.marked {
-                    node.marked = true;
-                    open.push(at);
+        while let Some(at) = open.pop() {
+            for edge in 0..self.nodes[at].reaches.len() {
+                let target = self.nodes[at].reaches[edge];
+                if !self.nodes[target].marked {
+                    self.nodes[target].marked = true;
+                    open.push(target);
                 }
             }
         }
-        self.order.iter().filter_map(|place| {
-            let node = &self.nodes[place];
-            (!node.marked).then(|| node.held.clone())
-        }).collect()
+        self.nodes.iter().filter(|node| !node.marked).map(|node| node.held.clone()).collect()
     }
 
     /// Recheck ownership after finalization, retaining only the original

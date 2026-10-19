@@ -502,12 +502,19 @@ pub fn note(ghost: Ghost) {
     });
 }
 
+/// Buffer only cycle-capable owners, including inline callable components.
+fn trace_value(out: &mut Vec<Knot>, value: &Value) {
+    if matches!(value, Value::Bound(..) | Value::Method(..) | Value::Keyed(..)) || Knot::value_place(value).is_some() {
+        out.push(Knot::Held(value.clone()));
+    }
+}
+
 /// The values embedded in compiled forms are owned by their routine.
 /// In particular, an exception arm may retain nested routine constants
 /// after a generator yields, and those routines may keep its globals.
 pub(crate) fn form_holds(form: &Form, out: &mut Vec<Knot>) {
     match form {
-        Form::Const(value) => out.push(Knot::Held(value.clone())),
+        Form::Const(value) => trace_value(out, value),
         Form::Fits { value, test, kinds, .. } => {
             form_holds(value, out);
             case_holds(test, out);
@@ -532,7 +539,7 @@ pub(crate) fn form_holds(form: &Form, out: &mut Vec<Knot>) {
             for input in [a, b] {
                 match input {
                     Input::Form(form) => form_holds(form, out),
-                    Input::Const(value) => out.push(Knot::Held(value.clone())),
+                    Input::Const(value) => trace_value(out, value),
                     Input::Address(_) => {}
                 }
             }
@@ -567,7 +574,7 @@ pub(crate) fn form_holds(form: &Form, out: &mut Vec<Knot>) {
 
 fn case_holds(test: &CaseTest, out: &mut Vec<Knot>) {
     match test {
-        CaseTest::Equal(value) => out.push(Knot::Held(value.clone())),
+        CaseTest::Equal(value) => trace_value(out, value),
         CaseTest::AnyOf(parts) => for part in parts { case_holds(part, out); },
         CaseTest::Series { members, .. } => for member in members { case_holds(member, out); },
         CaseTest::Also { test, .. } => case_holds(test, out),
@@ -598,25 +605,30 @@ impl Knot {
     fn place(&self) -> Option<usize> {
         Some(match self {
             Knot::Frame(env) => Rc::as_ptr(env) as *const () as usize,
-            Knot::Held(value) => match value {
-                Value::Dim(d) => Rc::as_ptr(d) as *const () as usize,
-                Value::Thing(t) | Value::Attributes(t) => Rc::as_ptr(t) as *const () as usize,
-                Value::Blueprint(b) => Rc::as_ptr(b) as *const () as usize,
-                Value::Generator(g) => Rc::as_ptr(g) as *const () as usize,
-                Value::Set(s) | Value::SetCursor { source: s, .. } => Rc::as_ptr(s) as *const () as usize,
-                Value::Iterator(i) => Rc::as_ptr(i) as *const () as usize,
-                Value::Backtrace(t) => Rc::as_ptr(t) as *const () as usize,
-                Value::Shared(c) | Value::Mutable(c, _) => Rc::as_ptr(c) as *const () as usize,
-                Value::Vector(v) | Value::Tuple(v) | Value::Row(v) | Value::Arguments(v) | Value::Span(v) | Value::Wrapped(_, v) => Rc::as_ptr(v) as *const () as usize,
-                Value::Dict(d) => Rc::as_ptr(d) as *const () as usize,
-                Value::Couple(c) => Rc::as_ptr(c) as *const () as usize,
-                Value::Member(v, _) | Value::Window(v, _) => Rc::as_ptr(v) as *const () as usize,
-                Value::Cursor(c) => Rc::as_ptr(c) as *const () as usize,
-                Value::Adorned(a) => Rc::as_ptr(a) as *const () as usize,
-                Value::Routine(p) => Rc::as_ptr(p) as *const () as usize,
-                Value::Traversal(v, _) => Rc::as_ptr(v) as *const () as usize,
-                _ => return None,
-            },
+            Knot::Held(value) => Self::value_place(value)?,
+        })
+    }
+
+    /// Locate a borrowed value without creating a temporary strong owner.
+    fn value_place(value: &Value) -> Option<usize> {
+        Some(match value {
+            Value::Dim(d) => Rc::as_ptr(d) as *const () as usize,
+            Value::Thing(t) | Value::Attributes(t) => Rc::as_ptr(t) as *const () as usize,
+            Value::Blueprint(b) => Rc::as_ptr(b) as *const () as usize,
+            Value::Generator(g) => Rc::as_ptr(g) as *const () as usize,
+            Value::Set(s) | Value::SetCursor { source: s, .. } => Rc::as_ptr(s) as *const () as usize,
+            Value::Iterator(i) => Rc::as_ptr(i) as *const () as usize,
+            Value::Backtrace(t) => Rc::as_ptr(t) as *const () as usize,
+            Value::Shared(c) | Value::Mutable(c, _) => Rc::as_ptr(c) as *const () as usize,
+            Value::Vector(v) | Value::Tuple(v) | Value::Row(v) | Value::Arguments(v) | Value::Span(v) | Value::Wrapped(_, v) => Rc::as_ptr(v) as *const () as usize,
+            Value::Dict(d) => Rc::as_ptr(d) as *const () as usize,
+            Value::Couple(c) => Rc::as_ptr(c) as *const () as usize,
+            Value::Member(v, _) | Value::Window(v, _) => Rc::as_ptr(v) as *const () as usize,
+            Value::Cursor(c) => Rc::as_ptr(c) as *const () as usize,
+            Value::Adorned(a) => Rc::as_ptr(a) as *const () as usize,
+            Value::Routine(p) => Rc::as_ptr(p) as *const () as usize,
+            Value::Traversal(v, _) => Rc::as_ptr(v) as *const () as usize,
+            _ => return None,
         })
     }
 
@@ -649,7 +661,7 @@ impl Knot {
     /// The knots this one holds directly. A cell being written to at
     /// this moment yields none, which leans towards keeping.
     fn onward(&self, out: &mut Vec<Knot>) {
-        let held = |out: &mut Vec<Knot>, v: &Value| out.push(Knot::Held(v.clone()));
+        let held = trace_value;
         match self {
             Knot::Frame(env) => {
                 if let Ok(cells) = env.cells.try_borrow() {
@@ -774,8 +786,8 @@ struct Strand {
 /// and whatever has one, or is reached from something that has one, the
 /// program can still get at. The rest it cannot.
 pub struct Web {
-    strands: HashMap<usize, Strand, crate::table::FxBuildHasher>,
-    bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>,
+    strands: Vec<Strand>,
+    positions: HashMap<usize, usize, crate::table::FxBuildHasher>,
 }
 
 /// An inline value is an engine root even though it has no shared
@@ -805,7 +817,7 @@ impl Web {
                 }
             }).collect()
         }).unwrap_or_default();
-        self.strands.values().filter_map(|strand| match &strand.knot {
+        self.strands.iter().filter_map(|strand| match &strand.knot {
             Knot::Held(Value::Couple(_) | Value::Row(_) | Value::Arguments(_))=>None,
             Knot::Held(Value::Vector(_) | Value::Dict(_))=>None,
             Knot::Held(Value::Routine(code))=>functions.get(&(Rc::as_ptr(code) as usize)).cloned(),
@@ -842,39 +854,52 @@ impl Web {
     pub fn link_attributes(&mut self, function: &Value, holder: &Value) {
         let function = match function { Value::Bound(body, _) => Value::Routine(body.clone()), other => other.clone() };
         if let (Some(from), Some(to)) = (Knot::Held(function).place(), Knot::Held(holder.clone()).place()) {
-            if let Some(strand) = self.strands.get_mut(&from) { strand.onward.push(to); }
+            if let Some(source) = self.positions.get(&from).copied() {
+                if let Some(destination) = self.positions.get(&to) { self.strands[source].onward.push(*destination); }
+            }
         }
     }
 
+    /// Assign each owner a slot, counting collector holds only at insertion.
+    fn enroll(&mut self, knot: Knot, books: &HashMap<usize, usize, crate::table::FxBuildHasher>) -> Option<usize> {
+        let address = knot.place()?;
+        match self.positions.entry(address) {
+            std::collections::hash_map::Entry::Occupied(found) => Some(*found.get()),
+            std::collections::hash_map::Entry::Vacant(empty) => {
+                let slot = self.strands.len();
+                self.strands.push(Strand { knot, onward: Vec::new(), inward: books.get(&address).copied().unwrap_or_default(), reached: false });
+                empty.insert(slot);
+                Some(slot)
+            }
+        }
+    }
+
+    /// Store links as slots so marking needs no address hashing or link copies.
     fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>) -> Web {
-        let mut strands: HashMap<usize, Strand, crate::table::FxBuildHasher> = HashMap::default();
-        let mut frontier: Vec<usize> = Vec::new();
+        let mut web = Web { strands: Vec::with_capacity(roots.len()), positions: HashMap::default() };
+        let mut frontier = Vec::new();
         for root in roots.into_iter().flat_map(Knot::parts) {
-            if let Some(place) = root.place() {
-                if !strands.contains_key(&place) {
-                    strands.insert(place, Strand { knot: root, onward: Vec::new(), inward: 0, reached: false });
-                    frontier.push(place);
-                }
+            let size = web.strands.len();
+            if let Some(slot) = web.enroll(root, &bookkeeping) {
+                if slot == size { frontier.push(slot); }
             }
         }
         let mut next = Vec::new();
-        while let Some(place) = frontier.pop() {
+        while let Some(slot) = frontier.pop() {
             next.clear();
-            strands[&place].knot.onward(&mut next);
-            let mut onward = Vec::with_capacity(next.len());
+            web.strands[slot].knot.onward(&mut next);
+            let mut links = Vec::with_capacity(next.len());
             for knot in next.drain(..).flat_map(Knot::parts) {
-                let Some(at) = knot.place() else { continue };
-                if let Some(strand) = strands.get_mut(&at) {
-                    strand.inward += 1;
-                } else {
-                    strands.insert(at, Strand { knot, onward: Vec::new(), inward: 1, reached: false });
-                    frontier.push(at);
+                let size = web.strands.len();
+                if let Some(destination) = web.enroll(knot, &bookkeeping) {
+                    web.strands[destination].inward += 1;
+                    links.push(destination);
+                    if destination == size { frontier.push(destination); }
                 }
-                onward.push(at);
             }
-            if let Some(strand) = strands.get_mut(&place) { strand.onward = onward; }
+            web.strands[slot].onward = links;
         }
-        Web { strands, bookkeeping }
+        web
     }
 
     /// Whether a value belongs only to an unreachable round, after
@@ -888,7 +913,7 @@ impl Web {
             other => Knot::Held(other.clone()).parts(),
         };
         parts.all(|part| {
-            part.place().and_then(|place| self.strands.get(&place)).is_some_and(|strand| !strand.reached)
+            part.place().and_then(|place| self.positions.get(&place)).is_some_and(|slot| !self.strands[*slot].reached)
         })
     }
 
@@ -896,25 +921,25 @@ impl Web {
     /// on each is the one hold not counted among the program's.
     pub fn unreachable(&mut self) -> Vec<Knot> {
         let mut frontier: Vec<usize> = Vec::new();
-        for (place, strand) in self.strands.iter_mut() {
-            if strand.knot.holds() > strand.inward + 1 + self.bookkeeping.get(place).copied().unwrap_or(0) {
+        for (slot, strand) in self.strands.iter_mut().enumerate() {
+            if strand.knot.holds() > strand.inward + 1 {
                 strand.reached = true;
-                frontier.push(*place);
+                frontier.push(slot);
             }
         }
-        while let Some(place) = frontier.pop() {
-            let onward = self.strands[&place].onward.clone();
-            for at in onward {
-                if let Some(strand) = self.strands.get_mut(&at) {
-                    if !strand.reached {
-                        strand.reached = true;
-                        frontier.push(at);
-                    }
+        while let Some(slot) = frontier.pop() {
+            let links = std::mem::take(&mut self.strands[slot].onward);
+            for &destination in &links {
+                let strand = &mut self.strands[destination];
+                if !strand.reached {
+                    strand.reached = true;
+                    frontier.push(destination);
                 }
             }
+            self.strands[slot].onward = links;
         }
         let mut lost = Vec::new();
-        for strand in self.strands.values() {
+        for strand in self.strands.iter() {
             if strand.reached { continue; }
             lost.push(match &strand.knot {
                 Knot::Held(v) => Knot::Held(v.clone()),
@@ -930,7 +955,7 @@ impl Web {
     pub fn remaining(&mut self, original: Vec<Knot>) -> Vec<Knot> {
         drop(self.unreachable());
         original.into_iter().filter(|knot| {
-            knot.place().and_then(|at| self.strands.get(&at)).is_some_and(|strand| !strand.reached)
+            knot.place().and_then(|at| self.positions.get(&at)).is_some_and(|slot| !self.strands[*slot].reached)
         }).collect()
     }
 
