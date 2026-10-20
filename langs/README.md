@@ -6267,6 +6267,8 @@ by this collector and raises `NotImplementedError`.
 `ext.builtin.trace_native` registers a Python tracing callback, reads the active
 callback, and exposes native compiled instructions with their source positions.
 The instruction vocabulary belongs to each kernel; it is not CPython bytecode.
+Private bridge operations 11 and 12 inspect and rebuild native code images;
+operations 3 through 10 retain coroutine, finalization and frame services.
 `ext.builtin.function.native_frame` marks a routine whose frame the
 reference implementation keeps off the Python frame chain, as a C
 routine's frame is absent: the frame walk in `sys._getframe` and along

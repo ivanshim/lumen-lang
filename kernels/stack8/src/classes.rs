@@ -2730,6 +2730,12 @@ impl<'a> Engine<'a> {
                     }
                     if let Value::Class(owner) = args[0].contents() {
                         if let Some(value) = Self::own_class_value(&owner, &args[1].plain()) { return Ok(value.contents()); }
+                        if args[1].plain() == "__class__" { return Ok(Value::Class(owner)); }
+                    } else if let Value::Faint(reference) = args[0].contents() {
+                        if let Some(Value::Class(owner)) = reference.revive() {
+                            if let Some(value) = Self::own_class_value(&owner, &args[1].plain()) { return Ok(value.contents()); }
+                            if args[1].plain() == "__class__" { return Ok(Value::Class(owner)); }
+                        }
                     } else if args.get(3).is_some_and(|book| !matches!(book.contents(), Value::Null)) {
                         let Value::Tuple(found) = self.class_namespace_read(vec![args[3].clone(), args[1].clone()])? else { unreachable!() };
                         if found[0].is_true() { return Ok(found[1].clone()); }
@@ -2913,7 +2919,7 @@ impl<'a> Engine<'a> {
             => {
                     if args.len() != 1 { return Err("TypeError: __annotate__() requires one argument".into()); }
                     let forward = matches!(args[0].contents(), Value::Small(3));
-                    self.data.extend([args[0].clone(), Value::Small(3)]);
+                    self.data.extend([args[0].clone(), Value::Small(2)]);
                     self.perform(&Action::Gt, 2)?;
                     if self.drop_top()?.is_true() { return Err("NotImplementedError: ".into()); }
                     // Read class evaluators in the isolated lookup scope.
@@ -5720,12 +5726,7 @@ impl<'a> Engine<'a> {
                 let annotate_word = self.lang.class_details.get("code.fields").and_then(|row| row.get(10));
                 if annotate_word.is_some_and(|word| word == name) {
                     let public = { let members = c.shared.borrow(); members.iter().find(|(key, _)| key == name).or_else(|| members.iter().find(|(key, _)| key == "__annotate_func__")).map(|(_, own)| own.contents()) };
-                    if let Some(own) = public {
-                        if matches!(&own, Value::Adapter(parts) if parts.0 == 44 && matches!(parts.1.first(), Some(Value::Array(_)))) {
-                            return Ok(Self::adapter(44, vec![subject.clone()]));
-                        }
-                        return Ok(own);
-                    }
+                    if let Some(own) = public { return Ok(own); }
                     let has_values = c.shared.borrow().iter().find(|(key, _)| key == crate::code::ANNOTATE_WORD)
                         .is_some_and(|(_, value)| matches!(value.contents(), Value::Array(row) if row.chunks(2).any(|entry| matches!(entry.get(1), Some(Value::Routine(code)) if !code.postponed_annotation))));
                     let has_values = c.shared.borrow().iter().find(|(key, _)| key == "\0annotation_strings").map_or(has_values, |(_, mode)| !mode.is_true());
@@ -5801,6 +5802,14 @@ impl<'a> Engine<'a> {
                 if let Some(root)=self.root_member(name,Some(c)) {return Ok(root);}
             }
             Value::Object(o) => {
+                if name.starts_with("co_") {
+                    let retained = {
+                        let fields = o.fields.borrow();
+                        if fields.iter().any(|(key, _)| key == name) { None }
+                        else { fields.iter().find(|(key, _)| key == "\0compiled").map(|(_, value)| value.clone()) }
+                    };
+                    if let Some(code) = retained { return self.class_get(code, name, false); }
+                }
                 let module = self.module_holding(&subject).is_some() || Self::kind_beneath(&o.class_now()).as_deref() == Some("module");
                 if module {
                     let annotate = self.lang.class_details.get("code.fields").and_then(|row| row.get(10)).cloned().unwrap_or_default();
@@ -8371,6 +8380,16 @@ impl<'a> Engine<'a> {
                 };
                 if class.python_names.borrow().is_none() || class.sealed.get() { return Err("TypeError: argument is immutable".into()); }
                 class.shared.borrow_mut().retain(|(key, _)| key != "__dict__" && key != "__weakref__");
+                let at = class.shared.borrow().iter().position(|(key, _)| key == "\0annotation_classdict");
+                if let Some(at) = at {
+                    let context = class.shared.borrow_mut().remove(at).1;
+                    if let Value::Binding(cell) | Value::Bond(cell) = context {
+                        *cell.borrow_mut() = Value::Faint(Rc::new(crate::faint::Faint {
+                            hold: crate::faint::Hold::Class(Rc::downgrade(&class)), bearer: std::rc::Weak::new(),
+                            told: RefCell::new(None), cached_hash: RefCell::new(None), cleared: std::cell::Cell::new(false),
+                        }));
+                    }
+                }
                 // The kind no longer carries a weak reference where it
                 // stands, so a class built over it may name one itself.
                 class.weak_storage.set(Some(false));

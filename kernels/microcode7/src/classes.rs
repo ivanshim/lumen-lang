@@ -2449,7 +2449,16 @@ impl<'a> Machine<'a> {
                             return symbolic.map_err(Escape::Error);
                         }
                         match values[0].settled() {
-                            Value::Blueprint(class) => { if let Some(entry) = Self::own_entry(&class, &values[1].bare()) { return Ok(entry.settled()); } },
+                            Value::Blueprint(class) => {
+                                if let Some(entry) = Self::own_entry(&class, &values[1].bare()) { return Ok(entry.settled()); }
+                                if values[1].bare() == "__class__" { return Ok(Value::Blueprint(class)); }
+                            },
+                            Value::Dim(reference) => {
+                                if let Some(Value::Blueprint(owner)) = reference.revive() {
+                                    if let Some(entry) = Self::own_entry(&owner, &values[1].bare()) { return Ok(entry.settled()); }
+                                    if values[1].bare() == "__class__" { return Ok(Value::Blueprint(owner)); }
+                                }
+                            },
                             _ if values.get(3).is_some_and(|book| !matches!(book.settled(), Value::Nil)) => {
                                 if let Value::Tuple(pair) = self.class_namespace_read(vec![values[3].clone(), values[1].clone()])? {
                                     if pair[0].is_true() { return Ok(pair[1].clone()); }
@@ -2599,7 +2608,7 @@ impl<'a> Machine<'a> {
                         if values.len() != 1 { return Err(String::from("TypeError: __annotate__() requires one argument").into()); }
                         let format = values[0].settled();
                         let symbolic = matches!(format, Value::Small(3));
-                        let rejected = self.prim(Prim::Gt, "", &[format, Value::Small(3)])?;
+                        let rejected = self.prim(Prim::Gt, "", &[format, Value::Small(2)])?;
                         if rejected.is_true() { return Err(String::from("NotImplementedError: ").into()); }
                         // Carry the isolated scope into each class evaluator.
                         match &kept[0] {
@@ -4063,7 +4072,7 @@ impl<'a> Machine<'a> {
         match &entry {
             Value::Wrapped(73, parts) if parts.is_empty() && receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
             Value::Wrapped(134, ref parts) if parts[0].bare() == "normal_pdf" && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
-            Value::Wrapped(2, items) if !items.is_empty() && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
+            Value::Wrapped(2, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(120, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(48 | 133 | 136 | 60 | 120 | 123 | 124 | 125 | 127 | 155 | 156 | 157 | 158, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
@@ -4555,7 +4564,7 @@ impl<'a> Machine<'a> {
             Some(11|12)=>{
                 let required=if which==Some(11){1}else{2};
                 if values.len()!=required {return Err("TypeError: invalid number of reduction arguments".to_owned().into());}
-                let protocol=if which==Some(11){0}else{
+                let version=if which==Some(11){0}else{
                     let supplied=values[1].settled();
                     let index=if matches!(supplied,Value::Small(_)|Value::Huge(_)|Value::Flag(_)){supplied}
                         else {self.stood_for_whole(&supplied)?.ok_or_else(||Escape::Error("TypeError: protocol must be an integer".to_owned()))?};
@@ -4572,7 +4581,7 @@ impl<'a> Machine<'a> {
                         }
                     }
                 }
-                return self.object_reduction(first,protocol);
+                return self.object_reduction(first,version);
             }
             Some(13)=>Value::Small(match &first{Value::Thing(t) if t.blueprint().name!=self.detail("root")=>24,_=>16}),
             _=>return Err(self.class_unready()),
@@ -6271,10 +6280,7 @@ impl<'a> Machine<'a> {
             }
             if self.rules.words_ext_stmt_class_detail_code_fields.get(10).is_some_and(|word| word == key) {
                 if let Some(own) = Self::own_entry(b, key).or_else(|| Self::own_entry(b, "__annotate_func__")) {
-                    return Ok(match own.settled() {
-                        Value::Wrapped(44, contents) if matches!(contents.first(), Some(Value::Vector(_))) => Self::wrap(44, vec![value.clone()]),
-                        entry => entry,
-                    });
+                    return Ok(own.settled());
                 }
                 let present = Self::own_entry(b, crate::data::ANNOTATE_WORD).is_some_and(|value| match value.settled() {
                     Value::Vector(row) => row.chunks(2).any(|entry| matches!(entry.get(1), Some(Value::Bound(code, _) | Value::Routine(code)) if !code.annotation_is_text)),
@@ -8469,6 +8475,16 @@ impl<'a> Machine<'a> {
             class.weak_slot.set(Some(false));
             let mut namespace = class.shared.borrow_mut();
             namespace.retain(|entry| !matches!(entry.0.as_str(), "__dict__" | "__weakref__"));
+            let context = namespace.iter().position(|entry| entry.0 == "\0annotation_classdict").map(|index| namespace.remove(index).1);
+            drop(namespace);
+            if let Some(context) = context {
+                let reference = Value::Dim(Rc::new(crate::ghost::Dim {
+                    ghost: crate::ghost::Ghost::Blueprint(Rc::downgrade(&class)), bearer: std::rc::Weak::new(),
+                    notify: RefCell::new(None), hash: RefCell::new(None), detached: std::cell::Cell::new(false),
+                }));
+                let member = self.detail("cell.contents").to_owned();
+                self.alter_class_member(context, &member, Some(reference), true)?;
+            }
             return Ok(Value::Nil);
         }
         if op == 19 || op == 20 { return self.class_namespace_write(values, op == 20); }

@@ -831,6 +831,7 @@ pub struct Machine<'a> {
     /// value's own where one is run, else the running text's, as the
     /// reference reads them from the calling frame.
     text_future_bits: std::cell::Cell<i64>,
+    program_optimization: std::cell::Cell<u8>,
     /// The future flags the entry text was built with: its run stands
     /// in no call's frame, so they are kept aside here.
     top_future_bits: std::cell::Cell<i64>,
@@ -2273,6 +2274,7 @@ impl<'a> Machine<'a> {
             knows_cells: (HashMap::new(), HashMap::new(), std::collections::HashSet::new()),
             frames_named: Vec::new(),
             text_future_bits: std::cell::Cell::new(0),
+            program_optimization: std::cell::Cell::new(0),
             top_future_bits: std::cell::Cell::new(0),
             armed_names: None,
             annotation_scopes: Vec::new(),
@@ -4200,7 +4202,7 @@ impl<'a> Machine<'a> {
             return if matches!(held, Value::Unset) { self.fetch(slot, frame) } else { Ok(held) };
         }
         if let Value::Shared(cell) = &f.cells.borrow()[slot.at] {
-            if self.names_in_calls && !f.capture_slots.borrow().contains(&slot.at) && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/") && !slot.ident.starts_with('#')) {
+            if self.names_in_calls && !slot.ident.starts_with('#') && !f.capture_slots.borrow().contains(&slot.at) && !(Rc::ptr_eq(f, &self.outermost) && self.idents[slot.at].starts_with("\0import/")) {
                 return Ok(Value::Shared(cell.clone()));
             }
             if !self.rules.closes_over { return Ok(cell.borrow().clone()); }
@@ -7275,6 +7277,21 @@ impl<'a> Machine<'a> {
         answer
     }
 
+    // Carry a short circuit's established truth through enclosing boolean pairs.
+    fn logical_operand(&mut self, node: &Form, frame: &Rc<Env>) -> Result<(Value, Option<bool>), Escape> {
+        if let Form::Apply(Callee::Prim(operation @ (Prim::Both | Prim::Either), _), inputs) = node {
+            let (first, known) = self.logical_operand(&inputs[0], frame)?;
+            let truth = match known { Some(flag) => flag, None => self.object_truth(&first)? };
+            if truth == (*operation == Prim::Either) { return Ok((first, Some(truth))); }
+            return self.logical_operand(&inputs[1], frame);
+        }
+        let value = match self.value_of(node, frame)? {
+            Value::Bound(program, scope) if program.frameless => self.invoke(program, scope, Vec::new())?,
+            value => value,
+        };
+        Ok((value, None))
+    }
+
     fn has_wildcard_imports(&self) -> bool {
         let (wildcard, revised) = self.namespace_overrides();
         wildcard || revised || !self.displaced_primitives.is_empty()
@@ -9014,6 +9031,7 @@ impl<'a> Machine<'a> {
         match op {
             Prim::Both | Prim::Either
             => {
+                if self.rules.logical_value { return self.logical_operand(node, frame).map(|(value, _)| value); }
                     // A language may want the side that settled the pair
                     // handed back whole instead of a flag for its truth.
                     let whole = self.rules.logical_value;
@@ -14279,7 +14297,11 @@ impl<'a> Machine<'a> {
                 if positional.len() <= place { positional.resize(place + 1, Value::Unset); }
                 positional[place] = worth;
             }
-            for held in positional.iter_mut() { if matches!(held, Value::Unset) { *held = Value::Nil; } }
+            for (slot, held) in positional.iter_mut().enumerate() {
+                if matches!(held, Value::Unset) {
+                    *held = match (op, slot) { (Prim::Prepare, 3 | 4) => Value::Small(0), (Prim::Prepare, 5) => Value::Small(-1), _ => Value::Nil };
+                }
+            }
             return Ok(None);
         }
         if matches!(op, Prim::Octets(0 | 1)) && self.rules.names_shadow_builtins {
@@ -31366,7 +31388,7 @@ impl<'a> Machine<'a> {
                 }
             }
             let row = match target {
-                Value::Vector(values) | Value::Tuple(values) => values.as_ref().clone(),
+                Value::Vector(values) | Value::Tuple(values) => values,
                 _ => return Err(self.span_complaint("unsupported")),
             };
             let (_, picked, _) = self.span_selection(bounds, row.len())?;
@@ -34111,7 +34133,13 @@ impl<'a> Machine<'a> {
             self.build_class_value(name.to_string(), parents, members)?
         };
         if let Some(Value::Wrapped(35, items)) = class_cell {
-            if !protocol { let word = self.detail("cell.contents").to_owned(); self.alter_class_member(Value::Wrapped(35, items), &word, Some(result.clone()), true)?; return Ok(result); }
+            if !protocol {
+                let context = Value::Wrapped(35, items);
+                let word = self.detail("cell.contents").to_owned();
+                self.alter_class_member(context.clone(), &word, Some(result.clone()), true)?;
+                if let Value::Blueprint(owner) = &result { owner.shared.borrow_mut().push((String::from("\0annotation_classdict"), context)); }
+                return Ok(result);
+            }
             // What the builder answered may be no class at all: the cell
             // then names nothing and nothing is asked of it.
             let Value::Blueprint(made) = result.settled() else { return Ok(result) };
@@ -34824,7 +34852,7 @@ impl<'a> Machine<'a> {
         let held = book.borrow().clone();
         match &held {
             Value::Dict(_) => { set_down(book, name, value); Ok(()) }
-            Value::Attributes(_) | Value::Thing(_) => self.mapping_write(&held, name, value),
+            Value::Attributes(_) | Value::Thing(_) | Value::Vector(_) => self.mapping_write(&held, name, value),
             _ => Ok(()),
         }
     }
@@ -34962,6 +34990,10 @@ impl<'a> Machine<'a> {
 
     fn text_tokens(&mut self, source: &str, mode: usize) -> Result<Vec<crate::scan::Token>, (String, u32, usize)> {
         if source.is_empty() && self.cached_forms.is_some() { return Ok(vec![]); }
+        let terminated = if mode == 0 && !source.is_empty() && !source.ends_with('\n') {
+            std::borrow::Cow::Owned(format!("{source}\n"))
+        } else { std::borrow::Cow::Borrowed(source) };
+        let source = terminated.as_ref();
         if mode != 0 && source.is_empty() { return Err(("SyntaxError: invalid syntax".into(), 0, 0)); }
         if mode == 1 {
             let head = source.trim_start_matches([' ', '\t', '\n']).split(|ch: char| !ch.is_alphanumeric() && ch != '_').next().unwrap_or("");
@@ -35072,6 +35104,9 @@ impl<'a> Machine<'a> {
     /// Text checked ahead of time and kept as a code value with the
     /// file it stands in and the manner it is to be read in.
     fn decode_program(&mut self, raw: &[u8], file: &str) -> Result<Rc<str>, String> {
+        if raw.iter().any(|byte| *byte == 0) {
+            return Err(self.text_unreadable_at(0, "SyntaxError: source code string cannot contain null bytes".to_owned(), file, 0, 0, None, ""));
+        }
         let has_bom = raw.starts_with(b"\xef\xbb\xbf");
         let raw = if has_bom { &raw[3..] } else { raw };
         let mut found: Option<String> = None;
@@ -35516,7 +35551,7 @@ impl<'a> Machine<'a> {
                 piece.row = last_row; piece.column = last_col; piece.end_row = last_row; piece.end_column = last_col;
             }
         }
-        let built = crate::build::build_text(&tokens, self.table, &[], 0, None, None, None, None, mode == 1, &[], top_await, mode == 2, 0, self.text_future_bits.get());
+        let built = crate::build::build_text(&tokens, self.table, &[], 0, None, None, None, None, mode == 1, &[], top_await, mode == 2, i64::from(self.program_optimization.get()), self.text_future_bits.get());
         let (said, row, cols) = match built {
             Ok(_) => return Some(Self::spent_place(source)),
             Err(fault) => fault,
@@ -35538,6 +35573,20 @@ impl<'a> Machine<'a> {
     /// Whether the text ended with block boundaries still open: the
     /// closes the indenting pass laid at the very end stand for
     /// indented blocks the text never left.
+    fn unfinished_inline_suite(words: &[crate::scan::Token]) -> bool {
+        use crate::scan::Shape;
+        let substantive = |word: &&crate::scan::Token| !matches!(word.shape, Shape::Lead | Shape::Open | Shape::Close | Shape::LineEnd | Shape::Finish);
+        let Some(tail) = words.iter().rposition(|word| substantive(&word)) else { return false; };
+        let mut first = 0;
+        for (at, word) in words[..tail].iter().enumerate() {
+            if matches!(word.shape, Shape::Open | Shape::Close | Shape::LineEnd) { first = at + 1; }
+        }
+        match words[first..=tail].iter().find(substantive).filter(|word| word.shape == Shape::Bare).map(|word| word.spelling()) {
+            Some("def" | "class" | "if" | "elif" | "else" | "for" | "while" | "try" | "except" | "finally" | "with" | "async") => true,
+            _ => false,
+        }
+    }
+
     fn left_open_at_end(tokens: &[crate::scan::Token]) -> bool {
         use crate::scan::Shape;
         let Some(finish) = tokens.iter().find(|piece| piece.shape == Shape::Finish) else { return false };
@@ -35548,6 +35597,24 @@ impl<'a> Machine<'a> {
             open = open || piece.shape == Shape::Close;
         }
         open
+    }
+
+    /// Accept integer indices for compiler options, rejecting C-int overflow.
+    fn compiler_option(&mut self, argument: &Value) -> Result<i64, String> {
+        let ordinary = argument.settled();
+        let indexed = if matches!(ordinary, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { ordinary.clone() }
+            else { self.stood_for_whole(&ordinary)?.ok_or_else(|| format!("TypeError: '{}' object cannot be interpreted as an integer", ordinary.kind_word()))? };
+        let integral = match indexed { Value::Flag(b) => Some(i64::from(b)), Value::Small(n) => Some(n), Value::Huge(n) => n.to_i64(), _ => None };
+        match integral { Some(n) if n >= i32::MIN as i64 && n <= i32::MAX as i64 => Ok(n), _ => Err("OverflowError: Python int too large to convert to C int".to_owned()) }
+    }
+
+    /// Decode a contiguous buffer with the shared library buffer reader.
+    fn program_from_buffer(&mut self, argument: Value, filename: &str) -> Result<Rc<str>, String> {
+        let builtins = self.namespace_for("builtins")?;
+        let reader = self.attribute(&builtins, "_buffer_bytes").ok_or_else(|| self.source_refused())?;
+        let decoded = self.apply_within(reader, vec![argument])?;
+        if let Value::Octets { cell, .. } = decoded.settled() { self.decode_program(&cell.borrow(), filename) }
+        else { Err(self.source_refused()) }
     }
 
     fn single_reading(words: &[crate::scan::Token], text: &str) -> Result<(), (String, u32, usize)> {
@@ -35563,11 +35630,11 @@ impl<'a> Machine<'a> {
             if word.shape == Shape::Close { nesting = nesting.saturating_sub(1); continue; }
             if word.shape == Shape::LineEnd { beginning = true; separated = false; continue; }
             if matches!(word.shape, Shape::Lead | Shape::Finish) { continue; }
-            if separated && ["def", "class", "async", "with", "try", "while", "for", "if"].contains(&word.spelling()) {
+            if separated && word.shape == Shape::Bare && ["def", "class", "async", "with", "try", "while", "for", "if"].contains(&word.spelling()) {
                 return Err((String::from("SyntaxError: invalid syntax"), word.row, word.column));
             }
             if beginning && nesting == 0 {
-                let name = word.spelling();
+                let name = match word.shape { Shape::Bare | Shape::Sign => word.spelling(), _ => "" };
                 match header {
                     Some(block) => {
                         let arm = block && ["else", "elif", "finally", "except"].contains(&name);
@@ -35622,70 +35689,55 @@ impl<'a> Machine<'a> {
     fn text_prepared(&mut self, name: &str, v: &[Value]) -> Result<Value, String> {
         let formals = self.table.strings("ext.builtin.compile.parameters");
         if v.len() < 3 || v.len() > formals.len() { return Err(self.core_complaint("core.arity", name)); }
-        let (Value::Text(file), Value::Text(manner)) = (v[1].settled(), v[2].settled()) else { return Err(self.source_refused()) };
-        let mut normalized = v.to_vec();
-        if matches!(normalized[0].settled(), Value::Thing(_)) {
-            if let Some(row) = self.numeric_octets(&normalized[0])? { normalized[0] = self.octets(row, false); }
+        let path = self.path_from_protocol(v[1].clone())?;
+        let path = Self::underlying(&path).unwrap_or_else(|| path.settled());
+        let file = if let Value::Text(file) = path { file }
+            else if matches!(path, Value::Octets { .. }) {
+                let decoded = self.codec_function("_decode", vec![path, Value::text("utf-8"), Value::text("surrogateescape")])?;
+                match decoded { Value::Text(file) => file, _ => return Err(self.source_refused()) }
+            } else { return Err(self.source_refused()); };
+        if file.chars().any(|c| c == '\0') { return Err("ValueError: embedded null character".to_owned()); }
+        let manner_value = Self::underlying(&v[2]).unwrap_or_else(|| v[2].settled());
+        let manner = match manner_value { Value::Text(word) => word, other => return Err(format!("TypeError: compile() argument 'mode' must be str, not {}", other.kind_word())) };
+        let flags = if let Some(value) = v.get(3) { self.compiler_option(value)? } else { 0 };
+        if flags & !0x1FEF610 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
+        let optimize = if let Some(value) = v.get(5) { self.compiler_option(value)? } else { -1 };
+        if optimize < -1 || optimize > 2 { return Err("ValueError: compile(): invalid optimize value".into()); }
+        let suppress_inheritance = if let Some(value) = v.get(4) { self.object_truth(value)? } else { false };
+        if flags & 1024 != 0 {
+            let namespace = self.load_namespace("ast")?;
+            let prepare = self.attribute(&namespace, "_compile_input").ok_or_else(|| self.source_refused())?;
+            let argument = self.core_run(&prepare, vec![v[0].clone()])?;
+            let argument = if let Value::Octets { cell, .. } = argument.settled() {
+                Value::Text(self.decode_program(&cell.borrow(), &file)?)
+            } else { argument };
+            let reader = self.attribute(&namespace, "_compile_ast").ok_or_else(|| self.source_refused())?;
+            return self.core_run(&reader, vec![argument, Value::Text(file.clone()), Value::Text(manner.clone()), Value::Small(flags), Value::Small(optimize), v.get(6).cloned().unwrap_or(Value::Nil)]);
         }
-        let v = normalized.as_slice();
-        if let Some(Value::Small(flags)) = v.get(3).map(Value::settled) {
-            if flags & 1024 != 0 {
-                let namespace = self.load_namespace("ast")?;
-                let read = self.attribute(&namespace, "_compile_ast").ok_or_else(|| self.source_refused())?;
-                let mut handed = v[..4].to_vec();
-                handed.push(v.get(5).cloned().unwrap_or(Value::Small(-1)));
-                handed.push(v.get(6).cloned().unwrap_or(Value::Nil));
-                return self.core_run(&read, handed);
-            }
-        }
+        let settling = if optimize < 0 { std::env::var("PYTHONOPTIMIZE").ok().and_then(|text| text.parse::<i64>().ok()).unwrap_or(0).clamp(0, 2) } else { optimize };
         let mut sites_value = Value::tuple(Vec::new());
-        let source = match v[0].settled() {
+        let source = match Self::underlying(&v[0]).unwrap_or_else(|| v[0].settled()) {
             Value::Text(s) => s,
             Value::Octets { cell, .. } => self.decode_program(&cell.borrow(), &file)?,
             Value::Thing(tree) => {
                 let owner = self.load_namespace("ast")?;
                 let function = self.attribute(&owner, "_compile_source").ok_or_else(|| self.source_refused())?;
-                let converted = self.core_run(&function, vec![Value::Thing(tree), Value::Text(manner.clone())])?;
+                let converted = self.core_run(&function, vec![Value::Thing(tree.clone()), Value::Text(manner.clone())])?;
+                if matches!(converted.settled(), Value::Nil) { self.program_from_buffer(Value::Thing(tree), &file)? } else {
                 let Value::Tuple(pair) = converted.settled() else { return Err(self.source_refused()); };
                 if pair.len() != 2 { return Err(self.source_refused()); }
                 sites_value = pair[1].clone();
                 match pair[0].settled() { Value::Text(code) => code, _ => return Err(self.source_refused()) }
+                }
             }
             _ => return Err("TypeError: compile() arg 1 must be a string, bytes or AST object".to_owned()),
         };
         let Some(mode) = self.table.strings("ext.builtin.compile.modes").iter().position(|word| word == manner.as_ref()) else { return Err("ValueError: compile(): invalid mode".into()); };
-        let flags = match v.get(3).map(Value::settled) {
-            None | Some(Value::Nil) => 0,
-            Some(Value::Small(bits)) => bits,
-            _ => return Err("TypeError: compile() argument 'flags' must be int".into()),
-        };
-        if flags < 0 || flags & 0xEF != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
-        if v.get(5).map_or(false, |value| !matches!(value.settled(), Value::Nil | Value::Small(-1..=2))) {
-            return Err("ValueError: compile(): invalid optimize value".into());
-        }
-        let settling = match v.get(5).map(Value::settled) { Some(Value::Small(n)) => n, _ => -1 };
-        // PyCF_ONLY_AST: the value handed back is the syntax tree the
-        // library's reader builds, not a code value; PyCF_OPTIMIZED_AST
-        // asks that tree with the names the optimiser settles already
-        // folded in.
-        if flags & 1024 != 0 {
-            let namespace = self.load_namespace("ast")?;
-            let reader = self.namespace_item(&namespace, "ast", "_tree_for_compile")?;
-            let comments = if flags & 4096 != 0 { 1 } else { 0 };
-            let settling = if flags & 32768 != 0 {
-                match v.get(5).map(Value::settled) { Some(Value::Small(n)) if n >= 0 => n, _ => 0 }
-            } else { -1 };
-            return match self.apply_class_member(reader, vec![Value::text(&source), Value::text(&file), Value::text(&manner), Value::Small(comments), Value::Small(settling)]) {
-                Ok(tree) => Ok(tree),
-                Err(Escape::Error(told)) => Err(told),
-                Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
-            };
-        }
         let top_await = flags & 8192 != 0;
         // The future flags in force: those the call names, and — unless
         // it says not to inherit — those of the text now running, the
         // way the reference reads them from the calling frame's code.
-        let caller_future = if v.get(4).map_or(false, |value| value.settled().is_true()) { 0 } else { self.frames_named.last().map_or(self.top_future_bits.get(), |body| body.future_bits) };
+        let caller_future = if suppress_inheritance { 0 } else { self.frames_named.last().map_or(self.top_future_bits.get(), |body| body.future_bits) };
         let future_bits = flags & 0x1FE0010 | caller_future;
         // The reference's PyCF_ALLOW_INCOMPLETE_INPUT and
         // PyCF_DONT_IMPLY_DEDENT, the two flags codeop compiles with:
@@ -35746,27 +35798,16 @@ impl<'a> Machine<'a> {
             }
             return Err(self.text_left_inside_block(&file, &source));
         }
+        if mode == 2 && !source.ends_with('\n') && (Self::unfinished_inline_suite(&tokens) || source.lines().last().map_or(false, |line| line.trim_start().starts_with('#')) && Self::left_open_at_end(&tokens)) {
+            if incomplete_ok {
+                if let Some(told) = self.text_incomplete(&file, Self::spent_place(counted), counted) { return Err(told); }
+            }
+            return Err(self.text_left_inside_block(&file, &source));
+        }
         for (message, row, column) in &built.warnings {
             self.syntax_warning(mode, message, &file, *row, *column, &source, None)?;
         }
-        if flags & 0x400 != 0 {
-            // PyCF_ONLY_AST: the value handed back is the library's
-            // syntax tree of the text rather than a code value.
-            let space = self.load_namespace("ast")?;
-            let parse = match self.read_class_member(space, "_parse_for_compile", true) {
-                Ok(parse) => parse.settled(),
-                Err(Escape::Error(told)) => return Err(told),
-                Err(escape) => { self.got_away = Some(escape); return Err(self.bad_answer()); }
-            };
-            let manner = self.table.strings("ext.builtin.compile.modes")[mode].clone();
-            let type_comments = i64::from(flags & 0x1000 != 0);
-            let optimize = match v.get(5).map(Value::settled) { Some(Value::Small(n)) => n, _ => -1 };
-            return match self.apply_class_member(parse, vec![Value::Text(source.clone()), Value::Text(file.clone()), Value::text(&manner), Value::Small(type_comments), Value::Small(optimize), Value::Flag(flags & 0x8000 != 0)]) {
-                Ok(tree) => Ok(tree),
-                Err(Escape::Error(told)) => Err(told),
-                Err(escape) => { self.got_away = Some(escape); Err(self.bad_answer()) }
-            };
-        }
+
         let kind = self.code_blueprint();
         let bits = (if built.program.generator { 128 } else { 0 }) | built.future_bits;
         let constants = Value::tuple(built.program.literals.iter().map(|v| match v {
@@ -35996,10 +36037,16 @@ impl<'a> Machine<'a> {
             Value::Thing(code) if self.table.strings("ext.builtin.compile.kind").first().map(String::as_str) == Some(code.blueprint().name.as_str()) => code.holds.borrow().iter().find_map(|(word, worth)| if word == "co_flags" { match worth.settled() { Value::Small(bits) => Some(bits & 0x1FE0010), _ => None } } else { None }).unwrap_or(0),
             _ => caller_future,
         };
+        let optimization = match &first {
+            Value::Thing(code) => code.holds.borrow().iter().find_map(|(name, value)| if name == "\0optimization" { match value.settled() { Value::Small(n) => Some(n as u8), _ => None } } else { None }).unwrap_or(0),
+            _ => 0,
+        };
+        self.program_optimization.set(optimization);
         self.text_future_bits.set(held_future);
         let (source, file, mode, top_await, settling) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing), false, 0),
             Value::Octets { cell, .. } => (self.decode_program(&cell.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false, 0),
+            buffer @ Value::Thing(_) if !matches!(&buffer, Value::Thing(code) if self.table.single("ext.builtin.compile.kind") == Some(code.blueprint().name.as_str())) => (self.program_from_buffer(buffer, "<string>")?.to_string(), None, usize::from(weighing), false, 0),
             Value::Thing(code) if self.table.strings("ext.builtin.compile.kind").first().map(String::as_str) == Some(code.blueprint().name.as_str()) => {
                 let holds = code.holds.borrow();
                 let mode = match holds.get(2).map(|(_, worth)| worth) { Some(Value::Small(n)) => *n as usize, _ => 0 };
@@ -36023,17 +36070,41 @@ impl<'a> Machine<'a> {
         }
         // An expression to be weighed may stand in from the edge of its text.
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_owned() } else { source };
+        if self.table.has_any("ext.builtin.compile.kind") {
+            if let Some(global) = v.get(1).map(Value::settled).filter(|held| !matches!(held, Value::Nil)) {
+                let is_dict = match &global {
+                    Value::Dict(_) | Value::Attributes(_) => true,
+                    other => Self::underlying(other).map_or(false, |inner| matches!(inner.settled(), Value::Dict(_))),
+                };
+                if !is_dict {
+                    if !weighing { return Err(format!("TypeError: exec() globals must be a dict, not {}", global.kind_word())); }
+                    let mapping = match &global {
+                        Value::Thing(t) => self.inherited_entry(&t.blueprint(), "__getitem__").is_some(),
+                        Value::Vector(_) | Value::Tuple(_) => true,
+                        _ => false,
+                    };
+                    return Err(if mapping { "TypeError: globals must be a real dict; try eval(expr, {}, mapping)" } else { "TypeError: globals must be a dict" }.to_owned());
+                }
+            }
+            if let Some(Value::Thing(local)) = v.get(2).map(Value::settled) {
+                let maps = self.inherited_entry(&local.blueprint(), "__getitem__").is_some() || Self::underlying(&Value::Thing(local.clone())).map_or(false, |inner| matches!(inner.settled(), Value::Dict(_)));
+                if !maps {
+                    return Err(if weighing { "TypeError: locals must be a mapping".to_owned() } else { format!("TypeError: locals must be a mapping or None, not {}", local.blueprint().name) });
+                }
+            }
+        }
         let mut books = Vec::new();
         for place in 1..3 {
             books.push(match v.get(place) {
                 None | Some(Value::Nil) => None,
                 Some(Value::Shared(cell) | Value::Mutable(cell, _)) if matches!(&*cell.borrow(), Value::Attributes(_) | Value::Dict(_)) => Some(cell.clone()),
+                Some(Value::Shared(cell) | Value::Mutable(cell, _)) if place == 2 && self.table.has_any("ext.builtin.compile.kind") && matches!(&*cell.borrow(), Value::Vector(_)) => Some(cell.clone()),
                 // A program's own value, standing in for a dictionary of
                 // its own through the blueprint it answers to: kept in
                 // a cell of its own so the rest of a reading works with
                 // it exactly as it works with a plain dictionary's cell.
                 Some(thing @ (Value::Attributes(_) | Value::Thing(_))) => Some(Rc::new(RefCell::new(thing.clone()))),
-                Some(_) => return Err(self.core_complaint("core.arity", name)),
+                Some(other) => return Err(if !self.table.has_any("ext.builtin.compile.kind") { self.core_complaint("core.arity", name) } else if weighing { "TypeError: locals must be a mapping".to_owned() } else { format!("TypeError: locals must be a mapping or None, not {}", other.kind_word()) }),
             });
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
@@ -36127,6 +36198,7 @@ impl<'a> Machine<'a> {
             }
             return self.perform_booked(source, file, mode, book, None, top_await, literals, settling, sites);
         }
+        let warn_source = file.is_none();
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -36139,12 +36211,14 @@ impl<'a> Machine<'a> {
         let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, natives, None, settling, sites)?;
         // What the build noted about how the text is written is said
         // once the text stands, each warning through the warnings module.
-        for (message, row, column) in built.warnings.clone() {
-            self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
-        }
-        if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+        if warn_source {
+            for (message, row, column) in built.warnings.clone() {
+                self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
+            }
+        }
+        if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
         self.text_concluded(&built, &file, mode, shown)
     }
 
@@ -36156,6 +36230,7 @@ impl<'a> Machine<'a> {
     /// makes is gone once the text is done.
     fn perform_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, mine: Rc<Env>, _top_await: bool, literals: Option<Vec<Value>>, settling: i64, sites: &[[u32; 8]]) -> Result<Value, String> {
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
+        let warn_source = file.is_none();
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -36198,12 +36273,14 @@ impl<'a> Machine<'a> {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
-        for (message, row, column) in built.warnings.clone() {
-            self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
-        }
-        if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
         self.idents = built.globals.clone();
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+        if warn_source {
+            for (message, row, column) in built.warnings.clone() {
+                self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
+            }
+        }
+        if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
         let needed = built.program.idents.len().max(names.len());
         if !Rc::ptr_eq(&mine, &self.outermost) || mine.cells.borrow().len() < needed {
             mine.cells.borrow_mut().resize(needed, Value::Unset);
@@ -36236,6 +36313,7 @@ impl<'a> Machine<'a> {
     /// among the outermost cells, and a book kept for them.
     fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, literals: Option<Vec<Value>>, settling: i64, sites: &[[u32; 8]]) -> Result<Value, String> {
         let captured = self.module_function_builtins.take();
+        let warn_source = file.is_none();
         let file = file.unwrap_or_else(|| "<string>".to_owned());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -36274,13 +36352,15 @@ impl<'a> Machine<'a> {
         // under the name the handed globals give the text, each warning
         // through the warnings module.
         let spoken_as = framed_in.as_deref().map(str::to_string);
-        for (message, row, column) in built.warnings.clone() {
-            self.syntax_warning(mode, &message, &file, row, column, &source, spoken_as.as_deref())?;
-        }
-        if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
         let fresh = &built.globals[beginning..];
         self.idents.extend(fresh.iter().map(|word| format!("\0names/{beginning}/{word}")));
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
+        if warn_source {
+            for (message, row, column) in built.warnings.clone() {
+                self.syntax_warning(mode, &message, &file, row, column, &source, spoken_as.as_deref())?;
+            }
+        }
+        if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
         let (near, outer) = match near { Some(near) => (near, Some(outer)), None => (outer, None) };
         let declarations: std::collections::BTreeSet<_> = built.outer_aliases.iter().cloned()
             .chain(crate::build::text_wide_globals(&tokens, self.table)).collect();

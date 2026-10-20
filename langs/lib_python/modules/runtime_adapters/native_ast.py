@@ -2688,13 +2688,21 @@ class _Parser:
             cases = []
             while self.at_name('case') and self.peek().scol == indent:
                 header = self.pop()
-                value, vs, ve = self.parse_or()
-                pattern = self.pattern_from_expr(value)
-                if self.at_name('as'):
-                    self.pop()
-                    name = self.pop()
-                    pattern = self.located(MatchAs, self.toks[self.at - 2], name, pattern=pattern, name=name.text)
-                    pattern.lineno, pattern.col_offset = vs
+                pattern, vs, ve = self.parse_case_as()
+                if isinstance(pattern, MatchStar) and not self.at_op(','):
+                    _syntax('invalid syntax')
+                if self.at_op(','):
+                    elts = [pattern]
+                    while self.at_op(','):
+                        comma = self.pop()
+                        ve = (comma.erow, comma.ecol)
+                        if self.at_op(':') or self.at_name('if'):
+                            break
+                        elt, es, ee = self.parse_case_as()
+                        elts.append(elt)
+                        ve = ee
+                    pattern = MatchSequence(patterns=elts, lineno=vs[0], col_offset=vs[1],
+                                            end_lineno=ve[0], end_col_offset=ve[1])
                 guard = None
                 if self.at_name('if'):
                     self.pop()
@@ -3130,6 +3138,27 @@ class _Parser:
             node = Tuple(elts=elts, ctx=Load(), lineno=ls[0], col_offset=ls[1],
                          end_lineno=le[0], end_col_offset=le[1])
         return (node, ls, le)
+
+    def parse_case_as(self):
+        value, vs, ve = self.parse_case_item()
+        pattern = self.pattern_from_expr(value)
+        if self.at_name('as'):
+            if isinstance(pattern, MatchStar):
+                _syntax('invalid syntax')
+            self.pop()
+            name = self.pop()
+            pattern = MatchAs(pattern=pattern, name=name.text, lineno=vs[0], col_offset=vs[1],
+                              end_lineno=name.erow, end_col_offset=name.ecol)
+            ve = (name.erow, name.ecol)
+        return (pattern, vs, ve)
+
+    def parse_case_item(self):
+        if not self.at_op('*'):
+            return self.parse_or()
+        star = self.pop()
+        value, vs, ve = self.parse_or()
+        return (Starred(value=value, ctx=Load(), lineno=star.srow, col_offset=star.scol,
+                        end_lineno=ve[0], end_col_offset=ve[1]), (star.srow, star.scol), ve)
 
     def parse_or(self):
         node, ls, le = self.parse_and()
@@ -4409,6 +4438,13 @@ def _check_features(tree, version):
         if version < minimum:
             raise SyntaxError(type(node).__name__ + ' is only supported in Python 3.' + str(minimum) + ' and greater')
 
+# Preserve trees while accepting source through the existing buffer protocol.
+def _compile_input(source):
+    if isinstance(source, (AST, str, bytes)):
+        return source
+    import builtins
+    return builtins._buffer_bytes(source)
+
 # Route compile's AST-only flags through the same public parser.
 def _compile_ast(source, filename, mode, flags, optimize=-1, feature_version=None):
     if flags < 0 or flags & 255:
@@ -4418,17 +4454,16 @@ def _compile_ast(source, filename, mode, flags, optimize=-1, feature_version=Non
     if mode not in ('exec', 'eval', 'single', 'func_type'):
         raise ValueError('compile(): invalid mode')
     if isinstance(source, AST):
-        if flags & 32768:
-            class DebugFold(NodeTransformer):
-                def visit_Name(self, node):
-                    if node.id == '__debug__' and isinstance(node.ctx, Load):
-                        return copy_location(Constant(value=__debug__ if optimize < 0 else optimize == 0), node)
-                    return node
-            return DebugFold().visit(source)
-        return source
+        expected = {'exec': Module, 'eval': Expression, 'single': Interactive, 'func_type': FunctionType}[mode]
+        if not isinstance(source, expected):
+            raise TypeError('expected ' + expected.__name__ + ' node, got ' + type(source).__name__)
+        _validate_node(source)
+        _validate_contexts(source)
+        source = _copy_ast(source)
+        return _optimized_tree(source, max(optimize, 0), True) if flags & 32768 else source
     return parse(source, filename, mode, type_comments=bool(flags & PyCF_TYPE_COMMENTS),
-                 optimize=optimize if flags & 32768 else -1,
-                 fold_debug=bool(flags & 32768), feature_version=feature_version)
+                 optimize=optimize if flags & 32768 else -1, feature_version=feature_version,
+                 fold_debug=bool(flags & 32768))
 
 # Validate required fields, locations and ASDL categories before generating code.
 def _validate_node(node, active=None):
@@ -4498,6 +4533,8 @@ def _validate_node(node, active=None):
 
 # Compile the current tree rather than replaying the text from which it was parsed.
 def _compile_source(tree, mode):
+    if not isinstance(tree, AST):
+        return None
     expected = {'exec': Module, 'eval': Expression, 'single': Interactive}.get(mode)
     if expected is None:
         raise ValueError('compile(): invalid mode')
@@ -4619,3 +4656,113 @@ def main(args=None):
                  feature_version=feature_version, optimize=args.optimize)
     print(dump(tree, include_attributes=args.include_attributes,
                indent=args.indent, show_empty=args.show_empty))
+
+
+def _optimized_tree(tree, optimize, fold_debug=False):
+    def pattern_value(node):
+        if isinstance(node, Constant) and type(node.value) in (int, float, complex):
+            return node.value
+        if isinstance(node, UnaryOp) and isinstance(node.op, (UAdd, USub)):
+            value = pattern_value(node.operand)
+            if value is not None:
+                return -value if isinstance(node.op, USub) else +value
+        if isinstance(node, BinOp) and isinstance(node.op, (Add, Sub)):
+            left, right = pattern_value(node.left), pattern_value(node.right)
+            if type(left) in (int, float) and type(right) is complex:
+                return left + right if isinstance(node.op, Add) else left - right
+        return None
+
+    class Optimizer(NodeTransformer):
+        def visit_MatchValue(self, node):
+            self.generic_visit(node)
+            value = pattern_value(node.value) if optimize > 0 else None
+            if value is not None:
+                node.value = copy_location(Constant(value=value), node.value)
+            return node
+
+        def visit_MatchMapping(self, node):
+            self.generic_visit(node)
+            if optimize > 0:
+                for index, key in enumerate(node.keys):
+                    value = pattern_value(key)
+                    if value is not None:
+                        node.keys[index] = copy_location(Constant(value=value), key)
+            return node
+
+        def visit_BinOp(self, node):
+            self.generic_visit(node)
+            if optimize < 1 or not isinstance(node.op, Mod) or not isinstance(node.left, Constant) or type(node.left.value) is not str or not isinstance(node.right, Tuple):
+                return node
+            text, arguments = node.left.value, node.right.elts
+            if any(isinstance(arg, Starred) for arg in arguments):
+                return node
+            values, literal, cursor, argument = [], '', 0, 0
+            while cursor < len(text):
+                if text[cursor] != '%':
+                    literal += text[cursor]
+                    cursor += 1
+                    continue
+                cursor += 1
+                if cursor < len(text) and text[cursor] == '%':
+                    literal += '%'
+                    cursor += 1
+                    continue
+                flags = ''
+                while cursor < len(text) and text[cursor] in '-+ #0':
+                    flags += text[cursor]
+                    cursor += 1
+                width_start = cursor
+                while cursor < len(text) and '0' <= text[cursor] <= '9':
+                    cursor += 1
+                width = text[width_start:cursor]
+                precision = ''
+                if cursor < len(text) and text[cursor] == '.':
+                    cursor += 1
+                    precision_start = cursor
+                    while cursor < len(text) and '0' <= text[cursor] <= '9':
+                        cursor += 1
+                    precision = '.' + (text[precision_start:cursor] or '0')
+                if cursor == len(text) or text[cursor] not in 'sar' or argument == len(arguments):
+                    return node
+                if literal:
+                    values.append(copy_location(Constant(value=literal), node.left))
+                    literal = ''
+                spec = (('<' if '-' in flags else '>') + width if width else '') + precision
+                value = FormattedValue(value=arguments[argument], conversion=ord(text[cursor]),
+                                       format_spec=copy_location(Constant(value=spec), node.left) if spec else None)
+                values.append(copy_location(value, node))
+                argument += 1
+                cursor += 1
+            if argument != len(arguments):
+                return node
+            if literal:
+                values.append(copy_location(Constant(value=literal), node.left))
+            return copy_location(JoinedStr(values=values), node)
+
+        def visit_Name(self, node):
+            if node.id == '__debug__' and isinstance(node.ctx, Load) and (fold_debug or optimize > 0):
+                return copy_location(Constant(value=optimize < 1), node)
+            return node
+
+        def generic_visit(self, node):
+            result = super().generic_visit(node)
+            if optimize == 2 and isinstance(result, (Module, FunctionDef, AsyncFunctionDef, ClassDef)):
+                body = result.body
+                if body and isinstance(body[0], Expr) and isinstance(body[0].value, Constant) and isinstance(body[0].value.value, str):
+                    removed = body.pop(0)
+                    if not body:
+                        body.append(copy_location(Pass(), removed))
+            return result
+    return Optimizer().visit(tree)
+
+
+def _copy_ast(value):
+    if isinstance(value, AST):
+        fields = {name: _copy_ast(item) for name, item in iter_fields(value)}
+        for name in value._attributes:
+            if hasattr(value, name):
+                fields[name] = getattr(value, name)
+        return type(value)(**fields)
+    if isinstance(value, list):
+        return [_copy_ast(item) for item in value]
+    return value
