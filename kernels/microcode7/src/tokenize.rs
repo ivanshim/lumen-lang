@@ -171,45 +171,192 @@ fn accept_line(owner: &Thing, line: &Value) -> Value {
     for (key, expected) in [("cur", 0), ("inp", 0), ("tok_mode_stack_index", 0), ("done", 10)] {
         if counter(&scanner, key) != Some(expected) { return Value::Flag(false); }
     }
-    let Some(storage) = sequence(&scanner, "bufc") else { return Value::Flag(false); };
-    match &*storage.borrow() { Value::Vector(row) if row.is_empty() => (), _ => return Value::Flag(false) }
+    let clear = match slot(&scanner, "bufc") {
+        Value::Text(word) => word.is_empty(),
+        Value::Vector(row) => row.is_empty(),
+        _ => false,
+    };
+    if !clear { return Value::Flag(false); }
     let Some(previous_row) = counter(&scanner, "lineno") else { return Value::Flag(false); };
     store(&scanner, "line_start", Value::Small(0));
     if source.is_empty() {
         store(&scanner, "done", Value::Small(11));
         return Value::Small(0);
     }
-    let mut row = Vec::with_capacity(source.len() + 1);
-    for unit in source.chars() {
-        let mut utf8 = [0; 4];
-        row.push(Value::text(unit.encode_utf8(&mut utf8)));
-    }
     let synthesized = source.as_bytes().last() != Some(&10);
-    if synthesized { row.push(Value::text("\n")); }
-    let count = row.len() as i64;
-    *storage.borrow_mut() = Value::Vector(crate::tuples::Sequence::plain(row));
+    let buffered = if synthesized {
+        let mut word = source.to_string();
+        word.push('\n');
+        Value::text(&word)
+    } else {
+        Value::Text(source.clone())
+    };
+    let count = match &buffered { Value::Text(word) => word.chars().count() as i64, _ => 0 };
     let contains_null = source.as_bytes().contains(&0);
+    store(&scanner, "bufc", buffered.clone());
+    store(&scanner, "buf", buffered);
     store(&scanner, "lineno", Value::Small(previous_row + 1));
     store(&scanner, "implicit_newline", Value::Flag(synthesized));
     store(&scanner, "line_null", Value::Flag(contains_null));
     store(&scanner, "inp", Value::Small(count));
-    let buffered = match synthesized {
-        false => Value::Text(source),
-        true => { let mut word = source.to_string(); word.push('\n'); Value::text(&word) }
-    };
-    store(&scanner, "buf", buffered);
     if contains_null { Value::Small(-1) } else { Value::Small(1) }
 }
 
+
+// Spaces-only margin. Tabs, form feeds and continuations stay with the port.
+const EDGE_INDENT: i64 = 5;
+const EDGE_DEDENT: i64 = 6;
+
+enum Edge {
+    Skip,
+    Stay,
+    Emit(Value),
+}
+
+fn snapshot_line(owner: &Thing, scanner: &Thing, source: &str, row_number: i64) -> Option<Value> {
+    match counter(owner, "last_lineno") {
+        Some(previous) if previous == row_number => {
+            let cached = slot(owner, "last_line");
+            if matches!(cached, Value::Nil) { None } else { Some(cached) }
+        }
+        _ => {
+            if matches!(slot(scanner, "implicit_newline"), Value::Flag(true)) {
+                source.strip_suffix('\n').map(Value::text)
+            } else {
+                Some(Value::text(source))
+            }
+        }
+    }
+}
+
+fn vector_at(cell: &Rc<RefCell<Value>>, index: usize) -> Option<i64> {
+    let borrowed = cell.borrow();
+    let Value::Vector(parts) = &*borrowed else { return None; };
+    let Value::Small(n) = parts.get(index)?.settled() else { return None; };
+    Some(n)
+}
+
+fn vector_len(cell: &Rc<RefCell<Value>>) -> Option<usize> {
+    let borrowed = cell.borrow();
+    let Value::Vector(parts) = &*borrowed else { return None; };
+    Some(parts.len())
+}
+
+fn punch_column(cell: &Rc<RefCell<Value>>, depth: usize, column: i64) -> bool {
+    let mut borrowed = cell.borrow_mut();
+    let Value::Vector(parts) = &mut *borrowed else { return false; };
+    let entries = Rc::make_mut(parts);
+    if depth > entries.len() { return false; }
+    entries.truncate(depth);
+    entries.push(Value::Small(column));
+    true
+}
+
+fn spaces_of(source: &str, width: i64) -> Option<String> {
+    if width < 0 { return None; }
+    let mut taken = String::new();
+    let mut seen = 0i64;
+    for ch in source.chars() {
+        if seen == width { break; }
+        if ch != ' ' { return None; }
+        taken.push(ch);
+        seen += 1;
+    }
+    if seen == width { Some(taken) } else { None }
+}
+
+fn emit_edge(owner: &Thing, scanner: &Thing, source: &str, row_number: i64, column: i64, waiting: i64) -> Value {
+    let spelling = if waiting < 0 {
+        Value::text("")
+    } else {
+        Value::text(&spaces_of(source, column).unwrap_or_default())
+    };
+    let opened = if waiting < 0 { column } else { 0 };
+    let image = snapshot_line(owner, scanner, source, row_number).unwrap_or_else(|| Value::text(source));
+    let left = if waiting < 0 { waiting + 1 } else { waiting - 1 };
+    store(scanner, "pendin", Value::Small(left));
+    store(owner, "last_lineno", Value::Small(row_number));
+    store(owner, "last_line", image.clone());
+    let kind = if waiting < 0 { EDGE_DEDENT } else { EDGE_INDENT };
+    Value::tuple(vec![
+        Value::Small(kind), spelling,
+        Value::tuple(vec![Value::Small(row_number), Value::Small(opened)]),
+        Value::tuple(vec![Value::Small(row_number), Value::Small(column)]),
+        image,
+    ])
+}
+
+fn finish_margin(owner: &Thing, scanner: &Thing) -> Option<Value> {
+    let waiting = counter(scanner, "pendin")?;
+    if waiting == 0 { return None; }
+    if !matches!(slot(scanner, "tok_extra_tokens"), Value::Flag(true)) { return None; }
+    if !matches!(slot(scanner, "atbol"), Value::Flag(false)) { return None; }
+    if counter(scanner, "line_start") != Some(0) { return None; }
+    let cursor = counter(scanner, "cur")?;
+    let row_number = counter(scanner, "lineno")?;
+    if cursor < 0 { return None; }
+    let Value::Text(source) = slot(scanner, "buf") else { return None; };
+    if waiting > 0 && spaces_of(source.as_ref(), cursor).is_none() { return None; }
+    if snapshot_line(owner, scanner, source.as_ref(), row_number).is_none() { return None; }
+    Some(emit_edge(owner, scanner, source.as_ref(), row_number, cursor, waiting))
+}
+
+fn align_margin(owner: &Thing, scanner: &Thing, source: &Rc<str>, line_base: i64, row_number: i64, width: i64) -> Edge {
+    let Some(indent) = counter(scanner, "indent").filter(|n| *n >= 0) else { return Edge::Skip; };
+    let (Some(primary), Some(secondary)) = (sequence(scanner, "indstack"), sequence(scanner, "altindstack")) else {
+        return Edge::Skip;
+    };
+    let depth = indent as usize;
+    let (Some(mark), Some(alt)) = (vector_at(&primary, depth), vector_at(&secondary, depth)) else { return Edge::Skip; };
+    if mark != alt { return Edge::Skip; }
+    if width == mark {
+        store(scanner, "cur", Value::Small(line_base + width));
+        store(scanner, "atbol", Value::Flag(false));
+        return Edge::Stay;
+    }
+    let extra = matches!(slot(scanner, "tok_extra_tokens"), Value::Flag(true));
+    if !extra || line_base != 0 || width < 0 { return Edge::Skip; }
+    if snapshot_line(owner, scanner, source.as_ref(), row_number).is_none() { return Edge::Skip; }
+    let waiting = if width > mark {
+        if indent >= 99 { return Edge::Skip; }
+        let next = depth + 1;
+        let (Some(a), Some(b)) = (vector_len(&primary), vector_len(&secondary)) else { return Edge::Skip; };
+        if next > a || next > b { return Edge::Skip; }
+        if !punch_column(&primary, next, width) || !punch_column(&secondary, next, width) { return Edge::Skip; }
+        store(scanner, "indent", Value::Small(next as i64));
+        1
+    } else {
+        let mut cursor = depth;
+        let mut steps = 0i64;
+        loop {
+            if cursor == 0 { break; }
+            let Some(here) = vector_at(&primary, cursor) else { return Edge::Skip; };
+            if width >= here { break; }
+            let Some(side) = vector_at(&secondary, cursor) else { return Edge::Skip; };
+            if side != here { return Edge::Skip; }
+            cursor -= 1;
+            steps -= 1;
+        }
+        let Some(landed) = vector_at(&primary, cursor) else { return Edge::Skip; };
+        let Some(side) = vector_at(&secondary, cursor) else { return Edge::Skip; };
+        if landed != width || side != width { return Edge::Skip; }
+        store(scanner, "indent", Value::Small(cursor as i64));
+        steps
+    };
+    store(scanner, "cur", Value::Small(line_base + width));
+    store(scanner, "atbol", Value::Flag(false));
+    store(scanner, "start", Value::Small(line_base + width));
+    Edge::Emit(emit_edge(owner, scanner, source.as_ref(), row_number, width, waiting))
+}
+
 // Return a buffered token, leaving ambiguous syntax and input reads to the port.
-pub fn atom(values: &[Value]) -> Result<Value, String> {
+fn read_atom(values: &[Value]) -> Result<Value, String> {
     if values.is_empty() || values.len() > 2 { return Err("TypeError: tokenizer scan needs an iterator and optional decoded line".to_owned()); }
     let Value::Thing(owner) = values[0].settled() else { return Ok(Value::Nil); };
     if let Some(line) = values.get(1) { return Ok(accept_line(&owner, line)); }
     let Value::Thing(scanner) = slot(&owner, "tok") else { return Ok(Value::Nil); };
     if !matches!(slot(&owner, "done"), Value::Flag(false)) { return Ok(Value::Nil); }
-    if counter(&scanner, "pendin") != Some(0)
-        || counter(&scanner, "done") != Some(10) { return Ok(Value::Nil); }
+    if counter(&scanner, "done") != Some(10) { return Ok(Value::Nil); }
     let (Some(cursor), Some(limit), Some(line_base), Some(row_number), Some(nesting)) =
         (counter(&scanner, "cur"), counter(&scanner, "inp"), counter(&scanner, "line_start"), counter(&scanner, "lineno"), counter(&scanner, "tok_mode_stack_index"))
         else { return Ok(Value::Nil); };
@@ -221,13 +368,16 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
         Some(0) => (),
         _ => return Ok(Value::Nil),
     }
+    if counter(&scanner, "pendin").is_some_and(|waiting| waiting != 0) {
+        return Ok(finish_margin(&owner, &scanner).unwrap_or(Value::Nil));
+    }
     let beginning = match slot(&scanner, "atbol") { Value::Flag(yes) => yes, _ => return Ok(Value::Nil) };
     if beginning && cursor == limit {
         if nesting > 0 { return Ok(Value::Nil); }
         store(&scanner, "inp", Value::Small(0));
         store(&scanner, "cur", Value::Small(0));
         store(&scanner, "line_null", Value::Flag(false));
-        store(&scanner, "bufc", Value::Vector(crate::tuples::Sequence::plain(Vec::new())).keep(true));
+        store(&scanner, "bufc", Value::text(""));
         store(&scanner, "start", Value::Nil);
         return Ok(Value::Flag(false));
     }
@@ -244,22 +394,21 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
             || matches!(head, 13 | 92 | 9 | 12) { return Ok(Value::Nil); }
         let trivia = head == 35 || head == 10;
         if trivia && !matches!(slot(&scanner, "tok_extra_tokens"), Value::Flag(true)) { return Ok(Value::Nil); }
-        match counter(&scanner, "level") {
-            Some(0) if !trivia => {
-                let Some(index) = counter(&scanner, "indent").filter(|n| *n >= 0) else { return Ok(Value::Nil); };
-                let Value::Vector(primary) = slot(&scanner, "indstack") else { return Ok(Value::Nil); };
-                let Value::Vector(secondary) = slot(&scanner, "altindstack") else { return Ok(Value::Nil); };
-                let width = (at - origin) as i64;
-                for entries in [&primary, &secondary] {
-                    if !matches!(entries.get(index as usize).map(Value::settled), Some(Value::Small(n)) if n == width) { return Ok(Value::Nil); }
-                }
+        let width = (at - origin) as i64;
+        if counter(&scanner, "level") == Some(0) && !trivia {
+            match align_margin(&owner, &scanner, &source, line_base, row_number, width) {
+                Edge::Skip => return Ok(Value::Nil),
+                Edge::Emit(token) => return Ok(token),
+                Edge::Stay => {}
             }
-            Some(n) if n >= 0 => (),
-            _ => return Ok(Value::Nil),
+        } else if counter(&scanner, "level").is_none_or(|n| n < 0) {
+            return Ok(Value::Nil);
+        } else {
+            store(&scanner, "cur", Value::Small(line_base + width));
+            store(&scanner, "atbol", Value::Flag(false));
         }
-        store(&scanner, "cur", Value::Small(line_base + (at - origin) as i64));
-        store(&scanner, "atbol", Value::Flag(false));
     }
+
     let mut after = at + 1;
     let tag = match head {
         b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
@@ -411,4 +560,70 @@ pub fn atom(values: &[Value]) -> Result<Value, String> {
     let begin_pair = Value::tuple(vec![Value::Small(row_number), Value::Small(column as i64)]);
     let end_pair = Value::tuple(vec![Value::Small(row_number), Value::Small(endpoint as i64)]);
     Ok(Value::tuple(vec![token_type, lexeme, begin_pair, end_pair, text_line]))
+}
+
+// Pack consecutive recognised tokens into one tuple. A request to read, or a
+// token the port still classifies, stays out of that tuple and is produced
+// again on the next entry with the scanner left as that attempt left it.
+fn recognised(item: &Value) -> bool {
+    match item {
+        Value::Tuple(fields) => fields.len() == 5,
+        _ => false,
+    }
+}
+
+// Serve the native queue directly; leave nonstandard adapter fields to Python.
+fn buffered_next(values: &[Value]) -> Result<Value, String> {
+    let owner = match values[0].settled() { Value::Thing(thing) => thing, _ => return Ok(Value::Nil) };
+    let pending = slot(&owner, "_queued");
+    if !matches!(pending, Value::Nil) {
+        if let Value::Tuple(entries) = pending {
+            if let Some(offset) = counter(&owner, "_queued_at").and_then(|n| usize::try_from(n).ok()) {
+                if let Some(item) = entries.get(offset).filter(|item| recognised(item)) {
+                    let answer = item.clone();
+                    store(&owner, "_queued_at", Value::Small((offset + 1) as i64));
+                    if entries.len() == offset + 1 { store(&owner, "_queued", Value::Nil); }
+                    return Ok(answer);
+                }
+            }
+        }
+        return Ok(Value::Nil);
+    }
+    let batch = atom(&values[..1])?;
+    match &batch {
+        Value::Tuple(entries) if entries.first().is_some_and(recognised) => {
+            let answer = entries[0].clone();
+            store(&owner, "_queued_at", Value::Small(1));
+            store(&owner, "_queued", batch);
+            Ok(answer)
+        }
+        _ if recognised(&batch) => Ok(batch),
+        _ => Ok(Value::Nil),
+    }
+}
+
+pub fn atom(values: &[Value]) -> Result<Value, String> {
+    if values.is_empty() {
+        return Ok(Value::Wrapped(120, crate::tuples::Sequence::plain(vec![Value::Small(11)])));
+    }
+    if matches!(values, [_, Value::Flag(true)]) { return buffered_next(values); }
+    if values.len() != 1 {
+        return read_atom(values);
+    }
+    let mut group = Vec::new();
+    // A callback can supply arbitrarily long lines: retain only a small batch.
+    while group.len() != 128 {
+        let found = read_atom(values)?;
+        if recognised(&found) {
+            group.push(found);
+            continue;
+        }
+        if group.is_empty() { return Ok(found); }
+        break;
+    }
+    if group.is_empty() { return Ok(Value::Flag(false)); }
+    if group.len() < 2 {
+        return Ok(group.remove(0));
+    }
+    Ok(Value::tuple(group))
 }

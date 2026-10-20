@@ -154,40 +154,171 @@ fn prepare_line(iterator: &Instance, supplied: &Value) -> Value {
     let Value::Text(text) = supplied.contents() else { return Value::Flag(false); };
     if number(&state, "cur") != Some(0) || number(&state, "inp") != Some(0)
         || number(&state, "tok_mode_stack_index") != Some(0) || number(&state, "done") != Some(10) { return Value::Flag(false); }
-    let Some(buffer) = list(&state, "bufc") else { return Value::Flag(false); };
-    if !matches!(&*buffer.borrow(), Value::Array(row) if row.is_empty()) { return Value::Flag(false); }
+    let fresh = match field(&state, "bufc") {
+        Value::Text(row) => row.is_empty(),
+        Value::Array(row) => row.is_empty(),
+        _ => false,
+    };
+    if !fresh { return Value::Flag(false); }
     let Some(lineno) = number(&state, "lineno") else { return Value::Flag(false); };
     put(&state, "line_start", Value::Small(0));
     if text.is_empty() {
         put(&state, "done", Value::Small(11));
         return Value::Small(0);
     }
-    let mut characters = text.chars().map(|character| {
-        let mut encoded = [0u8; 4];
-        Value::text(character.encode_utf8(&mut encoded))
-    }).collect::<Vec<_>>();
     let implicit = !text.ends_with('\n');
-    if implicit { characters.push(Value::text("\n")); }
-    let length = characters.len();
-    *buffer.borrow_mut() = Value::array(characters);
+    let physical = if implicit { Value::text(&format!("{text}\n")) } else { Value::Text(text.clone()) };
+    let length = match &physical { Value::Text(row) => row.chars().count(), _ => 0 };
+    put(&state, "bufc", physical.clone());
+    put(&state, "buf", physical);
     let null = text.contains('\0');
     put(&state, "line_null", Value::Flag(null));
     put(&state, "inp", Value::Small(length as i64));
     put(&state, "implicit_newline", Value::Flag(implicit));
-    let physical = if implicit { Value::text(&format!("{text}\n")) } else { Value::Text(text) };
-    put(&state, "buf", physical);
     put(&state, "lineno", Value::Small(lineno + 1));
     Value::Small(if null { -1 } else { 1 })
 }
 
+
+// token.INDENT and token.DEDENT. Not stored on the scanner's type tuple.
+const MARGIN_INDENT: i64 = 5;
+const MARGIN_DEDENT: i64 = 6;
+
+enum Margin {
+    Leave,
+    Opened,
+    Made(Value),
+}
+
+fn line_view(iterator: &Instance, state: &Instance, text: &Rc<str>, lineno: i64) -> Option<Value> {
+    if number(iterator, "last_lineno") == Some(lineno) {
+        let cached = field(iterator, "last_line");
+        if matches!(cached, Value::Null) { return None; }
+        return Some(cached);
+    }
+    if matches!(field(state, "implicit_newline"), Value::Flag(true)) {
+        let Some(stripped) = text.strip_suffix('\n') else { return None; };
+        return Some(Value::text(stripped));
+    }
+    Some(Value::Text(text.clone()))
+}
+
+fn listed_column(cell: &Rc<RefCell<Value>>, index: usize) -> Option<i64> {
+    let borrowed = cell.borrow();
+    let Value::Array(row) = &*borrowed else { return None; };
+    match row.get(index).map(Value::contents) {
+        Some(Value::Small(n)) => Some(n),
+        _ => None,
+    }
+}
+
+fn listed_len(cell: &Rc<RefCell<Value>>) -> Option<usize> {
+    let borrowed = cell.borrow();
+    let Value::Array(row) = &*borrowed else { return None; };
+    Some(row.len())
+}
+
+// lst[depth:] = [column], the same truncation the port uses when the level grows.
+fn stamp_column(cell: &Rc<RefCell<Value>>, depth: usize, column: i64) -> bool {
+    let mut borrowed = cell.borrow_mut();
+    let Value::Array(row) = &mut *borrowed else { return false; };
+    let row = Rc::make_mut(row);
+    if depth > row.len() { return false; }
+    row.truncate(depth);
+    row.push(Value::Small(column));
+    true
+}
+
+fn margin_tuple(iterator: &Instance, state: &Instance, text: &Rc<str>, lineno: i64, column: i64, pendin: i64) -> Value {
+    let (kind, word, start_col) = if pendin < 0 {
+        (MARGIN_DEDENT, Value::text(""), column)
+    } else {
+        (MARGIN_INDENT, Value::text(&text[..column as usize]), 0)
+    };
+    let image = line_view(iterator, state, text, lineno).unwrap_or_else(|| Value::Text(text.clone()));
+    let next = if pendin < 0 { pendin + 1 } else { pendin - 1 };
+    put(state, "pendin", Value::Small(next));
+    put(iterator, "last_line", image.clone());
+    put(iterator, "last_lineno", Value::Small(lineno));
+    Value::tuple(vec![
+        Value::Small(kind), word,
+        Value::tuple(vec![Value::Small(lineno), Value::Small(start_col)]),
+        Value::tuple(vec![Value::Small(lineno), Value::Small(column)]),
+        image,
+    ])
+}
+
+fn release_pending(iterator: &Instance, state: &Instance) -> Option<Value> {
+    let pendin = number(state, "pendin")?;
+    if pendin == 0 { return None; }
+    if !matches!(field(state, "tok_extra_tokens"), Value::Flag(true)) { return None; }
+    if !matches!(field(state, "atbol"), Value::Flag(false)) { return None; }
+    if number(state, "line_start") != Some(0) { return None; }
+    let cur = number(state, "cur")?;
+    let lineno = number(state, "lineno")?;
+    if cur < 0 { return None; }
+    let Value::Text(text) = field(state, "buf") else { return None; };
+    let column = cur;
+    if pendin > 0 && (column as usize > text.len() || !text.is_char_boundary(column as usize)) {
+        return None;
+    }
+    Some(margin_tuple(iterator, state, &text, lineno, column, pendin))
+}
+
+fn place_margin(iterator: &Instance, state: &Instance, text: &Rc<str>, base: i64, lineno: i64, column: i64) -> Margin {
+    let Some(indent) = number(state, "indent").filter(|n| *n >= 0) else { return Margin::Leave; };
+    let (Some(columns), Some(alts)) = (list(state, "indstack"), list(state, "altindstack")) else { return Margin::Leave; };
+    let depth = indent as usize;
+    let (Some(mark), Some(alt)) = (listed_column(&columns, depth), listed_column(&alts, depth)) else { return Margin::Leave; };
+    if mark != alt { return Margin::Leave; }
+    if column == mark {
+        put(state, "atbol", Value::Flag(false));
+        put(state, "cur", Value::Small(base + column));
+        return Margin::Opened;
+    }
+    let extra = matches!(field(state, "tok_extra_tokens"), Value::Flag(true));
+    if !extra || base != 0 || column < 0 { return Margin::Leave; }
+    if !text.is_char_boundary(column as usize) { return Margin::Leave; }
+    if line_view(iterator, state, text, lineno).is_none() { return Margin::Leave; }
+    let owed = if column > mark {
+        if indent >= 99 { return Margin::Leave; }
+        let next = depth + 1;
+        let (Some(col_len), Some(alt_len)) = (listed_len(&columns), listed_len(&alts)) else { return Margin::Leave; };
+        if next > col_len || next > alt_len { return Margin::Leave; }
+        if !stamp_column(&columns, next, column) || !stamp_column(&alts, next, column) { return Margin::Leave; }
+        put(state, "indent", Value::Small(next as i64));
+        1
+    } else {
+        let mut cursor = depth;
+        let mut steps = 0i64;
+        while cursor > 0 {
+            let Some(here) = listed_column(&columns, cursor) else { return Margin::Leave; };
+            if column >= here { break; }
+            let Some(side) = listed_column(&alts, cursor) else { return Margin::Leave; };
+            if side != here { return Margin::Leave; }
+            cursor -= 1;
+            steps -= 1;
+        }
+        let Some(landed) = listed_column(&columns, cursor) else { return Margin::Leave; };
+        let Some(side) = listed_column(&alts, cursor) else { return Margin::Leave; };
+        if landed != column || side != column { return Margin::Leave; }
+        put(state, "indent", Value::Small(cursor as i64));
+        steps
+    };
+    put(state, "atbol", Value::Flag(false));
+    put(state, "cur", Value::Small(base + column));
+    put(state, "start", Value::Small(base + column));
+    Margin::Made(margin_tuple(iterator, state, text, lineno, column, owed))
+}
+
 // Recognize buffered tokens; leave refills and diagnostic cases to the adapter.
-pub fn scan(args: &[Value]) -> Result<Value, String> {
+fn scan_one(args: &[Value]) -> Result<Value, String> {
     if !(1..=2).contains(&args.len()) { return Err("TypeError: tokenizer scan needs an iterator and optional decoded line".into()); }
     let Value::Object(iterator) = args[0].contents() else { return Ok(Value::Null); };
     if args.len() == 2 { return Ok(prepare_line(&iterator, &args[1])); }
     let Value::Object(state) = field(&iterator, "tok") else { return Ok(Value::Null); };
     if !matches!(field(&iterator, "done"), Value::Flag(false))
-        || number(&state, "pendin") != Some(0) || number(&state, "done") != Some(10) { return Ok(Value::Null); }
+        || number(&state, "done") != Some(10) { return Ok(Value::Null); }
     let (Some(cur), Some(inp), Some(base), Some(lineno), Some(depth)) =
         (number(&state, "cur"), number(&state, "inp"), number(&state, "line_start"), number(&state, "lineno"), number(&state, "tok_mode_stack_index"))
         else { return Ok(Value::Null); };
@@ -198,12 +329,15 @@ pub fn scan(args: &[Value]) -> Result<Value, String> {
         return Ok(interpolation(&iterator, &state, &mode, depth, cur, inp, base, lineno).unwrap_or(Value::Null));
     }
     if number(&mode, "kind") != Some(0) { return Ok(Value::Null); }
+    if number(&state, "pendin").is_some_and(|n| n != 0) {
+        return Ok(release_pending(&iterator, &state).unwrap_or(Value::Null));
+    }
     let atbol = match field(&state, "atbol") { Value::Flag(value) => value, _ => return Ok(Value::Null) };
     // Reset before the callback, exactly where ordinary underflow does so.
     if atbol && cur == inp {
         if depth != 0 { return Ok(Value::Null); }
         put(&state, "start", Value::Null);
-        put(&state, "bufc", Value::array(Vec::new()).held(true));
+        put(&state, "bufc", Value::text(""));
         put(&state, "line_null", Value::Flag(false));
         put(&state, "cur", Value::Small(0));
         put(&state, "inp", Value::Small(0));
@@ -224,16 +358,19 @@ pub fn scan(args: &[Value]) -> Result<Value, String> {
         if level < 0 { return Ok(Value::Null); }
         let blank = matches!(first, b'#' | b'\n');
         if blank && !matches!(field(&state, "tok_extra_tokens"), Value::Flag(true)) { return Ok(Value::Null); }
+        let column = (start - byte) as i64;
         if level == 0 && !blank {
-            let Some(indent) = number(&state, "indent").filter(|n| *n >= 0) else { return Ok(Value::Null); };
-            let (Value::Array(columns), Value::Array(alternates)) = (field(&state, "indstack"), field(&state, "altindstack")) else { return Ok(Value::Null); };
-            let column = (start - byte) as i64;
-            if !matches!(columns.get(indent as usize).map(Value::contents), Some(Value::Small(n)) if n == column)
-                || !matches!(alternates.get(indent as usize).map(Value::contents), Some(Value::Small(n)) if n == column) { return Ok(Value::Null); }
+            match place_margin(&iterator, &state, &text, base, lineno, column) {
+                Margin::Leave => return Ok(Value::Null),
+                Margin::Made(token) => return Ok(token),
+                Margin::Opened => {}
+            }
+        } else {
+            put(&state, "atbol", Value::Flag(false));
+            put(&state, "cur", Value::Small(base + column));
         }
-        put(&state, "atbol", Value::Flag(false));
-        put(&state, "cur", Value::Small(base + (start - byte) as i64));
     }
+
     let mut end = start + 1;
     let kind;
     if first.is_ascii_alphabetic() || first == b'_' {
@@ -361,4 +498,62 @@ pub fn scan(args: &[Value]) -> Result<Value, String> {
     Ok(Value::tuple(vec![token, spelling,
         Value::tuple(vec![Value::Small(lineno), Value::Small(begin as i64)]),
         Value::tuple(vec![Value::Small(lineno), Value::Small(last_column as i64)]), line]))
+}
+
+// A run of finished tokens shares one crossing. The step that asks for
+// another line, or that the adapter still has to classify, is not included:
+// the following call repeats it from the same scanner state.
+fn finished_token(value: &Value) -> bool {
+    matches!(value, Value::Tuple(parts) if parts.len() == 5)
+}
+
+// Drain bounded token batches without repeating the adapter's Python bookkeeping.
+// Unexpected private state still takes the adapter's ordinary indexing path.
+fn next_buffered(args: &[Value]) -> Result<Value, String> {
+    let Value::Object(iterator) = args[0].contents() else { return Ok(Value::Null); };
+    match field(&iterator, "_queued") {
+        Value::Tuple(tokens) => {
+            let Some(index) = number(&iterator, "_queued_at").and_then(|n| usize::try_from(n).ok()) else { return Ok(Value::Null); };
+            let Some(token) = tokens.get(index).filter(|token| finished_token(token)) else { return Ok(Value::Null); };
+            let token = token.clone();
+            put(&iterator, "_queued_at", Value::Small(index as i64 + 1));
+            if index + 1 == tokens.len() { put(&iterator, "_queued", Value::Null); }
+            return Ok(token);
+        }
+        Value::Null => (),
+        _ => return Ok(Value::Null),
+    }
+    let scanned = scan(&args[..1])?;
+    let Value::Tuple(row) = &scanned else { return Ok(Value::Null); };
+    if row.first().is_some_and(finished_token) {
+        let first = row[0].clone();
+        put(&iterator, "_queued", scanned);
+        put(&iterator, "_queued_at", Value::Small(1));
+        Ok(first)
+    } else if finished_token(&scanned) { Ok(scanned) }
+    else { Ok(Value::Null) }
+}
+
+pub fn scan(args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() { return Ok(Value::Adapter(Rc::new((119, vec![Value::Small(11)])))); }
+    if args.len() == 2 && matches!(args[1], Value::Flag(true)) { return next_buffered(args); }
+    if args.len() != 1 {
+        return scan_one(args);
+    }
+    let mut gathered = Vec::new();
+    // Bound speculative token storage even when a physical line is enormous.
+    while gathered.len() < 128 {
+        let step = scan_one(args)?;
+        if finished_token(&step) {
+            gathered.push(step);
+            continue;
+        }
+        if gathered.is_empty() { return Ok(step); }
+        break;
+    }
+    if gathered.is_empty() { return Ok(Value::Flag(false)); }
+    if gathered.len() == 1 {
+        return Ok(gathered.swap_remove(0));
+    }
+    Ok(Value::tuple(gathered))
 }

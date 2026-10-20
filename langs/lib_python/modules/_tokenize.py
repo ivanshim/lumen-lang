@@ -180,7 +180,7 @@ class _TokenizerMode(object):
 class _TokState(object):
     def __init__(self, readline, encoding):
         self.buf = ''
-        self.bufc = []
+        self.bufc = ''
         self.line_null = False
         self._maxlevel = MAXLEVEL
         self._maxexpr = MAX_EXPR_NESTING
@@ -220,16 +220,16 @@ class _TokState(object):
 # character columns already, so the C byte-to-character conversion is the
 # identity here.
 def _syntaxerror_range(tok, msg, col_offset, end_col_offset):
-    errtext = ''.join(tok.bufc[tok.line_start:tok.cur])
+    errtext = tok.bufc[tok.line_start:tok.cur]
     if col_offset == -1:
         col_offset = len(errtext)
     if end_col_offset == -1:
         end_col_offset = col_offset
-    rest = ''.join(tok.bufc[tok.line_start:])
+    rest = tok.bufc[tok.line_start:]
     nl = rest.find('\n')
     line_len = nl if nl != -1 else len(rest)
     if line_len != tok.cur - tok.line_start:
-        errtext = ''.join(tok.bufc[tok.line_start:tok.line_start + line_len])
+        errtext = tok.bufc[tok.line_start:tok.line_start + line_len]
     raise SyntaxError(msg, ('<string>', tok.lineno, col_offset, errtext,
                             tok.lineno, end_col_offset))
 
@@ -264,7 +264,7 @@ def _parser_warn(tok, msg):
 # tok_underflow_readline.
 def _underflow_readline(tok):
     if tok.start is None and not (tok.tok_mode_stack_index > 0):
-        tok.bufc = []
+        tok.bufc = ''
         tok.line_null = False
         tok.cur = 0
         tok.inp = 0
@@ -289,7 +289,7 @@ def _read_line(tok):
 def _append_line(tok, line):
     # The character row only ever grows, exactly as the C tokenizer's
     # buffer does, and one character read off it never rescans the text.
-    tok.bufc.extend(line)
+    tok.bufc += line
     tok.inp = len(tok.bufc)
     tok.line_null = '\x00' in line
     tok.line_start = tok.cur
@@ -298,7 +298,7 @@ def _append_line(tok, line):
         return 0
     tok.implicit_newline = False
     if tok.bufc[tok.inp - 1] != '\n':
-        tok.bufc.append('\n')
+        tok.bufc += '\n'
         tok.inp += 1
         tok.implicit_newline = True
     # Keep the current physical line for native buffered span scans.
@@ -386,7 +386,7 @@ def _verify_end_of_number(tok, c, kind):
 def _verify_identifier(tok):
     if tok.tok_extra_tokens:
         return True
-    s = ''.join(tok.bufc[tok.start:tok.cur])
+    s = tok.bufc[tok.start:tok.cur]
     invalid = len(s)
     if not s[0].isidentifier():
         invalid = 0
@@ -1191,9 +1191,8 @@ class TokenizerIter(object):
         # Line cache, as in the C tokenizeriterobject.
         self.last_line = None
         self.last_lineno = 0
-
-    def __iter__(self):
-        return self
+        self._queued = None
+        self._queued_at = 0
 
     # Python/Python-tokenize.c: _tokenizer_error, for the error codes the
     # lexer reports through tok.done rather than an exception.
@@ -1210,7 +1209,7 @@ class TokenizerIter(object):
             offset = tok.inp
             if offset < 0:
                 offset = 0
-            err.offset = len(''.join(tok.bufc[:offset]).encode('utf-8'))
+            err.offset = len(tok.bufc[:offset].encode('utf-8'))
             err.end_lineno = tok.lineno
             raise err
         if tok.done == E_TOKEN:
@@ -1234,13 +1233,17 @@ class TokenizerIter(object):
             msg = 'unknown tokenization error'
         # The C decodes the line (without its trailing newline) and counts
         # one character past its end for the column.
-        error_line = ''.join(tok.bufc[:tok.inp - 1])
+        error_line = tok.bufc[:tok.inp - 1]
         offset = len(error_line) + 1
         raise errtype(msg, ('<string>', tok.lineno, offset, error_line,
                             None, None))
 
-    def __next__(self):
+    def _native_batch(self):
+        # One native step: a batch of finished tokens, one token, or None
+        # when the Python lexer still has to classify the next lexeme.
         buffered = _scan_token(self)
+        if buffered == -1:
+            _syntaxerror(self.tok, "source code cannot contain null bytes")
         if buffered is False:
             tok = self.tok
             line = _read_line(tok)
@@ -1255,8 +1258,33 @@ class TokenizerIter(object):
             buffered = _scan_token(self)
             if buffered is False:
                 buffered = None
-        if buffered is not None:
-            return buffered
+        return buffered
+
+    def __iter__(self):
+        return self
+
+    # Bind the scanner as a native iterator slot; slow lexemes still use the port.
+    __next__ = _scan_token()
+
+    # Preserve callback handling, diagnostics and unusual private queue shapes.
+    def _next_slow(self):
+        queued = self._queued
+        if queued is not None:
+            token = queued[self._queued_at]
+            self._queued_at += 1
+            if self._queued_at == len(queued):
+                self._queued = None
+            return token
+        found = self._native_batch()
+        if found is None:
+            return self._python_token()
+        if type(found) is tuple and found and type(found[0]) is tuple:
+            self._queued = found
+            self._queued_at = 1
+            return found[0]
+        return found
+
+    def _python_token(self):
         tok = self.tok
         # Dispatch directly, as tok_get does before entering the C scanner.
         current_tok = tok.tok_mode_stack[tok.tok_mode_stack_index]
@@ -1273,7 +1301,7 @@ class TokenizerIter(object):
         elif tstart >= tok.line_start:
             string = tok.buf[tstart - tok.line_start:tend - tok.line_start]
         else:
-            string = ''.join(tok.bufc[tstart:tend])
+            string = tok.bufc[tstart:tend]
 
         is_trailing_token = type_ == ENDMARKER or (
             type_ == DEDENT and tok.done == E_EOF)
@@ -1294,7 +1322,7 @@ class TokenizerIter(object):
                 if line_start == tok.line_start:
                     line = tok.buf[:size]
                 else:
-                    line = ''.join(tok.bufc[line_start:line_start + size])
+                    line = tok.bufc[line_start:line_start + size]
                 self.last_line = line
             else:
                 line = self.last_line

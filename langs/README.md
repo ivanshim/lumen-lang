@@ -6176,6 +6176,11 @@ character set and returns its ending code-point index. The regular-expression
 adapter uses it for repeated atoms and captured spans, retaining its Unicode
 matching rules when the scan reaches a non-ASCII character.
 
+`ext.builtin.tokenize.scan` fills one decoded physical line into the tokenizer
+buffer and can return several finished tokens from that buffer together.
+Forms the scanner does not recognise, and a buffer that still needs another
+line, stay with the Python tokenizer and its existing diagnostics.
+
 `ext.builtin.re.shortcut` computes the existing regular-expression adapter's
 ASCII atom sets and capture endpoints/groups. Unsupported input shapes
 return no result and retain the adapter's existing Unicode and object paths.
