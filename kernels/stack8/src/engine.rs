@@ -32794,7 +32794,7 @@ impl Engine<'_> {
             SourceLocations { root: root.to_owned(), locations, directories, watches, links }
     }
 
-    fn sys_path_source(&self, path: &str) -> Option<(String, Vec<u8>)> {
+    fn sys_path_source(&mut self, path: &str) -> Option<(String, Vec<u8>)> {
         let (owner, word, leaf) = match path.rsplit_once('.') {
             Some((parent, child)) => (parent, self.lang.module_path.as_deref()?, child),
             None => ("sys", "path", path),
@@ -32805,8 +32805,9 @@ impl Engine<'_> {
             value = cell.borrow().clone();
         }
         let items = match value {
-            Value::Array(items) => items,
-            Value::Tuple(items) if self.lang.module_path.is_some() => items,
+            Value::Array(items) => items.to_vec(),
+            Value::Tuple(items) if self.lang.module_path.is_some() => items.to_vec(),
+            other if self.lang.module_path.is_some() => self.core_members(&other).ok()?,
             _ => return None,
         };
         const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules");
