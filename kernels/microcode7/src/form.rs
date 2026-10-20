@@ -416,6 +416,7 @@ pub enum Prim {
     TraceBridge,
     NativeFrame,
     HeapNative,
+    DequeNative,
     ContextStore,
     AllocationTrace,
     WarningOperation(u8),

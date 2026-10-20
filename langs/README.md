@@ -4674,6 +4674,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.define` | - | - | - | - | `define` | - | - | - | - | - |
 | `ext.builtin.define.class_constant` | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - | - | - | - |
 | `ext.builtin.delattr` | - | - | `delattr` | - | - | - | - | - | - | - |
+| `ext.builtin.deque_native` | - | - | `__deque_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.dict` | - | - | `dict` | - | - | - | - | - | - | - |
 | `ext.builtin.dir` | - | - | `dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.change` | - | - | `__change_dir` | - | - | - | - | - | - | - |
@@ -6298,3 +6299,5 @@ Python text methods validate named error policies in development mode (`-X dev`)
 `ext.builtin.bytes.memory` supplies bounded byte-storage reads, newline reads and exact-bytes writes for memory streams. Its read-only field mode accepts immutable or writable byte storage and decodes bounded batches from a caller-supplied opcode layout table; unsupported or incomplete fields remain for the caller to parse. Layout bit 8 ends a batch after the field, leaving protocol termination under caller control. Its metadata predicate can compare code fingerprints through the ordinary code caches. A code-watch operation returns a live invalidation flag, cleared when function code is rewritten; callers retain the canonical path once that flag is cleared. It checks index-sized bounds, closed storage and outstanding exports before changing bytes, returning the result and next position. Python adapters keep conversion hooks and subclass dispatch.
 
 The struct adapter can request direct packing for exact integer, boolean and immutable bytes arguments; layouts requiring float or complex conversion and custom objects use the conversion-protocol path. Exact contiguous byte inputs also unpack directly unless a complex result needs wrapping.
+
+`ext.builtin.deque_native` names the private accelerator for the Python collections adapter: two list stacks support amortized constant-time endpoints, bounded eviction, and rotation; materialization preserves the backing list identity and iterator mutation state. Explicit `bind` registration attaches storage operations to adapter functions; only valid positional calls are accelerated, and rewritten code and conversion/error paths retain ordinary function dispatch.

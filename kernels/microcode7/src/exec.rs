@@ -650,6 +650,10 @@ pub struct Machine<'a> {
     /// Routines whose frames a frame walk hides, as C routines are
     /// absent from a Python frame chain in the reference.
     native_frame_routines: std::collections::HashSet<usize, crate::table::FxBuildHasher>,
+    /// Registered routine identities retain their function and storage descriptor.
+    deque_functions: std::collections::HashMap<usize, (Value, Value, String), crate::table::FxBuildHasher>,
+    deque_candidates: [u64; 8],
+    deque_field_plans: std::collections::HashMap<usize, (Value, Vec<String>, u64, u64), crate::table::FxBuildHasher>,
     supplied_books: Vec<Option<Rc<RefCell<Value>>>>,
     /// Prevent fresh imports during the interpreter's final teardown.
     shutting_down: bool,
@@ -2193,6 +2197,9 @@ impl<'a> Machine<'a> {
             world_book: None,
             main_world: None,
             native_frame_routines: std::collections::HashSet::with_hasher(crate::table::FxBuildHasher::default()),
+            deque_functions: std::collections::HashMap::with_hasher(crate::table::FxBuildHasher::default()),
+            deque_candidates: [0; 8],
+            deque_field_plans: std::collections::HashMap::with_hasher(crate::table::FxBuildHasher::default()),
             supplied_books: Vec::new(),
             readings: Vec::new(),
             module_function_builtins: None,
@@ -3226,7 +3233,7 @@ impl<'a> Machine<'a> {
 
     /// Weave the ownership web, leaving the reaper's retained knots out
     /// of the program's outside holds.
-    fn round_web(&self, retained: &[crate::ghost::Knot]) -> crate::ghost::Web {
+    fn round_web(&self, retained: &[crate::ghost::Knot], enumerate: bool) -> crate::ghost::Web {
         use crate::ghost::{Knot, Web};
         let books = self.readings.iter().flat_map(|book| {
             std::iter::once(Knot::Held(Value::Shared(book.near.clone())))
@@ -3246,7 +3253,7 @@ impl<'a> Machine<'a> {
             .chain(self.natives_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
             .collect();
         {
-            let mut web = Web::from_notable(bookkeeping, live);
+            let mut web = Web::from_notable(bookkeeping, live, enumerate);
             for (function, holder) in &self.routine_members { if let Some(function) = function.revive() { web.link_attributes(&function, &Value::Thing(holder.clone())); } }
             web
         }
@@ -3265,7 +3272,7 @@ impl<'a> Machine<'a> {
         self.routine_members.retain(|(function, _)| function.revive().is_some());
         if self.routine_members.len() != members_before { self.reindex_routine_members(); }
         self.attend_to_gone();
-        let mut web = self.round_web(&[]);
+        let mut web = self.round_web(&[], false);
         let mut original = web.unreachable();
         // With no lost knot there is nothing to silence or farewell, and
         // the web just woven still describes the machine: reuse it.
@@ -3302,7 +3309,7 @@ impl<'a> Machine<'a> {
             }
         }
         drop(web);
-        let mut checked = self.round_web(&original);
+        let mut checked = self.round_web(&original, false);
         let lost = checked.remaining(original);
         let found = lost.len();
         self.routine_members.retain(|(function, _)| function.revive().is_some_and(|function| !checked.unowned(&function)));
@@ -7669,6 +7676,12 @@ impl<'a> Machine<'a> {
                 return Err(fault);
             }
         };
+        let location = Rc::as_ptr(&p) as usize;
+        let flagged = self.deque_candidates[(location >> 9) & 7] & (1u64 << ((location >> 3) & 63)) != 0;
+        if flagged && self.deque_functions.contains_key(&location) {
+            let supplied = self.value_list(args, frame)?;
+            return self.invoke(p, env, supplied);
+        }
         let callee = self.env_for(&p, env, args, frame)?;
         let mut chosen = Self::explicit_globals(&p);
         let paused_names = if self.armed_names.is_none() && !self.annotation_scopes.is_empty() {
@@ -15497,6 +15510,10 @@ impl<'a> Machine<'a> {
     }
 
     pub fn invoke(&mut self, program: Rc<Routine>, env: Rc<Env>, args: Vec<Value>) -> Res {
+        let location = Rc::as_ptr(&program) as usize;
+        if self.deque_candidates[(location >> 9) & 7] & (1u64 << ((location >> 3) & 63)) != 0 {
+            if let Some(outcome) = self.deque_function_call(&program, &env, &args) { return outcome; }
+        }
         let mut handed = match self.handed_globals(&program) {
             Some(namespace) => Some(namespace),
             None if self.armed_names.is_some() => match &program.globe {
@@ -24450,7 +24467,7 @@ impl<'a> Machine<'a> {
                 if v.is_empty() { Value::tuple(Vec::new()) }
                 else { n(1)?; Value::tuple(self.gathered_members(&v[0])?) }
             }
-            Prim::WarningOperation(_) | Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::LzmaEncode | Prim::LzmaDecode | Prim::ZlibNative | Prim::BinaryFormat | Prim::BinaryAscii | Prim::ContextStore | Prim::NamespaceRead | Prim::TraceBridge | Prim::NativeFrame | Prim::HeapNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
+            Prim::WarningOperation(_) | Prim::Belongs | Prim::Tupling | Prim::Uniques | Prim::Unchanging | Prim::Ordered | Prim::Backwards | Prim::Numbered | Prim::Zipped | Prim::Mapped | Prim::Filtered | Prim::EveryTrue | Prim::Least | Prim::Greatest | Prim::Magnitude | Prim::Rounded | Prim::QuotRem | Prim::Powered | Prim::Hexadecimal | Prim::Octal | Prim::Binary | Prim::Quoted | Prim::Asciied | Prim::Truthful | Prim::CallableValue | Prim::IdentityOf | Prim::Hashed | Prim::Iterator | Prim::NextItem | Prim::HasAttribute | Prim::GetMember | Prim::SetMember | Prim::DropMember | Prim::MembersOf | Prim::LzmaEncode | Prim::LzmaDecode | Prim::ZlibNative | Prim::BinaryFormat | Prim::BinaryAscii | Prim::ContextStore | Prim::NamespaceRead | Prim::TraceBridge | Prim::NativeFrame | Prim::HeapNative | Prim::DequeNative | Prim::ReduceNative | Prim::RebuildNative => unreachable!(),
             Prim::Listed => {
                 match v.len() {
                     0 => Value::Vector(crate::tuples::Sequence::plain(Vec::new())),
@@ -26733,7 +26750,7 @@ impl<'a> Machine<'a> {
             Prim::HeapObjects
             => {
                 n(0)?;
-                let snapshot=self.round_web(&[]);
+                let snapshot=self.round_web(&[], true);
                 let mut identities=std::collections::HashSet::new();
                 let mut values=snapshot.heap_values();
                 let mut published=Vec::with_capacity(values.len());
@@ -36469,7 +36486,7 @@ fn belongs_to(worth: &Value, kind: &Value) -> bool {
 impl Machine<'_> {
     fn is_core_primitive(op: Prim) -> bool {
         use Prim::*;
-        matches!(op, WarningOperation(_) | Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | LzmaEncode | LzmaDecode | ZlibNative | BinaryFormat | BinaryAscii | ContextStore | NamespaceRead | TraceBridge | NativeFrame | HeapNative | ReduceNative | RebuildNative)
+        matches!(op, WarningOperation(_) | Belongs | Tupling | Uniques | Unchanging | Dictionary | Ordered | Backwards | Numbered | Zipped | Mapped | Filtered | EveryTrue | Least | Greatest | Magnitude | Rounded | QuotRem | Powered | Hexadecimal | Octal | Binary | Quoted | Asciied | Truthful | CallableValue | IdentityOf | Hashed | Iterator | NextItem | HasAttribute | GetMember | SetMember | DropMember | MembersOf | LzmaEncode | LzmaDecode | ZlibNative | BinaryFormat | BinaryAscii | ContextStore | NamespaceRead | TraceBridge | NativeFrame | HeapNative | DequeNative | ReduceNative | RebuildNative)
     }
 
     pub(super) fn core_complaint(&self, key: &str, middle: &str) -> String {
@@ -37612,7 +37629,7 @@ impl Machine<'_> {
         // one; the value is kept before it settles into a copy.
         let reverse_owner = if op == Prim::Backwards { input.first().cloned() } else { None };
         let standing = if op == Prim::GetMember { input.first().cloned() } else { None };
-        if !matches!(op, Prim::IdentityOf | Prim::HeapNative | Prim::ContextStore | Prim::TraceBridge | Prim::NamespaceRead) {
+        if !matches!(op, Prim::IdentityOf | Prim::HeapNative | Prim::DequeNative | Prim::ContextStore | Prim::TraceBridge | Prim::NamespaceRead) {
             for (position, item) in input.iter_mut().enumerate() {
                 if op == Prim::SetMember && position == 2 { continue; }
                 if op == Prim::Dictionary && item.kind_word() == "mappingproxy" { *item = item.proxy_pairs(); continue; }
@@ -38008,6 +38025,38 @@ impl Machine<'_> {
                 };
                 self.native_frame_routines.insert(Rc::as_ptr(&program) as usize);
                 Ok(input[0].clone())
+            }
+            DequeNative => {
+                require(2, 4)?;
+                if input[1].settled().bare() == "bind" {
+                    require(4, 4)?;
+                    let descriptor = input[0].settled();
+                    let accepted = match &descriptor {
+                        Value::Tuple(group) if group.len() == 6 => group.iter().all(|slot| matches!(slot, Value::Wrapped(32, _))),
+                        Value::Wrapped(32, _) => true,
+                        _ => false,
+                    };
+                    if !accepted { return Err(String::from("TypeError: deque binding requires slot descriptors")); }
+                    let function = input[2].settled();
+                    let body = match &function {
+                        Value::Bound(body, _) => body,
+                        _ => return Err(String::from("TypeError: deque binding requires a function")),
+                    };
+                    let verb = match input[3].settled() { Value::Text(text) => text.to_string(), _ => return Err(String::from("TypeError: deque operation must be a string")) };
+                    let key = Rc::as_ptr(body) as usize;
+                    self.deque_candidates[(key >> 9) & 7] |= 1u64 << ((key >> 3) & 63);
+                    if let Some((_, Value::Tuple(previous), _)) = self.deque_functions.get(&key) {
+                        let address = Rc::as_ptr(previous) as usize;
+                        self.deque_field_plans.remove(&address);
+                    }
+                    self.deque_functions.insert(key, (function.clone(), descriptor, verb));
+                    return Ok(function);
+                }
+                require(2, 3)?;
+                let command = input[1].settled();
+                if let Value::Text(word) = command {
+                    self.deque_work(&input[0], &word, input.get(2).cloned())
+                } else { Err(String::from("TypeError: deque operation must be a string")) }
             }
             HeapNative => {
                 require(2, 3)?;
@@ -38868,6 +38917,9 @@ fn decimal_value(c: char) -> Option<u32> {
 
 #[path = "heap.rs"]
 mod heap;
+
+#[path = "deque.rs"]
+mod deque;
 
 #[path = "binascii.rs"]
 mod binascii;

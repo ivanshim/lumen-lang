@@ -939,6 +939,7 @@
   "ext.builtin.function.native_frame": [
     "__native_frame__"
   ],
+  "ext.builtin.deque_native": ["__deque_native__"],
   "ext.builtin.heap_native": [
     "__heap_native__"
   ],

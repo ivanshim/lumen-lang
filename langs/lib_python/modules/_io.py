@@ -1583,7 +1583,7 @@ class BufferedReader(_BufferedIOBase):
         # reference's fast path answers it, without the lock and the
         # refill road: only for the plain reader, whose read does not
         # flush first.
-        if type(self) is BufferedReader and type(size) is int and size >= 0 and not impl._read_lock._held:
+        if type(self) is BufferedReader and type(size) is int and size >= 0 and not impl._read_lock._held and not impl.closed:
             held = impl._read_buf
             at = impl._read_pos
             if size <= len(held) - at:

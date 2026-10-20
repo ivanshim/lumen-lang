@@ -139,6 +139,10 @@ pub struct Engine<'a> {
     /// Routines whose frames a frame walk hides, as C routines are
     /// absent from a Python frame chain in the reference.
     native_frame_routines: std::collections::HashSet<usize, crate::value::FxBuildHasher>,
+    /// Explicitly registered adapter routines and their owned storage descriptors.
+    deque_routines: std::collections::HashMap<usize, (Value, Value, String), crate::value::FxBuildHasher>,
+    deque_routine_bits: [u64; 4],
+    deque_layouts: std::collections::HashMap<usize, (u64, u64, Value, Vec<String>), crate::value::FxBuildHasher>,
     trace_hook: Value,
     coroutine_depth: usize,
     annotation_scope: Option<(Rc<Routine>, Option<Rc<Class>>, Vec<(Weak<Instance>, String)>)>,
@@ -1753,6 +1757,9 @@ impl<'a> Engine<'a> {
             trace_frame: None,
             step_at: -1,
             native_frame_routines: std::collections::HashSet::with_hasher(crate::value::FxBuildHasher::default()),
+            deque_routines: std::collections::HashMap::with_hasher(crate::value::FxBuildHasher::default()),
+            deque_routine_bits: [0; 4],
+            deque_layouts: std::collections::HashMap::with_hasher(crate::value::FxBuildHasher::default()),
             trace_hook: Value::Null,
             coroutine_depth: 0,
             annotation_scope: None,
@@ -2450,7 +2457,7 @@ impl<'a> Engine<'a> {
     }
 
     /// Build ownership including any nodes retained by this collection.
-    fn cycle_graph(&self, retained: &[Value]) -> crate::faint::Graph {
+    fn cycle_graph(&self, retained: &[Value], complete: bool) -> crate::faint::Graph {
         let books = self.text_books.iter().flat_map(|book| {
             std::iter::once(Value::Bond(book.near.clone()))
                 .chain(book.outer.iter().cloned().map(Value::Bond))
@@ -2460,15 +2467,13 @@ impl<'a> Engine<'a> {
         let live = self.world.iter().chain(&self.data).chain(&self.caught).chain(&self.buffer)
             .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
             .chain(self.native_exceptions.values()).chain(std::iter::once(&self.trace_hook)).cloned()
-            // Weak metadata keys must also be graph candidates: a function
-            // owned only by an active local can otherwise be absent, leaving
-            // no node from which to mark its still-live attribute dictionary.
-            .chain(self.function_members.iter().filter_map(|(function, _)| function.revive()))
             .chain(self.outer_book.iter().cloned().map(Value::Bond))
             .chain(self.function_books.iter().flatten().cloned().map(Value::Bond))
             .chain(self.natives.iter().cloned().map(Value::Bond)).collect();
         {
-            let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live);
+            // Weak metadata keys are candidates, never proven outside owners.
+            let weak_keys = self.function_members.iter().filter_map(|(function, _)| function.revive()).collect();
+            let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live, weak_keys, complete);
             for (function, holder) in &self.function_members { if let Some(function) = function.revive() { graph.link_attributes(&function, &Value::Object(holder.clone())); } }
             graph
         }
@@ -2485,7 +2490,7 @@ impl<'a> Engine<'a> {
         self.function_members.retain(|(function, _)| function.revive().is_some());
         self.reindex_function_rows();
         self.settle_departed();
-        let mut graph = self.cycle_graph(&[]);
+        let mut graph = self.cycle_graph(&[], false);
         let mut group = graph.unreached();
         // Nothing unreachable means nothing is said or cleared, so the
         // heap is the same afterwards and the first walk still stands.
@@ -2521,7 +2526,7 @@ impl<'a> Engine<'a> {
             }
         }
         drop(graph);
-        let mut after = self.cycle_graph(&group);
+        let mut after = self.cycle_graph(&group, false);
         let unreached = after.still_unreached(group);
         let count = unreached.len();
         self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !after.unowned(&function)));
@@ -4756,6 +4761,16 @@ impl<'a> Engine<'a> {
     }
 
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
+        let address = Rc::as_ptr(program) as usize;
+        let bit = (address >> 4) & 255;
+        if self.deque_routine_bits[bit / 64] & (1u64 << (bit % 64)) != 0 && self.deque_routines.contains_key(&address) {
+            let supplied = self.data[self.data.len() - n..].to_vec();
+            if let Some(done) = self.deque_routine_call(program, &supplied) {
+                self.data.truncate(self.data.len() - n);
+                self.data.push(done?);
+                return Ok(());
+            }
+        }
         let mut annotation_namespace = Self::function_book(program).or_else(|| {
             self.armed_names.as_ref()?;
             match program.globe.as_ref() {
@@ -24767,7 +24782,7 @@ impl<'a> Engine<'a> {
             Builtin::Restore => unreachable!(),
             // These two are read only where a language binds names,
             // which reaches them through `core_call` instead.
-            Builtin::WarningBackend(_) | Builtin::LzmaEncode | Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
+            Builtin::WarningBackend(_) | Builtin::LzmaEncode | Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::DequeNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -25435,7 +25450,7 @@ impl<'a> Engine<'a> {
             Builtin::TrackedObjects
             => {
                 if args.len()!=0 {return Err(format!("TypeError: {}() takes no arguments",self.lang.gc_objects.first().map_or("gc.get_objects",String::as_str)));}
-                let graph=self.cycle_graph(&[]);
+                let graph=self.cycle_graph(&[], true);
                 let mut seen=std::collections::HashSet::new();
                 let mut objects=Vec::new();
                 for object in graph.tracked_objects() {
@@ -29613,7 +29628,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::LzmaEncode | Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::LzmaEncode | Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::DequeNative | Builtin::ReduceNative | Builtin::RebuildNative)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -30678,7 +30693,7 @@ impl Engine<'_> {
         }
         let standing = if b == Builtin::GetAttr { args.first().cloned() } else { None };
         // A map walked backwards keeps its cell too, for the walk to watch.
-        if !matches!(b, Builtin::Identity | Builtin::Reversed | Builtin::HeapNative | Builtin::ContextNative | Builtin::TraceNative | Builtin::StaticNamespace) {
+        if !matches!(b, Builtin::Identity | Builtin::Reversed | Builtin::HeapNative | Builtin::DequeNative | Builtin::ContextNative | Builtin::TraceNative | Builtin::StaticNamespace) {
             for (position, value) in args.iter_mut().enumerate() {
                 if b == Builtin::SetAttr && position == 2 { continue; }
                 if b == Builtin::Dict && value.core_kind() == "mappingproxy" { *value = value.proxy_dictionary(); continue; }
@@ -30997,6 +31012,27 @@ impl Engine<'_> {
                 };
                 self.native_frame_routines.insert(Rc::as_ptr(&program) as usize);
                 args[0].clone()
+            }
+            Builtin::DequeNative => {
+                arity(2, 4)?;
+                if args[1].contents().plain() == "bind" {
+                    arity(4, 4)?;
+                    let descriptor = args[0].contents();
+                    let slots = match &descriptor { Value::Tuple(row) if row.len() == 6 => row.as_slice(), _ => std::slice::from_ref(&descriptor) };
+                    if !slots.iter().all(|v| matches!(v, Value::Adapter(slot) if slot.0 == 16)) { return Err("TypeError: deque binding requires slot descriptors".into()); }
+                    let Value::Routine(routine) = args[2].contents() else { return Err("TypeError: deque binding requires a function".into()) };
+                    let Value::Text(verb) = args[3].contents() else { return Err("TypeError: deque operation must be a string".into()) };
+                    let identity = Rc::as_ptr(&routine) as usize;
+                    let bit = (identity >> 4) & 255;
+                    self.deque_routine_bits[bit / 64] |= 1u64 << (bit % 64);
+                    if let Some((_, Value::Tuple(layout), _)) = self.deque_routines.get(&identity) { self.deque_layouts.remove(&(Rc::as_ptr(layout) as usize)); }
+                    self.deque_routines.insert(identity, (args[2].clone(), args[0].clone(), verb.to_string()));
+                    return Ok(args[2].clone());
+                }
+                arity(2, 3)?;
+                if self.lang.deque_native.is_empty() { return Err(self.core_fault("core.unready", name)); }
+                let Value::Text(verb) = args[1].contents() else { return Err("TypeError: deque operation must be a string".into()) };
+                self.deque_native_call(&args[0], &verb, args.get(2).cloned())?
             }
             Builtin::HeapNative => {
                 arity(2, 3)?;
@@ -35431,6 +35467,9 @@ fn unicode_decimal_digit(character: char) -> Option<u32> {
 
 #[path = "heap.rs"]
 mod heap;
+
+#[path = "deque.rs"]
+mod deque;
 
 #[path = "binascii.rs"]
 mod binascii;

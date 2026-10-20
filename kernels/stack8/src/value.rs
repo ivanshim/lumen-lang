@@ -2313,6 +2313,7 @@ pub struct ClassMembers {
 }
 
 impl ClassMembers {
+    pub(super) fn revision() -> u64 { MEMBERS_REVISION.with(|revision| revision.get()) }
     pub fn new(rows: Vec<(String, Value)>) -> Self {
         Self { rows: RefCell::new(rows), offsets: RefCell::new(None), absent: RefCell::new((u64::MAX, std::collections::HashSet::with_hasher(FxBuildHasher::default()))) }
     }

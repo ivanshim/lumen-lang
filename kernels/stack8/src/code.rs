@@ -844,6 +844,7 @@ pub enum Builtin {
     TraceNative,
     NativeFrame,
     HeapNative,
+    DequeNative,
     ContextNative,
     AllocationTrace,
     WarningBackend(u8),
