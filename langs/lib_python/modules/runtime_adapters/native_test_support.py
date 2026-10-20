@@ -914,7 +914,12 @@ STDLIB_DIR = TEST_HOME_DIR
 TEST_SUPPORT_DIR = os.path.join(TEST_HOME_DIR, 'test', 'support')
 is_android = False
 is_apple = sys.platform in ("darwin", "ios", "tvos", "watchos")
-has_socket_support = not (is_emscripten or is_wasi)
+# Listening sockets are not implemented: socket.listen and socket.accept
+# are unavailable, and http.server.HTTPServer refuses to construct. Local
+# server tests consult this flag and skip. CPython leaves it true except
+# on Emscripten and WASI; that formula is true on this host and would
+# start those tests against a server that is not there.
+has_socket_support = False
 has_fork_support = False
 has_subprocess_support = True
 can_start_thread = False
@@ -972,14 +977,34 @@ def requires_subprocess():
     return unittest.skipUnless(has_subprocess_support, "requires subprocess support")
 
 
+def _loopback_name_resolves():
+    """Whether socket.gethostbyname can resolve localhost from the host table.
+
+    A module-level socket check asks for a client socket. has_socket_support
+    stays false because this runtime has no listening server.
+    """
+    try:
+        import socket
+    except ImportError:
+        return False
+    try:
+        address = socket.gethostbyname("localhost")
+    except socket.gaierror:
+        return False
+    return isinstance(address, str) and len(address) > 0
+
+
 def requires_working_socket(*, module=False):
     """Skip tests or modules that require working sockets
 
     Can be used as a function/class decorator or to skip an entire module.
+    Skipping a whole module follows client name resolution. A decorated
+    test follows has_socket_support, which is false without a listening
+    server, so local server tests stay skipped.
     """
     msg = "requires socket support"
     if module:
-        if not has_socket_support:
+        if not _loopback_name_resolves():
             raise unittest.SkipTest(msg)
     else:
         return unittest.skipUnless(has_socket_support, msg)
