@@ -13335,6 +13335,32 @@ impl<'a> Compiler<'a> {
                 }
                 let native = lang.builtins.get(&named).copied();
                 let changes = matches!(native, Some(Builtin::Append | Builtin::Replace));
+                // The roads with a shape of their own read their
+                // arguments first. Every other call reaches the member
+                // before an argument can run, so a kind that answers to
+                // no such name says so first, exactly as the reference
+                // does, and an argument that raises or writes is never
+                // reached on that account.
+                let suspends = lang.yield_suspends && [&lang.yield_send, &lang.yield_close, &lang.yield_throw].iter().any(|words| Lang::spells(words, &named));
+                let setter = native.filter(|b| b.set_method()).is_some();
+                if let Some(brackets) = &call {
+                    if !changes && !suspends && !setter {
+                        self.read(&held);
+                        self.let_go(&held);
+                        if !lang.trace_fields.is_empty() { self.put(member_range.clone()); }
+                        self.act(Action::Grab(named.as_str().into()), 1);
+                        let callee = self.gensym("method_value");
+                        self.write(&callee);
+                        self.pass_token();
+                        let argc = self.arguments_of(&named, brackets)?;
+                        self.read(&callee);
+                        self.let_go(&callee);
+                        if !lang.trace_fields.is_empty() { self.put(self.expression_location(origin)); }
+                        self.act(Action::Invoke(named.as_str().into()), argc + 1);
+                        self.land(finish);
+                        continue;
+                    }
+                }
                 if !changes { self.read(&held); self.let_go(&held); }
                 let argc = if let Some(brackets) = &call {
                     self.pass_token();
@@ -13348,7 +13374,7 @@ impl<'a> Compiler<'a> {
                         self.let_go(&held);
                         self.write(&target);
                     } else { self.class_cannot_run(); }
-                } else if lang.yield_suspends && [&lang.yield_send, &lang.yield_close, &lang.yield_throw].iter().any(|words| Lang::spells(words, &named)) {
+                } else if suspends {
                     self.act(Action::Send(Rc::from(named.as_str())), argc + 1);
                 } else if let Some(method) = native.filter(|b| b.set_method()) {
                     if call.is_some() { self.act(Action::Builtin(method, Rc::from(named.as_str())), argc + 1); }
@@ -13358,23 +13384,13 @@ impl<'a> Compiler<'a> {
                     // its refusal.
                     else if lang.member_amiss.is_some() { self.act(Action::Grab(Rc::from(named.as_str())), 1); }
                     else { self.scope_fault(&lang.set_words["ext.builtin.set.method.unavailable"]); }
-                } else if matches!(native, Some(Builtin::Bytes(14))) && call.is_none() {
-                    self.act(Action::Grab(Rc::from(named.as_str())), 1);
-                } else if matches!(native, Some(Builtin::Bytes(_))) && call.is_none() {
-                    self.discard();
-                    self.constant(Value::text(&lang.byte_words["ext.system.bytes.unready"][0]));
-                    self.act(Action::Builtin(Builtin::Raise, Rc::from("")), 1);
-                } else if native.is_none() && call.is_none() && lang.member_amiss.is_some() {
+                } else if call.is_none() {
+                    // A member read on a kind that answers to none of
+                    // that name is told it has no such member, whatever
+                    // a name of that spelling holds elsewhere.
                     if !lang.trace_fields.is_empty() { self.put(member_range.clone()); }
                     self.act(Action::Grab(Rc::from(named.as_str())), 1);
-                } else if native.is_none() && lang.member_amiss.is_some() {
-                    // The receiver's kind answers to no such name, and a
-                    // definition wording that complaint has no pipe to
-                    // fall into: the value is told it has no such
-                    // member, whatever a name of that spelling holds.
-                    if !lang.trace_fields.is_empty() { self.put(member_range.clone()); }
-                    self.act(Action::MemberAmiss(Rc::from(named.as_str())), argc + 1);
-                } else { self.call(&named, argc + 1)?; }
+                }
                 self.land(finish);
                 continue;
             }
