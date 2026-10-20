@@ -12547,6 +12547,13 @@ impl<'a> Machine<'a> {
     pub(super) fn recipe_advance(&mut self, operation: i64, receiver: &Value) -> Result<Option<Value>, String> {
         let Value::Thing(thing) = receiver else { return Err("TypeError: invalid iterator receiver".to_owned()); };
         match operation {
+            11 => {
+                let ready = crate::tokenize::atom(&[receiver.clone(), Value::Flag(true)])?;
+                if !matches!(ready, Value::Nil) { return Ok(Some(ready)); }
+                let method = self.read_class_member(receiver.clone(), "_next_slow", false)
+                    .map_err(|escape| self.carried_native_fault(escape))?;
+                return self.core_run(&method, Vec::new()).map(Some);
+            }
             8..=10 => return self.recipe_group(operation, thing),
             6 => return self.recipe_slice(thing),
             7 => return self.recipe_zip(thing),
@@ -17722,7 +17729,10 @@ impl<'a> Machine<'a> {
     fn advance_object(&mut self, source: &Value) -> Result<Option<Value>, String> {
         if matches!(source, Value::Iterator(_) | Value::Generator(_)) { return self.next_value(source); }
         if let Some(Value::Wrapped(120, fields)) = self.appointment(source, 16) {
-            if let Value::Small(operation) = fields[0] { return self.recipe_advance(operation, source); }
+            if let Value::Small(operation) = fields[0] {
+                let fetched = self.recipe_advance(operation, source);
+                return if operation == 11 && fetched.is_err() && self.walk_halted() { Ok(None) } else { fetched };
+            }
         }
         match source {
             Value::Cursor(c) => Ok(c.borrow_mut().pop_front()),

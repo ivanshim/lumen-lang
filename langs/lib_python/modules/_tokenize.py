@@ -1263,12 +1263,8 @@ class TokenizerIter(object):
     def __iter__(self):
         return self
 
-    def __next__(self):
-        # Drain ordinary buffered tokens through the native scanner operation.
-        token = _scan_token(self, True)
-        if token is not None:
-            return token
-        return self._next_slow()
+    # Bind the scanner as a native iterator slot; slow lexemes still use the port.
+    __next__ = _scan_token()
 
     # Preserve callback handling, diagnostics and unusual private queue shapes.
     def _next_slow(self):

@@ -4384,6 +4384,15 @@ impl<'a> Engine<'a> {
 
     pub(super) fn iterator_recipe_next(&mut self, mode: i64, value: &Value) -> Res<Option<Value>> {
         let Value::Object(object) = value else { return Err("TypeError: invalid iterator receiver".into()); };
+        if mode == 11 {
+            let token = crate::tokenize::scan(&[value.clone(), Value::Flag(true)])?;
+            if !matches!(token, Value::Null) { return Ok(Some(token)); }
+            let slow = self.class_get(value.clone(), "_next_slow", false).map_err(|fault| {
+                self.carried = Some(fault);
+                self.special_fault()
+            })?;
+            return self.core_apply(&slow, Vec::new()).map(Some);
+        }
         if (8..=10).contains(&mode) { return self.group_recipe_next(mode, object); }
         if mode == 6 { return self.slice_recipe_next(object); }
         if mode == 7 { return self.zip_recipe_next(object); }
@@ -11277,7 +11286,9 @@ impl<'a> Engine<'a> {
         if let Some(Value::Adapter(entry)) = self.special_value(value, 16) {
             if entry.0 == 119 {
                 let Value::Small(mode) = entry.1[0] else { return Err(self.special_fault()); };
-                return self.iterator_recipe_next(mode, value);
+                let answer = self.iterator_recipe_next(mode, value);
+                if mode == 11 && answer.is_err() && self.stop_raised() { return Ok(None); }
+                return answer;
             }
         }
         let method = self.special_method(value, 16).ok_or_else(|| self.special_fault())?;

@@ -535,6 +535,7 @@ fn next_buffered(args: &[Value]) -> Result<Value, String> {
 }
 
 pub fn scan(args: &[Value]) -> Result<Value, String> {
+    if args.is_empty() { return Ok(Value::Adapter(Rc::new((119, vec![Value::Small(11)])))); }
     if args.len() == 2 && matches!(args[1], Value::Flag(true)) { return next_buffered(args); }
     if args.len() != 1 {
         return scan_one(args);

@@ -603,6 +603,9 @@ fn buffered_next(values: &[Value]) -> Result<Value, String> {
 }
 
 pub fn atom(values: &[Value]) -> Result<Value, String> {
+    if values.is_empty() {
+        return Ok(Value::Wrapped(120, crate::tuples::Sequence::plain(vec![Value::Small(11)])));
+    }
     if matches!(values, [_, Value::Flag(true)]) { return buffered_next(values); }
     if values.len() != 1 {
         return read_atom(values);
