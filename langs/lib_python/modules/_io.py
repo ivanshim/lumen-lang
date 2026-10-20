@@ -1579,11 +1579,12 @@ class BufferedReader(_BufferedIOBase):
         impl = self._live
         if impl is None:
             impl = self._impl
+        impl._checkClosed('read of closed file')
         # A read the buffer already holds is answered here, the way the
         # reference's fast path answers it, without the lock and the
         # refill road: only for the plain reader, whose read does not
         # flush first.
-        if type(self) is BufferedReader and type(size) is int and size >= 0 and not impl._read_lock._held and not impl.closed:
+        if type(self) is BufferedReader and type(size) is int and size >= 0 and not impl._read_lock._held:
             held = impl._read_buf
             at = impl._read_pos
             if size <= len(held) - at:
