@@ -844,6 +844,7 @@ pub enum Builtin {
     TraceNative,
     NativeFrame,
     HeapNative,
+    DequeNative,
     ContextNative,
     AllocationTrace,
     WarningBackend(u8),
@@ -1304,9 +1305,61 @@ impl Routine {
     }
 
     pub(crate) fn stack_bound(&self) -> i64 {
-        self.declared_stack.unwrap_or_else(|| self.instrs.iter().map(|word| match word {
-            Instr::Act(_, count) => count.saturating_add(1), _ => 1,
-        }).sum::<usize>().saturating_add(1) as i64)
+        if let Some(size) = self.declared_stack { return size; }
+        let mut pending = vec![(0, 0usize, self.instrs.len())];
+        let mut depths = vec![None; self.instrs.len()];
+        let mut maximum = 0;
+        while let Some((at, depth, limit)) = pending.pop() {
+            if at == limit { continue; }
+            let Some(word) = self.instrs.get(at) else { continue; };
+            if depths[at].is_some_and(|seen| seen >= depth) { continue; }
+            // A positive cycle has no finite operand bound.
+            if depth > self.instrs.len() { return i64::MAX; }
+            depths[at] = Some(depth);
+            maximum = maximum.max(depth);
+            let (taken, given) = match word {
+                Instr::Const(_) | Instr::Read(_) | Instr::Glance(_) | Instr::Bond(_)
+                | Instr::Missing(_) | Instr::Unwritten(_) => (0, 1),
+                Instr::Write(_) | Instr::Fasten(_) | Instr::SaveCallable(_) | Instr::Shed | Instr::Skip(_) => (1, 0),
+                Instr::Act(_, count) | Instr::PreparedAct(_, count, _) => (*count, 1),
+                Instr::BondItem(_) => (1, 1),
+                Instr::BondPlace(_, count) => (*count, 1),
+                Instr::Dyad { a, b, .. } => (usize::from(matches!(a, Operand::Top)) + usize::from(matches!(b, Operand::Top)), 1),
+                Instr::SkipCmp { a, b, .. } => (usize::from(matches!(a, Operand::Top)) + usize::from(matches!(b, Operand::Top)), 0),
+                _ => (0, 0),
+            };
+            let next = depth.saturating_sub(taken).saturating_add(given);
+            maximum = maximum.max(next);
+            match word {
+                Instr::Depart { to, .. } => pending.push((*to, next, if *to < limit { limit } else { self.instrs.len() })),
+                Instr::Skip(to) => {
+                    let constant = at.checked_sub(1).and_then(|prior| match self.instrs.get(prior) {
+                        Some(Instr::Const(Value::Flag(value))) => Some(*value), _ => None,
+                    });
+                    if constant != Some(true) { pending.push((*to, next, if *to < limit { limit } else { self.instrs.len() })); }
+                    if constant != Some(false) { pending.push((at + 1, next, limit)); }
+                }
+                Instr::SkipCmp { to, .. } => {
+                    pending.push((*to, next, if *to < limit { limit } else { self.instrs.len() })); pending.push((at + 1, next, limit));
+                }
+                Instr::Guard(catch) => {
+                    pending.push((*catch, depth + 1, limit)); pending.push((at + 1, next, limit));
+                }
+                Instr::Attempt(plan) => {
+                    pending.push((plan.body.0, depth, plan.body.1));
+                    // Entering leaves the value consumed by the context body's binding.
+                    let after = depth.saturating_sub(usize::from(plan.context.is_some()));
+                    pending.push((plan.after, after, limit));
+                    for arm in &plan.clauses {
+                        pending.push((arm.body.0, depth, arm.body.1));
+                        for kind in &arm.kinds { pending.push((kind.0, depth, kind.1)); }
+                    }
+                    for span in [plan.otherwise, plan.last].into_iter().flatten() { pending.push((span.0, depth, span.1)); }
+                }
+                _ => pending.push((at + 1, next, limit)),
+            }
+        }
+        maximum as i64
     }
 
     pub(crate) fn invalid_native_opcode(&self) -> Option<u8> {

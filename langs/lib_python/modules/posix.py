@@ -115,7 +115,7 @@ def confstr(name, /):
 
 (O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_CREAT, O_EXCL, O_TRUNC,
  O_NONBLOCK, O_CLOEXEC, O_DIRECTORY, O_NOFOLLOW, SEEK_SET, SEEK_CUR,
- SEEK_END, F_OK, R_OK, W_OK, X_OK, O_TMPFILE) = _call('constants')
+ SEEK_END, F_OK, R_OK, W_OK, X_OK, O_TMPFILE, O_NOCTTY) = _call('constants')
 
 # These feature names describe implemented host entry points, not test expectations.
 _have_functions = ['HAVE_FACCESSAT', 'HAVE_FCHMODAT', 'HAVE_FSTATAT', 'HAVE_LSTAT',
@@ -256,6 +256,10 @@ def stat(path, *, dir_fd=None, follow_symlinks=True):
         if '\0' in path:
             raise ValueError('embedded null character')
         original = path
+        if dir_fd is None and type(follow_symlinks) is bool:
+            return _host('stat_native', stat_result, path, follow_symlinks)
+    elif type(path) is bytes and dir_fd is None and type(follow_symlinks) is bool:
+        return _host('stat_native', stat_result, _path(path), follow_symlinks)
     elif _is_fd_path(path):
         if dir_fd is not None:
             raise ValueError("stat: can't specify dir_fd without matching path")
@@ -441,6 +445,52 @@ def lseek(fd, position, whence, /):
 
 def ftruncate(fd, length, /):
     _call('ftruncate', _cint(fd), _fd(length))
+
+
+def sendfile(out_fd, in_fd, offset, count):
+    out, source = _cint(out_fd), _cint(in_fd)
+    if offset is None:
+        return _call('sendfile', out, source, 0, 0, _fd(count))
+    return _call('sendfile', out, source, 1, _fd(offset), _fd(count))
+
+
+def copy_file_range(src, dst, count, offset_src=None, offset_dst=None):
+    return _call('copy_file_range', _cint(src), _cint(dst), _fd(count),
+                 int(offset_src is not None), 0 if offset_src is None else _fd(offset_src),
+                 int(offset_dst is not None), 0 if offset_dst is None else _fd(offset_dst))
+
+
+XATTR_CREATE = 1
+XATTR_REPLACE = 2
+XATTR_SIZE_MAX = 65536
+
+
+def _xattr(verb, name, path, attribute, value, flags, follow_symlinks):
+    if _is_fd_path(path):
+        if not follow_symlinks:
+            raise ValueError(name + ': cannot use fd and follow_symlinks together')
+        target, kind = _cint(path), 2
+    else:
+        target, kind = _path(path), 0 if follow_symlinks else 1
+    label = b'' if attribute is None else _path(attribute)
+    return _call('xattr', verb, target, label, value, kind, flags, filename=None if kind == 2 else target)
+
+
+def getxattr(path, attribute, *, follow_symlinks=True):
+    return _xattr(0, 'getxattr', path, attribute, b'', 0, follow_symlinks)
+
+
+def setxattr(path, attribute, value, flags=0, *, follow_symlinks=True):
+    _xattr(1, 'setxattr', path, attribute, bytes(value), _cint(flags), follow_symlinks)
+
+
+def listxattr(path=None, *, follow_symlinks=True):
+    names = _xattr(2, 'listxattr', '.' if path is None else path, None, b'', 0, follow_symlinks)
+    return [_decode(name) for name in names.split(b'\0') if name]
+
+
+def removexattr(path, attribute, *, follow_symlinks=True):
+    _xattr(3, 'removexattr', path, attribute, b'', 0, follow_symlinks)
 
 
 def readlink(path, *, dir_fd=None):

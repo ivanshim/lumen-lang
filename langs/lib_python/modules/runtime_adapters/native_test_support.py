@@ -1693,6 +1693,9 @@ def control_characters_c0():
     return [chr(value) for value in range(32)] + ["\x7f"]
 
 
+# Require the native code object's retained source positions.
+def requires_debug_ranges(reason='requires co_positions / debug_ranges'):
+    return unittest.skipUnless(hasattr((lambda: None).__code__, 'co_positions'), reason)
 
 # From CPython v3.14.8; PSF License.
 def requires_bz2(reason='requires bz2'):
@@ -1738,6 +1741,10 @@ def get_attribute(obj, name):
 
 
 # From CPython v3.14.8; PSF License.
+
+# Skip specialization checks when no specializing interpreter is present.
+def requires_specialization(test):
+    return unittest.skip('requires specialization')(test)
 # From CPython v3.14.8 (8e6e75d9102e), Lib/test/support/__init__.py; PSF License.
 def patch(test_instance, object_to_patch, attr_name, new_value):
     """Override 'object_to_patch'.'attr_name' with 'new_value'.

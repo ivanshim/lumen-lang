@@ -9,13 +9,22 @@ const SLOTS: usize = 256;
 thread_local! {
     static ENABLED: Cell<bool> = const { Cell::new(false) };
     static EMPTY: Rc<Vec<Value>> = Rc::new(Vec::new());
-    static FREE: RefCell<Released> = const { RefCell::new(Released { rows: Vec::new(), bytes: 0 }) };
+    static FREE: RefCell<Released> = const { RefCell::new(Released { short: [Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()], rows: Vec::new(), held: 0, bytes: 0 }) };
 }
 
 // Budget accounting belongs to the pool, not to each released tuple.
-struct Released { rows: Vec<Rc<Vec<Value>>>, bytes: usize }
+// Short rows wait in a shelf for each capacity, so the common small tuple is found
+// without looking at the rest; longer ones are searched for the closest fit.
+struct Released { short: [Vec<Rc<Vec<Value>>>; 8], rows: Vec<Rc<Vec<Value>>>, held: usize, bytes: usize }
 impl Released {
     fn take(&mut self, needed: usize) -> Option<Rc<Vec<Value>>> {
+        for size in needed..self.short.len() {
+            if let Some(row) = self.short[size].pop() {
+                self.held -= 1;
+                self.bytes -= row.capacity().saturating_mul(std::mem::size_of::<Value>());
+                return Some(row);
+            }
+        }
         let mut best = None;
         let mut capacity = usize::MAX;
         for (at, row) in self.rows.iter().enumerate().rev() {
@@ -27,11 +36,17 @@ impl Released {
         }
         best.map(|at| {
             let row = self.rows.swap_remove(at);
+            self.held -= 1;
             self.bytes -= row.capacity().saturating_mul(std::mem::size_of::<Value>());
             row
         })
     }
-    fn clear(&mut self) { self.rows.clear(); self.bytes = 0; }
+    fn put(&mut self, row: Rc<Vec<Value>>) {
+        self.held += 1;
+        let size = row.capacity();
+        if size < self.short.len() { self.short[size].push(row); } else { self.rows.push(row); }
+    }
+    fn clear(&mut self) { for shelf in &mut self.short { shelf.clear(); } self.rows.clear(); self.held = 0; self.bytes = 0; }
 }
 
 /// An ordinary Rc for arrays, or the final-owner release boundary for tuples.
@@ -83,9 +98,9 @@ impl Drop for Items {
         let bytes = parts.capacity().saturating_mul(std::mem::size_of::<Value>());
         let _ = FREE.try_with(|free| {
             let mut free = free.borrow_mut();
-            if free.rows.len() < SLOTS && bytes <= LIMIT.saturating_sub(free.bytes) {
+            if free.held < SLOTS && bytes <= LIMIT.saturating_sub(free.bytes) {
                 free.bytes += bytes;
-                free.rows.push(self.storage.clone());
+                free.put(self.storage.clone());
             }
         });
     }

@@ -2200,6 +2200,8 @@ pub struct TypeNames {
 }
 
 thread_local! { static NAMESPACE_CHANGE: Cell<u64> = const { Cell::new(1) }; }
+/// The current namespace stamp, for a reader keeping something derived from class entries.
+pub fn namespace_change() -> u64 { NAMESPACE_CHANGE.with(|stamp| stamp.get()) }
 
 /// Namespace slots stay ordered; Python lookup may index their spellings.
 /// Mutation invalidates all slot positions before the caller can edit rows.
@@ -2211,6 +2213,7 @@ pub struct BlueprintEntries {
 }
 
 impl BlueprintEntries {
+    pub(super) fn epoch() -> u64 { NAMESPACE_CHANGE.with(Cell::get) }
     pub fn new(entries: Vec<(String, Value)>) -> Self {
         Self { values: RefCell::new(entries), positions: RefCell::new(None), missing: RefCell::new(std::collections::HashMap::with_hasher(crate::table::FxBuildHasher::default())) }
     }
@@ -2307,6 +2310,7 @@ impl Blueprint {
     }
     pub fn ancestry(&self) -> Vec<Rc<Blueprint>> {self.ancestry.borrow().clone()}
     pub fn parents(&self) -> Vec<Rc<Blueprint>> {self.parents.borrow().clone()}
+    pub fn parentless(&self) -> bool {self.parents.borrow().is_empty()}
     pub fn under(&self) -> Option<Rc<Blueprint>> {self.under.borrow().clone()}
 
     pub(super) fn python_title(&self) -> Option<String> {

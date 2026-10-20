@@ -214,7 +214,7 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                 }
             }
             "constants" => {
-                let flags = vec![libc::O_RDONLY,libc::O_WRONLY,libc::O_RDWR,libc::O_APPEND,libc::O_CREAT,libc::O_EXCL,libc::O_TRUNC,libc::O_NONBLOCK,libc::O_CLOEXEC,libc::O_DIRECTORY,libc::O_NOFOLLOW,libc::SEEK_SET,libc::SEEK_CUR,libc::SEEK_END,libc::F_OK,libc::R_OK,libc::W_OK,libc::X_OK,libc::O_TMPFILE];
+                let flags = vec![libc::O_RDONLY,libc::O_WRONLY,libc::O_RDWR,libc::O_APPEND,libc::O_CREAT,libc::O_EXCL,libc::O_TRUNC,libc::O_NONBLOCK,libc::O_CLOEXEC,libc::O_DIRECTORY,libc::O_NOFOLLOW,libc::SEEK_SET,libc::SEEK_CUR,libc::SEEK_END,libc::F_OK,libc::R_OK,libc::W_OK,libc::X_OK,libc::O_TMPFILE,libc::O_NOCTTY];
                 Ok(Value::tuple(flags.into_iter().map(|f| Value::Small(i64::from(f))).collect()))
             }
             "environ" => {
@@ -289,6 +289,62 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
             "lseek" => checked(libc::lseek(int(0)? as _, int(1)?, int(2)? as _)),
             "dup" => checked(libc::fcntl(int(0)? as _, libc::F_DUPFD_CLOEXEC, 0) as i64),
             "ftruncate" => checked(libc::ftruncate(int(0)? as _, int(1)?) as i64),
+            "sendfile" => {
+                let mut start = int(3)?;
+                let cursor: *mut i64 = if int(2)? == 0 { std::ptr::null_mut() } else { &mut start };
+                checked(libc::sendfile(int(0)? as _, int(1)? as _, cursor, int(4)? as usize) as i64)
+            }
+            "copy_file_range" => {
+                let (mut read_at, mut write_at) = (int(4)?, int(6)?);
+                let read_cursor: *mut i64 = if int(3)? == 0 { std::ptr::null_mut() } else { &mut read_at };
+                let write_cursor: *mut i64 = if int(5)? == 0 { std::ptr::null_mut() } else { &mut write_at };
+                checked(libc::copy_file_range(int(0)? as _, read_cursor, int(1)? as _, write_cursor, int(2)? as usize, 0) as i64)
+            }
+            // Extended attributes: the first word picks get, set, list or remove; the fifth says path, link itself or descriptor.
+            "xattr" => {
+                let action = int(0)?;
+                let how = int(4)?;
+                let owner = if how == 2 { None } else { Some(path(1)?) };
+                let handle = if how == 2 { int(1)? as libc::c_int } else { -1 };
+                let label = if action == 2 { CString::default() } else { path(2)? };
+                let payload = if action == 1 { data_of(&params[3])? } else { Vec::new() };
+                let mode = int(5)? as libc::c_int;
+                let first = owner.as_ref().map_or(std::ptr::null(), |c| c.as_ptr());
+                let attempt = |space: *mut libc::c_void, room: usize| -> isize {
+                    let names = space as *mut libc::c_char;
+                    let (given, length) = (payload.as_ptr().cast::<libc::c_void>(), payload.len());
+                    let outcome = match (action, how) {
+                        (0, 0) => libc::getxattr(first, label.as_ptr(), space, room),
+                        (0, 1) => libc::lgetxattr(first, label.as_ptr(), space, room),
+                        (0, _) => libc::fgetxattr(handle, label.as_ptr(), space, room),
+                        (1, 0) => libc::setxattr(first, label.as_ptr(), given, length, mode) as isize,
+                        (1, 1) => libc::lsetxattr(first, label.as_ptr(), given, length, mode) as isize,
+                        (1, _) => libc::fsetxattr(handle, label.as_ptr(), given, length, mode) as isize,
+                        (2, 0) => libc::listxattr(first, names, room),
+                        (2, 1) => libc::llistxattr(first, names, room),
+                        (2, _) => libc::flistxattr(handle, names, room),
+                        (_, 0) => libc::removexattr(first, label.as_ptr()) as isize,
+                        (_, 1) => libc::lremovexattr(first, label.as_ptr()) as isize,
+                        (_, _) => libc::fremovexattr(handle, label.as_ptr()) as isize,
+                    };
+                    outcome
+                };
+                if action == 0 || action == 2 {
+                    let mut answer = Err(libc::EIO);
+                    for _ in 0..64 {
+                        let wanted = attempt(std::ptr::null_mut(), 0);
+                        if wanted < 0 { answer = Err(errno()); break; }
+                        let mut space = vec![0u8; wanted as usize + 1];
+                        let used = attempt(space.as_mut_ptr().cast(), space.len());
+                        if used >= 0 { space.truncate(used as usize); answer = Ok(octets(space)); break; }
+                        answer = Err(errno());
+                        if errno() != libc::ERANGE { break; }
+                    }
+                    answer
+                } else {
+                    checked(attempt(std::ptr::null_mut(), 0) as i64)
+                }
+            }
             "fchmod" => checked(libc::fchmod(int(0)? as _, int(1)? as libc::mode_t) as i64),
             "fchdir" => checked(libc::fchdir(int(0)? as _) as i64),
             "chdir" => checked(libc::chdir(path(0)?.as_ptr()) as i64),
@@ -445,6 +501,36 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
             let mut descriptors = [-1; 2];
             checked(libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) as i64)
                 .map(|_| Value::tuple(descriptors.into_iter().map(|fd| Value::Small(fd as i64)).collect()))
+        },
+        "tcgetattr" => {
+            let mut state: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(int(0)? as _, &mut state) == -1 { Err(errno()) } else {
+                let mut parts: Vec<Value> = [state.c_iflag as i64, state.c_oflag as i64, state.c_cflag as i64, state.c_lflag as i64,
+                    libc::cfgetispeed(&state) as i64, libc::cfgetospeed(&state) as i64].into_iter().map(Value::Small).collect();
+                parts.push(octets(state.c_cc.as_slice()));
+                Ok(Value::tuple(parts))
+            }
+        },
+        "tcsetattr" => {
+            let descriptor = int(0)? as libc::c_int;
+            let mut state: libc::termios = std::mem::zeroed();
+            if libc::tcgetattr(descriptor, &mut state) == -1 { Err(errno()) } else {
+                state.c_iflag = int(2)? as _; state.c_oflag = int(3)? as _; state.c_cflag = int(4)? as _; state.c_lflag = int(5)? as _;
+                let controls = data_of(&params[8])?;
+                state.c_cc.iter_mut().zip(controls.iter()).for_each(|(slot, byte)| *slot = *byte);
+                let (input, output) = (int(6)? as libc::speed_t, int(7)? as libc::speed_t);
+                if libc::cfsetispeed(&mut state, input) == -1 || libc::cfsetospeed(&mut state, output) == -1 { Err(errno()) }
+                else { checked(libc::tcsetattr(descriptor, int(1)? as _, &state) as i64) }
+            }
+        },
+        "tcflow" => {
+            let (descriptor, argument) = (int(0)? as libc::c_int, int(2)? as libc::c_int);
+            checked(match int(1)? {
+                0 => libc::tcsendbreak(descriptor, argument),
+                1 => libc::tcdrain(descriptor),
+                2 => libc::tcflush(descriptor, argument),
+                _ => libc::tcflow(descriptor, argument),
+            } as i64)
         },
         "isatty" => Ok(Value::Flag(libc::isatty(int(0)? as _) == 1)),
             "terminal" => {

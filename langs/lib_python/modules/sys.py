@@ -113,7 +113,8 @@ class _Flags:
     optimize = 0
     dont_write_bytecode = 1
     no_user_site = 1
-    no_site = 1
+    # Builtins can import sys before its trailing startup adapter runs.
+    no_site = 1 if _host_environment("environ")[1].get(b"LUMEN_PYTHON_NO_SITE") else 0
     ignore_environment = _ignore_environment
     verbose = 0
     bytes_warning = 0

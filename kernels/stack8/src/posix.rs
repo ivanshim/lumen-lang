@@ -232,7 +232,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
                 libc::O_CREAT, libc::O_EXCL, libc::O_TRUNC, libc::O_NONBLOCK,
                 libc::O_CLOEXEC, libc::O_DIRECTORY, libc::O_NOFOLLOW,
                 libc::SEEK_SET, libc::SEEK_CUR, libc::SEEK_END, libc::F_OK,
-                libc::R_OK, libc::W_OK, libc::X_OK, libc::O_TMPFILE];
+                libc::R_OK, libc::W_OK, libc::X_OK, libc::O_TMPFILE, libc::O_NOCTTY];
             Ok(Value::tuple(row.into_iter().map(|n| Value::Small(n as i64)).collect()))
         },
         "stat" | "lstat" | "fstat" => {
@@ -317,6 +317,56 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
         "write" => { let data = raw(&a[1])?; status(libc::write(number(0)? as i32, data.as_ptr().cast(), data.len()) as i64) },
         "lseek" => status(libc::lseek(number(0)? as i32, number(1)?, number(2)? as i32)),
         "ftruncate" => status(libc::ftruncate(number(0)? as i32, number(1)?) as i64),
+        "sendfile" => {
+            let mut at = number(3)?;
+            let spot = if number(2)? != 0 { &mut at as *mut i64 } else { std::ptr::null_mut() };
+            status(libc::sendfile(number(0)? as i32, number(1)? as i32, spot, number(4)? as usize) as i64)
+        },
+        "copy_file_range" => {
+            let (mut from, mut to) = (number(4)?, number(6)?);
+            let from_at = if number(3)? != 0 { &mut from as *mut i64 } else { std::ptr::null_mut() };
+            let to_at = if number(5)? != 0 { &mut to as *mut i64 } else { std::ptr::null_mut() };
+            status(libc::copy_file_range(number(0)? as i32, from_at, number(1)? as i32, to_at, number(2)? as usize, 0) as i64)
+        },
+        // Extended attributes: verb 0 get, 1 set, 2 list, 3 remove; kind 0 path, 1 path without following links, 2 descriptor.
+        "xattr" => {
+            let (verb, kind, flags) = (number(0)?, number(4)?, number(5)? as i32);
+            let target = if kind == 2 { None } else { Some(pathname(1)?) };
+            let fd = if kind == 2 { number(1)? as i32 } else { -1 };
+            let name = if verb == 2 { CString::default() } else { CString::new(raw(&a[2])?).map_err(|_| "ValueError: embedded null byte".to_owned())? };
+            let value = if verb == 1 { raw(&a[3])? } else { Vec::new() };
+            let once = |room: *mut libc::c_void, size: usize| -> isize {
+                let path = target.as_ref().map_or(std::ptr::null(), |t| t.as_ptr());
+                let list = room as *mut libc::c_char;
+                match (verb, kind) {
+                    (0, 0) => libc::getxattr(path, name.as_ptr(), room, size),
+                    (0, 1) => libc::lgetxattr(path, name.as_ptr(), room, size),
+                    (0, _) => libc::fgetxattr(fd, name.as_ptr(), room, size),
+                    (1, 0) => libc::setxattr(path, name.as_ptr(), value.as_ptr().cast(), value.len(), flags) as isize,
+                    (1, 1) => libc::lsetxattr(path, name.as_ptr(), value.as_ptr().cast(), value.len(), flags) as isize,
+                    (1, _) => libc::fsetxattr(fd, name.as_ptr(), value.as_ptr().cast(), value.len(), flags) as isize,
+                    (2, 0) => libc::listxattr(path, list, size),
+                    (2, 1) => libc::llistxattr(path, list, size),
+                    (2, _) => libc::flistxattr(fd, list, size),
+                    (_, 0) => libc::removexattr(path, name.as_ptr()) as isize,
+                    (_, 1) => libc::lremovexattr(path, name.as_ptr()) as isize,
+                    (_, _) => libc::fremovexattr(fd, name.as_ptr()) as isize,
+                }
+            };
+            if verb == 0 || verb == 2 {
+                loop {
+                    let need = once(std::ptr::null_mut(), 0);
+                    if need < 0 { break Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)); }
+                    let mut data = vec![0u8; need as usize + 1];
+                    let got = once(data.as_mut_ptr().cast(), data.len());
+                    if got >= 0 { data.truncate(got as usize); break Ok(bytes(data)); }
+                    let fault = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+                    if fault != libc::ERANGE { break Err(fault); }
+                }
+            } else {
+                status(once(std::ptr::null_mut(), 0) as i64)
+            }
+        },
         "chdir" => { let p = pathname(0)?; status(libc::chdir(p.as_ptr()) as i64) },
         "fchdir" => status(libc::fchdir(number(0)? as i32) as i64),
         "mkdir" => { let p = pathname(0)?; status(libc::mkdirat(number(2)? as i32, p.as_ptr(), number(1)? as libc::mode_t) as i64) },
@@ -448,6 +498,34 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
             let mut descriptors = [-1; 2];
             status(libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) as i64)
                 .map(|_| Value::tuple(descriptors.into_iter().map(|fd| Value::Small(fd as i64)).collect()))
+        },
+        "tcgetattr" => {
+            let mut mode = std::mem::zeroed::<libc::termios>();
+            status(libc::tcgetattr(number(0)? as i32, &mut mode) as i64).map(|_| Value::tuple(vec![
+                Value::Small(mode.c_iflag as i64), Value::Small(mode.c_oflag as i64), Value::Small(mode.c_cflag as i64), Value::Small(mode.c_lflag as i64),
+                Value::Small(libc::cfgetispeed(&mode) as i64), Value::Small(libc::cfgetospeed(&mode) as i64), bytes(mode.c_cc.to_vec())]))
+        },
+        "tcsetattr" => {
+            let fd = number(0)? as i32;
+            let mut mode = std::mem::zeroed::<libc::termios>();
+            if libc::tcgetattr(fd, &mut mode) < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) } else {
+                mode.c_iflag = number(2)? as libc::tcflag_t; mode.c_oflag = number(3)? as libc::tcflag_t;
+                mode.c_cflag = number(4)? as libc::tcflag_t; mode.c_lflag = number(5)? as libc::tcflag_t;
+                for (slot, byte) in mode.c_cc.iter_mut().zip(raw(&a[8])?) { *slot = byte; }
+                if libc::cfsetispeed(&mut mode, number(6)? as libc::speed_t) < 0 || libc::cfsetospeed(&mut mode, number(7)? as libc::speed_t) < 0 {
+                    Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO))
+                } else { status(libc::tcsetattr(fd, number(1)? as i32, &mode) as i64) }
+            }
+        },
+        "tcflow" => {
+            let fd = number(0)? as i32;
+            let arg = number(2)? as i32;
+            match number(1)? {
+                0 => status(libc::tcsendbreak(fd, arg) as i64),
+                1 => status(libc::tcdrain(fd) as i64),
+                2 => status(libc::tcflush(fd, arg) as i64),
+                _ => status(libc::tcflow(fd, arg) as i64),
+            }
         },
         "isatty" => Ok(Value::Flag(libc::isatty(number(0)? as i32) != 0)),
         "urandom" => {

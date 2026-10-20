@@ -127,7 +127,7 @@ impl<'a> Machine<'a> {
         let mut global = std::collections::BTreeSet::new();
         let mut attributes = std::collections::BTreeSet::new();
         let mut returns_none = true;
-        fn walk(node: &Form, global: &mut std::collections::BTreeSet<String>, attributes: &mut std::collections::BTreeSet<String>, returns_none: &mut bool, builtins: &HashMap<String, Prim>, member: Option<&str>) {
+        fn walk(node: &Form, global: &mut std::collections::BTreeSet<String>, attributes: &mut std::collections::BTreeSet<String>, returns_none: &mut bool, builtins: &HashMap<String, Prim, crate::table::FxBuildHasher>, member: Option<&str>) {
             // Only the fallback's outer call implements the member lookup; its arguments remain ordinary expressions.
             if let Form::Apply(Callee::Prim(Prim::Choose, _), branches) = node {
                 if let Some(Form::Apply(Callee::Prim(Prim::HasMember, _), operands)) = branches.first() {
@@ -212,9 +212,32 @@ impl<'a> Machine<'a> {
 
     pub(super) fn native_stack_bound(&self, routine: &Routine) -> i64 {
         if let Some(bound) = routine.stack_bound { return bound; }
-        let mut listing = Vec::new();
-        routine.body.instruction_listing(&mut 0, (0, u32::MAX, u32::MAX, u32::MAX), &mut listing);
-        // Each node retains at most its argument row and one result.
-        listing.len().saturating_mul(2).saturating_add(1) as i64
+        fn retained(node: &Form) -> usize {
+            match node {
+                Form::Const(Value::Routine(body)) if body.frameless => retained(&body.body),
+                Form::Apply(Callee::Prim(Prim::Seq | Prim::Choose | Prim::Both | Prim::Either, _), _) =>
+                    image_children(node).into_iter().map(retained).max().unwrap_or(1),
+                Form::Apply(callee, values) => {
+                    let mut peak = 1;
+                    for (saved, value) in values.iter().enumerate() {
+                        peak = peak.max(saved.saturating_add(retained(value)));
+                    }
+                    if let Callee::Code(target) = callee { peak = peak.max(values.len().saturating_add(retained(target))); }
+                    peak.max(values.len().saturating_add(1))
+                }
+                Form::Class { values, .. } | Form::SharePlace(_, values) => {
+                    values.iter().enumerate().map(|(held, item)| held.saturating_add(retained(item)))
+                        .max().unwrap_or(1).max(values.len())
+                }
+                Form::Dyad { a, b, .. } => {
+                    let input = |part: &Input| match part { Input::Form(child) => retained(child), _ => 1 };
+                    input(a).max(input(b).saturating_add(1))
+                }
+                Form::ForgetWithin(left, right) | Form::TieCalled(left, right) | Form::CallWrite(left, right) =>
+                    retained(left).max(retained(right).saturating_add(1)),
+                _ => image_children(node).into_iter().map(retained).max().unwrap_or(1),
+            }
+        }
+        retained(&routine.body) as i64
     }
 }

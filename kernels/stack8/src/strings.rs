@@ -479,6 +479,9 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             let mut start = 0; let mut end = codes.len();
             if op != Rstrip { while start < end && discarded(codes[start]) { start += 1; } }
             if op != Lstrip { while end > start && discarded(codes[end - 1]) { end -= 1; } }
+            // Nothing taken off leaves the very row of code points; a
+            // row that lost a unit is a row of its own.
+            if start == 0 && end == codes.len() { return Ok(args[0].clone()); }
             return Ok(Value::from_codes(codes[start..end].to_vec()));
         }
         if matches!(op, Count | Find | Rfind | Index | Rindex | Startswith | Endswith) {
@@ -682,7 +685,10 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
         Strip | Lstrip | Rstrip => {
             let chars=match params.first() {None|Some(Value::Null)=>None,Some(v)=>Some(text(v,lang)?)};
             let trim=|c: char| chars.map_or_else(|| white(c), |set| set.contains(c));
-            Value::text(match op {Strip=>s.trim_matches(trim),Lstrip=>s.trim_start_matches(trim),_=>s.trim_end_matches(trim)})
+            let kept=match op {Strip=>s.trim_matches(trim),Lstrip=>s.trim_start_matches(trim),_=>s.trim_end_matches(trim)};
+            // With nothing taken off, the exact kind hands the very
+            // text it was given back out; a shortened text is a new one.
+            if kept.len()==s.len() {args[0].clone()} else {Value::text(kept)}
         }
         Split | Rsplit => {
             let limit=number(1,-1)?; let cap=if limit<0 {usize::MAX} else {limit as usize};

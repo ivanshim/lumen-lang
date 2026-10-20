@@ -13,6 +13,21 @@ class _Sentinel:
 DEFAULT = _Sentinel('DEFAULT')
 
 
+class _AnythingEqual:
+    # Equal to whatever it is set beside, so one argument of a recorded
+    # call can be left out of the comparison.
+    def __eq__(self, other):
+        return True
+
+    def __ne__(self, other):
+        return False
+
+    def __repr__(self):
+        return '<ANY>'
+
+ANY = _AnythingEqual()
+
+
 def _spec_names(spec):
     # A spec narrows the names a stand-in answers. A list or tuple
     # gives those names as it stands; anything else gives them as the
@@ -159,8 +174,11 @@ class Mock:
         if self.return_value is DEFAULT:
             if self._mock_wraps is not None:
                 return self._mock_wraps(*args, **kwargs)
-            self.return_value = type(self)(name='()')
+            self.return_value = self._mock_fresh()
         return self.return_value
+
+    def _mock_fresh(self):
+        return type(self)(name='()')
 
     def reset_mock(self):
         self.called = False
@@ -233,6 +251,19 @@ _MAGIC_ANSWERS = {
 }
 
 
+# The item operations answer with a MagicMock when nothing has said
+# otherwise, so what comes out of one can be indexed and sliced again.
+_MAGIC_ITEMS = (['__getitem__', '__setitem__', '__delitem__', '__neg__', '__pos__', '__abs__', '__invert__']
+                + ['__' + word + '__' for word in _MAGIC_NUMERICS]
+                + ['__i' + word + '__' for word in _MAGIC_NUMERICS]
+                + ['__r' + word + '__' for word in _MAGIC_NUMERICS])
+
+
+class _MagicItem(Mock):
+    def _mock_fresh(self):
+        return MagicMock(name='()')
+
+
 class MagicMock(Mock):
     # A stand-in that also answers the operations the reader reaches
     # through double-underscore names. Each of those is a stand-in of
@@ -242,13 +273,12 @@ class MagicMock(Mock):
     # class and never on the thing itself, so the methods below stand on
     # the class and pass the work to the stand-in kept beside them.
     #
-    # Only the names this reader asks an object for are here. The
-    # arithmetic ones, the asynchronous ones and the rest the reference
-    # carries are not, so a MagicMock added to a number is refused
-    # rather than answering with a stand-in.
-    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None):
+    # The item, unary and arithmetic names are given to the class
+    # below from one list; the asynchronous ones and the rest the
+    # reference carries are not here.
+    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None, spec=None):
         self._magic = {}
-        Mock.__init__(self, name, return_value, side_effect, wraps)
+        Mock.__init__(self, name, return_value, side_effect, wraps, spec)
         for word in _MAGIC_ANSWERS:
             child = Mock(name=word)
             child.return_value = _MAGIC_ANSWERS[word]
@@ -307,6 +337,21 @@ class MagicMock(Mock):
         return self._magic['__exit__'](kind, value, traceback)
 
 
+def _forwarder(word):
+    # Made on first use: a stand-in for each of forty names on every
+    # MagicMock would cost far more than any test asks of them. A test
+    # that wants a different answer puts its own on the name.
+    def method(self, /, *args):
+        slot = self._magic.get(word)
+        if slot is None:
+            slot = self._magic[word] = _MagicItem(name=word)
+        return slot(*args)
+    return method
+
+for _word in _MAGIC_ITEMS:
+    setattr(MagicMock, _word, _forwarder(_word))
+
+
 def _is_module(target):
     import types
     return isinstance(target, types.ModuleType)
@@ -315,6 +360,37 @@ def _is_module(target):
 def _builtin_names():
     import builtins
     return frozenset(name for name in dir(builtins) if not name.startswith('_'))
+
+
+class _Autospec:
+    # A stand-in for a patched function. It binds like a function when
+    # it sits on a class, so the instance reaches the mock as the first
+    # argument. Names it does not have are the mock's own.
+    # Calls are not checked against the replaced signature.
+    def __init__(self, mock):
+        self._mock = mock
+
+    def __call__(self, *args, **kwargs):
+        return self._mock(*args, **kwargs)
+
+    def __get__(self, instance, owner=None):
+        if instance is None:
+            return self
+        stand = self
+        def bound(*args, **kwargs):
+            return stand(instance, *args, **kwargs)
+        return bound
+
+    def __getattr__(self, name):
+        if name[:1] == '_':
+            raise AttributeError(name)
+        return getattr(self._mock, name)
+
+    def __setattr__(self, name, value):
+        if name[:1] == '_':
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._mock, name, value)
 
 
 class _Patch:
@@ -330,6 +406,7 @@ class _Patch:
         self.default_factory = default_factory
         self.temporary = None
         self.held = DEFAULT
+        self.local = False
 
     def start(self):
         create = self.create
@@ -338,7 +415,16 @@ class _Patch:
             import types as _types_mod
             if self.attribute in vars(_builtins_mod) and isinstance(self.target, _types_mod.ModuleType):
                 create = True
-        if hasattr(self.target, self.attribute):
+        # Keep local descriptors intact for restoration, and distinguish an
+        # inherited attribute from an override that must be put back.
+        try:
+            attributes = vars(self.target)
+        except TypeError:
+            attributes = {}
+        self.local = self.attribute in attributes
+        if self.local:
+            self.held = attributes[self.attribute]
+        elif hasattr(self.target, self.attribute):
             self.held = getattr(self.target, self.attribute)
         elif not create:
             raise AttributeError('the target has no attribute ' + repr(self.attribute))
@@ -351,17 +437,34 @@ class _Patch:
                     options['name'] = self.attribute
                 self.temporary = self.new_callable(**options)
             else:
-                self.temporary = self.default_factory(name=self.attribute, **self.made)
+                options = dict(self.made)
+                autospec = options.pop('autospec', None)
+                self.temporary = self.default_factory(name=self.attribute, **options)
+                if autospec:
+                    original = self.held if autospec is True else autospec
+                    import types
+                    if isinstance(self.target, type) and autospec is True:
+                        # Inspect the defining class without invoking descriptors.
+                        for base in self.target.__mro__:
+                            if self.attribute in vars(base):
+                                original = vars(base)[self.attribute]
+                                break
+                    if isinstance(original, types.FunctionType):
+                        self.temporary = _Autospec(self.temporary)
         else:
             self.temporary = self.new
         setattr(self.target, self.attribute, self.temporary)
         return self.temporary
 
     def stop(self):
-        if self.held is DEFAULT:
-            delattr(self.target, self.attribute)
-        else:
+        if self.local:
             setattr(self.target, self.attribute, self.held)
+        else:
+            delattr(self.target, self.attribute)
+            # Slot-backed attributes have no local dictionary entry to restore.
+            if (self.held is not DEFAULT and not self.create
+                    and not hasattr(self.target, self.attribute)):
+                setattr(self.target, self.attribute, self.held)
         self.temporary = None
 
     def __enter__(self):
@@ -438,7 +541,7 @@ class _MultiplePatch:
         return False
 
 
-_TAKEN = ('wraps', 'return_value', 'side_effect', 'spec')
+_TAKEN = ('wraps', 'return_value', 'side_effect', 'spec', 'autospec')
 
 # A dotted name is split at its last dot: what comes before is a chain
 # of modules and, where a plain attribute lookup does not reach that

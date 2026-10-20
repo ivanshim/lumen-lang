@@ -36,8 +36,10 @@
     "io": "runtime_adapters/io.py",
     "importlib.metadata": "runtime_adapters/metadata.py",
     "importlib.resources._common": "runtime_adapters/resources.py",
+    "pathlib": "runtime_adapters/pathlib.py",
     "_py_abc": "runtime_adapters/_py_abc.py",
     "marshal": "runtime_adapters/marshal.py",
+    "gettext": "runtime_adapters/gettext.py",
     "test.encoded_modules": "runtime_adapters/encoded_modules.py"
   },
   "data": {

@@ -40,7 +40,14 @@ impl Layout<'_> {
             let required = if inserts[1] == "an integer or a unicode character" { "an int or a unicode character" } else { inserts[1] };
             return format!("TypeError: %c requires {}, not {}", required, inserts[2]);
         }
-        if self.table.flag("ext.op.arithmetic.python_numbers") && matches!(label, "ext.op.rem.format.number" | "ext.op.rem.format.real") && inserts.len() == 3 {
+        if self.table.flag("ext.op.arithmetic.python_numbers") {
+            match (label, inserts) {
+                ("ext.op.rem.format.character.range", [_, maximum]) => return format!("OverflowError: %c arg not in range({maximum})"),
+                ("ext.op.rem.format.real", [_, _, kind]) => return format!("TypeError: float argument required, not {}", kind.rsplit('.').next().unwrap_or(kind)),
+                _ => {}
+            }
+        }
+        if self.table.flag("ext.op.arithmetic.python_numbers") && label == "ext.op.rem.format.number" && inserts.len() == 3 {
             let kind = inserts[2].rsplit('.').next().unwrap_or(inserts[2]);
             return format!("TypeError: %{} format: a real number is required, not {}", inserts[1], kind);
         }
@@ -283,6 +290,7 @@ impl Layout<'_> {
         // stays with the tens and everything else takes the general
         // form. Text has no such presentation and says so. The
         // grouping belongs to the locale, so none may stand beside it.
+        let locale_number = self.table.flag("ext.op.arithmetic.python_numbers") && shape.letter == Some('n');
         if shape.letter == Some('n') {
             if shape.separator.is_some() || shape.fraction_separator.is_some() { return Err(self.invalid()); }
             if !matches!(item, Value::Text(_)) {
@@ -354,6 +362,7 @@ impl Layout<'_> {
             }
             if shape.zero && shape.justify.is_none() { shape.justify = Some('='); }
             digits = shape.grouped(digits, front.len(), if radix == 10 { 3 } else { 4 });
+            if locale_number { digits = spell_with_locale(&digits, shape.zero_fit(front.len())); }
             return Ok(shape.padded(front, digits, '>'));
         }
         if shape.letter.map_or(false, |c| !"eEfFgG%".contains(c)) { return Err(unknown()); }
@@ -364,7 +373,8 @@ impl Layout<'_> {
         let body = shape.real_digits(number.abs());
         let nought = shape.no_minus_zero && body.trim_end_matches('%').parse::<f64>().ok() == Some(0.0);
         let prefix = shape.front(number.is_sign_negative() && !number.is_nan() && !nought);
-        let body = if number.is_finite() { shape.grouped(body, prefix.len(), 3) } else { body };
+        let mut body = if number.is_finite() { shape.grouped(body, prefix.len(), 3) } else { body };
+        if locale_number { body = spell_with_locale(&body, shape.zero_fit(prefix.len())); }
         Ok(shape.padded(prefix, body, '>'))
     }
 
@@ -747,9 +757,24 @@ impl Layout<'_> {
         let value = &supplied[*used];
         *used += 1;
         match value {
-            Value::Flag(_) | Value::Small(_) | Value::Huge(_) => value.as_big()?.to_i64()
-                .filter(|n| measure != "width" || (-1_000_000..=1_000_000).contains(n))
-                .ok_or_else(|| self.complain("ext.op.rem.format.star.big", &[&used.to_string(), measure])),
+            Value::Flag(_) | Value::Small(_) | Value::Huge(_) => {
+                let amount = value.as_big()?.to_i64()
+                    .ok_or_else(|| self.complain("ext.op.rem.format.star.big", &[&used.to_string(), measure]))?;
+                if measure == "width" {
+                    // A negative width that overflows C negation contributes no padding.
+                    if self.table.flag("ext.op.arithmetic.python_numbers") && amount.checked_abs().is_none() {
+                        return Ok(0);
+                    }
+                    // A full signed-size field leaves no room for the terminator.
+                    if self.table.flag("ext.op.arithmetic.python_numbers") && amount.unsigned_abs() >= (usize::MAX >> 1) as u64 {
+                        return Err(String::from("MemoryError: "));
+                    }
+                    if !(-1_000_000..=1_000_000).contains(&amount) {
+                        return Err(self.complain("ext.op.rem.format.star.big", &[&used.to_string(), measure]));
+                    }
+                }
+                Ok(amount)
+            },
             _ => Err(self.complain("ext.op.rem.format.star", &[&used.to_string(), self.typename(value)])),
         }
     }
@@ -774,6 +799,10 @@ impl Presentation {
     fn new() -> Self {
         Self { padding: ' ', justify: None, polarity: None, alternative: false, zero: false, no_minus_zero: false,
             extent: 0, digits: None, separator: None, fraction_separator: None, letter: None }
+    }
+
+    fn zero_fit(&self, front: usize) -> Option<(usize, usize)> {
+        if self.justify == Some('=') && self.padding == '0' { Some((front, self.extent)) } else { None }
     }
 
     fn front(&self, below: bool) -> String {
@@ -888,6 +917,98 @@ fn long_real_digits(value: f64, wanted: usize, exponent: bool) -> String {
 
 /// The two real parts of a worth that keeps them, and nothing at all
 /// for a worth that does not.
+
+fn spell_with_locale(body: &str, fit: Option<(usize, usize)>) -> String {
+    let (mark, gap, pattern) = crate::exec::numeric_marks();
+    fn bunch(digits: &str, gap: &str, pattern: &[i64]) -> String {
+        if pattern.is_empty() || digits.is_empty() { return digits.to_string(); }
+        let bytes = digits.as_bytes();
+        if !bytes.last().copied().unwrap_or(0).is_ascii_digit() { return digits.to_string(); }
+        let mut pending = digits;
+        let mut chunks = Vec::new();
+        let mut seen = 0usize;
+        let mut prior = 0i64;
+        let mut forever = false;
+        while !pending.is_empty() {
+            let width = if forever {
+                prior
+            } else if seen >= pattern.len() {
+                break;
+            } else {
+                let step = pattern[seen];
+                seen += 1;
+                if step == 127 { break; }
+                if step == 0 {
+                    if prior <= 0 { break; }
+                    forever = true;
+                    prior
+                } else {
+                    prior = step;
+                    step
+                }
+            };
+            if width <= 0 { break; }
+            if !pending.as_bytes()[pending.len() - 1].is_ascii_digit() { break; }
+            let take = (width as usize).min(pending.len());
+            let cut = pending.len() - take;
+            if pending[cut..].bytes().any(|byte| !byte.is_ascii_digit()) { break; }
+            chunks.push(&pending[cut..]);
+            pending = &pending[..cut];
+        }
+        if chunks.is_empty() { return digits.to_string(); }
+        if !pending.is_empty() { chunks.push(pending); }
+        chunks.reverse();
+        chunks.join(gap)
+    }
+    let (mantissa, power) = detach_exponent(body);
+    let mut written;
+    let (whole, fraction) = match mantissa.split_once('.') {
+        Some((a, b)) => (a, Some(b)),
+        None => (mantissa, None),
+    };
+    written = bunch(whole, &gap, &pattern);
+    if let Some((front, extent)) = fit {
+        if !whole.is_empty() && whole.bytes().all(|item| item.is_ascii_digit()) {
+            // The zero fill belongs to the digits, so the groups run over it.
+            let after = fraction.map_or(0, |b| mark.chars().count() + b.chars().count()) + power.chars().count();
+            let mut padded = whole.to_owned();
+            while front + written.chars().count() + after < extent {
+                padded.insert(0, '0');
+                written = bunch(&padded, &gap, &pattern);
+            }
+        }
+    }
+    if let Some(b) = fraction {
+        written.push_str(&mark);
+        written.push_str(b);
+    }
+    written.push_str(power);
+    written
+}
+
+fn detach_exponent(body: &str) -> (&str, &str) {
+    let bytes = body.as_bytes();
+    let mut cursor = bytes.len();
+    while cursor > 0 {
+        cursor -= 1;
+        let byte = bytes[cursor];
+        if byte == b'e' || byte == b'E' {
+            let mut rest = &body[cursor + 1..];
+            if let Some(stripped) = rest.strip_prefix('+').or_else(|| rest.strip_prefix('-')) {
+                rest = stripped;
+            }
+            if !rest.is_empty() && rest.bytes().all(|item| item.is_ascii_digit()) {
+                return (&body[..cursor], &body[cursor..]);
+            }
+            return (body, "");
+        }
+        if !byte.is_ascii_digit() && byte != b'+' && byte != b'-' && byte != b'.' {
+            return (body, "");
+        }
+    }
+    (body, "")
+}
+
 fn complex_parts(item: &Value) -> Option<(f64, f64)> {
     match item {
         Value::Complex(pair) => Some((pair.0, pair.1)),

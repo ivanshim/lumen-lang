@@ -5,6 +5,7 @@ import operator
 import sys
 from builtins import _buffer_view
 _memory = __bytes_memory__
+_memory_cursor = __pickle_buffer_native__
 
 DEFAULT_BUFFER_SIZE = 128 * 1024
 BlockingIOError = BlockingIOError
@@ -26,6 +27,8 @@ def text_encoding(encoding, stacklevel=2):
 def _index(value):
     if type(value) is int:
         return value
+    if type(value) is bool:
+        return int(value)
     if not hasattr(type(value), '__index__'):
         raise TypeError("'" + type(value).__name__ + "' object cannot be interpreted as an integer")
     return operator.index(value)
@@ -269,7 +272,12 @@ class BytesIO(_BufferedIOBase):
         if hasattr(self, '_data'):
             if _export(self._data, True):
                 raise BufferError('Existing exports of data: object cannot be re-sized')
-        self._data = bytearray() if initial_bytes is None else bytearray(_buffer(initial_bytes))
+        if initial_bytes is None:
+            self._data = bytearray()
+        elif type(initial_bytes) is bytes:
+            self._data = bytearray(initial_bytes)
+        else:
+            self._data = bytearray(_buffer(initial_bytes))
         self._pos = 0
         self._closed = False
     def _check_exports(self):
@@ -298,18 +306,10 @@ class BytesIO(_BufferedIOBase):
     writable = readable
     seekable = readable
     def read(self, size=-1):
-        if type(size) is int:
-            result, self._pos = _memory(self._data, self._pos, size, self._closed, 0)
-            return result
-        size = _size(size)
-        if self._closed:
-            raise ValueError('I/O operation on closed file')
-        end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
-        if end <= self._pos:
-            return b''
-        result = bytes(self._data[self._pos:end])
-        self._pos = end
-        return result
+        data = _memory_cursor(6, self, size)
+        if data is None:
+            data = _memory_cursor(6, self, _size(size))
+        return data
     read1 = read
     def readinto(self, buffer):
         if type(buffer) is bytearray:
@@ -328,31 +328,14 @@ class BytesIO(_BufferedIOBase):
         if type(size) is int:
             result, self._pos = _memory(self._data, self._pos, size, self._closed, 1)
             return result
-        size = _size(size)
-        if self._closed:
-            raise ValueError('I/O operation on closed file')
-        end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
-        start = self._pos
-        if end <= start:
-            return b''
-        at = self._data.find(b'\n', start, end)
-        if at >= 0:
-            end = at + 1
-        data = bytes(self._data[start:end])
-        self._pos = end
-        return data
+        data = _memory_cursor(8, self, size)
+        if data is None:
+            data = _memory_cursor(8, self, _size(size))
+        return data or b''
     def write(self, b):
-        # Immutable exact bytes need no temporary export or snapshot.
-        if type(b) is bytes:
-            n, self._pos = _memory(self._data, self._pos, b, self._closed, 2)
-            return n
-        kind = type(b)
-        if kind is bytes or kind is bytearray:
-            if self._closed:
-                raise ValueError('I/O operation on closed file')
-            if _export(self._data, True):
-                raise BufferError('Existing exports of data: object cannot be re-sized')
-            return self._store(b)
+        stored = _memory_cursor(7, self, b)
+        if stored is not None:
+            return stored
         with _get_buffer(b) as view:
             if not view.c_contiguous:
                 raise BufferError('memoryview: underlying buffer is not C-contiguous')
@@ -362,16 +345,7 @@ class BytesIO(_BufferedIOBase):
                 raise BufferError('Existing exports of data: object cannot be re-sized')
             return self._store(view.tobytes())
     def _store(self, data):
-        n = len(data)
-        if not n:
-            return 0
-        if self._pos > sys.maxsize - n:
-            raise OverflowError('new position too large')
-        if self._pos > len(self._data):
-            self._data.extend(b'\0' * (self._pos - len(self._data)))
-        self._data[self._pos:self._pos + n] = data
-        self._pos += n
-        return n
+        return _memory_cursor(7, self, data)
     def seek(self, pos, whence=0):
         if type(pos) is not int or pos > _MAXSIZE or pos < _MINSIZE:
             pos = _ssize(pos)
@@ -810,6 +784,14 @@ class TextIOWrapper(_TextIOBase):
         buffer = self._buffer
         if buffer is None or not self._initialized:
             self._unattached()
+        kind = type(buffer)
+        if kind is BufferedWriter or kind is BufferedReader or kind is BufferedRandom:
+            impl = buffer._live
+            if impl is not None:
+                checked = impl.raw
+                if not checked._owned:
+                    return True
+                return checked.raw._closed if checked._plain else checked.raw.closed
         return buffer.closed
     def _writeflush(self):
         pending = self._pending
@@ -849,7 +831,7 @@ class TextIOWrapper(_TextIOBase):
         data = encoder.encode(text)
         if not isinstance(data, bytes):
             raise TypeError("encoder should return a bytes object, not '%s'" % type(data).__name__)
-        chunk = self._CHUNK_SIZE
+        chunk = self._chunk_size
         # A write that would take the waiting data past a chunk sends what
         # waits first, and goes again in case that call wrote something.
         while self._pending and self._pending_count + len(data) > chunk:
@@ -899,17 +881,18 @@ class TextIOWrapper(_TextIOBase):
             self._unattached()
         return buffer.seekable()
     def flush(self):
-        if self._buffer is None or not self._initialized:
+        buffer = self._buffer
+        if buffer is None or not self._initialized:
             self._unattached()
         if self._pending:
             self._writeflush()
-        function = _TEXT.get('flush') or _text_function('flush')
-        return function(self)
+        # The reference flushes the buffer and then marks telling possible.
+        buffer.flush()
+        self._telling = self._seekable
     # Close the backing stream even when finalization warning lookup fails.
     def close(self):
         if self._buffer is None or not self._initialized:
             self._unattached()
-        function = _TEXT.get('close') or _text_function('close')
         attached = self._buffer
         try:
             if self._finalizing and not attached.closed:
@@ -918,7 +901,14 @@ class TextIOWrapper(_TextIOBase):
                     warn(self)
         finally:
             try:
-                result = function(self)
+                # The reference's own close: flush, then close the buffer,
+                # unless there is none or it is closed already.
+                result = None
+                if self.buffer is not None and not self.closed:
+                    try:
+                        self.flush()
+                    finally:
+                        self.buffer.close()
             except Exception:
                 # A buffer detached inside its closed check needs no closure.
                 if attached is not None and self._buffer is None and self._initialized:
@@ -1073,8 +1063,10 @@ class FileIO(_RawIOBase):
                         raise ValueError('opener returned ' + str(fd))
                 owned = True
                 os.set_inheritable(fd, False)
+            # The C code asks the system directly, so a replaced os.fstat is not seen here.
+            import posix
             try:
-                file_mode = os.fstat(fd).st_mode
+                file_mode = posix.fstat(fd).st_mode
             except OSError as exc:
                 if exc.errno == 9:
                     raise
@@ -1105,6 +1097,8 @@ class FileIO(_RawIOBase):
             raise
     def _init_named(self, file, plan):
         # The common case of __init__: a path given as text, a plain mode.
+        # Match the general initializer: raw descriptor checks bypass replaceable os wrappers.
+        import posix
         global _finalizer_warnings, _finalizer_collector, _finalizer_os
         os = _finalizer_os
         if os is None:
@@ -1124,7 +1118,7 @@ class FileIO(_RawIOBase):
         try:
             fd = os.open(file, flags, 438)
             try:
-                file_mode = os.fstat(fd).st_mode
+                file_mode = posix.fstat(fd).st_mode
             except OSError as exc:
                 if exc.errno == 9:
                     raise
@@ -1203,9 +1197,9 @@ class FileIO(_RawIOBase):
 
     @property
     def _blksize(self):
-        import os
+        import posix
         try:
-            st = os.fstat(self._fd)
+            st = posix.fstat(self._fd)
         except OSError:
             return DEFAULT_BUFFER_SIZE
         blksize = getattr(st, 'st_blksize', 0)
@@ -1458,9 +1452,10 @@ def _buffered_impl(kind):
             def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
                 base.__init__(self, raw, buffer_size)
                 self.raw = raw
-                if hasattr(self, '_read_lock'):
+                held = vars(self)
+                if '_read_lock' in held:
                     self._read_lock = _BufferedLock()
-                if hasattr(self, '_write_lock'):
+                if '_write_lock' in held:
                     self._write_lock = _BufferedLock()
             @property
             def closed(self):
@@ -1474,6 +1469,16 @@ def _buffered_impl(kind):
                 result = base.detach(self)
                 self.raw = None
                 return result
+        if kind == 'BufferedReader':
+            # Retain the consumed prefix of small refills for backward seeks.
+            def _read_unlocked(self, size):
+                result = base._read_unlocked(self, size)
+                if size is not None and 0 < size <= self.buffer_size and result and self._read_pos == 0:
+                    unread = len(self._read_buf)
+                    self._read_buf = (result + self._read_buf)[-self.buffer_size:]
+                    self._read_pos = len(self._read_buf) - unread
+                return result
+            _Impl._read_unlocked = _read_unlocked
         impl = _IMPLS[kind] = _Impl
     return impl
 
@@ -1489,7 +1494,7 @@ class BufferedReader(_BufferedIOBase):
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
         self._initialize(_buffered_impl('BufferedReader'), raw, buffer_size)
     def _initialize(self, factory, raw, size):
-        previous = getattr(self, '_implementation', None)
+        previous = self.__dict__.get('_implementation')
         if previous is not None and previous.raw is not None:
             previous.raw._owned = False
         self._live = None
@@ -1570,6 +1575,17 @@ class BufferedReader(_BufferedIOBase):
         impl = self._live
         if impl is None:
             impl = self._impl
+        impl._checkClosed('read of closed file')
+        # A read the buffer already holds is answered here, the way the
+        # reference's fast path answers it, without the lock and the
+        # refill road: only for the plain reader, whose read does not
+        # flush first.
+        if type(self) is BufferedReader and type(size) is int and size >= 0 and not impl._read_lock._held:
+            held = impl._read_buf
+            at = impl._read_pos
+            if size <= len(held) - at:
+                impl._read_pos = at + size
+                return held[at:at + size]
         return impl.read(size)
     def read1(self, size=-1):
         impl = self._live
@@ -1585,7 +1601,12 @@ class BufferedReader(_BufferedIOBase):
         impl = self._live
         if impl is None:
             impl = self._impl
-        return impl.closed
+            return impl.closed
+        # The checked raw's own answer, read without its property call.
+        checked = impl.raw
+        if not checked._owned:
+            return True
+        return checked.raw._closed if checked._plain else checked.raw.closed
     def _dealloc_warn(self, source):
         raw = getattr(self, '_raw', None)
         warn = getattr(raw, '_dealloc_warn', None)
@@ -1607,25 +1628,41 @@ class BufferedReader(_BufferedIOBase):
         if impl is None:
             impl = self._impl
         return impl.flush()
+    # The reference's reader answers readable and seekable with the raw
+    # stream's own answer, so a usable stream asks the raw stream directly;
+    # writable is the base answer unless the kind says otherwise.
     def readable(self):
-        impl = self._live
-        if impl is None:
-            impl = self._impl
-        return impl.readable()
+        if self._live is None:
+            return self._impl.readable()
+        return self._raw.readable()
     def writable(self):
         impl = self._live
         if impl is None:
             impl = self._impl
         return impl.writable()
     def seekable(self):
-        impl = self._live
-        if impl is None:
-            impl = self._impl
-        return impl.seekable()
+        if self._live is None:
+            return self._impl.seekable()
+        return self._raw.seekable()
     def seek(self, pos, whence=0):
         impl = self._live
         if impl is None:
             impl = self._impl
+        # Keep buffered bytes when a read-only stream seeks within them.
+        if type(self) is BufferedReader and type(pos) is int and type(whence) is int and whence in (0, 1):
+            impl._checkClosed('seek of closed file')
+            with impl._read_lock:
+                if impl.raw.seekable():
+                    try:
+                        end = impl.raw.tell()
+                    except (OSError, ValueError):
+                        end = None
+                    if type(end) is int and end >= 0:
+                        start = end - len(impl._read_buf)
+                        target = pos if whence == 0 else start + impl._read_pos + pos
+                        if 0 <= start <= target <= end:
+                            impl._read_pos = target - start
+                            return target
         return impl.seek(pos, whence)
     def tell(self):
         impl = self._live
@@ -1653,16 +1690,50 @@ class BufferedReader(_BufferedIOBase):
 class BufferedWriter(BufferedReader):
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
         self._initialize(_buffered_impl('BufferedWriter'), raw, buffer_size)
+    # The reference's writer answers writable with the raw stream's own
+    # answer and readable with the base answer.
+    def readable(self):
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.readable()
+    def writable(self):
+        if self._live is None:
+            return self._impl.writable()
+        return self._raw.writable()
 
 class BufferedRandom(BufferedReader):
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
         self._initialize(_buffered_impl('BufferedRandom'), raw, buffer_size)
+    writable = BufferedWriter.writable
 
 class BufferedRWPair(BufferedReader):
     def __init__(self, reader, writer, buffer_size=DEFAULT_BUFFER_SIZE):
         _pyio = _text_runtime()
         self._implementation = _pyio.BufferedRWPair(reader, writer, buffer_size)
         self._live = self._implementation
+    # A pair has no single checked raw stream: its implementation answers.
+    def readable(self):
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.readable()
+    def writable(self):
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.writable()
+    def seekable(self):
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.seekable()
+    @property
+    def closed(self):
+        impl = self._live
+        if impl is None:
+            impl = self._impl
+        return impl.closed
     # Forward resource warnings to each actual raw stream of the pair.
     def _dealloc_warn(self, source):
         implementation = getattr(self, '_implementation', None)

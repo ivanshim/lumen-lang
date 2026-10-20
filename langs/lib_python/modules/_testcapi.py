@@ -1,16 +1,17 @@
 # Runtime bridges for the supported interpreter configuration and display APIs.
 import os
+import sys
+
+# Expose the signed size limit used by native sequence lengths.
+PY_SSIZE_T_MAX = sys.maxsize
+from _code_metadata import _debug_ranges_enabled
 
 # Read the debug-range setting that the kernels use for position records.
 def config_get(name):
     if name != 'code_debug_ranges':
         raise NotImplementedError('this interpreter configuration field is unavailable')
-    setting = os.environ.get('PYTHONNODEBUGRANGES', '0')
-    try:
-        disabled = int(setting or '0') != 0
-    except ValueError:
-        disabled = False
-    return not disabled
+    return _debug_ranges_enabled()
+
 
 # Display an actual exception through the standard formatter and stderr policy.
 def exception_print(exception):

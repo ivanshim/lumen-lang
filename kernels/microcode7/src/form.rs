@@ -416,6 +416,7 @@ pub enum Prim {
     TraceBridge,
     NativeFrame,
     HeapNative,
+    DequeNative,
     ContextStore,
     AllocationTrace,
     WarningOperation(u8),
@@ -682,8 +683,10 @@ pub enum Form {
     /// An operation of two operands, evaluated without a vector
     /// of arguments.
     Dyad { op: Prim, name: Rc<str>, a: Input, b: Input },
-    /// `x = x + k`, the binding stepped in place.
-    Bump { slot: Address, by: i64 },
+    /// `x = x + k`, or `x += k` when `inplace` is set. A plain integer
+    /// steps either way. Anything else uses ordinary addition, or the
+    /// in-place method when the write asked for one.
+    Bump { slot: Address, by: i64, inplace: bool },
     /// A class declaration: what is known while building, and a value
     /// for each property, kept value and constant the plan names.
     Class { plan: Rc<Plan>, values: Vec<Form> },
@@ -1040,11 +1043,53 @@ impl Form {
         *next += 1;
         if let Self::OnLine(row, _, _) = self { coordinates = (*row, u32::MAX, u32::MAX, u32::MAX); }
         if let Self::Located(bounds, _, _) = self { coordinates = *bounds; }
-        let display = format!("{self:?}");
-        let tag = if matches!(self, Self::Apply(Callee::Prim(Prim::Choose, _), _)) { "Choose" } else { display.split(['(', ' ', '{']).next().unwrap_or("") };
+        // Formatting a whole form would recursively visit captured namespaces.
+        let tag = match self {
+            Self::Apply(Callee::Prim(Prim::Choose, _), _) => "Choose",
+            Self::Fits { .. } => "Fits",
+            Self::Const(..) => "Const",
+            Self::Read(..) => "Read",
+            Self::RemoveName(..) => "RemoveName",
+            Self::Take(..) => "Take",
+            Self::Release(..) => "Release",
+            Self::Glance(..) => "Glance",
+            Self::Write(..) => "Write",
+            Self::Apply(..) => "Apply",
+            Self::Cycle { .. } => "Cycle",
+            Self::Dyad { .. } => "Dyad",
+            Self::Bump { .. } => "Bump",
+            Self::Class { .. } => "Class",
+            Self::Again => "Again",
+            Self::Assert { .. } => "Assert",
+            Self::Attempt { .. } => "Attempt",
+            Self::Missing(..) => "Missing",
+            Self::OnLine(..) => "OnLine",
+            Self::Located(..) => "Located",
+            Self::Share(..) => "Share",
+            Self::Tie(..) => "Tie",
+            Self::ShareItem(..) => "ShareItem",
+            Self::SharePlace(..) => "SharePlace",
+            Self::ShareField(..) => "ShareField",
+            Self::ShareOwn(..) => "ShareOwn",
+            Self::ShareCalled(..) => "ShareCalled",
+            Self::ShareWithin(..) => "ShareWithin",
+            Self::ForgetWithin(..) => "ForgetWithin",
+            Self::ForgetCalled(..) => "ForgetCalled",
+            Self::ReadyCalled(..) => "ReadyCalled",
+            Self::TieCalled(..) => "TieCalled",
+            Self::Forget(..) => "Forget",
+            Self::Ready(..) => "Ready",
+            Self::Muted(..) => "Muted",
+            Self::Silenced(..) => "Silenced",
+            Self::Called(..) => "Called",
+            Self::CallWrite(..) => "CallWrite",
+            Self::Remark(..) => "Remark",
+            Self::CellOrSaid(..) => "CellOrSaid",
+            Self::HeldEither(..) => "HeldEither",
+        };
         let branches = matches!(self, Self::Cycle { .. } | Self::Apply(Callee::Prim(Prim::Choose, _), _));
         output.push(Value::tuple(vec![Value::Small(*next as i64), Value::text(tag), Value::Nil, Value::Flag(branches),
-            Value::tuple([coordinates.0, coordinates.1, coordinates.2, coordinates.3].into_iter().map(|number| if number == u32::MAX { Value::Nil } else { Value::Small(number as i64) }).collect())]));
+            Value::tuple([coordinates.0, coordinates.2, coordinates.1, coordinates.3].into_iter().map(|number| if number == u32::MAX { Value::Nil } else { Value::Small(number as i64) }).collect())]));
         match self {
             Self::Located(_, _, inner) | Self::OnLine(_, _, inner) => {
                 inner.instruction_listing(next, coordinates, output);

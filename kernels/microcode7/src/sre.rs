@@ -404,7 +404,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
         let point = u32::try_from(integer(&input[1])?).map_err(|_| String::from("OverflowError: Python int too large to convert to C unsigned long"))?;
         return Ok(Value::text(&crate::unicode::decomposition(point)));
     }
-    if !matches!(action, 0 | 7 | 8) {
+    if !matches!(action, 0 | 7 | 8 | 13) {
         let value = u32::try_from(integer(&input[1])?).map_err(|_| String::from("OverflowError: Python int too large to convert to C unsigned long"))?;
         return match action {
             1 | 2 => Ok(Value::Small(folded(value, action == 1) as i64)),
@@ -412,7 +412,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
             _ => Ok(Value::Flag(has_property(value, 16))),
         };
     }
-    let required = if action == 7 { 6 } else { 8 };
+    let required = match action { 13 => 7, 7 => 6, _ => 8 };
     if input.len() != required { return Err(String::from("TypeError: invalid SRE matcher argument count")); }
     let Value::Vector(raw) = &input[1] else { return Err(String::from("TypeError: SRE code must be a list")); };
     let program: Vec<u32> = raw.iter().map(|v| integer(v).and_then(|n| u32::try_from(n).map_err(|_| String::from("OverflowError: regular expression code size limit exceeded")))).collect::<Result<_, _>>()?;
@@ -424,8 +424,8 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
     let skip_empty = action == 0 && integer(&input[7])? != 0;
     if begin > limit { return Ok(if action == 7 { vector(Vec::new()) } else { Value::Nil }); }
     let regex = Regex { program: &program, subject: &subject, limit };
-    if matches!(action, 7 | 8) {
-        let permitted = if action == 8 { integer(&input[6])? } else { 0 };
+    if matches!(action, 7 | 8 | 13) {
+        let permitted = if action == 7 { 0 } else { integer(&input[6])? };
         let inserted = if action == 8 { input[7].character_numbers().ok_or_else(|| String::from("TypeError: replacement must be text"))? } else { vec![] };
         let mut output = Vec::new();
         let mut until = begin;
@@ -457,6 +457,14 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
                 output.extend_from_slice(&inserted);
                 until = result.offset;
                 replacements += 1;
+            } else if action == 13 {
+                // Keep separators' captures after the preceding substring.
+                rows.push(Value::characters(subject[until..scan].to_vec()));
+                rows.extend(result.captures.chunks_exact(2).map(|span| {
+                    if span[0] == -1 { Value::Nil } else { slice(span) }
+                }));
+                until = result.offset;
+                replacements += 1;
             } else {
             let item = if groups == 0 {
                 Value::characters(subject[scan..result.offset].to_vec())
@@ -471,6 +479,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
             output.extend_from_slice(&subject[until..limit]);
             return Ok(Value::tuple(vec![Value::characters(output), Value::Small(replacements)]));
         }
+        if action == 13 { rows.push(Value::characters(subject[until..limit].to_vec())); }
         return Ok(vector(rows));
     }
     let mut position = begin;

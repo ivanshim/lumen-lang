@@ -143,16 +143,25 @@ thread_local! {
     static LIBRARY_SURVEYS: std::cell::RefCell<std::collections::BTreeMap<String, (SurveyRows, SourceRows)>> = std::cell::RefCell::new(std::collections::BTreeMap::new());
 }
 
+// The surveys live under the definition's JSON in its one canonical form,
+// whatever spelling registered them: the newest registration of a
+// definition stands for it.
 pub fn register_prepared(definition: &str, rows: SurveyRows, sources: SourceRows) {
     let Ok(object) = serde_json::from_str::<serde_json::Value>(definition) else { return; };
     LIBRARY_SURVEYS.with(|library| { library.borrow_mut().insert(object.to_string(), (rows, sources)); });
 }
 
+// A text already in the canonical form is the key itself and needs no
+// reading; another spelling is read and written out canonically first.
 pub(crate) fn library_rows(definition: &str) -> Option<(SurveyRows, SourceRows)> {
-    match serde_json::from_str::<serde_json::Value>(definition) {
-        Ok(object) => LIBRARY_SURVEYS.with(|library| library.borrow().get(&object.to_string()).cloned()),
-        Err(_) => None,
-    }
+    LIBRARY_SURVEYS.with(|library| {
+        let library = library.borrow();
+        if let Some(rows) = library.get(definition) { return Some(*rows); }
+        match serde_json::from_str::<serde_json::Value>(definition) {
+            Ok(object) => library.get(&object.to_string()).copied(),
+            Err(_) => None,
+        }
+    })
 }
 
 fn input_proof(input: &[Token]) -> Vec<u8> {
@@ -180,9 +189,26 @@ fn input_proof(input: &[Token]) -> Vec<u8> {
 
 fn take_number(remaining: &mut &[u8]) -> Option<u64> {
     let header = remaining.get(..8)?;
-    let value = u64::from_le_bytes(header.try_into().ok()?);
+    let mut value = 0u64;
+    let mut place = 8;
+    while place > 0 { place -= 1; value = value << 8 | u64::from(header[place]); }
     *remaining = &remaining[8..];
     Some(value)
+}
+
+// The seven numbers that close a token's record, taken together.
+fn take_numbers(remaining: &mut &[u8]) -> Option<[u64; 7]> {
+    let block = remaining.get(..56)?;
+    let mut numbers = [0u64; 7];
+    let mut which = 0;
+    while which < 7 {
+        let from = which * 8;
+        numbers[which] = u64::from(block[from]) | u64::from(block[from + 1]) << 8 | u64::from(block[from + 2]) << 16 | u64::from(block[from + 3]) << 24
+            | u64::from(block[from + 4]) << 32 | u64::from(block[from + 5]) << 40 | u64::from(block[from + 6]) << 48 | u64::from(block[from + 7]) << 56;
+        which += 1;
+    }
+    *remaining = &remaining[56..];
+    Some(numbers)
 }
 
 fn take_word(remaining: &mut &[u8]) -> Option<String> {
@@ -207,26 +233,32 @@ fn read_token_proof(mut remaining: &[u8]) -> Option<Vec<Token>> {
         let kind = kinds.get(usize::from(take_byte(&mut remaining)?)).copied()?;
         let said = take_word(&mut remaining)?;
         let written = if take_byte(&mut remaining)? == 0 { None } else { Some(take_word(&mut remaining)?) };
-        let span = usize::try_from(take_number(&mut remaining)?).ok()?;
-        let row = u32::try_from(take_number(&mut remaining)?).ok()?;
-        let column = usize::try_from(take_number(&mut remaining)?).ok()?;
-        let end_column = usize::try_from(take_number(&mut remaining)?).ok()?;
-        let end_row = u32::try_from(take_number(&mut remaining)?).ok()?;
-        let utf8_column = usize::try_from(take_number(&mut remaining)?).ok()?;
-        let utf8_end = usize::try_from(take_number(&mut remaining)?).ok()?;
-        output.push(Token { shape: kind, lexeme: said, raw: written, span, row, column, end_column, end_row, utf8_column, utf8_end });
+        let [span, row, column, end_column, end_row, utf8_column, utf8_end] = take_numbers(&mut remaining)?;
+        let fits = |number: u64| (number as usize) as u64 == number;
+        if row > u64::from(u32::MAX) || end_row > u64::from(u32::MAX) || ![span, column, end_column, utf8_column, utf8_end].into_iter().all(fits) { return None; }
+        output.push(Token { shape: kind, lexeme: said, raw: written, span: span as usize, row: row as u32, column: column as usize, end_column: end_column as usize, end_row: end_row as u32, utf8_column: utf8_column as usize, utf8_end: utf8_end as usize });
     }
     if remaining.is_empty() { Some(output) } else { None }
 }
 
+thread_local! {
+    // The survey row of the bundled text whose tokens were last handed out, and
+    // the row a module build now under way may take its survey from.
+    static TOKENS_FROM_ROW: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static SURVEY_ROW: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
 pub(crate) fn library_tokens(source: &str, table: &Table) -> Option<Vec<Token>> {
+    TOKENS_FROM_ROW.with(|last| last.set(None));
     if table.single("ext.lexical.prologue.brief.setting").is_some() { return None; }
     let requested = source_key(source);
     for &(key, encoded_source, row) in table.library_token_sources? {
         if key != requested { continue; }
         if unpack_library_proof(encoded_source)?.as_slice() != source.as_bytes() { continue; }
         let (_, proof, _) = table.library_surveys?.get(row)?;
-        return read_token_proof(&unpack_library_proof(proof)?);
+        let tokens = read_token_proof(&unpack_library_proof(proof)?)?;
+        TOKENS_FROM_ROW.with(|last| last.set(Some(row)));
+        return Some(tokens);
     }
     None
 }
@@ -269,6 +301,12 @@ fn unpack_library_proof(packed: &'static [u8]) -> Option<Rc<Vec<u8>>> {
 
 fn library_survey(input: &[Token], table: &Table) -> Option<LibrarySurvey> {
     let rows = table.library_surveys?;
+    // Tokens read back from a bundled row are that row's own, so its survey
+    // is taken as it stands rather than matched against a rewritten proof.
+    if let Some(row) = SURVEY_ROW.with(|held| held.take()) {
+        let (_, _, encoded) = rows.get(row)?;
+        return serde_json::from_slice(&unpack_library_proof(encoded)?).ok();
+    }
     let proof = input_proof(input);
     let sought = input_key(&proof);
     let (_, _, encoded) = rows.iter().find(|(key, fingerprint, _)| *key == sought && unpack_library_proof(fingerprint).as_deref().map(Vec::as_slice) == Some(proof.as_slice()))?;
@@ -596,6 +634,8 @@ impl<'a> CompileWords<'a> {
 
 pub struct Builder<'a> {
     grammar: &'a CompileWords<'a>,
+    stripped_docs: HashSet<usize>,
+    optimize: i64,
     indexes_globals: bool,
     global_positions: HashMap<String, (usize, usize), FxBuildHasher>,
     globals_indexed: usize,
@@ -689,7 +729,6 @@ pub struct Builder<'a> {
     /// The optimization level the reading runs under: below one keeps
     /// docstrings, assertions and `__debug__` as written; one drops
     /// assertions and settles `__debug__` false; two drops docstrings.
-    optimize: i64,
     /// How many layers stood open before a word of this text was read.
     /// A statement is at the top of what was handed over when no more
     /// than these are open, whatever stands around them elsewhere.
@@ -932,8 +971,10 @@ pub fn build_module_position(tokens: &[Token], table: &Table, seeded: &[String],
     let line = std::cell::Cell::new(0);
     let fatal = std::cell::Cell::new(false);
     let span = std::cell::Cell::new((1, 1, 0));
-    build_marking(tokens, table, seeded, HashMap::new(), false, 0, Some(origin), beside, named, Some((&line, &fatal, &span)), None, None, false, false, 0, &[], 0)
-        .map_err(|message| (message, line.get(), span.get()))
+    SURVEY_ROW.with(|held| held.set(TOKENS_FROM_ROW.with(|last| last.take())));
+    let built = build_marking(tokens, table, seeded, HashMap::new(), false, 0, Some(origin), beside, named, Some((&line, &fatal, &span)), None, None, false, false, 0, &[], 0);
+    SURVEY_ROW.with(|held| held.set(None));
+    built.map_err(|message| (message, line.get(), span.get()))
 }
 
 pub fn build_from_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32)> {
@@ -1209,7 +1250,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         }
     }
     let grammar = CompileWords::of(table);
-    let mut r = Builder { image_settings: i64::from(value_only) | (i64::from(interactive) << 1) | (i64::from(allow_top_await) << 2) | (settle.clamp(0, 2) << 8), grammar: &grammar, origin_content: Rc::new(std::cell::OnceCell::new()), indexes_globals, global_positions, globals_indexed, lexical_origin: Rc::new(if survey { Vec::new() } else { tokens.to_vec() }), annotation_lookup: false, class_annotation_read: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, finally_loop_bases: Vec::new(), in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, first_adornment: None, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, member_temps: Vec::new(), gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
+    let mut r = Builder { stripped_docs: HashSet::new(), image_settings: i64::from(value_only) | (i64::from(interactive) << 1) | (i64::from(allow_top_await) << 2) | (settle.clamp(0, 2) << 8), grammar: &grammar, origin_content: Rc::new(std::cell::OnceCell::new()), indexes_globals, global_positions, globals_indexed, lexical_origin: Rc::new(if survey { Vec::new() } else { tokens.to_vec() }), annotation_lookup: false, class_annotation_read: false, annotation_owner: None, generic_class_body: false, generic_class_parameters: Vec::new(), annotations_as_strings: future_bits & 0x1000000 != 0, future_bits, barry_as_flufl: future_bits & 0x400000 != 0, syntax_try_nesting: 0, finally_nesting: 0, finally_loop_bases: Vec::new(), in_lazy_from: false, module_site_flags: HashMap::new(), module_sites: Vec::new(), annotation_sites: Vec::new(), starred_annotations: Vec::new(), unpack_annotation_starts: std::collections::HashSet::new(), declarations: Vec::new(), class_met: Vec::new(), importing: false, asynchronous: false, in_coroutine: false, coroutine_next: false, pattern_kinds: Vec::new(), warnings: Vec::new(), loop_depth: 0, except_star_bases: Vec::new(), range_end: None, kind_mark: None, surveyed: words.clone(), survey, class_bindings: Vec::new(), default_depth: None, class_globals: Vec::new(), under_way: Vec::new(), receiver: None, outside_lambda: Vec::new(), within: standing_in, bags: HashMap::new(), shared_args, arg_names, gives_back, stopped_fatally: false, declared_at: 0, first_adornment: None, carrying: Vec::new(), pending_types: Vec::new(), documentation_statement: None, noted_when_read: Vec::new(), table, forks: Vec::new(), tokens, original_words, pos: 0, layers, read_in, interactive, optimize: settle, outer_layers, spoken_for: Vec::new(), gensyms: 0, member_temps: Vec::new(), gather_names: Vec::new(), gather_targets: Vec::new(), gather_sources: 0, named_blocked: false, named_value: false, string_sum_right: false, presumed: assumed, seen: HashMap::new(), strict, statics: Vec::new(), also_property: Vec::new(), before, past_library: false, named_in_program: shadowed.to_vec(), native_exports: exports.clone(), written_in, globe, born, framed_in, waiting: None, stepping: None, stood: None, stands: None, naming: Vec::new(), named_afresh: Vec::new(), named_before: 0, giving_cells: Vec::new(), formal_kinds: Vec::new(), taking: None,
         generator_seen: false,
         top_coroutine: false,
         reading_yield: false, forbids_await: false, place_depth: 0,
@@ -1270,8 +1311,19 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
         let mut stmts = Vec::new();
         let mut ahead = Vec::new();
         let mut opening = true;
+        let mut preceding: Option<(u32, usize)> = None;
+        let mut after_compound = false;
         r.skip_line_ends();
         while !r.exhausted() {
+            let extra_statement = preceding.filter(|(row, _)| interactive && r.look().row > *row);
+            if !after_compound {
+                if let Some((row, end)) = extra_statement {
+                    if let Some((line, _, bounds)) = mark { line.set(row); bounds.set((end, end + 1, row)); }
+                    return Err(String::from("SyntaxError: multiple statements found while compiling a single statement"));
+                }
+            }
+            after_compound = ["if", "for", "while", "try", "with", "def", "class", "async", "@"].contains(&r.look().lexeme.as_str());
+            let start_of_statement = r.pos;
             let defines = table.flag("ext.stmt.function.hoisted") && r.key("stmt.function");
             let own_line = r.look().row > before;
             if opening && own_line && before != 0 && within.is_none() && !read_in && !survey
@@ -1297,6 +1349,13 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
                     return Err(said);
                 }
             };
+            if let Some((row, end)) = extra_statement {
+                if let Some((line, _, bounds)) = mark {
+                    line.set(row);
+                    bounds.set((end, end + 1, row));
+                }
+                return Err(String::from("SyntaxError: multiple statements found while compiling a single statement"));
+            }
             // Text standing alone as the first statement of a program
             // is the program's own documentation, kept under the name
             // the language gives it (ext.system.module.doc).
@@ -1315,11 +1374,16 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
                     }
                 }
             }
+            let omitted_doc = opening && own_line && r.optimize == 2 && matches!(&stmt, Form::OnLine(_, _, inner) if matches!(inner.as_ref(), Form::Const(Value::Text(_))));
             if own_line { opening = false; }
+            if omitted_doc { r.skip_line_ends(); continue; }
             if defines {
                 ahead.push(stmt);
             } else if !opening_text || (r.optimize < 2 && !table.has_any("ext.stmt.class.builder")) {
                 stmts.push(stmt);
+            }
+            if let Some(end) = r.tokens[start_of_statement..r.pos].iter().rev().find(|part| !matches!(part.shape, Shape::Lead | Shape::Open | Shape::Close | Shape::LineEnd | Shape::Finish)) {
+                preceding = Some((end.end_row.max(end.row), end.end_column.max(end.column + end.lexeme.chars().count())));
             }
             r.skip_line_ends();
         }
@@ -1367,7 +1431,7 @@ fn build_survey(tokens: &[Token], table: &Table, seeded: &[String], assumed: Has
     };
     let mut body = body;
     if r.table.strings("ext.builtin.exceptions.traceback").len() > 26 { body.number_instructions(&mut 0); }
-    let mut root_literals = vec![Value::Nil];
+    let mut root_literals = Vec::new();
     let mut root_names = Vec::new();
     let mut suspended = false;
     inspect_form(&body, &[], &mut root_literals, &mut root_names, &mut suspended);
@@ -2342,6 +2406,9 @@ impl<'a> Builder<'a> {
     }
 
     fn read(&mut self, name: &str) -> Form {
+        if name == "__debug__" && self.table.has_any("ext.builtin.compile.modes") {
+            return constant(Value::Flag(self.optimize == 0));
+        }
         let type_wrapper = self.layers.last().is_some_and(|scope| !scope.type_names.is_empty()
             && !scope.idents.iter().any(|own| own == name));
         if self.annotation_lookup {
@@ -2355,6 +2422,12 @@ impl<'a> Builder<'a> {
             if self.annotation_lookup && !parameter && !name.starts_with('#') && (!self.class_annotation_read || entries.iter().any(|entry| entry == name)) {
                 let only_global = entries.iter().any(|entry| entry == name);
                 let class = class.clone();
+                for enclosing in self.under_way.iter_mut().rev() {
+                    if enclosing.completed_class.ident.as_ref() == class {
+                        enclosing.class_cell_protocol |= name == "__class__";
+                        break;
+                    }
+                }
                 let live = self.under_way.iter().rev().find(|body| body.completed_class.ident.as_ref() == class).and_then(|body| body.book.clone());
                 let receiver = Form::Glance(self.address_to_read(&class));
                 let outside = self.routine("<annotation fallback>", Holds::Every, Traps::Naught, Vec::new(), 0, |b| {
@@ -2487,7 +2560,7 @@ impl<'a> Builder<'a> {
             if let (Input::Address(read), Input::Const(Value::Small(k))) = (a, b) {
                 if read.ident == slot.ident && read.up == slot.up && read.at == slot.at && read.fallback == slot.fallback {
                     let by = if *op == Prim::Minus { -*k } else { *k };
-                    return Form::Bump { slot, by };
+                    return Form::Bump { slot, by, inplace: false };
                 }
             }
         }
@@ -2535,8 +2608,10 @@ impl<'a> Builder<'a> {
             doc.get_or_insert_with(String::new).push_str(&token.lexeme);
             finish += 1;
         }
-        let literal_statement = !expression_body && finish > start && self.tokens.get(finish).is_some_and(|token| matches!(token.shape, Shape::LineEnd | Shape::Finish | Shape::Close) || token.lexeme == ";");
-        if self.optimize >= 2 || !literal_statement { doc = None; }
+        let complete_literal = self.tokens.get(finish).is_some_and(|t| matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || self.table.separates(&t.lexeme));
+        let literal_statement = !expression_body && finish > start && complete_literal;
+        if !literal_statement { doc = None; }
+        if self.optimize == 2 && doc.is_some() { self.stripped_docs.insert(start); doc = None; }
         if self.grammar.has_any_ext_stmt_class_builder { doc = doc.map(|value| settle_doc_indentation(&value)); }
         let qualification=self.full_name_of(name);
         let taking = self.taking.take();
@@ -3087,6 +3162,9 @@ impl<'a> Builder<'a> {
     /// A branch: `if(test, «then», «otherwise»)`, the arms program values
     /// that own no names, so the chosen one runs in the frame around it.
     fn choose(&mut self, test: Form, then: Form, otherwise: Form) -> Form {
+        if self.table.has_any("ext.builtin.compile.modes") {
+            if let Some(answer) = literal_boolean(&test) { return if answer { then } else { otherwise }; }
+        }
         let wrap = |name: &str, body: Form| {
             let program = Routine { globals_rebound: false, code_description: Default::default(), compilation_entry: (self.pos, self.before, self.future_bits | self.image_settings), encoded_body: None, encoded_handlers: None,  display_names: Default::default(), definition: None, immediate_slots: None, body_boundary: self.pos, origin_content: self.origin_content.clone(), lexical_origin: self.lexical_origin.clone(), class_namespace: None, annotation_is_text: false, annotation_spelling: None, annotation_protocol: false, reads_annotation: false, annotator: None, literals: Vec::new(), referenced: Vec::new(), locals: Vec::new(), cells: Vec::new(), flags: 0, future_bits: self.future_bits, lineless: false, locations: None, stack_bound: None, qualification: String::new(), doc: None, generator: false, local_defaults: Vec::new(), gather_from: None, ident: name.to_string(), least: 0, formals: Vec::new(), formal_kinds: Vec::new(), taking: None, formal_slots: Vec::new(), idents: Vec::new(), reaching: Vec::new(), frameless: true, written_in: self.written_in.clone(), within: None, declared_on: 0, type_params: Vec::new(), globe: self.globe.clone(), born: self.born.clone(), framed_in: self.framed_in.clone(), traps: Traps::Naught, carried: Vec::new(), body };
             constant(Value::Routine(Rc::new(program)))
@@ -3115,6 +3193,9 @@ impl<'a> Builder<'a> {
             self.skip_line_ends();
             if self.key("stmt.else") { self.advance(); Some(Box::new(self.body()?)) } else { None }
         } else { None };
+        if self.table.has_any("ext.builtin.compile.modes") && literal_boolean(&test) == Some(false) {
+            return Ok(otherwise.map(|body| *body).unwrap_or_else(|| constant(Value::Nil)));
+        }
         Ok(Form::Cycle { test: Box::new(test), body: Box::new(body), step, after: false, otherwise })
     }
 
@@ -3425,6 +3506,10 @@ impl<'a> Builder<'a> {
     }
 
     fn stmt(&mut self) -> Res<Form> {
+        if self.stripped_docs.remove(&self.pos) {
+            while self.look().shape == Shape::Quote { self.advance(); }
+            return Ok(constant(Value::Nil));
+        }
         if let Some(problem) = self.type_scope_fault() { return Err(problem); }
         let opened = self.pos;
         self.warnings_in_statement(opened);
@@ -3809,8 +3894,16 @@ impl<'a> Builder<'a> {
             self.past_library = true;
         }
         if self.tells_place && self.look().row > self.before {
-            let row = tree_row(self.look().row - self.before, self.look().column);
-            let while_loop = self.grammar.has_any_ext_builtin_trace_native && self.key("stmt.while");
+            let mut token = self.look();
+            if self.table.has_any("ext.builtin.trace_native") {
+                let mut ahead = 0;
+                while token.lexeme == "(" && self.glance(ahead + 1).lexeme != ")" {
+                    ahead += 1;
+                    token = self.glance(ahead);
+                }
+            }
+            let row = tree_row(token.row.saturating_sub(self.before), token.column);
+            let while_loop = self.table.has_any("ext.builtin.trace_native") && self.key("stmt.while");
             let made = self.plain_or_kind()?;
             return Ok(if while_loop { made } else { Form::OnLine(row, 0, Box::new(made)) });
         }
@@ -3910,7 +4003,30 @@ impl<'a> Builder<'a> {
             whole = prim_call(Prim::TupleJoined, vec![whole, portion]);
             if !self.on_any("ext.op.tuple") { break; }
         }
-        Ok(if self.grammar.has_any_ext_builtin_tuple { prim_call(Prim::Tupling, vec![whole]) } else { whole })
+        Ok(if self.table.has_any("ext.builtin.tuple") { self.literal_tuple(whole) } else { whole })
+    }
+
+    fn folded_pair(&self, action: Prim, left: Form, right: Form) -> Form {
+        if self.table.has_any("ext.builtin.compile.modes") {
+            let plain = |form: &Form| match form { Form::Const(value) => Some(value.clone()), _ => None };
+            if let (Some(a), Some(b)) = (plain(&left), plain(&right)) {
+                let calc = match action { Prim::Plus => Some(math::Calc::Plus), Prim::Minus => Some(math::Calc::Minus), Prim::Times => Some(math::Calc::Times), _ => None };
+                let bounded = action != Prim::Times || ![&a, &b].iter().any(|v| matches!(v, Value::Huge(n) if n.bits() > 64));
+                if let Some(calc) = calc.filter(|_| bounded) {
+                    if let Some(Ok(value)) = math::binary_work(calc, &a, &b).or_else(|| math::compute(calc, &a, &b)) {
+                        return constant(at_language_width(value, self.table));
+                    }
+                }
+            }
+        }
+        prim_call(action, vec![left, right])
+    }
+
+    fn literal_tuple(&self, body: Form) -> Form {
+        if self.table.has_any("ext.builtin.compile.modes") {
+            if let Some(items) = tuple_literals(&body) { return constant(Value::tuple(items)); }
+        }
+        prim_call(Prim::Tupling, vec![body])
     }
 
     fn comma_tail(&mut self, first: Form) -> Res<Form> {
@@ -3928,7 +4044,7 @@ impl<'a> Builder<'a> {
             value = prim_call(Prim::TupleJoined, vec![value, segment]);
             if !self.on_any("ext.op.tuple") { break; }
         }
-        Ok(if self.grammar.has_any_ext_builtin_tuple { prim_call(Prim::Tupling, vec![value]) } else { value })
+        Ok(if self.table.has_any("ext.builtin.tuple") { self.literal_tuple(value) } else { value })
     }
 
     fn plain_or_kind(&mut self) -> Res<Form> {
@@ -4297,7 +4413,7 @@ impl<'a> Builder<'a> {
                 // has no cell, the value itself is the answer, as such a
                 // language does rather than stopping.
                 let by_cell = self.giving_cells.last().copied().unwrap_or(false);
-                let value = if self.on_stmt_end() || self.exhausted() || self.on_any("block.close") || self.look().shape == Shape::Close {
+                let value = if self.on_stmt_end() || self.exhausted() || self.look().shape == Shape::Close || self.on_any("block.close") {
                     Vec::new()
                 } else if by_cell {
                     vec![self.a_shared_cell(&self.grammar.strings_ext_op_reference_unshared_given.to_vec(), true, None)?]
@@ -4791,7 +4907,7 @@ impl<'a> Builder<'a> {
                 let entered = self.gensym("entered");
                 steps.push(Form::Write(entered.clone(), Box::new(value)));
                 if table.flag("ext.syntax.call.bind_names") { steps.push(Form::Release(manager)); }
-                value = if table.flag("ext.syntax.call.bind_names") { Form::Take(entered) } else { Form::Read(entered) };
+                value = if table.flag("ext.syntax.call.bind_names") { Form::Release(entered) } else { Form::Read(entered) };
                 contexts.push((steps.len(), watched, bounds));
             }
             if self.key("ext.stmt.with.as") {
@@ -5094,7 +5210,7 @@ impl<'a> Builder<'a> {
                         self.move_past();
                     } else {
                         if self.on_any("op.pipe") && self.glance(1).lexeme == self.look().lexeme && self.glance(2).lexeme == self.look().lexeme {
-                            self.advance(); self.advance(); self.advance();
+                            self.move_past(); self.advance(); self.advance();
                             indices.push(constant(Value::Nil));
                             special = true;
                         } else { indices.push(self.expr(0)?); }
@@ -9356,6 +9472,13 @@ impl<'a> Builder<'a> {
         let mut depth: Vec<String> = Vec::new();
         let mut cuts = Vec::new();
         let t = self.table;
+        // The bracket families are asked for once, not once for every
+        // sign met on the way.
+        let brackets: Vec<(&str, Option<&str>)> = [
+            ("syntax.group.open", "syntax.group.close"),
+            ("syntax.array.open", "syntax.array.close"),
+            ("syntax.map.open", "syntax.map.close"),
+        ].iter().filter_map(|(open, close)| t.single(open).map(|open| (open, t.single(close)))).collect();
         for i in start..limit {
             let word = &self.tokens[i];
             if depth.is_empty() {
@@ -9369,9 +9492,9 @@ impl<'a> Builder<'a> {
                     depth.pop();
                     continue;
                 }
-                for family in ["syntax.group", "syntax.array", "syntax.map"] {
-                    if t.single(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
-                        if let Some(close) = t.single(&format!("{}.close", family)) { depth.push(close.to_string()); }
+                for (open, close) in &brackets {
+                    if *open == word.lexeme.as_str() {
+                        if let Some(close) = close { depth.push(close.to_string()); }
                         break;
                     }
                 }
@@ -10111,6 +10234,26 @@ impl<'a> Builder<'a> {
 
     fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
         let target_start = self.pos.saturating_sub(2);
+        match expr {
+            Form::Located(span, number, inner) => {
+                let store = self.write_into(*inner, gives_back, compound, assign)?;
+                return Ok(Form::Located(span, number, Box::new(store)));
+            }
+            Form::OnLine(row, number, inner) => {
+                let store = self.write_into(*inner, gives_back, compound, assign)?;
+                return Ok(Form::OnLine(row, number, Box::new(store)));
+            }
+            _ => {}
+        }
+        if compound.is_none() && !self.in_class_body() && !self.under_way.is_empty() {
+            let mut target = &expr;
+            while let Form::Located(_, _, inner) | Form::OnLine(_, _, inner) = target { target = inner; }
+            if let Form::Apply(Callee::Prim(Prim::Of, _), operands) = target {
+                if let [Form::Read(receiver), Form::Const(Value::Text(member))] = operands.as_slice() {
+                    if receiver.ident.as_ref() == "self" { self.parts().self_writes.insert(member.to_string()); }
+                }
+            }
+        }
         let compound = compound.map(|op| {
             if self.grammar.has_any_ext_builtin_bytes && matches!(op, Prim::Plus | Prim::Times) { Prim::OctetAssign(op == Prim::Times) }
             else { op }
@@ -10275,6 +10418,24 @@ impl<'a> Builder<'a> {
             // x op= e is x = x op e.
             Form::Read(slot) => match compound {
                 Some(op) => {
+                    // A positive whole step of a bare name is applied
+                    // in place. An integer moves by that many; anything
+                    // else is still asked for the compound method.
+                    if self.stood.is_none() && self.stands.is_none() {
+                        if let Prim::Landing(place) = op {
+                            if let Form::Const(Value::Small(step)) = &value {
+                                if *step > 0 && (place == 0 || place == 1) {
+                                    let by = if place == 1 { -*step } else { *step };
+                                    self.unmet_last_read(&slot.ident);
+                                    return Ok(Form::Bump {
+                                        slot: self.address_to_write(&slot.ident),
+                                        by,
+                                        inplace: true,
+                                    });
+                                }
+                            }
+                        }
+                    }
                     // x op= e is x = x op e, and yet the name is only
                     // ever written by it, as the reference counts it.
                     let current = self.read(&slot.ident);
@@ -10952,7 +11113,11 @@ impl<'a> Builder<'a> {
                 // The right side is a program, run only when the left leaves it open.
                 Prim::Both | Prim::Either => {
                     let lazy = self.limb(Traps::Naught, |r| r.expr(floor_right))?;
-                    prim_call(op.prim, vec![left, lazy])
+                    match literal_boolean(&left).filter(|_| self.table.has_any("ext.builtin.compile.modes")) {
+                        Some(truth) if truth == matches!(op.prim, Prim::Either) => left,
+                        Some(_) => lazy,
+                        None => prim_call(op.prim, vec![left, lazy]),
+                    }
                 }
                 other => {
                     let string_sum = matches!(op.prim, Prim::Plus | Prim::Minus) && self.pos - consumed == origin + 1 && matches!(self.tokens[origin].shape, Shape::Quote | Shape::ByteQuote);
@@ -10983,7 +11148,7 @@ impl<'a> Builder<'a> {
                             let operand = if self.grammar.has_any_ext_stmt_class_special { Form::Release(by) } else { Form::Read(by) };
                             sequence(vec![set, prim_call(other, vec![now, operand])])
                         }
-                        None => prim_call(other, vec![left, right]),
+                        None => self.folded_pair(other, left, right),
                     }
                 }
             };
@@ -11044,7 +11209,10 @@ impl<'a> Builder<'a> {
     /// side is the cell this link filled, so no middle is read twice.
     fn comparison_tail(&mut self, near: Address, operation: Prim, level: u32, words: usize) -> Res<Form> {
         for _ in 0..words { self.advance(); }
-        let side = self.expr(level + 1)?;
+        let mut side = self.expr(level + 1)?;
+        if self.table.has_any("ext.builtin.compile.modes") && matches!(operation, Prim::Contains | Prim::Absent) {
+            if let Some(set) = frozen_display(&side, self.table) { side = constant(set); }
+        }
         let far = self.gensym("next");
         let put = Form::Write(far.clone(), Box::new(side));
         let test = prim_call(operation, vec![Form::Read(near), Form::Read(far.clone())]);
@@ -11348,6 +11516,13 @@ impl<'a> Builder<'a> {
             if let Some(op) = table.monadic.get(t.spelling()).copied() {
                 self.move_past();
                 let operand = self.expr(op.level)?;
+                let mut bare = &operand;
+                while let Form::Located(_, _, inner) | Form::OnLine(_, _, inner) = bare { bare = inner; }
+                if table.has_any("ext.builtin.compile.modes") {
+                    if let Form::Const(number) = bare {
+                        if let Some(value) = signed_literal(table, op.prim, number) { return Ok(constant(value)); }
+                    }
+                }
                 return Ok(prim_call(op.prim, vec![operand]));
             }
             if table.spells("ext.op.name_by_value", &t.spelling()) {
@@ -12413,7 +12588,9 @@ impl<'a> Builder<'a> {
             let kind_follows = self.kind_mark.map_or(false, |mark| mark >= self.pos
                 && self.tokens[self.pos..mark].iter().all(|token| token.shape == Shape::Sign
                     && table.spells("syntax.group.close", &token.spelling())));
-            if reaching && table.flag("ext.op.member.pipes") && !table.spells("ext.text.format", &named) && (calling || self.place_depth == 0 && !self.on_writing() && !kind_follows) {
+            let after_groups = self.tokens[self.pos..].iter().find(|part| !table.spells("syntax.group.close", part.spelling()));
+            let target_follows = after_groups.map_or(false, |part| table.spells("stmt.assign", part.spelling()) || table.compound.contains_key(&part.lexeme));
+            if reaching && table.flag("ext.op.member.pipes") && !table.spells("ext.text.format", &named) && (calling || self.place_depth == 0 && !self.on_writing() && !kind_follows && !target_follows) {
                 let target = match &node { Form::Read(slot) => Some(slot.clone()), _ => None };
                 let held = self.gensym("subject");
                 let save = Form::Write(held.clone(), Box::new(node));
@@ -12830,12 +13007,13 @@ impl<'a> Builder<'a> {
             }
             return self.gather_comprehension(next, &closing, mapped);
         }
-        let opener = if mapped { Prim::MakeMap } else if family == "map" { Prim::EmptySet } else { Prim::MakeArray };
-        let mut parts: Vec<(Form, bool)> = Vec::new();
-        let mut opened = false;
+        // Keep literal width out of the form tree's recursion depth.
+        let accumulator = self.gensym("literal");
+        let initial = prim_call(if mapped { Prim::MakeMap } else if family == "map" { Prim::EmptySet } else { Prim::MakeArray }, vec![]);
+        let mut steps = vec![Form::Write(accumulator.clone(), Box::new(initial))];
         while !self.sign(&closing) {
             let spreading = self.on_any(if mapped { "ext.syntax.map.spread" } else { "ext.syntax.array.spread" });
-            if spreading { self.advance(); opened = true; }
+            if spreading { self.advance(); }
             let mut beginning = self.pos;
             let mut item = self.expr(0)?;
             if mapped && !spreading {
@@ -12864,30 +13042,15 @@ impl<'a> Builder<'a> {
                 self.pos = beginning;
                 return Err(String::from("SyntaxError: invalid syntax. Perhaps you forgot a comma?"));
             }
-            parts.push((item, spreading));
+            let extended = prim_call(Prim::ExtendLiteral(mapped, spreading), vec![Form::Take(accumulator.clone()), item]);
+            steps.push(Form::Write(accumulator.clone(), Box::new(extended)));
             if self.sign(&closing) { break; }
             self.need_sign(&separator, "between parts of a literal")?;
         }
         self.move_past();
-        // A list display with nothing opened out is made whole in one
-        // step: a literal of tens of thousands of members would otherwise
-        // be a chain of one-member growings as deep as the display is
-        // long, and reading that chain back would run the run out of
-        // stack. A map, a set, or anything opened out, still grows part
-        // by part so that every member lands in the order the text wrote
-        // it, and custom keys keep the handling they already had.
-        let flat = !opened && family == "array";
-        let mut value = if flat {
-            prim_call(opener, parts.into_iter().map(|(item, _)| item).collect())
-        } else {
-            let mut grown = prim_call(opener, Vec::new());
-            for (item, spreading) in parts {
-                grown = prim_call(Prim::ExtendLiteral(mapped, spreading), vec![grown, item]);
-            }
-            grown
-        };
-        if family == "map" && !mapped && self.grammar.has_any_ext_stmt_class_special { value = prim_call(Prim::DistinctObjects, vec![value]); }
-        Ok(value)
+        let result = Form::Release(accumulator);
+        steps.push(if family == "map" && !mapped && self.table.has_any("ext.stmt.class.special") { prim_call(Prim::DistinctObjects, vec![result]) } else { result });
+        Ok(sequence(steps))
     }
 
     /// The source of a comprehension clause. An assignment expression
@@ -13349,6 +13512,7 @@ impl<'a> Builder<'a> {
         let misplaced = self.grammar.strings_ext_syntax_call_amiss_order.to_vec();
         let mut keyword_written = false;
         let mut pairs_written = false;
+        let mut starred = false;
         while !self.sign(&close) {
             if self.exhausted() {
                 return Err(format!("Expected '{}'", close));
@@ -13408,6 +13572,7 @@ impl<'a> Builder<'a> {
             }
             let value = self.expr(0)?;
             let named = matches!(tag, Some(Value::Text(_) | Value::Flag(true)));
+            starred |= matches!(tag, Some(Value::Flag(_)));
             let argument = match tag {
                 Some(key) => prim_call(Prim::Couple, vec![constant(key), value]),
                 None => value,
@@ -13422,6 +13587,19 @@ impl<'a> Builder<'a> {
             }
         }
         self.move_past();
+        // A call of more than thirty plain arguments takes them as one
+        // array (and one map of the named ones), so that evaluating the
+        // call holds a few values at a time however long it is.
+        if self.table.flag("ext.syntax.call.bind_names") && close_key == "syntax.call.close"
+            && bind_list_long(items.len() + named_values.len(), starred) {
+            let spread = |flag: bool, body: Form| prim_call(Prim::Couple, vec![constant(Value::Flag(flag)), body]);
+            let mut handed = Vec::new();
+            let gather = |start: Prim, grows: Prim, parts: Vec<Form>| parts.into_iter()
+                .fold(prim_call(start, Vec::new()), |row, part| prim_call(grows.clone(), vec![row, part]));
+            if !items.is_empty() { handed.push(spread(false, gather(Prim::MakeArray, Prim::ExtendLiteral(false, false), items))); }
+            if !named_values.is_empty() { handed.push(spread(true, gather(Prim::MakeMap, Prim::ExtendLiteral(true, false), named_values))); }
+            return Ok(handed);
+        }
         items.extend(named_values);
         Ok(items)
     }
@@ -14278,7 +14456,54 @@ fn borrows_enclosing(form: &Form, names: &[&str]) -> bool {
     }
 }
 
+/// Reduce unary numeric literals with their original float sign retained.
+fn signed_literal(table: &Table, operation: Prim, number: &Value) -> Option<Value> {
+    let minus = match operation { Prim::Negate => true, Prim::Positive => false, _ => return None };
+    if let Value::Flag(b) = number { return Some(Value::Small(if minus { -i64::from(*b) } else { i64::from(*b) })); }
+    if !matches!(number, Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Complex(_)) { return None; }
+    if !minus { return Some(number.clone()); }
+    if let Value::Complex(z) = number { return Some(crate::complex::pair(table, -z.0, -z.1)); }
+    let negative = math::compute(math::Calc::Minus, &Value::Small(0), number)?.ok()?;
+    Some(match (number, negative) {
+        (Value::Frac(before), Value::Frac(after)) => {
+            let mut ratio = (*after).clone();
+            if num_traits::Zero::is_zero(&ratio.above) { ratio.under = !before.under; }
+            ratio.pointed = before.pointed;
+            Value::Frac(Rc::new(ratio))
+        }
+        (_, answer) => answer,
+    })
+}
+
+/// Keep Python constant types and each component's sign distinct.
+fn constant_key_matches(a: &Value, b: &Value) -> bool {
+    if std::mem::discriminant(a) != std::mem::discriminant(b) { return false; }
+    match (a, b) {
+        (Value::Complex(x), Value::Complex(y)) => x.0.to_bits() == y.0.to_bits() && x.1.to_bits() == y.1.to_bits(),
+        (Value::Frac(x), Value::Frac(y)) if x.under != y.under => false,
+        (Value::Tuple(x), Value::Tuple(y)) => {
+            x.len() == y.len() && x.iter().enumerate().all(|(at, value)| constant_key_matches(value, &y[at]))
+        }
+        (Value::Set(x), Value::Set(y)) if x.borrow().sealed && y.borrow().sealed => {
+            let left = x.borrow();
+            let right = y.borrow();
+            left.entries.len() == right.entries.len() && left.entries.iter().all(|(_, v)| right.entries.iter().any(|(_, w)| constant_key_matches(v, w)))
+        }
+        _ => a.equals(b),
+    }
+}
+
 // Follow the same unconditional exits as sequential form evaluation.
+fn literal_boolean(mut form: &Form) -> Option<bool> {
+    loop {
+        match form {
+            Form::Const(Value::Flag(answer)) => return Some(*answer),
+            Form::Located(_, _, child) | Form::OnLine(_, _, child) => form = child,
+            _ => return None,
+        }
+    }
+}
+
 fn metadata_stops(node: &Form) -> bool {
     match node {
         Form::OnLine(_, _, inner) | Form::Located(_, _, inner) | Form::Muted(inner) | Form::Silenced(inner) => metadata_stops(inner),
@@ -14288,29 +14513,67 @@ fn metadata_stops(node: &Form) -> bool {
     }
 }
 
+// The equality check still resolves collisions; code images need no eager hash.
+fn literal_index(value: &Value) -> Option<i64> {
+    match value {
+        Value::Routine(routine) => {
+            let label = Value::text(&routine.ident).hash_number()?;
+            Some(label.wrapping_mul(31).wrapping_add(i64::from(routine.declared_on)).wrapping_mul(31).wrapping_add(routine.body_boundary as i64))
+        }
+        other => Value::code_worth_hash(other),
+    }
+}
+
 fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, names: &mut Vec<String>, suspension: &mut bool) {
-    fn literal(value: &Value, constants: &mut Vec<Value>) {
+    let mut indexed: HashMap<i64, Vec<usize>> = HashMap::new();
+    for at in 0..constants.len() {
+        if let Some(key) = literal_index(&constants[at]) { indexed.entry(key).or_default().push(at); }
+    }
+    inspect_indexed_form(form, locals, constants, names, suspension, &mut indexed);
+}
+
+fn inspect_indexed_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, names: &mut Vec<String>, suspension: &mut bool, indexed: &mut HashMap<i64, Vec<usize>>) {
+    fn literal(value: &Value, constants: &mut Vec<Value>, indexed: &mut HashMap<i64, Vec<usize>>) {
+        if matches!(value, Value::Small(0..=255)) { return; }
         if matches!(value, Value::Unset) { return; }
         if let Value::Routine(p) = value {
             if p.frameless { return; }
-            if let Some(a) = &p.annotator { literal(&Value::Routine(a.clone()), constants); }
+            if let Some(a) = &p.annotator { literal(&Value::Routine(a.clone()), constants, indexed); }
         }
-        let stores_literal = !matches!(value, Value::Small(0..=255));
-        if (constants.is_empty() || stores_literal) && constants.iter().all(|v| std::mem::discriminant(v) != std::mem::discriminant(value) || !v.equals(value)) { constants.push(value.clone()); }
+        if let Some(key) = literal_index(value) {
+            let positions = indexed.entry(key).or_default();
+            if positions.iter().any(|index| constant_key_matches(&constants[*index], value)) { return; }
+            positions.push(constants.len());
+        } else if constants.iter().any(|prior| constant_key_matches(prior, value)) { return; }
+        constants.push(value.clone());
     }
     fn named(name: &str, locals: &[String], names: &mut Vec<String>) {
         if !name.is_empty() && !name.starts_with('#') && !locals.iter().any(|s| s == name) && !names.iter().any(|s| s == name) { names.push(name.to_owned()); }
     }
     let mut children: Vec<&Form> = Vec::new();
     match form {
+        Form::Const(Value::Unset) => {},
         Form::Const(Value::Routine(p)) if p.frameless => children.push(&p.body),
-        Form::Const(v) => literal(v, constants),
+        Form::Const(v) => literal(v, constants, indexed),
         Form::Read(a) | Form::Take(a) | Form::Glance(a) => { if a.up > 0 && a.fallback.is_none() { named(&a.ident, locals, names); } },
+        Form::Write(slot, child) if slot.ident.starts_with("#called") && matches!(child.as_ref(), Form::Const(Value::Text(_))) => {
+            if let Form::Const(Value::Text(member)) = child.as_ref() { named(member, &[], names); }
+        }
         Form::Write(_, child) | Form::OnLine(_, _, child) | Form::Located(_, _, child) | Form::Muted(child) | Form::Silenced(child) | Form::Tie(_, child) => children.push(child),
+        Form::Apply(Callee::Prim(Prim::Kept, spelling), args) if spelling.is_empty() => {
+            children.extend(args.iter().take(2));
+        }
+        Form::Apply(Callee::Prim(Prim::Of | Prim::Onto | Prim::HasMember | Prim::SetMember | Prim::Pluck, spelling), args) if spelling.is_empty() => {
+            for (at, argument) in args.iter().enumerate() {
+                if let (1, Form::Const(Value::Text(member))) = (at, argument) {
+                    named(member, &[], names);
+                } else { children.push(argument); }
+            }
+        }
         Form::Apply(callee, args) => {
             if matches!(callee, Callee::Prim(Prim::Suspend, _)) { *suspension = true; }
             match callee {
-                Callee::Code(target) => inspect_form(target, locals, constants, names, suspension),
+                Callee::Code(target) => inspect_indexed_form(target, locals, constants, names, suspension, indexed),
                 Callee::Prim(op, spelling) => if !matches!(op, Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Yield | Prim::Leave | Prim::Resume) { named(spelling, locals, names); },
             }
             for (index, child) in args.iter().enumerate() {
@@ -14330,15 +14593,15 @@ fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, name
                 while let Form::OnLine(_, _, inner) | Form::Located(_, _, inner) = plain { plain = inner; }
                 let unused_literal = matches!(callee, Callee::Prim(Prim::Seq, _)) && index + 1 < args.len()
                     && matches!(plain, Form::Const(Value::Text(_) | Value::Small(_) | Value::Frac(_) | Value::Flag(_) | Value::Nil));
-                if !unused_literal { inspect_form(child, locals, constants, names, suspension); }
+                if !unused_literal { inspect_indexed_form(child, locals, constants, names, suspension, indexed); }
                 if matches!(callee, Callee::Prim(Prim::Seq, _)) && metadata_stops(child) { break; }
             }
         }
         Form::Dyad { a, b, .. } => {
             for input in [a, b] {
                 match input {
-                    Input::Form(f) => inspect_form(f, locals, constants, names, suspension),
-                    Input::Const(v) => literal(v, constants),
+                    Input::Form(f) => inspect_indexed_form(f, locals, constants, names, suspension, indexed),
+                    Input::Const(v) => literal(v, constants, indexed),
                     Input::Address(a) => if a.up > 0 && a.fallback.is_none() { named(&a.ident, locals, names); },
                 }
             }
@@ -14358,7 +14621,71 @@ fn inspect_form(form: &Form, locals: &[String], constants: &mut Vec<Value>, name
         Form::Assert { condition, message } => children.extend([condition.as_ref(), message.as_ref()]),
         _ => {}
     }
-    for child in children { inspect_form(child, locals, constants, names, suspension); }
+    for child in children { inspect_indexed_form(child, locals, constants, names, suspension, indexed); }
+}
+
+
+// Walk tuple display forms iteratively, retaining each immutable value's type.
+fn tuple_literals(root: &Form) -> Option<Vec<Value>> {
+    let mut pending = vec![root];
+    let mut result = Vec::new();
+    while let Some(node) = pending.pop() {
+        match node {
+            Form::Located(_, _, child) | Form::OnLine(_, _, child) => pending.push(child),
+            Form::Apply(Callee::Prim(Prim::TupleJoined, name), children) if name.is_empty() => pending.extend(children.iter().rev()),
+            Form::Apply(Callee::Prim(Prim::MakeArray, name), children) if name.is_empty() => {
+                for child in children {
+                    let mut literal = child;
+                    while let Form::Located(_, _, next) | Form::OnLine(_, _, next) = literal { literal = next; }
+                    let Form::Const(value) = literal else { return None; };
+                    if !constant_inert(value) { return None; }
+                    result.push(value.clone());
+                }
+            }
+            Form::Const(Value::Tuple(items)) if items.iter().all(constant_inert) => result.extend(items.iter().cloned()),
+            _ => return None,
+        }
+    }
+    Some(result)
+}
+
+
+fn frozen_display(expression: &Form, table: &Table) -> Option<Value> {
+    fn bare(mut form: &Form) -> &Form {
+        while let Form::Located(_, _, child) | Form::OnLine(_, _, child) = form { form = child; }
+        form
+    }
+    let Form::Apply(Callee::Prim(Prim::Seq, _), statements) = bare(expression) else { return None; };
+    let (initial, rest) = statements.split_first()?;
+    let Form::Write(slot, value) = bare(initial) else { return None; };
+    if !matches!(bare(value), Form::Apply(Callee::Prim(Prim::EmptySet, _), args) if args.is_empty()) { return None; }
+    let mut store = crate::data::SetStore::new(table.single("ext.builtin.frozenset")?, true);
+    for (index, step) in rest.iter().enumerate() {
+        if index + 1 == rest.len() {
+            let result = match bare(step) {
+                Form::Apply(Callee::Prim(Prim::DistinctObjects, _), children) if children.len() == 1 => bare(&children[0]),
+                other => other,
+            };
+            if !matches!(result, Form::Release(last) if last.ident == slot.ident) { return None; }
+        } else {
+            let Form::Write(target, addition) = bare(step) else { return None; };
+            if target.ident != slot.ident { return None; }
+            let Form::Apply(Callee::Prim(Prim::ExtendLiteral(false, false), _), arguments) = bare(addition) else { return None; };
+            if arguments.len() != 2 || !matches!(bare(&arguments[0]), Form::Take(previous) if previous.ident == slot.ident) { return None; }
+            let Form::Const(item) = bare(&arguments[1]) else { return None; };
+            if !constant_inert(item) { return None; }
+            store.put(item.hash_address().ok()?, item.clone());
+        }
+    }
+    Some(Value::Set(Rc::new(std::cell::RefCell::new(store))))
+}
+
+fn constant_inert(value: &Value) -> bool {
+    match value {
+        Value::Tuple(items) => items.iter().all(constant_inert),
+        Value::Nil | Value::Flag(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Complex(_) | Value::Text(_) | Value::Octets { .. } | Value::Ellipsis => true,
+        _ => false,
+    }
 }
 
 
@@ -14427,5 +14754,34 @@ mod prepared_proof_tests {
         assert!(super::unpack_library_proof(b"invalid").is_none());
         assert!(std::rc::Rc::ptr_eq(&decoded, &super::unpack_library_proof(packed).unwrap()));
 
+    }
+}
+
+/// Whether a call's argument list is long and plain enough to be handed over as a gathered array.
+fn bind_list_long(count: usize, starred: bool) -> bool {
+    count > 30 && !starred
+}
+
+#[cfg(test)]
+mod survey_registration {
+    use super::{library_rows, register_prepared, SourceRows, SurveyRows};
+    static ONE: SurveyRows = &[(10, b"x", b"x")];
+    static TWO: SurveyRows = &[(20, b"y", b"y")];
+    static THREE: SurveyRows = &[(30, b"z", b"z")];
+    static NONE: SourceRows = &[];
+    fn stamp_for(text: &str) -> Option<u64> { library_rows(text).map(|(rows, _)| rows[0].0) }
+    #[test]
+    fn the_newest_registration_wins_whatever_its_spelling() {
+        let tight = r#"{"language":"survey","words":["a"]}"#;
+        let loose = "{\n  \"words\": [\"a\"],\n  \"language\": \"survey\"\n}";
+        register_prepared(tight, ONE, NONE);
+        register_prepared(tight, TWO, NONE);
+        assert_eq!(stamp_for(tight), Some(20));
+        assert_eq!(stamp_for(loose), Some(20));
+        register_prepared(loose, THREE, NONE);
+        assert_eq!(stamp_for(tight), Some(30));
+        assert_eq!(stamp_for(loose), Some(30));
+        assert_eq!(stamp_for(r#"{"language":"else"}"#), None);
+        assert_eq!(stamp_for("{broken"), None);
     }
 }

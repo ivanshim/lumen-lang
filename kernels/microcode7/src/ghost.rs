@@ -133,8 +133,7 @@ thread_local! {
     // need polling. Class and instance listeners are notified on departure.
     // Every reason to look at the weak holds at a step, in one cell:
     // a step asks once and stands down where none is set.
-    static GHOST_STATE: Cell<u8> = const { Cell::new(0) };
-
+    static GHOST_STATE: Rc<Cell<u8>> = Rc::new(Cell::new(0));
     static LOST: Cell<bool> = const { Cell::new(false) };
     static FAREWELLS: RefCell<Vec<(Rc<Thing>, Value)>> = const { RefCell::new(Vec::new()) };
     static HALF_WALKS: RefCell<Vec<Rc<RefCell<Suspension>>>> = const { RefCell::new(Vec::new()) };
@@ -142,7 +141,7 @@ thread_local! {
     static REFERENCES: RefCell<Vec<Weak<Dim>>> = const { RefCell::new(Vec::new()) };
     static REFERENCES_NEXT_SWEEP: Cell<usize> = const { Cell::new(64) };
     static REFERENCES_BY_TARGET: RefCell<(HashMap<ReferenceAddress, Vec<Weak<Dim>>>, usize)> = RefCell::new((HashMap::new(), 64));
-    static ANCHORED: RefCell<Vec<Rc<Thing>>> = const { RefCell::new(Vec::new()) };
+    static ANCHORED: Rc<RefCell<Vec<Rc<Thing>>>> = Rc::new(RefCell::new(Vec::new()));
     // The addresses of the things a listener is on. A thing leaving
     // sets the lost flag only where its address is one of these.
     static WATCHED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
@@ -238,18 +237,16 @@ pub fn release_all_anchors() {
     ghost_drop(G_ANCHOR);
 }
 
-fn anchor_ready() -> bool {
-    ANCHORED.try_with(|all| {
-        let all = all.borrow();
-        // Avoid an iterator callback per retained owner at every interpreter step.
-        let mut pending = all.as_slice();
-        while let [a, b, c, d, rest @ ..] = pending {
-            if Rc::strong_count(a) == 1 || Rc::strong_count(b) == 1
-                || Rc::strong_count(c) == 1 || Rc::strong_count(d) == 1 { return true; }
-            pending = rest;
-        }
-        pending.iter().any(|item| Rc::strong_count(item) == 1)
-    }).unwrap_or(false)
+fn anchor_ready(anchored: &RefCell<Vec<Rc<Thing>>>) -> bool {
+    let all = anchored.borrow();
+    // Avoid an iterator callback per retained owner at every interpreter step.
+    let mut pending = all.as_slice();
+    while let [a, b, c, d, rest @ ..] = pending {
+        if Rc::strong_count(a) == 1 || Rc::strong_count(b) == 1
+            || Rc::strong_count(c) == 1 || Rc::strong_count(d) == 1 { return true; }
+        pending = rest;
+    }
+    pending.iter().any(|item| Rc::strong_count(item) == 1)
 }
 
 /// The method a class bids farewell with, where the language has one.
@@ -263,11 +260,30 @@ pub fn bidding() -> bool {
     FAREWELL_NAME.try_with(|n| n.borrow().is_some()).unwrap_or(false)
 }
 
+/// The cells a step reads to learn whether anything is stirring, kept by
+/// the machine so that a step does not go through the thread's table of
+/// statics each time. They are the very cells the rest of this file sets.
+pub struct Tap {
+    state: Rc<Cell<u8>>,
+    anchored: Rc<RefCell<Vec<Rc<Thing>>>>,
+}
+
+pub fn tap() -> Tap {
+    Tap {
+        state: GHOST_STATE.with(|cell| cell.clone()),
+        anchored: ANCHORED.with(|cell| cell.clone()),
+    }
+}
+
 /// Whether the machine has anything to attend to before its next step.
 #[inline(always)]
-pub fn stirred() -> bool {
-    let flags = GHOST_STATE.try_with(|s| s.get()).unwrap_or(0);
+pub fn stirred(tap: &Tap) -> bool {
+    let flags = tap.state.get();
     if flags == 0 { return false; }
+    stirred_by(flags, tap)
+}
+
+fn stirred_by(flags: u8, tap: &Tap) -> bool {
     if flags & G_POLL != 0 {
         let gone_method = LISTENERS.try_with(|queue| queue.try_borrow().map_or(false, |held| held.iter().any(|listener| matches!(listener.ghost, Ghost::WrappedMethod(_) | Ghost::Code(_)) && listener.departed()))).unwrap_or(false);
         if gone_method {
@@ -281,7 +297,7 @@ pub fn stirred() -> bool {
         }
     }
     if flags & G_STIRRED != 0 { return true; }
-    if flags & G_ANCHOR != 0 { return anchor_ready(); }
+    if flags & G_ANCHOR != 0 { return anchor_ready(&tap.anchored); }
     false
 }
 
@@ -365,7 +381,9 @@ pub fn thing_departing(going: &mut Thing) {
     let here = going as *const Thing as usize;
     // With the thread's storage gone (at the very end) nothing is
     // queued: there is no machine left to run anything.
-    let bidden = BIDDEN.try_with(|b| b.borrow_mut().remove(&here)).unwrap_or(true);
+    // Nearly every thing going has no farewell on record, and asking an
+    // empty set about an address still hashes the address.
+    let bidden = BIDDEN.try_with(|b| { let mut set = b.borrow_mut(); !set.is_empty() && set.remove(&here) }).unwrap_or(true);
     if !bidden {
         if let Some(farewell) = farewell_of(&going.of) {
             let members = std::mem::take(going.holds.get_mut());
@@ -503,12 +521,23 @@ pub fn note(ghost: Ghost) {
     });
 }
 
+// Retain shared owners and the inline forms which expand into shared owners.
+fn carries_links(value: &Value) -> bool {
+    matches!(value, Value::Dim(_) | Value::Thing(_) | Value::Attributes(_) | Value::Blueprint(_)
+        | Value::Generator(_) | Value::Set(_) | Value::SetCursor { .. } | Value::Iterator(_)
+        | Value::Backtrace(_) | Value::Shared(_) | Value::Mutable(..) | Value::Vector(_)
+        | Value::Tuple(_) | Value::Row(_) | Value::Arguments(_) | Value::Span(_) | Value::Wrapped(..)
+        | Value::Dict(_) | Value::Couple(_) | Value::Member(..) | Value::Window(..) | Value::Cursor(_)
+        | Value::Adorned(_) | Value::Routine(_) | Value::Traversal(..) | Value::Bound(..)
+        | Value::Method(..) | Value::Keyed(..))
+}
+
 /// The values embedded in compiled forms are owned by their routine.
 /// In particular, an exception arm may retain nested routine constants
 /// after a generator yields, and those routines may keep its globals.
 pub(crate) fn form_holds(form: &Form, out: &mut Vec<Knot>) {
     match form {
-        Form::Const(value) => out.push(Knot::Held(value.clone())),
+        Form::Const(value) => if carries_links(value) { out.push(Knot::Held(value.clone())); },
         Form::Fits { value, test, kinds, .. } => {
             form_holds(value, out);
             case_holds(test, out);
@@ -568,7 +597,7 @@ pub(crate) fn form_holds(form: &Form, out: &mut Vec<Knot>) {
 
 fn case_holds(test: &CaseTest, out: &mut Vec<Knot>) {
     match test {
-        CaseTest::Equal(value) => out.push(Knot::Held(value.clone())),
+        CaseTest::Equal(value) => if carries_links(value) { out.push(Knot::Held(value.clone())); },
         CaseTest::AnyOf(parts) => for part in parts { case_holds(part, out); },
         CaseTest::Series { members, .. } => for member in members { case_holds(member, out); },
         CaseTest::Also { test, .. } => case_holds(test, out),
@@ -650,7 +679,9 @@ impl Knot {
     /// The knots this one holds directly. A cell being written to at
     /// this moment yields none, which leans towards keeping.
     fn onward(&self, out: &mut Vec<Knot>) {
-        let held = |out: &mut Vec<Knot>, v: &Value| out.push(Knot::Held(v.clone()));
+        let held = |out: &mut Vec<Knot>, v: &Value| {
+            if carries_links(v) { out.push(Knot::Held(v.clone())); }
+        };
         match self {
             Knot::Frame(env) => {
                 if let Ok(cells) = env.cells.try_borrow() {
@@ -827,7 +858,7 @@ impl Web {
     }
 
     /// Woven from the notable things still about.
-    pub fn from_notable(extra: Vec<Knot>, live: Vec<Knot>) -> Web {
+    pub fn from_notable(extra: Vec<Knot>, live: Vec<Knot>, enumerate: bool) -> Web {
         let mut bookkeeping = HashMap::default();
         for knot in &extra {
             let parts = match knot {
@@ -845,8 +876,29 @@ impl Web {
             n.0.iter().filter_map(|g| g.revive()).map(Knot::Held).collect()
         }).unwrap_or_default();
         roots.extend(extra);
-        for knot in live { external_knots(knot, &mut roots); }
-        Web::weave(roots, bookkeeping)
+        let mut anchored: HashSet<usize, crate::table::FxBuildHasher> = HashSet::default();
+        let mut opened: HashSet<usize, crate::table::FxBuildHasher> = HashSet::default();
+        for knot in live {
+            let mut owners = Vec::new();
+            external_knots(knot, &mut owners);
+            if !enumerate {
+                for owner in &owners { if let Some(address) = owner.place() { anchored.insert(address); } }
+                let mut layer = owners.iter().map(|owner| match owner { Knot::Held(value) => Knot::Held(value.clone()), Knot::Frame(frame) => Knot::Frame(frame.clone()) }).collect::<Vec<_>>();
+                // Follow the live cell through its dictionary to the namespace bindings.
+                for _ in [0, 1, 2] {
+                    let mut children = Vec::new();
+                    for knot in layer {
+                        if knot.place().is_some_and(|address| opened.insert(address)) { knot.onward(&mut children); }
+                    }
+                    layer = Vec::new();
+                    for child in children.into_iter().flat_map(Knot::parts) {
+                        if let Some(address) = child.place() { anchored.insert(address); layer.push(child); }
+                    }
+                }
+            }
+            roots.extend(owners);
+        }
+        Web::weave(roots, bookkeeping, anchored)
     }
 
     pub fn link_attributes(&mut self, function: &Value, holder: &Value) {
@@ -856,7 +908,7 @@ impl Web {
         }
     }
 
-    fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>) -> Web {
+    fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>, anchored: HashSet<usize, crate::table::FxBuildHasher>) -> Web {
         let mut web = Web { strands: Vec::new(), placed: HashMap::default(), bookkeeping };
         let mut frontier: Vec<usize> = Vec::new();
         // Each part of a knot is placed once; a hold on a part already
@@ -883,6 +935,8 @@ impl Web {
         for root in roots { place_parts(&mut web, &mut frontier, root, 0, None); }
         let mut next = Vec::new();
         while let Some(position) = frontier.pop() {
+            // Keep engine-owned edges as outside ownership of their targets.
+            if anchored.contains(&web.strands[position].place) { continue; }
             next.clear();
             web.strands[position].knot.onward(&mut next);
             let mut onward = Vec::with_capacity(next.len());

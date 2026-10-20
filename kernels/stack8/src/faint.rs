@@ -110,7 +110,7 @@ impl Hold {
 
 /// Collect only identities relevant to live callbacks, including the
 /// reference object whose loss cancels its callback. No strong hold is kept.
-fn observe(reference: &Faint, addresses: &mut HashSet<usize>) {
+fn observe(reference: &Faint, addresses: &mut HashSet<usize, BuildHasherDefault<PlaceHasher>>) {
     addresses.insert(reference.bearer.as_ptr() as usize);
     match &reference.hold {
         Hold::Object(target) => { addresses.insert(target.as_ptr() as usize); }
@@ -188,12 +188,12 @@ thread_local! {
     static TARGET_REFERENCES: RefCell<HashMap<WeakTargetKey, Vec<Weak<Faint>>>> = RefCell::new(HashMap::new());
     static TARGET_PRUNE_AT: Cell<usize> = const { Cell::new(64) };
     static WATCHED: RefCell<Vec<Rc<Faint>>> = const { RefCell::new(Vec::new()) };
-    static INSTANCE_WATCHES: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+    static INSTANCE_WATCHES: RefCell<HashSet<usize, BuildHasherDefault<PlaceHasher>>> = RefCell::new(HashSet::default());
     /// Whether anything at all is waiting for the engine's next step.
     // Bit zero is queued work; bit one marks a nonempty anchor list.
     static PENDING: Cell<u8> = const { Cell::new(0) };
     /// Whether a value somebody may be watching has gone since the last look.
-    static OBSERVED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+    static OBSERVED: RefCell<HashSet<usize, BuildHasherDefault<PlaceHasher>>> = RefCell::new(HashSet::default());
     static DIED: Cell<bool> = const { Cell::new(false) };
     /// Objects rebuilt for their last words, with the routine to say them.
     static LAST_WORDS: RefCell<Vec<(Rc<Instance>, Value)>> = const { RefCell::new(Vec::new()) };
@@ -442,7 +442,7 @@ pub fn settle() -> (Vec<(Rc<Instance>, Value)>, Vec<Rc<RefCell<Generator>>>, Vec
                 }
             }
             let _ = WATCHING.try_with(|n| n.set(kept.len()));
-            let mut observed = HashSet::new();
+            let mut observed: HashSet<usize, BuildHasherDefault<PlaceHasher>> = HashSet::default();
             for reference in &kept {
                 observed.insert(reference.bearer.as_ptr() as usize);
                 if let Hold::Object(target) = &reference.hold { observed.insert(target.as_ptr() as usize); }
@@ -621,6 +621,11 @@ fn holds_on(value: &Value) -> usize {
     }
 }
 
+// Primitive payloads have no place or outgoing holds in this graph.
+fn cycle_edge(value: &Value) -> bool {
+    place_of(value).is_some() || matches!(value, Value::Method(..))
+}
+
 /// The values a value holds directly. A bound method is two holds, on
 /// the object and on the routine, and is listed as both. A cell that is
 /// being written to just now yields nothing: what it holds then counts
@@ -631,14 +636,14 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         Value::Object(o) | Value::Fields(o) => {
             out.push(Value::Class(o.class.clone()));
             if let Ok(fields) = o.fields.try_borrow() {
-                out.extend(fields.iter().map(|(_, v)| v.clone()));
+                out.extend(fields.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
             }
         }
         Value::Class(c) => {
-            out.extend(c.fields.iter().map(|(_, v)| v.clone()));
-            out.extend(c.constants.iter().map(|(_, v)| v.clone()));
+            out.extend(c.fields.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
+            out.extend(c.constants.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
             if let Ok(shared) = c.shared.try_borrow() {
-                out.extend(shared.iter().map(|(_, v)| v.clone()));
+                out.extend(shared.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
             }
             out.extend(c.methods.iter().map(|(_, p)| Value::Routine(p.clone())));
             out.extend(c.base().iter().map(|b| Value::Class(b.clone())));
@@ -650,14 +655,14 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                 out.push(g.async_finalizer.clone());
                 out.extend(g.trace_frame.iter().map(|f| Value::Object(f.clone())));
                 out.extend(g.program.iter().map(|p| Value::Routine(p.clone())));
-                out.extend(g.frame.iter().cloned());
-                out.extend(g.stack.iter().cloned());
-                out.extend(g.items.iter().cloned());
-                out.extend(g.handed.iter().cloned());
+                out.extend(g.frame.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.stack.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.items.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.handed.iter().filter(|value| cycle_edge(value)).cloned());
                 out.push(g.returned.clone());
-                out.extend(g.delegate.iter().cloned());
+                out.extend(g.delegate.iter().filter(|value| cycle_edge(value)).cloned());
                 out.push(g.sent.clone());
-                out.extend(g.current.iter().cloned());
+                out.extend(g.current.iter().filter(|value| cycle_edge(value)).cloned());
                 out.extend(g.watched.iter().map(|(cell, _)| Value::Bond(cell.clone())));
                 out.extend(g.reversed_walk.iter().map(|(cell, _, _)| Value::Bond(cell.clone())));
                 for step in &g.resume {
@@ -671,8 +676,8 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                         _ => {}
                     }
                 }
-                out.extend(g.held.iter().cloned());
-                out.extend(g.hurled.iter().cloned());
+                out.extend(g.held.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.hurled.iter().filter(|value| cycle_edge(value)).cloned());
             }
         }
         Value::Set(s) | Value::SetWalk(s, _) => {
@@ -683,11 +688,11 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         Value::Routine(r) => {
             out.extend(r.code_snapshot.get().map(|image| Value::Routine(image.clone())));
             out.extend(r.annotation.iter().map(|p| Value::Routine(p.clone())));
-            out.extend(r.code_constants.iter().cloned());
-            out.extend(r.globe.iter().cloned());
-            out.extend(r.born.iter().cloned());
-            out.extend(r.held.iter().cloned());
-            out.extend(r.enclosed.iter().map(|(_, v)| v.clone()));
+            out.extend(r.code_constants.iter().filter(|value| cycle_edge(value)).cloned());
+            out.extend(r.globe.iter().filter(|value| cycle_edge(value)).cloned());
+            out.extend(r.born.iter().filter(|value| cycle_edge(value)).cloned());
+            out.extend(r.held.iter().filter(|value| cycle_edge(value)).cloned());
+            out.extend(r.enclosed.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
             if let Ok(revised) = r.revised.try_borrow() {
                 out.extend(revised.iter().map(|p| Value::Routine(p.clone())));
             }
@@ -697,12 +702,12 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                 out.push(inner.clone());
             }
         }
-        Value::Array(a) | Value::Tuple(a) => out.extend(a.iter().cloned()),
-        Value::Slice(parts) => out.extend(parts.iter().cloned()),
+        Value::Array(a) | Value::Tuple(a) => out.extend(a.iter().filter(|value| cycle_edge(value)).cloned()),
+        Value::Slice(parts) => out.extend(parts.iter().filter(|value| cycle_edge(value)).cloned()),
         Value::Map(m) => {
             for (k, v) in m.iter() {
-                out.push(k.clone());
-                out.push(v.clone());
+                if cycle_edge(k) { out.push(k.clone()); }
+                if cycle_edge(v) { out.push(v.clone()); }
             }
         }
         Value::Hashed(p) | Value::Tie(p) => {
@@ -710,12 +715,12 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
             out.push(p.1.clone());
         }
         Value::ValueMethod(p) | Value::View(p) => out.push(p.0.clone()),
-        Value::Adapter(a) => out.extend(a.1.iter().cloned()),
+        Value::Adapter(a) => out.extend(a.1.iter().filter(|value| cycle_edge(value)).cloned()),
         Value::Descriptor(d) => match &**d {
             Descriptor::Static(v) | Descriptor::Class(v) => out.push(v.clone()),
             Descriptor::Property(a, b) => {
                 out.push(a.clone());
-                out.extend(b.iter().cloned());
+                out.extend(b.iter().filter(|value| cycle_edge(value)).cloned());
             }
             Descriptor::Bound(a, b) => {
                 out.push(a.clone());
@@ -725,18 +730,18 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         Value::Walking(w) => {
             if let Ok(w) = w.try_borrow() {
                 out.push(w.0.clone());
-                out.extend(w.1.iter().cloned());
+                out.extend(w.1.iter().filter(|value| cycle_edge(value)).cloned());
             }
         }
         Value::Walk(w) => {
             if let Ok(w) = w.try_borrow() {
-                out.extend(w.0.iter().cloned());
+                out.extend(w.0.iter().filter(|value| cycle_edge(value)).cloned());
             }
         }
         Value::Cursor(c) => {
             if let Ok(c) = c.try_borrow() {
-                out.extend(c.pending.iter().cloned());
-                out.extend(c.origin.iter().cloned());
+                out.extend(c.pending.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(c.origin.iter().filter(|value| cycle_edge(value)).cloned());
                 match &c.source {
                     CursorSource::Items(items, _) => out.push(Value::Tuple(items.clone())),
                     CursorSource::Living(cell, _) => out.push(Value::Bond(cell.clone())),
@@ -748,8 +753,8 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                         if let CursorSource::Called(_, _, Some(v)) = &c.source { out.push(v.clone()); }
                     }
                     CursorSource::Combined(rows, work, _) => {
-                        out.extend(rows.iter().cloned());
-                        out.extend(work.iter().cloned());
+                        out.extend(rows.iter().filter(|value| cycle_edge(value)).cloned());
+                        out.extend(work.iter().filter(|value| cycle_edge(value)).cloned());
                     }
                     CursorSource::Counted(..) => {}
                 }
@@ -799,7 +804,7 @@ impl Graph {
     }
 
     /// Everything reachable from the remembered candidates still alive.
-    pub fn from_candidates(extra: Vec<Value>, live: Vec<Value>) -> Graph {
+    pub fn from_candidates(extra: Vec<Value>, live: Vec<Value>, weak_keys: Vec<Value>, complete: bool) -> Graph {
         let mut bookkeeping = Places::default();
         for value in &extra {
             let parts = match value {
@@ -817,8 +822,33 @@ impl Graph {
             c.0.iter().filter_map(|h| h.revive()).collect()
         }).unwrap_or_default();
         roots.extend(extra);
-        for value in live { external_places(value, &mut roots); }
-        Graph::build(roots, bookkeeping)
+        let mut outside: HashSet<usize, BuildHasherDefault<PlaceHasher>> = HashSet::default();
+        let mut boundary = Vec::new();
+        for value in live {
+            let start = roots.len();
+            external_places(value, &mut roots);
+            if !complete {
+                for root in &roots[start..] {
+                    if place_of(root).is_some_and(|at| outside.insert(at)) { boundary.push(root.clone()); }
+                }
+            }
+        }
+        let mut held = Vec::new();
+        while let Some(root) = boundary.pop() {
+            held.clear();
+            reaches(&root, &mut held);
+            for child in held.drain(..) {
+                let (first, second) = match child {
+                    Value::Method(object, routine, _) => (Value::Object(object), Some(Value::Routine(routine))),
+                    child => (child, None),
+                };
+                for part in std::iter::once(first).chain(second) {
+                    if place_of(&part).is_some_and(|at| outside.insert(at)) { boundary.push(part); }
+                }
+            }
+        }
+        roots.extend(weak_keys);
+        Graph::build(roots, bookkeeping, outside)
     }
 
     pub fn link_attributes(&mut self, function: &Value, holder: &Value) {
@@ -828,7 +858,7 @@ impl Graph {
         }
     }
 
-    fn build(roots: Vec<Value>, bookkeeping: Places<usize>) -> Graph {
+    fn build(roots: Vec<Value>, bookkeeping: Places<usize>, outside: HashSet<usize, BuildHasherDefault<PlaceHasher>>) -> Graph {
         let mut nodes: Vec<Node> = Vec::new();
         let mut rows: Places<usize> = Places::default();
         let mut open: Vec<usize> = Vec::new();
@@ -848,6 +878,8 @@ impl Graph {
         }
         let mut children = Vec::new();
         while let Some(at) = open.pop() {
+            // Keep engine-owned edges as outside ownership of their targets.
+            if outside.contains(&nodes[at].place) { continue; }
             children.clear();
             reaches(&nodes[at].held, &mut children);
             let mut reached = Vec::with_capacity(children.len());

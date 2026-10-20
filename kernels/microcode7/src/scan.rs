@@ -1314,7 +1314,16 @@ fn scan_code_from<'a>(source: &str, table: &'a Table, first: u32, ended: &mut (u
     let fold_id = table.scanner.flag_identifier_case_insensitive;
     let mut tokens: Vec<Token> = Vec::new();
     let line_beginnings: Vec<usize> = std::iter::once(0).chain(src.iter().enumerate().filter_map(|(i, c)| (*c == '\n').then_some(i + 1))).collect();
-    let at_column = |index| index - line_beginnings[line_beginnings.partition_point(|start| *start <= index) - 1] + 1;
+    // The reading moves forward, so the line last found is tried first.
+    let last_line = std::cell::Cell::new(0usize);
+    let at_column = |index: usize| {
+        let mut line = last_line.get();
+        if line_beginnings[line] > index || line_beginnings.get(line + 1).is_some_and(|next| *next <= index) {
+            line = line_beginnings.partition_point(|start| *start <= index) - 1;
+            last_line.set(line);
+        }
+        index - line_beginnings[line] + 1
+    };
     let column = std::cell::Cell::new(1usize);
     let tok = |kind: Shape, text: String, row: u32| Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: column.get(), shape: kind, lexeme: text, raw: None, span: 0, row: row };
     let tok_spelled = |kind: Shape, text: String, raw: Option<String>, row: u32| Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: column.get(), shape: kind, lexeme: text, raw, span: 0, row: row };
