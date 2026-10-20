@@ -25678,6 +25678,26 @@ impl<'a> Engine<'a> {
                         class.sealed.set(true);
                         Value::Null
                     }
+                    5 => {
+                        arity(8)?;
+                        let password = self.byte_row(&args[1].contents(), false)?;
+                        let salt = self.byte_row(&args[2].contents(), false)?;
+                        let n_cost = as_index(&args[3])? as usize;
+                        let r_cost = as_index(&args[4])? as usize;
+                        let p_cost = as_index(&args[5])? as usize;
+                        let derived_len = as_index(&args[6])? as usize;
+                        let maxmem = as_index(&args[7])? as usize;
+                        self.byte_make(crate::crypto::scrypt_kdf(&password, &salt, n_cost, r_cost, p_cost, derived_len, maxmem)?, false)
+                    }
+                    6 => {
+                        arity(6)?;
+                        let Value::Text(name) = args[1].contents() else { return Err("TypeError: hash name must be str".into()) };
+                        let password = self.byte_row(&args[2].contents(), false)?;
+                        let salt = self.byte_row(&args[3].contents(), false)?;
+                        let rounds = as_index(&args[4])? as usize;
+                        let derived_len = as_index(&args[5])? as usize;
+                        self.byte_make(crate::crypto::pbkdf2_hmac(&name, &password, &salt, rounds, derived_len)?, false)
+                    }
                     _ => return Err("NotImplementedError: unsupported cryptographic operation".into()),
                 }
             },
