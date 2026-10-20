@@ -32741,8 +32741,7 @@ impl Engine<'_> {
 
     /// Recognize archive paths, including directories below a file entry.
     fn namespace_has_file_path(&self, namespace: &Value, word: &str) -> bool {
-        let Value::Object(space) = namespace else { return false };
-        let entries = space.fields.borrow().iter().find(|(key, _)| key == word).map(|(_, value)| value.contents());
+        let entries = Self::stored_module_member(namespace, word);
         match entries {
             Some(Value::Array(items)) | Some(Value::Tuple(items)) => items.iter().any(|item| {
                 let Value::Text(directory) = item else { return false };
@@ -32800,9 +32799,8 @@ impl Engine<'_> {
             Some((parent, child)) => (parent, self.lang.module_path.as_deref()?, child),
             None => ("sys", "path", path),
         };
-        let Value::Object(space) = self.modules.get(owner)? else { return None };
-        let held = space.fields.borrow().iter().find(|(name, _)| name == word).map(|(_, v)| v.clone())?;
-        let mut value = held;
+        let namespace = self.module_cache_value(owner).or_else(|| self.modules.get(owner).cloned())?;
+        let mut value = Self::stored_module_member(&namespace, word)?;
         while let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = value {
             value = cell.borrow().clone();
         }
@@ -32942,15 +32940,10 @@ impl Engine<'_> {
             let resolved = self.import_path(path)?;
             return self.import_member(module, &resolved, name);
         }
-        if let Value::Object(object) = module {
-            if let Some((_, held)) = object.fields.borrow().iter().find(|(word, _)| word == name) {
-                let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other.clone() };
-                if !matches!(value, Value::Blank) { return Ok(value); }
-            }
+        if let Some(value) = Self::stored_module_member(module, name).filter(|value| !matches!(value, Value::Blank)) {
+            return Ok(value);
         }
-        let hook = if let Value::Object(space) = module {
-            space.fields.borrow().iter().find(|(key, _)| key == "__getattr__").map(|(_, held)| held.contents()).filter(|value| !matches!(value, Value::Blank))
-        } else { None };
+        let hook = Self::stored_module_member(module, "__getattr__").filter(|value| !matches!(value, Value::Blank));
         if let Some(callable) = hook {
             match self.class_apply(callable, vec![Value::text(name)]) {
                 Ok(value) => return Ok(value),
@@ -32960,9 +32953,7 @@ impl Engine<'_> {
         }
         let child = format!("{path}.{name}");
         if (self.lang.module_path.is_none() && self.module_sources.contains_key(&child)) || self.sys_path_source(&child).is_some() || self.module_sources.contains_key(&child) && self.library_module_file(&child).is_some() || (self.modules.contains_key(&child) && self.module_cache_names(&child)) { return self.import_module(&child); }
-        let package = self.lang.module_path.as_ref().is_some_and(|word| {
-            matches!(module, Value::Object(space) if space.fields.borrow().iter().any(|(name, _)| name == word))
-        });
+        let package = self.lang.module_path.as_ref().is_some_and(|word| Self::stored_module_member(module, word).is_some());
         if package {
             match self.import_module(&child) {
                 Ok(value) => return Ok(value),
@@ -35661,8 +35652,12 @@ impl Engine<'_> {
         }
         let Some(first) = args.first().map(Value::contents) else { return Err(self.core_fault("core.arity", name)) };
         if let Value::Object(code) = &first {
-            if let Some((_, Value::Text(packet))) = code.fields.borrow().iter().find(|(key, _)| key == "\0code_archive") {
-                self.archived_text = Some(serde_json::from_str(packet).map_err(|e| format!("ValueError: {e}"))?);
+            if let Some((_, saved)) = code.fields.borrow().iter().find(|(key, _)| key == "\0code_archive") {
+                match saved {
+                    Value::Bytes(bytes, ..) => self.archived_text = Some(crate::cache::unpack_json(&bytes.borrow())?),
+                    Value::Text(packet) => self.archived_text = Some(serde_json::from_str(packet).map_err(|e| format!("ValueError: {e}"))?),
+                    _ => {}
+                }
             }
         }
         if let Value::Object(code) = &first {
@@ -36186,9 +36181,13 @@ impl Engine<'_> {
             let Value::Object(code) = given[0].contents() else { return Err("TypeError: expected a code object".into()); };
             if self.lang.compile_kind.as_deref() != Some(code.class_now().name.as_str()) { return Err("TypeError: expected a code object".into()); }
             let fields = code.fields.borrow();
-            if let Some((_, Value::Text(saved))) = fields.iter().find(|(key, _)| key == "\0code_archive")
+            if let Some((_, saved)) = fields.iter().find(|(key, _)| key == "\0code_archive")
                 .filter(|_| !fields.iter().any(|(key, _)| key == "\0replace_constants")) {
-                return Ok(Value::Bytes(Rc::new(RefCell::new(crate::cache::pack_text(saved.as_bytes())?)), false, Rc::from("b")));
+                match saved {
+                    Value::Bytes(..) => return Ok(saved.clone()),
+                    Value::Text(text) => return Ok(Value::Bytes(Rc::new(RefCell::new(crate::cache::pack_text(text.as_bytes())?)), false, Rc::from("b"))),
+                    _ => {}
+                }
             }
             let Some((_, Value::Routine(program))) = fields.iter().find(|(key, _)| key == "\0compiled_program") else { return Err("ValueError: no compiled instruction graph".into()); };
             let Some((_, Value::Text(bindings))) = fields.iter().find(|(key, _)| key == "\0compiled_bindings") else { return Err("ValueError: no compiled bindings".into()); };
@@ -36216,23 +36215,25 @@ impl Engine<'_> {
         }
         let Value::Bytes(bytes, ..) = given[0].contents() else { return Err("TypeError: expected cache bytes".into()); };
         let packet: serde_json::Value = crate::cache::unpack_json(&bytes.borrow())?;
-        let file = packet["file"].as_str().ok_or("ValueError: cache filename is missing")?;
+        let file = packet["file"].as_str().ok_or("ValueError: cache filename is missing")?.to_owned();
         let mode = packet["mode"].as_u64().filter(|n| *n < 3).ok_or("ValueError: invalid cache mode")?;
+        let function = packet["function"] == true;
+        let archive = Value::Bytes(Rc::new(RefCell::new(bytes.borrow().clone())), false, Rc::from("b"));
         let mut registry = crate::compile::Registry::default();
-        let program = crate::cache::program(packet.clone(), &mut registry)?;
-        if packet["function"] == true { return Ok(self.routine_code(&program)); }
+        let program = crate::cache::program(packet, &mut registry)?;
+        if function { return Ok(self.routine_code(&program)); }
         let bindings = serde_json::to_string(&registry).map_err(|e| format!("ValueError: {e}"))?;
         let constants = Value::tuple(program.code_constants.iter().map(|value| match value {
             Value::Routine(body) => self.routine_code(body), other => other.clone(),
         }).collect());
         let words = self.lang.compile_parameters.clone();
-        let fields = vec![(words[0].clone(), Value::text("")), (words[1].clone(), Value::text(file)),
+        let fields = vec![(words[0].clone(), Value::text("")), (words[1].clone(), Value::text(&file)),
             (words[2].clone(), Value::Small(mode as i64)), ("co_flags".into(), Value::Small(program.code_flags)),
             ("co_firstlineno".into(), Value::Small(program.declared_on as i64)), ("co_consts".into(), constants),
-            ("co_filename".into(), Value::text(file)),
+            ("co_filename".into(), Value::text(&file)),
             ("\0compiled_program".into(), Value::Routine(program)),
             ("\0compiled_bindings".into(), Value::text(&bindings)),
-            ("\0code_archive".into(), Value::text(&packet.to_string()))];
+            ("\0code_archive".into(), archive)];
         self.made += 1;
         let class = self.code_class();
         Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made })))

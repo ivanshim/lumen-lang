@@ -34006,9 +34006,7 @@ impl Machine<'_> {
 
     /// Check each search directory for an enclosing regular file.
     fn search_list_contains_file(&self, namespace: &Value, key: &str) -> bool {
-        let Value::Thing(owner) = namespace else { return false };
-        let held = owner.holds.borrow().iter().find(|entry| entry.0 == key).map(|entry| entry.1.clone());
-        let Some(mut directories) = held else { return false };
+        let Some(mut directories) = Self::imported_attribute(namespace, key) else { return false };
         while let Value::Shared(cell) | Value::Mutable(cell, _) = directories { directories = cell.borrow().clone(); }
         let items = match directories {
             Value::Vector(items) | Value::Tuple(items) => items,
@@ -34068,9 +34066,8 @@ impl Machine<'_> {
         let (space_name, attribute, filename) = if let Some((head, tail)) = path.rsplit_once('.') {
             (head, self.table.strings("ext.system.module.path").first().map(String::as_str)?, tail)
         } else { ("sys", "path", path) };
-        let Value::Thing(namespace) = self.imported.get(space_name)? else { return None };
-        let held = namespace.holds.borrow().iter().find(|entry| entry.0 == attribute).map(|entry| entry.1.clone())?;
-        let mut value = held;
+        let namespace = self.cached_import(space_name).or_else(|| self.imported.get(space_name).cloned())?;
+        let mut value = Self::imported_attribute(&namespace, attribute)?;
         while let Value::Shared(cell) | Value::Mutable(cell, _) = value {
             value = cell.borrow().clone();
         }
@@ -34215,17 +34212,10 @@ impl Machine<'_> {
             let full_name = self.qualified_import(path)?;
             return self.namespace_item(value, &full_name, wanted);
         }
-        if let Value::Thing(space) = value {
-            for (name, cell) in space.holds.borrow().iter() {
-                if name != wanted { continue; }
-                let read = match cell { Value::Shared(link) => link.borrow().clone(), worth => worth.clone() };
-                if !matches!(read, Value::Unset) { return Ok(read); }
-            }
+        if let Some(read) = Self::imported_attribute(value, wanted).filter(|read| !matches!(read, Value::Unset)) {
+            return Ok(read);
         }
-        let fallback = match value {
-            Value::Thing(space) => space.holds.borrow().iter().find(|entry| entry.0 == "__getattr__").map(|entry| entry.1.settled()).filter(|method| !matches!(method, Value::Unset)),
-            _ => None,
-        };
+        let fallback = Self::imported_attribute(value, "__getattr__").filter(|method| !matches!(method, Value::Unset));
         if let Some(f) = fallback {
             match self.apply_class_member(f, vec![Value::text(wanted)]) {
                 Ok(found) => return Ok(found),
@@ -34236,10 +34226,7 @@ impl Machine<'_> {
         let full = format!("{path}.{wanted}");
         if (self.table.strings("ext.system.module.path").first().map(String::as_str).is_none() && self.library_sources.contains_key(&full)) || self.sys_path_source(&full).is_some() || self.library_sources.contains_key(&full) && self.library_module_file(&full).is_some() || (self.imported.contains_key(&full) && self.import_cache_names(&full)) { return self.load_namespace(&full); }
         let path_name = self.table.single("ext.system.module.path");
-        let package = match (path_name, value) {
-            (Some(attribute), Value::Thing(namespace)) => namespace.holds.borrow().iter().any(|entry| entry.0 == attribute),
-            _ => false,
-        };
+        let package = path_name.is_some_and(|attribute| Self::imported_attribute(value, attribute).is_some());
         if package {
             match self.load_namespace(&full) {
                 Ok(child) => return Ok(child),
@@ -34311,9 +34298,8 @@ impl Machine<'_> {
     fn namespace_file_path(&self, path: &str) -> Option<String> {
         if self.table.strings("ext.system.module.path").first().map(String::as_str).is_some() {
             let word = self.rules.words_ext_system_source_file.first().map(String::as_str)?;
-            let Value::Thing(module) = self.imported.get(path)? else { return None; };
-            let held = module.holds.borrow().iter().find(|entry| entry.0 == word)?.1.clone();
-            let value = match held { Value::Shared(link) => link.borrow().clone(), other => other };
+            let module = self.cached_import(path).or_else(|| self.imported.get(path).cloned())?;
+            let value = Self::imported_attribute(&module, word)?;
             return match value { Value::Text(file) => Some(file.to_string()), _ => None };
         }
         if !self.library_sources.contains_key(path) { return None; }
@@ -36858,8 +36844,12 @@ impl<'a> Machine<'a> {
         }
         let Some(first) = v.first().map(Value::settled) else { return Err(self.core_complaint("core.arity", name)) };
         if let Value::Thing(code) = &first {
-            if let Some((_, Value::Text(saved))) = code.holds.borrow().iter().find(|(key, _)| key == "\0form_archive") {
-                self.cached_forms = Some(serde_json::from_str(saved).map_err(|e| format!("ValueError: {e}"))?);
+            if let Some((_, saved)) = code.holds.borrow().iter().find(|(key, _)| key == "\0form_archive") {
+                match saved {
+                    Value::Octets { cell, .. } => self.cached_forms = Some(crate::cache::unpack_forms(&cell.borrow())?),
+                    Value::Text(text) => self.cached_forms = Some(serde_json::from_str(text).map_err(|e| format!("ValueError: {e}"))?),
+                    _ => {}
+                }
             }
         }
         if let Value::Thing(thing) = &first {
@@ -40202,9 +40192,13 @@ impl Machine<'_> {
             let Value::Thing(object) = input[0].settled() else { return Err("TypeError: expected compiled code".into()); };
             if self.table.strings("ext.builtin.compile.kind").first().map(String::as_str) != Some(object.blueprint().name.as_str()) { return Err("TypeError: expected compiled code".into()); }
             let attributes = object.holds.borrow();
-            if let Some((_, Value::Text(encoded))) = attributes.iter().find(|(name, _)| name == "\0form_archive")
+            if let Some((_, saved)) = attributes.iter().find(|(name, _)| name == "\0form_archive")
                 .filter(|_| !attributes.iter().any(|(name, _)| name == "\0literal_overrides")) {
-                return Ok(Value::Octets { cell: Rc::new(RefCell::new(crate::cache::pack_saved_forms(encoded.as_bytes())?)), changeable: false, lead: Rc::from("b") });
+                match saved {
+                    Value::Octets { .. } => return Ok(saved.clone()),
+                    Value::Text(text) => return Ok(Value::Octets { cell: Rc::new(RefCell::new(crate::cache::pack_saved_forms(text.as_bytes())?)), changeable: false, lead: Rc::from("b") }),
+                    _ => {}
+                }
             }
             let routine = attributes.iter().find(|(name, _)| name == "\0native_forms").and_then(|(_, value)| match value { Value::Routine(body) => Some(body.clone()), _ => None }).ok_or("ValueError: code has no compiled forms")?;
             let names = attributes.iter().find(|(name, _)| name == "\0form_names").and_then(|(_, value)| match value { Value::Text(text) => Some(text), _ => None }).ok_or("ValueError: code bindings are unavailable")?;
@@ -40237,23 +40231,24 @@ impl Machine<'_> {
         }
         let Value::Octets { cell, .. } = input[0].settled() else { return Err("TypeError: compiled cache requires bytes".to_owned()); };
         let envelope: serde_json::Value = crate::cache::unpack_forms(&cell.borrow())?;
-        let filename = envelope["filename"].as_str().ok_or("ValueError: compiled filename is absent")?;
+        let filename = envelope["filename"].as_str().ok_or("ValueError: compiled filename is absent")?.to_owned();
         let manner = envelope["manner"].as_u64().filter(|value| *value <= 2).ok_or("ValueError: unknown compiled mode")?;
-        let recovered = crate::cache::forms(envelope.clone(), &[], None, None, None)?;
-        if envelope["function"] == true { return Ok(self.code_handle(&recovered.program)); }
+        let function = envelope["function"] == true;
+        let archive = Value::Octets { cell: Rc::new(RefCell::new(cell.borrow().clone())), changeable: false, lead: Rc::from("b") };
+        let recovered = crate::cache::forms(envelope, &[], None, None, None)?;
+        if function { return Ok(self.code_handle(&recovered.program)); }
         let metadata = crate::build::cache_metadata(&recovered).to_string();
         let literals = Value::tuple(recovered.program.literals.iter().map(|item| match item {
             Value::Routine(body) => self.code_handle(body), value => value.clone(),
         }).collect());
         let keys = self.table.strings("ext.builtin.compile.parameters");
-        let mut slots = vec![(keys[0].clone(), Value::text("")), (keys[1].clone(), Value::text(filename)),
+        let mut slots = vec![(keys[0].clone(), Value::text("")), (keys[1].clone(), Value::text(&filename)),
             (keys[2].clone(), Value::Small(manner as i64)), ("co_flags".to_owned(), Value::Small(recovered.program.flags)),
             ("co_firstlineno".to_owned(), Value::Small(recovered.program.declared_on as i64)), ("co_consts".to_owned(), literals),
-            ("co_filename".into(), Value::text(filename))];
-        let encoded = envelope.to_string();
+            ("co_filename".into(), Value::text(&filename))];
         slots.push(("\0native_forms".into(), Value::Routine(recovered.program)));
         slots.push(("\0form_names".into(), Value::text(&metadata)));
-        slots.push(("\0form_archive".into(), Value::text(&encoded)));
+        slots.push(("\0form_archive".into(), archive));
         let of = self.code_blueprint();
         self.made += 1;
         Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of, holds: RefCell::new(slots), turn: self.made })))

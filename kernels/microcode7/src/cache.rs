@@ -114,7 +114,7 @@ pub fn forms(mut record: Node, seeded: &[String], globals: Option<Value>, native
     }
     renumber(&mut record["forms"], &offsets)?;
     renumber(&mut record["bodies"], &offsets)?;
-    let spellings = serde_json::from_value(record["spellings"].clone()).map_err(|error| format!("ValueError: {error}"))?;
+    let spellings = serde_json::from_value(record["spellings"].take()).map_err(|error| format!("ValueError: {error}"))?;
     let bodies: Vec<Node> = serde_json::from_value(record["bodies"].take()).map_err(|e| format!("ValueError: {e}"))?;
     BODY_INPUT.with(|stack| stack.borrow_mut().push(BodyInput { visited: vec![None; bodies.len()], pending: Default::default(), bodies }));
     READ_NAMESPACES.with(|stack| stack.borrow_mut().push((globals, natives, module, spellings)));
