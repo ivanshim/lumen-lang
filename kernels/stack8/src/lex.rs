@@ -272,7 +272,7 @@ struct Cursor<'a> {
     lang: &'a Lang,
     signs: std::rc::Rc<std::collections::HashMap<char, Vec<&'a str>>>,
     continued: std::rc::Rc<std::collections::HashMap<String, Vec<String>>>,
-    text: Vec<char>,
+    text: Box<[char]>,
     at: usize,
     row: usize,
     column: usize,
@@ -1449,12 +1449,22 @@ impl<'a> Cursor<'a> {
     /// Tokens to the end of the text.
     fn run(&mut self, mut at_line_start: bool) -> Result<(), String> {
         let lang = self.lang;
+        // Batch blanks only when they cannot introduce another lexical construct.
+        let blank_run = !lang.string_starters[9] && !lang.string_starters[32]
+            && !lang.line_comments.iter().chain(&lang.line_continuations).any(|mark|
+                mark.is_empty() || mark.starts_with(' ') || mark.starts_with('\t'));
         while self.at < self.text.len() {
             if at_line_start {
                 at_line_start = self.indentation();
                 if at_line_start {
                     continue;
                 }
+            }
+            if blank_run && matches!(self.text[self.at], ' ' | '\t') {
+                let beginning = self.at;
+                while self.at < self.text.len() && matches!(self.text[self.at], ' ' | '\t') { self.at += 1; }
+                self.column += self.at - beginning;
+                continue;
             }
             if !lang.long_quotes.is_empty() {
                 if lang.line_comments.iter().any(|m| at_word(&self.text, self.at, m)) {

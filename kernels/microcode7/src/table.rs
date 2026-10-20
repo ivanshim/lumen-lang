@@ -172,6 +172,9 @@ pub struct Table {
     guesses: Vec<std::cell::Cell<u32>>,
     pub dyadic: HashMap<String, Infix>,
     pub monadic: HashMap<String, Infix>,
+    /// Keep the immutable expression-prefix spellings for the atom fast path.
+    pub prefix_heads: HashSet<String, FxBuildHasher>,
+    pub prefix_head_width: usize,
     pub precedence: HashMap<String, u32>,
     pub prims: HashMap<String, Prim, FxBuildHasher>,
     builtin_continuations: HashMap<String, Vec<String>>,
@@ -618,6 +621,7 @@ impl Table {
             guesses: (0..GUESSES).map(|_| std::cell::Cell::new(0)).collect(),
             dyadic: HashMap::new(),
             monadic: HashMap::new(),
+            prefix_heads: HashSet::default(), prefix_head_width: 0,
             precedence: HashMap::new(),
             prims: HashMap::default(),
             builtin_continuations: HashMap::new(),
@@ -655,6 +659,14 @@ impl Table {
             ends.extend(extra_ends);
         }
         table.precedence_tables()?;
+        let mut heads: HashSet<String, FxBuildHasher> = table.monadic.keys().cloned().collect();
+        for label in ["op.mul", "ext.op.await", "ext.stmt.yield", "ext.stmt.class.special.declined",
+            "ext.stmt.class.special.stop", "ext.literal.ellipsis", "ext.literal.unimplemented",
+            "ext.op.lambda", "ext.stmt.unpack", "ext.op.name_by_value", "ext.op.hush", "ext.op.plus"] {
+            heads.extend(table.strings(label).iter().cloned());
+        }
+        table.prefix_head_width = heads.iter().map(String::len).max().unwrap_or(0);
+        table.prefix_heads = heads;
         let mut methods = HashMap::new();
         for (label, primitive) in BUILTIN_LABELS {
             if primitive != Prim::ValueMethod { continue; }
