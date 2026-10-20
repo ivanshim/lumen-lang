@@ -1,8 +1,11 @@
 # The CLI's interactive input loop. Compilation state and the user namespace
 # survive each command; this is also used after a script or -c with -i.
-def _lumen_interact(source, filename, namespace):
+def _lumen_interact(source, filename, namespace, quiet=False, version="3.14.8"):
     import codeop
     import sys
+    if not quiet:
+        sys.stderr.write("Python " + version + " (lumen-lang)\n")
+        sys.stderr.flush()
     compiler = codeop.CommandCompiler()
     def report():
         import traceback
@@ -27,6 +30,13 @@ def _lumen_interact(source, filename, namespace):
             sys.stderr.flush()
             line = sys.stdin.readline()
             if not line:
+                if pending:
+                    # At EOF, finish the buffered input without incomplete-input flags.
+                    command = compiler.compiler('\n'.join(pending), '<stdin>', 'single', incomplete_input=False)
+                    pending = []
+                    exec(command, namespace)
+                sys.stderr.write("\n")
+                sys.stderr.flush()
                 return
             pending.append(line.rstrip('\n'))
             command = compiler('\n'.join(pending), '<stdin>', 'single')

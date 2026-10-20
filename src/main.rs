@@ -203,6 +203,7 @@ struct Invocation {
     program_name: Option<String>,
     python_ignore_environment: bool,
     python_interactive: bool,
+    python_quiet: bool,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -748,7 +749,7 @@ fn run_all() {
         env::remove_var("LUMEN_WARNOPTIONS");
     }
 
-    let written = inv.module_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| (if inv.file == "-" {
+    let written = inv.module_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| (if inv.file == "-" || inv.file == "<stdin>" {
         let mut input = Vec::new();
         std::io::stdin().read_to_end(&mut input).map(|_| input)
     } else { fs::read(&inv.file) }).unwrap_or_else(|e| {
@@ -773,7 +774,7 @@ fn run_all() {
     let source = if inv.python_interactive {
         let initial = serde_json::to_string(&source).expect("interactive initial source");
         let filename = serde_json::to_string(&inv.file).expect("interactive source filename");
-        format!("{}\n_lumen_interact({initial}, {filename}, globals())\n", include_str!("python_interactive.py"))
+        format!("{}\n_lumen_interact({initial}, {filename}, globals(), {}, {})\n", include_str!("python_interactive.py"), if inv.python_quiet { "True" } else { "False" }, serde_json::to_string(inv.python.map_or("3.14.8", |version| version.release)).expect("interactive version"))
     } else { source };
     if inv.language.name() == "python" && inv.file == "<string>" { env::set_var("LUMEN_COMMAND_SOURCE", &source); }
     else { env::remove_var("LUMEN_COMMAND_SOURCE"); }
@@ -1122,6 +1123,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut extended_options = Vec::new();
     let mut python_ignore_environment = false;
     let mut python_interactive = false;
+    let mut python_quiet = false;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
     // The name a Python program sees as its own first argument. It is
@@ -1275,7 +1277,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 break;
             }
             Some("-q") if file.is_none() && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
-                // The interactive driver has no startup banner to suppress.
+                python_quiet = true;
                 language = Some(Language::Named("python".to_owned()));
                 rest = &rest[1..];
             }
@@ -1337,7 +1339,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 language = Some(Language::Named("python".to_owned()));
                 rest = &rest[used..];
             }
-            Some("-E") if file.is_none() => {
+            Some("-E") | Some("-I") if file.is_none() => {
                 python_ignore_environment = true;
                 language = Some(Language::Named("python".to_string()));
                 rest = &rest[1..];
@@ -1424,10 +1426,16 @@ fn parse_args(args: &[OsString]) -> Invocation {
 
     if let Some(limit) = tracing_limit { env::set_var("LUMEN_TRACE_FRAMES", limit.to_string()); }
     else { env::remove_var("LUMEN_TRACE_FRAMES"); }
-    if python_interactive && file.is_none() {
-        file = Some("<stdin>".to_owned());
-        module_source = Some(String::new());
-        program_name = Some(String::new());
+    // With no file, Python reads stdin as a script or a terminal session.
+    // Keep an explicit dash as argv[0], and leave resolved -c/-m source intact.
+    if file.as_deref().is_none_or(|name| name == "-") {
+        python_interactive |= std::io::IsTerminal::is_terminal(&std::io::stdin());
+        if file.is_none() {
+            file = Some("<stdin>".to_owned());
+            program_name = Some(String::new());
+        }
+        if python_interactive { module_source = Some(String::new()); }
+        if language.is_none() { language = Some(Language::Named("python".to_owned())); }
     }
     let file = file.unwrap_or_else(|| usage(program));
     let language = language.unwrap_or_else(|| {
@@ -1502,7 +1510,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         let encoded = extended_options.iter().map(|option| format!("{}:{option}", option.chars().count())).collect::<String>();
         env::set_var("LUMEN_XOPTIONS", encoded);
     } else { env::remove_var("LUMEN_XOPTIONS"); }
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_ignore_environment, python_interactive, python_development, warning_options, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_ignore_environment, python_interactive, python_quiet, python_development, warning_options, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.
