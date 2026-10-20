@@ -2439,6 +2439,11 @@ pub struct Blueprint {
 }
 
 impl Blueprint {
+    /// Supply the seven varying fields and fill every other blueprint field.
+    pub fn bare(name: String, presentation: Option<String>, under: Option<Rc<Blueprint>>, parents: Vec<Rc<Blueprint>>, ancestry: Vec<Rc<Blueprint>>, constants: Vec<(String, Value)>, shared: BlueprintEntries) -> Self {
+        Self { name, presentation, under: RefCell::new(under), parents: RefCell::new(parents), ancestry: RefCell::new(ancestry), constants, shared, answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), instance_slots: RefCell::new(None), namespace_layout: Cell::new(None), supplied_bases: RefCell::new(None), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: RefCell::new(None), mro_place: RefCell::new(vec![0]), mro_ready: Cell::new(true), base_epoch: Cell::new(0) }
+    }
+
     pub fn resolution(self: &Rc<Self>) -> Vec<Rc<Blueprint>> {
         let inherited=self.ancestry();
         let positions=self.mro_place.borrow();

@@ -1168,10 +1168,8 @@ impl<'a> Machine<'a> {
             }
             // A native fault's stored ancestry already includes every forebear.
             seed.push((String::from("\0fixed-fault-ancestry"), Value::Flag(true)));
-            let kind = Blueprint { parents: std::cell::RefCell::new(parents), ancestry: RefCell::new(ancestry), presentation: Some(format!("<class '{word}'>")),
-                name: word.clone(), under: std::cell::RefCell::new(under),
-                fields: seed, reaches: vec![], answers: vec![], methods: vec![],
-                shared: crate::data::BlueprintEntries::new(shared), constants: vec![], instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: std::cell::Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
+            let mut kind = Blueprint::bare(word.clone(), Some(format!("<class '{word}'>")), under, parents, ancestry, Vec::new(), crate::data::BlueprintEntries::new(shared));
+            kind.fields = seed;
             chain[number] = Some(Rc::new(kind));
         }
         let mut furnished: HashMap<String, Value> = chain.into_iter().flatten().map(|b| (b.name.clone(), Value::Blueprint(b))).collect();
@@ -2097,19 +2095,15 @@ impl<'a> Machine<'a> {
         crate::ghost::set_farewell_name(table.single("ext.stmt.class.finaliser").map(str::to_string));
         if table.has_any("ext.stmt.catch.as") {
             if let Some(at) = find("ext.system.fault.class.value") {
-                let blueprint = Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
-                    name: idents[at].clone(), under: std::cell::RefCell::new(None), answers: Vec::new(),
-                    fields: Vec::new(), constants: Vec::new(), methods: Vec::new(),
-                    shared: crate::data::BlueprintEntries::new(Vec::new()), reaches: Vec::new(), instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
+                let blueprint = Blueprint::bare(idents[at].clone(), None, None, Vec::new(), Vec::new(), Vec::new(), crate::data::BlueprintEntries::new(Vec::new()));
                 outermost.cells.borrow_mut()[at] = Value::Blueprint(Rc::new(blueprint));
             }
         }
         // The common ancestor stands before the fault kinds are laid
         // out, so their lines can end on it.
         let root_title = table.single("ext.stmt.class.detail.root").unwrap_or_default().to_owned();
-        let ancestor = Rc::new(Blueprint { presentation: Some(format!("<class '{root_title}'>")), name: root_title,
-            parents: std::cell::RefCell::new(Vec::new()), ancestry: RefCell::new(Vec::new()), under: std::cell::RefCell::new(None), answers: Vec::new(), fields: Vec::new(),
-            reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: crate::data::BlueprintEntries::new(Vec::new()), instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: std::cell::Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+        let presentation = Some(format!("<class '{root_title}'>"));
+        let ancestor = Rc::new(Blueprint::bare(root_title, presentation, None, Vec::new(), Vec::new(), Vec::new(), crate::data::BlueprintEntries::new(Vec::new())));
         let fault_kinds = Self::given_faults(table, &ancestor);
         // Preserve roster aliases while resolving numeric checks without spelling lookups.
         let numbered_faults = table.strings("ext.builtin.exceptions").iter()
@@ -4013,7 +4007,7 @@ impl<'a> Machine<'a> {
             if let Some(Value::Blueprint(kind)) = self.fault_kinds.get(self.rules.words_ext_stmt_class_special_stop.first().map(String::as_str)?).cloned() {
                 return Some(self.make_fault(kind, vec![], Value::Nil));
             }
-            let of = Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None, name: self.rules.words_ext_stmt_class_special_stop.first().map(String::as_str)?.to_owned(), under: std::cell::RefCell::new(None), fields: vec![], methods: vec![], shared: crate::data::BlueprintEntries::new(vec![]), reaches: vec![], answers: vec![], constants: vec![], instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
+            let of = Blueprint::bare(self.rules.words_ext_stmt_class_special_stop.first().map(String::as_str)?.to_owned(), None, None, Vec::new(), Vec::new(), Vec::new(), crate::data::BlueprintEntries::new(Vec::new()));
             self.made += 1;
             return Some(Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false), reclassified: RefCell::new(None),  of: Rc::new(of), holds: RefCell::new(vec![]), turn: self.made })));
         }
@@ -6798,9 +6792,7 @@ impl<'a> Machine<'a> {
             for name in ["f_back", "f_code", "f_globals", "f_lasti", "f_lineno", "f_locals", "f_trace", "f_trace_lines"] {
                 shared.push((name.to_owned(), self.kind_entry("frame", name)));
             }
-            self.activation_kind = Some(Rc::new(Blueprint { name: words[9].to_string(), under: std::cell::RefCell::new(None), presentation: Some(format!("<class '{}'>", words[9])),
-                parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                answers: Vec::new(), constants: vec![("__module__".into(), Value::text("builtins"))], shared: crate::data::BlueprintEntries::new(shared), instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)}));
+            self.activation_kind = Some(Rc::new(Blueprint::bare(words[9].to_string(), Some(format!("<class '{}'>", words[9])), None, Vec::new(), Vec::new(), vec![("__module__".into(), Value::text("builtins"))], crate::data::BlueprintEntries::new(shared))));
         }
         // Capture the actual globals while this frame is made. Looking up
         // globals later would use the formatter's module instead of ours.
@@ -8909,11 +8901,7 @@ impl<'a> Machine<'a> {
                     }
                     _ => {
                         let held = if matches!(held, Value::Unset) { Value::text("") } else { held };
-                        let kind = Blueprint {
-                            ancestry: std::cell::RefCell::new(vec![]), parents: std::cell::RefCell::new(vec![]), presentation: None,
-                            name: self.table.strings("ext.stmt.assert.kind").first().map(String::as_str).unwrap_or_default().to_string(),
-                            fields: Vec::new(), methods: Vec::new(), constants: Vec::new(),
-                            shared: crate::data::BlueprintEntries::new(Vec::new()), reaches: Vec::new(), under: std::cell::RefCell::new(None), answers: Vec::new(), instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
+                        let kind = Blueprint::bare(self.table.strings("ext.stmt.assert.kind").first().map(String::as_str).unwrap_or_default().to_string(), None, None, Vec::new(), Vec::new(), Vec::new(), crate::data::BlueprintEntries::new(Vec::new()));
                         Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false), reclassified: RefCell::new(None),  of: Rc::new(kind), turn: 0, holds: RefCell::new(vec![("message".to_string(), held)]) }))
                     }
                 };
@@ -9251,17 +9239,12 @@ impl<'a> Machine<'a> {
                     let mut parents=Vec::new();parents.extend(under);parents.extend(answers);
                     return self.build_class_value(plan.name.clone(),parents,entries);
                 }
-                Ok(Value::Blueprint(Rc::new(Blueprint {
-                    ancestry: std::cell::RefCell::new(vec![]), parents: std::cell::RefCell::new(vec![]), presentation: None,
-                    name: plan.name.clone(),
-                    under: std::cell::RefCell::new(under),
-                    answers,
-                    fields,
-                    reaches: plan.field_reach.clone(),
-                    methods: plan.methods.clone(),
-                    constants,
-                    shared: crate::data::BlueprintEntries::new(shared),
-                    instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)})))
+                let mut made = Blueprint::bare(plan.name.clone(), None, under, Vec::new(), Vec::new(), constants, crate::data::BlueprintEntries::new(shared));
+                made.answers = answers;
+                made.fields = fields;
+                made.reaches = plan.field_reach.clone();
+                made.methods = plan.methods.clone();
+                Ok(Value::Blueprint(Rc::new(made)))
             },
             _ => unreachable!(),
         }
@@ -27848,9 +27831,7 @@ impl<'a> Machine<'a> {
                     }
                 }
                 if self.has_class_order() { return self.build_class_value(title, vec![ancestor], holdings).map_err(|e| self.carried_native_fault(e)); }
-                let heir = Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
-                    under: std::cell::RefCell::new(Some(ancestor)), name: title, shared: crate::data::BlueprintEntries::new(holdings),
-                    methods: vec![], constants: vec![], reaches: vec![], answers: vec![], fields: vec![], instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
+                let heir = Blueprint::bare(title, None, Some(ancestor), Vec::new(), Vec::new(), Vec::new(), crate::data::BlueprintEntries::new(holdings));
                 Value::Blueprint(Rc::new(heir))
             },
             _ => unreachable!(),
@@ -32443,8 +32424,7 @@ impl<'a> Machine<'a> {
                 if !matches!(source, Value::Vector(_) | Value::Arguments(_) | Value::Dict(_) | Value::Text(_) | Value::Progression(_)) {
                     return Err(self.argument_fault("ext.builtin.exceptions.unready", None));
                 }
-                let kind = Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None, name: name.into(), under: std::cell::RefCell::new(None), answers: vec![], reaches: vec![],
-                    fields: vec![], shared: crate::data::BlueprintEntries::new(vec![]), constants: vec![], methods: vec![], instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
+                let kind = Blueprint::bare(name.into(), None, None, Vec::new(), Vec::new(), Vec::new(), crate::data::BlueprintEntries::new(Vec::new()));
                 self.made += 1;
                 Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false), reclassified: RefCell::new(None),  of: Rc::new(kind), turn: self.made,
                     holds: RefCell::new(vec![("\0walked".into(), source), ("\0walk-step".into(), Value::Small(0))]) }))
@@ -35938,9 +35918,7 @@ impl Machine<'_> {
             (Value::text(name), self.outermost.cells.borrow()[beginning + position].clone())).collect::<Vec<_>>();
         members.push(("\0bindings".to_owned(), Value::Dict(Rc::new(slot_links.into()))));
         members.push(("\0loaded-module".to_owned(), Value::text(path)));
-        let kind = Rc::new(Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), presentation: None,
-            name: path.into(), under: std::cell::RefCell::new(None), methods: Vec::new(), constants: Vec::new(),
-            shared: crate::data::BlueprintEntries::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+        let kind = Rc::new(Blueprint::bare(path.into(), None, None, Vec::new(), Vec::new(), Vec::new(), crate::data::BlueprintEntries::new(Vec::new())));
         if !self.rules.words_ext_builtin_weak_get.is_empty() { kind.weak_slot.set(Some(true)); }
         self.made += 1;
         let value = Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false), reclassified: RefCell::new(None),  of: kind, holds: RefCell::new(members), turn: self.made }));
@@ -36025,9 +36003,7 @@ impl Machine<'_> {
             let main_name = self.detail("main").to_owned();
             if main_name.len() > 0 && self.imported.get(&main_name).is_none() {
                 let dictionary = Value::Mutable(self.world_kept(), true);
-                let blueprint = Rc::new(Blueprint { name: main_name.clone(), presentation: Some(format!("<module '{main_name}'>")), under: std::cell::RefCell::new(None),
-                    parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), answers: Vec::new(), reaches: Vec::new(), fields: Vec::new(),
-                    type_names: RefCell::new(None), shared: crate::data::BlueprintEntries::new(Vec::new()), constants: Vec::new(), methods: Vec::new(), instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+                let blueprint = Rc::new(Blueprint::bare(main_name.clone(), Some(format!("<module '{main_name}'>")), None, Vec::new(), Vec::new(), Vec::new(), crate::data::BlueprintEntries::new(Vec::new())));
                 if !self.rules.words_ext_builtin_weak_get.is_empty() { blueprint.weak_slot.set(Some(true)); }
                 self.made += 1;
                 let instance = Thing {tethered: std::cell::Cell::new(false),  of: blueprint, reclassified: RefCell::new(None), turn: self.made,
@@ -37121,10 +37097,7 @@ impl<'a> Machine<'a> {
         // file, as CPython's SourceFileLoader does for __main__.
         if self.rules.has_any_ext_builtin_loader_source {
             let get_source = ("get_source".to_owned(), Value::Intrinsic(Prim::LoaderSource, Rc::from("__loader_source")));
-            let loader_kind = Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: RefCell::new(Vec::new()), presentation: None,
-                name: "SourceFileLoader".to_owned(), under: std::cell::RefCell::new(None), methods: Vec::new(), constants: Vec::new(),
-                shared: crate::data::BlueprintEntries::new(vec![get_source]), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(),
-                has_slot_storage: false, instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), type_names: RefCell::new(None), sealed: Cell::new(false), order_supplied: std::cell::Cell::new(false), supplied_order: RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
+            let loader_kind = Blueprint::bare("SourceFileLoader".to_owned(), None, None, Vec::new(), Vec::new(), Vec::new(), crate::data::BlueprintEntries::new(vec![get_source]));
             self.made += 1;
             let loader = Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false), reclassified: RefCell::new(None),
                 of: Rc::new(loader_kind), holds: RefCell::new(Vec::new()), turn: self.made }));
@@ -37137,9 +37110,7 @@ impl<'a> Machine<'a> {
             }
             let _ = self.booked_put(&book, "__loader__", Some(loader));
         }
-        let kind = Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: RefCell::new(Vec::new()), presentation: None,
-            name: main.clone(), under: std::cell::RefCell::new(None), methods: Vec::new(), constants: Vec::new(),
-            shared: crate::data::BlueprintEntries::new(Vec::new()), fields: Vec::new(), answers: Vec::new(), reaches: Vec::new(), has_slot_storage: false, instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: std::cell::Cell::new(None), type_names: std::cell::RefCell::new(None), sealed: std::cell::Cell::new(false), order_supplied: std::cell::Cell::new(false), supplied_order: RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
+        let kind = Blueprint::bare(main.clone(), None, None, Vec::new(), Vec::new(), Vec::new(), crate::data::BlueprintEntries::new(Vec::new()));
         self.made += 1;
         let value = Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false), reclassified: RefCell::new(None), of: Rc::new(kind), holds: RefCell::new(vec![("\0dictionary".to_string(), Value::Shared(book))]), turn: self.made }));
         self.imported.insert(main.clone(), value); self.namespace_places.borrow_mut().take(); self.revised_members.borrow_mut().clear();
@@ -38173,8 +38144,7 @@ impl<'a> Machine<'a> {
         }
         let alphabet = match cookie.as_str() {
             "cp1251" => Some("ЂЃ‚ѓ„…†‡€‰Љ‹ЊЌЋЏђ‘’“”•–—�™љ›њќћџ ЎўЈ¤Ґ¦§Ё©Є«¬­®Ї°±Ііґµ¶·ё№є»јЅѕїАБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯабвгдежзийклмнопрстуфхцчшщъыьэюя"),
-            "iso88597" => Some("
- ‘’£€₯¦§¨©ͺ«¬­�―°±²³΄΅Ά·ΈΉΊ»Ό½ΎΏΐΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡ�ΣΤΥΦΧΨΩΪΫάέήίΰαβγδεζηθικλμνξοπρςστυφχψωϊϋόύώ�"),
+            "iso88597" => Some("\u{85} ‘’£€₯¦§¨©ͺ«¬­�―°±²³΄΅Ά·ΈΉΊ»Ό½ΎΏΐΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡ�ΣΤΥΦΧΨΩΪΫάέήίΰαβγδεζηθικλμνξοπρςστυφχψωϊϋόύώ�"),
             "cp437" | "437" | "ibm437" => Some("\u{c7}\u{fc}\u{e9}\u{e2}\u{e4}\u{e0}\u{e5}\u{e7}\u{ea}\u{eb}\u{e8}\u{ef}\u{ee}\u{ec}\u{c4}\u{c5}\u{c9}\u{e6}\u{c6}\u{f4}\u{f6}\u{f2}\u{fb}\u{f9}\u{ff}\u{d6}\u{dc}\u{a2}\u{a3}\u{a5}\u{20a7}\u{192}\u{e1}\u{ed}\u{f3}\u{fa}\u{f1}\u{d1}\u{aa}\u{ba}\u{bf}\u{2310}\u{ac}\u{bd}\u{bc}\u{a1}\u{ab}\u{bb}\u{2591}\u{2592}\u{2593}\u{2502}\u{2524}\u{2561}\u{2562}\u{2556}\u{2555}\u{2563}\u{2551}\u{2557}\u{255d}\u{255c}\u{255b}\u{2510}\u{2514}\u{2534}\u{252c}\u{251c}\u{2500}\u{253c}\u{255e}\u{255f}\u{255a}\u{2554}\u{2569}\u{2566}\u{2560}\u{2550}\u{256c}\u{2567}\u{2568}\u{2564}\u{2565}\u{2559}\u{2558}\u{2552}\u{2553}\u{256b}\u{256a}\u{2518}\u{250c}\u{2588}\u{2584}\u{258c}\u{2590}\u{2580}\u{3b1}\u{df}\u{393}\u{3c0}\u{3a3}\u{3c3}\u{b5}\u{3c4}\u{3a6}\u{398}\u{3a9}\u{3b4}\u{221e}\u{3c6}\u{3b5}\u{2229}\u{2261}\u{b1}\u{2265}\u{2264}\u{2320}\u{2321}\u{f7}\u{2248}\u{b0}\u{2219}\u{b7}\u{221a}\u{207f}\u{b2}\u{25a0}\u{a0}"),
             "koi8r" => Some("\u{2500}\u{2502}\u{250c}\u{2510}\u{2514}\u{2518}\u{251c}\u{2524}\u{252c}\u{2534}\u{253c}\u{2580}\u{2584}\u{2588}\u{258c}\u{2590}\u{2591}\u{2592}\u{2593}\u{2320}\u{25a0}\u{2219}\u{221a}\u{2248}\u{2264}\u{2265}\u{a0}\u{2321}\u{b0}\u{b2}\u{b7}\u{f7}\u{2550}\u{2551}\u{2552}\u{451}\u{2553}\u{2554}\u{2555}\u{2556}\u{2557}\u{2558}\u{2559}\u{255a}\u{255b}\u{255c}\u{255d}\u{255e}\u{255f}\u{2560}\u{2561}\u{401}\u{2562}\u{2563}\u{2564}\u{2565}\u{2566}\u{2567}\u{2568}\u{2569}\u{256a}\u{256b}\u{256c}\u{a9}\u{44e}\u{430}\u{431}\u{446}\u{434}\u{435}\u{444}\u{433}\u{445}\u{438}\u{439}\u{43a}\u{43b}\u{43c}\u{43d}\u{43e}\u{43f}\u{44f}\u{440}\u{441}\u{442}\u{443}\u{436}\u{432}\u{44c}\u{44b}\u{437}\u{448}\u{44d}\u{449}\u{447}\u{44a}\u{42e}\u{410}\u{411}\u{426}\u{414}\u{415}\u{424}\u{413}\u{425}\u{418}\u{419}\u{41a}\u{41b}\u{41c}\u{41d}\u{41e}\u{41f}\u{42f}\u{420}\u{421}\u{422}\u{423}\u{416}\u{412}\u{42c}\u{42b}\u{417}\u{428}\u{42d}\u{429}\u{427}\u{42a}"),
             "cp1252" | "1252" | "windows1252" => Some("\u{20ac}\u{81}\u{201a}\u{192}\u{201e}\u{2026}\u{2020}\u{2021}\u{2c6}\u{2030}\u{160}\u{2039}\u{152}\u{8d}\u{17d}\u{8f}\u{90}\u{2018}\u{2019}\u{201c}\u{201d}\u{2022}\u{2013}\u{2014}\u{2dc}\u{2122}\u{161}\u{203a}\u{153}\u{9d}\u{17e}\u{178}\u{a0}\u{a1}\u{a2}\u{a3}\u{a4}\u{a5}\u{a6}\u{a7}\u{a8}\u{a9}\u{aa}\u{ab}\u{ac}\u{ad}\u{ae}\u{af}\u{b0}\u{b1}\u{b2}\u{b3}\u{b4}\u{b5}\u{b6}\u{b7}\u{b8}\u{b9}\u{ba}\u{bb}\u{bc}\u{bd}\u{be}\u{bf}\u{c0}\u{c1}\u{c2}\u{c3}\u{c4}\u{c5}\u{c6}\u{c7}\u{c8}\u{c9}\u{ca}\u{cb}\u{cc}\u{cd}\u{ce}\u{cf}\u{d0}\u{d1}\u{d2}\u{d3}\u{d4}\u{d5}\u{d6}\u{d7}\u{d8}\u{d9}\u{da}\u{db}\u{dc}\u{dd}\u{de}\u{df}\u{e0}\u{e1}\u{e2}\u{e3}\u{e4}\u{e5}\u{e6}\u{e7}\u{e8}\u{e9}\u{ea}\u{eb}\u{ec}\u{ed}\u{ee}\u{ef}\u{f0}\u{f1}\u{f2}\u{f3}\u{f4}\u{f5}\u{f6}\u{f7}\u{f8}\u{f9}\u{fa}\u{fb}\u{fc}\u{fd}\u{fe}\u{ff}"),
