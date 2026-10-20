@@ -21802,7 +21802,10 @@ impl<'a> Engine<'a> {
                 // A lower bound on decimal digits rejects large values
                 // without paying for the conversion being limited.
                 let lower = whole.bits().saturating_sub(1).saturating_mul(30102) / 100000;
-                if lower >= limit as u64 || num_traits::Signed::abs(&*whole).to_str_radix(10).len() > limit {
+                // Likewise an upper bound lets a number that cannot reach the
+                // limit skip the count; log10(2) is below 30103/100000.
+                let upper = whole.bits().saturating_mul(30103) / 100000 + 1;
+                if lower >= limit as u64 || (upper > limit as u64 && num_traits::Signed::abs(&*whole).to_str_radix(10).len() > limit) {
                     return Err(self.digits_refused(limit));
                 }
             }

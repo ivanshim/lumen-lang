@@ -74,7 +74,9 @@ fn in_category(tag: u32, value: u32) -> bool {
 #[derive(Clone)]
 struct Cycle { entry: usize, exit: usize, low: usize, high: usize, taken: usize, position: Option<usize> }
 #[derive(Clone)]
-struct Cursor { instruction: usize, offset: usize, captures: Vec<i64>, recent: i64, cycles: Vec<Cycle> }
+// `floor` marks a cursor that stands for a whole run of shorter ones: once
+// taken from the alternatives, the offsets down to `floor` are still owed.
+struct Cursor { instruction: usize, offset: usize, captures: Vec<i64>, recent: i64, cycles: Vec<Cycle>, floor: Option<usize> }
 struct Regex<'a> { program: &'a [u32], subject: &'a [u32], limit: usize }
 impl Regex<'_> {
     fn viable(&self, offset: usize) -> bool {
@@ -141,10 +143,43 @@ impl Regex<'_> {
         }
         false
     }
+    // How many words the instruction at `at` spans when it tests one
+    // character and is followed by SUCCESS, the shape of a one-item repeat's body.
+    fn single_width(&self, at: usize) -> Option<usize> {
+        let operand = self.instruction(at+1) as usize;
+        let span = match self.instruction(at) {
+            2 | 3 => 1,
+            13 | 31 | 35 | 39 => operand+1,
+            8 | 16 | 20 | 32 | 33 | 36 | 37 | 40 | 41 => 2,
+            _ => return None,
+        };
+        (self.instruction(at+span) == 1).then_some(span)
+    }
+    fn takes_one(&self, at: usize, mut value: u32) -> bool {
+        let tag = self.instruction(at);
+        let operand = self.instruction(at+1);
+        if tag >= 31 { value = folded(value, tag < 39); }
+        match tag {
+            2 => value != 10, 3 => true,
+            8 => in_category(operand, value),
+            16 | 32 | 40 => value == operand,
+            36 => value == folded(operand, true),
+            20 | 33 | 41 => value != operand,
+            37 => value != folded(operand, true),
+            35 => self.contains(at+2, value, match value { 97..=122 => value-32, _ => value }),
+            _ => self.contains(at+2, value, value),
+        }
+    }
     fn follow(&self, start: Cursor, terminal: Option<usize>, entire: bool, forbidden: Option<usize>, nesting: usize) -> Result<Option<Cursor>, String> {
         if nesting > 512 { return Err(String::from("RecursionError: regular expression assertion nesting exceeded")); }
         let mut alternatives = vec![start];
         while let Some(mut current) = alternatives.pop() {
+            if let Some(low) = current.floor.take() {
+                if current.offset > low {
+                    let mut rest = current.clone(); rest.offset -= 1; rest.floor = Some(low);
+                    alternatives.push(rest);
+                }
+            }
             loop {
                 let ip = current.instruction;
                 if terminal == Some(ip) { return Ok(Some(current)); }
@@ -229,6 +264,19 @@ impl Regex<'_> {
                     26 => {
                         let low = self.instruction(ip + 2) as usize;
                         let high = self.instruction(ip + 3) as usize;
+                        if self.single_width(ip + 4).is_some() {
+                            let mut taken = 0;
+                            loop {
+                                if taken >= low {
+                                    let mut attempt = current.clone(); attempt.instruction = ip + operand + 1;
+                                    let attempt = self.follow(attempt, terminal, entire, forbidden, nesting + 1)?;
+                                    if attempt.is_some() { return Ok(attempt); }
+                                }
+                                if taken >= high || current.offset >= self.limit || !self.takes_one(ip + 4, self.subject[current.offset]) { break; }
+                                current.offset += 1; taken += 1;
+                            }
+                            break;
+                        }
                         let mut trial = current.clone();
                         let mut taken = 0;
                         while taken <= high {
@@ -254,6 +302,21 @@ impl Regex<'_> {
                         let boundary = ip+operand+1;
                         let body = ip+4;
                         let possessive = tag >= 28;
+                        if tag != 28 && self.single_width(body).is_some() {
+                            // One character per step: measure the run once and
+                            // leave the shorter ends to be rebuilt on demand.
+                            let mut reach = current.offset;
+                            while reach - current.offset < most && reach < self.limit && self.takes_one(body, self.subject[reach]) { reach += 1; }
+                            if reach - current.offset < least { break; }
+                            let floor = current.offset + least;
+                            current.instruction = boundary;
+                            if !possessive && reach > floor {
+                                let mut rest = current.clone(); rest.offset = reach - 1; rest.floor = Some(floor);
+                                alternatives.push(rest);
+                            }
+                            current.offset = reach;
+                            continue;
+                        }
                         let mut choices = vec![current.clone()];
                         let mut count = 0;
                         while count < most {
@@ -274,18 +337,7 @@ impl Regex<'_> {
                     }
                     2 | 3 | 8 | 13 | 16 | 20 | 31..=33 | 35..=37 | 39..=41 => {
                         if current.offset >= self.limit { break; }
-                        let mut value = self.subject[current.offset];
-                        if tag >= 31 { value = folded(value, tag < 39); }
-                        let allowed = match tag {
-                            2 => value != 10, 3 => true,
-                            8 => in_category(operand as u32, value),
-                            16 | 32 | 40 => value == operand as u32,
-                            36 => value == folded(operand as u32, true),
-                            20 | 33 | 41 => value != operand as u32,
-                            37 => value != folded(operand as u32, true),
-                            35 => self.contains(ip+2, value, match value { 97..=122 => value-32, _ => value }),
-                            _ => self.contains(ip+2, value, value),
-                        };
+                        let allowed = self.takes_one(ip, self.subject[current.offset]);
                         if !allowed { break; }
                         current.offset += 1;
                         current.instruction += match tag { 2 | 3 => 1, 13 | 31 | 35 | 39 => operand+1, _ => 2 };
@@ -307,8 +359,15 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
     }
     let action = input.first().map(integer).transpose()?.unwrap_or(-1);
     if action == 10 {
-        let [_, text, snapshot, count, directory, selection] = input else {
+        // One tuple carries the subject, the state, the group count and the
+        // group names; the groups asked for follow it.
+        let [_, bundle, selection] = input else {
             return Err(String::from("TypeError: invalid SRE capture argument count"));
+        };
+        let Value::Tuple(parts) = bundle.settled() else { return Err(String::from("TypeError: invalid SRE match state")); };
+        let mut parts = parts.iter();
+        let (Some(text), Some(snapshot), Some(count), Some(directory), None) = (parts.next(), parts.next(), parts.next(), parts.next(), parts.next()) else {
+            return Err(String::from("TypeError: invalid SRE match state"));
         };
         let Value::Tuple(choices) = selection.settled() else { return Err(String::from("TypeError: SRE groups must be a tuple")); };
         for choice in choices.iter() {
@@ -439,7 +498,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
             let mut matched = None;
             while scan <= limit {
                 if !regex.viable(scan) { scan += 1; continue; }
-                let state = Cursor { instruction: 0, offset: scan, captures: vec![-1; groups * 2], recent: -1, cycles: vec![] };
+                let state = Cursor { instruction: 0, offset: scan, captures: vec![-1; groups * 2], recent: -1, cycles: vec![], floor: None };
                 let avoid = (omit && scan == origin).then_some(origin);
                 if let Some(result) = regex.follow(state, None, false, avoid, 0)? {
                     matched = Some(result);
@@ -489,7 +548,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
             position += 1;
             continue;
         }
-        let cursor = Cursor { instruction: 0, offset: position, captures: vec![-1; groups*2], recent: -1, cycles: vec![] };
+        let cursor = Cursor { instruction: 0, offset: position, captures: vec![-1; groups*2], recent: -1, cycles: vec![], floor: None };
         let forbid = if skip_empty && position == begin { Some(begin) } else { None };
         if let Some(m) = regex.follow(cursor, None, mode == 1, forbid, 0)? {
             return Ok(vector(vec![Value::Small(position as i64), Value::Small(m.offset as i64),
