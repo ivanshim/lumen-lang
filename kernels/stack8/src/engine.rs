@@ -8760,6 +8760,7 @@ impl<'a> Engine<'a> {
 
     pub(super) fn module_holding(&self, value: &Value) -> Option<String> {
         let Value::Object(o) = value else { return None };
+        if Self::kind_beneath(&o.class_now()).is_some_and(|kind| kind != "module") { return None; }
         if !self.module_addresses_ready.get() {
             let mut addresses = self.module_by_address.borrow_mut();
             addresses.clear();
@@ -8811,7 +8812,7 @@ impl<'a> Engine<'a> {
     fn stored_module_member(module: &Value, name: &str) -> Option<Value> {
         let Value::Object(object) = module else { return None };
         let fields = object.fields.borrow();
-        if let Some((_, namespace)) = fields.iter().find(|(key, _)| key == "_namespace") {
+        if let Some((_, namespace)) = fields.iter().find(|(key, _)| key == "\0namespace") {
             if let Value::Map(entries) = namespace.contents() {
                 return entries.iter().find_map(|(key, value)| key_spells(key, name).then(|| value.contents()));
             }

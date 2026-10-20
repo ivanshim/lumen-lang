@@ -4334,13 +4334,8 @@ impl<'a> Engine<'a> {
         let qualified = match subject {
             Value::Class(class) => format!("type object '{}' has no attribute '{name}'", self.qualified_class(class)),
             Value::Object(instance) if !self.lang.module_names.is_empty() && Self::kind_beneath(&instance.class_now()).as_deref() == Some("module") => {
-                let fields = instance.fields.borrow();
-                let namespace = fields.iter().find(|(key, _)| key == "_namespace").map(|(_, value)| value.contents());
-                let named = match &namespace {
-                    Some(Value::Map(entries)) => entries.iter().find(|(key, _)| matches!(key, Value::Text(word) if word.as_ref() == "__name__")).map(|(_, value)| value),
-                    _ => fields.iter().find(|(key, _)| key == "__name__").map(|(_, value)| value),
-                };
-                let label = named.and_then(|value| match value.contents() { Value::Text(word) => Some(word.to_string()), _ => None });
+                let label = Self::stored_module_member(subject, "__name__")
+                    .and_then(|value| match value { Value::Text(word) => Some(word.to_string()), _ => None });
                 label.map_or_else(|| format!("module has no attribute '{name}'"), |label| self.module_absence_text(&label, name))
             }
             Value::Object(instance) => format!("'{}' object has no attribute '{name}'", self.qualified_class(&instance.class_now())),
