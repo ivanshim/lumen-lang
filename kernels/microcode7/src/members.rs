@@ -322,6 +322,8 @@ impl Request<'_> {
             let set=match self.given.first(){None|Some(Value::Nil)=>None,Some(v)=>Some(letters(v,self.complaint)?)};
             let removes=|ch:char|match &set{Some(chars)=>chars.contains(ch),None=>ch.is_whitespace()||matches!(ch,'\u{1c}'..='\u{1f}')};
             let trimmed=if op=="lstrip"{s.trim_start_matches(removes)}else if op=="rstrip"{s.trim_end_matches(removes)}else{s.trim_matches(removes)};
+            // An exact text that lost nothing is handed back itself.
+            if trimmed.len()==s.len(){return Ok(self.target.settled());}
             return Ok(Value::text(trimmed));
         }
         if op=="split"||op=="rsplit"{
@@ -519,6 +521,8 @@ impl Request<'_> {
         };
         let low = if self.operation == "rstrip" { 0 } else { units.iter().position(|n| !discard(n)).unwrap_or(units.len()) };
         let high = if self.operation == "lstrip" { units.len() } else { units.iter().rposition(|n| !discard(n)).map_or(0, |p| p + 1) };
+        // Nothing discarded leaves the receiver's very row of units.
+        if low == 0 && high.max(low) == units.len() { return Ok(self.target.settled()); }
         Ok(Value::characters(units[low..high.max(low)].to_vec()))
     }
     fn affix_units(&self, units: &[u32]) -> ResultValue {

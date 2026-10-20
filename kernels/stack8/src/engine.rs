@@ -139,6 +139,10 @@ pub struct Engine<'a> {
     /// Routines whose frames a frame walk hides, as C routines are
     /// absent from a Python frame chain in the reference.
     native_frame_routines: std::collections::HashSet<usize, crate::value::FxBuildHasher>,
+    /// Explicitly registered adapter routines and their owned storage descriptors.
+    deque_routines: std::collections::HashMap<usize, (Value, Value, String), crate::value::FxBuildHasher>,
+    deque_routine_bits: [u64; 4],
+    deque_layouts: std::collections::HashMap<usize, (u64, u64, Value, Vec<String>), crate::value::FxBuildHasher>,
     trace_hook: Value,
     coroutine_depth: usize,
     annotation_scope: Option<(Rc<Routine>, Option<Rc<Class>>, Vec<(Weak<Instance>, String)>)>,
@@ -157,7 +161,7 @@ pub struct Engine<'a> {
     limit_place: StateCell<usize>,
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>, Value, usize)>,
-    async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>)>,
+    async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>), crate::value::FxBuildHasher>,
     delegated_tokens: std::collections::HashSet<usize>,
     code_watches: Vec<(Weak<RefCell<Value>>, bool)>,
     frame_codes: HashMap<usize, Weak<(u8, Vec<Value>)>>,
@@ -182,6 +186,10 @@ pub struct Engine<'a> {
     function_rows: RefCell<HashMap<(usize, usize), usize>>,
     /// Where the last short walk for a dead row of `function_members` ended.
     function_sweep: usize,
+    /// What each name asked of a row of bytes stands for (fixed kind, changeable kind).
+    byte_members_seen: RefCell<HashMap<String, [Option<Option<&'static str>>; 2], crate::value::FxBuildHasher>>,
+    /// The prepared entry the tokens last read by `text_tokens` came from, if any.
+    prepared_hint: std::cell::Cell<Option<usize>>,
     collecting_cycles: bool,
     kind_names: RefCell<HashMap<String, Vec<String>>>,
     member_words: [&'a str; 25],
@@ -230,6 +238,7 @@ pub struct Engine<'a> {
     /// value's own where one is run, else the running text's, as the
     /// reference reads them from the calling frame.
     text_future_bits: std::cell::Cell<i64>,
+    text_optimization: std::cell::Cell<u8>,
     native_names: RefCell<std::collections::BTreeMap<String, Vec<String>>>,
     /// Whether each definition reached makes a function of its own,
     /// which a language that tells values apart by identity wants.
@@ -246,7 +255,7 @@ pub struct Engine<'a> {
     /// written through it is a name written in the module.
     module_globals: HashMap<String, Rc<RefCell<Value>>>,
     // These dictionaries remain strongly owned by the module inventory.
-    globals_by_cell: HashMap<usize, String>,
+    globals_by_cell: HashMap<usize, String, crate::value::FxBuildHasher>,
     native_slots: HashMap<String, usize>,
     module_by_address: RefCell<HashMap<usize, String, crate::value::FxBuildHasher>>,
     changed_module_positions: RefCell<HashMap<usize, (usize, HashMap<String, usize, crate::value::FxBuildHasher>)>>,
@@ -1699,7 +1708,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
+            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, byte_members_seen: RefCell::new(HashMap::default()), prepared_hint: std::cell::Cell::new(None), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
             contexts: crate::context::ContextStore::default(),
@@ -1748,6 +1757,9 @@ impl<'a> Engine<'a> {
             trace_frame: None,
             step_at: -1,
             native_frame_routines: std::collections::HashSet::with_hasher(crate::value::FxBuildHasher::default()),
+            deque_routines: std::collections::HashMap::with_hasher(crate::value::FxBuildHasher::default()),
+            deque_routine_bits: [0; 4],
+            deque_layouts: std::collections::HashMap::with_hasher(crate::value::FxBuildHasher::default()),
             trace_hook: Value::Null,
             coroutine_depth: 0,
             annotation_scope: None,
@@ -1758,6 +1770,7 @@ impl<'a> Engine<'a> {
             trace_fault_outside: None,
             running_routine: None,
             text_future_bits: std::cell::Cell::new(0),
+            text_optimization: std::cell::Cell::new(0),
             inline_comp: None,
             location: None,
             frame_class: None,
@@ -1767,7 +1780,7 @@ impl<'a> Engine<'a> {
             limit_place: StateCell::new(0),
             generator_frames: HashMap::new(),
             coroutines: HashMap::new(),
-            async_generators: HashMap::new(),
+            async_generators: HashMap::default(),
             delegated_tokens: std::collections::HashSet::new(),
             code_watches: Vec::new(), frame_codes: HashMap::new(),
             source: Rc::from(""),
@@ -1845,7 +1858,7 @@ impl<'a> Engine<'a> {
             embedded_names: std::collections::HashSet::new(),
             modules: HashMap::new(),
             module_globals: HashMap::new(),
-            globals_by_cell: HashMap::new(),
+            globals_by_cell: HashMap::default(),
             native_slots: lang.class_special.iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
             module_by_address: RefCell::new(HashMap::with_hasher(crate::value::FxBuildHasher::default())),
             changed_module_positions: RefCell::new(HashMap::new()),
@@ -2444,7 +2457,7 @@ impl<'a> Engine<'a> {
     }
 
     /// Build ownership including any nodes retained by this collection.
-    fn cycle_graph(&self, retained: &[Value]) -> crate::faint::Graph {
+    fn cycle_graph(&self, retained: &[Value], complete: bool) -> crate::faint::Graph {
         let books = self.text_books.iter().flat_map(|book| {
             std::iter::once(Value::Bond(book.near.clone()))
                 .chain(book.outer.iter().cloned().map(Value::Bond))
@@ -2454,15 +2467,13 @@ impl<'a> Engine<'a> {
         let live = self.world.iter().chain(&self.data).chain(&self.caught).chain(&self.buffer)
             .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
             .chain(self.native_exceptions.values()).chain(std::iter::once(&self.trace_hook)).cloned()
-            // Weak metadata keys must also be graph candidates: a function
-            // owned only by an active local can otherwise be absent, leaving
-            // no node from which to mark its still-live attribute dictionary.
-            .chain(self.function_members.iter().filter_map(|(function, _)| function.revive()))
             .chain(self.outer_book.iter().cloned().map(Value::Bond))
             .chain(self.function_books.iter().flatten().cloned().map(Value::Bond))
             .chain(self.natives.iter().cloned().map(Value::Bond)).collect();
         {
-            let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live);
+            // Weak metadata keys are candidates, never proven outside owners.
+            let weak_keys = self.function_members.iter().filter_map(|(function, _)| function.revive()).collect();
+            let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live, weak_keys, complete);
             for (function, holder) in &self.function_members { if let Some(function) = function.revive() { graph.link_attributes(&function, &Value::Object(holder.clone())); } }
             graph
         }
@@ -2479,7 +2490,7 @@ impl<'a> Engine<'a> {
         self.function_members.retain(|(function, _)| function.revive().is_some());
         self.reindex_function_rows();
         self.settle_departed();
-        let mut graph = self.cycle_graph(&[]);
+        let mut graph = self.cycle_graph(&[], false);
         let mut group = graph.unreached();
         // Nothing unreachable means nothing is said or cleared, so the
         // heap is the same afterwards and the first walk still stands.
@@ -2515,7 +2526,7 @@ impl<'a> Engine<'a> {
             }
         }
         drop(graph);
-        let mut after = self.cycle_graph(&group);
+        let mut after = self.cycle_graph(&group, false);
         let unreached = after.still_unreached(group);
         let count = unreached.len();
         self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !after.unowned(&function)));
@@ -3376,7 +3387,7 @@ impl<'a> Engine<'a> {
         }
         // For the second format every name of the globals the annotation
         // reads is a stand-in, whatever it is bound to.
-        if !slot.ident.starts_with('#') && !slot.ident.starts_with('\0') {
+        if (&slot.ident).as_bytes().first() != Some(&b'#') && (&slot.ident).as_bytes().first() != Some(&0) {
             if let Some((names, true)) = self.annotation_scope() {
                 if self.running_routine.as_ref().is_some_and(|routine| Self::has_explicit_globals(routine)) {
                     if let Some(book) = &self.outer_book {
@@ -3403,7 +3414,7 @@ impl<'a> Engine<'a> {
         if let (Value::Bond(shared), false) = (&self.world[slot.far], empty_cell) {
             return Ok(match () {
                 _ if self.lang.bind_names && !self.registry.idents[slot.far].starts_with("\0module:") => Value::Bond(shared.clone()),
-                _ if (slot.moving && !slot.ident.starts_with('#')) => std::mem::replace(&mut *shared.borrow_mut(), Value::Gap),
+                _ if (slot.moving && (&slot.ident).as_bytes().first() != Some(&b'#')) => std::mem::replace(&mut *shared.borrow_mut(), Value::Gap),
                 _ => shared.borrow().clone(),
             });
         }
@@ -3411,7 +3422,7 @@ impl<'a> Engine<'a> {
         // Where a language makes a place on writing into it, a name
         // that holds nothing holds an empty array as far as the write
         // is concerned, and nothing is said about it.
-        if (slot.moving && !slot.ident.starts_with('#')) && self.lang.makes_places && (unbound || matches!(self.world[slot.far], Value::Null)) {
+        if (slot.moving && (&slot.ident).as_bytes().first() != Some(&b'#')) && self.lang.makes_places && (unbound || matches!(self.world[slot.far], Value::Null)) {
             return Ok(Value::Array(crate::tuples::Items::plain(Vec::new())));
         }
         // A language that has a word for a warning does not stop for a
@@ -3432,9 +3443,9 @@ impl<'a> Engine<'a> {
         if empty_cell { return Err(format!("Undefined variable: {}", slot.ident)); }
         let g = &mut self.world[slot.far];
         match g {
-            Value::Blank if (slot.moving && !slot.ident.starts_with('#')) => Err(format!("Undefined variable '{}'", slot.ident)),
+            Value::Blank if (slot.moving && (&slot.ident).as_bytes().first() != Some(&b'#')) => Err(format!("Undefined variable '{}'", slot.ident)),
             Value::Blank => Err(format!("Undefined variable: {}", slot.ident)),
-            _ if (slot.moving && !slot.ident.starts_with('#')) => Ok(std::mem::replace(g, Value::Gap)),
+            _ if (slot.moving && (&slot.ident).as_bytes().first() != Some(&b'#')) => Ok(std::mem::replace(g, Value::Gap)),
             v => Ok(v.clone()),
         }
     }
@@ -3567,7 +3578,7 @@ impl<'a> Engine<'a> {
                 self.write_booked(kept, &slot.ident, None, Some(slot.far));
                 if let Some(fled) = self.carried.take() { return Err(fled); }
             }
-            if !slot.ident.starts_with('#') && !self.lang.module_cache.is_empty() && self.module_slots.contains_key(&self.source) {
+            if (&slot.ident).as_bytes().first() != Some(&b'#') && !self.lang.module_cache.is_empty() && self.module_slots.contains_key(&self.source) {
                 if let Value::Bond(cell) = &self.world[slot.far] {
                     *cell.borrow_mut() = Value::Blank;
                     return Ok(());
@@ -3739,7 +3750,7 @@ impl<'a> Engine<'a> {
                     return Ok(());
                 }
             }
-            if slot.near.is_empty() && !slot.ident.starts_with('#') && self.registry.idents[slot.far].starts_with("\0module:") {
+            if slot.near.is_empty() && (&slot.ident).as_bytes().first() != Some(&b'#') && self.registry.idents[slot.far].starts_with("\0module:") {
                 if let Value::Bond(cell) = &self.world[slot.far] {
                     let cell = cell.clone();
                     *cell.borrow_mut() = value;
@@ -4750,6 +4761,16 @@ impl<'a> Engine<'a> {
     }
 
     pub fn invoke_top(&mut self, program: &Rc<Routine>, n: usize) -> Flow<()> {
+        let address = Rc::as_ptr(program) as usize;
+        let bit = (address >> 4) & 255;
+        if self.deque_routine_bits[bit / 64] & (1u64 << (bit % 64)) != 0 && self.deque_routines.contains_key(&address) {
+            let supplied = self.data[self.data.len() - n..].to_vec();
+            if let Some(done) = self.deque_routine_call(program, &supplied) {
+                self.data.truncate(self.data.len() - n);
+                self.data.push(done?);
+                return Ok(());
+            }
+        }
         let mut annotation_namespace = Self::function_book(program).or_else(|| {
             self.armed_names.as_ref()?;
             match program.globe.as_ref() {
@@ -6497,6 +6518,11 @@ impl<'a> Engine<'a> {
     }
 
     fn inspect_instructions(&self, target: &Value) -> Res<Value> {
+        if let Value::Object(object) = target.contents() {
+            if let Some((_, retained)) = object.fields.borrow().iter().find(|(name, _)| matches!(name.as_str(), "\0native_code" | "\0compiled")) {
+                return self.inspect_instructions(retained);
+            }
+        }
         let body = match target.contents() {
             Value::Routine(body) => body,
             Value::Adapter(parts) if parts.0 == 7 => match &parts.1[0] { Value::Routine(body) => body.clone(), _ => return Err("TypeError: expected code".into()) },
@@ -6515,11 +6541,44 @@ impl<'a> Engine<'a> {
         for (offset, instruction) in body.instrs.iter().enumerate() {
             match instruction {
                 Instr::Line(line) => { row = *line; position = vec![Value::Small(row as i64), Value::Null, Value::Null, Value::Null]; }
-                Instr::Location(a, b, c, d) => position = [a, b, c, d].into_iter().map(|part| Value::Small(*part as i64)).collect(),
+                Instr::Location(a, b, c, d) => position = [a, c, b, d].into_iter().map(|part| Value::Small(*part as i64)).collect(),
                 _ => {}
             }
-            let description = format!("{instruction:?}");
-            let opcode = description.split(['(', ' ', '{']).next().unwrap_or("");
+            // Operands can retain module graphs; inspection needs only the instruction tag.
+            let opcode = match instruction {
+                Instr::Const(..) => "Const",
+                Instr::Read(..) => "Read",
+                Instr::DeleteName(..) => "DeleteName",
+                Instr::SaveCallable(..) => "SaveCallable",
+                Instr::PrepareBuiltin(..) => "PrepareBuiltin",
+                Instr::PreparedAct(..) => "PreparedAct",
+                Instr::Write(..) => "Write",
+                Instr::Act(..) => "Act",
+                Instr::Skip(..) => "Skip",
+                Instr::Missing(..) => "Missing",
+                Instr::Unwritten(..) => "Unwritten",
+                Instr::Line(..) => "Line",
+                Instr::Location(..) => "Location",
+                Instr::Hush(..) => "Hush",
+                Instr::Glance(..) => "Glance",
+                Instr::Bond(..) => "Bond",
+                Instr::Fasten(..) => "Fasten",
+                Instr::BondItem(..) => "BondItem",
+                Instr::BondPlace(..) => "BondPlace",
+                Instr::Forget(..) => "Forget",
+                Instr::Emptied(..) => "Emptied",
+                Instr::Shed => "Shed",
+                Instr::Nothing => "Nothing",
+                Instr::Mute(..) => "Mute",
+                Instr::Ready(..) => "Ready",
+                Instr::Guard(..) => "Guard",
+                Instr::Attempt(..) => "Attempt",
+                Instr::Depart { .. } => "Depart",
+                Instr::Unguard => "Unguard",
+                Instr::Dyad { .. } => "Dyad",
+                Instr::Bump { .. } => "Bump",
+                Instr::SkipCmp { .. } => "SkipCmp",
+            };
             let jump = matches!(instruction, Instr::Skip(_) | Instr::SkipCmp { .. } | Instr::Depart { .. });
             let destination = match instruction { Instr::Skip(at) | Instr::SkipCmp { to: at, .. } | Instr::Depart { to: at, .. } => Value::Small(*at as i64), _ => Value::Null };
             entries.push(Value::tuple(vec![Value::Small(offset as i64), Value::text(opcode), destination, Value::Flag(jump),
@@ -18911,7 +18970,11 @@ impl<'a> Engine<'a> {
     }
 
     fn slice_places(&self, parts: &[Value; 3], size: usize) -> Res<(usize, usize, i128, Vec<usize>)> {
-        let (start, stop, stride) = self.slice_edges(parts, size)?;
+        let edges = self.slice_edges(parts, size)?;
+        Ok(Self::places_between(edges))
+    }
+
+    fn places_between((start, stop, stride): (i128, i128, i128)) -> (usize, usize, i128, Vec<usize>) {
         let backwards = stride < 0;
         let mut places = Vec::new();
         let mut at = start;
@@ -18919,7 +18982,7 @@ impl<'a> Engine<'a> {
             places.push(at as usize);
             at = at.saturating_add(stride);
         }
-        Ok((start.max(0) as usize, stop.max(start).max(0) as usize, stride, places))
+        (start.max(0) as usize, stop.max(start).max(0) as usize, stride, places)
     }
 
     fn read_slice(&self, target: &Value, parts: &[Value; 3]) -> Res<Value> {
@@ -18935,8 +18998,12 @@ impl<'a> Engine<'a> {
                 Ok(self.byte_make(places.into_iter().map(|i| row[i]).collect(), *mutable))
             }
             Value::Array(items) | Value::Tuple(items) => {
-                let (_, _, _, places) = self.slice_places(parts, items.len())?;
-                let selected = places.into_iter().map(|i| items[i].clone()).collect();
+                let edges = self.slice_edges(parts, items.len())?;
+                let selected = if edges.2 == 1 {
+                    items[edges.0.max(0) as usize..edges.1.max(edges.0).max(0) as usize].to_vec()
+                } else {
+                    Self::places_between(edges).3.into_iter().map(|i| items[i].clone()).collect()
+                };
                 Ok(if matches!(target, Value::Tuple(_)) { Value::tuple(selected) } else { Value::array(selected) })
             }
             Value::Text(text) if self.lang.text_indexable => {
@@ -20063,10 +20130,22 @@ impl<'a> Engine<'a> {
         // standing on the very kind the word names works here through
         // what it keeps of it, exactly as the loose member read off the
         // kind itself does.
-        if let Some((word, _)) = name.split_once('.') {
+        if let Some((word, member)) = name.split_once('.') {
             if let Some(Value::Object(o)) = args.first() {
                 if Self::kind_beneath(&o.class_now()).as_deref() == Some(word) {
-                    if let Some(worth) = Self::worth_of(&args[0]) { args[0] = worth; }
+                    if let Some(worth) = Self::worth_of(&args[0]) {
+                        // A thing standing on a text kind still answers
+                        // a trimming with a fresh exact text, so its
+                        // stored worth is copied rather than shared; a
+                        // fixed run of bytes is copied under the three
+                        // trimmings and no other working.
+                        args[0] = match worth {
+                            Value::Text(text) if matches!(builtin, Builtin::Text(crate::strings::TextOp::Strip | crate::strings::TextOp::Lstrip | crate::strings::TextOp::Rstrip)) => Value::text(&text),
+                            Value::Codepoints(row) if matches!(builtin, Builtin::Text(crate::strings::TextOp::Strip | crate::strings::TextOp::Lstrip | crate::strings::TextOp::Rstrip)) => Value::Codepoints(Rc::new(row.as_ref().clone())),
+                            Value::Bytes(cell, false, lead) if Self::byte_working(member).is_some_and(|task| matches!(task, 12 | 24 | 25)) => Value::Bytes(Rc::new(RefCell::new(cell.borrow().clone())), false, lead),
+                            other => other,
+                        };
+                    }
                 }
             }
         }
@@ -21009,6 +21088,18 @@ impl<'a> Engine<'a> {
         }
         let newargs_owner = (operation == "__getnewargs__").then(|| receiver.core_kind());
         let native_receiver = Self::worth_of(receiver);
+        // A thing of a text or fixed-bytes kind still hands a fresh
+        // exact value out of a trimming, so its immutable worth is
+        // copied here; a changeable worth stays the thing's own.
+        let native_receiver = match native_receiver {
+            Some(worth) if matches!(self.lang.value_methods.get(operation).map(String::as_str), Some("strip" | "lstrip" | "rstrip")) => Some(match worth {
+                Value::Text(text) => Value::text(&text),
+                Value::Codepoints(row) => Value::Codepoints(Rc::new(row.as_ref().clone())),
+                Value::Bytes(cell, false, lead) => Value::Bytes(Rc::new(RefCell::new(cell.borrow().clone())), false, lead),
+                other => other,
+            }),
+            other => other,
+        };
         let receiver = native_receiver.as_ref().unwrap_or(receiver);
         let contents = receiver.contents();
         if matches!(&contents, Value::Ellipsis | Value::Declined(_)) && matches!(operation, "__reduce__" | "__reduce_ex__") {
@@ -21627,6 +21718,17 @@ impl<'a> Engine<'a> {
     /// before it answers by its bare tail as well, since that is how a
     /// row of bytes names a method its kind keeps.
     pub(super) fn byte_member(&self, name: &str, changeable: bool) -> Option<&'static str> {
+        // The definition never changes under a run, so what a name stands for
+        // is searched out once and remembered, for each kind of bytes.
+        let kind = usize::from(changeable);
+        if let Some(known) = self.byte_members_seen.borrow().get(name).and_then(|row| row[kind]) { return known; }
+        let found = self.byte_member_searched(name, changeable);
+        let mut seen = self.byte_members_seen.borrow_mut();
+        if seen.len() < 4096 || seen.contains_key(name) { seen.entry(name.to_string()).or_insert([None, None])[kind] = Some(found); }
+        found
+    }
+
+    fn byte_member_searched(&self, name: &str, changeable: bool) -> Option<&'static str> {
         let spelt = |words: &Vec<String>| words.iter().any(|word| word == name || word.rsplit('.').next() == Some(name));
         let changers: &[&str] = if changeable { Self::BYTE_CHANGERS } else { &[] };
         Self::BYTE_MEMBERS.iter().chain(changers).copied().find(|working| {
@@ -22952,14 +23054,14 @@ impl<'a> Engine<'a> {
     fn pickle_buffer_work(&mut self, args: &[Value]) -> Flow<Value> {
         let Some(action) = args.first().and_then(|v| v.as_big().ok()).and_then(|v| v.to_u8()) else { return Err("TypeError: invalid buffer operation".into()); };
         // Copy a memory-stream range once, or store bytes without Python slice temporaries.
-        if action == 6 || action == 7 {
+        if matches!(action, 6..=8) {
             let [_, owner, item] = args else { return Err("TypeError: buffer cursor operation requires a stream and argument".into()); };
             // A count that is not a plain whole number the cursor can hold, or a
             // store of anything but bytes, goes back as None before any state is
             // read: the Python side then validates it the slow way, in its order.
             let plain = match (action, item.contents()) {
-                (6, Value::Small(_)) => true,
-                (6, Value::Huge(big)) => big.to_i64().is_some(),
+                (6 | 8, Value::Small(_)) => true,
+                (6 | 8, Value::Huge(big)) => big.to_i64().is_some(),
                 (7, Value::Bytes(..)) => true,
                 _ => false,
             };
@@ -22981,11 +23083,14 @@ impl<'a> Engine<'a> {
             if closed.is_true() { return Err("ValueError: I/O operation on closed file".into()); }
             let Value::Bytes(storage, mutable, _) = buffer.contents() else { return Err("TypeError: buffer cursor requires bytes storage".into()); };
             let begin = position.as_big()?.to_usize().ok_or("ValueError: invalid buffer position")?;
-            if action == 6 {
+            if action != 7 {
                 let count = item.as_big()?.to_i64().ok_or("OverflowError: buffer read size is too large")?;
                 let (copy, end) = {
                     let bytes = storage.borrow();
-                    let end = if count < 0 { bytes.len() } else { bytes.len().min(begin.saturating_add(count as usize)) };
+                    let mut end = if count < 0 { bytes.len() } else { bytes.len().min(begin.saturating_add(count as usize)) };
+                    if action == 8 && begin < end {
+                        if let Some(newline) = bytes[begin..end].iter().position(|byte| *byte == b'\n') { end = begin + newline + 1; }
+                    }
                     if end <= begin { (Vec::new(), begin) } else { (bytes[begin..end].to_vec(), end) }
                 };
                 if !copy.is_empty() { self.stream_moved(owner, end as i64, moved_directly)?; }
@@ -23754,6 +23859,11 @@ impl<'a> Engine<'a> {
                 // text, and each of those is worked out over the bytes.
                 _ => {
                     let answer = self.byte_text_work(task, &row, *mutable, given)?;
+                    if !*mutable && matches!(task, 24 | 25) {
+                        if let Value::Bytes(kept, ..) = &answer {
+                            if kept.borrow().len() == row.len() { return Ok(args[0].clone()); }
+                        }
+                    }
                     if !mutable && matches!(task, 26 | 27) {
                         if let Value::Tuple(parts) = &answer {
                             if matches!(&parts[1], Value::Bytes(bytes, ..) if !bytes.borrow().is_empty()) {
@@ -23766,6 +23876,9 @@ impl<'a> Engine<'a> {
                     return Ok(answer);
                 },
             };
+            if !*mutable && task == 12 && result.len() == row.len() {
+                return Ok(args[0].clone());
+            }
             Ok(self.byte_make(result, *mutable))
         })();
         self.byte_buffers_close(held, result)
@@ -24704,7 +24817,7 @@ impl<'a> Engine<'a> {
             Builtin::Restore => unreachable!(),
             // These two are read only where a language binds names,
             // which reaches them through `core_call` instead.
-            Builtin::WarningBackend(_) | Builtin::LzmaEncode | Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
+            Builtin::WarningBackend(_) | Builtin::LzmaEncode | Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::DequeNative | Builtin::ReduceNative | Builtin::RebuildNative => unreachable!(),
             Builtin::External => self.external(name, &args)?,
         })
     }
@@ -25372,7 +25485,7 @@ impl<'a> Engine<'a> {
             Builtin::TrackedObjects
             => {
                 if args.len()!=0 {return Err(format!("TypeError: {}() takes no arguments",self.lang.gc_objects.first().map_or("gc.get_objects",String::as_str)));}
-                let graph=self.cycle_graph(&[]);
+                let graph=self.cycle_graph(&[], true);
                 let mut seen=std::collections::HashSet::new();
                 let mut objects=Vec::new();
                 for object in graph.tracked_objects() {
@@ -25564,6 +25677,26 @@ impl<'a> Engine<'a> {
                         let Value::Class(class) = args[1].contents() else { return Err("TypeError: expected a type".into()) };
                         class.sealed.set(true);
                         Value::Null
+                    }
+                    5 => {
+                        arity(8)?;
+                        let password = self.byte_row(&args[1].contents(), false)?;
+                        let salt = self.byte_row(&args[2].contents(), false)?;
+                        let n_cost = as_index(&args[3])? as usize;
+                        let r_cost = as_index(&args[4])? as usize;
+                        let p_cost = as_index(&args[5])? as usize;
+                        let derived_len = as_index(&args[6])? as usize;
+                        let maxmem = as_index(&args[7])? as usize;
+                        self.byte_make(crate::crypto::scrypt_kdf(&password, &salt, n_cost, r_cost, p_cost, derived_len, maxmem)?, false)
+                    }
+                    6 => {
+                        arity(6)?;
+                        let Value::Text(name) = args[1].contents() else { return Err("TypeError: hash name must be str".into()) };
+                        let password = self.byte_row(&args[2].contents(), false)?;
+                        let salt = self.byte_row(&args[3].contents(), false)?;
+                        let rounds = as_index(&args[4])? as usize;
+                        let derived_len = as_index(&args[5])? as usize;
+                        self.byte_make(crate::crypto::pbkdf2_hmac(&name, &password, &salt, rounds, derived_len)?, false)
                     }
                     _ => return Err("NotImplementedError: unsupported cryptographic operation".into()),
                 }
@@ -26582,9 +26715,22 @@ impl<'a> Engine<'a> {
                         for (name, member) in &self.module_aliases { request.push(("MODULE_ALIAS".into(), name.clone(), member.clone(), false)); }
                         if let Some(root) = &self.library_root { request.push(("SELF".into(), "library_root".into(), root.clone(), false)); }
                         // A fresh engine owns its globals, modules, frames and heap.
-                        return Ok(match crate::go(self.lang, source, &[], &request) {
+                        // The nested program starts by loading the system module, which
+                        // arms the usual uncaught-exception hook, then forgets that
+                        // name. The added lines are not lines of the caller's text.
+                        let prelude = "\nimport sys\ndel sys\n";
+                        let hidden = prelude.lines().count() as u32;
+                        request.push(("SELF".into(), "lines_before".into(), hidden.to_string(), true));
+                        let nested = format!("{prelude}{source}");
+                        return Ok(match crate::go(self.lang, &nested, &[], &request) {
                             Ok(()) => Value::Small(0),
-                            Err(error) => { eprintln!("{error}"); Value::Small(-1) }
+                            Err(error) => {
+                                let shown = error.trim_start_matches('\0');
+                                if !shown.is_empty() {
+                                    eprintln!("{shown}");
+                                }
+                                Value::Small(-1)
+                            }
                         });
                     }
                 }
@@ -29550,7 +29696,7 @@ fn collection_contents(value: &Value) -> Value {
 // few names and their own complaints after those arguments are opened.
 impl Engine<'_> {
     fn core_builtin(b: Builtin) -> bool {
-        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::LzmaEncode | Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::ReduceNative | Builtin::RebuildNative)
+        matches!(b, Builtin::InstanceOf | Builtin::Tuple | Builtin::Set | Builtin::Frozen | Builtin::Dict | Builtin::Sorted | Builtin::Reversed | Builtin::Enumerate | Builtin::Zip | Builtin::Map | Builtin::Filter | Builtin::All | Builtin::Minimum | Builtin::Maximum | Builtin::Absolute | Builtin::Round | Builtin::Divmod | Builtin::Power | Builtin::Hex | Builtin::Oct | Builtin::Bin | Builtin::Repr | Builtin::Ascii | Builtin::Bool | Builtin::Callable | Builtin::Identity | Builtin::Hash | Builtin::Iter | Builtin::Next | Builtin::HasAttr | Builtin::GetAttr | Builtin::SetAttr | Builtin::DelAttr | Builtin::Vars | Builtin::LzmaEncode | Builtin::LzmaDecode | Builtin::ZlibNative | Builtin::StructNative | Builtin::BinAscii | Builtin::ContextNative | Builtin::StaticNamespace | Builtin::TraceNative | Builtin::NativeFrame | Builtin::HeapNative | Builtin::DequeNative | Builtin::ReduceNative | Builtin::RebuildNative)
     }
 
     pub(super) fn core_fault(&self, label: &str, piece: &str) -> String {
@@ -30615,7 +30761,7 @@ impl Engine<'_> {
         }
         let standing = if b == Builtin::GetAttr { args.first().cloned() } else { None };
         // A map walked backwards keeps its cell too, for the walk to watch.
-        if !matches!(b, Builtin::Identity | Builtin::Reversed | Builtin::HeapNative | Builtin::ContextNative | Builtin::TraceNative | Builtin::StaticNamespace) {
+        if !matches!(b, Builtin::Identity | Builtin::Reversed | Builtin::HeapNative | Builtin::DequeNative | Builtin::ContextNative | Builtin::TraceNative | Builtin::StaticNamespace) {
             for (position, value) in args.iter_mut().enumerate() {
                 if b == Builtin::SetAttr && position == 2 { continue; }
                 if b == Builtin::Dict && value.core_kind() == "mappingproxy" { *value = value.proxy_dictionary(); continue; }
@@ -30934,6 +31080,27 @@ impl Engine<'_> {
                 };
                 self.native_frame_routines.insert(Rc::as_ptr(&program) as usize);
                 args[0].clone()
+            }
+            Builtin::DequeNative => {
+                arity(2, 4)?;
+                if args[1].contents().plain() == "bind" {
+                    arity(4, 4)?;
+                    let descriptor = args[0].contents();
+                    let slots = match &descriptor { Value::Tuple(row) if row.len() == 6 => row.as_slice(), _ => std::slice::from_ref(&descriptor) };
+                    if !slots.iter().all(|v| matches!(v, Value::Adapter(slot) if slot.0 == 16)) { return Err("TypeError: deque binding requires slot descriptors".into()); }
+                    let Value::Routine(routine) = args[2].contents() else { return Err("TypeError: deque binding requires a function".into()) };
+                    let Value::Text(verb) = args[3].contents() else { return Err("TypeError: deque operation must be a string".into()) };
+                    let identity = Rc::as_ptr(&routine) as usize;
+                    let bit = (identity >> 4) & 255;
+                    self.deque_routine_bits[bit / 64] |= 1u64 << (bit % 64);
+                    if let Some((_, Value::Tuple(layout), _)) = self.deque_routines.get(&identity) { self.deque_layouts.remove(&(Rc::as_ptr(layout) as usize)); }
+                    self.deque_routines.insert(identity, (args[2].clone(), args[0].clone(), verb.to_string()));
+                    return Ok(args[2].clone());
+                }
+                arity(2, 3)?;
+                if self.lang.deque_native.is_empty() { return Err(self.core_fault("core.unready", name)); }
+                let Value::Text(verb) = args[1].contents() else { return Err("TypeError: deque operation must be a string".into()) };
+                self.deque_native_call(&args[0], &verb, args.get(2).cloned())?
             }
             Builtin::HeapNative => {
                 arity(2, 3)?;
@@ -31917,6 +32084,7 @@ impl Engine<'_> {
                 return Err(self.carried.take().unwrap_or_else(|| said.into()));
             }
         };
+        let prepared_at = self.prepared_hint.take();
         let offset = self.registry.idents.len();
         let mut local = crate::compile::Registry::with_outside_slots(offset);
         // A module's routines are made beside the module's own face:
@@ -31934,7 +32102,7 @@ impl Engine<'_> {
         local.globe = Some(Value::Fields(object.clone()));
         local.born = Some(self.native_dict());
         local.source = Some(Rc::from(source.as_str()));
-        let program = match crate::compile::compile_from(&tokens, self.lang, &mut local, 0, Some(Rc::from(filename))) {
+        let program = match crate::compile::compile_prepared(&tokens, self.lang, &mut local, Some(Rc::from(filename)), prepared_at) {
             Ok(program) => program,
             Err(said) => {
                 let said = self.text_syntax(0, said, filename, local.stopped_at, local.stopped_column, Some((local.stopped_end_row, local.stopped_end)), &source);
@@ -31942,7 +32110,9 @@ impl Engine<'_> {
             }
         };
         let names: Vec<String> = local.idents[offset..].to_vec();
-        for name in &names { self.registry.slot(&format!("\0module:{offset}:{path}:{name}")); }
+        let mut spelled = format!("\0module:{offset}:{path}:");
+        let stem = spelled.len();
+        for name in &names { spelled.truncate(stem); spelled.push_str(name); self.registry.slot(&spelled); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
         // The word this language spells a module's own file under, if
         // any: the same word the running program's own file is bound
@@ -32417,7 +32587,8 @@ impl Engine<'_> {
     /// A name the program may spell, as against the cells the kernel
     /// keeps for itself.
     fn public_name(name: &str) -> bool {
-        !name.starts_with('#') && !name.contains('\0')
+        let bytes = name.as_bytes();
+        bytes.first() != Some(&b'#') && !bytes.contains(&0)
     }
 
     /// The dictionary a global slot's value is kept in, if it is kept
@@ -32443,7 +32614,8 @@ impl Engine<'_> {
         }
         if self.outer_book.is_none() && self.text_books.is_empty() { return None; }
         let name = ident;
-        if !Self::public_name(name.rfind(':').map_or(name.as_str(), |at| &name[at + 1..])) { return None; }
+        let tail = match name.as_bytes().iter().rposition(|&byte| byte == b':') { Some(at) => &name[at + 1..], None => name.as_str() };
+        if !Self::public_name(tail) { return None; }
         if let Some(at) = self.text_books.iter().position(|book| far >= book.from && far < book.upto) { return Some(Kept::Text(at)); }
         if self.outer_book.is_some() && Self::public_name(name) {
             if self.lang.bind_names && !self.main_started && !self.lang.module_doc.contains(name) { return None; }
@@ -32816,7 +32988,11 @@ impl Engine<'_> {
             self.form_class(name.to_string(), parents, members)?
         };
         if let Some(Value::Bond(cell) | Value::Binding(cell)) = class_cell {
-            if !protocol { *cell.borrow_mut() = result.clone(); return Ok(result); }
+            if !protocol {
+                *cell.borrow_mut() = result.clone();
+                if let Value::Class(owner) = &result { owner.shared.borrow_mut().push(("\0annotation_classdict".into(), Value::Binding(cell.clone()))); }
+                return Ok(result);
+            }
             // What the metaclass answered may be no class at all: the
             // cell then names nothing and nothing is asked of it.
             let Value::Class(made) = result.contents() else { return Ok(result) };
@@ -33189,6 +33365,12 @@ impl Engine<'_> {
         }
     }
 
+    /// Whether a dictionary key is the word `name`, as `globals_key_word`
+    /// would read it, without spelling the key out.
+    fn globals_key_is(key: &Value, name: &str) -> bool {
+        let held = match key { Value::Hashed(pair) => pair.0.contents(), other => other.contents() };
+        matches!(Self::worth_of(&held).unwrap_or(held).contents(), Value::Text(word) if word.as_ref() == name)
+    }
     /// String keys alone name module attributes; rendering another key
     /// cannot make it a binding name.
     fn globals_key_word(key: &Value) -> Option<String> {
@@ -33449,7 +33631,7 @@ impl Engine<'_> {
         let mut book_mut = book.borrow_mut();
         if let Value::Map(pairs) = &mut *book_mut {
             let rows = Rc::make_mut(pairs);
-            if !rows.iter().any(|(key, _)| Self::globals_key_word(key).as_deref() == Some(name.as_ref())) { rows.push((Value::text(name), Value::Bond(binding.clone()))); }
+            if !rows.iter().any(|(key, _)| Self::globals_key_is(key, name)) { rows.push((Value::text(name), Value::Bond(binding.clone()))); }
         }
     }
     /// A name written into a module's own dictionary that the module
@@ -33711,7 +33893,7 @@ impl Engine<'_> {
         let held = book.borrow().clone();
         match &held {
             Value::Map(_) => { book_write(book, name, value); Ok(()) }
-            Value::Object(_) | Value::Fields(_) => self.dyn_write(&held, name, value),
+            Value::Object(_) | Value::Fields(_) | Value::Array(_) => self.dyn_write(&held, name, value),
             _ => Ok(()),
         }
     }
@@ -33830,6 +34012,10 @@ impl Engine<'_> {
     /// is, through `text_syntax`.
     fn text_tokens(&mut self, source: &str, mode: usize) -> Result<Vec<crate::lex::Token>, (String, usize, usize)> {
         if source.is_empty() && self.archived_text.is_some() { return Ok(Vec::new()); }
+        let terminated = if mode == 0 && !source.is_empty() && !source.ends_with('\n') {
+            std::borrow::Cow::Owned(format!("{source}\n"))
+        } else { std::borrow::Cow::Borrowed(source) };
+        let source = terminated.as_ref();
         if mode != 0 && source.is_empty() { return Err(("SyntaxError: invalid syntax".into(), 0, 0)); }
         if mode == 1 {
             let word = source.trim_start_matches([' ', '\t', '\n']).split(|ch: char| !ch.is_alphanumeric() && ch != '_').next().unwrap_or("");
@@ -33842,7 +34028,9 @@ impl Engine<'_> {
         }
 
         if mode == 0 {
-            if let Some(tokens) = crate::compile::prepared_tokens(source, self.lang) { return Ok(tokens); }
+            let prepared = crate::compile::prepared_tokens(source, self.lang);
+            self.prepared_hint.set(prepared.as_ref().map(|(_, at)| *at));
+            if let Some((tokens, _)) = prepared { return Ok(tokens); }
         }
         self.unicode_tokens(source)
             .and_then(|tokens| crate::layout::layout_position(tokens, self.lang, 0))
@@ -33869,7 +34057,11 @@ impl Engine<'_> {
             if args.len() <= at { args.resize(at + 1, Value::Gap); }
             args[at] = value;
         }
-        for value in &mut args { if matches!(value, Value::Gap) { *value = Value::Null; } }
+        for (at, value) in args.iter_mut().enumerate() {
+            if matches!(value, Value::Gap) {
+                *value = if builtin == Builtin::ReadyText && at >= 3 { Value::Small(if at == 5 { -1 } else { 0 }) } else { Value::Null };
+            }
+        }
         match builtin {
             Builtin::OuterNames | Builtin::NearNames => {
                 if !args.is_empty() { return Err(self.core_fault("core.arity", name)); }
@@ -33980,6 +34172,9 @@ impl Engine<'_> {
     /// Text checked ahead of time and kept as a code value, with the
     /// file and the manner it is to be read in.
     fn source_bytes(&mut self, bytes: &[u8], filename: &str) -> Res<Rc<str>> {
+        if bytes.contains(&0) {
+            return Err(self.text_syntax(0, "SyntaxError: source code string cannot contain null bytes".into(), filename, 0, 0, None, ""));
+        }
         let bom = bytes.starts_with(&[239, 187, 191]);
         let bytes = bytes.strip_prefix(&[239, 187, 191]).unwrap_or(bytes);
         let mut spelling: Option<String> = None;
@@ -34429,6 +34624,14 @@ impl Engine<'_> {
     /// Whether the text ended with block boundaries still open: the
     /// closes the shaping pass laid at the very end stand for indented
     /// blocks the text never left.
+    fn inline_suite_needs_newline(tokens: &[crate::lex::Token]) -> bool {
+        use crate::lex::Shape;
+        let Some(last) = tokens.iter().rposition(|token| !matches!(token.shape, Shape::Lead | Shape::Open | Shape::Close | Shape::LineEnd | Shape::Finish)) else { return false; };
+        let begin = tokens[..last].iter().rposition(|token| matches!(token.shape, Shape::Open | Shape::Close | Shape::LineEnd)).map_or(0, |at| at + 1);
+        let head = tokens[begin..=last].iter().find(|token| token.shape != Shape::Lead);
+        head.is_some_and(|token| token.shape == Shape::Instr && ["def", "class", "if", "elif", "else", "for", "while", "try", "except", "finally", "with", "async"].contains(&token.spelling()))
+    }
+
     fn blocks_open_at_end(tokens: &[crate::lex::Token]) -> bool {
         use crate::lex::Shape;
         let Some(finish) = tokens.iter().find(|token| token.shape == Shape::Finish) else { return false };
@@ -34445,6 +34648,28 @@ impl Engine<'_> {
         open
     }
 
+    /// Convert an index argument using compile's C-int range.
+    fn compile_integer(&mut self, supplied: &Value) -> Res<i64> {
+        let value = supplied.contents();
+        let number = match &value {
+            Value::Small(_) | Value::Huge(_) | Value::Flag(_) => value.clone(),
+            _ => self.special_index(&value)?.ok_or_else(|| format!("TypeError: '{}' object cannot be interpreted as an integer", Self::shown_kind(&value)))?,
+        };
+        let wide = match number { Value::Small(n) => Some(n), Value::Flag(b) => Some(i64::from(b)), Value::Huge(n) => n.to_i64(), _ => None };
+        wide.filter(|n| i32::try_from(*n).is_ok()).ok_or_else(|| "OverflowError: Python int too large to convert to C int".into())
+    }
+
+    /// Read contiguous source buffers through the existing buffer protocol.
+    fn source_buffer(&mut self, value: Value, file: &str) -> Res<Rc<str>> {
+        let namespace = self.route_module("builtins")?;
+        let copier = self.member_of(namespace, "_buffer_bytes")?.ok_or_else(|| self.source_unready())?;
+        let copied = self.call_held(copier, vec![value])?;
+        match copied.contents() {
+            Value::Bytes(bytes, ..) => self.source_bytes(&bytes.borrow(), file),
+            _ => Err(self.source_unready()),
+        }
+    }
+
     fn single_text_tokens(tokens: &[crate::lex::Token], source: &str) -> Result<(), (String, usize, usize)> {
         use crate::lex::Shape;
         let (mut depth, mut line_start, mut seen, mut compound, mut decorators) = (0usize, true, false, false, false);
@@ -34458,11 +34683,11 @@ impl Engine<'_> {
                 Shape::Lead | Shape::Finish => continue,
                 _ => {}
             }
-            if after_semicolon && matches!(token.spelling(), "if" | "for" | "while" | "try" | "with" | "def" | "class" | "async") {
+            if after_semicolon && token.shape == Shape::Instr && matches!(token.spelling(), "if" | "for" | "while" | "try" | "with" | "def" | "class" | "async") {
                 return Err(("SyntaxError: invalid syntax".into(), token.row, token.column));
             }
             if depth == 0 && line_start {
-                let word = token.spelling();
+                let word = if matches!(token.shape, Shape::Instr | Shape::Sign) { token.spelling() } else { "" };
                 if seen {
                     let decorated = decorators && matches!(word, "@" | "def" | "class" | "async");
                     let continued = compound && matches!(word, "elif" | "else" | "except" | "finally");
@@ -34517,75 +34742,60 @@ impl Engine<'_> {
 
     fn text_readied(&mut self, name: &str, args: Vec<Value>) -> Res<Value> {
         if args.len() < 3 || args.len() > self.lang.compile_parameters.len() { return Err(self.core_fault("core.arity", name)); }
-        let (Value::Text(file), Value::Text(manner)) = (args[1].contents(), args[2].contents()) else { return Err(self.source_unready()) };
-        let mut args = args;
-        if matches!(args[0].contents(), Value::Object(_)) {
-            if let Some(row) = self.number_buffer(&args[0])? { args[0] = self.byte_make(row, false); }
-        }
-        if args.get(3).is_some_and(|value| matches!(value.contents(), Value::Small(bits) if bits & 1024 != 0)) {
+        let filename = self.filesystem_path(args[1].clone())?;
+        let filename = Self::worth_of(&filename).unwrap_or_else(|| filename.contents());
+        let file = match filename {
+            Value::Text(file) => file,
+            bytes @ Value::Bytes(..) => match self.codec_library("_decode", vec![bytes, Value::text("utf-8"), Value::text("surrogateescape")])? {
+                Value::Text(file) => file, _ => return Err(self.source_unready()),
+            },
+            _ => return Err(self.source_unready()),
+        };
+        if file.contains('\0') { return Err("ValueError: embedded null character".into()); }
+        let mode_value = Self::worth_of(&args[2]).unwrap_or_else(|| args[2].contents());
+        let Value::Text(manner) = mode_value else { return Err(format!("TypeError: compile() argument 'mode' must be str, not {}", Self::shown_kind(&mode_value))); };
+        let flags = match args.get(3) { Some(value) => self.compile_integer(value)?, None => 0 };
+        if flags & !0x1FEF610 != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
+        let optimization = match args.get(5) { Some(value) => self.compile_integer(value)?, None => -1 };
+        if !(-1..=2).contains(&optimization) { return Err("ValueError: compile(): invalid optimize value".into()); }
+        let dont_inherit = match args.get(4) { Some(value) => self.special_truth(value)?, None => false };
+        if flags & 1024 != 0 {
             let ast = self.route_module("ast")?;
-            let parser = self.member_of(ast, "_compile_ast")?.ok_or_else(|| self.source_unready())?;
-            return self.call_held(parser, vec![args[0].clone(), args[1].clone(), args[2].clone(), args[3].clone(), args.get(5).cloned().unwrap_or(Value::Small(-1)), args.get(6).cloned().unwrap_or(Value::Null)]);
+            let input_reader = self.member_of(ast.clone(), "_compile_input")?.ok_or_else(|| self.source_unready())?;
+            let supplied = self.call_held(input_reader, vec![args[0].clone()])?;
+            let supplied = match supplied.contents() {
+                Value::Bytes(bytes, ..) => Value::Text(self.source_bytes(&bytes.borrow(), &file)?),
+                other => other,
+            };
+            let reader = self.member_of(ast, "_compile_ast")?.ok_or_else(|| self.source_unready())?;
+            return self.call_held(reader, vec![supplied, Value::Text(file.clone()), Value::Text(manner.clone()), Value::Small(flags), Value::Small(optimization), args.get(6).cloned().unwrap_or(Value::Null)]);
         }
+        let optimization = if optimization < 0 { std::env::var("PYTHONOPTIMIZE").ok().and_then(|text| text.parse::<i64>().ok()).unwrap_or(0).clamp(0, 2) } else { optimization };
         let mut supplied_positions = Value::tuple(Vec::new());
-        let source = match args[0].contents() {
+        let source = match Self::worth_of(&args[0]).unwrap_or_else(|| args[0].contents()) {
             Value::Text(source) => source,
             Value::Bytes(bytes, ..) => self.source_bytes(&bytes.borrow(), &file)?,
             Value::Object(tree) => {
                 let module = self.route_module("ast")?;
                 let converter = self.member_of(module, "_compile_source")?.ok_or_else(|| self.source_unready())?;
-                match self.call_held(converter, vec![Value::Object(tree), Value::Text(manner.clone())])?.contents() {
+                match self.call_held(converter, vec![Value::Object(tree.clone()), Value::Text(manner.clone())])?.contents() {
                     Value::Tuple(parts) if parts.len() == 2 => {
                         let Value::Text(text) = parts[0].contents() else { return Err(self.source_unready()); };
                         supplied_positions = parts[1].clone();
                         text
                     }
+                    Value::Null => self.source_buffer(Value::Object(tree), &file)?,
                     _ => return Err(self.source_unready()),
                 }
             }
             _ => return Err("TypeError: compile() arg 1 must be a string, bytes or AST object".into()),
         };
         let Some(mode) = self.lang.compile_modes.iter().position(|word| word == manner.as_ref()) else { return Err("ValueError: compile(): invalid mode".into()); };
-        let flags = match args.get(3).map(Value::contents) {
-            None | Some(Value::Null) => 0,
-            Some(Value::Small(bits)) => bits,
-            _ => return Err("TypeError: compile() argument 'flags' must be int".into()),
-        };
-        if flags < 0 || flags & 0xEF != 0 { return Err("ValueError: compile(): unrecognised flags".into()); }
-        if args.get(5).map_or(false, |value| !matches!(value.contents(), Value::Null | Value::Small(-1..=2))) {
-            return Err("ValueError: compile(): invalid optimize value".into());
-        }
-        let optimization = match args.get(5).map(Value::contents) { Some(Value::Small(level)) if level >= 0 => level, _ => std::env::var("PYTHONOPTIMIZE").ok().and_then(|text| text.parse().ok()).unwrap_or(0) };
-        // PyCF_ONLY_AST: the value handed back is the syntax tree the
-        // library's reader builds rather than a code value, and
-        // PyCF_OPTIMIZED_AST has the names the optimiser settles first
-        // folded in.
-        if flags & 1024 != 0 {
-            let module = match self.import_module("ast") {
-                Ok(module) => module,
-                Err(Fault::Note(told)) => return Err(told),
-                Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
-            };
-            let reader = match self.class_get(module, "_tree_for_compile", false) {
-                Ok(reader) => reader.contents(),
-                Err(Fault::Note(told)) => return Err(told),
-                Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
-            };
-            let comments = if flags & 4096 != 0 { 1 } else { 0 };
-            let settling = if flags & 32768 != 0 {
-                match args.get(5).map(Value::contents) { Some(Value::Small(n)) if n >= 0 => n, _ => 0 }
-            } else { -1 };
-            return match self.class_apply(reader, vec![Value::text(&source), Value::text(&file), Value::text(&manner), Value::Small(comments), Value::Small(settling)]) {
-                Ok(tree) => Ok(tree),
-                Err(Fault::Note(told)) => Err(told),
-                Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
-            };
-        }
         let allow_top_await = flags & 8192 != 0;
         // The future flags in force: those the call names, and — unless
         // it says not to inherit — those of the text now running, the
         // way the reference reads them from the calling frame's code.
-        let caller_future = if args.get(4).map_or(false, |value| value.contents().is_true()) { 0 } else { self.running_routine.as_ref().map_or(0, |body| body.future_bits) };
+        let caller_future = if dont_inherit { 0 } else { self.running_routine.as_ref().map_or(0, |body| body.future_bits) };
         let future_bits = flags & 0x1FE0010 | caller_future;
         // The reference's PyCF_ALLOW_INCOMPLETE_INPUT and
         // PyCF_DONT_IMPLY_DEDENT, the two flags codeop compiles with:
@@ -34652,31 +34862,16 @@ impl Engine<'_> {
             }
             return Err(self.text_ends_inside_block(&file, &source));
         }
+        if mode == 2 && !source.ends_with('\n') && (Self::inline_suite_needs_newline(&tokens) || source.rsplit('\n').next().is_some_and(|line| line.trim_start().starts_with('#')) && Self::blocks_open_at_end(&tokens)) {
+            if allow_incomplete {
+                if let Some(told) = self.text_incomplete(&file, Self::ran_out_place(counted), counted) { return Err(told); }
+            }
+            return Err(self.text_ends_inside_block(&file, &source));
+        }
         for (message, row, column) in std::mem::take(&mut trial.warnings) {
             self.syntax_warning(mode, &message, &file, row, column, &source, None)?;
         }
-        if flags & 0x400 != 0 {
-            // PyCF_ONLY_AST: the value handed back is the library's
-            // syntax tree of the text rather than a code value.
-            let module = match self.import_module("ast") {
-                Ok(module) => module,
-                Err(Fault::Note(told)) => return Err(told),
-                Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
-            };
-            let parse = match self.import_member(&module, "ast", "_parse_for_compile") {
-                Ok(parse) => parse,
-                Err(Fault::Note(told)) => return Err(told),
-                Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
-            };
-            let manner = self.lang.compile_modes[mode].clone();
-            let type_comments = i64::from(flags & 0x1000 != 0);
-            let optimize = match args.get(5).map(Value::contents) { Some(Value::Small(n)) => n, _ => -1 };
-            return match self.class_apply(parse, vec![Value::Text(source.clone()), Value::Text(file.clone()), Value::text(&manner), Value::Small(type_comments), Value::Small(optimize), Value::Flag(flags & 0x8000 != 0)]) {
-                Ok(tree) => Ok(tree),
-                Err(Fault::Note(told)) => Err(told),
-                Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
-            };
-        }
+
         let class = self.code_class();
         let words = &self.lang.compile_parameters;
         let bits = (if trial.top_level_coroutine { 128 } else { 0 }) | trial.future_bits;
@@ -34888,10 +35083,16 @@ impl Engine<'_> {
             Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str()) => code.fields.borrow().iter().find_map(|(name, value)| if name == "co_flags" { match value.contents() { Value::Small(bits) => Some(bits & 0x1FE0010), _ => None } } else { None }).unwrap_or(0),
             _ => caller_future,
         };
+        let optimization = match &first {
+            Value::Object(code) => code.fields.borrow().iter().find_map(|(name, value)| if name == "\0optimization" { match value.contents() { Value::Small(n) => Some(n as u8), _ => None } } else { None }).unwrap_or(0),
+            _ => 0,
+        };
+        self.text_optimization.set(optimization);
         self.text_future_bits.set(held_future);
         let (source, file, mode, top_await, optimization) = match first {
             Value::Text(text) => (text.to_string(), None, usize::from(weighing), false, 0),
             Value::Bytes(bytes, ..) => (self.source_bytes(&bytes.borrow(), "<string>")?.to_string(), None, usize::from(weighing), false, 0),
+            buffer @ Value::Object(_) if !matches!(&buffer, Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str())) => (self.source_buffer(buffer, "<string>")?.to_string(), None, usize::from(weighing), false, 0),
             Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str()) => {
                 let fields = code.fields.borrow();
                 let mode = match fields.get(2).map(|(_, held)| held) { Some(Value::Small(n)) => *n as usize, _ => 0 };
@@ -34914,16 +35115,34 @@ impl Engine<'_> {
         }
         // An expression to be weighed may stand in from the edge of its text.
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']).to_string() } else { source };
+        if self.lang.compile_kind.is_some() {
+            if let Some(given) = args.get(1).filter(|v| !matches!(v.contents(), Value::Null)) {
+                let value = given.contents();
+                let dictionary = matches!(value, Value::Map(_) | Value::Fields(_)) || Self::worth_of(&value).is_some_and(|v| matches!(v.contents(), Value::Map(_)));
+                if !dictionary {
+                    let subscripts = matches!(&value, Value::Object(o) if self.class_value(&o.class_now(), "__getitem__").is_some()) || matches!(value, Value::Array(_) | Value::Tuple(_));
+                    return Err(if weighing {
+                        if subscripts { "TypeError: globals must be a real dict; try eval(expr, {}, mapping)".into() } else { "TypeError: globals must be a dict".into() }
+                    } else { format!("TypeError: exec() globals must be a dict, not {}", value.core_kind()) });
+                }
+            }
+            if let Some(Value::Object(object)) = args.get(2).map(Value::contents) {
+                if self.class_value(&object.class_now(), "__getitem__").is_none() && !Self::worth_of(&Value::Object(object.clone())).is_some_and(|v| matches!(v.contents(), Value::Map(_))) {
+                    return Err(if weighing { "TypeError: locals must be a mapping".into() } else { format!("TypeError: locals must be a mapping or None, not {}", object.class_now().name) });
+                }
+            }
+        }
         let as_book = |value: Option<&Value>| -> Res<Option<Rc<RefCell<Value>>>> {
             match value {
                 None | Some(Value::Null) => Ok(None),
                 Some(Value::Bond(cell) | Value::Collection(cell, _)) if matches!(&*cell.borrow(), Value::Map(_) | Value::Fields(_)) => Ok(Some(cell.clone())),
+                Some(Value::Bond(cell) | Value::Collection(cell, _)) if self.lang.compile_kind.is_some() && matches!(&*cell.borrow(), Value::Array(_)) => Ok(Some(cell.clone())),
                 // A program's own value, standing in for a dictionary of
                 // its own through the class it answers to: kept in a
                 // cell of its own so the rest of a reading works with it
                 // exactly as it works with a plain dictionary's cell.
                 Some(v @ (Value::Object(_) | Value::Fields(_))) => Ok(Some(Rc::new(RefCell::new(v.clone())))),
-                Some(_) => Err(self.source_unready()),
+                Some(other) => Err(if self.lang.compile_kind.is_none() { self.source_unready() } else if weighing { "TypeError: locals must be a mapping".into() } else { format!("TypeError: locals must be a mapping or None, not {}", other.core_kind()) }),
             }
         };
         let outer = as_book(args.get(1))?;
@@ -35004,6 +35223,7 @@ impl Engine<'_> {
             }
             return self.run_text_booked(source, file, mode, globals, None, top_await, replacements, optimization, positions);
         }
+        let warn_from_text = file.is_none();
         let file = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -35017,9 +35237,12 @@ impl Engine<'_> {
         }
         let compiled = self.text_program(source, &tokens, &file, mode, None, top_await, None, positions);
         self.registry.born = previous;
-        let (program, shown) = compiled?;
+        let (program, shown, warnings) = compiled?;
         let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
         self.world.resize(self.registry.idents.len(), Value::Blank);
+        if warn_from_text {
+            for (message, row, column) in warnings { self.syntax_warning(mode, &message, &file, row, column, source, None)?; }
+        }
         self.text_finished(&program, &file, shown)
     }
 
@@ -35031,6 +35254,7 @@ impl Engine<'_> {
     /// makes is gone once the text is done.
     fn run_text_within(&mut self, source: &str, file: Option<String>, mode: usize, names: Vec<String>, values: Vec<Value>, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64, positions: &[[u32; 8]]) -> Res<Value> {
         let source = if mode == 1 { source.trim_start_matches([' ', '\t']) } else { source };
+        let warn_from_text = file.is_none();
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -35057,6 +35281,10 @@ impl Engine<'_> {
         };
         let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
         self.world.resize(self.registry.idents.len(), Value::Blank);
+        let warnings = std::mem::take(&mut self.registry.warnings);
+        if warn_from_text {
+            for (message, row, column) in warnings { self.syntax_warning(mode, &message, &file, row, column, source, None)?; }
+        }
         let mut mine = values;
         mine.resize(program.idents.len().max(mine.len()), Value::Blank);
         let (was_written_in, was_on) = (self.source.clone(), self.line);
@@ -35085,6 +35313,7 @@ impl Engine<'_> {
     /// of their own in the world, and a book is kept for them.
     fn run_text_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, replacements: Option<Vec<Value>>, optimization: i64, positions: &[[u32; 8]]) -> Res<Value> {
         let supplied_builtins = self.compiled_builtins.take();
+        let warn_from_text = file.is_none();
         let file: Rc<str> = Rc::from(file.unwrap_or_else(|| "<string>".to_string()).as_str());
         let tokens = match self.text_tokens(source, mode) {
             Ok(tokens) => tokens,
@@ -35122,11 +35351,15 @@ impl Engine<'_> {
         // that every routine the text makes answers with the name the
         // namespace had when they were made, not one written later.
         local.home = Some(module_hint.as_deref().map(Rc::from));
-        let (program, shown) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await, module_hint.as_deref(), positions)?;
+        let (program, shown, warnings) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await, module_hint.as_deref(), positions)?;
         let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
         let names: Vec<String> = local.idents[offset..].to_vec();
         for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
+        // Warning hooks may import modules, so reserve the compiled slots first.
+        if warn_from_text {
+            for (message, row, column) in warnings { self.syntax_warning(mode, &message, &file, row, column, source, module_hint.as_deref())?; }
+        }
         let (near, outer) = match near { Some(near) => (near, Some(outer)), None => (outer, None) };
         let mut declared = local.declared_outer;
         for name in crate::compile::text_wide_globals(&tokens, self.lang) {
@@ -35147,10 +35380,10 @@ impl Engine<'_> {
     /// one statement shown as it runs, which is an expression written
     /// out where it is one; else statements. Answers whether what the
     /// program leaves is to be written out.
-    fn text_program(&mut self, source: &str, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>, top_await: bool, module_hint: Option<&str>, positions: &[[u32; 8]]) -> Res<(Rc<Routine>, bool)> {
+    fn text_program(&mut self, source: &str, tokens: &[crate::lex::Token], file: &Rc<str>, mode: usize, local: Option<&mut crate::compile::Registry>, top_await: bool, _module_hint: Option<&str>, positions: &[[u32; 8]]) -> Res<(Rc<Routine>, bool, Vec<(String, usize, usize)>)> {
         if let Some(packet) = self.archived_text.take() {
             let registry = match local { Some(registry) => registry, None => &mut self.registry };
-            return crate::cache::program(packet, registry).map(|program| (program, false));
+            return crate::cache::program(packet, registry).map(|program| (program, false, Vec::new()));
         }
         let mut amiss = (String::new(), 0, 0, (0, 0));
         let mut noted = Vec::new();
@@ -35160,6 +35393,7 @@ impl Engine<'_> {
             registry.allow_top_level_await = top_await;
             registry.future_bits = self.text_future_bits.get();
             registry.source = Some(Rc::from(source));
+            registry.optimize = i64::from(self.text_optimization.get());
             if compiled.is_none() {
                 registry.value_only = mode == 1;
                 registry.interactive = mode == 2;
@@ -35170,13 +35404,7 @@ impl Engine<'_> {
             }
         }
         match compiled {
-            // What the reading noted about how the text is written is
-            // said once the reading stands, each warning through the
-            // warnings module under the name the text runs as.
-            Some((program, shown)) => {
-                for (message, row, column) in noted { self.syntax_warning(mode, &message, file, row, column, source, module_hint)?; }
-                Ok((program, shown))
-            }
+            Some((program, shown)) => Ok((program, shown, noted)),
             None => Err(self.text_syntax(mode, amiss.0, file, amiss.1, amiss.2, Some(amiss.3), source)),
         }
     }
@@ -35307,6 +35535,9 @@ fn unicode_decimal_digit(character: char) -> Option<u32> {
 
 #[path = "heap.rs"]
 mod heap;
+
+#[path = "deque.rs"]
+mod deque;
 
 #[path = "binascii.rs"]
 mod binascii;

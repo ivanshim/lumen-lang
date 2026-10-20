@@ -416,6 +416,7 @@ pub enum Prim {
     TraceBridge,
     NativeFrame,
     HeapNative,
+    DequeNative,
     ContextStore,
     AllocationTrace,
     WarningOperation(u8),
@@ -1042,11 +1043,53 @@ impl Form {
         *next += 1;
         if let Self::OnLine(row, _, _) = self { coordinates = (*row, u32::MAX, u32::MAX, u32::MAX); }
         if let Self::Located(bounds, _, _) = self { coordinates = *bounds; }
-        let display = format!("{self:?}");
-        let tag = if matches!(self, Self::Apply(Callee::Prim(Prim::Choose, _), _)) { "Choose" } else { display.split(['(', ' ', '{']).next().unwrap_or("") };
+        // Formatting a whole form would recursively visit captured namespaces.
+        let tag = match self {
+            Self::Apply(Callee::Prim(Prim::Choose, _), _) => "Choose",
+            Self::Fits { .. } => "Fits",
+            Self::Const(..) => "Const",
+            Self::Read(..) => "Read",
+            Self::RemoveName(..) => "RemoveName",
+            Self::Take(..) => "Take",
+            Self::Release(..) => "Release",
+            Self::Glance(..) => "Glance",
+            Self::Write(..) => "Write",
+            Self::Apply(..) => "Apply",
+            Self::Cycle { .. } => "Cycle",
+            Self::Dyad { .. } => "Dyad",
+            Self::Bump { .. } => "Bump",
+            Self::Class { .. } => "Class",
+            Self::Again => "Again",
+            Self::Assert { .. } => "Assert",
+            Self::Attempt { .. } => "Attempt",
+            Self::Missing(..) => "Missing",
+            Self::OnLine(..) => "OnLine",
+            Self::Located(..) => "Located",
+            Self::Share(..) => "Share",
+            Self::Tie(..) => "Tie",
+            Self::ShareItem(..) => "ShareItem",
+            Self::SharePlace(..) => "SharePlace",
+            Self::ShareField(..) => "ShareField",
+            Self::ShareOwn(..) => "ShareOwn",
+            Self::ShareCalled(..) => "ShareCalled",
+            Self::ShareWithin(..) => "ShareWithin",
+            Self::ForgetWithin(..) => "ForgetWithin",
+            Self::ForgetCalled(..) => "ForgetCalled",
+            Self::ReadyCalled(..) => "ReadyCalled",
+            Self::TieCalled(..) => "TieCalled",
+            Self::Forget(..) => "Forget",
+            Self::Ready(..) => "Ready",
+            Self::Muted(..) => "Muted",
+            Self::Silenced(..) => "Silenced",
+            Self::Called(..) => "Called",
+            Self::CallWrite(..) => "CallWrite",
+            Self::Remark(..) => "Remark",
+            Self::CellOrSaid(..) => "CellOrSaid",
+            Self::HeldEither(..) => "HeldEither",
+        };
         let branches = matches!(self, Self::Cycle { .. } | Self::Apply(Callee::Prim(Prim::Choose, _), _));
         output.push(Value::tuple(vec![Value::Small(*next as i64), Value::text(tag), Value::Nil, Value::Flag(branches),
-            Value::tuple([coordinates.0, coordinates.1, coordinates.2, coordinates.3].into_iter().map(|number| if number == u32::MAX { Value::Nil } else { Value::Small(number as i64) }).collect())]));
+            Value::tuple([coordinates.0, coordinates.2, coordinates.1, coordinates.3].into_iter().map(|number| if number == u32::MAX { Value::Nil } else { Value::Small(number as i64) }).collect())]));
         match self {
             Self::Located(_, _, inner) | Self::OnLine(_, _, inner) => {
                 inner.instruction_listing(next, coordinates, output);

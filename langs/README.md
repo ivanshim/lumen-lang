@@ -4674,6 +4674,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.define` | - | - | - | - | `define` | - | - | - | - | - |
 | `ext.builtin.define.class_constant` | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - | - | - | - |
 | `ext.builtin.delattr` | - | - | `delattr` | - | - | - | - | - | - | - |
+| `ext.builtin.deque_native` | - | - | `__deque_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.dict` | - | - | `dict` | - | - | - | - | - | - | - |
 | `ext.builtin.dir` | - | - | `dir` | - | - | - | - | - | - | - |
 | `ext.builtin.dir.change` | - | - | `__change_dir` | - | - | - | - | - | - | - |
@@ -5679,7 +5680,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.system.bytes.concat` | - | - | `TypeError: can't concat ` ` to ` | - | - | - | - | - | - | - |
 | `ext.system.bytes.decode` | - | - | `UnicodeDecodeError: ` | - | - | - | - | - | - | - |
 | `ext.system.bytes.encode` | - | - | `UnicodeEncodeError: ` | - | - | - | - | - | - | - |
-| `ext.system.bytes.encodings` | - | - | `utf-8 utf-8 utf8` `ascii ascii us-ascii` `latin-1 latin-1 latin1 iso-8859-1` `rawunicodeescape raw-unicode-escape` | - | - | - | - | - | - | - |
+| `ext.system.bytes.encodings` | - | - | `utf-8 utf-8 utf8` `ascii ascii us-ascii` `latin-1 latin-1 latin1 iso-8859-1 iso8859-1` `rawunicodeescape raw-unicode-escape` | - | - | - | - | - | - | - |
 | `ext.system.bytes.hex` | - | - | `ValueError: non-hexadecimal number found in fromhex() arg at position ` | - | - | - | - | - | - | - |
 | `ext.system.bytes.immutable` | - | - | `TypeError: 'bytes' object does not support item assignment` | - | - | - | - | - | - | - |
 | `ext.system.bytes.index` | - | - | `IndexError: index out of range` `IndexError: pop index out of range` `IndexError: pop from empty bytearray` | - | - | - | - | - | - | - |
@@ -6118,7 +6119,7 @@ code and alias-table revisions remain unchanged; catalog existence stays live.
 
 `ext.builtin.math.fsum` enables native expansion summation for ordinary Python numeric lists and tuples. Conversion and accumulation preserve input order and the final rounding correction; custom numeric objects and iterators retain the library protocol path.
 
-`ext.builtin.struct_native` supplies the canonical native binary layouts, packing and unpacking for the unchanged CPython struct wrapper. The separate implementations in structpack.rs and byteformat.rs follow CPython v3.14.8 Modules/_struct.c; the Python interface acquires contiguous buffers and applies object conversion protocols.
+`ext.builtin.struct_native` supplies the canonical native binary layouts, packing and unpacking for the unchanged CPython struct wrapper. The separate implementations in structpack.rs and byteformat.rs follow CPython v3.14.8 Modules/_struct.c; the Python interface acquires contiguous buffers and applies object conversion protocols. Operation 10 attempts integer-only packing without conversion and returns None for formats or values that need the adapter's ordinary conversion path.
 
 `ext.builtin.bytes.escape_decode` names the Python-only byte escape decoder, following CPython v3.14.8 Objects/bytesobject.c and Modules/_codecsmodule.c. It preserves consumed buffer length and reports invalid escapes for the warning adapter.
 `ext.stmt.class.detail.mro.entries` names the non-type base substitution hook; `ext.stmt.class.detail.original.bases` names the retained original base tuple. Module-load helpers accept a false second argument to query source availability without importing and a true second argument to return its source path.
@@ -6176,7 +6177,7 @@ The Python floating math adapter also supplies compensated `fsum`, consuming its
 It exposes that argument in the frame namespace and requires an iterator when
 the expression starts, including when its code is made into a new function.
 
-`ext.builtin.pickle_buffer` supplies native exported-buffer ownership, raw byte views, release and buffer acquisition for PickleBuffer, following CPython v3.14.8 Objects/picklebufobject.c. Its binding is separate from the absent _pickle accelerator. Operations 6 and 7 transfer memory-stream byte ranges and store bytes at a checked cursor; the runtime IO adapter retains size validation, closed-stream checks and exported-buffer checks.
+`ext.builtin.pickle_buffer` supplies native exported-buffer ownership, raw byte views, release and buffer acquisition for PickleBuffer, following CPython v3.14.8 Objects/picklebufobject.c. Its binding is separate from the absent _pickle accelerator. Operations 6, 7 and 8 read byte ranges, store bytes and read lines at a checked memory-stream cursor; the runtime IO adapter retains size validation, closed-stream checks and exported-buffer checks.
 
 `ext.builtin.text.intern` retains canonical Python strings for sys.intern and attribute-name dictionaries, including surrogate-containing strings.
 The Python-only type-parameter labels also expose `_typing` primitives to the
@@ -6267,6 +6268,8 @@ by this collector and raises `NotImplementedError`.
 `ext.builtin.trace_native` registers a Python tracing callback, reads the active
 callback, and exposes native compiled instructions with their source positions.
 The instruction vocabulary belongs to each kernel; it is not CPython bytecode.
+Private bridge operations 11 and 12 inspect and rebuild native code images;
+operations 3 through 10 retain coroutine, finalization and frame services.
 `ext.builtin.function.native_frame` marks a routine whose frame the
 reference implementation keeps off the Python frame chain, as a C
 routine's frame is absent: the frame walk in `sys._getframe` and along
@@ -6296,3 +6299,5 @@ Python text methods validate named error policies in development mode (`-X dev`)
 `ext.builtin.bytes.memory` supplies bounded byte-storage reads, newline reads and exact-bytes writes for memory streams. Its read-only field mode accepts immutable or writable byte storage and decodes bounded batches from a caller-supplied opcode layout table; unsupported or incomplete fields remain for the caller to parse. Layout bit 8 ends a batch after the field, leaving protocol termination under caller control. Its metadata predicate can compare code fingerprints through the ordinary code caches. A code-watch operation returns a live invalidation flag, cleared when function code is rewritten; callers retain the canonical path once that flag is cleared. It checks index-sized bounds, closed storage and outstanding exports before changing bytes, returning the result and next position. Python adapters keep conversion hooks and subclass dispatch.
 
 The struct adapter can request direct packing for exact integer, boolean and immutable bytes arguments; layouts requiring float or complex conversion and custom objects use the conversion-protocol path. Exact contiguous byte inputs also unpack directly unless a complex result needs wrapping.
+
+`ext.builtin.deque_native` names the private accelerator for the Python collections adapter: two list stacks support amortized constant-time endpoints, bounded eviction, and rotation; materialization preserves the backing list identity and iterator mutation state. Explicit `bind` registration attaches storage operations to adapter functions; only valid positional calls are accelerated, and rewritten code and conversion/error paths retain ordinary function dispatch.

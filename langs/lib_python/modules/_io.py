@@ -272,7 +272,12 @@ class BytesIO(_BufferedIOBase):
         if hasattr(self, '_data'):
             if _export(self._data, True):
                 raise BufferError('Existing exports of data: object cannot be re-sized')
-        self._data = bytearray() if initial_bytes is None else bytearray(_buffer(initial_bytes))
+        if initial_bytes is None:
+            self._data = bytearray()
+        elif type(initial_bytes) is bytes:
+            self._data = bytearray(initial_bytes)
+        else:
+            self._data = bytearray(_buffer(initial_bytes))
         self._pos = 0
         self._closed = False
     def _check_exports(self):
@@ -323,19 +328,10 @@ class BytesIO(_BufferedIOBase):
         if type(size) is int:
             result, self._pos = _memory(self._data, self._pos, size, self._closed, 1)
             return result
-        size = _size(size)
-        if self._closed:
-            raise ValueError('I/O operation on closed file')
-        end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
-        start = self._pos
-        if end <= start:
-            return b''
-        at = self._data.find(b'\n', start, end)
-        if at >= 0:
-            end = at + 1
-        data = bytes(self._data[start:end])
-        self._pos = end
-        return data
+        data = _memory_cursor(8, self, size)
+        if data is None:
+            data = _memory_cursor(8, self, _size(size))
+        return data or b''
     def write(self, b):
         stored = _memory_cursor(7, self, b)
         if stored is not None:
@@ -1473,6 +1469,16 @@ def _buffered_impl(kind):
                 result = base.detach(self)
                 self.raw = None
                 return result
+        if kind == 'BufferedReader':
+            # Retain the consumed prefix of small refills for backward seeks.
+            def _read_unlocked(self, size):
+                result = base._read_unlocked(self, size)
+                if size is not None and 0 < size <= self.buffer_size and result and self._read_pos == 0:
+                    unread = len(self._read_buf)
+                    self._read_buf = (result + self._read_buf)[-self.buffer_size:]
+                    self._read_pos = len(self._read_buf) - unread
+                return result
+            _Impl._read_unlocked = _read_unlocked
         impl = _IMPLS[kind] = _Impl
     return impl
 
@@ -1569,6 +1575,17 @@ class BufferedReader(_BufferedIOBase):
         impl = self._live
         if impl is None:
             impl = self._impl
+        impl._checkClosed('read of closed file')
+        # A read the buffer already holds is answered here, the way the
+        # reference's fast path answers it, without the lock and the
+        # refill road: only for the plain reader, whose read does not
+        # flush first.
+        if type(self) is BufferedReader and type(size) is int and size >= 0 and not impl._read_lock._held:
+            held = impl._read_buf
+            at = impl._read_pos
+            if size <= len(held) - at:
+                impl._read_pos = at + size
+                return held[at:at + size]
         return impl.read(size)
     def read1(self, size=-1):
         impl = self._live
@@ -1631,6 +1648,21 @@ class BufferedReader(_BufferedIOBase):
         impl = self._live
         if impl is None:
             impl = self._impl
+        # Keep buffered bytes when a read-only stream seeks within them.
+        if type(self) is BufferedReader and type(pos) is int and type(whence) is int and whence in (0, 1):
+            impl._checkClosed('seek of closed file')
+            with impl._read_lock:
+                if impl.raw.seekable():
+                    try:
+                        end = impl.raw.tell()
+                    except (OSError, ValueError):
+                        end = None
+                    if type(end) is int and end >= 0:
+                        start = end - len(impl._read_buf)
+                        target = pos if whence == 0 else start + impl._read_pos + pos
+                        if 0 <= start <= target <= end:
+                            impl._read_pos = target - start
+                            return target
         return impl.seek(pos, whence)
     def tell(self):
         impl = self._live

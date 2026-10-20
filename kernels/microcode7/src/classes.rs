@@ -1150,7 +1150,7 @@ impl<'a> Machine<'a> {
         }else {Self::change_entry(&mut blueprint.shared.borrow_mut(),word,Some(value));}
         Ok(Value::Nil)
     }
-    fn inherited_storage(&self,class:&Rc<Blueprint>)->Vec<Vec<String>> {
+    pub(super) fn inherited_storage(&self,class:&Rc<Blueprint>)->Vec<Vec<String>> {
         let previous=class.under();
         let mut shape=match previous {Some(base)=>self.inherited_storage(&base),None=>Vec::new()};
         let own=class.shared.borrow();
@@ -2449,7 +2449,16 @@ impl<'a> Machine<'a> {
                             return symbolic.map_err(Escape::Error);
                         }
                         match values[0].settled() {
-                            Value::Blueprint(class) => { if let Some(entry) = Self::own_entry(&class, &values[1].bare()) { return Ok(entry.settled()); } },
+                            Value::Blueprint(class) => {
+                                if let Some(entry) = Self::own_entry(&class, &values[1].bare()) { return Ok(entry.settled()); }
+                                if values[1].bare() == "__class__" { return Ok(Value::Blueprint(class)); }
+                            },
+                            Value::Dim(reference) => {
+                                if let Some(Value::Blueprint(owner)) = reference.revive() {
+                                    if let Some(entry) = Self::own_entry(&owner, &values[1].bare()) { return Ok(entry.settled()); }
+                                    if values[1].bare() == "__class__" { return Ok(Value::Blueprint(owner)); }
+                                }
+                            },
                             _ if values.get(3).is_some_and(|book| !matches!(book.settled(), Value::Nil)) => {
                                 if let Value::Tuple(pair) = self.class_namespace_read(vec![values[3].clone(), values[1].clone()])? {
                                     if pair[0].is_true() { return Ok(pair[1].clone()); }
@@ -2599,7 +2608,7 @@ impl<'a> Machine<'a> {
                         if values.len() != 1 { return Err(String::from("TypeError: __annotate__() requires one argument").into()); }
                         let format = values[0].settled();
                         let symbolic = matches!(format, Value::Small(3));
-                        let rejected = self.prim(Prim::Gt, "", &[format, Value::Small(3)])?;
+                        let rejected = self.prim(Prim::Gt, "", &[format, Value::Small(2)])?;
                         if rejected.is_true() { return Err(String::from("NotImplementedError: ").into()); }
                         // Carry the isolated scope into each class evaluator.
                         match &kept[0] {
@@ -3121,6 +3130,18 @@ impl<'a> Machine<'a> {
                                 _ => (),
                             }
                         }
+                        // A loose trimming on a thing of a text or
+                        // fixed-bytes kind makes a fresh exact value at
+                        // each call, so the worth it works is copied
+                        // here rather than shared.
+                        let receiver = if of_own_kind && matches!(subject, Value::Thing(_)) && matches!(self.table.method_names.get(entry.as_str()).copied(), Some("strip" | "lstrip" | "rstrip")) {
+                            match receiver.settled() {
+                                Value::Text(text) => Value::text(&text),
+                                Value::Unpaired(units) => Value::Unpaired(Rc::from(&units[..])),
+                                Value::Octets { cell, changeable: false, lead } => Value::Octets { cell: Rc::new(RefCell::new(cell.borrow().clone())), changeable: false, lead },
+                                other => other,
+                            }
+                        } else { receiver };
                         let found=if of_own_kind && self.native_member(&receiver, &entry) {
                             Some(Value::Member(Rc::new(subject.clone()), entry.clone()))
                         } else if of_own_kind && entry == self.detail("descriptor.get")
@@ -3634,7 +3655,7 @@ impl<'a> Machine<'a> {
             };
             let (adjusted, room) = self.respared(&source, &base, base.clone(), Some(placed), Some(named));
             let source = Rc::new(adjusted);
-            self.code_handles.insert(Rc::as_ptr(&source) as usize, Rc::downgrade(&body));
+            self.code_handles.insert(Rc::as_ptr(&source) as usize, (Rc::downgrade(&source), Rc::downgrade(&body)));
             let callable = Value::Bound(source, room);
             let attribute = self.detail("code").to_owned();
             self.routine_kept(&callable, &attribute, Value::Wrapped(7, body.clone()));
@@ -4063,7 +4084,7 @@ impl<'a> Machine<'a> {
         match &entry {
             Value::Wrapped(73, parts) if parts.is_empty() && receiver.is_some()=>return Ok(Self::wrap(3,vec![entry.clone(),receiver.unwrap()])),
             Value::Wrapped(134, ref parts) if parts[0].bare() == "normal_pdf" && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
-            Value::Wrapped(2, items) if !items.is_empty() && receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
+            Value::Wrapped(2, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(120, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(48 | 133 | 136 | 60 | 120 | 123 | 124 | 125 | 127 | 155 | 156 | 157 | 158, _) if receiver.is_some() => return Ok(Self::wrap(3, vec![entry.clone(), receiver.unwrap()])),
             Value::Wrapped(4,items)=>return Ok(items[0].clone()),
@@ -4365,7 +4386,7 @@ impl<'a> Machine<'a> {
         if key == self.detail("code") {
             if let Some(Value::Wrapped(7, payload)) = replacement.as_ref().map(Value::settled) {
                 let running = self.code_run_by(subject);
-                self.code_handles.insert(Rc::as_ptr(&running) as usize, Rc::downgrade(&payload));
+                self.code_handles.insert(Rc::as_ptr(&running) as usize, (Rc::downgrade(&running), Rc::downgrade(&payload)));
             }
             let slot = self.routine_storage(subject);
             let mut entries = self.routine_members[slot].1.holds.borrow_mut();
@@ -4555,7 +4576,7 @@ impl<'a> Machine<'a> {
             Some(11|12)=>{
                 let required=if which==Some(11){1}else{2};
                 if values.len()!=required {return Err("TypeError: invalid number of reduction arguments".to_owned().into());}
-                let protocol=if which==Some(11){0}else{
+                let version=if which==Some(11){0}else{
                     let supplied=values[1].settled();
                     let index=if matches!(supplied,Value::Small(_)|Value::Huge(_)|Value::Flag(_)){supplied}
                         else {self.stood_for_whole(&supplied)?.ok_or_else(||Escape::Error("TypeError: protocol must be an integer".to_owned()))?};
@@ -4572,7 +4593,7 @@ impl<'a> Machine<'a> {
                         }
                     }
                 }
-                return self.object_reduction(first,protocol);
+                return self.object_reduction(first,version);
             }
             Some(13)=>Value::Small(match &first{Value::Thing(t) if t.blueprint().name!=self.detail("root")=>24,_=>16}),
             _=>return Err(self.class_unready()),
@@ -4739,12 +4760,12 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn held_as_state(value:&Value)->Value {
         let Value::Thing(t)=value else{return Value::Nil};
-        let pairs:Vec<(Value,Value)>=t.holds.borrow().iter().filter(|(k,v)|!k.starts_with('\0')&&!matches!(v,Value::Unset)).map(|(k,v)|(Value::text(k),v.clone())).collect();
+        let pairs:Vec<(Value,Value)>=t.holds.borrow().iter().filter(|(k,v)|!k.starts_with('\0')&&!matches!(v,Value::Unset)).map(|(k,v)|(Self::attribute_key(k),v.clone())).collect();
         let ordinary = if pairs.is_empty() { Value::Nil } else { Value::Dict(Rc::new(pairs.into())) };
         let mut slotted = Vec::new();
         for (key, held) in t.holds.borrow().iter() {
             if let Some(named) = key.strip_prefix("\0slot:").and_then(|rest| rest.rsplit_once(':')) {
-                if !matches!(held, Value::Unset) { slotted.push((Value::text(named.0), held.clone())); }
+                if !matches!(held, Value::Unset) { slotted.push((Self::attribute_key(named.0), held.clone())); }
             }
         }
         if slotted.is_empty() { ordinary } else { Value::tuple(vec![ordinary, Value::Dict(Rc::new(slotted.into()))]) }
@@ -5094,6 +5115,25 @@ impl<'a> Machine<'a> {
         words[slot].parse().ok().map(Value::Small)
     }
     pub(super) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
+        // Resolve plain instance storage before inspecting unrelated callable kinds.
+        if self.names_in_calls && !key.starts_with("__") {
+            if let Value::Thing(instance) = &value {
+                let entries = instance.holds.borrow();
+                let saved = entries.iter().all(|(word, _)| !word.starts_with('\0'))
+                    .then(|| entries.iter().find(|(word, _)| word == key).map(|(_, member)| member.clone())).flatten();
+                drop(entries);
+                if let Some(saved) = saved {
+                    let kind = instance.blueprint();
+                    let plain_kind = Self::native_word(&kind).is_none()
+                        && Self::native_beneath(&kind).map_or(true, |word| word == self.detail("root"));
+                    if plain_kind {
+                        let hooked = !direct && self.inherited_entry(&kind, self.detail("get")).is_some();
+                        let priority = self.inherited_entry(&kind, key).is_some_and(|member| self.writes_too(&member));
+                        if !hooked && !priority { return Ok(saved); }
+                    }
+                }
+            }
+        }
         if key.starts_with("co_") && key != "co_optimize" {
             if let Value::Thing(instance) = &value {
                 if self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &instance.blueprint())) {
@@ -5173,7 +5213,7 @@ impl<'a> Machine<'a> {
             if Self::locals_member(key) { return Ok(Value::Member(Rc::new(Value::Thing(proxy)), key.to_owned())); }
         }
         if let Some(answer) = self.coroutine_attribute(&value.settled(), key)? { return Ok(answer); }
-        if self.table.spells("ext.stmt.class.detail.text_signature", key) {
+        if self.rules.words_ext_stmt_class_detail_text_signature.iter().any(|word| word == key) {
             if let Some(text) = self.builtin_text_signature(&value) { return Ok(Value::text(text)); }
         }
         let mut value = value;
@@ -6271,10 +6311,7 @@ impl<'a> Machine<'a> {
             }
             if self.rules.words_ext_stmt_class_detail_code_fields.get(10).is_some_and(|word| word == key) {
                 if let Some(own) = Self::own_entry(b, key).or_else(|| Self::own_entry(b, "__annotate_func__")) {
-                    return Ok(match own.settled() {
-                        Value::Wrapped(44, contents) if matches!(contents.first(), Some(Value::Vector(_))) => Self::wrap(44, vec![value.clone()]),
-                        entry => entry,
-                    });
+                    return Ok(own.settled());
                 }
                 let present = Self::own_entry(b, crate::data::ANNOTATE_WORD).is_some_and(|value| match value.settled() {
                     Value::Vector(row) => row.chunks(2).any(|entry| matches!(entry.get(1), Some(Value::Bound(code, _) | Value::Routine(code)) if !code.annotation_is_text)),
@@ -6626,6 +6663,12 @@ impl<'a> Machine<'a> {
                 if let Some(member)=self.attribute(&set.settled(),key) { return Ok(member); }
             }
             if let Some(text @ Value::Text(_)) = &native {
+                // A trimming keeps the thing as its receiver, so each
+                // call copies the stored worth afresh; other workings
+                // bind the text itself.
+                if matches!(self.table.method_names.get(key).copied(), Some("strip" | "lstrip" | "rstrip")) {
+                    return Ok(Value::Member(Rc::new(value.clone()), key.to_owned()));
+                }
                 if let Some(member) = self.attribute(text, key) { return Ok(member); }
             }
             if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
@@ -6668,7 +6711,12 @@ impl<'a> Machine<'a> {
                 // which the worth beneath the thing carries out.
                 if let Value::Octets{changeable,..}=under.settled() {
                     if let Some(working)=self.octet_member(key,changeable) {
-                        return Ok(Value::Member(Rc::new(under),working.to_string()));
+                        // A fixed row under a trimming keeps the thing
+                        // as its receiver so each call copies afresh.
+                        let receiver = if !changeable && matches!(self.table.method_names.get(key).copied(), Some("strip" | "lstrip" | "rstrip")) {
+                            value.clone()
+                        } else { under };
+                        return Ok(Value::Member(Rc::new(receiver),working.to_string()));
                     }
                 }
                 // A set answers some of its methods with primitives that
@@ -8469,6 +8517,16 @@ impl<'a> Machine<'a> {
             class.weak_slot.set(Some(false));
             let mut namespace = class.shared.borrow_mut();
             namespace.retain(|entry| !matches!(entry.0.as_str(), "__dict__" | "__weakref__"));
+            let context = namespace.iter().position(|entry| entry.0 == "\0annotation_classdict").map(|index| namespace.remove(index).1);
+            drop(namespace);
+            if let Some(context) = context {
+                let reference = Value::Dim(Rc::new(crate::ghost::Dim {
+                    ghost: crate::ghost::Ghost::Blueprint(Rc::downgrade(&class)), bearer: std::rc::Weak::new(),
+                    notify: RefCell::new(None), hash: RefCell::new(None), detached: std::cell::Cell::new(false),
+                }));
+                let member = self.detail("cell.contents").to_owned();
+                self.alter_class_member(context, &member, Some(reference), true)?;
+            }
             return Ok(Value::Nil);
         }
         if op == 19 || op == 20 { return self.class_namespace_write(values, op == 20); }

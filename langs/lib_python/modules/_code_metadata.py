@@ -1,6 +1,7 @@
 # Code metadata over native instructions. Offsets refer to the native program,
 # never to a fabricated CPython bytecode stream.
 import operator
+import os
 import warnings
 
 _INTS = ('co_argcount', 'co_posonlyargcount', 'co_kwonlyargcount', 'co_nlocals',
@@ -90,18 +91,25 @@ def _varint(number, output):
         number >>= 6
     output.append(number)
 
+# Match Python's nonempty environment opt-out, including the -X CLI setting.
+def _debug_ranges_enabled():
+    return not os.environ.get('PYTHONNODEBUGRANGES')
+
 # Encode retained native source coordinates in Python's location-table format.
 def location_table(code):
+    ranges = _debug_ranges_enabled()
     output = []
     line = code.co_firstlineno
     for start, end, column, finish in code.co_positions():
         if start is None:
             output.append(248)
             continue
-        output.append(240)
+        output.append(240 if ranges else 232)
         delta = start - line
         _varint((-delta << 1) | 1 if delta < 0 else delta << 1, output)
         line = start
+        if not ranges:
+            continue
         _varint(0 if end is None else end - start, output)
         _varint(0 if column is None else column + 1, output)
         _varint(0 if finish is None else finish + 1, output)
@@ -109,6 +117,7 @@ def location_table(code):
 
 # Read all the standard short and long forms of a location table.
 def positions(code):
+    ranges = _debug_ranges_enabled()
     data = iter(code.co_linetable)
     line = code.co_firstlineno
     def unsigned():
@@ -149,6 +158,8 @@ def positions(code):
         except StopIteration:
             raise ValueError('invalid location table') from None
         item = tuple(None if part == -1 else part for part in item)
+        if not ranges:
+            item = (item[0], item[0], None, None)
         for _ in range(length):
             yield item
 

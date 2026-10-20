@@ -521,12 +521,23 @@ pub fn note(ghost: Ghost) {
     });
 }
 
+// Retain shared owners and the inline forms which expand into shared owners.
+fn carries_links(value: &Value) -> bool {
+    matches!(value, Value::Dim(_) | Value::Thing(_) | Value::Attributes(_) | Value::Blueprint(_)
+        | Value::Generator(_) | Value::Set(_) | Value::SetCursor { .. } | Value::Iterator(_)
+        | Value::Backtrace(_) | Value::Shared(_) | Value::Mutable(..) | Value::Vector(_)
+        | Value::Tuple(_) | Value::Row(_) | Value::Arguments(_) | Value::Span(_) | Value::Wrapped(..)
+        | Value::Dict(_) | Value::Couple(_) | Value::Member(..) | Value::Window(..) | Value::Cursor(_)
+        | Value::Adorned(_) | Value::Routine(_) | Value::Traversal(..) | Value::Bound(..)
+        | Value::Method(..) | Value::Keyed(..))
+}
+
 /// The values embedded in compiled forms are owned by their routine.
 /// In particular, an exception arm may retain nested routine constants
 /// after a generator yields, and those routines may keep its globals.
 pub(crate) fn form_holds(form: &Form, out: &mut Vec<Knot>) {
     match form {
-        Form::Const(value) => out.push(Knot::Held(value.clone())),
+        Form::Const(value) => if carries_links(value) { out.push(Knot::Held(value.clone())); },
         Form::Fits { value, test, kinds, .. } => {
             form_holds(value, out);
             case_holds(test, out);
@@ -586,7 +597,7 @@ pub(crate) fn form_holds(form: &Form, out: &mut Vec<Knot>) {
 
 fn case_holds(test: &CaseTest, out: &mut Vec<Knot>) {
     match test {
-        CaseTest::Equal(value) => out.push(Knot::Held(value.clone())),
+        CaseTest::Equal(value) => if carries_links(value) { out.push(Knot::Held(value.clone())); },
         CaseTest::AnyOf(parts) => for part in parts { case_holds(part, out); },
         CaseTest::Series { members, .. } => for member in members { case_holds(member, out); },
         CaseTest::Also { test, .. } => case_holds(test, out),
@@ -668,7 +679,9 @@ impl Knot {
     /// The knots this one holds directly. A cell being written to at
     /// this moment yields none, which leans towards keeping.
     fn onward(&self, out: &mut Vec<Knot>) {
-        let held = |out: &mut Vec<Knot>, v: &Value| out.push(Knot::Held(v.clone()));
+        let held = |out: &mut Vec<Knot>, v: &Value| {
+            if carries_links(v) { out.push(Knot::Held(v.clone())); }
+        };
         match self {
             Knot::Frame(env) => {
                 if let Ok(cells) = env.cells.try_borrow() {
@@ -845,7 +858,7 @@ impl Web {
     }
 
     /// Woven from the notable things still about.
-    pub fn from_notable(extra: Vec<Knot>, live: Vec<Knot>) -> Web {
+    pub fn from_notable(extra: Vec<Knot>, live: Vec<Knot>, enumerate: bool) -> Web {
         let mut bookkeeping = HashMap::default();
         for knot in &extra {
             let parts = match knot {
@@ -863,8 +876,29 @@ impl Web {
             n.0.iter().filter_map(|g| g.revive()).map(Knot::Held).collect()
         }).unwrap_or_default();
         roots.extend(extra);
-        for knot in live { external_knots(knot, &mut roots); }
-        Web::weave(roots, bookkeeping)
+        let mut anchored: HashSet<usize, crate::table::FxBuildHasher> = HashSet::default();
+        let mut opened: HashSet<usize, crate::table::FxBuildHasher> = HashSet::default();
+        for knot in live {
+            let mut owners = Vec::new();
+            external_knots(knot, &mut owners);
+            if !enumerate {
+                for owner in &owners { if let Some(address) = owner.place() { anchored.insert(address); } }
+                let mut layer = owners.iter().map(|owner| match owner { Knot::Held(value) => Knot::Held(value.clone()), Knot::Frame(frame) => Knot::Frame(frame.clone()) }).collect::<Vec<_>>();
+                // Follow the live cell through its dictionary to the namespace bindings.
+                for _ in [0, 1, 2] {
+                    let mut children = Vec::new();
+                    for knot in layer {
+                        if knot.place().is_some_and(|address| opened.insert(address)) { knot.onward(&mut children); }
+                    }
+                    layer = Vec::new();
+                    for child in children.into_iter().flat_map(Knot::parts) {
+                        if let Some(address) = child.place() { anchored.insert(address); layer.push(child); }
+                    }
+                }
+            }
+            roots.extend(owners);
+        }
+        Web::weave(roots, bookkeeping, anchored)
     }
 
     pub fn link_attributes(&mut self, function: &Value, holder: &Value) {
@@ -874,7 +908,7 @@ impl Web {
         }
     }
 
-    fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>) -> Web {
+    fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>, anchored: HashSet<usize, crate::table::FxBuildHasher>) -> Web {
         let mut web = Web { strands: Vec::new(), placed: HashMap::default(), bookkeeping };
         let mut frontier: Vec<usize> = Vec::new();
         // Each part of a knot is placed once; a hold on a part already
@@ -901,6 +935,8 @@ impl Web {
         for root in roots { place_parts(&mut web, &mut frontier, root, 0, None); }
         let mut next = Vec::new();
         while let Some(position) = frontier.pop() {
+            // Keep engine-owned edges as outside ownership of their targets.
+            if anchored.contains(&web.strands[position].place) { continue; }
             next.clear();
             web.strands[position].knot.onward(&mut next);
             let mut onward = Vec::with_capacity(next.len());

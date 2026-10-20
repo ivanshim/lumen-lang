@@ -59,6 +59,22 @@ fn compile(text: &str) -> Result<Format, String> {
     });
     Ok(format)
 }
+/// An integer of at most eight little-endian bytes is read into a machine
+/// word; a wider one, or an unsigned eight-byte value past i64, goes the
+/// long way round through a big integer.
+fn decoded_integer(raw: &[u8], signed: bool) -> Value {
+    if raw.len() <= 8 {
+        let mut word = [0u8; 8];
+        word[..raw.len()].copy_from_slice(raw);
+        if signed {
+            if raw.last().is_some_and(|last| last & 0x80 != 0) { for byte in &mut word[raw.len()..] { *byte = 0xff; } }
+            return Value::Small(i64::from_le_bytes(word));
+        }
+        let unsigned = u64::from_le_bytes(word);
+        return match i64::try_from(unsigned) { Ok(fits) => Value::Small(fits), Err(_) => Value::of_big(BigInt::from(unsigned)) };
+    }
+    Value::of_big(if signed { BigInt::from_signed_bytes_le(raw) } else { BigInt::from_bytes_le(Sign::Plus, raw) })
+}
 fn floating(value: &Value) -> Result<f64, String> {
     Ok(match value {
         Value::Real(r) => { let x=crate::value::as_binary(&r.p, &r.q); if r.below && r.p.is_zero() { -x.abs() } else { x } },
@@ -188,6 +204,18 @@ pub fn apply(args: &[Value]) -> Result<Value,String> {
     for field in &format.fields {
         if field.code==b'x' {continue;}
         if matches!(field.code,b's'|b'p') {let start=field.at+usize::from(field.code==b'p' && field.count>0);let count=if field.code==b'p' {if field.count==0 {0} else {(data[field.at] as usize).min(field.count-1)}} else {field.count};values.push(bytes(data[start..start+count].to_vec()));continue;}
+        // A repeated byte is already one machine word: copying each
+        // one into a fresh buffer dominated archives full of 'B' fields.
+        if field.width == 1 && matches!(field.code, b'B' | b'b') {
+            let from = field.at;
+            let upto = from + field.count;
+            let negative = field.code == b'b';
+            for byte in &data[from..upto] {
+                let number = if negative { *byte as i8 as i64 } else { i64::from(*byte) };
+                values.push(Value::Small(number));
+            }
+            continue;
+        }
         for j in 0..field.count {
             let start=field.at+j*field.width;let mut raw=data[start..start+field.width].to_vec();
             if !format.little {if matches!(field.code,b'F'|b'D') {let half=raw.len()/2;raw[..half].reverse();raw[half..].reverse();} else {raw.reverse();}}
@@ -195,7 +223,7 @@ pub fn apply(args: &[Value]) -> Result<Value,String> {
                 b'c' => bytes(raw),b'?' => Value::Flag(raw[0]!=0),
                 b'e'|b'f'|b'd' => crate::value::real_of(unpack_float(&raw),17),
                 b'F'|b'D' => Value::tuple(vec![crate::value::real_of(unpack_float(&raw[..raw.len()/2]),17),crate::value::real_of(unpack_float(&raw[raw.len()/2..]),17)]),
-                _ => Value::of_big(if b"bhilqn".contains(&field.code) {BigInt::from_signed_bytes_le(&raw)} else {BigInt::from_bytes_le(Sign::Plus,&raw)}),
+                _ => decoded_integer(&raw, b"bhilqn".contains(&field.code)),
             });
         }
     }

@@ -404,8 +404,9 @@ pub enum Descriptor {
 /// are kept under a key already reckoned by `set_key`, never a
 /// program's raw text, so that guard buys nothing here and every
 /// member read or written pays for it regardless. This is the
-/// textbook Fowler-Noll-Vo pass, one byte at a time: no table, no
-/// lookahead, just a running product folded against each byte in turn.
+/// Fowler-Noll-Vo pass taken eight bytes to a turn, the odd bytes at the
+/// end one by one: no table, no lookahead, just a running product folded
+/// against each word in turn.
 pub struct QuickHash(u64);
 
 impl QuickHash {
@@ -421,15 +422,24 @@ impl std::hash::Hasher for QuickHash {
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
         let mut running = self.0;
-        for &byte in bytes {
-            running ^= byte as u64;
-            running = running.wrapping_mul(Self::PRIME);
+        let length = bytes.len();
+        let mut at = 0;
+        // Eight bytes to a turn; indexing keeps the loop free of iterator calls.
+        while at + 8 <= length {
+            let word = bytes[at] as u64 | (bytes[at + 1] as u64) << 8 | (bytes[at + 2] as u64) << 16 | (bytes[at + 3] as u64) << 24
+                | (bytes[at + 4] as u64) << 32 | (bytes[at + 5] as u64) << 40 | (bytes[at + 6] as u64) << 48 | (bytes[at + 7] as u64) << 56;
+            running = (running ^ word).wrapping_mul(Self::PRIME).rotate_left(29);
+            at += 8;
+        }
+        while at < length {
+            running = (running ^ bytes[at] as u64).wrapping_mul(Self::PRIME);
+            at += 1;
         }
         self.0 = running;
     }
     #[inline]
     fn finish(&self) -> u64 {
-        self.0
+        self.0 ^ (self.0 >> 32)
     }
 }
 
@@ -2303,6 +2313,7 @@ pub struct ClassMembers {
 }
 
 impl ClassMembers {
+    pub(super) fn revision() -> u64 { MEMBERS_REVISION.with(|revision| revision.get()) }
     pub fn new(rows: Vec<(String, Value)>) -> Self {
         Self { rows: RefCell::new(rows), offsets: RefCell::new(None), absent: RefCell::new((u64::MAX, std::collections::HashSet::with_hasher(FxBuildHasher::default()))) }
     }

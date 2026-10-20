@@ -939,6 +939,7 @@
   "ext.builtin.function.native_frame": [
     "__native_frame__"
   ],
+  "ext.builtin.deque_native": ["__deque_native__"],
   "ext.builtin.heap_native": [
     "__heap_native__"
   ],
@@ -3946,7 +3947,7 @@
   "ext.system.bytes.encodings": [
     "utf-8 utf-8 utf8",
     "ascii ascii us-ascii",
-    "latin-1 latin-1 latin1 iso-8859-1",
+    "latin-1 latin-1 latin1 iso-8859-1 iso8859-1",
     "rawunicodeescape raw-unicode-escape"
   ],
   "ext.system.bytes.hex": [

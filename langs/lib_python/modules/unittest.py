@@ -634,6 +634,7 @@ def expectedFailure(function):
     return expected
 
 class TestSuite:
+    _removed_tests = 0
     def __init__(self, tests=None):
         self.class_ = None
         self.module_namespace = None
@@ -655,7 +656,7 @@ class TestSuite:
             self.addTest(test)
 
     def countTestCases(self):
-        return sum(test.countTestCases() for test in self.tests)
+        return self._removed_tests + sum(test.countTestCases() for test in self.tests if test is not None)
 
     def __call__(self, result):
         return self.run(result)
@@ -1103,10 +1104,18 @@ class TextTestRunner:
             try:
                 if test.countTestCases() > 0 and test._fixture('setUpClass', result):
                     try:
-                        for member in test.tests:
+                        members = test.tests
+                        for at in range(len(members)):
+                            member = members[at]
                             self._run(member, result)
                             if self.failfast and not result.wasSuccessful():
                                 break
+                            # A test that has run is let go, as CPython's suite does,
+                            # so what it holds is not kept alive to the end of the run.
+                            if hasattr(member, 'countTestCases'):
+                                test._removed_tests += member.countTestCases()
+                            members[at] = None
+                            member = None
                     finally:
                         test._fixture('tearDownClass', result)
             finally:

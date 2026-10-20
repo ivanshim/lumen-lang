@@ -2213,6 +2213,7 @@ pub struct BlueprintEntries {
 }
 
 impl BlueprintEntries {
+    pub(super) fn epoch() -> u64 { NAMESPACE_CHANGE.with(Cell::get) }
     pub fn new(entries: Vec<(String, Value)>) -> Self {
         Self { values: RefCell::new(entries), positions: RefCell::new(None), missing: RefCell::new(std::collections::HashMap::with_hasher(crate::table::FxBuildHasher::default())) }
     }
@@ -2309,6 +2310,7 @@ impl Blueprint {
     }
     pub fn ancestry(&self) -> Vec<Rc<Blueprint>> {self.ancestry.borrow().clone()}
     pub fn parents(&self) -> Vec<Rc<Blueprint>> {self.parents.borrow().clone()}
+    pub fn parentless(&self) -> bool {self.parents.borrow().is_empty()}
     pub fn under(&self) -> Option<Rc<Blueprint>> {self.under.borrow().clone()}
 
     pub(super) fn python_title(&self) -> Option<String> {
