@@ -2081,7 +2081,7 @@ impl<'a> Engine<'a> {
             // A method bound to a value of a builtin kind, reached as a
             // value in its own right and then called.
             Value::ValueMethod(bound) => {
-                if self.lang.class_details.get("native.protocols").is_some_and(|names| !names.is_empty()) {
+                if self.lang.native_protocols {
                     let mut positional = Vec::new(); let mut named = Vec::new();
                     for (key, value) in self.call_items(args)? {
                         match key { Some(key) => named.push((key, value)), None => positional.push(value) }

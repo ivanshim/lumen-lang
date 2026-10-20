@@ -44,7 +44,8 @@
     "test.support.script_helper": "runtime_adapters/script_helper.py",
     "zipimport": "runtime_adapters/zipimport.py",
     "test": "runtime_adapters/test_package.py",
-    "test.support.warnings_helper": "runtime_adapters/warnings_helper.py"
+    "test.support.warnings_helper": "runtime_adapters/warnings_helper.py",
+    "re._compiler": "runtime_adapters/re_compiler.py"
   },
   "data": {
     "_codec_sjis": {

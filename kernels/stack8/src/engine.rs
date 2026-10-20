@@ -9557,7 +9557,7 @@ impl<'a> Engine<'a> {
                 else { self.async_generator_awaitable(receiver.clone(), 0, Value::Null).map_err(|fault| { self.carried = Some(fault); self.special_fault() })? });
         }
         let original = receiver;
-        let underlying = Self::worth_of(original).filter(|_| self.lang.class_details.get("native.protocols").is_some_and(|names| !names.is_empty()));
+        let underlying = Self::worth_of(original).filter(|_| self.lang.native_protocols);
         let receiver = underlying.as_ref().unwrap_or(original);
         let mut args = args;
         if matches!(place, 2 | 3) && matches!(receiver.contents(), Value::Map(_)) {
@@ -21281,7 +21281,7 @@ impl<'a> Engine<'a> {
         // kind. Each hands its work to the builtin or the sign that
         // already does it, so that the answer and the refusal are the
         // ones the plain form gives.
-        let underlying = Self::worth_of(receiver).filter(|_| self.lang.class_details.get("native.protocols").is_some_and(|names| !names.is_empty()));
+        let underlying = Self::worth_of(receiver).filter(|_| self.lang.native_protocols);
         if let Some(place) = self.native_place(underlying.as_ref().unwrap_or(receiver), operation) {
             return self.native_member_call(receiver, operation, place, args, named);
         }

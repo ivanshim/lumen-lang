@@ -249,6 +249,8 @@ series is retained, in a window of two series; only 3.14 is registered today.
 
 | `langs/lib_python/modules/runtime_adapters/codecs.py` | `Codec`, `StreamReader`, and `StreamWriter` class bodies and `getencoder`/`getdecoder` functions from `Lib/codecs.py`, copied unchanged beneath a PSF provenance header | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
+| `langs/lib_python/modules/runtime_adapters/re_compiler.py`, `native/sre/` | `compile` from `Lib/re/_compiler.py`, copied unchanged beneath a native fast path; the native compiler follows `Lib/re/_parser.py` and `Lib/re/_compiler.py`, and `native/sre/cases.rs` is the table `_EXTRA_CASES` of `Lib/re/_casefix.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+
 | `langs/lib_python/modules/_strptime.py` | `Lib/_strptime.py`, unchanged beneath a PSF provenance header; supplies the `time.strptime` adapter | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 
 | `python-3.14.8/test_strptime.py` | `Lib/test/test_strptime.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |

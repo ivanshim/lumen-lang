@@ -140,6 +140,8 @@ pub struct Lang {
     /// Every step of every program asks this, so it is a field read
     /// rather than a hashmap looked into afresh at each one.
     pub fuller_classes: bool,
+    /// Whether builtin kinds answer through native protocols, read once.
+    pub native_protocols: bool,
     pub ident: String,
     pub extensions: Vec<String>,
     pub banner: String,
@@ -2832,6 +2834,7 @@ impl Lang {
             // every program: nothing about a language's own class detail
             // words changes once the language is read.
             fuller_classes: r.strings("ext.stmt.class.detail.root")?.first().map_or(false, |s| !s.is_empty()),
+            native_protocols: !r.strings("ext.stmt.class.detail.native.protocols")?.is_empty(),
             class_firstline: r.strings("ext.stmt.class.detail.firstline")?,
             class_static_attributes: r.strings("ext.stmt.class.detail.static.attributes")?,
             native_docs: r.strings("ext.stmt.class.detail.native.docs")?,
