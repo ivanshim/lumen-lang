@@ -39,6 +39,7 @@ INT_MIN = -(1 << 31)
 INT_MAX = (1 << 31) - 1
 LONG_MIN = -(1 << 63)
 LONG_MAX = (1 << 63) - 1
+ULONG_MAX = (1 << 64) - 1
 
 def PyTime_AsSecondsDouble(value):
     import operator
