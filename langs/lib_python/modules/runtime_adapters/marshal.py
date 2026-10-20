@@ -1,6 +1,10 @@
 # Native compiled-code records use the actual kernel instruction format and ABI.
 import types as _code_types
 
+_value_dumps = dumps
+_value_loads = loads
+_value_prefix = b"\x00LumenValue\x01"
+
 _code_prefix = b'\x00LumenCode\x01'
 
 class _CodeWriter(_Writer):
@@ -41,9 +45,13 @@ def dumps(value, version=version, /, *, allow_code=True):
         if not allow_code:
             raise ValueError('marshalling code objects is disallowed')
         return _code_prefix + _code_pack(value)
+    try:
+        return _value_dumps(value, version, allow_code=allow_code)
+    except ValueError:
+        pass
     writer = _CodeWriter(allow_code)
     writer.put(value)
-    return writer.text().encode()
+    return _value_prefix + writer.text().encode()
 
 def loads(data, /, *, allow_code=True):
     data = memoryview(data).tobytes()
@@ -53,7 +61,9 @@ def loads(data, /, *, allow_code=True):
         return _code_unpack(data[len(_code_prefix):])
     if not data:
         raise EOFError('EOF read where object expected')
-    return _CodeReader(data.decode(), allow_code).get()
+    if data.startswith(_value_prefix):
+        return _CodeReader(data[len(_value_prefix):].decode(), allow_code).get()
+    return _value_loads(data, allow_code=allow_code)
 
 def dump(value, file, version=version, /, *, allow_code=True):
     file.write(dumps(value, version, allow_code=allow_code))

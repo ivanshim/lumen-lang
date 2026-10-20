@@ -15784,10 +15784,9 @@ impl<'a> Machine<'a> {
     fn enter_function_globals(&mut self, program: &Routine) -> (bool, Option<Option<Rc<RefCell<Value>>>>) {
         let explicit = self.handed_globals(program);
         let supplied = explicit.is_some();
-        let inherited = program.globe.is_none();
-        let change_world = supplied || !inherited || !self.supplied_books.is_empty();
-        let previous = if change_world {
-            let next = explicit.or_else(|| inherited.then(|| self.supplied_books.first().cloned().flatten()).flatten());
+        let ordinary = program.globe.is_none() && !self.supplied_books.is_empty();
+        let previous = if supplied || ordinary {
+            let next = explicit.or_else(|| self.supplied_books.first().cloned().flatten());
             Some(std::mem::replace(&mut self.world_book, next))
         } else { None };
         if supplied { self.supplied_books.push(previous.clone().flatten()); }
