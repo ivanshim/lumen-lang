@@ -32374,6 +32374,19 @@ impl Engine<'_> {
         result
     }
 
+    fn initialize_source_file_spec(&mut self, path: &str, module: &Value, file: Option<&str>) -> Flow<bool> {
+        if self.lang.module_path.is_none() { return Ok(false); }
+        let maker = self.modules.get("sys").cloned()
+            .and_then(|system| self.member_of(system, "_make_spec").ok().flatten());
+        let (Some(factory), Some(file), Value::Object(namespace)) = (maker, file, module) else { return Ok(false); };
+        let spec = self.call_held(factory, vec![Value::text(path), Value::text(file)])?;
+        let loader = self.member_of(spec.clone(), "loader")?.unwrap_or(Value::Null);
+        let globals = Rc::new(RefCell::new(Value::Fields(namespace.clone())));
+        book_write(&globals, "__spec__", Some(spec));
+        book_write(&globals, "__loader__", Some(loader));
+        Ok(true)
+    }
+
     fn import_module_inner(&mut self, path: &str) -> Flow<Value> {
         let resolved = self.import_path(path)?;
         let path = resolved.as_str();
@@ -32638,6 +32651,7 @@ impl Engine<'_> {
         self.importing.insert(path.to_string());
         self.refresh_module_cache(path);
         self.source_loader_metadata(path, &module)?;
+        let spec_initialized = self.initialize_source_file_spec(path, &module, own_file.as_deref())?;
         let saved_depth = self.data.len();
         let result = self.invoke(&program, Vec::new());
         self.data.truncate(saved_depth);
@@ -32645,18 +32659,8 @@ impl Engine<'_> {
             self.importing.remove(path); self.embedded_names.remove(path);
             self.modules.remove(path); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear(); self.refresh_module_cache(path); return Err(fault);
         }
-        if self.lang.module_path.is_some() {
-            let maker = self.modules.get("sys").cloned()
-                .and_then(|system| self.member_of(system, "_make_spec").ok().flatten());
-            if let (Some(factory), Some(file)) = (maker, own_file.as_deref()) {
-                let spec = self.call_held(factory, vec![Value::text(path), Value::text(file)])?;
-                let loader = self.member_of(spec.clone(), "loader")?.unwrap_or(Value::Null);
-                if let Value::Object(namespace) = &module {
-                    let mut attrs = namespace.fields.borrow_mut();
-                    if let Some((_, value)) = attrs.iter_mut().find(|(key, _)| key == "__spec__") { *value = spec; }
-                    if let Some((_, value)) = attrs.iter_mut().find(|(key, _)| key == "__loader__") { *value = loader; }
-                }
-            }
+        if !spec_initialized {
+            self.initialize_source_file_spec(path, &module, own_file.as_deref())?;
         }
         // Bind native cursor access to the class made by the embedded adapter.
         if embedded && path == "_io" {
@@ -36182,7 +36186,8 @@ impl Engine<'_> {
             let Value::Object(code) = given[0].contents() else { return Err("TypeError: expected a code object".into()); };
             if self.lang.compile_kind.as_deref() != Some(code.class_now().name.as_str()) { return Err("TypeError: expected a code object".into()); }
             let fields = code.fields.borrow();
-            if let Some((_, Value::Text(saved))) = fields.iter().find(|(key, _)| key == "\0code_archive") {
+            if let Some((_, Value::Text(saved))) = fields.iter().find(|(key, _)| key == "\0code_archive")
+                .filter(|_| !fields.iter().any(|(key, _)| key == "\0replace_constants")) {
                 return Ok(Value::Bytes(Rc::new(RefCell::new(crate::cache::pack_text(saved.as_bytes())?)), false, Rc::from("b")));
             }
             let Some((_, Value::Routine(program))) = fields.iter().find(|(key, _)| key == "\0compiled_program") else { return Err("ValueError: no compiled instruction graph".into()); };

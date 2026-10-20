@@ -33609,6 +33609,18 @@ impl Machine<'_> {
         answer
     }
 
+    fn initialize_source_file_spec(&mut self, path: &str, module: &Value, file: Option<&str>) -> Result<bool, String> {
+        if !self.table.has_any("ext.system.module.path") { return Ok(false); }
+        let factory = self.imported.get("sys").cloned().and_then(|system| self.attribute(&system, "_make_spec"));
+        let (Some(factory), Some(file), Value::Thing(namespace)) = (factory, file, module) else { return Ok(false); };
+        let spec = self.core_run(&factory, vec![Value::text(path), Value::text(file)])?;
+        let loader = self.read_class_member(spec.clone(), "loader", false).map_err(|fault| self.carried_native_fault(fault))?;
+        let globals = Rc::new(RefCell::new(Value::Attributes(namespace.clone())));
+        set_down(&globals, "__spec__", Some(spec));
+        set_down(&globals, "__loader__", Some(loader));
+        Ok(true)
+    }
+
     fn load_namespace_inner(&mut self, path: &str) -> Result<Value, String> {
         let qualified = self.qualified_import(path)?;
         let path = qualified.as_str();
@@ -33882,6 +33894,7 @@ impl Machine<'_> {
         self.loaded_spaces.insert(Rc::from(filename), path.to_owned());
         self.importing.insert(path.into());
         self.refresh_import_table(path);
+        let spec_initialized = self.initialize_source_file_spec(path, &value, own_file.as_deref())?;
         let scope = self.outermost.clone();
         let caller_location = (self.written_in.clone(), self.row);
         self.park_cursor();
@@ -33907,21 +33920,8 @@ impl Machine<'_> {
             self.refresh_import_table(path);
             return Err(match stopped { Escape::Error(said) => said, other => { self.got_away = Some(other); "module did not finish".into() } });
         }
-        if self.table.has_any("ext.system.module.path") {
-            if let Some(filename) = own_file.as_ref() {
-                let factory = self.imported.get("sys").cloned().and_then(|system| self.attribute(&system, "_make_spec"));
-                if let Some(factory) = factory {
-                    let description = self.core_run(&factory, vec![Value::text(path), Value::text(filename)])?;
-                    let loader = self.read_class_member(description.clone(), "loader", false).map_err(|fault| self.carried_native_fault(fault))?;
-                    if let Value::Thing(space) = &value {
-                        let mut attributes = space.holds.borrow_mut();
-                        for entry in attributes.iter_mut() {
-                            if entry.0 == "__spec__" { entry.1 = description.clone(); }
-                            if entry.0 == "__loader__" { entry.1 = loader.clone(); }
-                        }
-                    }
-                }
-            }
+        if !spec_initialized {
+            self.initialize_source_file_spec(path, &value, own_file.as_deref())?;
         }
         // Remember the adapter's actual blueprint before import-cache replacement.
         if path == "_io" && from_library {
@@ -40202,7 +40202,8 @@ impl Machine<'_> {
             let Value::Thing(object) = input[0].settled() else { return Err("TypeError: expected compiled code".into()); };
             if self.table.strings("ext.builtin.compile.kind").first().map(String::as_str) != Some(object.blueprint().name.as_str()) { return Err("TypeError: expected compiled code".into()); }
             let attributes = object.holds.borrow();
-            if let Some((_, Value::Text(encoded))) = attributes.iter().find(|(name, _)| name == "\0form_archive") {
+            if let Some((_, Value::Text(encoded))) = attributes.iter().find(|(name, _)| name == "\0form_archive")
+                .filter(|_| !attributes.iter().any(|(name, _)| name == "\0literal_overrides")) {
                 return Ok(Value::Octets { cell: Rc::new(RefCell::new(crate::cache::pack_saved_forms(encoded.as_bytes())?)), changeable: false, lead: Rc::from("b") });
             }
             let routine = attributes.iter().find(|(name, _)| name == "\0native_forms").and_then(|(_, value)| match value { Value::Routine(body) => Some(body.clone()), _ => None }).ok_or("ValueError: code has no compiled forms")?;
