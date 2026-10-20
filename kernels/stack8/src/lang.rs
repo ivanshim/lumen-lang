@@ -421,8 +421,8 @@ pub struct Lang {
     /// Nothing is shown as no text at all, rather than as the word a
     /// program writes for it: how PHP shows it.
     pub null_silent: bool,
-    pub dyadic: HashMap<String, Operator>,
-    pub monadic: HashMap<String, Operator>,
+    pub dyadic: HashMap<String, Operator, crate::value::FxBuildHasher>,
+    pub monadic: HashMap<String, Operator, crate::value::FxBuildHasher>,
     pub pipe_words: Vec<String>,
     pub range_marks: Vec<String>,
     pub precedence: HashMap<String, u32>,
@@ -461,7 +461,10 @@ pub struct Lang {
     pub quote_open: Vec<String>,
     pub quote_close: Vec<String>,
 
-    pub builtins: HashMap<String, Builtin>,
+    pub builtins: HashMap<String, Builtin, crate::value::FxBuildHasher>,
+    /// Whether the language spells the instance-of builtin at all, found once
+    /// when it is read rather than by a walk of every builtin at each `type`.
+    pub instance_of_spelled: bool,
     pub builtin_tails: std::rc::Rc<HashMap<String, Vec<String>>>,
     /// The one word each builtin answers by, in the order the labels
     /// name them: a map by word cannot say which of several came first.
@@ -759,7 +762,7 @@ pub struct Lang {
     pub foreach_as_words: Vec<String>,
     pub c_for_words: Vec<String>,
     /// `x op= e` for every binary operator, when the switch is on.
-    pub compound: HashMap<String, Action>,
+    pub compound: HashMap<String, Action, crate::value::FxBuildHasher>,
     pub static_words: Vec<String>,
     pub class_bases_open: Vec<String>,
     pub class_bases_close: Vec<String>,
@@ -1825,7 +1828,7 @@ impl Lang {
             let at = if from_top { tiers.iter().rposition(hit) } else { tiers.iter().position(hit) };
             at.map(|i| i as u32 + 1)
         };
-        let mut binary = HashMap::new();
+        let mut binary = HashMap::default();
         for (tag, op) in [
             ("ext.op.contains", Action::Contains), ("op.add", Action::Add), ("op.sub", Action::Sub), ("op.mul", Action::Mul), ("op.div", div),
             ("op.quot", Action::IntDiv), ("op.rem", Action::Mod), ("op.pow", Action::Power), ("op.eq", Action::Eq),
@@ -1843,7 +1846,7 @@ impl Lang {
                 }
             }
         }
-        let mut unary = HashMap::new();
+        let mut unary = HashMap::default();
         for (tag, op) in [("op.not", Action::Not), ("op.negate", Action::Negate), ("ext.op.bit.not", Action::BitTurn)] {
             for lex in r.strings(tag)? {
                 let tier = tier_of(&lex, true).ok_or_else(|| format!("'{lex}' ({tag}) does not appear in op.precedence"))?;
@@ -1925,7 +1928,7 @@ impl Lang {
         let mut stack_lists = stack_lists.into_iter();
         let mut next_list = || stack_lists.next().expect("eight stack lists");
 
-        let mut natives = HashMap::new();
+        let mut natives = HashMap::default();
         let mut first_words: Vec<(Builtin, String)> = Vec::new();
         for (tag, native) in [
             ("ext.builtin.complex", Builtin::Complex),
@@ -2564,6 +2567,7 @@ impl Lang {
             text_negative_index: r.flag("ext.op.index.text.negative")?,
             text_repeat: r.flag("ext.builtin.text.repeat")?,
             text_words: ["ext.builtin.text.getnewargs","ext.builtin.text.fault.protocol","ext.builtin.text.fault.index","ext.builtin.text.splitlines","ext.builtin.text.partition","ext.builtin.text.rpartition","ext.builtin.text.expandtabs","ext.builtin.text.swapcase","ext.builtin.text.casefold","ext.builtin.text.capitalize","ext.builtin.text.title","ext.builtin.text.istitle","ext.builtin.text.isidentifier","ext.builtin.text.isprintable","ext.builtin.text.isdecimal","ext.builtin.text.isnumeric","ext.builtin.text.isascii","ext.builtin.text.removeprefix","ext.builtin.text.removesuffix","ext.builtin.text.format_map","ext.builtin.text.maketrans","ext.builtin.text.translate","ext.builtin.text.encode","ext.builtin.text.join","ext.builtin.text.split","ext.builtin.text.rsplit","ext.builtin.text.strip","ext.builtin.text.lstrip","ext.builtin.text.rstrip","ext.builtin.text.center","ext.builtin.text.ljust","ext.builtin.text.rjust","ext.builtin.text.zfill","ext.builtin.text.count","ext.builtin.text.find","ext.builtin.text.rfind","ext.builtin.text.index","ext.builtin.text.rindex","ext.builtin.text.startswith","ext.builtin.text.endswith","ext.builtin.text.replace","ext.builtin.text.upper","ext.builtin.text.lower","ext.builtin.text.length","ext.builtin.text.repr","ext.builtin.text.keyword.count","ext.builtin.text.keyword.keepends","ext.builtin.text.keyword.tabsize","ext.builtin.text.keyword.maxsplit","ext.builtin.text.keyword.sep","ext.builtin.text.keyword.encoding","ext.builtin.text.keyword.errors","ext.builtin.text.fault.arguments","ext.builtin.text.fault.arguments.many","ext.builtin.text.fault.receiver","ext.builtin.text.fault.string","ext.builtin.text.fault.integer","ext.builtin.text.fault.separator","ext.builtin.text.fault.fill","ext.builtin.text.fault.missing","ext.builtin.text.fault.encode","ext.builtin.text.fault.mapping","ext.builtin.text.fault.translation","ext.builtin.text.fault.codepoint","ext.builtin.text.fault.surrogate","ext.builtin.text.fault.maketrans.length","ext.builtin.text.fault.maketrans.key","ext.builtin.text.fault.maketrans.type","ext.builtin.text.fault.format","ext.builtin.text.fault.format.positional","ext.builtin.text.fault.format.brace","ext.builtin.text.fault.join","ext.builtin.text.fault.walk","ext.builtin.text.fault.room","ext.builtin.text.fault.key","ext.builtin.text.complaint"].into_iter().map(|k| Ok((k.to_string(), r.strings(k)?))).collect::<Result<_, String>>()?,
+            instance_of_spelled: natives.values().any(|b| *b == Builtin::InstanceOf),
             builtins: natives,
             builtin_tails: std::rc::Rc::new(HashMap::new()),
             builtin_words: first_words,
@@ -2733,7 +2737,7 @@ impl Lang {
             foreach_words: r.strings("stmt.foreach")?,
             foreach_as_words: r.strings("stmt.foreach.as")?,
             c_for_words: r.strings("ext.stmt.for.c")?,
-            compound: HashMap::new(),
+            compound: HashMap::default(),
             static_words: r.strings("ext.stmt.static")?,
             class_bases_open: r.strings("ext.stmt.class.bases.open")?,
             class_bases_close: r.strings("ext.stmt.class.bases.close")?,
@@ -3164,7 +3168,7 @@ impl Lang {
             // Every binary operator followed by the assignment sign, unless
             // that spelling is already an operator (`<=`) or the operator
             // itself ends in the sign (`==`, whose `===` is another operator).
-            let mut compound = HashMap::new();
+            let mut compound = HashMap::default();
             for (lex, op) in &lang.dyadic {
                 if matches!(op.action, Action::Contains) { continue; }
                 for assign in &lang.assign_words {
@@ -3292,7 +3296,7 @@ impl Lang {
         match list {
             [] => false,
             [single] => single == word,
-            rest => rest.iter().any(|w| w == word),
+            rest => rest.iter().any(|w| w.len() == word.len() && w == word),
         }
     }
 

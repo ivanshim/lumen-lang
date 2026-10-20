@@ -2487,7 +2487,7 @@ impl<'a> Builder<'a> {
             if let (Input::Address(read), Input::Const(Value::Small(k))) = (a, b) {
                 if read.ident == slot.ident && read.up == slot.up && read.at == slot.at && read.fallback == slot.fallback {
                     let by = if *op == Prim::Minus { -*k } else { *k };
-                    return Form::Bump { slot, by };
+                    return Form::Bump { slot, by, inplace: false };
                 }
             }
         }
@@ -9356,6 +9356,13 @@ impl<'a> Builder<'a> {
         let mut depth: Vec<String> = Vec::new();
         let mut cuts = Vec::new();
         let t = self.table;
+        // The bracket families are asked for once, not once for every
+        // sign met on the way.
+        let brackets: Vec<(&str, Option<&str>)> = [
+            ("syntax.group.open", "syntax.group.close"),
+            ("syntax.array.open", "syntax.array.close"),
+            ("syntax.map.open", "syntax.map.close"),
+        ].iter().filter_map(|(open, close)| t.single(open).map(|open| (open, t.single(close)))).collect();
         for i in start..limit {
             let word = &self.tokens[i];
             if depth.is_empty() {
@@ -9369,9 +9376,9 @@ impl<'a> Builder<'a> {
                     depth.pop();
                     continue;
                 }
-                for family in ["syntax.group", "syntax.array", "syntax.map"] {
-                    if t.single(&format!("{}.open", family)) == Some(word.lexeme.as_str()) {
-                        if let Some(close) = t.single(&format!("{}.close", family)) { depth.push(close.to_string()); }
+                for (open, close) in &brackets {
+                    if *open == word.lexeme.as_str() {
+                        if let Some(close) = close { depth.push(close.to_string()); }
                         break;
                     }
                 }
@@ -10275,6 +10282,24 @@ impl<'a> Builder<'a> {
             // x op= e is x = x op e.
             Form::Read(slot) => match compound {
                 Some(op) => {
+                    // A positive whole step of a bare name is applied
+                    // in place. An integer moves by that many; anything
+                    // else is still asked for the compound method.
+                    if self.stood.is_none() && self.stands.is_none() {
+                        if let Prim::Landing(place) = op {
+                            if let Form::Const(Value::Small(step)) = &value {
+                                if *step > 0 && (place == 0 || place == 1) {
+                                    let by = if place == 1 { -*step } else { *step };
+                                    self.unmet_last_read(&slot.ident);
+                                    return Ok(Form::Bump {
+                                        slot: self.address_to_write(&slot.ident),
+                                        by,
+                                        inplace: true,
+                                    });
+                                }
+                            }
+                        }
+                    }
                     // x op= e is x = x op e, and yet the name is only
                     // ever written by it, as the reference counts it.
                     let current = self.read(&slot.ident);

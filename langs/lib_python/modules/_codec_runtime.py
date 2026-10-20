@@ -300,7 +300,14 @@ def _apply_encode_replacement(encoding, text, start, end, reason, replacement, l
         raise UnicodeEncodeError(encoding, text, start, end, reason)
     return bytes(ord(ch) for ch in replacement)
 
+# Cache pure normalizations with the same 256-entry turnover as registry spellings.
+_normalized = {}
+
 def _normalize(encoding):
+    if type(encoding) is str:
+        known = _normalized.get(encoding)
+        if known is not None:
+            return known
     if not isinstance(encoding, str):
         raise TypeError('encoding must be str')
     # CPython's normalize_encoding: runs of anything but alphanumerics
@@ -331,12 +338,20 @@ def _normalize(encoding):
                'iso_8859_14': 'iso8859_14', 'iso_8859_15': 'iso8859_15',
                'latin9': 'iso8859_15', 'l9': 'iso8859_15'}
     if name in aliases:
+        if type(encoding) is str:
+            if len(_normalized) >= 256:
+                _normalized.clear()
+            _normalized[encoding] = aliases[name]
         return aliases[name]
     if name in _charmaps or name in (
             'ascii', 'latin_1', 'utf_8', 'utf_8_sig', 'utf_7',
             'utf_16', 'utf_16_le', 'utf_16_be',
             'utf_32', 'utf_32_le', 'utf_32_be',
             'unicode_escape', 'raw_unicode_escape', 'idna'):
+        if type(encoding) is str:
+            if len(_normalized) >= 256:
+                _normalized.clear()
+            _normalized[encoding] = name
         return name
     from encodings.aliases import aliases as encoding_aliases
     canonical = encoding_aliases.get(name, name)
@@ -362,8 +377,7 @@ class CodecInfo(tuple):
         self.incrementaldecoder = incrementaldecoder
 
 _registry_cache = {}
-# The same entries by the spelling they were asked for with, so that a
-# name looked up again skips the validation and the normalizing.
+# Bound successful registry spellings to 256 entries, ahead of normalization.
 _registry_spelled = {}
 _registry_started = False
 _registry_normalizer = None
@@ -385,9 +399,12 @@ def lookup(encoding):
         _registry_normalizer = _normalize_encoding
     name = _registry_normalizer(encoding).lower()
     if name in _registry_cache:
+        found = _registry_cache[name]
         if type(encoding) is str:
-            _registry_spelled[encoding] = _registry_cache[name]
-        return _registry_cache[name]
+            if len(_registry_spelled) >= 256:
+                _registry_spelled.clear()
+            _registry_spelled[encoding] = found
+        return found
     if not _registry_started:
         _registry_started = True
         import encodings
@@ -398,6 +415,8 @@ def lookup(encoding):
                 raise TypeError('codec search functions must return 4-tuples')
             _registry_cache[name] = found
             if type(encoding) is str:
+                if len(_registry_spelled) >= 256:
+                    _registry_spelled.clear()
                 _registry_spelled[encoding] = found
             return found
     raise LookupError('unknown encoding: ' + encoding)

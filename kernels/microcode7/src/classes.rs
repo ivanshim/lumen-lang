@@ -4,33 +4,58 @@ use super::*;
 
 impl<'a> Machine<'a> {
     pub(super) fn detail(&self, key: &str) -> &str {
-        match key {
-            "defaults" => self.rules.detail_defaults,
-            "call" => self.rules.detail_call,
-            "code" => self.rules.detail_code,
-            "descriptor.delete" => self.rules.detail_descriptor_delete,
-            "descriptor.set" => self.rules.detail_descriptor_set,
-            "remove" => self.rules.detail_delete,
-            "subclass" => self.rules.detail_subclass,
-            "set" => self.rules.detail_set,
-            "get" => self.rules.detail_get,
-            "allocate" => self.rules.detail_allocate,
-            "descriptor.get" => self.rules.detail_descriptor_get,
-            "doc" => self.rules.detail_doc,
-            "getitem" => self.rules.detail_getitem,
-            "kind" => self.rules.detail_kind,
-            "main" => self.rules.detail_main,
-            "module" => self.rules.detail_module,
-            "mro" => self.rules.detail_mro,
-            "name" => self.rules.detail_name,
-            "namespace" => self.rules.detail_namespace,
-            "order" => self.rules.detail_order,
-            "qualified" => self.rules.detail_qualified,
-            "receiver" => self.rules.detail_receiver,
-            "root" => self.rules.detail_root,
-            "unready" => self.rules.detail_unready,
-            _ => self.table.single(&format!("ext.stmt.class.detail.{key}")).unwrap_or(""),
+        // The keys are told apart by length first, so a read compares
+        // against the few words of its own size rather than every word.
+        match key.len() {
+            3 => match key {
+                "set" => self.rules.detail_set,
+                "get" => self.rules.detail_get,
+                "doc" => self.rules.detail_doc,
+                "mro" => self.rules.detail_mro,
+                _ => self.detail_other(key),
+            },
+            4 => match key {
+                "call" => self.rules.detail_call,
+                "kind" => self.rules.detail_kind,
+                "main" => self.rules.detail_main,
+                "name" => self.rules.detail_name,
+                "root" => self.rules.detail_root,
+                _ => self.detail_other(key),
+            },
+            5 if key == "order" => self.rules.detail_order,
+            6 => match key {
+                "remove" => self.rules.detail_delete,
+                "module" => self.rules.detail_module,
+                _ => self.detail_other(key),
+            },
+            7 => match key {
+                "getitem" => self.rules.detail_getitem,
+                "unready" => self.rules.detail_unready,
+                _ => self.detail_other(key),
+            },
+            8 => match key {
+                "defaults" => self.rules.detail_defaults,
+                "subclass" => self.rules.detail_subclass,
+                "allocate" => self.rules.detail_allocate,
+                "receiver" => self.rules.detail_receiver,
+                _ => self.detail_other(key),
+            },
+            9 => match key {
+                "namespace" => self.rules.detail_namespace,
+                "qualified" => self.rules.detail_qualified,
+                _ => self.detail_other(key),
+            },
+            14 => match key {
+                "descriptor.set" => self.rules.detail_descriptor_set,
+                "descriptor.get" => self.rules.detail_descriptor_get,
+                _ => self.detail_other(key),
+            },
+            17 if key == "descriptor.delete" => self.rules.detail_descriptor_delete,
+            _ => self.detail_other(key),
         }
+    }
+    fn detail_other(&self, key: &str) -> &str {
+        self.table.single(&format!("ext.stmt.class.detail.{key}")).unwrap_or("")
     }
     // Read once when the roster itself was read, since no program still
     // running can change which words a class stands under: every value
@@ -394,6 +419,13 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn native_beneath(b:&Blueprint)->Option<String> {
         std::iter::once(b).chain(b.ancestry.borrow().iter().map(Rc::as_ref)).find_map(Self::native_word)
+    }
+    /// Whether the native kind under a blueprint is the one named, decided
+    /// without copying any kind's spelling out.
+    pub(super) fn native_beneath_is(b:&Blueprint,word:&str)->bool {
+        let spelled=|held:&Blueprint| held.constants.iter().find(|(k,_)|k=="\0native")
+            .map(|(_,v)| match v {Value::Text(text)=>text.as_ref()==word, other=>other.bare()==word});
+        std::iter::once(b).chain(b.ancestry.borrow().iter().map(Rc::as_ref)).find_map(spelled).unwrap_or(false)
     }
 
     /// Whether a blueprint stands on the native kind named, through any
@@ -1578,10 +1610,27 @@ impl<'a> Machine<'a> {
             if words.len()!=4{return Err(self.class_unready());}
             return Err(format!("{}{name}{}{}{}{}{}",words[0],words[1],declared.name,words[2],t.blueprint().name,words[3]).into());
         }
+        // Walking every base's storage twice was most of a slot access; the
+        // answer is remembered per declaring class and field until any class
+        // namespace changes or the class itself is gone.
+        thread_local! { static SLOT_KEYS: RefCell<std::collections::HashMap<(usize, String), (u64, std::rc::Weak<Blueprint>, String)>> = RefCell::new(std::collections::HashMap::new()); }
+        let stamp=crate::data::namespace_change();
+        let lookup=(Rc::as_ptr(declared) as usize, name.clone());
+        let remembered=SLOT_KEYS.with(|table| table.borrow().get(&lookup).and_then(|(seen, class, text)| {
+            let same=*seen==stamp && class.upgrade().map_or(false, |held| Rc::ptr_eq(&held, declared));
+            same.then(|| text.clone())
+        }));
+        if let Some(text)=remembered {return Ok(text);}
         let preceding=declared.under().map_or(0,|base|self.inherited_storage(&base).into_iter().map(|fields|fields.len()).sum::<usize>());
         let groups=self.inherited_storage(declared);
         let position=groups.last().and_then(|fields|fields.iter().position(|field|field==&name)).unwrap_or_default();
-        Ok(format!("\0slot:{name}:{}",preceding+position))
+        let text=format!("\0slot:{name}:{}",preceding+position);
+        SLOT_KEYS.with(|table| {
+            let mut table=table.borrow_mut();
+            if table.len()>=4096 {table.clear();}
+            table.insert(lookup,(stamp,Rc::downgrade(declared),text.clone()));
+        });
+        Ok(text)
     }
     fn replace_instance_book(&self,t:&Rc<Thing>,replacement:Option<Value>)->Res {
         if Self::native_beneath(&t.blueprint()).as_deref()==Some("module"){return Err("AttributeError: readonly attribute".to_owned().into());}
@@ -2038,7 +2087,9 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn inherited_entry(&self,b:&Blueprint,key:&str)->Option<Value> {
-        if self.names_in_calls && b.shared.absent_in_lineage(key) { return None; }
+        // A base change can supply an entry without altering any namespace.
+        let stable_line = b.base_epoch.get() == 0 && self.names_in_calls;
+        if stable_line && b.shared.absent_in_lineage(key) { return None; }
         let result = Self::lookup_ordered(b, |parent| {
             Self::own_entry(parent, key).or_else(|| {
                 if !self.table.has_class_order { return None; }
@@ -2056,7 +2107,7 @@ impl<'a> Machine<'a> {
                 Some(self.kind_entry(&spelling, key))
             })
         });
-        if self.names_in_calls && result.is_none() { b.shared.note_absence(key); }
+        if result.is_none() && stable_line { b.shared.note_absence(key); }
         result
     }
     pub(super) fn capture_title(word: &str) -> &str {
@@ -3042,18 +3093,6 @@ impl<'a> Machine<'a> {
                         // the entry as before.
                         let of_own_kind=self.table.prims.get(word.as_str()).copied().filter(Self::names_a_kind)
                             .map_or_else(||word==receiver.kind_word(),|op|self.kind_covers(&op,&word,&receiver.settled()));
-                        let is_initializer=self.rules.words_ext_stmt_class_constructor.first().is_some_and(|name|name==&entry);
-                        if of_own_kind && word=="bytearray" && is_initializer {
-                            if let Value::Octets{cell,changeable:true,..}=receiver.settled() {
-                                if OctetLease::held(&cell){return Err("BufferError: Existing exports of data: object cannot be re-sized".to_owned().into());}
-                                let answer=self.apply_class_member(Value::Intrinsic(Prim::Octets(1),Rc::from(word.as_str())),values)?;
-                                if let Value::Octets{cell:source,..}=answer {
-                                    let bytes=source.borrow().to_vec();cell.borrow_mut().clear();cell.borrow_mut().extend(bytes);
-                                    return Ok(Value::Nil);
-                                }
-                            }
-                            return Err(self.class_unready());
-                        }
                         if word == "type" && self.stands_for_a_kind(&receiver) {
                             let slots = self.rules.specials;
                             let calls = slots.get(17).map_or(false, |name| name == &entry);
@@ -4075,7 +4114,7 @@ impl<'a> Machine<'a> {
     }
     /// The program whose code a routine runs: its own, or the one whose
     /// code was written over it.
-    fn code_run_by(&self,value:&Value)->Rc<Routine> {
+    pub(super) fn code_run_by(&self,value:&Value)->Rc<Routine> {
         if let Some(entry)=self.written_over.get(&Self::written_key(value,&self.outermost)) {return entry.4.clone();}
         match value {Value::Bound(code,_)|Value::Routine(code)|Value::Method(code, _, _)=>code.clone(),_=>unreachable!("only a routine runs code")}
     }
@@ -4362,12 +4401,29 @@ impl<'a> Machine<'a> {
         }
         (!matches!(held,Value::Unset)).then_some(held)
     }
+    /// Resolve a root allocator's inherited slot through its layout parent.
+    /// Later multiple-inheritance parents cannot replace that parent's slot.
+    fn maker_slot_differs(&self, class: &Blueprint) -> bool {
+        Self::lookup_ordered(class, |entry| {
+            match Self::own_entry(entry, self.detail("allocate")) {
+                None => None,
+                Some(Value::Wrapped(1, args)) if args.is_empty() => {
+                    let prior = entry.under.borrow();
+                    Some(match prior.as_ref() {
+                        Some(base) => self.maker_slot_differs(base),
+                        None => false,
+                    })
+                }
+                Some(_) => Some(true),
+            }
+        }).unwrap_or(false)
+    }
     /// The root's making (`n`) or constructing (`i`), handed more than
     /// the class or the thing, refused as CPython refuses it: naming
     /// the root where the class wrote over that working, and the class
     /// where it wrote over neither.
     fn root_turns_away(&self,class:&Rc<Blueprint>,working:char)->Res<()> {
-        let makes=self.inherited_entry(class,self.detail("allocate")).is_some();
+        let makes=self.maker_slot_differs(class);
         let builds=self.rules.words_ext_stmt_class_constructor.first().map(String::as_str).map_or(false,|word|self.inherited_entry(class,word).is_some_and(|f| !matches!(f, Value::Wrapped(2, v) if v.is_empty())));
         let (mine,theirs)=if working=='n'{(makes,builds)}else{(builds,makes)};
         let label=if working=='n'{"arguments.new"}else{"arguments.init"};
@@ -5172,7 +5228,7 @@ impl<'a> Machine<'a> {
                             return self.complete_member_read(&value, key, direct, sought);
                         }
                     }
-                    if reader.is_none() && !key.starts_with("__") {
+                    if reader.is_none() && !key.as_bytes().starts_with(b"__") {
                         if let Some(meta) = &builder {
                             if let Some(entry) = self.inherited_entry(meta, key).filter(|entry| self.writes_too(entry) && (matches!(entry, Value::Wrapped(6 | 32 | 58, _)) || self.protocol_entry(entry, "descriptor.get").is_some())) {
                                 let sought = self.member_binding(entry, Some(value.clone()), meta.clone()); return self.complete_member_read(&value, key, direct, sought);
@@ -5189,10 +5245,10 @@ impl<'a> Machine<'a> {
         }
         // A heap instance with plain storage can use the normal Python order
         // before considering any of the native blueprint-specific readers.
-        if self.names_in_calls && (!key.starts_with("__") || key == self.detail("kind")) {
+        if self.names_in_calls && (!key.as_bytes().starts_with(b"__") || key == self.detail("kind")) {
             if let Value::Thing(thing) = &value {
                 let owner = thing.blueprint();
-                let simple = !thing.holds.borrow().iter().any(|entry| entry.0.starts_with('\0'))
+                let simple = !thing.holds.borrow().iter().any(|entry| entry.0.as_bytes().first() == Some(&0))
                     && Self::native_beneath(&owner).as_deref().is_none_or(|word| word == self.detail("root")) && self.namespace_holding(&value).is_none();
                 let default_reader = direct || self.inherited_entry(&owner, self.detail("get")).is_none();
                 if simple && default_reader {
@@ -5217,7 +5273,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        if self.names_in_calls && !key.starts_with("__") {
+        if self.names_in_calls && !key.as_bytes().starts_with(b"__") {
             let slot = match &value {
                 Value::Thing(thing) => {
                     let blueprint = thing.blueprint();
@@ -5268,6 +5324,9 @@ impl<'a> Machine<'a> {
             if let Some(found) = self.attribute(&value, key) { return Ok(found); }
         }
         if let Value::Octets { changeable, .. } = value.settled() {
+            if self.native_place(&value, key).is_some() || Self::octet_plain_member(&value, key) {
+                return Ok(Value::Member(Rc::new(value.clone()), key.to_string()));
+            }
             if let Some(method) = self.octet_member(key, changeable) {
                 return Ok(Value::Member(Rc::new(value.clone()), method.to_owned()));
             }
@@ -8294,7 +8353,14 @@ impl<'a> Machine<'a> {
             4=>Prim::SetMember, 5=>Prim::DropMember, 6=>Prim::HasAttribute, 7=>Prim::MembersOf,
             other=>Prim::ClassWork(other),
         };
-        self.table.prims.iter().find(|(_,p)|**p==target).map(|(w,_)|w.to_string()).unwrap_or_default()
+        // The word is looked for among every primitive's spelling, which is a
+        // walk of the whole table, so what was found is kept for the next ask.
+        if let Some(Some(word)) = self.tool_words.borrow().get(op as usize) { return word.clone(); }
+        let word = self.table.prims.iter().find(|(_,p)|**p==target).map(|(w,_)|w.to_string()).unwrap_or_default();
+        let mut kept = self.tool_words.borrow_mut();
+        if kept.len() <= op as usize { kept.resize(op as usize + 1, None); }
+        kept[op as usize] = Some(word.clone());
+        word
     }
     pub(super) fn work_on_class(&mut self,op:u8,mut values:Vec<Value>)->Res {
         if op == 30 && self.table.has_any("ext.builtin.partial.call") {

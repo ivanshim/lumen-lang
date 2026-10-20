@@ -38,6 +38,7 @@
     "importlib.resources._common": "runtime_adapters/resources.py",
     "_py_abc": "runtime_adapters/_py_abc.py",
     "marshal": "runtime_adapters/marshal.py",
+    "gettext": "runtime_adapters/gettext.py",
     "test.encoded_modules": "runtime_adapters/encoded_modules.py"
   },
   "data": {

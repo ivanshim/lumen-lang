@@ -144,7 +144,7 @@ impl Value {
             // the making of the walk where that says enough, and else
             // the word kept of the thing the members came from.
             Self::Iterator(cell) => return cell.try_borrow().map_or("iterator".to_owned(), |state| String::from(match &state.kind {
-                IteratorKind::Living(..) => "list_iterator",
+                IteratorKind::Living(..) => state.walks.as_deref().unwrap_or("list_iterator"),
                 IteratorKind::Stepping(row, _) => match (row.first.to_i64(), row.limit.to_i64(), row.stride.to_i64(), row.count().to_i64()) {
                     (Some(_), Some(_), Some(_), Some(_)) => "range_iterator",
                     _ => "longrange_iterator",

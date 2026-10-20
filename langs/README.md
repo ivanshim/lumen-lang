@@ -6101,6 +6101,15 @@ class itself and is not inherited by Python subclasses.
 
 `ext.builtin.posix` supplies host stat/lstat metadata, directory removal, readlink, access, host ABI open flags and file descriptors for the Python POSIX adapter. Descriptor operations include read, write, seek, truncate, status flags and terminal checks; read and write retry interrupted calls. It returns a value and an optional errno/message pair; the adapter raises ordinary Python OS exceptions.
 
+The gettext runtime adapter uses the same bridge for guarded catalog discovery.
+It reads live environment data, expands locale components, and checks current
+filesystem metadata without caching missing catalogs. Changed dependencies,
+custom inputs, custom environment readers, module types, import hooks, and active
+tracing retain the release implementation and their observable calls.
+A bounded private memo stores locale normalization strings while all helper
+code and alias-table revisions remain unchanged; catalog existence stays live.
+
+
 `ext.stmt.class.bases.resolve` names the Python base substitution hook and the attribute retaining the original bases. Both full kernels consult it when constructing a class; other language tables leave it absent.
 
 `ext.stmt.fn.defaults.enclosing` hides formal parameter names while the full kernels compile default expressions, so Python defaults resolve names in the enclosing scope. Tables without this flag retain their parameter bindings during default lookup.
@@ -6167,7 +6176,7 @@ The Python floating math adapter also supplies compensated `fsum`, consuming its
 It exposes that argument in the frame namespace and requires an iterator when
 the expression starts, including when its code is made into a new function.
 
-`ext.builtin.pickle_buffer` supplies native exported-buffer ownership, raw byte views, release and buffer acquisition for PickleBuffer, following CPython v3.14.8 Objects/picklebufobject.c. Its binding is separate from the absent _pickle accelerator.
+`ext.builtin.pickle_buffer` supplies native exported-buffer ownership, raw byte views, release and buffer acquisition for PickleBuffer, following CPython v3.14.8 Objects/picklebufobject.c. Its binding is separate from the absent _pickle accelerator. Operations 6 and 7 transfer memory-stream byte ranges and store bytes at a checked cursor; the runtime IO adapter retains size validation, closed-stream checks and exported-buffer checks.
 
 `ext.builtin.text.intern` retains canonical Python strings for sys.intern and attribute-name dictionaries, including surrogate-containing strings.
 The Python-only type-parameter labels also expose `_typing` primitives to the

@@ -400,12 +400,12 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         let point = u32::try_from(number(1)?).map_err(|_| "OverflowError: Python int too large to convert to C unsigned long".to_string())?;
         return Ok(Value::text(&crate::unicode::decomposition(point)));
     }
-    if !matches!(op, 0 | 7 | 8) {
+    if !matches!(op, 0 | 7 | 8 | 13) {
         let n = u32::try_from(number(1)?).map_err(|_| "OverflowError: Python int too large to convert to C unsigned long".to_string())?;
         return Ok(if op == 1 || op == 2 { Value::Small(lower(n, op == 1) as i64) }
         else { Value::Flag(char::from_u32(n).is_some_and(|c| if op == 3 { c.is_ascii_alphabetic() } else { crate::unicode::bits(c) & 16 != 0 })) });
     }
-    if args.len() != if op == 7 { 6 } else { 8 } { return Err("TypeError: invalid SRE matcher argument count".into()); }
+    if args.len() != match op { 7 => 6, 13 => 7, _ => 8 } { return Err("TypeError: invalid SRE matcher argument count".into()); }
     let Value::Array(items) = args[1].contents() else { return Err("TypeError: SRE code must be a list".into()) };
     let mut code = Vec::with_capacity(items.len());
     for item in items.iter() {
@@ -423,8 +423,8 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
     let advance = op == 0 && number(7)? != 0;
     if start > end { return Ok(if op == 7 { Value::array(Vec::new()) } else { Value::Null }); }
     let machine = Machine { code: &code, text: &text, end };
-    if op == 7 || op == 8 {
-        let limit = if op == 8 { number(6)? } else { 0 };
+    if matches!(op, 7 | 8 | 13) {
+        let limit = if op == 7 { 0 } else { number(6)? };
         let replacement = if op == 8 { args[7].contents().text_codes().ok_or_else(|| "TypeError: replacement must be text".to_string())? } else { Vec::new() };
         let mut substituted = Vec::new();
         let mut copied = start;
@@ -452,6 +452,14 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
                 substituted.extend_from_slice(&replacement);
                 copied = done.pos;
                 substitutions += 1;
+            } else if op == 13 {
+                // Split emits the intervening text and every capture, including absent groups.
+                matches.push(capture(copied as i64, at as i64));
+                for pair in done.marks.chunks_exact(2) {
+                    matches.push(if pair[0] < 0 { Value::Null } else { capture(pair[0], pair[1]) });
+                }
+                copied = done.pos;
+                substitutions += 1;
             } else { matches.push(match groups {
                 0 => capture(at as i64, done.pos as i64),
                 1 => capture(done.marks[0], done.marks[1]),
@@ -464,6 +472,7 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
             substituted.extend_from_slice(&text[copied..end]);
             return Ok(Value::Tuple(Rc::new(vec![Value::from_codes(substituted), Value::Small(substitutions)]).into()));
         }
+        if op == 13 { matches.push(Value::from_codes(text[copied..end].to_vec())); }
         return Ok(Value::array(matches));
     }
     for p in start..=if mode == 2 { end } else { start } {

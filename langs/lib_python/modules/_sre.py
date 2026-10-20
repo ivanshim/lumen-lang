@@ -148,6 +148,8 @@ class Pattern:
             maxsplit = args[0]
         maxsplit = _index(0 if maxsplit is _NO_COUNT else maxsplit)
         text, pos, end = self._input(string, 0, 9223372036854775807)
+        if type(string) is str and -9223372036854775808 <= maxsplit <= 9223372036854775807:
+            return _native(13, self._code, text, pos, end, self.groups, maxsplit)
         source = text.encode('latin1') if not isinstance(string, str) else text
         result = []
         used = 0

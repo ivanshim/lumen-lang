@@ -1070,14 +1070,9 @@ def _line_diff(first, second):
     return text
 
 
+# Order module names through the builtin Unicode string comparison.
 def _ordered(values):
-    result = []
-    for value in values:
-        at = 0
-        while at < len(result) and _word_before(result[at], value):
-            at += 1
-        result = [*result[:at], value, *result[at:]]
-    return result
+    return sorted(values)
 
 
 class TextTestRunner:
@@ -1102,8 +1097,11 @@ class TextTestRunner:
             if not test._module_fixture('setUpModule', result):
                 test._module_fixture('doModuleCleanups', result)
                 return None
+            # A base class with no test methods is still collected as an
+            # empty child suite. Class fixtures belong to suites that hold
+            # cases, matching the runner that skips setup when nothing runs.
             try:
-                if test._fixture('setUpClass', result):
+                if test.countTestCases() > 0 and test._fixture('setUpClass', result):
                     try:
                         for member in test.tests:
                             self._run(member, result)
@@ -1303,6 +1301,9 @@ def _select_tests(suite, names):
         return suite if cls in names or cls + '.' + method in names or suite.id() in names else None
     selected = TestSuite()
     selected.class_ = suite.class_
+    # Each module suite carries its own fixtures. A selection must keep
+    # that namespace so setUpModule still runs for the chosen classes.
+    selected.module_namespace = suite.module_namespace
     for test in suite:
         kept = _select_tests(test, names)
         if kept is not None:
@@ -1318,15 +1319,6 @@ def _only_classes():
     return names.split(',')
 
 
-def _word_before(left, right):
-    index = 0
-    while index < len(left) and index < len(right):
-        a = ord(left[index])
-        b = ord(right[index])
-        if a != b:
-            return a < b
-        index += 1
-    return len(left) < len(right)
 
 
 class _TestProgram:

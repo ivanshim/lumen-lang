@@ -127,7 +127,7 @@ impl<'a> Machine<'a> {
         let mut global = std::collections::BTreeSet::new();
         let mut attributes = std::collections::BTreeSet::new();
         let mut returns_none = true;
-        fn walk(node: &Form, global: &mut std::collections::BTreeSet<String>, attributes: &mut std::collections::BTreeSet<String>, returns_none: &mut bool, builtins: &HashMap<String, Prim>, member: Option<&str>) {
+        fn walk(node: &Form, global: &mut std::collections::BTreeSet<String>, attributes: &mut std::collections::BTreeSet<String>, returns_none: &mut bool, builtins: &HashMap<String, Prim, crate::table::FxBuildHasher>, member: Option<&str>) {
             // Only the fallback's outer call implements the member lookup; its arguments remain ordinary expressions.
             if let Form::Apply(Callee::Prim(Prim::Choose, _), branches) = node {
                 if let Some(Form::Apply(Callee::Prim(Prim::HasMember, _), operands)) = branches.first() {
