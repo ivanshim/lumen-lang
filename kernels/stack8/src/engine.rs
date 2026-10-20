@@ -8760,7 +8760,6 @@ impl<'a> Engine<'a> {
 
     pub(super) fn module_holding(&self, value: &Value) -> Option<String> {
         let Value::Object(o) = value else { return None };
-        if Self::kind_beneath(&o.class_now()).is_some_and(|kind| kind != "module") { return None; }
         if !self.module_addresses_ready.get() {
             let mut addresses = self.module_by_address.borrow_mut();
             addresses.clear();
@@ -8771,7 +8770,11 @@ impl<'a> Engine<'a> {
             }
             self.module_addresses_ready.set(true);
         }
-        if let Some(path) = self.module_by_address.borrow().get(&(Rc::as_ptr(o) as usize)) { return Some(path.clone()); }
+        if let Some(path) = self.module_by_address.borrow().get(&(Rc::as_ptr(o) as usize)) {
+            let actual = o.class_now();
+            if actual.python_names.borrow().is_some() && !Self::kind_beneath_is(&actual, "module") { return None; }
+            return Some(path.clone());
+        }
         let own = o.class_now();
         if !own.direct().is_empty() && !Self::kind_beneath_is(&own, "module") { return None; }
         let fields = o.fields.try_borrow().ok()?;
@@ -15097,8 +15100,12 @@ impl<'a> Engine<'a> {
                     match self.class_get(module.clone(), name, false) {
                         Ok(value) => value,
                         Err(fault) if self.attribute_fault(&fault) => {
+                            self.absent_member = None;
                             let cached = match self.class_get(module.clone(), "__name__", false) {
-                                Ok(Value::Text(owner)) => self.module_cache_value(&format!("{owner}.{name}")),
+                                Ok(owner) => match Self::worth_of(&owner).unwrap_or_else(|| owner.contents()) {
+                                    Value::Text(owner) => self.module_cache_value(&format!("{owner}.{name}")),
+                                    _ => None,
+                                },
                                 _ => None,
                             };
                             match cached {
