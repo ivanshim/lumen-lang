@@ -944,20 +944,67 @@ class TextIOWrapper(_TextIOBase):
         return function(self)
 
 class IncrementalNewlineDecoder:
+    # Keep newline state on this decoder rather than dispatching through a second object.
     def __init__(self, decoder, translate, errors='strict'):
-        _pyio = _text_runtime()
-        self._impl = _pyio.IncrementalNewlineDecoder(decoder, translate, errors)
+        self.decoder = decoder
+        self.translate = translate
+        self.seennl = 0
+        self.pendingcr = False
+    # Hold a trailing carriage return until the next character or the end of input.
     def decode(self, input, final=False):
-        return self._impl.decode(input, final)
+        decoder = self.decoder
+        output = input if decoder is None else decoder.decode(input, final=final)
+        if self.pendingcr and (output or final):
+            output = '\r' + output
+            self.pendingcr = False
+        # Most chunks contain no carriage returns and need no counting or replacement.
+        if type(output) is str and '\r' not in output:
+            if '\n' in output:
+                self.seennl |= 1
+            return output
+        if output.endswith('\r') and not final:
+            output = output[:-1]
+            self.pendingcr = True
+        pairs = output.count('\r\n')
+        carriage = output.count('\r') - pairs
+        lines = output.count('\n') - pairs
+        if lines:
+            self.seennl |= 1
+        if carriage:
+            self.seennl |= 2
+        if pairs:
+            self.seennl |= 4
+        if self.translate:
+            if pairs:
+                output = output.replace('\r\n', '\n')
+            if carriage:
+                output = output.replace('\r', '\n')
+        return output
+    # Combine the wrapped decoder flags with the pending carriage-return bit.
     def getstate(self):
-        return self._impl.getstate()
+        decoder = self.decoder
+        buffer, flags = (b'', 0) if decoder is None else decoder.getstate()
+        return buffer, (flags << 1) | self.pendingcr
+    # Restore buffering and codec flags without forgetting which newlines were seen.
     def setstate(self, state):
-        return self._impl.setstate(state)
+        buffer, flags = state
+        self.pendingcr = bool(flags & 1)
+        decoder = self.decoder
+        if decoder is not None:
+            decoder.setstate((buffer, flags >> 1))
+    # Clear newline history together with the underlying codec's buffered input.
     def reset(self):
-        return self._impl.reset()
+        self.seennl = 0
+        self.pendingcr = False
+        decoder = self.decoder
+        if decoder is not None:
+            decoder.reset()
     @property
+    # Report each observed newline spelling in the documented order.
     def newlines(self):
-        return self._impl.newlines
+        return (None, '\n', '\r', ('\r', '\n'), '\r\n',
+                ('\n', '\r\n'), ('\r', '\r\n'),
+                ('\r', '\n', '\r\n'))[self.seennl]
 
 _PLAIN_MODES = frozenset(['r', 'rb', 'w', 'wb', 'a', 'ab', 'x', 'xb', 'r+', 'rb+', 'r+b', 'w+', 'wb+', 'w+b', 'a+', 'ab+', 'a+b', 'x+', 'xb+', 'x+b'])
 
