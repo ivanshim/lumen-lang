@@ -2514,6 +2514,11 @@ impl<'a> Engine<'a> {
         }
         let mut quiet = Vec::new();
         for (path, previous, replacement) in retiring {
+            // The inventory's dictionary is bookkeeping, not a program hold
+            // on a module removed or replaced in the import cache.
+            if let Some(book) = self.module_globals.remove(&path) {
+                self.globals_by_cell.remove(&(Rc::as_ptr(&book) as usize));
+            }
             if let Value::Object(ref object) = previous {
                 let fields = object.fields.borrow();
                 if let Some((_, links)) = fields.iter().find(|(name, _)| name == "\0bindings") {
@@ -2547,7 +2552,9 @@ impl<'a> Engine<'a> {
         let quiet_cells = quiet_slots.iter().filter_map(|&slot| self.world.get(slot).cloned());
         let bookkeeping = self.function_members.iter().map(|(_, holder)| Value::Object(holder.clone()))
             .chain(books).chain(crate::faint::anchored_values()).chain(retained.iter().cloned()).chain(quiet_cells).collect();
-        let live = self.world.iter().chain(&self.data).chain(&self.caught).chain(&self.buffer)
+        let active_world = self.world.iter().enumerate().filter_map(|(at, value)|
+            (!quiet_slots.contains(&at)).then_some(value));
+        let live = active_world.chain(&self.data).chain(&self.caught).chain(&self.buffer)
             .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
             .chain(self.native_exceptions.values()).chain(std::iter::once(&self.trace_hook)).cloned()
             .chain(self.outer_book.iter().cloned().map(Value::Bond))
@@ -31083,7 +31090,7 @@ impl Engine<'_> {
             if let Some(view @ Value::View(_)) = Self::view_in(&args[0]) {
                 if let Value::Text(member) = args[1].contents() {
                     let read = self.class_get(view, &member, false);
-                    return match read { Ok(value) => Ok(if b == Builtin::HasAttr { Value::Flag(true) } else { value }), Err(fault) if self.attribute_fault(&fault) => if b == Builtin::HasAttr { Ok(Value::Flag(false)) } else if args.len() == 3 { Ok(args[2].clone()) } else { self.carried = Some(fault); Err(String::new()) }, Err(fault) => { self.carried = Some(fault); Err(String::new()) } };
+                    return match read { Ok(value) => Ok(if b == Builtin::HasAttr { Value::Flag(true) } else { value }), Err(fault) if self.attribute_fault(&fault) => if b == Builtin::HasAttr { self.absent_member = None; Ok(Value::Flag(false)) } else if args.len() == 3 { self.absent_member = None; Ok(args[2].clone()) } else { self.carried = Some(fault); Err(String::new()) }, Err(fault) => { self.carried = Some(fault); Err(String::new()) } };
                 }
             }
         }
@@ -32878,7 +32885,7 @@ impl Engine<'_> {
     fn import_fromlist_inner(&mut self, module: &Value, names: &Value, star: bool) -> Flow<()> {
         match self.class_get(module.clone(), "__path__", false) {
             Ok(_) => {},
-            Err(fault) if self.attribute_fault(&fault) => return Ok(()),
+            Err(fault) if self.attribute_fault(&fault) => { self.absent_member = None; return Ok(()); },
             Err(fault) => return Err(fault),
         }
         let canonical = self.class_get(module.clone(), "__name__", false)?;
@@ -32895,7 +32902,7 @@ impl Engine<'_> {
                 if !star {
                     match self.class_get(module.clone(), "__all__", false) {
                         Ok(all) => self.import_fromlist(module, &all, true)?,
-                        Err(fault) if self.attribute_fault(&fault) => {},
+                        Err(fault) if self.attribute_fault(&fault) => { self.absent_member = None; },
                         Err(fault) => return Err(fault),
                     }
                 }
@@ -32903,7 +32910,7 @@ impl Engine<'_> {
             }
             match self.class_get(module.clone(), &name, false) {
                 Ok(_) => continue,
-                Err(fault) if self.attribute_fault(&fault) => {},
+                Err(fault) if self.attribute_fault(&fault) => { self.absent_member = None; },
                 Err(fault) => return Err(fault),
             }
             let child = format!("{path}.{name}");
@@ -32940,7 +32947,7 @@ impl Engine<'_> {
         if let Some(callable) = hook {
             match self.class_apply(callable, vec![Value::text(name)]) {
                 Ok(value) => return Ok(value),
-                Err(fault) if self.attribute_fault(&fault) => {},
+                Err(fault) if self.attribute_fault(&fault) => { self.absent_member = None; },
                 Err(fault) => return Err(fault),
             }
         }
@@ -33086,6 +33093,29 @@ fn book_write(book: &Rc<RefCell<Value>>, name: &str, value: Option<Value>) {
 
 /// Resolve a compiled global store against the dictionary's current key order.
 fn compiled_book_write(book: &Rc<RefCell<Value>>, name: &str, value: Option<Value>, binding: Option<usize>) {
+    if let Value::Fields(space) = &*book.borrow() {
+        let mut fields = space.fields.borrow_mut();
+        let at = fields.iter().position(|(word, _)| word == name);
+        let link = at.map(|at| fields[at].1.clone()).or_else(|| {
+            fields.iter().find(|(word, _)| word == "\0bindings").and_then(|(_, table)|
+                if let Value::Map(links) = table { links.iter().find(|(key, _)| key_spells(key, name)).map(|(_, held)| held.clone()) } else { None })
+        });
+        let present = value.is_some();
+        if let Some(Value::Bond(cell)) = link {
+            let held = value.unwrap_or(Value::Blank);
+            if !matches!(&held, Value::Bond(other) | Value::Collection(other, _) if Rc::ptr_eq(&cell, other)) { *cell.borrow_mut() = held; }
+            if let Some(at) = at { if !present { fields.remove(at); } }
+            else if present { fields.push((name.to_owned(), Value::Bond(cell))); }
+        } else {
+            match (at, value) {
+                (Some(at), Some(held)) => fields[at].1 = held,
+                (Some(at), None) => { fields.remove(at); }
+                (None, Some(held)) => fields.push((name.to_owned(), held)),
+                (None, None) => {}
+            }
+        }
+        return;
+    }
     let backing = match &*book.borrow() {
         Value::Object(object) => Engine::worth_of(&Value::Object(object.clone())),
         _ => None,

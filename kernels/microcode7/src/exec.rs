@@ -3299,6 +3299,11 @@ impl<'a> Machine<'a> {
         let mut quiet = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for (path, previous, install) in swaps {
+            // Retiring the import also retires the inventory's dictionary
+            // hold; dictionaries retained by the program remain alive.
+            if let Some(book) = self.space_books.remove(&path) {
+                self.globals_by_cell.remove(&(Rc::as_ptr(&book) as usize));
+            }
             if let Value::Thing(space) = previous {
                 let rows = space.holds.borrow();
                 if let Some((_, links)) = rows.iter().find(|(key, _)| key == "\0bindings") {
@@ -34150,7 +34155,7 @@ impl Machine<'_> {
 
     fn load_fromlist_inner(&mut self, namespace: &Value, requests: &Value, expanded: bool) -> Result<(), String> {
         if let Err(escape) = self.read_class_member(namespace.clone(), "__path__", false) {
-            return if self.missing_member_escape(&escape) { Ok(()) } else { Err(self.carried_native_fault(escape)) };
+            return if self.missing_member_escape(&escape) { self.sought_in_vain = None; Ok(()) } else { Err(self.carried_native_fault(escape)) };
         }
         let module_name = self.read_class_member(namespace.clone(), "__name__", false).map_err(|escape| self.carried_native_fault(escape))?;
         let fullname = match module_name.settled() {
@@ -34173,14 +34178,14 @@ impl Machine<'_> {
                     if expanded { continue; }
                     match self.read_class_member(namespace.clone(), "__all__", false) {
                         Ok(exports) => self.load_fromlist(namespace, &exports, true)?,
-                        Err(escape) if self.missing_member_escape(&escape) => (),
+                        Err(escape) if self.missing_member_escape(&escape) => { self.sought_in_vain = None; },
                         Err(escape) => return Err(self.carried_native_fault(escape)),
                     }
                 },
                 _ => {
                     match self.read_class_member(namespace.clone(), &member, false) {
                         Ok(_) => continue,
-                        Err(escape) if self.missing_member_escape(&escape) => (),
+                        Err(escape) if self.missing_member_escape(&escape) => { self.sought_in_vain = None; },
                         Err(escape) => return Err(self.carried_native_fault(escape)),
                     }
                     let qualified = format!("{fullname}.{member}");
@@ -34222,7 +34227,7 @@ impl Machine<'_> {
         if let Some(f) = fallback {
             match self.apply_class_member(f, vec![Value::text(wanted)]) {
                 Ok(found) => return Ok(found),
-                Err(escape) if self.missing_member_escape(&escape) => (),
+                Err(escape) if self.missing_member_escape(&escape) => { self.sought_in_vain = None; },
                 Err(escape) => return Err(self.suspension_fault(escape)),
             }
         }
@@ -34379,6 +34384,29 @@ fn set_down(book: &Rc<RefCell<Value>>, name: &str, worth: Option<Value>) {
 
 /// Locate a compiled namespace store without retaining the value it replaces.
 fn set_down_slot(book: &Rc<RefCell<Value>>, name: &str, worth: Option<Value>, slot: Option<usize>) {
+    if let Value::Attributes(space) = &*book.borrow() {
+        let mut members = space.holds.borrow_mut();
+        let position = members.iter().position(|(word, _)| word == name);
+        let storage = position.map(|at| members[at].1.clone()).or_else(|| {
+            members.iter().find(|(word, _)| word == "\0bindings").and_then(|(_, table)|
+                if let Value::Dict(entries) = table { entries.iter().find(|(key, _)| spells_key(key, name)).map(|(_, kept)| kept.clone()) } else { None })
+        });
+        let present = worth.is_some();
+        if let Some(Value::Shared(cell)) = storage {
+            let next = worth.unwrap_or(Value::Unset);
+            if !matches!(&next, Value::Shared(other) | Value::Mutable(other, _) if Rc::ptr_eq(&cell, other)) { *cell.borrow_mut() = next; }
+            if let Some(at) = position { if !present { members.remove(at); } }
+            else if present { members.push((name.to_owned(), Value::Shared(cell))); }
+        } else {
+            match (position, worth) {
+                (Some(at), Some(next)) => members[at].1 = next,
+                (Some(at), None) => { members.remove(at); }
+                (None, Some(next)) => members.push((name.to_owned(), next)),
+                (None, None) => {}
+            }
+        }
+        return;
+    }
     let backing = match &*book.borrow() {
         Value::Thing(thing) => Machine::underlying(&Value::Thing(thing.clone())),
         _ => None,
@@ -38397,7 +38425,7 @@ impl Machine<'_> {
             if let Some(window @ Value::Window(_, 'm')) = Self::window_inside(&input[0]) {
                 if let Value::Text(word) = input[1].settled() {
                     let read = self.read_class_member(window, &word, false);
-                    return match read { Ok(value) => Ok(if op == Prim::HasAttribute { Value::Flag(true) } else { value }), Err(fault) if self.missing_member_escape(&fault) => if op == Prim::HasAttribute { Ok(Value::Flag(false)) } else if input.len() == 3 { Ok(input[2].clone()) } else { Err(self.carried_native_fault(fault)) }, Err(fault) => Err(self.carried_native_fault(fault)) };
+                    return match read { Ok(value) => Ok(if op == Prim::HasAttribute { Value::Flag(true) } else { value }), Err(fault) if self.missing_member_escape(&fault) => if op == Prim::HasAttribute { self.sought_in_vain = None; Ok(Value::Flag(false)) } else if input.len() == 3 { self.sought_in_vain = None; Ok(input[2].clone()) } else { Err(self.carried_native_fault(fault)) }, Err(fault) => Err(self.carried_native_fault(fault)) };
                 }
             }
         }
