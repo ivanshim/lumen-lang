@@ -19189,6 +19189,7 @@ impl<'a> Engine<'a> {
                 if ByteExport::active(row) { return Err("BufferError: Existing exports of data: object cannot be re-sized".into()); }
                 return Err(self.byte_fault("arguments"));
             }
+            else { for (at, byte) in places.into_iter().zip(replacement) { row.borrow_mut()[at] = byte; } }
             return Ok(target);
         }
         let Value::Array(mut items) = target else {
