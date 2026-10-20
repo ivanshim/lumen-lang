@@ -111,14 +111,16 @@ def gethostname():
 
 # Resolve a real address and preserve the resolver's exception category.
 def gethostbyaddr(ip_address):
+    # The same name the argument converter prints: None, not its type's name.
+    described = 'None' if ip_address is None else type(ip_address).__name__
     if isinstance(ip_address, str):
         address = ip_address.encode('idna')
     elif isinstance(ip_address, (bytes, bytearray)):
         address = bytes(ip_address)
     else:
-        raise TypeError('gethostbyaddr() argument 1 must be str, bytes or bytearray, not ' + type(ip_address).__name__)
+        raise TypeError('gethostbyaddr() argument 1 must be str, bytes or bytearray, not ' + described)
     if b'\0' in address:
-        raise TypeError('gethostbyaddr() argument 1 must be encoded string without null bytes, not ' + type(ip_address).__name__)
+        raise TypeError('gethostbyaddr() argument 1 must be encoded string without null bytes, not ' + described)
     kind, code, message, result = _call('socket_hostbyaddr', address)
     if kind == 1:
         raise gaierror(code, message.decode('utf-8', 'surrogateescape'))

@@ -914,7 +914,7 @@ STDLIB_DIR = TEST_HOME_DIR
 TEST_SUPPORT_DIR = os.path.join(TEST_HOME_DIR, 'test', 'support')
 is_android = False
 is_apple = sys.platform in ("darwin", "ios", "tvos", "watchos")
-has_socket_support = False
+has_socket_support = not (is_emscripten or is_wasi)
 has_fork_support = False
 has_subprocess_support = True
 can_start_thread = False
@@ -1680,6 +1680,19 @@ def darwin_malloc_err_warning(test_name):
     print(detail)
     print('-' * padding)
 
+
+
+def is_libssl_fips_mode():
+    """Whether OpenSSL reports FIPS mode, as CPython asks _hashlib for it.
+
+    Without _hashlib nothing claims FIPS mode, so the answer is no and the
+    digest tests it guards run.
+    """
+    try:
+        from _hashlib import get_fips_mode
+    except ImportError:
+        return False
+    return get_fips_mode() != 0
 
 
 def open_urlresource(url, *args, **kwargs):

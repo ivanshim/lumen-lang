@@ -29,7 +29,9 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `python-3.14.8/test_type_params.py` | `Lib/test/test_type_params.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py`, `Lib/wave.py`, `Lib/cmd.py`, `Lib/selectors.py`, `Lib/nturl2path.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_urllib.py` | `Lib/test/test_urllib.py` (unchanged) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_urllib2.py` | `Lib/test/test_urllib2.py` (unchanged; SHA-256 `c67976367976bc0e5552834e473b207cfbda7f9f68c0e30a57af2a09e7a7d1ba`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/` | `Lib/urllib/{__init__,error,request,response}.py`, `Lib/email/**/*.py` (the whole package, without `architecture.rst`), `Lib/mimetypes.py` and `Lib/ftplib.py`, all unchanged; `Lib/http/client.py` and `Lib/socket.py` are now used as copied (their native stand-ins `runtime_adapters/native_http_client.py` and `native_socket.py` are gone; the native socket facilities live in `_socket.py`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/` | `Lib/http/cookiejar.py` and `Lib/urllib/robotparser.py` (unchanged); `Lib/test/test_urllib.py` and `Lib/test/test_http_cookiejar.py` in the embedded `test` package so that `test_urllib2`'s `from test import test_urllib` and `from test.test_http_cookiejar import interact_netscape` resolve | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/` | `Lib/test/__init__.py`, `Lib/test/audiotests.py`, and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper,pty_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_argparse.py`, `translationdata/argparse/msgids.txt` | `Lib/test/test_argparse.py`, `Lib/test/translationdata/argparse/msgids.txt`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py`, `Lib/argparse.py`, `Lib/shutil.py`, `Lib/py_compile.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -488,6 +490,12 @@ source exists. Full working measurements are in ignored `probe/`.
 | `xml/dom/__init__.py` | unchanged release copy | `e7139ed583a7f60fbbc750044df4f1e3655371d8b8c4f80a43bff4aa3ba97857` | `e7139ed583a7f60fbbc750044df4f1e3655371d8b8c4f80a43bff4aa3ba97857` |
 | `xml/dom/domreg.py` | unchanged release copy | `826b02a803930834b96b1086cbee7db1d21c684f65dd3073706dc7bb5ba1a3e8` | `826b02a803930834b96b1086cbee7db1d21c684f65dd3073706dc7bb5ba1a3e8` |
 | `xml/dom/minicompat.py` | unchanged release copy | `42974c4c67803dfe80b016ff8aeea0d1e5c751703ab3aec5be765f4e534367be` | `42974c4c67803dfe80b016ff8aeea0d1e5c751703ab3aec5be765f4e534367be` |
+| `http/cookiejar.py` | unchanged release copy | `7a9c2e4cf1eaf0dad693417a3807691503faacda8a5b6eac36cb5f9d0aa22a91` | `7a9c2e4cf1eaf0dad693417a3807691503faacda8a5b6eac36cb5f9d0aa22a91` |
+| `urllib/robotparser.py` | unchanged release copy | `621c586e66d917d99dad44ff698bf9492cf5afc82cf9b3794199a589d553c38f` | `621c586e66d917d99dad44ff698bf9492cf5afc82cf9b3794199a589d553c38f` |
+| `test/test_urllib.py` | unchanged release copy | `81ca4b125101d8462ada6c112cecb9e60e4bf3c8b745efaf57135d2466a6935b` | `81ca4b125101d8462ada6c112cecb9e60e4bf3c8b745efaf57135d2466a6935b` |
+| `test/test_http_cookiejar.py` | unchanged release copy | `704f268fa120c4852304340abbf087fb74518e7ee06a0fd15a6dfc9eda97e27c` | `704f268fa120c4852304340abbf087fb74518e7ee06a0fd15a6dfc9eda97e27c` |
+
+Four release copies added after that audit are recorded in the table above: `http/cookiejar.py`, `urllib/robotparser.py`, `test/test_urllib.py` and `test/test_http_cookiejar.py`, each byte for byte from `v3.14.8`.
 
 ### Reference measurements
 
