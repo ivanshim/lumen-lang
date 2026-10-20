@@ -8812,15 +8812,22 @@ impl<'a> Engine<'a> {
         }
     }
 
-    fn stored_module_member(module: &Value, name: &str) -> Option<Value> {
+    fn stored_module_binding(module: &Value, name: &str) -> Option<Value> {
         let Value::Object(object) = module else { return None };
         let fields = object.fields.borrow();
-        if let Some((_, namespace)) = fields.iter().find(|(key, _)| key == "\0namespace") {
-            if let Value::Map(entries) = namespace.contents() {
-                return entries.iter().find_map(|(key, value)| key_spells(key, name).then(|| value.contents()));
-            }
-        }
-        fields.iter().find(|(key, _)| key == name).map(|(_, value)| value.contents())
+        let held = if let Some(Value::Map(entries)) = fields.iter().find(|(key, _)| key == "\0namespace").map(|(_, value)| value.contents()) {
+            entries.iter().find_map(|(key, value)| key_spells(key, name).then(|| value.clone()))
+        } else {
+            fields.iter().find(|(key, _)| key == name).map(|(_, value)| value.clone())
+        }?;
+        Some(match held {
+            Value::Bond(cell) => { let value = cell.borrow().clone(); value },
+            value => value,
+        })
+    }
+
+    fn stored_module_member(module: &Value, name: &str) -> Option<Value> {
+        Self::stored_module_binding(module, name).map(|value| value.contents())
     }
 
     fn module_initializing(&self, path: &str) -> bool {
@@ -32949,7 +32956,7 @@ impl Engine<'_> {
             let resolved = self.import_path(path)?;
             return self.import_member(module, &resolved, name);
         }
-        if let Some(value) = Self::stored_module_member(module, name).filter(|value| !matches!(value, Value::Blank)) {
+        if let Some(value) = Self::stored_module_binding(module, name).filter(|value| !matches!(value, Value::Blank)) {
             return Ok(value);
         }
         let hook = Self::stored_module_member(module, "__getattr__").filter(|value| !matches!(value, Value::Blank));

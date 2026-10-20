@@ -12273,18 +12273,22 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn imported_binding(value: &Value, word: &str) -> Option<Value> {
+        let Value::Thing(space) = value else { return None };
+        let held = space.holds.borrow();
+        let found = if let Some(Value::Dict(book)) = held.iter().find(|(key, _)| key == "_namespace").map(|(_, item)| item.settled()) {
+            book.iter().find(|(name, _)| spells_key(name, word)).map(|(_, item)| item.clone())
+        } else {
+            held.iter().find(|(key, _)| key == word).map(|(_, item)| item.clone())
+        }?;
+        Some(match found {
+            Value::Shared(cell) => { let item = cell.borrow().clone(); item },
+            item => item,
+        })
+    }
+
     fn imported_attribute(value: &Value, word: &str) -> Option<Value> {
-        if let Value::Thing(space) = value {
-            for (key, item) in space.holds.borrow().iter() {
-                if key == word { return Some(item.settled()); }
-                if key == "_namespace" {
-                    if let Value::Dict(book) = item.settled() {
-                        return book.iter().find(|(name, _)| spells_key(name, word)).map(|(_, item)| item.settled());
-                    }
-                }
-            }
-        }
-        None
+        Self::imported_binding(value, word).map(|item| item.settled())
     }
 
     fn import_is_pending(&self, name: &str) -> bool {
@@ -34212,7 +34216,7 @@ impl Machine<'_> {
             let full_name = self.qualified_import(path)?;
             return self.namespace_item(value, &full_name, wanted);
         }
-        if let Some(read) = Self::imported_attribute(value, wanted).filter(|read| !matches!(read, Value::Unset)) {
+        if let Some(read) = Self::imported_binding(value, wanted).filter(|read| !matches!(read, Value::Unset)) {
             return Ok(read);
         }
         let fallback = Self::imported_attribute(value, "__getattr__").filter(|method| !matches!(method, Value::Unset));
