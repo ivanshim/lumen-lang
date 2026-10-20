@@ -812,6 +812,7 @@ impl<'a> Engine<'a> {
         }
         Ok(())
     }
+    // Test identity or membership in the stored ancestry.
     fn is_or_descends(class: &Rc<Class>, base: &Rc<Class>) -> bool {
         Rc::ptr_eq(class, base) || class.lineage.borrow().iter().any(|ancestor| Rc::ptr_eq(ancestor, base))
     }
@@ -4677,6 +4678,7 @@ impl<'a> Engine<'a> {
         if name == layout[2] { return Some(Value::ValueMethod(Rc::new((subject.clone(), "integer_size".to_string())))); }
         None
     }
+    // Recognise a weak proxy when the language enables weak references.
     fn weak_proxy(&self, subject: &Value) -> Option<Rc<Instance>> {
         if self.lang.weak_refused.is_empty() { return None; }
         let Value::Object(proxy) = subject.contents() else { return None; };
@@ -6865,6 +6867,7 @@ impl<'a> Engine<'a> {
         c.shared.borrow_mut().push((word,made.clone()));
         Ok(made)
     }
+    // Build an annotation reference with its owner and class-scope flag.
     fn forward_reference(&mut self, text: &str, owner: Option<Rc<Class>>) -> Flow<Value> {
         let words = self.lang.class_annotations.clone();
         let namespace = self.import_module(&words[1])?;
@@ -8270,6 +8273,7 @@ impl<'a> Engine<'a> {
         };
         self.lang.builtins.iter().find(|(_,b)|**b==target).map(|(n,_)|n.clone()).unwrap_or_default()
     }
+    // Collect and sort the names returned by a directory hook.
     fn ordered_names(&mut self, answer: &Value) -> Flow<Value> {
         let names = self.special_items(answer).map_err(Fault::Note)?;
         let ordered = self.steady_order(names, &Value::Null, false).map_err(Fault::Note)?;
