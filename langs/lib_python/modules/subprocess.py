@@ -67,6 +67,8 @@ class _Readable:
         self._text = text
         self._encoding = encoding
         self._errors = errors
+        self.encoding = encoding if text else None
+        self.errors = errors if text else None
         self.closed = False
 
     # Decode captured bytes and apply universal newline translation.
@@ -93,6 +95,8 @@ class _Writable:
         self._text = text
         self._encoding = encoding
         self._errors = errors
+        self.encoding = encoding if text else None
+        self.errors = errors if text else None
         self.closed = False
 
     # Encode text writes while reporting their character count.

@@ -250,6 +250,13 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
             let name = libc::nl_langinfo(libc::CODESET);
             Ok(octets(CStr::from_ptr(name).to_bytes()))
         },
+            "kill" => {
+                let target = int(0)? as libc::pid_t;
+                let requested = int(1)? as libc::c_int;
+                let outcome = checked(i64::from(libc::kill(target, requested)));
+                match &outcome {Ok(_) => interrupted()?, Err(_) => {}}
+                outcome
+            }
             "getpid" | "getuid" | "geteuid" | "getgid" | "getegid" => {
                 let ident = match operation.as_ref() { "getpid" => libc::getpid() as i64, "getuid" => libc::getuid() as i64, "geteuid" => libc::geteuid() as i64, "getgid" => libc::getgid() as i64, _ => libc::getegid() as i64 };
                 Ok(Value::Small(ident))

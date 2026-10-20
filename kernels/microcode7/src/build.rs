@@ -3696,7 +3696,9 @@ impl<'a> Builder<'a> {
             let open = self.pair_open(last, opened)?;
             if open > opened {
                 let ahead = &self.tokens[open - 1];
-                let names = ahead.shape == Shape::Bare && !self.table.keywords.iter().any(|w| w == ahead.spelling());
+                // Soft keywords (`type`, `match`, `case`) ahead of a bracket name a callable, so the bracket is a call.
+                let softly = matches!(ahead.spelling().as_ref(), "type" | "match" | "case");
+                let names = ahead.shape == Shape::Bare && (softly || !self.table.keywords.iter().any(|w| w == ahead.spelling()));
                 let closed = ahead.shape == Shape::Sign && [")", "]", "}"].contains(&ahead.lexeme.as_str());
                 if names || closed { return None; }
             }

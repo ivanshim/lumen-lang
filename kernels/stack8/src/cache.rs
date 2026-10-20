@@ -98,7 +98,7 @@ struct ContextScope;
 impl Drop for ContextScope { fn drop(&mut self) { CONTEXT.with(|c| { c.borrow_mut().pop(); }); } }
 
 pub fn program(mut packet: Json, registry: &mut crate::compile::Registry) -> Result<Rc<crate::code::Routine>, String> {
-    if packet["abi"] != "lumen-stack8-v6" { return Err("ImportError: incompatible compiled code ABI".into()); }
+    if packet["abi"] != crate::PYTHON_CACHE_ABI { return Err("ImportError: incompatible compiled code ABI".into()); }
     let mut archived: crate::compile::Registry = serde_json::from_value(packet["bindings"].take()).map_err(|e| format!("ValueError: {e}"))?;
     let places: Vec<usize> = archived.idents.iter().map(|name| registry.slot(name)).collect();
     fn relocate(node: &mut Json, places: &[usize]) -> Result<(), String> {

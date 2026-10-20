@@ -1841,19 +1841,27 @@ def write_mirror(lang, d, files, reasons):
         locations = layout.get("files", {})
         aliases = layout.get("aliases", {})
         adapters = layout.get("adapters", {})
+        preludes = layout.get("preludes", {})
         embedded_data = layout.get("data", {})
         replacements = layout.get("replacements", {})
         module_names = layout.get("names", {})
         packed = []
         for source in sorted(modules.rglob(f"*.{ext}")):
+            # Non-UTF-8 sources need the filesystem loader's decoding.
+            try:
+                source.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
             relative = source.relative_to(modules).as_posix()
-            if relative in adapters.values() or relative in replacements.values():
+            if relative in adapters.values() or relative in replacements.values() or relative in preludes.values():
                 continue
             name = module_names.get(relative, relative[:-(len(ext) + 1)].replace("/", "."))
             if name.endswith(".__init__"):
                 name = name[:-9]
             location = locations.get(name, relative)
             source_expr = f'include_str!({json.dumps(replacements.get(name, relative))})'
+            if name in preludes:
+                source_expr = f'concat!(include_str!({json.dumps(preludes[name])}), "\\n", {source_expr})'
             for variable, data_file in embedded_data.get(name, {}).items():
                 prefix = json.dumps(variable + ' = r"""')
                 suffix = json.dumps('"""\n')

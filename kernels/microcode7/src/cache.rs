@@ -84,7 +84,7 @@ impl Drop for ReadingScope {
 }
 
 pub fn forms(mut record: Node, seeded: &[String], globals: Option<Value>, natives: Option<Value>, module: Option<Rc<str>>) -> Result<crate::build::Built, String> {
-    if record["format"] != "lumen-microcode7-v6" { return Err("ImportError: compiled forms use a different ABI".to_owned()); }
+    if record["format"] != crate::PYTHON_CACHE_ABI { return Err("ImportError: compiled forms use a different ABI".to_owned()); }
     let mut names = seeded.to_vec();
     let prior: Vec<String> = serde_json::from_value(record["metadata"]["globals"].clone()).map_err(|error| format!("ValueError: {error}"))?;
     let mut offsets = Vec::with_capacity(prior.len());

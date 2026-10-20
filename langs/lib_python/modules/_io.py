@@ -986,6 +986,10 @@ def _file_plans():
 _FILE_PLANS = {}
 
 class FileIO(_RawIOBase):
+    def _dealloc_warn(self, source):
+        if getattr(self, '_fd', -1) >= 0 and self._closefd and not self.closed:
+            import warnings
+            warnings.warn('unclosed file ' + repr(source), ResourceWarning, stacklevel=2, source=source)
     # What a stream whose __init__ never finished stands as, the way the C
     # stream stands with no descriptor: closed, and owing nothing.
     _fd = -1

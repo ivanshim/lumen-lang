@@ -46,4 +46,3 @@ def _setup(sys_module, _imp_module):
     _blocking_on = _WeakValueDictionary()
     if _imp._NativeFinder not in sys.meta_path:
         sys.meta_path.append(_imp._NativeFinder)
-

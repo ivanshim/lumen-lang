@@ -1,3 +1,8 @@
+/// Mark the kernel and cache revision, with CR/LF to detect text-mode corruption.
+pub const PYTHON_CACHE_MAGIC: [u8; 4] = *b"8\x07\r\n";
+/// Version the native cache envelope, including its header framing.
+pub const PYTHON_CACHE_ABI: &str = "lumen-stack8-v7";
+
 pub mod strings;
 mod unicode;
 mod ucd;
@@ -494,6 +499,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         }
         // A program may put a routine in the way of a value nobody
         // took; the run says nothing of its own where one took it up.
+        let interrupted = machine.fault_names(&fault, "KeyboardInterrupt");
         let handled = machine.taken_up(&fault);
         if !handled {
             machine.ended_uncaught(&fault);
@@ -505,7 +511,9 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         }
         machine.let_things_go();
         machine.let_go_all();
-        return Err(if handled && !lang.exceptions.is_empty() { String::from("\0") } else { fault.told(&machine.names()) });
+        let mut report = if handled && !lang.exceptions.is_empty() { String::from("\0") } else { fault.told(&machine.names()) };
+        if interrupted { report.push_str("\u{1}SIGINT"); }
+        return Err(report);
     }
     if let Err(after) = machine.run_when_done() {
         machine.ended_uncaught(&after);

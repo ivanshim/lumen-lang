@@ -177,6 +177,11 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
         },
         "socket_hostbyaddr" => Ok(host_by_address(&a[0])?),
         "locale_encoding" => Ok(bytes(CStr::from_ptr(libc::nl_langinfo(libc::CODESET)).to_bytes().to_vec())),
+        "kill" => {
+            let sent = status(libc::kill(number(0)? as libc::pid_t, number(1)? as libc::c_int) as i64);
+            if sent.is_ok() {check_signals()?;}
+            sent
+        },
         "getpid" => Ok(Value::Small(libc::getpid() as i64)),
         "getuid" => Ok(Value::Small(libc::getuid() as i64)),
         "geteuid" => Ok(Value::Small(libc::geteuid() as i64)),

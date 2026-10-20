@@ -203,6 +203,7 @@ struct Invocation {
     program_name: Option<String>,
     python_ignore_environment: bool,
     python_interactive: bool,
+    python_safe_path: bool,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -502,7 +503,10 @@ fn source_of(written: Vec<u8>, as_bytes: bool) -> String {
 }
 
 /// Native cache markers written by the two full Python kernels.
-const PYC_MAGICS: [[u8; 4]; 2] = [*b"L8C\x04", *b"L7C\x04"];
+const PYC_MAGICS: [[u8; 4]; 2] = [
+    lumen_stack8::PYTHON_CACHE_MAGIC,
+    lumen_microcode7::PYTHON_CACHE_MAGIC,
+];
 
 /// Whether bytes open with the bytecode marker, and so are a compiled
 /// module rather than source.
@@ -692,9 +696,23 @@ fn main() {
     // it complains, which wants more of the machine's stack than a run
     // is given by default; the whole run is therefore made on a thread
     // with room for it.
+    // The waiting host thread must not take signals meant for the interpreter.
+    let previous_mask = unsafe {
+        let mut blocked = std::mem::zeroed();
+        let mut previous = std::mem::zeroed();
+        libc::sigemptyset(&mut blocked);
+        libc::sigaddset(&mut blocked, libc::SIGINT);
+        let error = libc::pthread_sigmask(libc::SIG_BLOCK, &blocked, &mut previous);
+        if error != 0 { panic!("Failed to set signal mask: {}", std::io::Error::from_raw_os_error(error)); }
+        previous
+    };
     let roomy = std::thread::Builder::new()
         .stack_size(1 << 30)
-        .spawn(run_all)
+        .spawn(move || {
+            let error = unsafe { libc::pthread_sigmask(libc::SIG_SETMASK, &previous_mask, std::ptr::null_mut()) };
+            if error != 0 { panic!("Failed to restore signal mask: {}", std::io::Error::from_raw_os_error(error)); }
+            run_all();
+        })
         .expect("a thread for the run");
     match roomy.join() {
         Ok(()) => {}
@@ -716,6 +734,7 @@ fn run_all() {
     if inv.language.name() == "python" {
         if inv.python_development { std::env::set_var("LUMEN_PYTHON_DEV_MODE", "1"); }
         else { std::env::remove_var("LUMEN_PYTHON_DEV_MODE"); }
+        std::env::set_var("LUMEN_PYTHON_SAFE_PATH", if inv.python_safe_path { "1" } else { "0" });
         if inv.python_ignore_environment { std::env::set_var("LUMEN_PYTHON_IGNORE_ENV", "1"); }
         else { std::env::remove_var("LUMEN_PYTHON_IGNORE_ENV"); }
     }
@@ -944,7 +963,23 @@ fn run_all() {
     };
 
     if let Err(message) = result {
-        if !message.is_empty() { eprintln!("{}", message); }
+        let interrupted = message.strip_suffix("\u{1}SIGINT");
+        let report = interrupted.unwrap_or(&message);
+        if !report.is_empty() { eprintln!("{}", report); }
+        if interrupted.is_some() {
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            let _ = std::io::stderr().flush();
+            // Restore the signal disposition after Python reports an uncaught interrupt.
+            unsafe {
+                libc::signal(libc::SIGINT, libc::SIG_DFL);
+                let mut signals = std::mem::zeroed();
+                libc::sigemptyset(&mut signals);
+                libc::sigaddset(&mut signals, libc::SIGINT);
+                libc::pthread_sigmask(libc::SIG_UNBLOCK, &signals, std::ptr::null_mut());
+                libc::raise(libc::SIGINT);
+            }
+        }
         process::exit(1);
     }
 }
@@ -1122,6 +1157,8 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut extended_options = Vec::new();
     let mut python_ignore_environment = false;
     let mut python_interactive = false;
+    let mut python_safe_path = !env::var("LUMEN_LANG").is_ok_and(|held| held == "python");
+    let mut explicit_safe_path = false;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
     // The name a Python program sees as its own first argument. It is
@@ -1210,6 +1247,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
             // to the program and is left to it.
             Some(flag) if file.is_none() && (flag == "-m" || flag.starts_with("-m") && flag.len() > 2
                 && (python.is_some() || language.as_ref().is_some_and(|held| held.name() == "python") || env::var("LUMEN_LANG").is_ok_and(|held| held == "python"))) => {
+                python_safe_path = explicit_safe_path;
                 let (module, used) = if flag == "-m" {
                     if rest.len() < 2 { usage(program); }
                     (said(&rest[1]), 2)
@@ -1337,7 +1375,14 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 language = Some(Language::Named("python".to_owned()));
                 rest = &rest[used..];
             }
+            Some("-P") if file.is_none() => {
+                explicit_safe_path = true;
+                python_safe_path = true;
+                language.get_or_insert_with(|| Language::Named("python".to_owned()));
+                rest = &rest[1..];
+            }
             Some("-E") if file.is_none() => {
+                python_safe_path = explicit_safe_path;
                 python_ignore_environment = true;
                 language = Some(Language::Named("python".to_string()));
                 rest = &rest[1..];
@@ -1482,8 +1527,8 @@ fn parse_args(args: &[OsString]) -> Invocation {
         }
     }
 
-    if python_development && language.name() != "python" {
-        eprintln!("Error: -X dev requires the Python language");
+    if (python_development || python_ignore_environment) && language.name() != "python" {
+        eprintln!("Error: {} requires the Python language", if python_ignore_environment { "-E" } else { "-X dev" });
         process::exit(2);
     }
     let mut language = language;
@@ -1502,7 +1547,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         let encoded = extended_options.iter().map(|option| format!("{}:{option}", option.chars().count())).collect::<String>();
         env::set_var("LUMEN_XOPTIONS", encoded);
     } else { env::remove_var("LUMEN_XOPTIONS"); }
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_ignore_environment, python_interactive, python_development, warning_options, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_ignore_environment, python_interactive, python_safe_path, python_development, warning_options, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.

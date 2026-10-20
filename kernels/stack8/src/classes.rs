@@ -517,7 +517,9 @@ impl<'a> Engine<'a> {
         self.special_text(value, quoted).map_err(|message| self.carried.take().unwrap_or(Fault::Note(message)))
     }
     fn module_namespace_paths(&mut self, loader: &Value) -> Flow<Option<Value>> {
-        let external = self.modules.get("_frozen_importlib_external").or_else(|| self.modules.get("importlib._bootstrap_external")).cloned();
+        // The bootstrap's own external half, read from sys.modules first: a fresh copy a test imported must not stand in for it.
+        let external = ["_frozen_importlib_external", "importlib._bootstrap_external"].iter()
+            .find_map(|name| self.module_cache_value(name).filter(|held| !matches!(held, Value::Null)).or_else(|| self.modules.get(*name).cloned()));
         let Some(external) = external else { return Ok(None); };
         let category = self.module_member_or(&external, "NamespaceLoader", Value::Null)?;
         if matches!(category, Value::Null) { return Ok(None); }
@@ -4326,6 +4328,7 @@ impl<'a> Engine<'a> {
     fn attribute_from_hook(&self, failure: Fault, subject: &Value, name: &str) -> Fault {
         let Fault::Thrown(Value::Object(error)) = &failure else { return failure };
         if !self.attribute_fault(&failure) { return failure; }
+        if let Some(error) = self.module_shadow_hash_error(subject) { return Fault::Note(error); }
         // An inner attribute lookup already identifies its own receiver.
         if error.fields.borrow().iter().any(|(key, value)| self.lang.absent_name_member.as_ref() == Some(key) && !matches!(value.contents(), Value::Null)) { return failure; }
         let qualified = match subject {
@@ -4338,7 +4341,7 @@ impl<'a> Engine<'a> {
                     _ => fields.iter().find(|(key, _)| key == "__name__").map(|(_, value)| value),
                 };
                 let label = named.and_then(|value| match value.contents() { Value::Text(word) => Some(word.to_string()), _ => None });
-                label.map_or_else(|| format!("module has no attribute '{name}'"), |label| format!("module '{label}' has no attribute '{name}'"))
+                label.map_or_else(|| format!("module has no attribute '{name}'"), |label| self.module_absence_text(&label, name))
             }
             Value::Object(instance) => format!("'{}' object has no attribute '{name}'", self.qualified_class(&instance.class_now())),
             _ => return failure,
@@ -4908,6 +4911,9 @@ impl<'a> Engine<'a> {
             return self.class_get(module, "replace", false);
         }
         if let Value::Object(code) = &subject {
+            if self.code_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &code.class_now())) && self.lang.class_details.get("code.replace").and_then(|words| words.get(2)).is_some_and(|word| word == name) {
+                return Ok(Value::ValueMethod(Rc::new((subject.clone(), "code_positions".into()))));
+            }
             if self.code_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &code.class_now()))
                 && self.lang.class_details.get("code.replace").and_then(|words| words.first()).is_some_and(|word| word == name) {
                 return Ok(Value::ValueMethod(Rc::new((subject.clone(), "code_replace".to_owned()))));
@@ -7262,9 +7268,15 @@ impl<'a> Engine<'a> {
                 if name == self.class_word("kind") {
                     let Some(Value::Class(next)) = value else { return Err("TypeError: __class__ must be set to a class".to_string().into()); };
                     let old = o.class_now();
+                    // Native modules and subclasses without extra slots share their storage.
+                    let extra_slots = |class: &Class| std::iter::once(class).chain(class.lineage.borrow().iter().map(Rc::as_ref))
+                        .any(|base| Self::own_class_value(base, self.class_word("slots")).is_some_and(|value| !matches!(value.contents(), Value::Tuple(names) | Value::Array(names) if names.is_empty())));
+                    let old_module = self.module_holding(&subject).is_some() || Self::kind_beneath(&old).as_deref() == Some("module");
+                    let module_layout = old_module && Self::kind_beneath(&next).as_deref() == Some("module")
+                        && !extra_slots(&old) && !extra_slots(&next);
                     let mutable=old.python_names.borrow().is_some() && next.python_names.borrow().is_some();
                     let modules=Self::kind_beneath(&old).as_deref()==Some("module") && Self::kind_beneath(&next).as_deref()==Some("module");
-                    if !Rc::ptr_eq(&old,&next) && ((!mutable && !modules) || !self.bases_compatible(&old,&next) || !self.assignment_layouts_agree(&old,&next)) {
+                    if !module_layout && !Rc::ptr_eq(&old,&next) && ((!mutable && !modules) || !self.bases_compatible(&old,&next) || !self.assignment_layouts_agree(&old,&next)) {
                         return Err("TypeError: __class__ assignment: object layout differs".to_string().into());
                     }
                     let from = format!(":{:p}", Rc::as_ptr(&old));
@@ -7314,6 +7326,10 @@ impl<'a> Engine<'a> {
                 // so that its routines see the new value; a thing's member
                 // is simply written over.
                 let module=self.module_holding(&subject).is_some();
+                let value = if module { value.map(|item| {
+                    let same_binding = matches!(&item, Value::Bond(given) if o.fields.borrow().iter().any(|(key, held)| key == name && matches!(held, Value::Bond(existing) if Rc::ptr_eq(given, existing))));
+                    if same_binding { item } else { item.held(false) }
+                }) } else { value };
                 if module { self.module_member_mirror(o, name, &value); }
                 // A name a module takes from outside that it never bound
                 // for itself becomes one of its own globals, standing in

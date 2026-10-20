@@ -1,3 +1,8 @@
+/// Frame compiled Python input with a kernel/revision prefix and newline check.
+pub const PYTHON_CACHE_MAGIC: [u8; 4] = [b'7', 7, b'\r', b'\n'];
+/// Identify the compiled-code envelope used by marshal and pyc files.
+pub const PYTHON_CACHE_ABI: &str = "lumen-microcode7-v7";
+
 pub mod text;
 mod unicode;
 mod ucd;
