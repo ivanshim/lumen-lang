@@ -473,7 +473,14 @@ class AST:
 
     # Represent the actual fields, without source positions or private parser state.
     def __repr__(self):
-        return type(self).__name__ + '(' + ', '.join(field + '=' + repr(value) for field, value in iter_fields(self)) + ')'
+        parts = []
+        for field in self._fields:
+            try:
+                value = getattr(self, field)
+            except AttributeError:
+                continue
+            parts.append(field + '=' + repr(value))
+        return type(self).__name__ + '(' + ', '.join(parts) + ')'
 
 
 class mod(AST):
@@ -2065,6 +2072,8 @@ _STMT_WORDS = ('def', 'class', 'if', 'elif', 'else', 'for', 'while', 'try',
 _BINOPS = {'+': Add, '-': Sub, '*': Mult, '/': Div, '//': FloorDiv,
            '%': Mod, '@': MatMult, '<<': LShift, '>>': RShift,
            '|': BitOr, '^': BitXor, '&': BitAnd, '**': Pow}
+_BINOP_PRECEDENCE = {'|': 1, '^': 2, '&': 3, '<<': 4, '>>': 4,
+                     '+': 5, '-': 5, '*': 6, '/': 6, '//': 6, '%': 6, '@': 6}
 _CMPOPS = {'==': Eq, '!=': NotEq, '<': Lt, '<=': LtE, '>': Gt, '>=': GtE}
 _UNARY = {'+': UAdd, '-': USub, '~': Invert}
 
@@ -3240,80 +3249,22 @@ class _Parser:
                        end_lineno=le[0], end_col_offset=le[1])
         return (node, ls, le)
 
-    # Preserve the grammar's operator precedence and loose source span.
-    def parse_bitor(self):
-        node, ls, le = self.parse_bitxor()
-        while self.peek().kind == 'op' and self.peek().text in ('|',):
-            tok = self.pop()
-            right, rs, re = self.parse_bitxor()
-            node = BinOp(left=node, op=_BINOPS[tok.text](), right=right,
-                         lineno=ls[0], col_offset=ls[1],
-                         end_lineno=re[0], end_col_offset=re[1])
-            le = re
-        return node, ls, le
-
-    # Preserve the grammar's operator precedence and loose source span.
-    def parse_bitxor(self):
-        node, ls, le = self.parse_bitand()
-        while self.peek().kind == 'op' and self.peek().text in ('^',):
-            tok = self.pop()
-            right, rs, re = self.parse_bitand()
-            node = BinOp(left=node, op=_BINOPS[tok.text](), right=right,
-                         lineno=ls[0], col_offset=ls[1],
-                         end_lineno=re[0], end_col_offset=re[1])
-            le = re
-        return node, ls, le
-
-    # Preserve the grammar's operator precedence and loose source span.
-    def parse_bitand(self):
-        node, ls, le = self.parse_shift()
-        while self.peek().kind == 'op' and self.peek().text in ('&',):
-            tok = self.pop()
-            right, rs, re = self.parse_shift()
-            node = BinOp(left=node, op=_BINOPS[tok.text](), right=right,
-                         lineno=ls[0], col_offset=ls[1],
-                         end_lineno=re[0], end_col_offset=re[1])
-            le = re
-        return node, ls, le
-
-    # Preserve the grammar's operator precedence and loose source span.
-    def parse_shift(self):
-        node, ls, le = self.parse_arith()
-        while self.peek().kind == 'op' and self.peek().text in ('<<', '>>'):
-            tok = self.pop()
-            right, rs, re = self.parse_arith()
-            node = BinOp(left=node, op=_BINOPS[tok.text](), right=right,
-                         lineno=ls[0], col_offset=ls[1],
-                         end_lineno=re[0], end_col_offset=re[1])
-            le = re
-        return node, ls, le
-
-    def parse_arith(self):
-        node, ls, le = self.parse_term()
-        while self.at_op('+') or self.at_op('-'):
-            tok = self.pop()
-            right, rs, re = self.parse_term()
-            node = BinOp(left=node, op=_BINOPS[tok.text](), right=right,
-                         lineno=ls[0], col_offset=ls[1],
-                         end_lineno=re[0], end_col_offset=re[1])
-            le = re
-        return (node, ls, le)
-
-    def parse_term(self):
+    # Climb occupied precedence levels, retaining left associativity and spans.
+    def parse_bitor(self, minimum=1):
         node, ls, le = self.parse_unary()
         while True:
             tok = self.peek()
-            if tok.kind == 'op' and tok.text in ('*', '/', '//', '%', '@'):
-                if tok.text == '@' and self.fv < 5:
-                    _syntax("The '@' operator is only supported in Python 3.5 and greater")
-                self.pop()
-                right, rs, re = self.parse_unary()
-                node = BinOp(left=node, op=_BINOPS[tok.text](), right=right,
-                             lineno=ls[0], col_offset=ls[1],
-                             end_lineno=re[0], end_col_offset=re[1])
-                le = re
-            else:
-                return (node, ls, le)
+            priority = _BINOP_PRECEDENCE.get(tok.text, 0) if tok.kind == 'op' else 0
+            if priority < minimum:
+                return node, ls, le
+            if tok.text == '@' and self.fv < 5:
+                _syntax("The '@' operator is only supported in Python 3.5 and greater")
+            self.pop()
+            right, rs, re = self.parse_bitor(priority + 1)
+            node = BinOp(left=node, op=_BINOPS[tok.text](), right=right,
+                         lineno=ls[0], col_offset=ls[1],
+                         end_lineno=re[0], end_col_offset=re[1])
+            le = re
 
     def parse_unary(self):
         tok = self.peek()

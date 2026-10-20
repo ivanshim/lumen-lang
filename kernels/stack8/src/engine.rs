@@ -23054,14 +23054,14 @@ impl<'a> Engine<'a> {
     fn pickle_buffer_work(&mut self, args: &[Value]) -> Flow<Value> {
         let Some(action) = args.first().and_then(|v| v.as_big().ok()).and_then(|v| v.to_u8()) else { return Err("TypeError: invalid buffer operation".into()); };
         // Copy a memory-stream range once, or store bytes without Python slice temporaries.
-        if action == 6 || action == 7 {
+        if matches!(action, 6..=8) {
             let [_, owner, item] = args else { return Err("TypeError: buffer cursor operation requires a stream and argument".into()); };
             // A count that is not a plain whole number the cursor can hold, or a
             // store of anything but bytes, goes back as None before any state is
             // read: the Python side then validates it the slow way, in its order.
             let plain = match (action, item.contents()) {
-                (6, Value::Small(_)) => true,
-                (6, Value::Huge(big)) => big.to_i64().is_some(),
+                (6 | 8, Value::Small(_)) => true,
+                (6 | 8, Value::Huge(big)) => big.to_i64().is_some(),
                 (7, Value::Bytes(..)) => true,
                 _ => false,
             };
@@ -23083,11 +23083,14 @@ impl<'a> Engine<'a> {
             if closed.is_true() { return Err("ValueError: I/O operation on closed file".into()); }
             let Value::Bytes(storage, mutable, _) = buffer.contents() else { return Err("TypeError: buffer cursor requires bytes storage".into()); };
             let begin = position.as_big()?.to_usize().ok_or("ValueError: invalid buffer position")?;
-            if action == 6 {
+            if action != 7 {
                 let count = item.as_big()?.to_i64().ok_or("OverflowError: buffer read size is too large")?;
                 let (copy, end) = {
                     let bytes = storage.borrow();
-                    let end = if count < 0 { bytes.len() } else { bytes.len().min(begin.saturating_add(count as usize)) };
+                    let mut end = if count < 0 { bytes.len() } else { bytes.len().min(begin.saturating_add(count as usize)) };
+                    if action == 8 && begin < end {
+                        if let Some(newline) = bytes[begin..end].iter().position(|byte| *byte == b'\n') { end = begin + newline + 1; }
+                    }
                     if end <= begin { (Vec::new(), begin) } else { (bytes[begin..end].to_vec(), end) }
                 };
                 if !copy.is_empty() { self.stream_moved(owner, end as i64, moved_directly)?; }

@@ -17416,7 +17416,8 @@ impl<'a> Machine<'a> {
         self.alter_class_member(stream.clone(), "_pos", Some(Value::Small(place)), false)?;
         Ok(())
     }
-    fn memory_cursor(&mut self, writing: bool, parts: &[Value]) -> Res {
+    fn memory_cursor(&mut self, operation: i64, parts: &[Value]) -> Res {
+        let writing = operation == 7;
         let [stream, argument] = parts else { return Err("TypeError: buffer cursor operation requires a stream and argument".to_owned().into()); };
         // Only a whole number the cursor can count with, or bytes to store, are
         // taken here; anything else is handed back as None untouched, and the
@@ -17446,7 +17447,10 @@ impl<'a> Machine<'a> {
         if !writing {
             let amount = argument.as_big()?.to_i64().ok_or_else(|| "OverflowError: buffer read size is too large".to_owned())?;
             let content = cell.borrow();
-            let stop = content.len().min(if amount >= 0 { position.saturating_add(amount as usize) } else { usize::MAX });
+            let limit = content.len().min(if amount >= 0 { position.saturating_add(amount as usize) } else { usize::MAX });
+            let stop = if operation == 8 && position < limit {
+                content[position..limit].iter().position(|item| *item == 10).map_or(limit, |offset| position + offset + 1)
+            } else { limit };
             let copied = if position < stop { content[position..stop].to_vec() } else { Vec::new() };
             drop(content);
             if !copied.is_empty() { self.memory_stream_moved(stream, stop as i64, kept_here)?; }
@@ -17475,7 +17479,7 @@ impl<'a> Machine<'a> {
     }
     fn exported_pickle_buffer(&mut self, values: &[Value]) -> Res {
         let mode = values.first().ok_or_else(|| "TypeError: buffer operation missing".to_owned())?.as_big()?.to_i64().ok_or_else(|| "ValueError: buffer operation out of range".to_owned())?;
-        if matches!(mode, 6 | 7) { return self.memory_cursor(mode == 7, &values[1..]); }
+        if (6..=8).contains(&mode) { return self.memory_cursor(mode, &values[1..]); }
         match mode {
             5 => {
                 if let [_, Value::Blueprint(kind)] = values {

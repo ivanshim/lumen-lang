@@ -6119,7 +6119,7 @@ code and alias-table revisions remain unchanged; catalog existence stays live.
 
 `ext.builtin.math.fsum` enables native expansion summation for ordinary Python numeric lists and tuples. Conversion and accumulation preserve input order and the final rounding correction; custom numeric objects and iterators retain the library protocol path.
 
-`ext.builtin.struct_native` supplies the canonical native binary layouts, packing and unpacking for the unchanged CPython struct wrapper. The separate implementations in structpack.rs and byteformat.rs follow CPython v3.14.8 Modules/_struct.c; the Python interface acquires contiguous buffers and applies object conversion protocols.
+`ext.builtin.struct_native` supplies the canonical native binary layouts, packing and unpacking for the unchanged CPython struct wrapper. The separate implementations in structpack.rs and byteformat.rs follow CPython v3.14.8 Modules/_struct.c; the Python interface acquires contiguous buffers and applies object conversion protocols. Operation 10 attempts integer-only packing without conversion and returns None for formats or values that need the adapter's ordinary conversion path.
 
 `ext.builtin.bytes.escape_decode` names the Python-only byte escape decoder, following CPython v3.14.8 Objects/bytesobject.c and Modules/_codecsmodule.c. It preserves consumed buffer length and reports invalid escapes for the warning adapter.
 `ext.stmt.class.detail.mro.entries` names the non-type base substitution hook; `ext.stmt.class.detail.original.bases` names the retained original base tuple. Module-load helpers accept a false second argument to query source availability without importing and a true second argument to return its source path.
@@ -6177,7 +6177,7 @@ The Python floating math adapter also supplies compensated `fsum`, consuming its
 It exposes that argument in the frame namespace and requires an iterator when
 the expression starts, including when its code is made into a new function.
 
-`ext.builtin.pickle_buffer` supplies native exported-buffer ownership, raw byte views, release and buffer acquisition for PickleBuffer, following CPython v3.14.8 Objects/picklebufobject.c. Its binding is separate from the absent _pickle accelerator. Operations 6 and 7 transfer memory-stream byte ranges and store bytes at a checked cursor; the runtime IO adapter retains size validation, closed-stream checks and exported-buffer checks.
+`ext.builtin.pickle_buffer` supplies native exported-buffer ownership, raw byte views, release and buffer acquisition for PickleBuffer, following CPython v3.14.8 Objects/picklebufobject.c. Its binding is separate from the absent _pickle accelerator. Operations 6, 7 and 8 read byte ranges, store bytes and read lines at a checked memory-stream cursor; the runtime IO adapter retains size validation, closed-stream checks and exported-buffer checks.
 
 `ext.builtin.text.intern` retains canonical Python strings for sys.intern and attribute-name dictionaries, including surrogate-containing strings.
 The Python-only type-parameter labels also expose `_typing` primitives to the

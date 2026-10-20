@@ -272,7 +272,12 @@ class BytesIO(_BufferedIOBase):
         if hasattr(self, '_data'):
             if _export(self._data, True):
                 raise BufferError('Existing exports of data: object cannot be re-sized')
-        self._data = bytearray() if initial_bytes is None else bytearray(_buffer(initial_bytes))
+        if initial_bytes is None:
+            self._data = bytearray()
+        elif type(initial_bytes) is bytes:
+            self._data = bytearray(initial_bytes)
+        else:
+            self._data = bytearray(_buffer(initial_bytes))
         self._pos = 0
         self._closed = False
     def _check_exports(self):
@@ -323,19 +328,10 @@ class BytesIO(_BufferedIOBase):
         if type(size) is int:
             result, self._pos = _memory(self._data, self._pos, size, self._closed, 1)
             return result
-        size = _size(size)
-        if self._closed:
-            raise ValueError('I/O operation on closed file')
-        end = len(self._data) if size < 0 else min(len(self._data), self._pos + size)
-        start = self._pos
-        if end <= start:
-            return b''
-        at = self._data.find(b'\n', start, end)
-        if at >= 0:
-            end = at + 1
-        data = bytes(self._data[start:end])
-        self._pos = end
-        return data
+        data = _memory_cursor(8, self, size)
+        if data is None:
+            data = _memory_cursor(8, self, _size(size))
+        return data or b''
     def write(self, b):
         stored = _memory_cursor(7, self, b)
         if stored is not None:
