@@ -39,6 +39,11 @@ pub struct Env {
     /// reserved no slot for, kept here so every reading of the frame,
     /// `locals()` among them, sees them.
     pub extra: RefCell<Vec<(Value, Value)>>,
+    /// Addresses of shared cells the outermost frame must not treat as
+    /// roots during a reaping. Empty the rest of the time.
+    pub collector_skips: RefCell<HashSet<usize>>,
+    /// Set while `collector_skips` is non-empty.
+    pub collector_skipping: Cell<bool>,
 }
 
 impl Drop for Env {
@@ -47,7 +52,7 @@ impl Drop for Env {
 
 impl Env {
     pub fn make(size: usize, parent: Option<Rc<Env>>) -> Rc<Env> {
-        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(CaptureSlots::default()), outer: parent, weak_callback_frame: Cell::new(false), extra: RefCell::new(Vec::new()) })
+        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(CaptureSlots::default()), outer: parent, weak_callback_frame: Cell::new(false), collector_skips: RefCell::new(HashSet::new()), collector_skipping: Cell::new(false), extra: RefCell::new(Vec::new()) })
     }
 }
 

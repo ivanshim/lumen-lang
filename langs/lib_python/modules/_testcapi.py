@@ -67,3 +67,7 @@ def Py_CompileStringExFlags(source, filename, start, flags=0, optimize=-1):
         flags &= ~0x0800
     return compile(source, filename, modes[start], flags=flags,
                    dont_inherit=True, optimize=optimize)
+
+# This interpreter uses IEEE-754 quiet NaNs: the most significant
+# fraction bit is set. Platforms that invert that bit use 1.
+nan_msb_is_signaling = 0

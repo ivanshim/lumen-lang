@@ -685,7 +685,18 @@ impl Knot {
         match self {
             Knot::Frame(env) => {
                 if let Ok(cells) = env.cells.try_borrow() {
-                    for v in cells.iter() { held(out, v); }
+                    let skips = if env.collector_skipping.get() { env.collector_skips.try_borrow().ok() } else { None };
+                    for v in cells.iter() {
+                        // A dropped module's cells stay in this frame so a
+                        // callback can read and write them. The frame's edge
+                        // is not a root of those cells for this reaping.
+                        if let Some(skipped) = skips.as_ref() {
+                            if let Value::Shared(slot) = v {
+                                if skipped.contains(&(Rc::as_ptr(slot) as usize)) { continue; }
+                            }
+                        }
+                        held(out, v);
+                    }
                 }
                 if let Some(outer) = &env.outer { out.push(Knot::Frame(outer.clone())); }
             }
@@ -948,6 +959,16 @@ impl Web {
 
     /// Whether a value belongs only to an unreachable round, after
     /// leaving the machine's function bookkeeping out of its holds.
+    pub fn given_up(&self, knot: &Knot) -> bool {
+        match knot {
+            Knot::Held(value) => self.unowned(value),
+            Knot::Frame(env) => {
+                let place = Rc::as_ptr(env) as *const () as usize;
+                self.placed.get(&place).is_some_and(|&position| !self.strands[position].reached)
+            }
+        }
+    }
+
     pub fn unowned(&self, value: &Value) -> bool {
         // A bound function's environment can be the live module frame.
         // Its own routine is the part that determines whether the
