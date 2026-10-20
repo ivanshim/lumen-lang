@@ -1264,6 +1264,14 @@ class TokenizerIter(object):
         return self
 
     def __next__(self):
+        # Drain ordinary buffered tokens through the native scanner operation.
+        token = _scan_token(self, True)
+        if token is not None:
+            return token
+        return self._next_slow()
+
+    # Preserve callback handling, diagnostics and unusual private queue shapes.
+    def _next_slow(self):
         queued = self._queued
         if queued is not None:
             token = queued[self._queued_at]

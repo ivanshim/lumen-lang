@@ -507,15 +507,41 @@ fn finished_token(value: &Value) -> bool {
     matches!(value, Value::Tuple(parts) if parts.len() == 5)
 }
 
+// Drain bounded token batches without repeating the adapter's Python bookkeeping.
+// Unexpected private state still takes the adapter's ordinary indexing path.
+fn next_buffered(args: &[Value]) -> Result<Value, String> {
+    let Value::Object(iterator) = args[0].contents() else { return Ok(Value::Null); };
+    match field(&iterator, "_queued") {
+        Value::Tuple(tokens) => {
+            let Some(index) = number(&iterator, "_queued_at").and_then(|n| usize::try_from(n).ok()) else { return Ok(Value::Null); };
+            let Some(token) = tokens.get(index).filter(|token| finished_token(token)) else { return Ok(Value::Null); };
+            let token = token.clone();
+            put(&iterator, "_queued_at", Value::Small(index as i64 + 1));
+            if index + 1 == tokens.len() { put(&iterator, "_queued", Value::Null); }
+            return Ok(token);
+        }
+        Value::Null => (),
+        _ => return Ok(Value::Null),
+    }
+    let scanned = scan(&args[..1])?;
+    let Value::Tuple(row) = &scanned else { return Ok(Value::Null); };
+    if row.first().is_some_and(finished_token) {
+        let first = row[0].clone();
+        put(&iterator, "_queued", scanned);
+        put(&iterator, "_queued_at", Value::Small(1));
+        Ok(first)
+    } else if finished_token(&scanned) { Ok(scanned) }
+    else { Ok(Value::Null) }
+}
+
 pub fn scan(args: &[Value]) -> Result<Value, String> {
+    if args.len() == 2 && matches!(args[1], Value::Flag(true)) { return next_buffered(args); }
     if args.len() != 1 {
         return scan_one(args);
     }
     let mut gathered = Vec::new();
-    let mut hops = 0i32;
-    loop {
-        hops += 1;
-        if hops > 800_000 { break; }
+    // Bound speculative token storage even when a physical line is enormous.
+    while gathered.len() < 128 {
         let step = scan_one(args)?;
         if finished_token(&step) {
             gathered.push(step);

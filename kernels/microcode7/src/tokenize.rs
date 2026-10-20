@@ -572,15 +572,44 @@ fn recognised(item: &Value) -> bool {
     }
 }
 
+// Serve the native queue directly; leave nonstandard adapter fields to Python.
+fn buffered_next(values: &[Value]) -> Result<Value, String> {
+    let owner = match values[0].settled() { Value::Thing(thing) => thing, _ => return Ok(Value::Nil) };
+    let pending = slot(&owner, "_queued");
+    if !matches!(pending, Value::Nil) {
+        if let Value::Tuple(entries) = pending {
+            if let Some(offset) = counter(&owner, "_queued_at").and_then(|n| usize::try_from(n).ok()) {
+                if let Some(item) = entries.get(offset).filter(|item| recognised(item)) {
+                    let answer = item.clone();
+                    store(&owner, "_queued_at", Value::Small((offset + 1) as i64));
+                    if entries.len() == offset + 1 { store(&owner, "_queued", Value::Nil); }
+                    return Ok(answer);
+                }
+            }
+        }
+        return Ok(Value::Nil);
+    }
+    let batch = atom(&values[..1])?;
+    match &batch {
+        Value::Tuple(entries) if entries.first().is_some_and(recognised) => {
+            let answer = entries[0].clone();
+            store(&owner, "_queued_at", Value::Small(1));
+            store(&owner, "_queued", batch);
+            Ok(answer)
+        }
+        _ if recognised(&batch) => Ok(batch),
+        _ => Ok(Value::Nil),
+    }
+}
+
 pub fn atom(values: &[Value]) -> Result<Value, String> {
+    if matches!(values, [_, Value::Flag(true)]) { return buffered_next(values); }
     if values.len() != 1 {
         return read_atom(values);
     }
     let mut group = Vec::new();
-    let mut guard = 0i32;
-    loop {
-        guard += 1;
-        if guard > 900_000 { break; }
+    // A callback can supply arbitrarily long lines: retain only a small batch.
+    while group.len() != 128 {
         let found = read_atom(values)?;
         if recognised(&found) {
             group.push(found);
