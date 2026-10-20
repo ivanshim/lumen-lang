@@ -1427,7 +1427,11 @@ fn parse_args(args: &[OsString]) -> Invocation {
         module_source = Some(String::new());
         program_name = Some(String::new());
     }
-    let file = file.unwrap_or_else(|| usage(program));
+    let file = file.unwrap_or_else(|| {
+        if language.as_ref().is_some_and(|held| held.name() == "python") || env::var("LUMEN_LANG").is_ok_and(|held| held == "python") {
+            "-".to_owned()
+        } else { usage(program) }
+    });
     let language = language.unwrap_or_else(|| {
         // A language not named on the command line may be carried in
         // the environment, by a host that started this binary again

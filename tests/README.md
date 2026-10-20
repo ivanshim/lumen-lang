@@ -886,4 +886,4 @@ keeps native compilation provenance, so independent compilations are not yet
 compared by canonical instruction content. Upstream decorators determine the
 remaining CPython-specific skips.
 
-The batch21m-b4 doctest package and data are unmodified `Lib/test/test_doctest/` files from `Python-3.14.8.tar.xz` at `https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz` (archive SHA256 `c2215904f02b175596dc49351585104f4bc20341e1c47378b26a2c274360ce73`). The `__main__.py` symlink uses the existing Lumen generic package launcher; it is an adapter entry point.
+The batch21m-b4 doctest package and data are unmodified `Lib/test/test_doctest/` files from `Python-3.14.8.tar.xz` at `https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz` (archive SHA256 `c2215904f02b175596dc49351585104f4bc20341e1c47378b26a2c274360ce73`). The `__main__.py` adapter uses the existing Lumen generic package launcher; it is an adapter entry point.

@@ -861,3 +861,7 @@ def testsource(module, name):
                 source = source + example.source + example.want
             return source
     return ''
+
+
+# Export the supported public doctest API; helper TestCase classes stay private.
+__all__ = ['register_optionflag', 'DONT_ACCEPT_TRUE_FOR_1', 'DONT_ACCEPT_BLANKLINE', 'NORMALIZE_WHITESPACE', 'ELLIPSIS', 'SKIP', 'IGNORE_EXCEPTION_DETAIL', 'COMPARISON_FLAGS', 'REPORT_UDIFF', 'REPORT_CDIFF', 'REPORT_NDIFF', 'REPORT_ONLY_FIRST_FAILURE', 'REPORTING_FLAGS', 'FAIL_FAST', 'Example', 'DocTest', 'DocTestParser', 'DocTestFinder', 'DocTestRunner', 'OutputChecker', 'DocTestFailure', 'UnexpectedException', 'testmod', 'testfile', 'run_docstring_examples', 'DocTestSuite', 'DocFileSuite', 'set_unittest_reportflags', 'testsource']
