@@ -24234,6 +24234,7 @@ impl<'a> Machine<'a> {
             // a pipe (1), or inherited (anything else); a third stream
             // told to follow the second is kept a pipe of its own, and
             // the library that asked joins the two later.
+            Prim::PythonAtom => return crate::tokenize::atom(v),
             Prim::AsciiRun => { return self.dispatch_arm_56(op, name, v); }
             Prim::JsonStringScan => { return self.dispatch_arm_57(op, name, v); }
             Prim::Subprocess => { return self.dispatch_arm_58(op, name, v); }

@@ -118,6 +118,9 @@
   "ext.builtin.host.info": [
     "__host_info"
   ],
+  "ext.builtin.tokenize.scan": [
+    "__tokenize_scan"
+  ],
   "ext.builtin.text.scan_ascii": [
     "__text_scan_ascii"
   ],

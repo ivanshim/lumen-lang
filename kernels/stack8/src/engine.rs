@@ -24692,6 +24692,7 @@ impl<'a> Engine<'a> {
             // (anything else); a third stream told to follow the
             // second is kept as its own pipe, and the library that
             // asked reads the two together afterwards.
+            Builtin::TokenScan => return crate::tokenize::scan(args),
             Builtin::AsciiSpan => { return self.builtin_arm_27(builtin, name, args); }
             Builtin::JsonString => { return self.builtin_arm_28(builtin, name, args); }
             Builtin::Subprocess => { return self.builtin_arm_29(builtin, name, args); }

@@ -5105,6 +5105,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.to_string.object` | - | - | `object` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.undecodable` | - | - | `TypeError: decoding str is not supported` `TypeError: decoding to str: need a bytes-like object, ` ` found` | - | - | - | - | - | - | - |
 | `ext.builtin.to_string.unready` | - | - | `TypeError: str() takes at most 3 arguments` | - | - | - | - | - | - | - |
+| `ext.builtin.tokenize.scan` | - | - | `__tokenize_scan` | - | - | - | - | - | - | - |
 | `ext.builtin.trace_native` | - | - | `__trace_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.tuple` | - | - | `tuple` | - | - | - | - | - | - | - |
 | `ext.builtin.type_descriptors.clear` | - | - | `__clear_type_descriptors` | - | - | - | - | - | - | - |
@@ -6159,6 +6160,16 @@ native instance layout when multiple bases are present.
 returns a decoded string and ending code-point offset for a valid UTF-8
 string, or no result so the separate scanner adapter handles unpaired
 surrogates, permissive controls, and precise error diagnostics.
+
+`ext.builtin.tokenize.scan` recognizes buffered names, common numeric forms,
+ordinary single-line strings with prefixes and escapes, comments, newlines,
+plain single-line interpolation pieces, operators and matching root-mode
+brackets in a tokenizer iterator's private state. It returns a complete token and updates its cursor and line cache, or
+requests the adapter's reader callback before preparing its decoded line and
+retrying. Matching
+space-only indentation and blank lines can be prepared natively; indentation
+transitions, tabs, complex interpolation and diagnostic cases retain the
+adapter's scanner.
 
 `ext.builtin.text.scan_ascii` scans the bounded ASCII span accepted by a
 character set and returns its ending code-point index. The regular-expression

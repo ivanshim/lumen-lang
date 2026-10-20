@@ -723,6 +723,7 @@ pub enum Builtin {
     /// writing back.
 
     AsciiSpan,
+    TokenScan,
     JsonString,
     Subprocess,
     /// The host's own signals, one word told which step it is on
