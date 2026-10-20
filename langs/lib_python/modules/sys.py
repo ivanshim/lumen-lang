@@ -211,6 +211,7 @@ def set_int_max_str_digits(maxdigits):
         raise ValueError('maxdigits must be 0 or larger than 640')
     _int_max_str_digits = maxdigits
 
+# Standard streams validate their descriptor before asking os.isatty.
 class _StandardStream:
     closed = False
     encoding = 'utf-8'
