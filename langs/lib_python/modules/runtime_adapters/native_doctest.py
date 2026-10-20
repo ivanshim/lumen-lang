@@ -90,6 +90,8 @@ def set_unittest_reportflags(flags):
     return old
 
 
+master = None
+
 class DocTestFailure(Exception):
     def __init__(self, test, example, got):
         self.test = test
@@ -108,9 +110,10 @@ class TestResults:
     """What testmod and testfile report: how many examples were run and
     how many of them failed."""
 
-    def __init__(self, failed, attempted):
+    def __init__(self, failed, attempted, *, skipped=0):
         self.failed = failed
         self.attempted = attempted
+        self.skipped = skipped
 
     def __len__(self):
         return 2
@@ -710,6 +713,12 @@ class DocTestRunner:
             return None
         return where + _difference(example, got)
 
+    def merge(self, other):
+        self.failures += other.failures
+        self.tries += other.tries
+        self.skips += other.skips
+        self.reports.extend(other.reports)
+
     def summarize(self, verbose=None):
         for report in self.reports:
             print(self.DIVIDER)
@@ -768,6 +777,23 @@ class DocTestCase(_NamedCase):
         return '<DocTestCase ' + self._dt_test.name + '>'
 
 
+def _normalize_module(module, depth=2):
+    if isinstance(module, types.ModuleType):
+        return module
+    if isinstance(module, str):
+        return __load_module(module)
+    if module is not None:
+        raise TypeError('Expected a module, string, or None')
+    try:
+        try:
+            name = sys._getframemodulename(depth)
+        except AttributeError:
+            name = sys._getframe(depth).f_globals['__name__']
+        return sys.modules[name]
+    except KeyError:
+        return None
+
+
 def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
                  **options):
     """A unittest suite of the examples found in a module's docstrings."""
@@ -776,6 +802,8 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
     if module is None:
         caller = __program_namespace(1).f_globals
         module = sys.modules.get(sys._getframemodulename(1), caller)
+    else:
+        module = _normalize_module(module)
     tests = test_finder.find(module, None, None, globs, extraglobs)
     suite = unittest.TestSuite()
     optionflags = options.get('optionflags', 0)
@@ -790,10 +818,48 @@ def DocTestSuite(module=None, globs=None, extraglobs=None, test_finder=None,
 
 
 def DocFileSuite(*paths, **options):
+    if options.get('module_relative', True) and options.get('package') is None:
+        options['package'] = _normalize_module(None, 2)
     suite = unittest.TestSuite()
     for path in paths:
         suite.addTest(DocFileTest(path, **options))
     return suite
+
+
+def _load_testfile(filename, package, module_relative, encoding):
+    import os
+    if module_relative:
+        if isinstance(package, str):
+            package = __load_module(package)
+        elif package is None:
+            package = _normalize_module(None, 3)
+        elif not isinstance(package, types.ModuleType):
+            raise TypeError('Expected a module, string, or None')
+        if filename.startswith('/'):
+            raise ValueError('Module-relative files may not have absolute paths')
+        filename = os.path.join(*filename.split('/'))
+        if hasattr(package, '__file__'):
+            basedir = os.path.dirname(package.__file__)
+        elif package.__name__ == '__main__':
+            basedir = os.path.dirname(sys.argv[0]) if sys.argv and sys.argv[0] else os.curdir
+        else:
+            for directory in getattr(package, '__path__', ()):
+                candidate = os.path.join(directory, filename)
+                if os.path.exists(candidate):
+                    filename = candidate
+                    break
+            else:
+                raise ValueError("Can't resolve paths relative to the module %r (it has no __file__)" % package.__name__)
+            basedir = ''
+        filename = os.path.join(basedir, filename)
+        loader = getattr(package, '__loader__', None)
+        if loader is None:
+            loader = getattr(getattr(package, '__spec__', None), 'loader', None)
+        if hasattr(loader, 'get_data'):
+            text = loader.get_data(filename).decode(encoding)
+            return text.replace('\r\n', '\n').replace('\r', '\n'), filename
+    with open(filename, encoding=encoding) as source:
+        return source.read(), filename
 
 
 def DocFileTest(path, **options):
@@ -802,13 +868,8 @@ def DocFileTest(path, **options):
     relative = options.get('module_relative', True)
     if package is not None and not relative:
         raise ValueError('Package may only be specified for module-relative paths.')
-    if relative:
-        if path.startswith('/'):
-            raise ValueError('Module-relative files may not have absolute paths')
-        namespace = _namespace_of(package)
-        path = os.path.join(os.path.dirname(namespace.get('__file__', '')), path)
-    with open(path, encoding=options.get('encoding', 'utf-8')) as source:
-        text = source.read()
+    text, path = _load_testfile(path, package, relative,
+                                options.get('encoding') or 'utf-8')
     globs = _copy_dict(options.get('globs') or {})
     globs.update(options.get('extraglobs') or {})
     globs.setdefault('__name__', '__main__')
@@ -822,9 +883,28 @@ def testfile(filename, module_relative=True, name=None, package=None,
              globs=None, verbose=None, report=True, optionflags=0,
              extraglobs=None, raise_on_error=False, parser=None,
              encoding=None):
-    raise NotImplementedError(
-        'doctest.testfile needs to read ' + str(filename) +
-        ' from disk, which this library cannot do')
+    import os
+    global master
+    if package is not None and not module_relative:
+        raise ValueError('Package may only be specified for module-relative paths.')
+    text, filename = _load_testfile(filename, package, module_relative,
+                                    encoding or 'utf-8')
+    if name is None:
+        name = os.path.basename(filename)
+    namespace = _copy_dict(globs or {})
+    namespace.update(extraglobs or {})
+    namespace.setdefault('__name__', '__main__')
+    runner_class = DebugRunner if raise_on_error else DocTestRunner
+    runner = runner_class(verbose=verbose, optionflags=optionflags)
+    parser = parser or DocTestParser()
+    runner.run(parser.get_doctest(text, namespace, name, filename, 0))
+    if report:
+        runner.summarize()
+    if master is None:
+        master = runner
+    else:
+        master.merge(runner)
+    return TestResults(runner.failures, runner.tries, skipped=runner.skips)
 
 
 def testmod(m=None, name=None, globs=None, verbose=None, report=True,
