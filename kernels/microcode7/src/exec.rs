@@ -10787,6 +10787,18 @@ impl<'a> Machine<'a> {
         }
         let original = receiver;
         let underlying = Self::underlying(original).filter(|_| !self.rules.words_ext_stmt_class_detail_native_protocols.is_empty());
+        // A trimming on a thing of a kind copies the stored worth so
+        // every call hands a new exact value out.
+        let underlying = underlying.map(|worth| {
+            if matches!(Self::octet_operation(name), Some(12 | 24 | 25)) {
+                match worth.settled() {
+                    Value::Text(text) => Value::text(&text),
+                    Value::Unpaired(units) => Value::Unpaired(Rc::from(&units[..])),
+                    Value::Octets { cell, changeable: false, lead } => Value::Octets { cell: Rc::new(RefCell::new(cell.borrow().clone())), changeable: false, lead },
+                    other => other,
+                }
+            } else { worth }
+        });
         let receiver = underlying.as_ref().unwrap_or(original);
         let mut arguments = arguments;
         if (at == 2 || at == 3) && matches!(receiver.settled(), Value::Dict(_)) {
@@ -13178,6 +13190,19 @@ impl<'a> Machine<'a> {
         }
         let newargs_class = if name == "__getnewargs__" { Some(receiver.kind_word()) } else { None };
         let storage = Self::underlying(receiver);
+        // A trimming on a thing's kind makes a fresh exact value at
+        // each call, so the stored worth is copied under those three
+        // workings; a changeable worth stays the thing's own.
+        let storage = storage.map(|worth| {
+            if matches!(Self::octet_operation(name), Some(12 | 24 | 25)) {
+                match worth.settled() {
+                    Value::Text(text) => Value::text(&text),
+                    Value::Unpaired(units) => Value::Unpaired(Rc::from(&units[..])),
+                    Value::Octets { cell, changeable: false, lead } => Value::Octets { cell: Rc::new(RefCell::new(cell.borrow().clone())), changeable: false, lead },
+                    other => other,
+                }
+            } else { worth }
+        });
         let receiver = storage.as_ref().unwrap_or(receiver);
         let actual = receiver.settled();
         if matches!(actual, Value::Refusal(_) | Value::Ellipsis) && matches!(name, "__reduce__" | "__reduce_ex__") {
@@ -18263,6 +18288,11 @@ impl<'a> Machine<'a> {
                 // text, and every one of those is worked over the bytes.
                 _ => {
                     let produced = self.octets_textual(operation, &content, *changeable, args)?;
+                    if !*changeable && matches!(operation, 24 | 25) {
+                        if let Value::Octets { cell, .. } = &produced {
+                            if cell.borrow().len() == content.len() { return Ok(values[0].clone()); }
+                        }
+                    }
                     if matches!(operation, 26 | 27) && !changeable {
                         if let Value::Tuple(triple) = &produced {
                             let found = matches!(&triple[1], Value::Octets { cell, .. } if !cell.borrow().is_empty());
@@ -18275,6 +18305,9 @@ impl<'a> Machine<'a> {
                     }
                     return Ok(produced);
                 },
+            }
+            if !*changeable && operation == 12 && result.len() == content.len() {
+                return Ok(values[0].clone());
             }
             Ok(self.octets(result, *changeable))
         })();
@@ -23330,6 +23363,12 @@ impl<'a> Machine<'a> {
         if matches!(op, Prim::Textual(_)) && v.first().is_some_and(|value| Self::underlying(value).is_some_and(|base| matches!(base.settled(), Value::Text(_)))) {
             let mut operands = v.to_vec();
             operands[0] = Self::underlying(&operands[0]).expect("text storage");
+            // A trimming on a thing of a text kind makes a fresh exact
+            // text at each call, so the thing's stored worth is copied
+            // here instead of being read as it stands.
+            if matches!(op, Prim::Textual(crate::text::Work::STRIP | crate::text::Work::LSTRIP | crate::text::Work::RSTRIP)) {
+                operands[0] = match operands[0].settled() { Value::Text(text) => Value::text(&text), other => other };
+            }
             return self.prim(op, name, &operands);
         }
         if let Some(result) = self.user_operation(op, v)? { return Ok(result); }
@@ -24721,7 +24760,14 @@ impl<'a> Machine<'a> {
         let result = match op {
             Prim::Textual(work)
             => {
-                let mut values: Vec<Value> = v.iter().map(|x| match Self::underlying(x) { Some(word @ (Value::Text(_) | Value::Unpaired(_))) => word, _ => x.settled() }).collect();
+                // A trimming on a thing of a text kind answers with a fresh
+                // exact value, so surrogate storage is copied as it is unwrapped.
+                let trims = matches!(work, crate::text::Work::STRIP | crate::text::Work::LSTRIP | crate::text::Work::RSTRIP);
+                let mut values: Vec<Value> = v.iter().map(|x| match Self::underlying(x) {
+                    Some(Value::Unpaired(units)) if trims => Value::Unpaired(Rc::from(&units[..])),
+                    Some(word @ (Value::Text(_) | Value::Unpaired(_))) => word,
+                    _ => x.settled(),
+                }).collect();
                 // Convert explicit code-unit search endpoints through __index__.
                 if work == crate::text::Work::COUNT && values.iter().take(2).any(|value| matches!(value, Value::Unpaired(_))) {
                     let mut slot = 2;

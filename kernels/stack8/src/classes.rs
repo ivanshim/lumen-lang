@@ -3271,6 +3271,17 @@ impl<'a> Engine<'a> {
                         && matches!(word.as_str(), "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor") {
                         return self.class_apply(Self::adapter(15, vec![subject]), args);
                     }
+                    // A loose trimming on a thing of a text or fixed-bytes
+                    // kind makes a fresh exact value at each call, so the
+                    // worth it works is copied here rather than shared.
+                    let receiver = if of_own_kind && matches!(subject, Value::Object(_)) && matches!(self.lang.value_methods.get(member.as_str()).map(String::as_str), Some("strip" | "lstrip" | "rstrip")) {
+                        match receiver {
+                            Value::Text(text) => Value::text(&text),
+                            Value::Codepoints(row) => Value::Codepoints(Rc::new(row.as_ref().clone())),
+                            Value::Bytes(cell, false, lead) => Value::Bytes(Rc::new(RefCell::new(cell.borrow().clone())), false, lead),
+                            other => other,
+                        }
+                    } else { receiver };
                     let found = if of_own_kind && self.native_special(&receiver, &member) {
                         Some(Value::ValueMethod(Rc::new((subject.clone(), member.clone()))))
                     } else if of_own_kind && member == self.class_word("descriptor.get")
@@ -6063,6 +6074,13 @@ impl<'a> Engine<'a> {
                     if let Some(member)=self.builtin_member(&worth,name)? { return Ok(member); }
                 }
                 if let Some(word @ Value::Text(_)) = Self::worth_of(&subject) {
+                    // A trimming keeps the thing itself as its receiver,
+                    // so every call works the stored worth afresh and
+                    // answers a new exact text; other text workings
+                    // bind the worth they read.
+                    if matches!(self.lang.value_methods.get(name).map(String::as_str), Some("strip" | "lstrip" | "rstrip")) {
+                        return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
+                    }
                     if let Some(method) = self.builtin_member(&word, name)? { return Ok(method); }
                 }
                 if let Some(worth)=Self::worth_of(&subject).filter(|v|!matches!(v.contents(),Value::Set(_))) {
@@ -6094,6 +6112,11 @@ impl<'a> Engine<'a> {
                     // keeps, which the worth beneath the thing works.
                     if let Value::Bytes(_,changeable,_)=worth.contents() {
                         if let Some(working)=self.byte_member(name,changeable) {
+                            // A fixed row under a trimming keeps the
+                            // thing itself so each call copies afresh.
+                            if !changeable && matches!(self.lang.value_methods.get(name).map(String::as_str), Some("strip" | "lstrip" | "rstrip")) {
+                                return Ok(Value::ValueMethod(Rc::new((subject.clone(), working.to_string()))));
+                            }
                             return Ok(Value::ValueMethod(Rc::new((worth,working.to_string()))));
                         }
                     }

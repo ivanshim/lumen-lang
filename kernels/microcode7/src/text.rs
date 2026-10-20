@@ -454,6 +454,8 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             let left = if work == RSTRIP { 0 } else { numbers.iter().take_while(|point| ignores(point)).count() };
             let tail = &numbers[left..];
             let right = if work == LSTRIP { tail.len() } else { tail.len() - tail.iter().rev().take_while(|point| ignores(point)).count() };
+            // Nothing discarded means the receiver answers as itself.
+            if left == 0 && right == numbers.len() { return Ok(input[0].clone()); }
             return Ok(Value::characters(tail[..right].to_vec()));
         }
         if matches!(work, STARTSWITH | ENDSWITH | COUNT | INDEX | RINDEX | FIND | RFIND) {
@@ -706,7 +708,8 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             let mut kept=source;
             if work!=RSTRIP {kept=kept.trim_start_matches(ignored);}
             if work!=LSTRIP {kept=kept.trim_end_matches(ignored);}
-            Value::text(kept)
+            // Nothing taken off answers with the very text itself.
+            if kept.len()==source.len() {input[0].clone()} else {Value::text(kept)}
         }
         SPLIT|RSPLIT=>{
             let maximum=g.whole(1,-1)?;
