@@ -64,7 +64,6 @@
     "test.support.threading_helper": "runtime_adapters/native_test_support_threading_helper.py",
     "importlib._bootstrap_external": "runtime_adapters/importlib_external.py",
     "http.server": "runtime_adapters/native_http_server.py",
-    "runpy": "runtime_adapters/native_runpy.py",
     "signal": "runtime_adapters/native_signal.py",
     "test.support.script_helper": "runtime_adapters/native_test_support_script_helper.py",
     "threading": "runtime_adapters/native_threading.py",

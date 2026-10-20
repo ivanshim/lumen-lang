@@ -1122,15 +1122,6 @@ fn plainly(e: &std::io::Error) -> String {
     }
 }
 
-/// Where this build keeps the Python library, which is the first
-/// directory a name is looked for in.
-fn python_library_root() -> String {
-    match env::var_os("LUMEN_ROOT") {
-        Some(root) => std::path::PathBuf::from(root).join("langs/lib_python/modules").to_string_lossy().into_owned(),
-        None => concat!(env!("CARGO_MANIFEST_DIR"), "/langs/lib_python/modules").to_string(),
-    }
-}
-
 fn parse_args(args: &[OsString]) -> Invocation {
     let held = args.first().map(|a| a.to_string_lossy().into_owned()).unwrap_or_else(|| "lumen-lang".to_string());
     let program = held.as_str();
@@ -1256,49 +1247,9 @@ fn parse_args(args: &[OsString]) -> Invocation {
                     eprintln!("Error: -m requires the Python language");
                     process::exit(1);
                 }
-                let path = module.replace('.', "/");
-                let mut found = None;
-                let mut directories = vec![std::path::PathBuf::from(".")];
-                if !python_ignore_environment {
-                    if let Some(search) = env::var_os("PYTHONPATH") { directories.extend(env::split_paths(&search)); }
-                }
-                for directory in directories {
-                    for (at, relative) in [format!("{path}/__main__.py"), format!("{path}/__main__.pyc"), format!("{path}.py"), format!("{path}.pyc")].into_iter().enumerate() {
-                        let candidate = directory.join(relative).to_string_lossy().into_owned();
-                        let source = if candidate.ends_with(".pyc") {
-                            fs::metadata(&candidate).ok().map(|_| compiled_source(&candidate))
-                        } else { fs::read_to_string(&candidate).ok() };
-                        if let Some(source) = source { found = Some((candidate, source, at < 2)); break; }
-                    }
-                    if found.is_some() { break; }
-                }
-                if found.is_none() {
-                    // A name the library keeps is found where the library
-                    // keeps it, as the reference finds one walking sys.path.
-                    let root = python_library_root();
-                    for candidate in [format!("{root}/{path}/__main__.py"), format!("{root}/{path}.py")] {
-                        if let Ok(source) = fs::read_to_string(&candidate) { let via_main = candidate.ends_with("/__main__.py"); found = Some((candidate, source, via_main)); break; }
-                    }
-                }
-                if found.is_none() {
-                    let executable_module = format!("{module}.__main__");
-                    if let Some((_, source, filename)) = embedded_modules::MODULES.iter().find(|(name, _, _)| *name == executable_module)
-                        .or_else(|| embedded_modules::MODULES.iter().find(|(name, _, _)| *name == module)) {
-                        found = Some((format!("langs/lib_python/modules/{filename}"), source.to_string(), false));
-                    }
-                }
-                let Some((filename, source, via_main)) = found else {
-                    eprintln!("No module named {module}");
-                    process::exit(1);
-                };
-                // Naming the package finds its __main__.py and runs as
-                // package.__main__; naming package.__main__ itself finds
-                // that same file directly and keeps its own name, so the
-                // module identity is right either way.
-                module_name = Some(if via_main { format!("{module}.__main__") } else { module });
-                file = Some(filename);
-                module_source = Some(source);
-                language = Some(Language::Named("python".to_string()));
+                file = Some("-m".to_owned());
+                module_source = Some(format!("import runpy\nrunpy._run_module_as_main({})\n", python_string_literal(&module)));
+                language.get_or_insert_with(|| Language::Named("python".to_string()));
                 rest = &rest[used..];
                 break;
             }
@@ -1306,6 +1257,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
             Some("-c") if file.is_none() && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
                 if rest.len() < 2 { usage(program); }
                 module_source = Some(said(&rest[1]));
+                python_safe_path = explicit_safe_path;
                 file = Some("<string>".to_owned());
                 program_name = Some("-c".to_owned());
                 language = Some(Language::Named("python".to_owned()));
@@ -1388,6 +1340,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 rest = &rest[1..];
             }
             Some("-") if file.is_none() => {
+                python_safe_path = explicit_safe_path;
                 file = Some("-".to_string());
                 language = Some(Language::Named("python".to_string()));
                 rest = &rest[1..];
