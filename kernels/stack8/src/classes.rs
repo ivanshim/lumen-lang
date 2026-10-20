@@ -4758,12 +4758,12 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        if self.lang.class_details.get("root.members").and_then(|fields|fields.get(10)).is_some_and(|field|field==name) && matches!(subject.contents(),Value::Set(_)) {
+        if self.lang.root_member_words.get(10).is_some_and(|field|field==name) && matches!(subject.contents(),Value::Set(_)) {
             let inherited=self.root_member(name,None).ok_or_else(||self.class_refusal())?;
             return Ok(Self::adapter(3,vec![inherited,subject]));
         }
         if (self.is_coroutine(&subject) || matches!(&subject, Value::Adapter(parts) if parts.0 == 34))
-            && self.lang.class_details.get("root.members").is_some_and(|names| names.iter().skip(11).take(2).any(|word| word == name)) {
+            && self.lang.root_member_words.iter().skip(11).take(2).any(|word| word == name) {
             let member = self.root_member(name, None).expect("the root reduction descriptor");
             return Ok(Self::adapter(3, vec![member, subject.clone()]));
         }

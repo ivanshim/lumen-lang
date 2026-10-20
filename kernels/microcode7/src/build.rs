@@ -143,16 +143,25 @@ thread_local! {
     static LIBRARY_SURVEYS: std::cell::RefCell<std::collections::BTreeMap<String, (SurveyRows, SourceRows)>> = std::cell::RefCell::new(std::collections::BTreeMap::new());
 }
 
+// The surveys live under the definition's JSON in its one canonical form,
+// whatever spelling registered them: the newest registration of a
+// definition stands for it.
 pub fn register_prepared(definition: &str, rows: SurveyRows, sources: SourceRows) {
     let Ok(object) = serde_json::from_str::<serde_json::Value>(definition) else { return; };
     LIBRARY_SURVEYS.with(|library| { library.borrow_mut().insert(object.to_string(), (rows, sources)); });
 }
 
+// A text already in the canonical form is the key itself and needs no
+// reading; another spelling is read and written out canonically first.
 pub(crate) fn library_rows(definition: &str) -> Option<(SurveyRows, SourceRows)> {
-    match serde_json::from_str::<serde_json::Value>(definition) {
-        Ok(object) => LIBRARY_SURVEYS.with(|library| library.borrow().get(&object.to_string()).cloned()),
-        Err(_) => None,
-    }
+    LIBRARY_SURVEYS.with(|library| {
+        let library = library.borrow();
+        if let Some(rows) = library.get(definition) { return Some(*rows); }
+        match serde_json::from_str::<serde_json::Value>(definition) {
+            Ok(object) => library.get(&object.to_string()).copied(),
+            Err(_) => None,
+        }
+    })
 }
 
 fn input_proof(input: &[Token]) -> Vec<u8> {
@@ -180,9 +189,26 @@ fn input_proof(input: &[Token]) -> Vec<u8> {
 
 fn take_number(remaining: &mut &[u8]) -> Option<u64> {
     let header = remaining.get(..8)?;
-    let value = u64::from_le_bytes(header.try_into().ok()?);
+    let mut value = 0u64;
+    let mut place = 8;
+    while place > 0 { place -= 1; value = value << 8 | u64::from(header[place]); }
     *remaining = &remaining[8..];
     Some(value)
+}
+
+// The seven numbers that close a token's record, taken together.
+fn take_numbers(remaining: &mut &[u8]) -> Option<[u64; 7]> {
+    let block = remaining.get(..56)?;
+    let mut numbers = [0u64; 7];
+    let mut which = 0;
+    while which < 7 {
+        let from = which * 8;
+        numbers[which] = u64::from(block[from]) | u64::from(block[from + 1]) << 8 | u64::from(block[from + 2]) << 16 | u64::from(block[from + 3]) << 24
+            | u64::from(block[from + 4]) << 32 | u64::from(block[from + 5]) << 40 | u64::from(block[from + 6]) << 48 | u64::from(block[from + 7]) << 56;
+        which += 1;
+    }
+    *remaining = &remaining[56..];
+    Some(numbers)
 }
 
 fn take_word(remaining: &mut &[u8]) -> Option<String> {
@@ -207,26 +233,32 @@ fn read_token_proof(mut remaining: &[u8]) -> Option<Vec<Token>> {
         let kind = kinds.get(usize::from(take_byte(&mut remaining)?)).copied()?;
         let said = take_word(&mut remaining)?;
         let written = if take_byte(&mut remaining)? == 0 { None } else { Some(take_word(&mut remaining)?) };
-        let span = usize::try_from(take_number(&mut remaining)?).ok()?;
-        let row = u32::try_from(take_number(&mut remaining)?).ok()?;
-        let column = usize::try_from(take_number(&mut remaining)?).ok()?;
-        let end_column = usize::try_from(take_number(&mut remaining)?).ok()?;
-        let end_row = u32::try_from(take_number(&mut remaining)?).ok()?;
-        let utf8_column = usize::try_from(take_number(&mut remaining)?).ok()?;
-        let utf8_end = usize::try_from(take_number(&mut remaining)?).ok()?;
-        output.push(Token { shape: kind, lexeme: said, raw: written, span, row, column, end_column, end_row, utf8_column, utf8_end });
+        let [span, row, column, end_column, end_row, utf8_column, utf8_end] = take_numbers(&mut remaining)?;
+        let fits = |number: u64| (number as usize) as u64 == number;
+        if row > u64::from(u32::MAX) || end_row > u64::from(u32::MAX) || ![span, column, end_column, utf8_column, utf8_end].into_iter().all(fits) { return None; }
+        output.push(Token { shape: kind, lexeme: said, raw: written, span: span as usize, row: row as u32, column: column as usize, end_column: end_column as usize, end_row: end_row as u32, utf8_column: utf8_column as usize, utf8_end: utf8_end as usize });
     }
     if remaining.is_empty() { Some(output) } else { None }
 }
 
+thread_local! {
+    // The survey row of the bundled text whose tokens were last handed out, and
+    // the row a module build now under way may take its survey from.
+    static TOKENS_FROM_ROW: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+    static SURVEY_ROW: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
 pub(crate) fn library_tokens(source: &str, table: &Table) -> Option<Vec<Token>> {
+    TOKENS_FROM_ROW.with(|last| last.set(None));
     if table.single("ext.lexical.prologue.brief.setting").is_some() { return None; }
     let requested = source_key(source);
     for &(key, encoded_source, row) in table.library_token_sources? {
         if key != requested { continue; }
         if unpack_library_proof(encoded_source)?.as_slice() != source.as_bytes() { continue; }
         let (_, proof, _) = table.library_surveys?.get(row)?;
-        return read_token_proof(&unpack_library_proof(proof)?);
+        let tokens = read_token_proof(&unpack_library_proof(proof)?)?;
+        TOKENS_FROM_ROW.with(|last| last.set(Some(row)));
+        return Some(tokens);
     }
     None
 }
@@ -269,6 +301,12 @@ fn unpack_library_proof(packed: &'static [u8]) -> Option<Rc<Vec<u8>>> {
 
 fn library_survey(input: &[Token], table: &Table) -> Option<LibrarySurvey> {
     let rows = table.library_surveys?;
+    // Tokens read back from a bundled row are that row's own, so its survey
+    // is taken as it stands rather than matched against a rewritten proof.
+    if let Some(row) = SURVEY_ROW.with(|held| held.take()) {
+        let (_, _, encoded) = rows.get(row)?;
+        return serde_json::from_slice(&unpack_library_proof(encoded)?).ok();
+    }
     let proof = input_proof(input);
     let sought = input_key(&proof);
     let (_, _, encoded) = rows.iter().find(|(key, fingerprint, _)| *key == sought && unpack_library_proof(fingerprint).as_deref().map(Vec::as_slice) == Some(proof.as_slice()))?;
@@ -933,8 +971,10 @@ pub fn build_module_position(tokens: &[Token], table: &Table, seeded: &[String],
     let line = std::cell::Cell::new(0);
     let fatal = std::cell::Cell::new(false);
     let span = std::cell::Cell::new((1, 1, 0));
-    build_marking(tokens, table, seeded, HashMap::new(), false, 0, Some(origin), beside, named, Some((&line, &fatal, &span)), None, None, false, false, 0, &[], 0)
-        .map_err(|message| (message, line.get(), span.get()))
+    SURVEY_ROW.with(|held| held.set(TOKENS_FROM_ROW.with(|last| last.take())));
+    let built = build_marking(tokens, table, seeded, HashMap::new(), false, 0, Some(origin), beside, named, Some((&line, &fatal, &span)), None, None, false, false, 0, &[], 0);
+    SURVEY_ROW.with(|held| held.set(None));
+    built.map_err(|message| (message, line.get(), span.get()))
 }
 
 pub fn build_from_at(tokens: &[Token], table: &Table, seeded: &[String], assumed: HashMap<String, Signature>, strict: bool, before: u32) -> Result<Built, (String, u32)> {
@@ -14720,4 +14760,28 @@ mod prepared_proof_tests {
 /// Whether a call's argument list is long and plain enough to be handed over as a gathered array.
 fn bind_list_long(count: usize, starred: bool) -> bool {
     count > 30 && !starred
+}
+
+#[cfg(test)]
+mod survey_registration {
+    use super::{library_rows, register_prepared, SourceRows, SurveyRows};
+    static ONE: SurveyRows = &[(10, b"x", b"x")];
+    static TWO: SurveyRows = &[(20, b"y", b"y")];
+    static THREE: SurveyRows = &[(30, b"z", b"z")];
+    static NONE: SourceRows = &[];
+    fn stamp_for(text: &str) -> Option<u64> { library_rows(text).map(|(rows, _)| rows[0].0) }
+    #[test]
+    fn the_newest_registration_wins_whatever_its_spelling() {
+        let tight = r#"{"language":"survey","words":["a"]}"#;
+        let loose = "{\n  \"words\": [\"a\"],\n  \"language\": \"survey\"\n}";
+        register_prepared(tight, ONE, NONE);
+        register_prepared(tight, TWO, NONE);
+        assert_eq!(stamp_for(tight), Some(20));
+        assert_eq!(stamp_for(loose), Some(20));
+        register_prepared(loose, THREE, NONE);
+        assert_eq!(stamp_for(tight), Some(30));
+        assert_eq!(stamp_for(loose), Some(30));
+        assert_eq!(stamp_for(r#"{"language":"else"}"#), None);
+        assert_eq!(stamp_for("{broken"), None);
+    }
 }

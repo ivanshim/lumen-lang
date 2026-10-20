@@ -601,7 +601,7 @@ impl Table {
             cells.insert(key, held.len() - 1);
             known.push((key, shape));
         }
-        let mut strange: Vec<&str> = map.keys().map(String::as_str).filter(|k| !k.starts_with('$') && !known.iter().any(|(l, _)| l == k)).collect();
+        let mut strange: Vec<&str> = map.keys().map(String::as_str).filter(|k| !k.starts_with('$') && !cells.contains_key(k)).collect();
         strange.sort();
         if !strange.is_empty() {
             return Err(format!("unknown label(s): {}", strange.join(", ")));

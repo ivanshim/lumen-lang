@@ -5182,7 +5182,7 @@ impl<'a> Machine<'a> {
             if Self::locals_member(key) { return Ok(Value::Member(Rc::new(Value::Thing(proxy)), key.to_owned())); }
         }
         if let Some(answer) = self.coroutine_attribute(&value.settled(), key)? { return Ok(answer); }
-        if self.table.spells("ext.stmt.class.detail.text_signature", key) {
+        if self.rules.words_ext_stmt_class_detail_text_signature.iter().any(|word| word == key) {
             if let Some(text) = self.builtin_text_signature(&value) { return Ok(Value::text(text)); }
         }
         let mut value = value;

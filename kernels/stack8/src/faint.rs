@@ -110,7 +110,7 @@ impl Hold {
 
 /// Collect only identities relevant to live callbacks, including the
 /// reference object whose loss cancels its callback. No strong hold is kept.
-fn observe(reference: &Faint, addresses: &mut HashSet<usize>) {
+fn observe(reference: &Faint, addresses: &mut HashSet<usize, BuildHasherDefault<PlaceHasher>>) {
     addresses.insert(reference.bearer.as_ptr() as usize);
     match &reference.hold {
         Hold::Object(target) => { addresses.insert(target.as_ptr() as usize); }
@@ -188,12 +188,12 @@ thread_local! {
     static TARGET_REFERENCES: RefCell<HashMap<WeakTargetKey, Vec<Weak<Faint>>>> = RefCell::new(HashMap::new());
     static TARGET_PRUNE_AT: Cell<usize> = const { Cell::new(64) };
     static WATCHED: RefCell<Vec<Rc<Faint>>> = const { RefCell::new(Vec::new()) };
-    static INSTANCE_WATCHES: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+    static INSTANCE_WATCHES: RefCell<HashSet<usize, BuildHasherDefault<PlaceHasher>>> = RefCell::new(HashSet::default());
     /// Whether anything at all is waiting for the engine's next step.
     // Bit zero is queued work; bit one marks a nonempty anchor list.
     static PENDING: Cell<u8> = const { Cell::new(0) };
     /// Whether a value somebody may be watching has gone since the last look.
-    static OBSERVED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+    static OBSERVED: RefCell<HashSet<usize, BuildHasherDefault<PlaceHasher>>> = RefCell::new(HashSet::default());
     static DIED: Cell<bool> = const { Cell::new(false) };
     /// Objects rebuilt for their last words, with the routine to say them.
     static LAST_WORDS: RefCell<Vec<(Rc<Instance>, Value)>> = const { RefCell::new(Vec::new()) };
@@ -442,7 +442,7 @@ pub fn settle() -> (Vec<(Rc<Instance>, Value)>, Vec<Rc<RefCell<Generator>>>, Vec
                 }
             }
             let _ = WATCHING.try_with(|n| n.set(kept.len()));
-            let mut observed = HashSet::new();
+            let mut observed: HashSet<usize, BuildHasherDefault<PlaceHasher>> = HashSet::default();
             for reference in &kept {
                 observed.insert(reference.bearer.as_ptr() as usize);
                 if let Hold::Object(target) = &reference.hold { observed.insert(target.as_ptr() as usize); }

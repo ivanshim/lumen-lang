@@ -385,7 +385,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("operator", concat!(include_str!("operator.py"), "\n", include_str!("runtime_adapters/operator.py")), "operator.py"),
     ("optparse", include_str!("optparse.py"), "optparse.py"),
     ("os", include_str!("os.py"), "os.py"),
-    ("pathlib", include_str!("pathlib/__init__.py"), "pathlib/__init__.py"),
+    ("pathlib", concat!(include_str!("pathlib/__init__.py"), "\n", include_str!("runtime_adapters/pathlib.py")), "pathlib/__init__.py"),
     ("pathlib._local", include_str!("pathlib/_local.py"), "pathlib/_local.py"),
     ("pathlib._os", include_str!("pathlib/_os.py"), "pathlib/_os.py"),
     ("pathlib.types", include_str!("pathlib/types.py"), "pathlib/types.py"),

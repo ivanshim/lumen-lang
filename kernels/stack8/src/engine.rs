@@ -157,7 +157,7 @@ pub struct Engine<'a> {
     limit_place: StateCell<usize>,
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>, Value, usize)>,
-    async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>)>,
+    async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>), crate::value::FxBuildHasher>,
     delegated_tokens: std::collections::HashSet<usize>,
     code_watches: Vec<(Weak<RefCell<Value>>, bool)>,
     frame_codes: HashMap<usize, Weak<(u8, Vec<Value>)>>,
@@ -182,6 +182,10 @@ pub struct Engine<'a> {
     function_rows: RefCell<HashMap<(usize, usize), usize>>,
     /// Where the last short walk for a dead row of `function_members` ended.
     function_sweep: usize,
+    /// What each name asked of a row of bytes stands for (fixed kind, changeable kind).
+    byte_members_seen: RefCell<HashMap<String, [Option<Option<&'static str>>; 2], crate::value::FxBuildHasher>>,
+    /// The prepared entry the tokens last read by `text_tokens` came from, if any.
+    prepared_hint: std::cell::Cell<Option<usize>>,
     collecting_cycles: bool,
     kind_names: RefCell<HashMap<String, Vec<String>>>,
     member_words: [&'a str; 25],
@@ -247,7 +251,7 @@ pub struct Engine<'a> {
     /// written through it is a name written in the module.
     module_globals: HashMap<String, Rc<RefCell<Value>>>,
     // These dictionaries remain strongly owned by the module inventory.
-    globals_by_cell: HashMap<usize, String>,
+    globals_by_cell: HashMap<usize, String, crate::value::FxBuildHasher>,
     native_slots: HashMap<String, usize>,
     module_by_address: RefCell<HashMap<usize, String, crate::value::FxBuildHasher>>,
     changed_module_positions: RefCell<HashMap<usize, (usize, HashMap<String, usize, crate::value::FxBuildHasher>)>>,
@@ -1700,7 +1704,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
+            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, byte_members_seen: RefCell::new(HashMap::default()), prepared_hint: std::cell::Cell::new(None), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
             contexts: crate::context::ContextStore::default(),
@@ -1769,7 +1773,7 @@ impl<'a> Engine<'a> {
             limit_place: StateCell::new(0),
             generator_frames: HashMap::new(),
             coroutines: HashMap::new(),
-            async_generators: HashMap::new(),
+            async_generators: HashMap::default(),
             delegated_tokens: std::collections::HashSet::new(),
             code_watches: Vec::new(), frame_codes: HashMap::new(),
             source: Rc::from(""),
@@ -1847,7 +1851,7 @@ impl<'a> Engine<'a> {
             embedded_names: std::collections::HashSet::new(),
             modules: HashMap::new(),
             module_globals: HashMap::new(),
-            globals_by_cell: HashMap::new(),
+            globals_by_cell: HashMap::default(),
             native_slots: lang.class_special.iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
             module_by_address: RefCell::new(HashMap::with_hasher(crate::value::FxBuildHasher::default())),
             changed_module_positions: RefCell::new(HashMap::new()),
@@ -3378,7 +3382,7 @@ impl<'a> Engine<'a> {
         }
         // For the second format every name of the globals the annotation
         // reads is a stand-in, whatever it is bound to.
-        if !slot.ident.starts_with('#') && !slot.ident.starts_with('\0') {
+        if (&slot.ident).as_bytes().first() != Some(&b'#') && (&slot.ident).as_bytes().first() != Some(&0) {
             if let Some((names, true)) = self.annotation_scope() {
                 if self.running_routine.as_ref().is_some_and(|routine| Self::has_explicit_globals(routine)) {
                     if let Some(book) = &self.outer_book {
@@ -3405,7 +3409,7 @@ impl<'a> Engine<'a> {
         if let (Value::Bond(shared), false) = (&self.world[slot.far], empty_cell) {
             return Ok(match () {
                 _ if self.lang.bind_names && !self.registry.idents[slot.far].starts_with("\0module:") => Value::Bond(shared.clone()),
-                _ if (slot.moving && !slot.ident.starts_with('#')) => std::mem::replace(&mut *shared.borrow_mut(), Value::Gap),
+                _ if (slot.moving && (&slot.ident).as_bytes().first() != Some(&b'#')) => std::mem::replace(&mut *shared.borrow_mut(), Value::Gap),
                 _ => shared.borrow().clone(),
             });
         }
@@ -3413,7 +3417,7 @@ impl<'a> Engine<'a> {
         // Where a language makes a place on writing into it, a name
         // that holds nothing holds an empty array as far as the write
         // is concerned, and nothing is said about it.
-        if (slot.moving && !slot.ident.starts_with('#')) && self.lang.makes_places && (unbound || matches!(self.world[slot.far], Value::Null)) {
+        if (slot.moving && (&slot.ident).as_bytes().first() != Some(&b'#')) && self.lang.makes_places && (unbound || matches!(self.world[slot.far], Value::Null)) {
             return Ok(Value::Array(crate::tuples::Items::plain(Vec::new())));
         }
         // A language that has a word for a warning does not stop for a
@@ -3434,9 +3438,9 @@ impl<'a> Engine<'a> {
         if empty_cell { return Err(format!("Undefined variable: {}", slot.ident)); }
         let g = &mut self.world[slot.far];
         match g {
-            Value::Blank if (slot.moving && !slot.ident.starts_with('#')) => Err(format!("Undefined variable '{}'", slot.ident)),
+            Value::Blank if (slot.moving && (&slot.ident).as_bytes().first() != Some(&b'#')) => Err(format!("Undefined variable '{}'", slot.ident)),
             Value::Blank => Err(format!("Undefined variable: {}", slot.ident)),
-            _ if (slot.moving && !slot.ident.starts_with('#')) => Ok(std::mem::replace(g, Value::Gap)),
+            _ if (slot.moving && (&slot.ident).as_bytes().first() != Some(&b'#')) => Ok(std::mem::replace(g, Value::Gap)),
             v => Ok(v.clone()),
         }
     }
@@ -3569,7 +3573,7 @@ impl<'a> Engine<'a> {
                 self.write_booked(kept, &slot.ident, None, Some(slot.far));
                 if let Some(fled) = self.carried.take() { return Err(fled); }
             }
-            if !slot.ident.starts_with('#') && !self.lang.module_cache.is_empty() && self.module_slots.contains_key(&self.source) {
+            if (&slot.ident).as_bytes().first() != Some(&b'#') && !self.lang.module_cache.is_empty() && self.module_slots.contains_key(&self.source) {
                 if let Value::Bond(cell) = &self.world[slot.far] {
                     *cell.borrow_mut() = Value::Blank;
                     return Ok(());
@@ -3741,7 +3745,7 @@ impl<'a> Engine<'a> {
                     return Ok(());
                 }
             }
-            if slot.near.is_empty() && !slot.ident.starts_with('#') && self.registry.idents[slot.far].starts_with("\0module:") {
+            if slot.near.is_empty() && (&slot.ident).as_bytes().first() != Some(&b'#') && self.registry.idents[slot.far].starts_with("\0module:") {
                 if let Value::Bond(cell) = &self.world[slot.far] {
                     let cell = cell.clone();
                     *cell.borrow_mut() = value;
@@ -18951,7 +18955,11 @@ impl<'a> Engine<'a> {
     }
 
     fn slice_places(&self, parts: &[Value; 3], size: usize) -> Res<(usize, usize, i128, Vec<usize>)> {
-        let (start, stop, stride) = self.slice_edges(parts, size)?;
+        let edges = self.slice_edges(parts, size)?;
+        Ok(Self::places_between(edges))
+    }
+
+    fn places_between((start, stop, stride): (i128, i128, i128)) -> (usize, usize, i128, Vec<usize>) {
         let backwards = stride < 0;
         let mut places = Vec::new();
         let mut at = start;
@@ -18959,7 +18967,7 @@ impl<'a> Engine<'a> {
             places.push(at as usize);
             at = at.saturating_add(stride);
         }
-        Ok((start.max(0) as usize, stop.max(start).max(0) as usize, stride, places))
+        (start.max(0) as usize, stop.max(start).max(0) as usize, stride, places)
     }
 
     fn read_slice(&self, target: &Value, parts: &[Value; 3]) -> Res<Value> {
@@ -18975,8 +18983,12 @@ impl<'a> Engine<'a> {
                 Ok(self.byte_make(places.into_iter().map(|i| row[i]).collect(), *mutable))
             }
             Value::Array(items) | Value::Tuple(items) => {
-                let (_, _, _, places) = self.slice_places(parts, items.len())?;
-                let selected = places.into_iter().map(|i| items[i].clone()).collect();
+                let edges = self.slice_edges(parts, items.len())?;
+                let selected = if edges.2 == 1 {
+                    items[edges.0.max(0) as usize..edges.1.max(edges.0).max(0) as usize].to_vec()
+                } else {
+                    Self::places_between(edges).3.into_iter().map(|i| items[i].clone()).collect()
+                };
                 Ok(if matches!(target, Value::Tuple(_)) { Value::tuple(selected) } else { Value::array(selected) })
             }
             Value::Text(text) if self.lang.text_indexable => {
@@ -21667,6 +21679,17 @@ impl<'a> Engine<'a> {
     /// before it answers by its bare tail as well, since that is how a
     /// row of bytes names a method its kind keeps.
     pub(super) fn byte_member(&self, name: &str, changeable: bool) -> Option<&'static str> {
+        // The definition never changes under a run, so what a name stands for
+        // is searched out once and remembered, for each kind of bytes.
+        let kind = usize::from(changeable);
+        if let Some(known) = self.byte_members_seen.borrow().get(name).and_then(|row| row[kind]) { return known; }
+        let found = self.byte_member_searched(name, changeable);
+        let mut seen = self.byte_members_seen.borrow_mut();
+        if seen.len() < 4096 || seen.contains_key(name) { seen.entry(name.to_string()).or_insert([None, None])[kind] = Some(found); }
+        found
+    }
+
+    fn byte_member_searched(&self, name: &str, changeable: bool) -> Option<&'static str> {
         let spelt = |words: &Vec<String>| words.iter().any(|word| word == name || word.rsplit('.').next() == Some(name));
         let changers: &[&str] = if changeable { Self::BYTE_CHANGERS } else { &[] };
         Self::BYTE_MEMBERS.iter().chain(changers).copied().find(|working| {
@@ -31957,6 +31980,7 @@ impl Engine<'_> {
                 return Err(self.carried.take().unwrap_or_else(|| said.into()));
             }
         };
+        let prepared_at = self.prepared_hint.take();
         let offset = self.registry.idents.len();
         let mut local = crate::compile::Registry::with_outside_slots(offset);
         // A module's routines are made beside the module's own face:
@@ -31974,7 +31998,7 @@ impl Engine<'_> {
         local.globe = Some(Value::Fields(object.clone()));
         local.born = Some(self.native_dict());
         local.source = Some(Rc::from(source.as_str()));
-        let program = match crate::compile::compile_from(&tokens, self.lang, &mut local, 0, Some(Rc::from(filename))) {
+        let program = match crate::compile::compile_prepared(&tokens, self.lang, &mut local, Some(Rc::from(filename)), prepared_at) {
             Ok(program) => program,
             Err(said) => {
                 let said = self.text_syntax(0, said, filename, local.stopped_at, local.stopped_column, Some((local.stopped_end_row, local.stopped_end)), &source);
@@ -31982,7 +32006,9 @@ impl Engine<'_> {
             }
         };
         let names: Vec<String> = local.idents[offset..].to_vec();
-        for name in &names { self.registry.slot(&format!("\0module:{offset}:{path}:{name}")); }
+        let mut spelled = format!("\0module:{offset}:{path}:");
+        let stem = spelled.len();
+        for name in &names { spelled.truncate(stem); spelled.push_str(name); self.registry.slot(&spelled); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
         // The word this language spells a module's own file under, if
         // any: the same word the running program's own file is bound
@@ -32457,7 +32483,8 @@ impl Engine<'_> {
     /// A name the program may spell, as against the cells the kernel
     /// keeps for itself.
     fn public_name(name: &str) -> bool {
-        !name.starts_with('#') && !name.contains('\0')
+        let bytes = name.as_bytes();
+        bytes.first() != Some(&b'#') && !bytes.contains(&0)
     }
 
     /// The dictionary a global slot's value is kept in, if it is kept
@@ -32483,7 +32510,8 @@ impl Engine<'_> {
         }
         if self.outer_book.is_none() && self.text_books.is_empty() { return None; }
         let name = ident;
-        if !Self::public_name(name.rfind(':').map_or(name.as_str(), |at| &name[at + 1..])) { return None; }
+        let tail = match name.as_bytes().iter().rposition(|&byte| byte == b':') { Some(at) => &name[at + 1..], None => name.as_str() };
+        if !Self::public_name(tail) { return None; }
         if let Some(at) = self.text_books.iter().position(|book| far >= book.from && far < book.upto) { return Some(Kept::Text(at)); }
         if self.outer_book.is_some() && Self::public_name(name) {
             if self.lang.bind_names && !self.main_started && !self.lang.module_doc.contains(name) { return None; }
@@ -33233,6 +33261,12 @@ impl Engine<'_> {
         }
     }
 
+    /// Whether a dictionary key is the word `name`, as `globals_key_word`
+    /// would read it, without spelling the key out.
+    fn globals_key_is(key: &Value, name: &str) -> bool {
+        let held = match key { Value::Hashed(pair) => pair.0.contents(), other => other.contents() };
+        matches!(Self::worth_of(&held).unwrap_or(held).contents(), Value::Text(word) if word.as_ref() == name)
+    }
     /// String keys alone name module attributes; rendering another key
     /// cannot make it a binding name.
     fn globals_key_word(key: &Value) -> Option<String> {
@@ -33493,7 +33527,7 @@ impl Engine<'_> {
         let mut book_mut = book.borrow_mut();
         if let Value::Map(pairs) = &mut *book_mut {
             let rows = Rc::make_mut(pairs);
-            if !rows.iter().any(|(key, _)| Self::globals_key_word(key).as_deref() == Some(name.as_ref())) { rows.push((Value::text(name), Value::Bond(binding.clone()))); }
+            if !rows.iter().any(|(key, _)| Self::globals_key_is(key, name)) { rows.push((Value::text(name), Value::Bond(binding.clone()))); }
         }
     }
     /// A name written into a module's own dictionary that the module
@@ -33890,7 +33924,9 @@ impl Engine<'_> {
         }
 
         if mode == 0 {
-            if let Some(tokens) = crate::compile::prepared_tokens(source, self.lang) { return Ok(tokens); }
+            let prepared = crate::compile::prepared_tokens(source, self.lang);
+            self.prepared_hint.set(prepared.as_ref().map(|(_, at)| *at));
+            if let Some((tokens, _)) = prepared { return Ok(tokens); }
         }
         self.unicode_tokens(source)
             .and_then(|tokens| crate::layout::layout_position(tokens, self.lang, 0))

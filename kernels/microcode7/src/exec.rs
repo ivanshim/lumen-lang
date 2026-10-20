@@ -453,6 +453,9 @@ struct ExecutionRules<'a> {
     words_ext_stmt_class_special_stop: &'a [String],
     words_ext_system_names_module: &'a [String],
     words_ext_system_module_name: &'a [String],
+    words_ext_system_module_doc: &'a [String],
+    words_ext_system_source_file: &'a [String],
+    words_ext_stmt_class_detail_text_signature: &'a [String],
     words_ext_stmt_async_generator_methods: &'a [String],
     words_ext_stmt_class_annotations: &'a [String],
     words_ext_stmt_class_detail_code_fields: &'a [String],
@@ -700,7 +703,7 @@ pub struct Machine<'a> {
     pub outermost: Rc<Env>,
     idents: Vec<String>,
     /// Names bound by the source after its library prefix.
-    pub main_bindings: std::collections::HashSet<String>,
+    pub main_bindings: std::collections::HashSet<String, crate::table::FxBuildHasher>,
     memo: HashMap<String, Value>,
     identities: std::collections::BTreeMap<(String, u64), i64>,
     /// A loose member descriptor, keyed by the kind's word and the member
@@ -1020,6 +1023,9 @@ fn unique_directory_name() -> String {
     out.reverse();
     String::from_utf8(out).unwrap()
 }
+
+// Whether a name opens with the mark of one the builder made up, or with a
+// nul; asked at every fetch and store, so read off the first byte.
 
 /// The frame a name's address reaches from the one a call stands in:
 /// as far up as the address says, and no farther than the frames go,
@@ -2054,6 +2060,9 @@ impl<'a> Machine<'a> {
                 words_ext_stmt_class_special_stop: table.strings("ext.stmt.class.special.stop"),
                 words_ext_system_names_module: table.strings("ext.system.names.module"),
                 words_ext_system_module_name: table.strings("ext.system.module.name"),
+                words_ext_system_module_doc: table.strings("ext.system.module.doc"),
+                words_ext_system_source_file: table.strings("ext.system.source.file"),
+                words_ext_stmt_class_detail_text_signature: table.strings("ext.stmt.class.detail.text_signature"),
                 words_ext_stmt_async_generator_methods: table.strings("ext.stmt.async.generator.methods"),
                 words_ext_stmt_class_annotations: table.strings("ext.stmt.class.annotations"),
                 words_ext_stmt_class_detail_code_fields: table.strings("ext.stmt.class.detail.code.fields"),
@@ -2206,7 +2215,7 @@ impl<'a> Machine<'a> {
             args_cell: find("system.args"),
             memo_cell: find("system.memoization"),
             idents,
-            main_bindings: std::collections::HashSet::new(),
+            main_bindings: std::collections::HashSet::default(),
             memo: HashMap::new(),
             identities: std::collections::BTreeMap::new(),
             loose_members: RefCell::new(HashMap::new()),
@@ -4227,7 +4236,7 @@ impl<'a> Machine<'a> {
         let f = if imported_global { self.outermost.clone() } else { ascend(frame, slot.up).clone() };
         // For the second format every name of the globals the annotation
         // reads is a stand-in, whatever it is bound to.
-        if Rc::ptr_eq(&f, &self.outermost) && !Rc::ptr_eq(frame, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0') {
+        if Rc::ptr_eq(&f, &self.outermost) && !Rc::ptr_eq(frame, &self.outermost) && (&slot.ident).as_bytes().first() != Some(&b'#') && (&slot.ident).as_bytes().first() != Some(&0) {
             if let Some((names, true)) = self.annotation_scope(frame) {
                 let copied = self.frames_named.last().is_some_and(|routine| Self::explicit_globals(routine).is_some());
                 if copied {
@@ -4252,7 +4261,7 @@ impl<'a> Machine<'a> {
             let routine = self.frames_named.last().map_or("<unknown>", |body| body.ident.as_str());
             return Err(format!("RuntimeError: closure binding '{}' is unavailable in {routine}", slot.ident));
         };
-        if slot.up > 0 && !Rc::ptr_eq(&f, &self.outermost) && !slot.ident.starts_with('#') && !slot.ident.starts_with('\0')
+        if slot.up > 0 && !Rc::ptr_eq(&f, &self.outermost) && (&slot.ident).as_bytes().first() != Some(&b'#') && (&slot.ident).as_bytes().first() != Some(&0)
             && self.frames_named.last().is_some_and(|routine| Self::explicit_globals(routine).is_none()) {
             if let Some((names, all)) = self.annotation_scope(frame) {
                 let content = v.settled();
@@ -4277,7 +4286,7 @@ impl<'a> Machine<'a> {
         // Imported source names have binding wrappers; compiler temporaries
         // hold collection cells directly and must retain those cells.
         if let Value::Shared(cell) = &v {
-            if self.names_in_calls && !(Rc::ptr_eq(&f, &self.outermost) && self.idents[slot.at].starts_with("\0import/") && !slot.ident.starts_with('#')) { return Ok(v); }
+            if self.names_in_calls && !(Rc::ptr_eq(&f, &self.outermost) && self.idents[slot.at].starts_with("\0import/") && (&slot.ident).as_bytes().first() != Some(&b'#')) { return Ok(v); }
             let held = cell.borrow().clone();
             if !self.rules.closes_over { return Ok(held); }
             v = held;
@@ -8113,7 +8122,7 @@ impl<'a> Machine<'a> {
                 let mut places = f.cells.borrow_mut();
                 match &places[slot.at] {
                     Value::Shared(cell) if f.capture_slots.borrow().contains(&slot.at) => *cell.borrow_mut() = Value::Unset,
-                    Value::Shared(cell) if !slot.ident.starts_with('#') && self.rules.closes_over && (!self.names_in_calls || Rc::ptr_eq(f, &self.outermost) && self.loaded_spaces.contains_key(&self.written_in)) => *cell.borrow_mut() = Value::Unset,
+                    Value::Shared(cell) if (&slot.ident).as_bytes().first() != Some(&b'#') && self.rules.closes_over && (!self.names_in_calls || Rc::ptr_eq(f, &self.outermost) && self.loaded_spaces.contains_key(&self.written_in)) => *cell.borrow_mut() = Value::Unset,
                     _ => places[slot.at] = Value::Unset,
                 }
                 Ok(Value::Nil)
@@ -12004,7 +12013,7 @@ impl<'a> Machine<'a> {
         let Value::Thing(thing) = value else { return None };
         let mut places = self.namespace_places.borrow_mut();
         let names = places.get_or_insert_with(|| {
-            let mut names = HashMap::new();
+            let mut names = HashMap::default();
             for (name, worth) in &self.imported {
                 if let Value::Thing(space) = worth {
                     names.entry(Rc::as_ptr(space) as usize).or_insert_with(|| name.clone());
@@ -31194,7 +31203,9 @@ impl<'a> Machine<'a> {
         let reverse = stride < 0;
         let distance = if reverse { ends[0] - ends[1] } else { ends[1] - ends[0] };
         let many = if distance <= 0 { 0 } else { (distance - 1) / stride.abs() + 1 };
-        let picked = (0..many).map(|turn| (ends[0] + turn * stride) as usize).collect();
+        let mut picked = Vec::with_capacity(many.max(0) as usize);
+        let mut place = ends[0];
+        for _ in 0..many.max(0) as usize { picked.push(place as usize); place += stride; }
         let begin = ends[0].max(0) as usize;
         let end = ends[1].max(ends[0]).max(0) as usize;
         Ok((begin..end, picked, unit))
@@ -33136,7 +33147,7 @@ impl Machine<'_> {
         // The word this language spells a module's own file under, if
         // any: the same word the running program's own file is bound
         // to, carried here for a module read in besides it.
-        let file_word = self.table.strings("ext.system.source.file").first().map(String::as_str);
+        let file_word = self.rules.words_ext_system_source_file.first().map(String::as_str);
         let path_word = self.table.strings("ext.system.module.path").first().map(String::as_str);
         let search = namespace_portions.as_ref().map(|locations| {
             let entries = locations.iter().map(|location| Value::text(location)).collect();
@@ -33545,7 +33556,7 @@ impl Machine<'_> {
     /// the file honestly.
     fn namespace_file_path(&self, path: &str) -> Option<String> {
         if self.table.strings("ext.system.module.path").first().map(String::as_str).is_some() {
-            let word = self.table.strings("ext.system.source.file").first().map(String::as_str)?;
+            let word = self.rules.words_ext_system_source_file.first().map(String::as_str)?;
             let Value::Thing(module) = self.imported.get(path)? else { return None; };
             let held = module.holds.borrow().iter().find(|entry| entry.0 == word)?.1.clone();
             let value = match held { Value::Shared(link) => link.borrow().clone(), other => other };
@@ -33677,7 +33688,7 @@ impl<'a> Machine<'a> {
         }
         if self.world_book.is_none() && self.readings.is_empty() { return None; }
         let ident = self.idents.get(at)?;
-        let bare = ident.rsplit_once('/').map_or(ident.as_str(), |(_, bare)| bare);
+        let bare = match ident.as_bytes().iter().rposition(|&byte| byte == b'/') { Some(slash) => &ident[slash + 1..], None => ident.as_str() };
         if self.world_book.is_some() && Self::visible_name(bare)
             && self.frames_named.last().is_some_and(|routine| routine.globals_rebound) {
             return Some(Held::World);
@@ -33686,10 +33697,10 @@ impl<'a> Machine<'a> {
         if !Self::visible_name(bare) { return None; }
         if let Some(which) = self.readings.iter().position(|book| (book.from..book.upto).contains(&at)) { return Some(Held::Reading(which)); }
         if self.world_book.is_some() && Self::visible_name(ident) {
-            if self.names_in_calls && !self.user_source_started && !self.table.strings("ext.system.module.doc").contains(ident) { return None; }
+            if self.names_in_calls && !self.user_source_started && !self.rules.words_ext_system_module_doc.contains(ident) { return None; }
             let source_member = self.main_bindings.contains(ident)
                 || self.rules.words_ext_system_module_name.contains(ident)
-                || self.table.strings("ext.system.source.file").contains(ident)
+                || self.rules.words_ext_system_source_file.contains(ident)
                 || self.table.strings("ext.system.module.doc").contains(ident)
                 || self.world_book.as_ref().is_some_and(|book| match &*book.borrow() {
                     Value::Thing(_) => true,
@@ -34209,7 +34220,7 @@ impl<'a> Machine<'a> {
                 if self.names_in_calls && !self.main_bindings.contains(word)
                     && !self.rules.words_ext_system_module_name.contains(word)
                     && !self.table.strings("ext.system.module.doc").contains(word)
-                    && !self.table.strings("ext.system.source.file").contains(word) { continue; }
+                    && !self.rules.words_ext_system_source_file.contains(word) { continue; }
                 entries.push((Value::text(word), held.clone()));
             }
         }

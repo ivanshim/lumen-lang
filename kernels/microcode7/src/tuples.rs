@@ -4,34 +4,50 @@ use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use crate::data::Value;
 
+// Released rows of up to this many slots are kept in a tier of their own size.
+const TIERS: usize = 16;
+
 thread_local! {
     static ACTIVE: Cell<bool> = const { Cell::new(false) };
     static VACANT: Rc<Vec<Value>> = Rc::new(vec![]);
-    static RESERVE: RefCell<TupleReserve> = const { RefCell::new(TupleReserve { allocations: Vec::new(), retained_bytes: 0 }) };
+    static RESERVE: RefCell<TupleReserve> = const { RefCell::new(TupleReserve { tiers: [const { Vec::new() }; TIERS], oversize: Vec::new(), stored: 0, retained_bytes: 0 }) };
 }
 
 // Budget accounting belongs to the pool, not to each released tuple.
-struct TupleReserve { allocations: Vec<Rc<Vec<Value>>>, retained_bytes: usize }
+struct TupleReserve { tiers: [Vec<Rc<Vec<Value>>>; TIERS], oversize: Vec<Rc<Vec<Value>>>, stored: usize, retained_bytes: usize }
 impl TupleReserve {
     fn acquire(&mut self, needed: usize) -> Option<Rc<Vec<Value>>> {
-        let mut best = None;
-        let mut capacity = usize::MAX;
-        let mut cursor = self.allocations.len();
-        while cursor > 0 {
-            cursor -= 1;
-            let available = self.allocations[cursor].capacity();
-            if available < needed || available >= capacity { continue; }
-            capacity = available;
-            best = Some(cursor);
-            if available == needed { break; }
+        if self.stored == 0 { return None; }
+        let mut found = None;
+        let mut tier = needed;
+        while found.is_none() && tier < TIERS {
+            found = self.tiers[tier].pop();
+            tier += 1;
         }
-        best.map(|at| {
-            let row = self.allocations.swap_remove(at);
-            self.retained_bytes -= row.capacity().saturating_mul(std::mem::size_of::<Value>());
-            row
-        })
+        if found.is_none() {
+            let mut best: Option<(usize, usize)> = None;
+            for (at, row) in self.oversize.iter().enumerate() {
+                let room = row.capacity();
+                if room >= needed && best.map_or(true, |(_, least)| room < least) { best = Some((at, room)); }
+            }
+            found = best.map(|(at, _)| self.oversize.swap_remove(at));
+        }
+        let row = found?;
+        self.stored -= 1;
+        self.retained_bytes -= row.capacity().saturating_mul(std::mem::size_of::<Value>());
+        Some(row)
     }
-    fn clear(&mut self) { self.allocations.clear(); self.retained_bytes = 0; }
+    fn shelve(&mut self, row: Rc<Vec<Value>>) {
+        let room = row.capacity();
+        if room < TIERS { self.tiers[room].push(row); } else { self.oversize.push(row); }
+        self.stored += 1;
+    }
+    fn clear(&mut self) {
+        for tier in self.tiers.iter_mut() { tier.clear(); }
+        self.oversize.clear();
+        self.stored = 0;
+        self.retained_bytes = 0;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -84,9 +100,9 @@ impl Drop for Sequence {
         let cost = values.capacity().saturating_mul(std::mem::size_of::<Value>());
         let _ = RESERVE.try_with(|reserve| {
             let mut reserve = reserve.borrow_mut();
-            if reserve.allocations.len() < 256 && cost <= (1024usize * 1024).saturating_sub(reserve.retained_bytes) {
+            if reserve.stored < 256 && cost <= (1024usize * 1024).saturating_sub(reserve.retained_bytes) {
                 reserve.retained_bytes += cost;
-                reserve.allocations.push(self.row.clone());
+                reserve.shelve(self.row.clone());
             }
         });
     }
@@ -114,6 +130,20 @@ mod tests {
         let vector = Sequence::plain(vec![]);
         assert!(Rc::ptr_eq(&tuples[0], &tuples[1]));
         assert!(!Rc::ptr_eq(&tuples[1], &vector));
+    }
+    #[test]
+    fn released_rows_come_back_by_size() {
+        let _scope = Scope::enter(true);
+        let pair = Sequence::tuple(vec![Value::Small(1), Value::Small(2)]);
+        let long = Sequence::tuple((0..40).map(Value::Small).collect());
+        let (pair_row, long_row) = (Rc::as_ptr(&pair), Rc::as_ptr(&long));
+        drop(pair);
+        drop(long);
+        let again = Sequence::tuple(vec![Value::Small(3), Value::Small(4)]);
+        let longer = Sequence::tuple((0..33).map(Value::Small).collect());
+        assert_eq!(Rc::as_ptr(&again), pair_row);
+        assert_eq!(Rc::as_ptr(&longer), long_row);
+        assert_eq!(longer.len(), 33);
     }
     #[test]
     fn aliases_hold_elements_until_the_reserve_receives_empty_storage() {
