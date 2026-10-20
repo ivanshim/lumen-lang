@@ -811,6 +811,15 @@ class TextIOWrapper(_TextIOBase):
             raise UnsupportedOperation('not readable')
         if self._pending:
             self._writeflush()
+        # Consume an already decoded span without entering the chunk reader.
+        if type(size) is int and size >= 0 and self._decoder is not None:
+            used = self._decoded_chars_used
+            end = used + size
+            text = self._decoded_chars
+            if end <= len(text):
+                self._checkReadable()
+                self._decoded_chars_used = end
+                return text[used:end]
         function = _TEXT.get('read') or _text_function('read')
         return function(self, size)
     def readline(self, size=-1):
@@ -818,6 +827,22 @@ class TextIOWrapper(_TextIOBase):
             self._unattached()
         if self._pending:
             self._writeflush()
+        # A complete buffered line needs neither a decoder call nor a rewind.
+        if (size is None or type(size) is int) and self._decoder is not None:
+            text = self._decoded_chars
+            used = self._decoded_chars_used
+            available = len(text) - used
+            if available and (self._readtranslate or not self._readuniversal):
+                if self.closed:
+                    raise ValueError('read from closed file')
+                stop = text.find('\n' if self._readtranslate else self._readnl, used)
+                end = stop + (1 if self._readtranslate else len(self._readnl)) if stop >= 0 else -1
+                if size is not None and size >= 0 and size <= available:
+                    limit = used + size
+                    end = min(end, limit) if end >= 0 else limit
+                if end >= 0:
+                    self._decoded_chars_used = end
+                    return text[used:end]
         function = _TEXT.get('readline') or _text_function('readline')
         return function(self, size)
     def write(self, text):
@@ -859,6 +884,26 @@ class TextIOWrapper(_TextIOBase):
             self._unattached()
         function = _TEXT.get('seek') or _text_function('seek')
         return function(self, cookie, whence)
+    # Assemble only populated cookie fields; ordinary offsets stay small integers.
+    def _pack_cookie(self, position, dec_flags=0, bytes_to_feed=0, need_eof=False, chars_to_skip=0):
+        if dec_flags:
+            position |= dec_flags << 64
+        if bytes_to_feed:
+            position |= bytes_to_feed << 128
+        if chars_to_skip:
+            position |= chars_to_skip << 192
+        if need_eof:
+            position |= 1 << 256
+        return position
+    # Return ordinary byte offsets without dividing four wide integer fields.
+    def _unpack_cookie(self, cookie):
+        if 0 <= cookie < 18446744073709551616:
+            return cookie, 0, 0, False, 0
+        rest, position = divmod(cookie, 18446744073709551616)
+        rest, flags = divmod(rest, 18446744073709551616)
+        rest, feed = divmod(rest, 18446744073709551616)
+        eof, skip = divmod(rest, 18446744073709551616)
+        return position, flags, feed, bool(eof), skip
     def tell(self):
         if self._buffer is None or not self._initialized:
             self._unattached()
