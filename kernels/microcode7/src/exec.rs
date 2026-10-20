@@ -600,7 +600,7 @@ pub struct Machine<'a> {
     async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>)>,
     delegated_answers: std::collections::HashSet<usize>,
     code_observers: Vec<(Weak<RefCell<Value>>, bool)>,
-    pub(super) code_handles: HashMap<usize, Weak<Vec<Value>>>,
+    pub(super) code_handles: HashMap<usize, (Weak<Routine>, Weak<Vec<Value>>)>,
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
     pub library_files: HashMap<String, String>,
@@ -6286,8 +6286,10 @@ impl<'a> Machine<'a> {
     pub(super) fn code_handle(&mut self, body: &Rc<Routine>) -> Value {
         if let Some(template) = &body.definition { return self.code_handle(template); }
         let address = Rc::as_ptr(body) as usize;
-        if let Some(parts) = self.code_handles.get(&address).and_then(Weak::upgrade) {
-            return Value::Wrapped(7, parts.into());
+        if let Some((owner, cached)) = self.code_handles.get(&address) {
+            if owner.upgrade().is_some_and(|prior| Rc::ptr_eq(&prior, body)) {
+                if let Some(parts) = cached.upgrade() { return Value::Wrapped(7, parts.into()); }
+            }
         }
         let origin = self.written_over.values().find(|entry| Rc::ptr_eq(&entry.2, body))
             .map(|entry| entry.4.clone()).filter(|source| !Rc::ptr_eq(source, body));
@@ -6308,7 +6310,7 @@ impl<'a> Machine<'a> {
             },
         };
         if let Value::Wrapped(7, parts) = &handle {
-            self.code_handles.insert(address, Rc::downgrade(parts));
+            self.code_handles.insert(address, (Rc::downgrade(body), Rc::downgrade(parts)));
         }
         handle
     }
@@ -17659,8 +17661,12 @@ impl<'a> Machine<'a> {
                 if !self.written_over.contains_key(&key) {
                     while let Some(definition) = program.definition.clone() { program = definition; }
                     let address = Rc::as_ptr(&program) as usize;
-                    if let Some(parts) = self.code_handles.get(&address).and_then(Weak::upgrade) {
-                        return Ok(matches!(saved, Value::Wrapped(7, expected) if Rc::ptr_eq(&parts, expected)));
+                    if let Some((owner, cached)) = self.code_handles.get(&address) {
+                        if owner.upgrade().is_some_and(|prior| Rc::ptr_eq(&prior, &program)) {
+                            if let Some(parts) = cached.upgrade() {
+                                return Ok(matches!(saved, Value::Wrapped(7, expected) if Rc::ptr_eq(&parts, expected)));
+                            }
+                        }
                     }
                 }
             }
@@ -25722,9 +25728,28 @@ impl<'a> Machine<'a> {
                         inputs.extend(self.library_aliases.iter().map(|(name, alias)| (String::from("MODULE_ALIAS"), name.clone(), alias.clone(), false)));
                         if let Some(root) = &self.library_directory { inputs.push((String::from("SELF"), String::from("library_root"), root.to_string_lossy().into_owned(), false)); }
                         // The nested interpreter uses separate runtime state.
-                        let status = match crate::go(self.table, script, &[], &inputs) {
-                            Ok(()) => 0,
-                            Err(message) => { eprintln!("{}", message.strip_prefix('\0').unwrap_or(&message)); -1 }
+                        // Its text is run after a startup that imports the system
+                        // module and unbinds it, so an exception nobody caught is
+                        // printed by the hook and the caller's names stay unchanged.
+                        // Traceback line numbers still count the supplied text only.
+                        let mut lead = String::new();
+                        lead.push('\n');
+                        lead.push_str("import sys\n");
+                        lead.push_str("del sys\n");
+                        let skipped = lead.matches('\n').count();
+                        inputs.push((String::from("SELF"), String::from("lines_before"), skipped.to_string(), false));
+                        let mut body = String::with_capacity(lead.len() + script.len());
+                        body.push_str(&lead);
+                        body.push_str(script);
+                        let ran = crate::go(self.table, &body, &[], &inputs);
+                        let status = if let Err(message) = ran {
+                            let pending = message.strip_prefix('\0').unwrap_or(message.as_str());
+                            if !pending.is_empty() {
+                                eprintln!("{pending}");
+                            }
+                            -1
+                        } else {
+                            0
                         };
                         return Ok(Value::Small(status));
                     }

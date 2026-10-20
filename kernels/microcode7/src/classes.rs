@@ -3655,7 +3655,7 @@ impl<'a> Machine<'a> {
             };
             let (adjusted, room) = self.respared(&source, &base, base.clone(), Some(placed), Some(named));
             let source = Rc::new(adjusted);
-            self.code_handles.insert(Rc::as_ptr(&source) as usize, Rc::downgrade(&body));
+            self.code_handles.insert(Rc::as_ptr(&source) as usize, (Rc::downgrade(&source), Rc::downgrade(&body)));
             let callable = Value::Bound(source, room);
             let attribute = self.detail("code").to_owned();
             self.routine_kept(&callable, &attribute, Value::Wrapped(7, body.clone()));
@@ -4386,7 +4386,7 @@ impl<'a> Machine<'a> {
         if key == self.detail("code") {
             if let Some(Value::Wrapped(7, payload)) = replacement.as_ref().map(Value::settled) {
                 let running = self.code_run_by(subject);
-                self.code_handles.insert(Rc::as_ptr(&running) as usize, Rc::downgrade(&payload));
+                self.code_handles.insert(Rc::as_ptr(&running) as usize, (Rc::downgrade(&running), Rc::downgrade(&payload)));
             }
             let slot = self.routine_storage(subject);
             let mut entries = self.routine_members[slot].1.holds.borrow_mut();

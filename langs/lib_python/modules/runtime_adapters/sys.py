@@ -23,8 +23,8 @@ while _warning_cursor < len(_warning_text) and _warning_text[_warning_cursor] !=
         _warning_cursor += 1
 
 flags.bytes_warning = int(_options_environment.get(b'LUMEN_PYTHON_BYTES_WARNING', b'0'))
-if _options_environment.get(b'LUMEN_PYTHON_NO_SITE'):
-    flags.no_site = 1
+# A normal start leaves site enabled. -S sets the variable and turns it off.
+flags.no_site = 1 if _options_environment.get(b'LUMEN_PYTHON_NO_SITE') else 0
 
 del _options_environment
 
@@ -52,3 +52,8 @@ def _environment(name):
     value = value.decode() if isinstance(value, bytes) else value
     _environment_values[name] = value
     return value
+
+# quit and exit are names of the builtins module. Load it once the flag is
+# known so a normal start can call them, and -S still leaves them unset.
+import builtins as _startup_builtins
+del _startup_builtins

@@ -26695,9 +26695,22 @@ impl<'a> Engine<'a> {
                         for (name, member) in &self.module_aliases { request.push(("MODULE_ALIAS".into(), name.clone(), member.clone(), false)); }
                         if let Some(root) = &self.library_root { request.push(("SELF".into(), "library_root".into(), root.clone(), false)); }
                         // A fresh engine owns its globals, modules, frames and heap.
-                        return Ok(match crate::go(self.lang, source, &[], &request) {
+                        // The nested program starts by loading the system module, which
+                        // arms the usual uncaught-exception hook, then forgets that
+                        // name. The added lines are not lines of the caller's text.
+                        let prelude = "\nimport sys\ndel sys\n";
+                        let hidden = prelude.lines().count() as u32;
+                        request.push(("SELF".into(), "lines_before".into(), hidden.to_string(), true));
+                        let nested = format!("{prelude}{source}");
+                        return Ok(match crate::go(self.lang, &nested, &[], &request) {
                             Ok(()) => Value::Small(0),
-                            Err(error) => { eprintln!("{error}"); Value::Small(-1) }
+                            Err(error) => {
+                                let shown = error.trim_start_matches('\0');
+                                if !shown.is_empty() {
+                                    eprintln!("{shown}");
+                                }
+                                Value::Small(-1)
+                            }
                         });
                     }
                 }
