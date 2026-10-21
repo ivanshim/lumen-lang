@@ -264,7 +264,6 @@ fn anchor_ready(anchored: &RefCell<Vec<Rc<Thing>>>) -> bool {
     }
     pending.iter().any(|item| Rc::strong_count(item) == 1)
 }
-}
 
 /// The method a class bids farewell with, where the language has one.
 /// Until it is named, nothing that goes is looked at.
