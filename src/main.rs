@@ -1437,28 +1437,28 @@ fn parse_args(args: &[OsString]) -> Invocation {
 
     if let Some(limit) = tracing_limit { env::set_var("LUMEN_TRACE_FRAMES", limit.to_string()); }
     else { env::remove_var("LUMEN_TRACE_FRAMES"); }
-    // With no file, Python reads stdin as a script or a terminal session.
+    let language = language.unwrap_or_else(|| {
+        // Explicit language wins over the environment. With neither, infer
+        // a supplied file's language or start Python for no-file input.
+        match env::var("LUMEN_LANG") {
+            Ok(held) if !held.trim().is_empty() => language_from_flag(&held),
+            _ => Language::Named(file.as_ref().map_or_else(|| "python".to_owned(), |file| {
+                language_from_extension(file).unwrap_or_else(|| DEFAULT_LANGUAGE.to_string())
+            })),
+        }
+    });
+    python_interactive &= language.name() == "python";
+    // Only Python reads no-file input as a script or terminal session.
     // Keep an explicit dash as argv[0], and leave resolved -c/-m source intact.
-    if file.as_deref().is_none_or(|name| name == "-") {
+    if language.name() == "python" && file.as_deref().is_none_or(|name| name == "-") {
         python_interactive |= std::io::IsTerminal::is_terminal(&std::io::stdin());
         if file.is_none() {
             file = Some("<stdin>".to_owned());
             program_name = Some(String::new());
         }
         if python_interactive { module_source = Some(String::new()); }
-        if language.is_none() { language = Some(Language::Named("python".to_owned())); }
     }
     let file = file.unwrap_or_else(|| usage(program));
-    let language = language.unwrap_or_else(|| {
-        // A language not named on the command line may be carried in
-        // the environment, by a host that started this binary again
-        // without naming it; a flag always wins. Where neither names
-        // one, the file's own extension, and then the default, stand.
-        match env::var("LUMEN_LANG") {
-            Ok(held) if !held.trim().is_empty() => language_from_flag(&held),
-            _ => Language::Named(language_from_extension(&file).unwrap_or_else(|| DEFAULT_LANGUAGE.to_string())),
-        }
-    });
     // A directory handed as the program is run, for Python alone, as the
     // __main__.py inside it, the way the reference runs it; it keeps its
     // own name as the program's, so a script asking for sys.argv[0] finds
