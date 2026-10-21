@@ -39,8 +39,9 @@ pub struct Env {
     /// reserved no slot for, kept here so every reading of the frame,
     /// `locals()` among them, sees them.
     pub extra: RefCell<Vec<(Value, Value)>>,
-    /// Addresses of shared cells the outermost frame must not treat as
-    /// roots during a reaping. Empty the rest of the time.
+    /// Indices of native import slots the outermost frame must not treat
+    /// as roots during a reaping: their namespace already owns the cells.
+    /// Empty the rest of the time.
     pub collector_skips: RefCell<HashSet<usize>>,
     /// Set while `collector_skips` is non-empty.
     pub collector_skipping: Cell<bool>,

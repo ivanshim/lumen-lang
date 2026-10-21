@@ -218,11 +218,15 @@ class DirsOnSysPath(object):
         sys.path[:] = self.original_value
 
 
+_module_collection_count = 0
+
+
 def modules_setup():
     return sys.modules.copy(),
 
 
 def modules_cleanup(oldmodules):
+    global _module_collection_count
     # Encoders/decoders are registered permanently within the internal
     # codec cache. If we destroy the corresponding modules their
     # globals will be set to None which will trip up the cached functions.
@@ -238,6 +242,15 @@ def modules_cleanup(oldmodules):
     # do currently). Implicitly imported *real* modules should be left alone
     # (see issue 10556).
     sys.modules.update(oldmodules)
+    # The embedded runtime has no allocation-triggered cycle collection.
+    # Restoring repeated isolated imports otherwise retains whole namespaces
+    # until an explicit collection. Batch the safe cleanup boundary, and
+    # preserve an explicit gc.disable() request.
+    _module_collection_count += 1
+    if _module_collection_count % 8 == 0:
+        collector = sys.modules.get("gc")
+        if collector is not None and collector.isenabled():
+            collector.collect()
 
 
 @contextlib.contextmanager

@@ -2483,10 +2483,10 @@ impl<'a> Engine<'a> {
         }
     }
 
-    /// Drop interpreter ownership of modules the program has removed or
-    /// replaced in its import cache. The returned world slots still hold
-    /// the previous module's globals; the collector counts those holds as
-    /// its own so they do not keep the discarded module alive.
+    /// Retire inventory entries removed or replaced in the import cache.
+    /// Native import slots duplicate the namespace objects' bindings, so
+    /// the collector counts all those slots as bookkeeping, including
+    /// earlier versions already absent from the inventory.
     fn quiet_replaced_modules(&mut self) -> Vec<usize> {
         let Some(owner) = self.lang.module_cache.first().cloned() else { return Vec::new() };
         if self.cached_module_address("\0").is_none() { return Vec::new(); }
@@ -2505,42 +2505,29 @@ impl<'a> Engine<'a> {
             let replacement = listed.and_then(|_| self.module_cache_value(&path)).filter(|value| matches!(value.contents(), Value::Object(_)));
             retiring.push((path, Value::Object(object), replacement));
         }
-        if retiring.is_empty() { return Vec::new(); }
-        let mut at_pointer: HashMap<usize, usize> = HashMap::new();
-        for (index, slot) in self.world.iter().enumerate() {
-            if let Value::Bond(cell) = slot {
-                at_pointer.insert(Rc::as_ptr(cell) as usize, index);
-            }
-        }
-        let mut quiet = Vec::new();
-        for (path, previous, replacement) in retiring {
-            // The inventory's dictionary is bookkeeping, not a program hold
-            // on a module removed or replaced in the import cache.
+        let changed = !retiring.is_empty();
+        for (path, _previous, replacement) in retiring {
+            // The inventory's dictionary is bookkeeping, not a program hold.
             if let Some(book) = self.module_globals.remove(&path) {
                 self.globals_by_cell.remove(&(Rc::as_ptr(&book) as usize));
-            }
-            if let Value::Object(ref object) = previous {
-                let fields = object.fields.borrow();
-                if let Some((_, links)) = fields.iter().find(|(name, _)| name == "\0bindings") {
-                    if let Value::Map(entries) = links.contents() {
-                        for (_, cell) in entries.iter() {
-                            // The map stores the world cell itself. Unwrapping
-                            // it would yield the global, not the cell to explain.
-                            let Value::Bond(bond) = cell else { continue };
-                            let Some(&index) = at_pointer.get(&(Rc::as_ptr(&bond) as usize)) else { continue };
-                            if !quiet.contains(&index) { quiet.push(index); }
-                        }
-                    }
-                }
             }
             match replacement {
                 Some(current) => { self.modules.insert(path, current); }
                 None => { self.modules.remove(&path); }
             }
         }
-        self.module_addresses_ready.set(false);
-        self.changed_module_positions.borrow_mut().clear();
-        quiet
+        if changed {
+            self.module_addresses_ready.set(false);
+            self.changed_module_positions.borrow_mut().clear();
+        }
+        // Every version of an imported namespace owns its bindings through
+        // its module object. World slots duplicate those holds, including
+        // versions no longer present in the inventory. Count each duplicate
+        // without turning it into a root; user-held modules and functions
+        // still keep their namespace alive through the ordinary graph.
+        self.registry.idents.iter().enumerate()
+            .filter_map(|(at, name)| (name.starts_with("\0module:") && at < self.world.len()).then_some(at))
+            .collect()
     }
 
     /// Build ownership including any nodes retained by this collection.

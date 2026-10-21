@@ -3247,13 +3247,10 @@ impl<'a> Machine<'a> {
         rows.iter().any(|(member, slot)| member == &words[1] && matches!(slot.settled(), Value::Dict(_)))
     }
 
-    /// A module dropped from `sys.modules` still has cells in the outermost
-    /// frame. That frame is always alive, so an edge from it would keep the
-    /// module. Leave the cells where they are: a callback or finalizer may
-    /// read and write a module the program still holds, and a finalizer may
-    /// resurrect one. Record those cells so the frame skips them until this
-    /// reaping ends. The clones handed back are that frame hold, counted and
-    /// then dropped.
+    /// Retire replaced inventory entries and discount every native import
+    /// slot's duplicate binding hold, including earlier module versions.
+    /// Cells stay intact for callbacks, finalizers and resurrection; live
+    /// modules and functions retain their namespaces through normal edges.
     fn note_retired_modules(&mut self) -> Vec<Value> {
         self.clear_collector_skips();
         if !self.import_dictionary_ready() { return Vec::new(); }
@@ -3286,37 +3283,10 @@ impl<'a> Machine<'a> {
             });
             swaps.push((path, Value::Thing(space), install));
         }
-        if swaps.is_empty() { return Vec::new(); }
-        let mut locate = std::collections::HashSet::new();
-        {
-            let cells = self.outermost.cells.borrow();
-            for cell in cells.iter() {
-                if let Value::Shared(slot) = cell {
-                    locate.insert(Rc::as_ptr(slot) as usize);
-                }
-            }
-        }
-        let mut quiet = Vec::new();
-        let mut seen = std::collections::HashSet::new();
-        for (path, previous, install) in swaps {
-            // Retiring the import also retires the inventory's dictionary
-            // hold; dictionaries retained by the program remain alive.
+        let changed = !swaps.is_empty();
+        for (path, _previous, install) in swaps {
             if let Some(book) = self.space_books.remove(&path) {
                 self.globals_by_cell.remove(&(Rc::as_ptr(&book) as usize));
-            }
-            if let Value::Thing(space) = previous {
-                let rows = space.holds.borrow();
-                if let Some((_, links)) = rows.iter().find(|(key, _)| key == "\0bindings") {
-                    if let Value::Dict(entries) = links.settled() {
-                        for (_, cell) in entries.iter() {
-                            // Bindings keep the outermost cell, not the value inside it.
-                            let Value::Shared(slot) = cell else { continue };
-                            let addr = Rc::as_ptr(&slot) as usize;
-                            if !locate.contains(&addr) || !seen.insert(addr) { continue; }
-                            quiet.push(Value::Shared(slot.clone()));
-                        }
-                    }
-                }
             }
             if let Some(current) = install {
                 self.imported.insert(path, current);
@@ -3324,35 +3294,27 @@ impl<'a> Machine<'a> {
                 self.imported.remove(&path);
             }
         }
-        if !quiet.is_empty() {
-            let mut skips = self.outermost.collector_skips.borrow_mut();
-            for value in &quiet {
-                if let Value::Shared(slot) = value {
-                    skips.insert(Rc::as_ptr(slot) as usize);
-                }
-            }
-            drop(skips);
-            self.outermost.collector_skipping.set(true);
+        if changed {
+            self.namespace_places.borrow_mut().take();
+            self.revised_members.borrow_mut().clear();
         }
-        self.namespace_places.borrow_mut().take();
-        self.revised_members.borrow_mut().clear();
-        quiet
+        // Native import slots duplicate the namespace object's binding holds.
+        // Include old versions as well as the current inventory, and count
+        // aliases separately because each frame slot owns one hold.
+        let cells = self.outermost.cells.borrow();
+        let mut skips = self.outermost.collector_skips.borrow_mut();
+        for (at, name) in self.idents.iter().enumerate() {
+            if name.starts_with("\0import/") && at < cells.len() { skips.insert(at); }
+        }
+        self.outermost.collector_skipping.set(!skips.is_empty());
+        skips.iter().filter_map(|&at| cells.get(at).cloned()).collect()
     }
 
-    /// The shared cells `note_retired_modules` left in the outermost frame.
+    /// Copies of the frame slots discounted for this collection.
     fn skipped_module_cells(&self) -> Vec<Value> {
         let skips = self.outermost.collector_skips.borrow();
-        if skips.is_empty() { return Vec::new(); }
         let cells = self.outermost.cells.borrow();
-        let mut quiet = Vec::new();
-        for cell in cells.iter() {
-            if let Value::Shared(slot) = cell {
-                if skips.contains(&(Rc::as_ptr(slot) as usize)) {
-                    quiet.push(Value::Shared(slot.clone()));
-                }
-            }
-        }
-        quiet
+        skips.iter().filter_map(|&at| cells.get(at).cloned()).collect()
     }
 
     fn clear_collector_skips(&self) {
