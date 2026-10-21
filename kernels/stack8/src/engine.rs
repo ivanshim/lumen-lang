@@ -2492,7 +2492,8 @@ impl<'a> Engine<'a> {
     fn collect_namespace_garbage(&mut self, large_source: bool) {
         if self.collecting_cycles { return; }
         let growth = self.world.len().saturating_sub(self.cycle_checkpoint_slots);
-        if !large_source && growth < 128_000 { return; }
+        // A large source alone collects only after some namespace growth: each collection walks the whole world.
+        if growth < if large_source { 100_000 } else { 128_000 } { return; }
         let limit = self.modules.get("gc").and_then(|module| {
             let Value::Object(object) = module.contents() else { return None };
             let fields = object.fields.try_borrow().ok()?;
