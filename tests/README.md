@@ -828,3 +828,17 @@ slot removal and global-operand renaming remain unavailable. Code comparison
 keeps native compilation provenance, so independent compilations are not yet
 compared by canonical instruction content. Upstream decorators determine the
 remaining CPython-specific skips.
+
+## Colorize rebase adapter audit (2026-10-21)
+
+Main's registered runtime adapters are preserved. The mock adapter now accepts
+configured attributes in its constructors and `configure_mock`, including dotted
+child paths in parent-first order. CPython library and test bodies are unchanged.
+The following hashes cover the complete adapter files, including their headers.
+
+| File beneath `langs/lib_python/modules/` | Full-file SHA-256 |
+|---|---|
+| `runtime_adapters/native_unittest_mock.py` | `5f650039e5c10072efcbb4f124ba31bb0dffdae04d0ea7ee8ea41f0a2081cf2e` |
+| `runtime_adapters/inspect.py` | `1a83c39ef69937b6d84c6127318d0cdde1a31615b657b3bb26017a5dfe8278d8` |
+| `runtime_adapters/native_inspect.py` | `d3c0894c9a679ddfbea8bea4ffad38161a294bff0d86f99c7e1e3bcdd2d6c71d` |
+| `runtime_adapters/native_test_support_os_helper.py` | `aacb2c1d8076e2de9c495405ea1a463336a8da1ea2710e2cc8e391e70e76d1df` |

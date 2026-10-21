@@ -105,7 +105,8 @@ class Mock:
             return
         object.__setattr__(self, name, value)
 
-    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None, spec=None):
+    # Initialize call tracking and apply configured attributes after the defaults.
+    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None, spec=None, **kwargs):
         self._mock_name = name
         self._mock_wraps = wraps
         self._mock_methods = _spec_names(spec)
@@ -116,6 +117,18 @@ class Mock:
         self.call_count = 0
         self.call_args = None
         self.call_args_list = []
+        self.configure_mock(**kwargs)
+
+    # Set parent attributes before dotted child attributes, following CPython.
+    def configure_mock(self, /, **kwargs):
+        for name, value in sorted(kwargs.items(), key=lambda item: item[0].count('.')):
+            parts = name.split('.')
+            final = parts.pop()
+            target = self
+            for part in parts:
+                target = getattr(target, part)
+            setattr(target, final, value)
+
 
     @property
     def side_effect(self):
@@ -276,7 +289,7 @@ class MagicMock(Mock):
     # The item, unary and arithmetic names are given to the class
     # below from one list; the asynchronous ones and the rest the
     # reference carries are not here.
-    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None, spec=None):
+    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None, spec=None, **kwargs):
         self._magic = {}
         Mock.__init__(self, name, return_value, side_effect, wraps, spec)
         for word in _MAGIC_ANSWERS:
@@ -288,6 +301,7 @@ class MagicMock(Mock):
         walker.return_value = iter([])
         self._magic['__iter__'] = walker
         setattr(self, '__iter__', walker)
+        self.configure_mock(**kwargs)
 
     def __repr__(self):
         if self._mock_name is None:
