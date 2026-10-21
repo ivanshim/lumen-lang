@@ -691,7 +691,7 @@ impl Knot {
                         // callback can read and write them. The frame's edge
                         // is not a root of those cells for this reaping.
                         if let Some(skipped) = skips.as_ref() {
-                            if skipped.contains(&at) { continue; }
+                            if skipped.get(at).copied().unwrap_or(false) { continue; }
                         }
                         held(out, v);
                     }

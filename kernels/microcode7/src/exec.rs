@@ -694,6 +694,9 @@ pub struct Machine<'a> {
     routine_members: Vec<(crate::ghost::Ghost, Rc<Thing>)>,
     routine_member_positions: HashMap<(u8, usize, usize), usize, crate::table::FxBuildHasher>,
     reaping: bool,
+    cycle_checkpoint_slots: usize,
+    // World size, inventory identities, and retired native slot positions.
+    quiet_module_slots: (usize, Vec<(String, usize)>, Vec<usize>),
     loose_entries: RefCell<HashMap<(String, String), Value>>,
     stack_origin: usize,
     descriptor_files: std::collections::BTreeMap<i32, std::fs::File>,
@@ -2219,7 +2222,7 @@ impl<'a> Machine<'a> {
             code_kind: None,
             cached_forms: None,
             member_inventories: RefCell::new(HashMap::new()),
-            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: HashMap::default(), reaping: false, loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
+            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: HashMap::default(), reaping: false, cycle_checkpoint_slots: 0, quiet_module_slots: Default::default(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
             stack_origin: &table as *const &Table as usize,
             descriptor_files: std::collections::BTreeMap::new(),
             table,
@@ -3247,8 +3250,32 @@ impl<'a> Machine<'a> {
         rows.iter().any(|(member, slot)| member == &words[1] && matches!(slot.settled(), Value::Dict(_)))
     }
 
-    /// Retire replaced inventory entries and discount every native import
-    /// slot's duplicate binding hold, including earlier module versions.
+    /// Compilation and import batches provide safe points for cyclic
+    /// garbage, including programs that never explicitly ask for it.
+    fn collect_namespace_garbage(&mut self, large_source: bool) {
+        if self.reaping { return; }
+        let growth = self.idents.len().saturating_sub(self.cycle_checkpoint_slots);
+        if !large_source && growth < 128_000 { return; }
+        let limit = self.imported.get("gc").and_then(|module| {
+            let Value::Thing(space) = module.settled() else { return None };
+            let rows = space.holds.try_borrow().ok()?;
+            let enabled = rows.iter().find(|(name, _)| name == "_enabled")?.1.settled();
+            if !matches!(enabled, Value::Flag(true)) { return None; }
+            let Value::Tuple(thresholds) = rows.iter().find(|(name, _)| name == "_threshold")?.1.settled() else { return None };
+            match thresholds.first()?.settled() {
+                Value::Small(n) if n > 0 => Some((n as usize).saturating_mul(64)),
+                _ => None,
+            }
+        });
+        if limit.is_some_and(|limit| large_source || growth >= limit) {
+            let deferred = self.got_away.take();
+            self.reap_rounds();
+            self.got_away = deferred;
+        }
+    }
+
+    /// Retire replaced inventory entries and discount retired native import
+    /// slots' duplicate binding holds, including earlier module versions.
     /// Cells stay intact for callbacks, finalizers and resurrection; live
     /// modules and functions retain their namespaces through normal edges.
     fn note_retired_modules(&mut self) -> Vec<Value> {
@@ -3301,20 +3328,69 @@ impl<'a> Machine<'a> {
         // Native import slots duplicate the namespace object's binding holds.
         // Include old versions as well as the current inventory, and count
         // aliases separately because each frame slot owns one hold.
+        let inventory: Vec<(String, usize)> = self.imported.iter().filter_map(|(path, module)| {
+            let Value::Thing(object) = module.settled() else { return None };
+            Some((path.clone(), Rc::as_ptr(&object) as usize))
+        }).collect();
+        // Slots and their owning inventory are unchanged between ordinary
+        // collections. Reuse the classification instead of scanning every
+        // namespace and reserved slot again for each weak-reference round.
+        if !changed && self.quiet_module_slots.0 == self.idents.len() && self.quiet_module_slots.1 == inventory {
+            let cells = self.outermost.cells.borrow();
+            let mut skips = self.outermost.collector_skips.borrow_mut();
+            skips.resize(cells.len(), false);
+            for &at in &self.quiet_module_slots.2 { skips[at] = true; }
+            self.outermost.collector_skipping.set(!self.quiet_module_slots.2.is_empty());
+            drop(skips);
+            drop(cells);
+            return self.skipped_module_cells();
+        }
+        // Active inventory bindings already have module roots. Retain their
+        // ordinary frame edges instead of cloning every live namespace into
+        // the bookkeeping graph at each collection.
+        let mut active = std::collections::HashSet::new();
+        for module in self.imported.values() {
+            let Value::Thing(space) = module.settled() else { continue };
+            let rows = space.holds.borrow();
+            let Some((_, links)) = rows.iter().find(|(name, _)| name == "\0bindings") else { continue };
+            if let Value::Dict(entries) = links.settled() {
+                for (_, cell) in entries.iter() {
+                    if let Value::Shared(cell) = cell { active.insert(Rc::as_ptr(cell) as usize); }
+                }
+            }
+        }
         let cells = self.outermost.cells.borrow();
         let mut skips = self.outermost.collector_skips.borrow_mut();
-        for (at, name) in self.idents.iter().enumerate() {
-            if name.starts_with("\0import/") && at < cells.len() { skips.insert(at); }
+        skips.resize(cells.len(), false);
+        for (at, (name, value)) in self.idents.iter().zip(cells.iter()).enumerate() {
+            if !name.starts_with("\0import/") { continue; }
+            let current = match value {
+                Value::Shared(cell) | Value::Mutable(cell, _) => active.contains(&(Rc::as_ptr(cell) as usize)),
+                _ => false,
+            };
+            if !current { skips[at] = true; }
         }
-        self.outermost.collector_skipping.set(!skips.is_empty());
-        skips.iter().filter_map(|&at| cells.get(at).cloned()).collect()
+        self.quiet_module_slots = (self.idents.len(), inventory, skips.iter().enumerate().filter_map(|(at, &quiet)| quiet.then_some(at)).collect());
+        self.outermost.collector_skipping.set(!self.quiet_module_slots.2.is_empty());
+        drop(skips);
+        drop(cells);
+        self.skipped_module_cells()
     }
 
     /// Copies of the frame slots discounted for this collection.
     fn skipped_module_cells(&self) -> Vec<Value> {
         let skips = self.outermost.collector_skips.borrow();
         let cells = self.outermost.cells.borrow();
-        skips.iter().filter_map(|&at| cells.get(at).cloned()).collect()
+        skips.iter().enumerate().filter_map(|(at, &quiet)| {
+            if !quiet { return None; }
+            let value = cells.get(at)?;
+            let occupied = match value {
+                Value::Shared(cell) | Value::Mutable(cell, _) => cell.try_borrow().map_or(true, |inner| !matches!(&*inner, Value::Nil | Value::Unset)),
+                Value::Nil | Value::Unset => false,
+                _ => true,
+            };
+            occupied.then(|| value.clone())
+        }).collect()
     }
 
     fn clear_collector_skips(&self) {
@@ -3356,6 +3432,7 @@ impl<'a> Machine<'a> {
         use crate::ghost::{Knot, Web};
         if self.reaping { return 0; }
         self.reaping = true;
+        self.cycle_checkpoint_slots = self.idents.len();
         let quiet = self.note_retired_modules();
         let pinned: Vec<Knot> = quiet.into_iter().map(Knot::Held).collect();
         // Dead weak keys must release their attributes before ordering finalizers.
@@ -33569,6 +33646,7 @@ impl Machine<'_> {
 
     pub(super) fn load_namespace(&mut self, path: &str) -> Result<Value, String> {
         let answer = self.load_namespace_inner(path);
+        if answer.is_ok() { self.collect_namespace_garbage(false); }
         if answer.is_err() {
             if let Some(Escape::Thrown(value)) = &self.got_away { self.prune_import_backtrace(value); }
         }
@@ -35745,6 +35823,7 @@ impl<'a> Machine<'a> {
     }
 
     fn text_tokens(&mut self, source: &str, mode: usize) -> Result<Vec<crate::scan::Token>, (String, u32, usize)> {
+        if source.len() >= 65_536 { self.collect_namespace_garbage(true); }
         if source.is_empty() && self.cached_forms.is_some() { return Ok(vec![]); }
         let terminated = if mode == 0 && !source.is_empty() && !source.ends_with('\n') {
             std::borrow::Cow::Owned(format!("{source}\n"))

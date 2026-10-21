@@ -6944,15 +6944,14 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn class_write(&mut self, subject:Value, name:&str, value:Option<Value>, plain:bool) -> Flow<Value> {
-        if self.module_holding(&subject).is_some() { self.changed_module_positions.borrow_mut().clear(); }
-        self.has_nonstring_class_keys |= name == "\0type-keys";
-        // A class standing behind a name's cell is written on as the
-        // class itself, there being no cell in the reference's own
-        // accounts; anything else keeps the form it was handed in.
+        // A class or instance behind a binding receives its own attribute
+        // writes. Collection and function wrappers keep their identities.
         let subject = match &subject {
-            Value::Bond(_) | Value::Binding(_) | Value::Collection(_, _) if matches!(subject.contents(), Value::Class(_)) => subject.contents(),
+            Value::Bond(_) | Value::Binding(_) | Value::Collection(_, _) if matches!(subject.contents(), Value::Class(_) | Value::Object(_)) => subject.contents(),
             _ => subject,
         };
+        if self.module_holding(&subject).is_some() { self.changed_module_positions.borrow_mut().clear(); }
+        self.has_nonstring_class_keys |= name == "\0type-keys";
         if matches!(&subject,Value::Object(instance) if Self::own_kind(&instance.class_now()).as_deref()==Some("struct_time")) {
             if ["tm_year","tm_mon","tm_mday","tm_hour","tm_min","tm_sec","tm_wday","tm_yday","tm_isdst","tm_zone","tm_gmtoff"].contains(&name) {return Err("AttributeError: readonly attribute".into())}
             return Err(format!("AttributeError: 'time.struct_time' object has no attribute '{name}'").into());

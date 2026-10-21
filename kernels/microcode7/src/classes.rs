@@ -7098,6 +7098,12 @@ impl<'a> Machine<'a> {
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
+        // Bindings of blueprints and instances forward attribute writes
+        // to that value; callable and collection wrappers remain intact.
+        let subject = match &subject {
+            Value::Shared(_) | Value::Mutable(_, _) if matches!(subject.settled(), Value::Blueprint(_) | Value::Thing(_)) => subject.settled(),
+            _ => subject,
+        };
         if self.namespace_holding(&subject).is_some() { self.revised_members.borrow_mut().clear(); }
         let replacement = if self.namespace_holding(&subject).is_some() {
             replacement.map(|item| item.keep(false))
@@ -7141,13 +7147,6 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        // A blueprint standing behind a binding's cell is altered as
-        // the blueprint itself, there being no cell in the reference's
-        // own accounts; anything else keeps the form it was handed in.
-        let subject = match &subject {
-            Value::Shared(_) | Value::Mutable(_, _) if matches!(subject.settled(), Value::Blueprint(_)) => subject.settled(),
-            _ => subject,
-        };
         // Assigning or removing the abstract marker invalidates only this class.
         if self.rules.words_ext_stmt_class_detail_abstract.first().is_some_and(|name| name == key) {
             if let Value::Blueprint(class) = subject.settled() { self.unmarked_classes.borrow_mut().remove(&(Rc::as_ptr(&class) as usize)); }

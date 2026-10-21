@@ -191,6 +191,9 @@ pub struct Engine<'a> {
     /// The prepared entry the tokens last read by `text_tokens` came from, if any.
     prepared_hint: std::cell::Cell<Option<usize>>,
     collecting_cycles: bool,
+    cycle_checkpoint_slots: usize,
+    // World size, inventory identities, and retired native slot positions.
+    quiet_module_slots: (usize, Vec<(String, usize)>, Vec<usize>),
     kind_names: RefCell<HashMap<String, Vec<String>>>,
     member_words: [&'a str; 25],
     opened_descriptors: HashMap<i32, std::fs::File>,
@@ -1711,7 +1714,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, byte_members_seen: RefCell::new(HashMap::default()), prepared_hint: std::cell::Cell::new(None), collecting_cycles: false, kind_names: RefCell::new(HashMap::new()),
+            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, byte_members_seen: RefCell::new(HashMap::default()), prepared_hint: std::cell::Cell::new(None), collecting_cycles: false, cycle_checkpoint_slots: 0, quiet_module_slots: Default::default(), kind_names: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
             contexts: crate::context::ContextStore::default(),
@@ -2483,10 +2486,35 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// Large compilation and import batches are safe points for cyclic
+    /// garbage. Reference-counted temporaries otherwise outlive an entire
+    /// import-heavy program when it never explicitly asks for collection.
+    fn collect_namespace_garbage(&mut self, large_source: bool) {
+        if self.collecting_cycles { return; }
+        let growth = self.world.len().saturating_sub(self.cycle_checkpoint_slots);
+        if !large_source && growth < 128_000 { return; }
+        let limit = self.modules.get("gc").and_then(|module| {
+            let Value::Object(object) = module.contents() else { return None };
+            let fields = object.fields.try_borrow().ok()?;
+            let enabled = fields.iter().find(|(name, _)| name == "_enabled")?.1.contents();
+            if !matches!(enabled, Value::Flag(true)) { return None; }
+            let Value::Tuple(thresholds) = fields.iter().find(|(name, _)| name == "_threshold")?.1.contents() else { return None };
+            match thresholds.first()?.contents() {
+                Value::Small(n) if n > 0 => Some((n as usize).saturating_mul(64)),
+                _ => None,
+            }
+        });
+        if limit.is_some_and(|limit| large_source || growth >= limit) {
+            let pending = self.carried.take();
+            self.collect_cycles();
+            self.carried = pending;
+        }
+    }
+
     /// Retire inventory entries removed or replaced in the import cache.
-    /// Native import slots duplicate the namespace objects' bindings, so
-    /// the collector counts all those slots as bookkeeping, including
-    /// earlier versions already absent from the inventory.
+    /// Retired native import slots duplicate namespace binding holds.
+    /// Discount every retired version, including versions already absent
+    /// from the inventory; current modules retain ordinary world roots.
     fn quiet_replaced_modules(&mut self) -> Vec<usize> {
         let Some(owner) = self.lang.module_cache.first().cloned() else { return Vec::new() };
         if self.cached_module_address("\0").is_none() { return Vec::new(); }
@@ -2525,9 +2553,41 @@ impl<'a> Engine<'a> {
         // versions no longer present in the inventory. Count each duplicate
         // without turning it into a root; user-held modules and functions
         // still keep their namespace alive through the ordinary graph.
-        self.registry.idents.iter().enumerate()
-            .filter_map(|(at, name)| (name.starts_with("\0module:") && at < self.world.len()).then_some(at))
-            .collect()
+        let inventory: Vec<(String, usize)> = self.modules.iter().filter_map(|(path, module)| {
+            let Value::Object(object) = module.contents() else { return None };
+            Some((path.clone(), Rc::as_ptr(&object) as usize))
+        }).collect();
+        // Slots and their owning inventory are unchanged between ordinary
+        // collections. Reuse the classification instead of scanning every
+        // namespace and reserved slot again for each weak-reference round.
+        if !changed && self.quiet_module_slots.0 == self.world.len() && self.quiet_module_slots.1 == inventory {
+            return self.quiet_module_slots.2.clone();
+        }
+        // Current inventory bindings already have real module roots. Keep
+        // their world slots in the ordinary path instead of expanding the
+        // bookkeeping graph with an extra copy of every active namespace.
+        let mut active = std::collections::HashSet::new();
+        for module in self.modules.values() {
+            let Value::Object(object) = module.contents() else { continue };
+            let fields = object.fields.borrow();
+            let Some((_, links)) = fields.iter().find(|(name, _)| name == "\0bindings") else { continue };
+            if let Value::Map(entries) = links.contents() {
+                for (_, cell) in entries.iter() {
+                    if let Value::Bond(cell) = cell { active.insert(Rc::as_ptr(cell) as usize); }
+                }
+            }
+        }
+        let quiet: Vec<usize> = self.registry.idents.iter().zip(&self.world).enumerate()
+            .filter_map(|(at, (name, value))| {
+                if !name.starts_with("\0module:") { return None; }
+                let current = match value {
+                    Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => active.contains(&(Rc::as_ptr(cell) as usize)),
+                    _ => false,
+                };
+                (!current).then_some(at)
+            }).collect();
+        self.quiet_module_slots = (self.world.len(), inventory, quiet.clone());
+        quiet
     }
 
     /// Build ownership including any nodes retained by this collection.
@@ -2536,12 +2596,21 @@ impl<'a> Engine<'a> {
             std::iter::once(Value::Bond(book.near.clone()))
                 .chain(book.outer.iter().cloned().map(Value::Bond))
         });
-        let quiet_cells = quiet_slots.iter().filter_map(|&slot| self.world.get(slot).cloned());
+        // Cleared bindings have no outgoing ownership. Do not rebuild a
+        // graph node for every empty historical slot at each collection.
+        let quiet_cells = quiet_slots.iter().filter_map(|&slot| self.world.get(slot)).filter(|value| match value {
+            Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell.try_borrow().map_or(true, |value| !matches!(&*value, Value::Null | Value::Blank)),
+            Value::Null | Value::Blank => false,
+            _ => true,
+        }).cloned();
         let bookkeeping = self.function_members.iter().map(|(_, holder)| Value::Object(holder.clone()))
             .chain(books).chain(crate::faint::anchored_values()).chain(retained.iter().cloned()).chain(quiet_cells).collect();
-        let quiet_positions: std::collections::HashSet<usize> = quiet_slots.iter().copied().collect();
+        // Slot indices are dense: a byte per slot avoids a large hash table
+        // for long-running import programs with many retired namespaces.
+        let mut quiet_positions = vec![false; self.world.len()];
+        for &at in quiet_slots { if let Some(quiet) = quiet_positions.get_mut(at) { *quiet = true; } }
         let active_world = self.world.iter().enumerate().filter_map(|(at, value)|
-            (!quiet_positions.contains(&at)).then_some(value));
+            (!quiet_positions[at] && !matches!(value, Value::Blank | Value::Null)).then_some(value));
         let live = active_world.chain(&self.data).chain(&self.caught).chain(&self.buffer)
             .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
             .chain(self.native_exceptions.values()).chain(std::iter::once(&self.trace_hook)).cloned()
@@ -2564,6 +2633,7 @@ impl<'a> Engine<'a> {
     fn collect_cycles(&mut self) -> usize {
         if self.collecting_cycles { return 0; }
         self.collecting_cycles = true;
+        self.cycle_checkpoint_slots = self.world.len();
         let quiet_slots = self.quiet_replaced_modules();
         // Dead weak keys must release their attributes before ordering finalizers.
         self.function_members.retain(|(function, _)| function.revive().is_some());
@@ -32373,6 +32443,7 @@ impl Engine<'_> {
 
     pub(super) fn import_module(&mut self, path: &str) -> Flow<Value> {
         let result = self.import_module_inner(path);
+        if result.is_ok() { self.collect_namespace_garbage(false); }
         if let Err(Fault::Thrown(raised)) = &result { self.trim_import_trace(raised); }
         result
     }
@@ -34569,6 +34640,7 @@ impl Engine<'_> {
     /// `compile`, `eval` or `exec` is told apart the same way a file
     /// is, through `text_syntax`.
     fn text_tokens(&mut self, source: &str, mode: usize) -> Result<Vec<crate::lex::Token>, (String, usize, usize)> {
+        if source.len() >= 65_536 { self.collect_namespace_garbage(true); }
         if source.is_empty() && self.archived_text.is_some() { return Ok(Vec::new()); }
         let terminated = if mode == 0 && !source.is_empty() && !source.ends_with('\n') {
             std::borrow::Cow::Owned(format!("{source}\n"))
