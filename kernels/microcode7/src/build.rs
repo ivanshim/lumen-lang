@@ -10741,8 +10741,16 @@ impl<'a> Builder<'a> {
         // value adds no name, so the form it would build is not needed.
         if floor == 0 && self.survey && self.place_depth == 0 && self.kind_mark.is_none() {
             if let Some(end) = self.plain_extent() {
-                self.pos = end;
-                return Ok(constant(Value::Small(0)));
+                // A slice hides the augmented-assignment sign from the
+                // look-ahead that raises place_depth, so a value ending
+                // on that sign is still a target and must be built.
+                let writes = self.tokens.get(end).is_some_and(|token| {
+                    token.shape == Shape::Sign && self.table.compound.contains_key(&token.lexeme)
+                });
+                if !writes {
+                    self.pos = end;
+                    return Ok(constant(Value::Small(0)));
+                }
             }
         }
         let first = self.pos;

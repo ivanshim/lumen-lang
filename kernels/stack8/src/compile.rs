@@ -10837,12 +10837,18 @@ impl<'a> Compiler<'a> {
         // are not built on that pass.
         if floor == 0 && self.discovering && !self.writing_place && self.annotation_target.is_none() {
             if let Some(end) = self.survey_value_end() {
-                self.pos = end;
-                // A deletion or a subscript still classifies the value
-                // by the instruction it leaves. One placeholder keeps
-                // that shape; this pass discards the instructions.
-                self.constant(Value::Small(0));
-                return Ok(());
+                let compound_target = match self.tokens.get(end) {
+                    Some(token) => token.shape == Shape::Sign && self.lang.compound.contains_key(&token.lexeme),
+                    None => false,
+                };
+                if !compound_target {
+                    self.pos = end;
+                    // A deletion or a subscript still classifies the value
+                    // by the instruction it leaves. One placeholder keeps
+                    // that shape; this pass discards the instructions.
+                    self.constant(Value::Small(0));
+                    return Ok(());
+                }
             }
         }
         if let Some(starts) = &mut self.ast_expression_starts { starts.push(self.pos); }
