@@ -433,7 +433,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("signal", include_str!("runtime_adapters/native_signal.py"), "signal.py"),
     ("site", include_str!("site.py"), "site.py"),
     ("socket", include_str!("socket.py"), "socket.py"),
-    ("socketserver", include_str!("runtime_adapters/native_socketserver.py"), "socketserver.py"),
+    ("socketserver", include_str!("socketserver.py"), "socketserver.py"),
     ("sre_compile", include_str!("sre_compile.py"), "sre_compile.py"),
     ("sre_constants", include_str!("sre_constants.py"), "sre_constants.py"),
     ("sre_parse", include_str!("sre_parse.py"), "sre_parse.py"),
