@@ -41,6 +41,8 @@ def is_finalizing():
 _environment_values = {}
 
 def _environment(name):
+    if _ignore_environment:
+        return None
     try:
         return _environment_values[name]
     except KeyError:

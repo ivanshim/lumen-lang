@@ -54,6 +54,7 @@ def _absolute_search_entry(entry, cwd):
 path = [__file__.rsplit('/', 1)[0]]
 _path_host = __host_info()
 _ignore_environment = int(_path_host[3].get('LUMEN_PYTHON_IGNORE_ENV') == '1')
+_isolated = int(_path_host[3].get('LUMEN_PYTHON_ISOLATED') == '1')
 _python_path = '' if _ignore_environment else _path_host[3].get('PYTHONPATH', '')
 if _python_path:
     _search_paths = []
@@ -120,7 +121,7 @@ class _Flags:
     bytes_warning = 0
     quiet = 0
     hash_randomization = 0
-    isolated = 0
+    isolated = _isolated
     # The options that PYTHONDEVMODE, PYTHONUTF8 and
     # PYTHONWARNDEFAULTENCODING (or -X dev, -X utf8, -X
     # warn_default_encoding, which the helpers that start a second
@@ -646,12 +647,11 @@ def getfilesystemencodeerrors():
 
 # Explicit module runs search the working directory before the embedded
 # library. File runs retain the isolated default search path.
-if __program_namespace().get('__spec__') is not None:
+if not _isolated and __program_namespace().get('__spec__') is not None:
     _cwd_error, _cwd_bytes = __posix('cwd')
     if _cwd_error:
         raise OSError(_cwd_error, 'cannot resolve the working directory')
     path.insert(0, _cwd_bytes.decode('utf-8', 'surrogateescape'))
-    flags.isolated = 0
     flags.safe_path = False
 
 def gettrace():

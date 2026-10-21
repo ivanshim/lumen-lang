@@ -202,6 +202,7 @@ struct Invocation {
     python_development: bool,
     program_name: Option<String>,
     python_ignore_environment: bool,
+    python_isolated: bool,
     python_interactive: bool,
     python_quiet: bool,
 }
@@ -719,6 +720,8 @@ fn run_all() {
         else { std::env::remove_var("LUMEN_PYTHON_DEV_MODE"); }
         if inv.python_ignore_environment { std::env::set_var("LUMEN_PYTHON_IGNORE_ENV", "1"); }
         else { std::env::remove_var("LUMEN_PYTHON_IGNORE_ENV"); }
+        if inv.python_isolated { std::env::set_var("LUMEN_PYTHON_ISOLATED", "1"); }
+        else { std::env::remove_var("LUMEN_PYTHON_ISOLATED"); }
     }
     // Only an actual -m invocation carries module execution metadata;
     // a script child must not inherit its parent's module identity.
@@ -1122,6 +1125,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut tracing_limit = None;
     let mut extended_options = Vec::new();
     let mut python_ignore_environment = false;
+    let mut python_isolated = false;
     let mut python_interactive = false;
     let mut python_quiet = false;
     // Whether the run was asked only to name itself and stop.
@@ -1222,7 +1226,8 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 }
                 let path = module.replace('.', "/");
                 let mut found = None;
-                let mut directories = vec![std::path::PathBuf::from(".")];
+                let mut directories = Vec::new();
+                if !python_isolated { directories.push(std::path::PathBuf::from(".")); }
                 if !python_ignore_environment {
                     if let Some(search) = env::var_os("PYTHONPATH") { directories.extend(env::split_paths(&search)); }
                 }
@@ -1339,7 +1344,13 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 language = Some(Language::Named("python".to_owned()));
                 rest = &rest[used..];
             }
-            Some("-E") | Some("-I") if file.is_none() => {
+            Some("-I") if file.is_none() => {
+                python_isolated = true;
+                python_ignore_environment = true;
+                language = Some(Language::Named("python".to_string()));
+                rest = &rest[1..];
+            }
+            Some("-E") if file.is_none() => {
                 python_ignore_environment = true;
                 language = Some(Language::Named("python".to_string()));
                 rest = &rest[1..];
@@ -1510,7 +1521,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         let encoded = extended_options.iter().map(|option| format!("{}:{option}", option.chars().count())).collect::<String>();
         env::set_var("LUMEN_XOPTIONS", encoded);
     } else { env::remove_var("LUMEN_XOPTIONS"); }
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_ignore_environment, python_interactive, python_quiet, python_development, warning_options, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_ignore_environment, python_isolated, python_interactive, python_quiet, python_development, warning_options, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.
