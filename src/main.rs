@@ -139,7 +139,13 @@ fn with_library(kernel: &str, language: &str, source: String) -> String {
     let library = if full && language == "python" {
         format!("__native_round = round\n{}\nround = __native_round\ndel __native_round\nimport sys{}", library,
             format!("{}{}",
-                if env::var("LUMEN_COMMAND_SOURCE").is_ok() { "\nimport os, linecache\nlinecache._register_code(sys._getframe().f_code, os.environ['LUMEN_COMMAND_SOURCE'], '<string>')\nimport importlib._bootstrap\n__loader__ = importlib._bootstrap.BuiltinImporter\n__spec__ = None\ndel __file__" } else { "" },
+                // The command's text is handed over as a literal: reading it back through os
+                // would load the whole os chain, and the import bootstrap is left to the first
+                // import that asks for it, as it is for a program run from a file.
+                match env::var("LUMEN_COMMAND_SOURCE") {
+                    Ok(text) => format!("\nimport linecache\nlinecache._register_code(sys._getframe().f_code, {}, '<string>')\n__spec__ = None\ndel __file__", serde_json::to_string(&text).expect("a source string can be quoted")),
+                    Err(_) => String::new(),
+                },
                 if env::var("LUMEN_WARNOPTIONS").is_ok_and(|options| !options.is_empty()) { "\nimport warnings" } else { "" }))
     } else { library };
     let lead = source.len() - source.trim_start().len();
