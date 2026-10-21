@@ -24,6 +24,7 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `python-3.14.8/test_raise.py`, `test_property.py`, `test_subclassinit.py` | `Lib/test/test_raise.py`, `Lib/test/test_property.py`, `Lib/test/test_subclassinit.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_pstats.py`, `pstats.pck` | `Lib/test/test_pstats.py` and its binary fixture `Lib/test/pstats.pck`, copied byte for byte (`pstats.pck` sits beside the tests, where `support.findfile` looks) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_codeccallbacks.py` | `Lib/test/test_codeccallbacks.py` (unchanged; SHA-256 `84306f89bdb5b1074c0b3067c465438170cce614dde70bf11f794cfdbd3ce0c7`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_socket.py`, `test_select.py`, `test_poll.py`, `test_selectors.py`, `test_timeout.py`, `test_urllib_response.py`, `test_urllib2_localnet.py` | `Lib/test/test_socket.py`, `Lib/test/test_select.py`, `Lib/test/test_poll.py`, `Lib/test/test_selectors.py`, `Lib/test/test_timeout.py`, `Lib/test/test_urllib_response.py`, `Lib/test/test_urllib2_localnet.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_descrtut.py` | `Lib/test/test_descrtut.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_unpack/` | `Lib/test/test_unpack.py`, copied byte for byte as the module `__init__.py`, with a suite entry `__main__.py` that imports it as `test.test_unpack` and runs its tests | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_type_params.py` | `Lib/test/test_type_params.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -66,6 +67,7 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `python-3.14.8/test_ast/utils.py` | `Lib/test/test_ast/utils.py`, byte for byte (SHA-256 `09954af7c72fb805ce01bd4df288f49e8ab19ea2c8b65a02c168500b9587d40d`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/support/ast_helper.py` | `Lib/test/support/ast_helper.py`, byte for byte (SHA-256 `ef59a178bcb025e2f967e9028b8400ba108d42d5eb84f4508a22a7218a169c0c`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `../langs/lib_python/modules/test/support/ast_helper.py` | `Lib/test/support/ast_helper.py`, byte for byte (SHA-256 `ef59a178bcb025e2f967e9028b8400ba108d42d5eb84f4508a22a7218a169c0c`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `../langs/lib_python/modules/test/support/refleak_helper.py` | `Lib/test/support/refleak_helper.py`, byte for byte (SHA-256 `e2ae780ff989e88949e699113ad359db7ccf31be069fc5c3b00828d78ce344bc`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `../langs/lib_python/modules/test/test_ast/__init__.py` | `Lib/test/test_ast/__init__.py`, byte for byte (SHA-256 `90b5cf9c1b53bb3ff98437b85ef11674697d994cf3573b0fd44712c114df2bdc`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `../langs/lib_python/modules/test/test_ast/snippets.py` | `Lib/test/test_ast/snippets.py`, byte for byte (SHA-256 `cc56f5c71d26cb580fa1ddcd7734fe64531e856d4f25acaa291bb0012620bc4c`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `../langs/lib_python/modules/test/test_ast/utils.py` | `Lib/test/test_ast/utils.py`, byte for byte (SHA-256 `09954af7c72fb805ce01bd4df288f49e8ab19ea2c8b65a02c168500b9587d40d`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -835,3 +837,9 @@ slot removal and global-operand renaming remain unavailable. Code comparison
 keeps native compilation provenance, so independent compilations are not yet
 compared by canonical instruction content. Upstream decorators determine the
 remaining CPython-specific skips.
+
+The urllib2 rebase includes accepted socket foundation 767b9454a. Socket
+module and decorator requirements use the same capability flag; DNS is not a
+socket probe. The unchanged HTTP server uses the native TCP server adapter.
+Native-thread requirements remain separate and use threading_helper's existing
+can_start_thread capability; unavailable threads raise SkipTest before starting.

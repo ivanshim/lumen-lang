@@ -914,12 +914,7 @@ STDLIB_DIR = TEST_HOME_DIR
 TEST_SUPPORT_DIR = os.path.join(TEST_HOME_DIR, 'test', 'support')
 is_android = False
 is_apple = sys.platform in ("darwin", "ios", "tvos", "watchos")
-# Listening sockets are not implemented: socket.listen and socket.accept
-# are unavailable, and http.server.HTTPServer refuses to construct. Local
-# server tests consult this flag and skip. CPython leaves it true except
-# on Emscripten and WASI; that formula is true on this host and would
-# start those tests against a server that is not there.
-has_socket_support = False
+has_socket_support = True
 has_fork_support = False
 has_subprocess_support = True
 can_start_thread = False
@@ -977,34 +972,111 @@ def requires_subprocess():
     return unittest.skipUnless(has_subprocess_support, "requires subprocess support")
 
 
-def _loopback_name_resolves():
-    """Whether socket.gethostbyname can resolve localhost from the host table.
+class ResourceDenied(unittest.SkipTest):
+    """Test skipped because it requested a disallowed resource.
 
-    A module-level socket check asks for a client socket. has_socket_support
-    stays false because this runtime has no listening server.
+    This is raised when a test calls requires() for a resource that
+    has not be enabled.  It is used to distinguish between expected
+    and unexpected skips.
     """
-    try:
-        import socket
-    except ImportError:
-        return False
-    try:
-        address = socket.gethostbyname("localhost")
-    except socket.gaierror:
-        return False
-    return isinstance(address, str) and len(address) > 0
 
+def requires(resource, msg=None):
+    """Raise ResourceDenied if the specified resource is not available."""
+    if not is_resource_enabled(resource):
+        if msg is None:
+            msg = "Use of the %r resource not enabled" % resource
+        raise ResourceDenied(msg)
+    if resource in {"network", "urlfetch"} and not has_socket_support:
+        raise ResourceDenied("No socket support")
+    # No graphical toolkit is embedded here, so no gui resource to probe.
+
+def reap_children():
+    """Use this function at the end of test_main() whenever sub-processes
+    are started.  This will help ensure that no extra children (zombies)
+    stick around to hog resources and create problems when looking
+    for refleaks.
+    """
+    # Need os.waitpid(-1, os.WNOHANG): Windows is not supported
+    if not (hasattr(os, 'waitpid') and hasattr(os, 'WNOHANG')):
+        return
+    elif not has_subprocess_support:
+        return
+
+    # Reap all our dead child processes so we don't leave zombies around.
+    # These hog resources and might be causing some of the buildbots to die.
+    while True:
+        try:
+            # Read the exit status of any child process which already completed
+            pid, status = os.waitpid(-1, os.WNOHANG)
+        except OSError:
+            break
+
+        if pid == 0:
+            break
+
+        print_warning(f"reap_children() reaped child process {pid}")
+        set_environment_altered("reaped child process")
+
+SOCK_MAX_SIZE = 16 * 1024 * 1024 + 1
+
+def _get_kernel_version(sysname="Linux"):
+    import platform
+    if platform.system() != sysname:
+        return None
+    version_txt = platform.release().split('-', 1)[0]
+    try:
+        return tuple(map(int, version_txt.split('.')))
+    except ValueError:
+        return None
+
+def _requires_unix_version(sysname, min_version):
+    """Decorator raising SkipTest if the OS is `sysname` and the version is less
+    than `min_version`.
+
+    For example, @_requires_unix_version('FreeBSD', (7, 2)) raises SkipTest if
+    the FreeBSD version is less than 7.2.
+    """
+    import platform
+    min_version_txt = '.'.join(map(str, min_version))
+    version_txt = platform.release().split('-', 1)[0]
+    if platform.system() == sysname:
+        try:
+            version = tuple(map(int, version_txt.split('.')))
+        except ValueError:
+            skip = False
+        else:
+            skip = version < min_version
+    else:
+        skip = False
+
+    return unittest.skipIf(
+        skip,
+        f"{sysname} version {min_version_txt} or higher required, not "
+        f"{version_txt}"
+    )
+
+
+def requires_linux_version(*min_version):
+    """Decorator raising SkipTest if the OS is Linux and the Linux version is
+    less than `min_version`.
+
+    For example, @requires_linux_version(2, 6, 32) raises SkipTest if the Linux
+    version is less than 2.6.32.
+    """
+    return _requires_unix_version('Linux', min_version)
+
+def skip_android_selinux(name):
+    return unittest.skipIf(sys.platform == "android",
+                           f"Android blocks {name} with SELinux")
 
 def requires_working_socket(*, module=False):
     """Skip tests or modules that require working sockets
 
     Can be used as a function/class decorator or to skip an entire module.
-    Skipping a whole module follows client name resolution. A decorated
-    test follows has_socket_support, which is false without a listening
-    server, so local server tests stay skipped.
     """
     msg = "requires socket support"
     if module:
-        if not _loopback_name_resolves():
+        if not has_socket_support:
             raise unittest.SkipTest(msg)
     else:
         return unittest.skipUnless(has_socket_support, msg)

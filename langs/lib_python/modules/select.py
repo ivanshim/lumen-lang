@@ -1,6 +1,7 @@
 # Native select adapter; CPython v3.14.8 Modules/selectmodule.c.
 # Copyright (c) Python Software Foundation; PSF License in tests/python/LICENSE.
 import math as _math
+import time as _time
 from _operator import index as _index
 from posix import _call as _posix_call
 
@@ -49,7 +50,7 @@ def _length_hint(obj, default):
     return value
 
 
-def _as_fd(item):
+def _as_fd(item, bounded=True):
     # PyObject_AsFileDescriptor: an int (a bool first warns), or whatever
     # the object's own fileno attribute says when called with no argument.
     if isinstance(item, int):
@@ -70,7 +71,7 @@ def _as_fd(item):
         raise OverflowError('Python int too large to convert to C int')
     if fd < 0:
         raise ValueError('file descriptor cannot be a negative integer (%d)' % (fd,))
-    if fd >= FD_SETSIZE:
+    if bounded and fd >= FD_SETSIZE:
         raise ValueError('filedescriptor out of range in select()')
     return fd
 
@@ -158,3 +159,110 @@ class _Select:
 
 
 select = _Select()
+
+
+POLLIN = 1
+POLLPRI = 2
+POLLOUT = 4
+POLLERR = 8
+POLLHUP = 16
+POLLNVAL = 32
+POLLRDNORM = 64
+POLLRDBAND = 128
+POLLWRNORM = 256
+POLLWRBAND = 512
+POLLMSG = 1024
+POLLRDHUP = 8192
+
+
+def _event_mask(value):
+    # _PyLong_UnsignedShort_Converter: an index within the unsigned short range.
+    mask = _index(value)
+    if mask < 0:
+        raise ValueError('value must be positive')
+    if mask > 18446744073709551615:
+        raise OverflowError('Python int too large to convert to C unsigned long')
+    if mask > 65535:
+        raise OverflowError('Python int too large for C unsigned short')
+    return mask
+
+
+class _Poll:
+    """Polling object: register descriptors with event masks, then poll() them.
+
+    Instances come only from select.poll(), as with the reference's type."""
+    __slots__ = ('_registry',)
+
+    def __new__(cls, *args, **kwargs):
+        raise TypeError("cannot create 'select.poll' instances")
+
+    def register(self, fd, eventmask=POLLIN | POLLPRI | POLLOUT, /):
+        """Register a file descriptor with the polling object."""
+        self._registry[_as_fd(fd, False)] = _event_mask(eventmask)
+
+    def modify(self, fd, eventmask, /):
+        """Modify an already registered file descriptor."""
+        fd = _as_fd(fd, False)
+        if fd not in self._registry:
+            raise FileNotFoundError(2, 'No such file or directory')
+        self._registry[fd] = _event_mask(eventmask)
+
+    def unregister(self, fd, /):
+        """Remove a file descriptor being tracked by the polling object."""
+        del self._registry[_as_fd(fd, False)]
+
+    def poll(self, timeout=None, /):
+        """Polls the set of registered file descriptors.
+
+        Returns a list of (fd, event) pairs; None or a negative timeout waits
+        without limit, otherwise the timeout is in milliseconds."""
+        if timeout is None:
+            ms = -1
+        else:
+            # _PyTime_FromMillisecondsObject with ROUND_TIMEOUT: a float
+            # rounds up to the next millisecond, anything else is an index.
+            if isinstance(timeout, float):
+                if _math.isnan(timeout):
+                    raise ValueError('Invalid value NaN (not a number)')
+                ms = _math.ceil(timeout)
+            else:
+                try:
+                    ms = _index(timeout)
+                except TypeError:
+                    raise TypeError('timeout must be an integer or None') from None
+            if not -9223372036854 <= ms <= 9223372036854:
+                raise OverflowError('timestamp too large to convert to C PyTime_t')
+            if not -2147483648 <= ms <= 2147483647:
+                raise OverflowError('timeout is too large')
+            if ms < 0:
+                ms = -1
+        # The host call reads the event mask as a signed short.
+        requests = tuple((fd, mask - 65536 if mask > 32767 else mask) for fd, mask in self._registry.items())
+        expires = None if ms < 0 else _time.monotonic() + ms / 1000
+        while True:
+            try:
+                ready = _posix_call('poll', requests, ms)
+            except InterruptedError:
+                # Start over against the same deadline after a handler returned.
+                if expires is not None:
+                    ms = max(0, _math.ceil((expires - _time.monotonic()) * 1000))
+                continue
+            return [(fd, events & 65535) for fd, events in ready]
+
+
+_Poll.__name__ = _Poll.__qualname__ = 'poll'
+
+
+class _PollFactory:
+    # A callable object rather than a function, like select above: the
+    # reference's poll is a builtin, and selectors keeps it as a class
+    # attribute (`_selector_cls = select.poll`) that must not bind.
+    def __call__(self, /):
+        """Returns a polling object, which supports registering and
+unregistering file descriptors, and then polling them for I/O events."""
+        made = object.__new__(_Poll)
+        made._registry = {}
+        return made
+
+
+poll = _PollFactory()
