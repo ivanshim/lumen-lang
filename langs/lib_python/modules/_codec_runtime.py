@@ -339,7 +339,6 @@ def _normalize(encoding):
         else:
             punct = True
     name = ''.join(chars)
-
     if name in _normalization_aliases:
         if cacheable:
             if len(_normalized) >= 256:
@@ -356,8 +355,8 @@ def _normalize(encoding):
                 _normalized.clear()
             _normalized[encoding] = name
         return name
-    from encodings._normalization_aliases import _normalization_aliases as encoding__normalization_aliases
-    canonical = encoding__normalization_aliases.get(name, name)
+    from encodings.aliases import aliases as encoding_aliases
+    canonical = encoding_aliases.get(name, name)
     if canonical in _charmaps or canonical in (
             'ascii', 'latin_1', 'utf_8', 'utf_8_sig', 'utf_7',
             'utf_16', 'utf_16_le', 'utf_16_be',
