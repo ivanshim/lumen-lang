@@ -10635,7 +10635,116 @@ impl<'a> Builder<'a> {
     /// followed by a sign that writes is read as a write whose value is
     /// what was written — but not where the write is the whole
     /// statement, which is read as a statement.
+    /// End of a floor-zero expression that records no binding of its own.
+    /// Anything that introduces a scope or a named expression is refused,
+    /// and the ordinary expression reader records those bindings instead.
+    fn plain_extent(&self) -> Option<usize> {
+        let table = self.table;
+        let mut cursor = self.pos;
+        let mut nest = 0i32;
+        let mut held = false;
+        let stop = self.tokens.len();
+        while cursor < stop {
+            let token = &self.tokens[cursor];
+            let written = token.spelling();
+            match token.shape {
+                Shape::Woven | Shape::WovenEnd | Shape::Field | Shape::FieldText | Shape::Unheld => return None,
+                _ => {}
+            }
+            if token.shape == Shape::Bare && (table.spells("ext.op.lambda", written) || table.spells("ext.stmt.yield", written) || table.spells("ext.op.await", written)) {
+                return None;
+            }
+            if table.spells("ext.op.assign.expression", written) { return None; }
+            if nest > 0 && token.shape == Shape::Bare && (table.spells("ext.op.comprehension.for", written) || table.spells("ext.stmt.async", written)) {
+                return None;
+            }
+            if nest > 0 {
+                if token.shape == Shape::Sign {
+                    match token.lexeme.as_str() {
+                        "(" | "[" | "{" => nest += 1,
+                        ")" | "]" | "}" => nest -= 1,
+                        _ => {}
+                    }
+                }
+                cursor += 1;
+                if nest == 0 { held = true; }
+                continue;
+            }
+            if !held {
+                if token.shape == Shape::Sign && matches!(token.lexeme.as_str(), "(" | "[" | "{") {
+                    nest = 1;
+                    cursor += 1;
+                    continue;
+                }
+                if matches!(token.shape, Shape::Numeral | Shape::Quote | Shape::ByteQuote | Shape::CharacterRow) {
+                    let kind = token.shape;
+                    cursor += 1;
+                    if table.flag("ext.lexical.string.adjacent") && matches!(kind, Shape::Quote | Shape::ByteQuote | Shape::CharacterRow) {
+                        while cursor < stop {
+                            match self.tokens[cursor].shape {
+                                Shape::Woven | Shape::WovenEnd | Shape::Field | Shape::FieldText | Shape::Unheld => return None,
+                                Shape::Quote | Shape::ByteQuote | Shape::CharacterRow => cursor += 1,
+                                _ => break,
+                            }
+                        }
+                    }
+                    held = true;
+                    continue;
+                }
+                if table.spells("ext.literal.ellipsis", written) {
+                    cursor += 1;
+                    held = true;
+                    continue;
+                }
+                if table.monadic.contains_key(written) {
+                    cursor += 1;
+                    continue;
+                }
+                if token.shape == Shape::Bare {
+                    let reserved = table.keywords.contains(written)
+                        && !table.spells("literal.true", written)
+                        && !table.spells("literal.false", written)
+                        && !table.spells("literal.null", written);
+                    if reserved { return None; }
+                    cursor += 1;
+                    held = true;
+                    continue;
+                }
+                return None;
+            }
+            if token.shape == Shape::Bare && table.spells("ext.op.in.negated", written)
+                && self.tokens.get(cursor + 1).is_some_and(|next| table.spells("ext.op.in", next.spelling())) {
+                cursor += 2;
+                held = false;
+                continue;
+            }
+            let group = token.shape == Shape::Sign && matches!(token.lexeme.as_str(), "(" | "[" | "{");
+            let operator = match token.shape {
+                Shape::Bare => table.dyadic.contains_key(written) || table.spells("ext.op.if_else", written),
+                Shape::Sign => group || table.spells("op.pipe", written) || table.dyadic.contains_key(written),
+                _ => false,
+            };
+            if !operator { return Some(cursor); }
+            if group {
+                nest = 1;
+                cursor += 1;
+                continue;
+            }
+            cursor += 1;
+            held = false;
+        }
+        if held && nest == 0 { Some(cursor) } else { None }
+    }
+
     fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<Form> {
+        // The survey pass records assignments and nested scopes. A plain
+        // value adds no name, so the form it would build is not needed.
+        if floor == 0 && self.survey && self.place_depth == 0 && self.kind_mark.is_none() {
+            if let Some(end) = self.plain_extent() {
+                self.pos = end;
+                return Ok(constant(Value::Small(0)));
+            }
+        }
         let first = self.pos;
         let form = self.expr_read(floor, may_write)?;
         if self.on_writing() || self.on_any("ext.op.assign.expression") || TREE_SITES.with(|sites| sites.borrow().is_empty()) { Ok(form) }
