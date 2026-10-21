@@ -3302,7 +3302,9 @@ impl<'a> Machine<'a> {
     /// through that metaclass's own call, which says what comes of it.
     pub(super) fn type_support_namespace(&mut self) -> Value {
         if let Some(cached) = self.imported.get("_typing") { return cached.clone(); }
-        let mut entries = vec![(String::from("__name__"), Value::text("_typing"))];
+        let mut entries = vec![(String::from("__name__"), Value::text("_typing")),
+            ("__doc__".into(), Value::Nil), ("__package__".into(), Value::Nil),
+            ("__loader__".into(), Value::Nil), ("__spec__".into(), Value::Nil)];
         entries.push(("Union".into(), Value::Blueprint(self.native_kind("Union"))));
         for title in ["TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "Generic", "NoDefaultType", "ParamSpecArgs", "ParamSpecKwargs"] {
             let kind = self.native_kind(title);

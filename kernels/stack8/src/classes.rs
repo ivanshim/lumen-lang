@@ -3476,7 +3476,9 @@ impl<'a> Engine<'a> {
     /// through that metaclass's own call, which decides what comes of it.
     pub(super) fn typing_module(&mut self) -> Value {
         if let Some(module) = self.modules.get("_typing") { return module.clone(); }
-        let mut fields = vec![("__name__".into(), Value::text("_typing"))];
+        let mut fields = vec![("__name__".into(), Value::text("_typing")),
+            ("__doc__".into(), Value::Null), ("__package__".into(), Value::Null),
+            ("__loader__".into(), Value::Null), ("__spec__".into(), Value::Null)];
         fields.push(("Union".into(), Value::Class(self.kind_class("Union"))));
         for name in ["TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "Generic", "NoDefaultType", "ParamSpecArgs", "ParamSpecKwargs"] {
             let class = self.kind_class(name);
