@@ -3325,6 +3325,7 @@ impl<'a> Machine<'a> {
         let space = Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: self.native_kind("module"),
             holds: RefCell::new(entries), turn: self.made }));
         self.imported.insert(String::from("_typing"), space.clone()); self.namespace_places.borrow_mut().take(); self.revised_members.borrow_mut().clear();
+        self.refresh_import_table("_typing");
         space
     }
     fn absent_type_default(&mut self) -> Value {

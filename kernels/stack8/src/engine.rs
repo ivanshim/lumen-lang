@@ -33908,7 +33908,7 @@ impl Engine<'_> {
             let spec = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None),
                 class: self.root_class(),
                 fields: RefCell::new(vec![("name".into(), Value::text(&name)),
-                    ("origin".into(), Value::text(&self.source)), ("parent".into(), Value::text(parent))]), mark: self.made }));
+                    ("origin".into(), Value::text(&self.source)), ("parent".into(), Value::text(parent)), ("loader".into(), Value::Null)]), mark: self.made }));
             for (word, value) in [("__spec__", spec.clone()), ("__package__", Value::text(parent))] {
                 let slot = self.registry.slot(word);
                 self.world.resize(self.registry.idents.len(), Value::Blank);
@@ -33938,6 +33938,13 @@ impl Engine<'_> {
                 fields: RefCell::new(vec![("get_source".to_string(), Value::Native(Builtin::LoaderSource, Rc::from("get_source")))]),
                 mark: self.made,
             }));
+            if let Value::Map(entries) = book.borrow().contents() {
+                if let Some((_, spec)) = entries.iter().find(|(key, _)| key.plain() == "__spec__") {
+                    if let Value::Object(spec) = spec.contents() {
+                        if let Some((_, held)) = spec.fields.borrow_mut().iter_mut().find(|(name, _)| name == "loader") { *held = loader.clone(); }
+                    }
+                }
+            }
             let _ = self.book_put(&book, "__loader__", Some(loader));
         }
         self.made += 1;

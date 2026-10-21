@@ -3503,6 +3503,7 @@ impl<'a> Engine<'a> {
         self.made += 1;
         let module = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made }));
         self.modules.insert("_typing".into(), module.clone()); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear();
+        self.refresh_module_cache("_typing");
         module
     }
     fn no_type_default(&mut self) -> Value {

@@ -35081,7 +35081,7 @@ impl<'a> Machine<'a> {
             let parent = name.rsplit_once('.').map_or("", |(parent, _)| parent);
             let spec = Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None),
                 of: self.common_ancestor(), holds: RefCell::new(vec![("name".into(), Value::text(&name)),
-                    ("origin".into(), Value::text(&self.entry_file)), ("parent".into(), Value::text(parent))]), turn: self.made }));
+                    ("origin".into(), Value::text(&self.entry_file)), ("parent".into(), Value::text(parent)), ("loader".into(), Value::Nil)]), turn: self.made }));
             let spec_address = self.place_called("__spec__");
             let owner_address = self.place_called("__package__");
             {
@@ -35104,6 +35104,13 @@ impl<'a> Machine<'a> {
             self.made += 1;
             let loader = Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None),
                 of: Rc::new(loader_kind), holds: RefCell::new(Vec::new()), turn: self.made }));
+            if let Value::Dict(entries) = book.borrow().settled() {
+                if let Some((_, spec)) = entries.iter().find(|(key, _)| key.bare() == "__spec__") {
+                    if let Value::Thing(spec) = spec.settled() {
+                        if let Some((_, held)) = spec.holds.borrow_mut().iter_mut().find(|(name, _)| name == "loader") { *held = loader.clone(); }
+                    }
+                }
+            }
             let _ = self.booked_put(&book, "__loader__", Some(loader));
         }
         let kind = Blueprint { parents: std::cell::RefCell::new(Vec::new()), ancestry: RefCell::new(Vec::new()), presentation: None,
