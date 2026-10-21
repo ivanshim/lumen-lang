@@ -7636,7 +7636,7 @@ impl<'a> Machine<'a> {
         if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
         if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
             let mut values=self.value_list(args,frame)?;
-            if matches!(&stands,Value::Wrapped(..)) { values=self.opened_arguments(values)?; }
+            if matches!(&stands,Value::Wrapped(..)) && !self.wrapper_takes_raw_keys(&stands) { values=self.opened_arguments(values)?; }
             return self.apply_class_member(stands,values);
         }
         if let Value::Method(body, object, _) = &stands {
@@ -11795,7 +11795,7 @@ impl<'a> Machine<'a> {
                 if let Some(answer) = self.text_called(&stands, args, frame) { return Ok(Next::Value(answer?)); }
                 if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
                     let mut given=self.value_list(args,frame)?;
-                    if matches!(&stands,Value::Wrapped(..)) { given=self.opened_arguments(given)?; }
+                    if matches!(&stands,Value::Wrapped(..)) && !self.wrapper_takes_raw_keys(&stands) { given=self.opened_arguments(given)?; }
                     return Ok(Next::Value(self.apply_class_member(stands,given)?));
                 }
                 if let Value::Method(body, object, _) = &stands {
@@ -14790,8 +14790,8 @@ impl<'a> Machine<'a> {
                         Value::Dict(entries) => {
                             for (k, v) in entries.iter() {
                                 self.note_keyword(&mut folded, k, shown)?;
-                                let k = match k { Value::Keyed(inner, _) => inner.as_ref().clone(), other => other.clone() };
-                                names.push((k, v.clone()));
+                                // Keep the hash the dictionary stored, so a later read does not hash the key again.
+                                names.push((k.clone(), v.clone()));
                             }
                         }
                         _ => {
@@ -14873,6 +14873,9 @@ impl<'a> Machine<'a> {
     /// The word a keyword is written under. Only text stands; anything
     /// else is the reference's own complaint, with no naming over it.
     fn word_of_key(&self, key: &Value) -> Res<String> {
+        // A key kept beside its hash is the thing itself: the hash is the
+        // dictionary's own reckoning and no part of the word it stands under.
+        let key = match key { Value::Keyed(inner, _) => inner.as_ref(), other => other };
         let bare = match key.settled() {
             Value::Text(_) => key.settled(),
             _ => Self::underlying(key).unwrap_or_else(|| key.settled()),
@@ -15091,6 +15094,69 @@ impl<'a> Machine<'a> {
         }
     }
 
+
+    /// Whether a call's spreads carry a keyword key that is no text. Only a
+    /// mapping handed to `**` can, and a map answers from its own entries;
+    /// any other kind of spread is taken as though it might.
+    fn spreads_carry_foreign_keys(&self, values: &[Value]) -> bool {
+        values.iter().any(|value| match value {
+            Value::Couple(pair) if matches!(pair.0, Value::Flag(true)) => match pair.1.settled() {
+                Value::Dict(entries) => entries.iter().any(|(key, _)| match key {
+                    Value::Text(_) => false,
+                    Value::Keyed(inner, _) => !matches!(inner.as_ref(), Value::Text(_)),
+                    _ => true,
+                }),
+                _ => true,
+            },
+            _ => false,
+        })
+    }
+
+    /// Whether a wrapped bound method stands on a routine that takes the
+    /// call's keyword mapping as it stands. Such a wrapper is handed the
+    /// call whole so the routine's own binding can weigh the keys.
+    fn wrapper_takes_raw_keys(&self, value: &Value) -> bool {
+        let Value::Wrapped(3, parts) = value else { return false };
+        match parts.first() {
+            Some(Value::Routine(code)) | Some(Value::Bound(code, _)) | Some(Value::Method(code, _, _)) => self.routine_takes_raw_keys(code),
+            _ => false,
+        }
+    }
+
+    /// Whether a routine takes the call's keyword mapping as it stands,
+    /// the way a native maker does, instead of having every key turned into
+    /// a word first. The standard adapter marks such a routine with an
+    /// attribute, read here off the routine's own book.
+    pub(super) fn routine_takes_raw_keys(&self, program: &Routine) -> bool {
+        // The raw-key making is the reference's own, so only the Python
+        // definition may opt into it; every other language keeps words.
+        if !self.table.flag("ext.op.arithmetic.python_numbers") { return false; }
+        for (callable, attributes) in &self.routine_members {
+            let Some(value) = callable.revive() else { continue; };
+            let code = match &value {
+                Value::Routine(code) | Value::Bound(code, _) | Value::Method(code, _, _) => code,
+                _ => continue,
+            };
+            if !std::ptr::eq(program, code.as_ref()) { continue; }
+            let entries = attributes.holds.borrow();
+            if entries.iter().any(|(word, held)| {
+                (word == "_lumen_raw_keywords" || word == "_lumen_raw_keywords\0" || word == "\0_lumen_raw_keywords\0")
+                    && matches!(held.settled(), Value::Flag(true))
+            }) { return true; }
+            // A namespace handed to the routine keeps later attributes there.
+            if let Some((_, book)) = entries.iter().find(|(word, _)| word == "\0handed") {
+                if let Value::Dict(pairs) = book.settled() {
+                    if pairs.iter().any(|(key, held)| {
+                        matches!(key, Value::Text(text) if text.as_ref() == "_lumen_raw_keywords")
+                            && matches!(held.settled(), Value::Flag(true))
+                    }) { return true; }
+                }
+            }
+            return false;
+        }
+        false
+    }
+
     fn fit_arguments(&mut self, program: &Rc<Routine>, manners: &[char], values: Vec<Value>) -> Res<Vec<Value>> {
         if values.len() == manners.len() && manners.iter().zip(&values)
             .all(|(how, value)| matches!(how, 'b' | 'p') && !matches!(value, Value::Couple(_) | Value::Unset)) {
@@ -15123,21 +15189,38 @@ impl<'a> Machine<'a> {
             }
         }
         // Empty built-in spreads cannot raise expansion diagnostics.
-        let (positional, named) = if values.iter().any(|value| match value {
+        let has_spread = values.iter().any(|value| match value {
             Value::Couple(pair) if matches!(pair.0, Value::Flag(_)) => match (&pair.0, pair.1.settled()) {
                 (Value::Flag(false), Value::Tuple(items)) if items.is_empty() => false,
                 (Value::Flag(true), Value::Dict(items)) if items.is_empty() => false,
                 _ => true,
             },
             _ => false,
-        }) {
+        });
+        // A maker marked to take raw keys sees a non-text key whole. Every
+        // other call still narrows keys to words before they are placed.
+        let raw_maker = self.spreads_carry_foreign_keys(&values) && self.routine_takes_raw_keys(program);
+        let (positional, named): (Vec<Value>, Vec<(Value, Value)>) = if raw_maker {
+            if has_spread {
+                let title = self.routine_called(program);
+                let called = match self.routine_module(program).settled() {
+                    Value::Text(space) if !space.is_empty() && &*space != "builtins" && !title.is_empty() => format!("{space}.{title}"),
+                    _ => title,
+                };
+                self.expanded_arguments_shown(values, &format!("{called}() "))?
+            } else { self.expanded_arguments(values)? }
+        } else if has_spread {
             let title = self.routine_called(program);
             let called = match self.routine_module(program).settled() {
                 Value::Text(space) if !space.is_empty() && &*space != "builtins" && !title.is_empty() => format!("{space}.{title}"),
                 _ => title,
             };
-            self.open_arguments_shown(values, &format!("{called}() "))?
-        } else { self.open_arguments(values)? };
+            let (positional, named) = self.open_arguments_shown(values, &format!("{called}() "))?;
+            (positional, named.into_iter().map(|(key, worth)| (Value::text(&key), worth)).collect())
+        } else {
+            let (positional, named) = self.open_arguments(values)?;
+            (positional, named.into_iter().map(|(key, worth)| (Value::text(&key), worth)).collect())
+        };
         let mut fitted = vec![Value::Unset; manners.len()];
         let ordinary: Vec<usize> = manners.iter().enumerate()
             .filter_map(|(slot, how)| matches!(how, 'b' | 'p').then_some(slot)).collect();
@@ -15158,29 +15241,39 @@ impl<'a> Machine<'a> {
         // that they read, weigh and compare as the language says.
         if let Some(slot) = gather { fitted[slot] = Value::tuple(remaining); }
         let keys: Vec<String> = match manners.contains(&'p') {
-            true => named.iter().map(|(key, _)| key.clone()).collect(),
+            true => named.iter().filter_map(|(key, _)| self.word_of_key(key).ok()).collect(),
             false => Vec::new(),
         };
         let mut spare_names = Vec::new();
         let mut already = std::collections::HashSet::new();
         for (key, worth) in named {
+            let word = match self.word_of_key(&key) {
+                Ok(word) => word,
+                Err(fault) => {
+                    if gather_names.is_some() && raw_maker {
+                        spare_names.push((self.hash_key(&key)?, worth));
+                        continue;
+                    }
+                    return Err(fault.into());
+                }
+            };
             // A place given twice over, once in order and once by name,
             // is worded with the routine the call was meant for, under
             // the name it goes by where it was written.
             let duplicate = || match self.table.strings("ext.syntax.call.amiss.positional") {
-                [opening, between, closing] => self.whole_complaint(opening.clone() + &self.routine_called(program) + between + &key + closing),
-                _ => self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&key)),
+                [opening, between, closing] => self.whole_complaint(opening.clone() + &self.routine_called(program) + between + &word + closing),
+                _ => self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&word)),
             };
-            if !already.insert(key.clone()) { return Err(self.keyword_twice(program, &key).into()); }
+            if !already.insert(word.clone()) { return Err(self.keyword_twice(program, &word).into()); }
             let found = program.formals.iter().enumerate()
-                .find(|(at, name)| **name == key && matches!(manners[*at], 'b' | 'n'));
+                .find(|(at, name)| **name == word && matches!(manners[*at], 'b' | 'n'));
             if let Some((at, _)) = found {
                 if !matches!(fitted[at], Value::Unset) { return Err(duplicate().into()); }
                 fitted[at] = worth;
             } else if gather_names.is_some() {
-                spare_names.push((Value::text(&key), worth));
+                spare_names.push((Value::text(&word), worth));
             } else {
-                return Err(self.unplaced_keyword(program, manners, &keys, &key).into());
+                return Err(self.unplaced_keyword(program, manners, &keys, &word).into());
             }
         }
         if handed > ordinary.len() && gather.is_none() {
@@ -18413,6 +18506,9 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn hash_key(&mut self, value: &Value) -> Result<Value, String> {
+        // A key the dictionary already hashed is that key. Hashing it again
+        // would ask the program a second time.
+        if matches!(value, Value::Keyed(_, _)) { return Ok(value.clone()); }
         if self.rules.has_any_ext_stmt_class_special {
             if let Some(number) = Self::constructor_hash(value) {
                 return Ok(Value::Keyed(Rc::new(value.clone()), Rc::new(number)));

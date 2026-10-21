@@ -1339,7 +1339,24 @@ impl Value {
     }
 
     pub fn text(s: &str) -> Value {
+        thread_local! {
+            static SHORT_TEXT: Vec<Rc<str>> = std::iter::once(Rc::from(""))
+                .chain((0..=255u32).map(|point| Rc::from(char::from_u32(point).unwrap().to_string()))).collect();
+        }
+        let mut letters = s.chars();
+        let first = letters.next();
+        if letters.next().is_none() && first.is_none_or(|letter| (letter as u32) < 256) {
+            let index = first.map_or(0, |letter| letter as usize + 1);
+            return SHORT_TEXT.with(|held| Value::Text(held[index].clone()));
+        }
         Value::Text(Rc::from(s))
+    }
+
+    // Share the empty immutable byte literal across independently compiled code.
+    pub fn quoted_bytes(content: Vec<u8>, opening: Rc<str>) -> Value {
+        thread_local! { static EMPTY_BYTES: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new())); }
+        let cell = if content.is_empty() { EMPTY_BYTES.with(Clone::clone) } else { Rc::new(RefCell::new(content)) };
+        Value::Bytes(cell, false, opening)
     }
 
     pub fn member_text(&self, words: &Wording) -> String {
