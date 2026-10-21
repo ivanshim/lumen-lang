@@ -1390,13 +1390,14 @@ impl<'a> Compiler<'a> {
     }
 
     /// The defaults of a routine, read once its frame has been left
-    /// behind: class members and enclosing names bind there.
-    fn read_defaults(&mut self, spares: &[(usize, usize)]) -> Res<()> {
+    /// behind: class members and enclosing names bind there. Generic
+    /// functions temporarily expose their enclosing declaration slots.
+    fn read_defaults(&mut self, spares: &[(usize, usize)], generic_scope: bool) -> Res<()> {
         if self.lang.bind_names {
             let after = self.pos;
             for (_, from) in spares {
                 self.pos = *from;
-                if self.piece().ident == "#type parameters" {
+                if generic_scope && self.piece().ident == "#type parameters" {
                     let saved = self.piece().declared.clone();
                     self.piece().declared.fill(true);
                     let depth = self.default_depth.replace(self.pieces.len() - 1);
@@ -7010,7 +7011,7 @@ impl<'a> Compiler<'a> {
             // other language keeps its call-time default. The method's
             // own parameters stand aside while it is read, so a name
             // spelled like one of them still means the one outside.
-            self.read_defaults(&spares)?;
+            self.read_defaults(&spares, false)?;
             self.constant(Value::Routine(body));
             if self.lang.bind_names && !spares.is_empty() { self.act(Action::Close, spares.len() + 1); }
         }
@@ -7286,7 +7287,7 @@ impl<'a> Compiler<'a> {
             self.gathering().methods.retain(|(old, _)| old != &named);
             self.gathering().shared.retain(|(old, _)| old != &named);
             let slot = self.member_place(&named, "method");
-            self.read_defaults(&spares)?;
+            self.read_defaults(&spares, false)?;
             self.constant(Value::Routine(method.clone()));
             if self.lang.bind_names && !spares.is_empty() { self.act(Action::Close, spares.len() + 1); }
             let wrapped=!decorators.is_empty();
@@ -8915,7 +8916,7 @@ impl<'a> Compiler<'a> {
                 false => self.read(named),
             }
         }
-        self.read_defaults(&defaults)?;
+        self.read_defaults(&defaults, true)?;
         self.constant(Value::Routine(program));
         let count = carried.len() + if lang.bind_names { defaults.len() } else { 0 };
         if count != 0 {
@@ -12023,7 +12024,7 @@ impl<'a> Compiler<'a> {
                                 if !lang.trace_fields.is_empty() { self.put(self.expression_location(origin)); }
                                 self.act(Action::Invoke(Rc::from(tok.lexeme.as_str())), argc + 1);
                             } else if matches!(native, Some(Builtin::Append) | Some(Builtin::Replace) | Some(Builtin::Lead)) {
-                                // push(arr, v), put(arr, i, v): the array is named.
+                                // push, put and unshift name the array they change.
                                 let target = match self.look().shape {
                                     Shape::Instr => self.take().lexeme,
                                     _ => return Err(format!("First argument to {}() must be an array variable name", tok.lexeme)),
