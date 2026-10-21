@@ -423,7 +423,7 @@ impl Default for QuickHash {
 }
 
 impl std::hash::Hasher for QuickHash {
-    #[inline]
+    #[inline(always)]
     fn write(&mut self, bytes: &[u8]) {
         let mut running = self.0;
         let length = bytes.len();
@@ -451,12 +451,12 @@ impl std::hash::Hasher for QuickHash {
         }
         self.0 = running;
     }
-    #[inline]
+    #[inline(always)]
     fn write_u8(&mut self, byte: u8) {
         // Same step as write() of one byte. String hashing ends with this.
         self.0 = (self.0 ^ byte as u64).wrapping_mul(Self::PRIME);
     }
-    #[inline]
+    #[inline(always)]
     fn finish(&self) -> u64 {
         self.0 ^ (self.0 >> 32)
     }

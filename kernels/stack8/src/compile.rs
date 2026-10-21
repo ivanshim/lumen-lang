@@ -7705,7 +7705,8 @@ impl<'a> Compiler<'a> {
             self.pass_token();
         }
         if self.discovering {
-            let names = self.gathering().bindings.iter().cloned().collect();
+            let mut names: Vec<String> = self.gathering().bindings.iter().cloned().collect();
+            names.sort();
             self.plans.insert(class_source, BindingPlan { names, ..BindingPlan::default() });
         }
         Ok(())

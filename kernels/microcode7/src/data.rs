@@ -489,8 +489,8 @@ pub struct MapStore {
     pub slots: Vec<usize>,
     /// Table allocation, entries still available, and the specialized string-key kind.
     pub entry_budget: (usize, usize, bool),
-    place: RefCell<Option<(std::collections::HashMap<String, usize>, usize)>>,
-    spellings: RefCell<Option<Result<std::collections::HashMap<Rc<str>, usize>, ()>>>,
+    place: RefCell<Option<(std::collections::HashMap<String, usize, crate::table::FxBuildHasher>, usize)>>,
+    spellings: RefCell<Option<Result<std::collections::HashMap<Rc<str>, usize, crate::table::FxBuildHasher>, ()>>>,
     namespace_slots: RefCell<Vec<Option<(Rc<str>, usize)>>>,
 }
 
@@ -508,7 +508,7 @@ impl MapStore {
         }
         let mut cached = self.spellings.borrow_mut();
         if cached.is_none() {
-            let mut words = std::collections::HashMap::new();
+            let mut words = std::collections::HashMap::default();
             let mut immutable = true;
             for (at, (key, _)) in self.pairs.iter().enumerate() {
                 match fixed_text(key) {
@@ -556,7 +556,7 @@ impl MapStore {
     fn ensure_place(&self) {
         let mut place = self.place.borrow_mut();
         if place.is_none() {
-            let mut built = std::collections::HashMap::with_capacity(self.pairs.len());
+            let mut built = std::collections::HashMap::with_capacity_and_hasher(self.pairs.len(), Default::default());
             let mut unaddressed = 0;
             for (at, (key, _)) in self.pairs.iter().enumerate() {
                 match key.hash_address() {

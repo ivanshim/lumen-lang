@@ -58,6 +58,7 @@ impl<'a> Machine<'a> {
             _ => self.detail_other(key),
         }
     }
+    // Remember detail words outside the fixed dispatch table.
     fn detail_other(&self, key: &str) -> &str {
         // A word outside the fixed roster is looked up once and kept.
         if let Some(word) = self.detail_kept.borrow().iter().find(|(held, _)| held == key).map(|(_, word)| *word) {
@@ -811,7 +812,7 @@ impl<'a> Machine<'a> {
             let shell=Self::wrap(if op==Prim::ClassWork(9){4}else{5},vec![Value::Nil]);
             if let Value::Wrapped(_,parts)=&shell {if let Value::Mutable(flag,_)=&parts[2]{flag.replace(Value::Flag(true));}}
             shell
-        } else if self.rules.class_builder && op == Prim::Dictionary { self.core_primitive(op,word,positional,named)? } else if named.is_empty(){self.prim(op,word,&positional)?}else{let mut arguments=positional;match self.builtin_names(op,word,&mut arguments,named)?{Some(result)=>result,None=>self.prim(op,word,&arguments)?}};
+        } else if self.rules.class_builder && matches!(op, Prim::Dictionary) { self.core_primitive(op,word,positional,named)? } else if named.is_empty(){self.prim(op,word,&positional)?}else{let mut arguments=positional;match self.builtin_names(op,word,&mut arguments,named)?{Some(result)=>result,None=>self.prim(op,word,&arguments)?}};
         let made = if matches!(word, "str" | "bytes" | "bytearray") { Self::underlying(&made).unwrap_or(made) } else { made };
         let kept=match made.settled(){
             held @ (Value::Vector(_)|Value::Dict(_))=>Value::Mutable(Rc::new(RefCell::new(held)),true),
@@ -2556,7 +2557,7 @@ impl<'a> Machine<'a> {
                 self.apply_class_member(Value::Intrinsic(Prim::Textual(work),name),positional)
             }
             Value::Intrinsic(operation, name) => {
-                if operation == Prim::UnicodeDecomposition && values.iter().all(|arg| !matches!(arg, Value::Couple(_))) {
+                if matches!(operation, Prim::UnicodeDecomposition) && values.iter().all(|arg| !matches!(arg, Value::Couple(_))) {
                     return Ok(crate::sre::decompose(&values)?);
                 }
                 let (mut input, keywords) = self.arguments_for_native(&name, values)?;
@@ -3099,7 +3100,7 @@ impl<'a> Machine<'a> {
                         let receiver=values.remove(0).settled();
                         let Value::Thing(object)=receiver else { return Err(self.class_unready()); };
                         let operation=*self.table.prims.get(&word).ok_or_else(||self.class_unready())?;
-                        if operation == Prim::Listed {
+                        if matches!(operation, Prim::Listed) {
                             let allocation=self.inherited_entry(&object.blueprint(),self.detail("allocate"));
                             if allocation.is_some_and(|entry| !matches!(entry,Value::Wrapped(..))) { values=self.open_arguments(values)?.0; }
                         }
@@ -3266,7 +3267,7 @@ impl<'a> Machine<'a> {
                         }
                         if let Value::Intrinsic(op, spelling) = &target {
                             if matches!(op, Prim::Uniques | Prim::Unchanging) && spelling.as_ref() == word {
-                                if *op == Prim::Uniques { values.clear(); }
+                                if matches!(*op, Prim::Uniques) { values.clear(); }
                                 return self.prim(*op, spelling, &values).map_err(Escape::from);
                             }
                         }
@@ -6209,7 +6210,7 @@ impl<'a> Machine<'a> {
         }
         match &value {
             Value::Intrinsic(working, spelling) if !working.names_a_kind() && !self.detail("name").is_empty() => {
-                if *working == Prim::UnicodeDecomposition {
+                if matches!(*working, Prim::UnicodeDecomposition) {
                     let detail = self.table.strings("ext.builtin.unicodedata.decomposition.metadata");
                     if [self.detail("name"), self.detail("qualified")].contains(&key) {
                         if let Some(title) = detail.first() { return Ok(Value::text(title)); }
@@ -6450,7 +6451,7 @@ impl<'a> Machine<'a> {
             if *op == Prim::AsReal && self.rules.words_ext_builtin_method_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("float_from_number")));
             }
-            if *op == Prim::ComplexMade && self.rules.words_ext_builtin_method_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
+            if matches!(*op, Prim::ComplexMade) && self.rules.words_ext_builtin_method_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("complex_from_number")));
             }
             if Self::names_a_kind(op) {
@@ -6513,7 +6514,7 @@ impl<'a> Machine<'a> {
                 }
                 if key == self.detail("order") && self.table.has_any("ext.stmt.class.builder") {
                     let entry = self.kind_entry("type", key);
-                    if *op == Prim::SortOf { return Ok(entry); }
+                    if matches!(*op, Prim::SortOf) { return Ok(entry); }
                     let builder = self.builder_blueprint();
                     return self.member_binding(entry, Some(value.clone()), builder);
                 }
@@ -8330,9 +8331,9 @@ impl<'a> Machine<'a> {
         }
         if self.spells_property_kind(&settled) { return Ok(self.property_blueprint()); }
         if let Value::Intrinsic(operation, word) = settled {
-            if operation == Prim::SortOf { return Ok(self.builder_blueprint()); }
-            if operation == Prim::Truthful {return Err(self.rules.words_ext_builtin_bool_base.first().map(String::as_str).unwrap_or("TypeError: bases must be types").to_owned().into());}
-            if operation != Prim::Truthful && (self.native_class_spelling(&word) || (!self.rules.words_ext_stmt_class_builder.is_empty() && matches!(operation, Prim::ClassWork(9..=11)))) { return Ok(self.native_kind(&word)); }
+            if matches!(operation, Prim::SortOf) { return Ok(self.builder_blueprint()); }
+            if matches!(operation, Prim::Truthful) {return Err(self.rules.words_ext_builtin_bool_base.first().map(String::as_str).unwrap_or("TypeError: bases must be types").to_owned().into());}
+            if !matches!(operation, Prim::Truthful) && (self.native_class_spelling(&word) || (!self.rules.words_ext_stmt_class_builder.is_empty() && matches!(operation, Prim::ClassWork(9..=11)))) { return Ok(self.native_kind(&word)); }
         }
         if !self.rules.words_ext_stmt_class_builder.is_empty() {
             let word = parent.kind_it_names().map(Rc::from).or_else(|| self.kind_spelling(parent));

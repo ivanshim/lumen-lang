@@ -48,7 +48,7 @@ pub struct FxHasher {
 
 impl FxHasher {
     const SEED: usize = 0x51_7c_c1_b7_27_22_0a_95;
-    #[inline]
+    #[inline(always)]
     fn add(&mut self, word: usize) {
         self.hash = ((self.hash << 5 | self.hash >> (usize::BITS - 5)) ^ word).wrapping_mul(Self::SEED);
     }
@@ -60,21 +60,27 @@ impl std::hash::Hasher for FxHasher {
         self.add(word);
     }
     #[inline]
-    fn write(&mut self, mut bytes: &[u8]) {
-        while bytes.len() >= 8 {
-            self.add(usize::from_ne_bytes(bytes[..8].try_into().unwrap()));
-            bytes = &bytes[8..];
+    fn write(&mut self, bytes: &[u8]) {
+        // Whole words are read where they lie, without a copy through an array.
+        let (start, mut left) = (bytes.as_ptr(), bytes.len());
+        let mut at = 0;
+        while left >= 8 {
+            self.add(unsafe { (start.add(at) as *const usize).read_unaligned() });
+            at += 8;
+            left -= 8;
         }
-        if bytes.len() >= 4 {
-            self.add(u32::from_ne_bytes(bytes[..4].try_into().unwrap()) as usize);
-            bytes = &bytes[4..];
+        if left >= 4 {
+            self.add(unsafe { (start.add(at) as *const u32).read_unaligned() } as usize);
+            at += 4;
+            left -= 4;
         }
-        if bytes.len() >= 2 {
-            self.add(u16::from_ne_bytes(bytes[..2].try_into().unwrap()) as usize);
-            bytes = &bytes[2..];
+        if left >= 2 {
+            self.add(unsafe { (start.add(at) as *const u16).read_unaligned() } as usize);
+            at += 2;
+            left -= 2;
         }
-        if let Some(&last) = bytes.first() {
-            self.add(last as usize);
+        if left > 0 {
+            self.add(unsafe { *start.add(at) } as usize);
         }
     }
     #[inline]
@@ -204,15 +210,17 @@ pub struct Table {
     /// Keep the immutable expression-prefix spellings for the atom fast path.
     pub prefix_heads: HashSet<String, FxBuildHasher>,
     pub prefix_head_width: usize,
-    pub precedence: HashMap<String, u32>,
+    pub precedence: HashMap<String, u32, FxBuildHasher>,
     pub prims: HashMap<String, Prim, FxBuildHasher>,
     builtin_continuations: HashMap<String, Vec<String>>,
     /// Method spellings indexed once from the immutable definition.
-    pub method_names: HashMap<String, &'static str>,
+    pub method_names: HashMap<String, &'static str, FxBuildHasher>,
     /// One word for each primitive, kept in the order the labels write
     /// them. A map keyed by word cannot say which word came first, and
     /// a primitive spelled several ways has to answer by a settled one.
     pub prim_words: Vec<(Prim, String)>,
+    /// Where each primitive's word stands in `prim_words`.
+    prim_word_at: HashMap<Prim, usize, FxBuildHasher>,
     /// `x op= e` for each binary operator (ext.op.assign.compound).
     pub compound: HashMap<String, Prim, FxBuildHasher>,
     /// The labels the definition wrote out, empty ones included.
@@ -613,11 +621,12 @@ impl Table {
             dyadic: HashMap::default(),
             monadic: HashMap::default(),
             prefix_heads: HashSet::default(), prefix_head_width: 0,
-            precedence: HashMap::new(),
+            precedence: HashMap::default(),
             prims: HashMap::default(),
             builtin_continuations: HashMap::new(),
-            method_names: HashMap::new(),
+            method_names: HashMap::default(),
             prim_words: Vec::new(),
+            prim_word_at: HashMap::default(),
             compound: HashMap::default(),
             given: map.keys().cloned().collect(),
             keywords: HashSet::new(),
@@ -658,7 +667,7 @@ impl Table {
         }
         table.prefix_head_width = heads.iter().map(String::len).max().unwrap_or(0);
         table.prefix_heads = heads;
-        let mut methods = HashMap::new();
+        let mut methods = HashMap::default();
         for (label, primitive) in BUILTIN_LABELS {
             if primitive != Prim::ValueMethod { continue; }
             let operation = label.strip_prefix("ext.builtin.method.").unwrap_or(label);
@@ -694,6 +703,11 @@ impl Table {
         self.statement_endings = self.strings("stmt.terminator").iter()
             .chain(self.strings("ext.stmt.separator")).cloned().collect();
         self.scanner = ScannerWords::read(&*self);
+    }
+
+    /// The word a primitive answers by when a value is asked its kind.
+    pub fn prim_word(&self, op: Prim) -> Option<&String> {
+        self.prim_word_at.get(&op).map(|at| &self.prim_words[*at].1)
     }
 
     pub fn continued_builtins(&self, prefix: &str) -> &[String] {
@@ -1139,7 +1153,7 @@ impl Table {
                 // its kind: the word its label writes first, so that a
                 // primitive a table spells several ways does not take
                 // turns among the spellings.
-                if !self.prim_words.iter().any(|(p, _)| *p == op) { self.prim_words.push((op, lex.clone())); }
+                if !self.prim_word_at.contains_key(&op) { self.prim_word_at.insert(op, self.prim_words.len()); self.prim_words.push((op, lex.clone())); }
                 if self.prims.get(&lex) == Some(&op) { continue; }
                 if let Some(previous) = self.prims.get(&lex).copied() {
                     if matches!(op, Prim::Octets(_) | Prim::Textual(_) | Prim::ClassWork(_)) { continue; }
