@@ -211,6 +211,9 @@ enum Owed {
     Test(Rc<Form>),
     Decide(Rc<Form>),
     Turn(Rc<Form>, usize),
+    /// A while resumed after one plain yield. The tail stays inside the
+    /// loop form, so the next pass does not copy it.
+    PlainResume(Rc<Form>, usize),
     HandOut,
     From,
     Await,
@@ -347,7 +350,7 @@ impl Suspension {
                     crate::ghost::form_holds(a, out);
                     crate::ghost::form_holds(b, out);
                 }
-                Owed::Test(form) | Owed::Decide(form) | Owed::Turn(form, _) => {
+                Owed::Test(form) | Owed::Decide(form) | Owed::Turn(form, _) | Owed::PlainResume(form, _) => {
                     if shared_forms.insert(Rc::as_ptr(form) as usize) { crate::ghost::form_holds(form, out); }
                 }
                 Owed::Truth(_, form) => crate::ghost::form_holds(form, out),
@@ -5580,6 +5583,239 @@ impl<'a> Machine<'a> {
         }
     }
 
+    fn note_reached_line(&mut self, row: u32, at: usize) -> Res<()> {
+        self.stand_at_instruction(at as i64);
+        self.row = row;
+        if let Some(active) = &self.active_trace {
+            active.holds.borrow_mut()[0].1 = Value::Small(row as i64);
+        }
+        if crate::ghost::stirred(&self.ghost_tap) {
+            self.attend_to_gone();
+        }
+        if !matches!(self.tracing_function, Value::Nil) { self.emit_trace("line", Value::Nil)?; }
+        if self.watches_signals { self.signals_due_now()?; }
+        Ok(())
+    }
+
+    fn note_source_extent(&mut self, bounds: (u32, u32, u32, u32), at: usize) {
+        self.stand_at_instruction(at as i64);
+        self.row = bounds.0;
+        self.extent = Some(bounds);
+    }
+
+    /// Run a suspension-free statement. Line and extent notes follow the
+    /// suspending walker: the plain evaluator would also clear the carried
+    /// exception and restore the previous extent, which a generator must not.
+    fn plain_statement_value(&mut self, form: &Form, frame: &Rc<Env>) -> Res {
+        match form {
+            Form::OnLine(row, at, inner) => {
+                self.note_reached_line(*row, *at)?;
+                self.plain_statement_value(inner, frame)
+            }
+            Form::Located(bounds, at, inner) => {
+                self.note_source_extent(*bounds, *at);
+                self.plain_statement_value(inner, frame)
+            }
+            Form::Write(slot, inner) => {
+                let made = self.plain_statement_value(inner, frame)?;
+                self.store(slot, frame, made.clone())?;
+                Ok(made)
+            }
+            Form::Apply(Callee::Prim(Prim::Seq, _), parts) => {
+                if let Some(done) = self.quick_chain_compare(form, frame)? {
+                    return Ok(done);
+                }
+                let mut last = Value::Nil;
+                for part in parts {
+                    drop(std::mem::replace(&mut last, Value::Nil));
+                    last = self.plain_statement_value(part, frame)?;
+                }
+                Ok(last)
+            }
+            Form::Dyad { op, a, b, .. }
+                if matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) =>
+            {
+                match (self.quick_input(a, frame)?, self.quick_input(b, frame)?) {
+                    (Some(left), Some(right)) => {
+                        if let Some(done) = self.quick_numeric(*op, &left, &right).map_err(Escape::Error)? {
+                            return Ok(done);
+                        }
+                    }
+                    _ => {}
+                }
+                self.value_of(form, frame)
+            }
+            Form::Apply(Callee::Prim(Prim::Landing(place), _), args) if args.len() == 2 => {
+                match self.quick_landing(*place, &args[0], &args[1], frame)? {
+                    Some(done) => Ok(done),
+                    None => self.value_of(form, frame),
+                }
+            }
+            Form::Apply(Callee::Prim(op, _), args)
+                if args.len() == 2 && matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) =>
+            {
+                match self.quick_binary(*op, args, frame)? {
+                    Some(done) => Ok(done),
+                    None => self.value_of(form, frame),
+                }
+            }
+            Form::Forget(_) => self.value_of(form, frame),
+            other => self.value_of(other, frame),
+        }
+    }
+
+    fn suspended_statement(&mut self, statement: &Form, frame: &Rc<Env>) -> Res {
+        let mut current = statement;
+        loop {
+            match current {
+                Form::OnLine(row, at, inner) => {
+                    self.note_reached_line(*row, *at)?;
+                    current = inner;
+                }
+                Form::Located(bounds, at, inner) => {
+                    self.note_source_extent(*bounds, *at);
+                    current = inner;
+                }
+                Form::Apply(Callee::Prim(Prim::Suspend, _), args) => {
+                    let marked = self.active_trace.as_ref().map(Self::activation_instruction).unwrap_or(-1);
+                    let item = self.plain_statement_value(&args[0], frame)?;
+                    self.stand_at_instruction(marked);
+                    return Ok(item);
+                }
+                _ => unreachable!("plain yield shape"),
+            }
+        }
+    }
+
+    /// Yield from a loop body whose shape is only plain work around one yield.
+    /// A while that can be resumed without copying its tail is left as one
+    /// owed step. Anything else keeps the tail on the owed list, so a value
+    /// sent back in is dropped the way the suspending walker drops it.
+    fn hand_plain_yield(&mut self, body: &Form, frame: &Rc<Env>, state: &mut Suspension, cycle: &Rc<Form>, floor: usize) -> Res<Option<Value>> {
+        let current = peeled(body);
+        if let Form::Apply(Callee::Prim(Prim::Seq, _), parts) = current {
+            let mut yield_at = None;
+            for (index, statement) in parts.iter().enumerate() {
+                if plain_suspend(statement).is_some() {
+                    yield_at = Some(index);
+                    break;
+                }
+                if !form_is_plain(statement) { return Ok(None); }
+            }
+            let Some(yield_at) = yield_at else { return Ok(None); };
+            for statement in &parts[..yield_at] {
+                let _ = self.plain_statement_value(statement, frame)?;
+            }
+            let item = self.suspended_statement(&parts[yield_at], frame)?;
+            self.park_after_yield(state, cycle, floor, &parts[yield_at + 1..]);
+            return Ok(Some(item));
+        }
+        if plain_suspend(current).is_some() {
+            let item = self.suspended_statement(current, frame)?;
+            self.park_after_yield(state, cycle, floor, &[]);
+            return Ok(Some(item));
+        }
+        Ok(None)
+    }
+
+    /// Remember how to come back to this yield. The fast form is one owed
+    /// step that still owns the loop; the slow form copies each statement
+    /// that follows the yield.
+    fn park_after_yield(&mut self, state: &mut Suspension, cycle: &Rc<Form>, floor: usize, tail: &[Form]) {
+        if cycle_resumes_plain(cycle.as_ref()) && tail.iter().all(form_is_plain) {
+            state.owed.push(Owed::PlainResume(Rc::clone(cycle), floor));
+        } else {
+            state.owed.push(Owed::Turn(Rc::clone(cycle), floor));
+            for statement in tail.iter().rev() {
+                state.owed.push(Owed::Find(statement.clone()));
+                state.owed.push(Owed::Drop);
+            }
+        }
+        state.receiving = true;
+    }
+
+    /// Statements after the yield of a loop already parked for a plain resume.
+    /// What stands before the yield ran on the way out and is not run again.
+    fn run_yield_tail(&mut self, body: &Form, frame: &Rc<Env>) -> Res<()> {
+        let current = peeled(body);
+        let Form::Apply(Callee::Prim(Prim::Seq, _), parts) = current else { return Ok(()) };
+        let mut yielded = false;
+        for statement in parts.iter() {
+            if !yielded {
+                if plain_suspend(statement).is_some() { yielded = true; }
+                continue;
+            }
+            let _ = self.plain_statement_value(statement, frame)?;
+        }
+        Ok(())
+    }
+
+    /// One pass back into a while that yielded. The value sent in is dropped
+    /// for a bare yield, the tail runs from the loop form itself, then the
+    /// test decides whether to yield again.
+    fn resume_plain_loop(&mut self, state: &mut Suspension, frame: &Rc<Env>, cycle: Rc<Form>, floor: usize) -> Res<Stepped> {
+        if state.found.len() > floor {
+            state.found.pop();
+        }
+        {
+            let Form::Cycle { body, .. } = cycle.as_ref() else { unreachable!("a resumed loop") };
+            self.run_yield_tail(body, frame)?;
+        }
+        state.found.truncate(floor);
+        {
+            let Form::Cycle { step, .. } = cycle.as_ref() else { unreachable!("a resumed loop") };
+            if let Some(step) = step {
+                if form_is_plain(step) {
+                    let _ = self.plain_statement_value(step, frame)?;
+                } else {
+                    self.value_of(step, frame)?;
+                }
+            }
+        }
+        if let Some(over) = self.past_its_time() { return Err(over); }
+        if let Some(over) = self.past_its_room() { return Err(over); }
+        if self.watches_signals {
+            self.signals_due_now()?;
+        }
+        let told = {
+            let Form::Cycle { test, .. } = cycle.as_ref() else { unreachable!("a resumed loop") };
+            if form_is_plain(test) {
+                self.plain_statement_value(test, frame)?
+            } else {
+                self.value_of(test, frame)?
+            }
+        };
+        if self.object_truth(&told)? {
+            let handed = {
+                let Form::Cycle { body, .. } = cycle.as_ref() else { unreachable!("a resumed loop") };
+                self.hand_plain_yield(body, frame, state, &cycle, floor)?
+            };
+            if let Some(item) = handed {
+                return Ok(Stepped::Handed(item));
+            }
+            let owned_body = {
+                let Form::Cycle { body, .. } = cycle.as_ref() else { unreachable!("a resumed loop") };
+                body.clone()
+            };
+            state.owed.push(Owed::Turn(cycle, floor));
+            if form_is_plain(&owned_body) {
+                let _ = self.plain_statement_value(&owned_body, frame)?;
+            } else {
+                state.owed.push(Owed::Find(*owned_body));
+            }
+        } else {
+            let owned_else = {
+                let Form::Cycle { otherwise, .. } = cycle.as_ref() else { unreachable!("a resumed loop") };
+                otherwise.clone()
+            };
+            match owned_else {
+                Some(arm) => state.owed.push(Owed::Find(*arm)),
+                None => state.found.push(Value::Nil),
+            }
+        }
+        Ok(Stepped::Going)
+    }
+
     /// One step of the owed work. The body is carried forward a piece at
     /// a time so that a watch standing round a suspension is kept with
     /// the body rather than on the machine's own stack.
@@ -5592,6 +5828,10 @@ impl<'a> Machine<'a> {
         if let Owed::Find(node) = &work {
             if worked_whole(node) {
                 state.found.push(self.value_of(node, &frame)?);
+                return Ok(Stepped::Going);
+            }
+            if form_is_plain(node) {
+                state.found.push(self.plain_statement_value(node, &frame)?);
                 return Ok(Stepped::Going);
             }
         }
@@ -5799,17 +6039,26 @@ impl<'a> Machine<'a> {
                     }
                     let Form::Cycle { test, .. } = cycle.as_ref() else { unreachable!() };
                     state.owed.push(Owed::Decide(cycle.clone()));
-                    if worked_whole(test) { state.found.push(self.value_of(test, &frame)?); }
+                    if form_is_plain(test) { state.found.push(self.plain_statement_value(test, &frame)?); }
+                    else if worked_whole(test) { state.found.push(self.value_of(test, &frame)?); }
                     else { state.owed.push(Owed::Find(*test.clone())); }
                 }
                 Owed::Decide(cycle) => {
                     let test = state.found.pop().unwrap_or(Value::Nil);
                     let Form::Cycle { body, otherwise, .. } = cycle.as_ref() else { unreachable!() };
                     if self.object_truth(&test)? {
-                        state.owed.push(Owed::Turn(cycle.clone(), state.found.len()));
-                        state.owed.push(Owed::Find(*body.clone()));
+                        let floor = state.found.len();
+                        if let Some(item) = self.hand_plain_yield(body, &frame, state, &cycle, floor)? {
+                            return Ok(Stepped::Handed(item));
+                        }
+                        state.owed.push(Owed::Turn(cycle.clone(), floor));
+                        if form_is_plain(body) { let _ = self.plain_statement_value(body, &frame)?; }
+                        else { state.owed.push(Owed::Find(*body.clone())); }
                     } else if let Some(arm) = otherwise { state.owed.push(Owed::Find(*arm.clone())); }
                     else { state.found.push(Value::Nil); }
+                }
+                Owed::PlainResume(cycle, floor) => {
+                    return self.resume_plain_loop(state, &frame, cycle, floor);
                 }
                 Owed::Turn(cycle, floor) => {
                     state.found.truncate(floor);
@@ -7494,6 +7743,11 @@ impl<'a> Machine<'a> {
                 match fast {
                     Some(v) => Ok(v),
                     None => {
+                        // Two native numbers never consult an instance method.
+                        // Settling them here skips the general primitive walk.
+                        if let Some(done) = self.quick_numeric(*op, &av, &bv).map_err(Escape::Error)? {
+                            return Ok(done);
+                        }
                         let made = self.prim(*op, name, &[av, bv]);
                         // What a thing's own method raised on the way
                         // is raised on, not the words that stood in.
@@ -7579,6 +7833,9 @@ impl<'a> Machine<'a> {
         match node {
             Form::Apply(Callee::Prim(Prim::Seq, _), args)
             => {
+                if let Some(done) = self.quick_chain_compare(node, frame)? {
+                    return Ok(done);
+                }
                 let mut last = Value::Nil;
                 for a in args {
                     // What the statement before came to is let go
@@ -7736,6 +7993,26 @@ impl<'a> Machine<'a> {
                     let target = self.supplied_name(word)?;
                     if !matches!(&target, Value::Intrinsic(native, _) if native == operation) {
                         return self.call_form(&Form::Const(target), arguments, frame);
+                    }
+                }
+            }
+        }
+        // Names and literals that are already numbers skip the general
+        // primitive walk. A shadowed name, and anything that must run,
+        // stays on that walk.
+        if let Form::Apply(Callee::Prim(op, name), args) = node {
+            let shadowed = !supplied
+                && (self.has_wildcard_imports() || self.world_shadow_applies())
+                && self.spread_override(name, *op).is_some();
+            if !shadowed && args.len() == 2 {
+                if matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
+                    if let Some(done) = self.quick_binary(*op, args, frame)? {
+                        return Ok(done);
+                    }
+                }
+                if let Prim::Landing(place) = op {
+                    if let Some(done) = self.quick_landing(*place, &args[0], &args[1], frame)? {
+                        return Ok(done);
                     }
                 }
             }
@@ -19707,6 +19984,14 @@ impl<'a> Machine<'a> {
     fn object_truth(&mut self, subject: &Value) -> Result<bool, String> {
         if let Value::Attributes(t) = subject { return Ok(!self.attribute_entries(t).is_empty()); }
         if matches!(subject, Value::Refusal(_)) { return Err(self.core_complaint("core.bool.declined", "")); }
+        // Native numbers and flags have no instance dictionary, so the
+        // special-method search would miss and fall through to the same test.
+        match subject {
+            Value::Flag(_) | Value::Small(_) | Value::Huge(_) | Value::Frac(_) | Value::Nil | Value::Unset => {
+                return Ok(subject.is_true());
+            }
+            _ => {}
+        }
         match self.ask_special(subject, 9, &[])? {
             Some(Value::Flag(b)) => return Ok(b),
             Some(other) => return Err(match self.table.strings("ext.builtin.bool.result").first().map(String::as_str) {
@@ -22668,6 +22953,27 @@ impl<'a> Machine<'a> {
         // (the read that follows says which member is missing), whichever
         // layer below it would be reached through.
         if op == Prim::HasMember && matches!(v, [Value::Thing(_), _]) && self.has_class_order() { return Ok(Value::Flag(true)); }
+        // A compound write of two native numbers is the plain arithmetic.
+        // Lists, bytearrays, sets and user-defined in-place methods stay on
+        // the ordinary landing road, which still hears those methods.
+        if let Prim::Landing(place) = op {
+            if let [left, right] = v {
+                if let (Some(one), Some(other)) = (numeric_operand(left), numeric_operand(right)) {
+                    let arithmetic = match self.table.landing_working(place) {
+                        Prim::Plus | Prim::OctetAssign(false) => Some(Prim::Plus),
+                        Prim::Minus => Some(Prim::Minus),
+                        Prim::Times | Prim::OctetAssign(true) => Some(Prim::Times),
+                        _ => None,
+                    };
+                    if let Some(arithmetic) = arithmetic {
+                        self.landed += 1;
+                        let done = self.number_work(arithmetic, &[one, other]);
+                        self.landed -= 1;
+                        return done;
+                    }
+                }
+            }
+        }
         // Exact native integers cannot supply user slots or collection
         // behavior. Their arithmetic still uses the normal numeric rules.
         if let [Value::Small(_), Value::Small(right)] = v {
@@ -30652,6 +30958,120 @@ impl<'a> Machine<'a> {
         Ok(result)
     }
 
+    /// Arithmetic or ordering of two native numbers, or nothing when
+    /// either side is a thing, a flag, or a collection that owns the
+    /// operation. Callers then use the ordinary primitive road.
+    fn quick_numeric(&mut self, op: Prim, left: &Value, right: &Value) -> Result<Option<Value>, String> {
+        let (Some(one), Some(other)) = (numeric_operand(left), numeric_operand(right)) else {
+            return Ok(None);
+        };
+        match op {
+            Prim::Plus | Prim::Minus | Prim::Times => Ok(Some(self.number_work(op, &[one, other])?)),
+            Prim::Eq => Ok(Some(Value::Flag(one.equals(&other)))),
+            Prim::Ne => Ok(Some(Value::Flag(!one.equals(&other)))),
+            Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge => {
+                if math::no_order(&one, &other) {
+                    return Ok(Some(Value::Flag(false)));
+                }
+                let earlier = |low: &Value, high: &Value| -> Result<bool, String> {
+                    match math::below(low, high) {
+                        Some(answer) => Ok(answer),
+                        None => Ok(low.as_big()? < high.as_big()?),
+                    }
+                };
+                let yes = match op {
+                    Prim::Lt => earlier(&one, &other)?,
+                    Prim::Gt => earlier(&other, &one)?,
+                    Prim::Le => !earlier(&other, &one)?,
+                    _ => !earlier(&one, &other)?,
+                };
+                Ok(Some(Value::Flag(yes)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// A name or a literal that is already a native number. Anything
+    /// that must be called, or that is not a number, is left untouched.
+    fn quick_loaded(&mut self, form: &Form, frame: &Rc<Env>) -> Res<Option<Value>> {
+        let mut current = form;
+        loop {
+            match current {
+                Form::OnLine(_, _, inner) | Form::Located(_, _, inner) => current = inner,
+                Form::Read(slot) => return Ok(numeric_operand(&self.fetch(slot, frame)?)),
+                Form::Const(value) => return Ok(numeric_operand(value)),
+                _ => return Ok(None),
+            }
+        }
+    }
+
+    fn quick_input(&mut self, input: &Input, frame: &Rc<Env>) -> Res<Option<Value>> {
+        match input {
+            Input::Address(slot) => Ok(numeric_operand(&self.fetch(slot, frame)?)),
+            Input::Const(value) => Ok(numeric_operand(value)),
+            Input::Form(form) => self.quick_loaded(form, frame),
+        }
+    }
+
+    /// `+=`, `-=`, or `*=` of two native numbers. Lists, bytearrays,
+    /// sets and user-defined in-place methods stay on the landing road.
+    fn quick_landing(&mut self, place: u8, left: &Form, right: &Form, frame: &Rc<Env>) -> Res<Option<Value>> {
+        let arithmetic = match self.table.landing_working(place) {
+            Prim::Plus | Prim::OctetAssign(false) => Prim::Plus,
+            Prim::Minus => Prim::Minus,
+            Prim::Times | Prim::OctetAssign(true) => Prim::Times,
+            _ => return Ok(None),
+        };
+        let (Some(one), Some(other)) = (self.quick_loaded(left, frame)?, self.quick_loaded(right, frame)?) else {
+            return Ok(None);
+        };
+        self.landed += 1;
+        let done = self.number_work(arithmetic, &[one, other]);
+        self.landed -= 1;
+        Ok(Some(done.map_err(Escape::Error)?))
+    }
+
+    /// `+`, `-`, `*`, or a comparison written as a primitive call of two
+    /// native numbers. Names and literals only: a call on either side
+    /// stays on the ordinary road, and is not run twice.
+    fn quick_binary(&mut self, op: Prim, args: &[Form], frame: &Rc<Env>) -> Res<Option<Value>> {
+        let (Some(left), Some(right)) = (self.quick_loaded(&args[0], frame)?, self.quick_loaded(&args[1], frame)?) else {
+            return Ok(None);
+        };
+        self.quick_numeric(op, &left, &right).map_err(Escape::Error)
+    }
+
+    /// One comparison lowered as a chain of temporary cells.
+    /// `a != b` is stored, judged and then forgotten. When both sides are
+    /// already native numbers, the cells are never written: the judgment
+    /// is the same value the cells would have held.
+    /// A chain of two or more links, or a side that is not a name or a
+    /// literal number, is left to the ordinary walk.
+    fn quick_chain_compare(&mut self, form: &Form, frame: &Rc<Env>) -> Res<Option<Value>> {
+        let Form::Apply(Callee::Prim(Prim::Seq, _), outer) = form else { return Ok(None); };
+        if outer.len() != 4 { return Ok(None); }
+        let Form::Write(_, left) = &outer[0] else { return Ok(None); };
+        let Form::Write(_, links) = &outer[1] else { return Ok(None); };
+        let Form::Forget(_) = &outer[2] else { return Ok(None); };
+        let Form::Read(_) = &outer[3] else { return Ok(None); };
+        let mut links = links.as_ref();
+        while let Form::Located(_, _, inner) = links { links = inner; }
+        let Form::Apply(Callee::Prim(Prim::Seq, _), inner) = links else { return Ok(None); };
+        if inner.len() != 4 { return Ok(None); }
+        let Form::Write(_, right) = &inner[0] else { return Ok(None); };
+        let Form::Write(_, compare) = &inner[1] else { return Ok(None); };
+        let Form::Forget(_) = &inner[2] else { return Ok(None); };
+        let Form::Read(_) = &inner[3] else { return Ok(None); };
+        let mut compare = compare.as_ref();
+        while let Form::Located(_, _, deeper) = compare { compare = deeper; }
+        let Form::Dyad { op, a, b, .. } = compare else { return Ok(None); };
+        if !matches!(op, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) { return Ok(None); }
+        if !matches!((a, b), (Input::Address(_), Input::Address(_))) { return Ok(None); }
+        let (Some(one), Some(other)) = (self.quick_loaded(left, frame)?, self.quick_loaded(right, frame)?) else {
+            return Ok(None);
+        };
+        self.quick_numeric(*op, &one, &other).map_err(Escape::Error)
+    }
 
     fn number_work(&mut self, op: Prim, v: &[Value]) -> Result<Value, String> {
         if let [Value::Small(left), Value::Small(right)] = v {
@@ -32872,6 +33292,86 @@ fn suspension_within(form: &Form) -> bool {
         Form::Assert { condition, message } => suspension_within(condition) || suspension_within(message),
         Form::Dyad { a, b, .. } => [a, b].iter().any(|input| matches!(input, Input::Form(f) if suspension_within(f))),
         _ => false,
+    }
+}
+
+/// A native number, following a shared or mutable cell to the value it holds.
+/// Windows and other containers are left alone: settling a window copies it.
+fn numeric_operand(value: &Value) -> Option<Value> {
+    let mut seen = value.clone();
+    for _ in 0..8 {
+        let peeled = match &seen {
+            Value::Small(_) | Value::Huge(_) | Value::Frac(_) => return Some(seen.clone()),
+            Value::Shared(cell) | Value::Mutable(cell, _) => cell.borrow().clone(),
+            _ => return None,
+        };
+        seen = peeled;
+    }
+    None
+}
+
+/// Whether a generator step can be worked by `value_of` once its line and
+/// source extent have been recorded the way the suspending walker records them.
+fn form_is_plain(form: &Form) -> bool {
+    match form {
+        Form::OnLine(_, _, inner) | Form::Located(_, _, inner) => form_is_plain(inner),
+        Form::Read(_) | Form::Const(_) | Form::Take(_) | Form::Glance(_) | Form::Release(_) | Form::Forget(_) | Form::Bump { .. } => true,
+        Form::Write(_, inner) => form_is_plain(inner),
+        Form::Dyad { a, b, .. } => input_is_plain(a) && input_is_plain(b),
+        Form::Apply(Callee::Prim(Prim::Seq, _), args) => args.iter().all(form_is_plain),
+        Form::Apply(Callee::Prim(op, _), args) => prim_runs_plain(op) && args.iter().all(form_is_plain),
+        Form::Apply(Callee::Code(target), args) => form_is_plain(target) && args.iter().all(form_is_plain),
+        _ => false,
+    }
+}
+
+fn input_is_plain(input: &Input) -> bool {
+    match input {
+        Input::Address(_) | Input::Const(_) => true,
+        Input::Form(form) => form_is_plain(form),
+    }
+}
+
+fn prim_runs_plain(op: &Prim) -> bool {
+    !matches!(op,
+        Prim::Seq | Prim::Choose | Prim::Both | Prim::Either | Prim::Leave | Prim::Resume
+        | Prim::Yield | Prim::Suspend | Prim::Delegate | Prim::AwaitResult | Prim::AsyncWalk
+        | Prim::Append | Prim::Replace | Prim::Restore | Prim::Front | Prim::MoreYet)
+}
+
+/// The form under line and extent wrappers.
+fn peeled(body: &Form) -> &Form {
+    let mut current = body;
+    loop {
+        match current {
+            Form::OnLine(_, _, inner) | Form::Located(_, _, inner) | Form::Muted(inner) | Form::Silenced(inner) => current = inner,
+            _ => return current,
+        }
+    }
+}
+
+/// A while whose test and step can be worked without taking the loop apart.
+/// A loop that tests after its body stays on the copying resume.
+fn cycle_resumes_plain(cycle: &Form) -> bool {
+    let Form::Cycle { test, step, after, .. } = cycle else { return false };
+    if *after { return false; }
+    if !(form_is_plain(test) || worked_whole(test)) { return false; }
+    match step {
+        None => true,
+        Some(step) => form_is_plain(step) || worked_whole(step),
+    }
+}
+
+fn plain_suspend(form: &Form) -> Option<&Form> {
+    let mut current = form;
+    loop {
+        match current {
+            Form::OnLine(_, _, inner) | Form::Located(_, _, inner) | Form::Muted(inner) | Form::Silenced(inner) => current = inner,
+            Form::Apply(Callee::Prim(Prim::Suspend, _), args) if args.len() == 1 && form_is_plain(&args[0]) => {
+                return Some(&args[0]);
+            }
+            _ => return None,
+        }
     }
 }
 
