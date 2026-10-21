@@ -26708,6 +26708,13 @@ impl<'a> Engine<'a> {
                 match step {
                     0 => {
                         if !matches!(args.len(), 6 | 7) { return Err(format!("{}() expects 6 or 7 arguments", name)); }
+                        // Return free GNU allocator pages before a child
+                        // starts alongside this interpreter's live heap.
+                        #[cfg(all(target_os = "linux", target_env = "gnu"))]
+                        unsafe {
+                            unsafe extern "C" { fn malloc_trim(pad: usize) -> std::os::raw::c_int; }
+                            let _ = malloc_trim(0);
+                        }
                         use std::os::unix::ffi::OsStrExt as _;
                         let sp = self.wording();
                         let mut words = one_after_another(&args[1]).into_iter();
