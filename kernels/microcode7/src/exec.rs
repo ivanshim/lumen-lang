@@ -5635,13 +5635,17 @@ impl<'a> Machine<'a> {
             Form::Dyad { op, a, b, .. }
                 if matches!(op, Prim::Plus | Prim::Minus | Prim::Times | Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) =>
             {
-                match (self.quick_input(a, frame)?, self.quick_input(b, frame)?) {
-                    (Some(left), Some(right)) => {
-                        if let Some(done) = self.quick_numeric(*op, &left, &right).map_err(Escape::Error)? {
-                            return Ok(done);
-                        }
-                    }
-                    _ => {}
+                // A name or a literal on the left may be combined at once.
+                // Anything else is ordinary work, and the right operand stays
+                // unread until that work has run.
+                let Some(left) = self.quick_input(a, frame)? else {
+                    return self.value_of(form, frame);
+                };
+                let Some(right) = self.quick_input(b, frame)? else {
+                    return self.value_of(form, frame);
+                };
+                if let Some(done) = self.quick_numeric(*op, &left, &right).map_err(Escape::Error)? {
+                    return Ok(done);
                 }
                 self.value_of(form, frame)
             }
@@ -31022,9 +31026,8 @@ impl<'a> Machine<'a> {
             Prim::Times | Prim::OctetAssign(true) => Prim::Times,
             _ => return Ok(None),
         };
-        let (Some(one), Some(other)) = (self.quick_loaded(left, frame)?, self.quick_loaded(right, frame)?) else {
-            return Ok(None);
-        };
+        let Some(one) = self.quick_loaded(left, frame)? else { return Ok(None); };
+        let Some(other) = self.quick_loaded(right, frame)? else { return Ok(None); };
         self.landed += 1;
         let done = self.number_work(arithmetic, &[one, other]);
         self.landed -= 1;
@@ -31035,9 +31038,8 @@ impl<'a> Machine<'a> {
     /// native numbers. Names and literals only: a call on either side
     /// stays on the ordinary road, and is not run twice.
     fn quick_binary(&mut self, op: Prim, args: &[Form], frame: &Rc<Env>) -> Res<Option<Value>> {
-        let (Some(left), Some(right)) = (self.quick_loaded(&args[0], frame)?, self.quick_loaded(&args[1], frame)?) else {
-            return Ok(None);
-        };
+        let Some(left) = self.quick_loaded(&args[0], frame)? else { return Ok(None); };
+        let Some(right) = self.quick_loaded(&args[1], frame)? else { return Ok(None); };
         self.quick_numeric(op, &left, &right).map_err(Escape::Error)
     }
 
@@ -31067,9 +31069,8 @@ impl<'a> Machine<'a> {
         let Form::Dyad { op, a, b, .. } = compare else { return Ok(None); };
         if !matches!(op, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) { return Ok(None); }
         if !matches!((a, b), (Input::Address(_), Input::Address(_))) { return Ok(None); }
-        let (Some(one), Some(other)) = (self.quick_loaded(left, frame)?, self.quick_loaded(right, frame)?) else {
-            return Ok(None);
-        };
+        let Some(one) = self.quick_loaded(left, frame)? else { return Ok(None); };
+        let Some(other) = self.quick_loaded(right, frame)? else { return Ok(None); };
         self.quick_numeric(*op, &one, &other).map_err(Escape::Error)
     }
 
