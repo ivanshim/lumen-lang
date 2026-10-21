@@ -17133,8 +17133,30 @@ impl<'a> Machine<'a> {
             let requested = Value::text(&handling);
             let _registered = self.codec_function("lookup_error", vec![requested])?;
         }
-        if writing && matches!(values[0], Value::Unpaired(_)) { return self.codec_function("_encode_surrogates", values.to_vec()); }
         let alphabet = alphabet?;
+        if writing {
+            if let Value::Unpaired(points) = &values[0] {
+                if handling == "surrogateescape" {
+                    let ceiling = if alphabet == Self::SEVEN_BIT { 127 } else { 255 };
+                    let mut converted = Vec::new();
+                    let mut supported = true;
+                    // Preserve ordinary scalars and escaped octets in one pass.
+                    for point in points.iter().copied() {
+                        match point {
+                            0xdc80..=0xdcff => converted.push((point - 0xdc00) as u8),
+                            _ if alphabet != Self::WIDE && point <= ceiling => converted.push(point as u8),
+                            _ if alphabet == Self::WIDE => match char::from_u32(point) {
+                                Some(ch) => { let mut buffer = [0u8; 4]; converted.extend_from_slice(ch.encode_utf8(&mut buffer).as_bytes()); }
+                                None => { supported = false; break; }
+                            },
+                            _ => { supported = false; break; }
+                        }
+                    }
+                    if supported { return Ok(self.octets(converted, false)); }
+                }
+                return self.codec_function("_encode_surrogates", values.to_vec());
+            }
+        }
         // A valid input does not require the requested error callback to exist.
         let encoding = self.octet_codec_name(alphabet);
         if writing {
@@ -17179,6 +17201,11 @@ impl<'a> Machine<'a> {
             return Ok(self.octets(result, false));
         }
         if alphabet == Self::BYTE_FOR_BYTE { return self.octets_to_text(input, alphabet); }
+        if alphabet == Self::SEVEN_BIT && handling == "surrogateescape" {
+            // ASCII escapes are a codepoint transform, not a series of raised errors.
+            let escaped = input.iter().map(|byte| match *byte { 0..=127 => u32::from(*byte), other => 0xdc00 | u32::from(other) }).collect();
+            return Ok(Value::characters(escaped));
+        }
         // A reading handler may leave a different row of octets on the
         // fault; the reader continues on whatever row is there now.
         let mut source = input.to_vec();
@@ -17208,6 +17235,11 @@ impl<'a> Machine<'a> {
                     result.extend(std::str::from_utf8(&remaining[..first]).map_err(|_| self.octet_error("unready"))?.chars().map(|ch| ch as u32));
                     if handling == "ignore" { cursor += last; continue; }
                     if handling == "replace" { result.push(65533); cursor += last; continue; }
+                    if handling == "surrogateescape" && remaining[first..last].iter().all(|byte| *byte > 127) {
+                        for byte in &remaining[first..last] { result.push(0xdc00 | u32::from(*byte)); }
+                        cursor += last;
+                        continue;
+                    }
                     let call = vec![Value::text(&encoding), self.octets(source.clone(), false), Value::Small((cursor + first) as i64), Value::Small((cursor + last) as i64), Value::text(cause), Value::text(&handling)];
                     match self.codec_function("_decode_error_full", call)? {
                         Value::Tuple(parts) => {
@@ -24142,6 +24174,7 @@ impl<'a> Machine<'a> {
             // a pipe (1), or inherited (anything else); a third stream
             // told to follow the second is kept a pipe of its own, and
             // the library that asked joins the two later.
+            Prim::IoTextAppend => { return self.dispatch_arm_56(op, name, v); }
             Prim::AsciiRun => { return self.dispatch_arm_56(op, name, v); }
             Prim::JsonStringScan => { return self.dispatch_arm_57(op, name, v); }
             Prim::Subprocess => { return self.dispatch_arm_58(op, name, v); }
@@ -27420,6 +27453,14 @@ impl<'a> Machine<'a> {
         };
 
         let result = match op {
+            Prim::IoTextAppend => {
+                n(3)?;
+                return match self.append_memory_text(v) {
+                    Ok(answer) => Ok(answer),
+                    Err(Escape::Error(told)) => Err(told),
+                    Err(escaped) => { self.got_away = Some(escaped); Err(String::new()) }
+                };
+            }
             Prim::AsciiRun
             => {
                 n(4)?;

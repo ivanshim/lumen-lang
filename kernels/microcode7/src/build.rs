@@ -12592,6 +12592,15 @@ impl<'a> Builder<'a> {
             let target_follows = after_groups.map_or(false, |part| table.spells("stmt.assign", part.spelling()) || table.compound.contains_key(&part.lexeme));
             if reaching && table.flag("ext.op.member.pipes") && !table.spells("ext.text.format", &named) && (calling || self.place_depth == 0 && !self.on_writing() && !kind_follows && !target_follows) {
                 let target = match &node { Form::Read(slot) => Some(slot.clone()), _ => None };
+                // A plain read of a name no value kind answers for itself gives the
+                // same member whether or not the subject has it; asking first adds nothing.
+                if !calling && self.grammar.method_labels.get(named.as_str()).is_none()
+                    && !(table.flag("ext.stmt.yield.suspends") && ["ext.stmt.yield.send", "ext.stmt.yield.close", "ext.stmt.yield.throw"].iter().any(|key| table.spells(key, &named)))
+                    && table.prims.get(&named).is_none() && table.strings("ext.builtin.method.error.attribute").len() == 3 {
+                    let bounds = self.span_since(if self.tokens[origin].row == self.tokens[field_start].row { origin } else { field_start });
+                    node = self.located(bounds, prim_call(Prim::Of, vec![node, constant(Value::text(&named))]));
+                    continue;
+                }
                 let held = self.gensym("subject");
                 let save = Form::Write(held.clone(), Box::new(node));
                 let test = prim_call(Prim::HasMember, vec![Form::Read(held.clone()), constant(Value::text(&named))]);

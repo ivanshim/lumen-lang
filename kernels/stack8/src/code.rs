@@ -722,6 +722,7 @@ pub enum Builtin {
     /// this may run a second interpreter beside itself and read its
     /// writing back.
 
+    IoTextAppend,
     AsciiSpan,
     JsonString,
     Subprocess,

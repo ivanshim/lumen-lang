@@ -141,6 +141,37 @@ impl Regex<'_> {
         }
         false
     }
+    // Decode the one-codepoint bodies emitted for optimized repeats.
+    fn repeated_unit(&self, at: usize) -> Option<(usize, u32)> {
+        let tag = *self.program.get(at)? as usize;
+        let value = self.program.get(at + 1).copied().unwrap_or(0);
+        let width = match tag {
+            2 | 3 => 1,
+            13 | 31 | 35 | 39 => value as usize + 1,
+            8 | 16 | 20 | 32 | 33 | 36 | 37 | 40 | 41 => 2,
+            _ => return None,
+        };
+        match self.program.get(at + width) {
+            Some(1) => Some((tag, value)),
+            _ => None,
+        }
+    }
+
+    // Apply a repeat's character predicate with no temporary cursor allocations.
+    fn unit_accepts(&self, at: usize, instruction: (usize, u32), character: u32) -> bool {
+        let (tag, value) = instruction;
+        let character = if tag < 31 { character } else { folded(character, tag < 39) };
+        match tag {
+            3 => true, 2 => character != 10,
+            16 | 32 | 40 => character == value,
+            20 | 33 | 41 => character != value,
+            8 => in_category(value, character),
+            36 | 37 => (character == folded(value, true)) == (tag == 36),
+            35 => self.contains(at + 2, character, match character { 97..=122 => character - 32, _ => character }),
+            _ => self.contains(at + 2, character, character),
+        }
+    }
+
     fn follow(&self, start: Cursor, terminal: Option<usize>, entire: bool, forbidden: Option<usize>, nesting: usize) -> Result<Option<Cursor>, String> {
         if nesting > 512 { return Err(String::from("RecursionError: regular expression assertion nesting exceeded")); }
         let mut alternatives = vec![start];
@@ -254,6 +285,31 @@ impl Regex<'_> {
                         let boundary = ip+operand+1;
                         let body = ip+4;
                         let possessive = tag >= 28;
+                        if tag != 28 {
+                            if let Some(unit) = self.repeated_unit(body) {
+                                let origin = current.offset;
+                                let ceiling = most.min(self.limit.saturating_sub(origin));
+                                let mut finish = origin;
+                                while finish - origin < ceiling && self.unit_accepts(body, unit, self.subject[finish]) { finish += 1; }
+                                if finish - origin < least { break; }
+                                current.instruction = boundary;
+                                current.offset = finish;
+                                if possessive { continue; }
+                                let required = if self.program.get(boundary) == Some(&16) { self.program.get(boundary + 1) } else { None };
+                                let mut latest = None;
+                                // Only a matching literal can begin the remaining pattern.
+                                for offset in origin + least..=finish {
+                                    if required.is_some_and(|letter| offset == self.limit || self.subject.get(offset) != Some(letter)) { continue; }
+                                    if let Some(previous) = latest.take() { alternatives.push(previous); }
+                                    let mut option = current.clone(); option.offset = offset;
+                                    latest = Some(option);
+                                }
+                                match latest {
+                                    Some(option) => { current = option; continue; }
+                                    None => break,
+                                }
+                            }
+                        }
                         let mut choices = vec![current.clone()];
                         let mut count = 0;
                         while count < most {
@@ -297,6 +353,45 @@ impl Regex<'_> {
         Ok(None)
     }
 }
+// The program a pattern keeps arrives as a tuple, which nothing can change
+// afterwards. Each tuple is held in the book beside its decoded words, so
+// the place it lives at is never lent to another tuple while the entry stands.
+thread_local! {
+    static DECODED_PROGRAMS: RefCell<VecDeque<(usize, Value, Rc<Vec<u32>>)>> = const { RefCell::new(VecDeque::new()) };
+}
+const PROGRAMS_KEPT: usize = 80;
+
+fn compiled_program(source: &Value) -> Result<Rc<Vec<u32>>, String> {
+    fn word_of(item: &Value) -> Result<u32, String> {
+        let overflow = || String::from("OverflowError: regular expression code size limit exceeded");
+        let number = match item {
+            Value::Small(whole) => *whole,
+            Value::Flag(truth) => i64::from(*truth),
+            other => other.as_big()?.to_i64().ok_or_else(overflow)?,
+        };
+        u32::try_from(number).map_err(|_| overflow())
+    }
+    let (fixed, row) = match source {
+        Value::Tuple(row) => (true, row),
+        Value::Vector(row) => (false, row),
+        _ => return Err(String::from("TypeError: SRE code must be a list")),
+    };
+    let address = Rc::as_ptr(&**row) as usize;
+    if fixed {
+        let seen = DECODED_PROGRAMS.with(|book| book.borrow().iter().find(|entry| entry.0 == address).map(|entry| entry.2.clone()));
+        if let Some(words) = seen { return Ok(words); }
+    }
+    let words = Rc::new(row.iter().map(word_of).collect::<Result<Vec<u32>, String>>()?);
+    if fixed {
+        DECODED_PROGRAMS.with(|book| {
+            let mut book = book.borrow_mut();
+            if book.len() >= PROGRAMS_KEPT { book.pop_front(); }
+            book.push_back((address, source.clone(), words.clone()));
+        });
+    }
+    Ok(words)
+}
+
 pub fn invoke(input: &[Value]) -> Result<Value, String> {
     fn integer(v: &Value) -> Result<i64, String> {
         match v {
@@ -414,8 +509,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
     }
     let required = match action { 13 => 7, 7 => 6, _ => 8 };
     if input.len() != required { return Err(String::from("TypeError: invalid SRE matcher argument count")); }
-    let Value::Vector(raw) = &input[1] else { return Err(String::from("TypeError: SRE code must be a list")); };
-    let program: Vec<u32> = raw.iter().map(|v| integer(v).and_then(|n| u32::try_from(n).map_err(|_| String::from("OverflowError: regular expression code size limit exceeded")))).collect::<Result<_, _>>()?;
+    let program = compiled_program(&input[1])?;
     let subject = characters_for_regex(&input[2])?;
     let begin = integer(&input[3])?.max(0) as usize;
     let limit = (integer(&input[4])?.max(0) as usize).min(subject.len());
@@ -423,7 +517,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
     let mode = if action == 0 { integer(&input[6])? } else { 2 };
     let skip_empty = action == 0 && integer(&input[7])? != 0;
     if begin > limit { return Ok(if action == 7 { vector(Vec::new()) } else { Value::Nil }); }
-    let regex = Regex { program: &program, subject: &subject, limit };
+    let regex = Regex { program: &program[..], subject: &subject, limit };
     if matches!(action, 7 | 8 | 13) {
         let permitted = if action == 7 { 0 } else { integer(&input[6])? };
         let inserted = if action == 8 { input[7].character_numbers().ok_or_else(|| String::from("TypeError: replacement must be text"))? } else { vec![] };

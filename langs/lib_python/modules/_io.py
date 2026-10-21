@@ -1,6 +1,7 @@
 # Runtime counterpart of CPython v3.14.8 Modules/_io (PSF License).
 # Memory storage follows bytesio.c and stringio.c. Buffered text operations
 # dispatch to the unchanged _pyio implementation after io finishes importing.
+_append_text = __io_text_append
 import operator
 import sys
 from builtins import _buffer_view
@@ -408,7 +409,11 @@ class StringIO(_TextIOBase):
             raise ValueError('I/O operation on uninitialized object')
         return self._closed
     def _checkClosed(self):
-        if self.closed:
+        try:
+            closed = self._closed if type(self) is StringIO else self.closed
+        except AttributeError:
+            closed = self.closed
+        if closed:
             raise ValueError('I/O operation on closed file')
     @property
     def line_buffering(self):
@@ -468,6 +473,10 @@ class StringIO(_TextIOBase):
         self._text = ''
         self._closed = True
     def write(self, text):
+        if type(self) is StringIO and type(text) is str:
+            result = _append_text(self, text, StringIO)
+            if result is not None:
+                return result
         if not isinstance(text, str):
             raise TypeError('string argument expected, got ' + type(text).__name__)
         self._checkClosed()
@@ -488,32 +497,41 @@ class StringIO(_TextIOBase):
         self._length = len(self._text)
         return n
     def read(self, size=-1):
-        size = _size(size)
+        if type(size) is not int or size > _MAXSIZE or size < _MINSIZE:
+            size = _size(size)
         self._checkClosed()
-        self._materialize()
-        end = len(self._text) if size < 0 else min(len(self._text), self._pos + size)
-        if end <= self._pos:
+        if self._chunks:
+            self._materialize()
+        text = self._text
+        start = self._pos
+        length = len(text)
+        end = length if size < 0 or start + size > length else start + size
+        if end <= start:
             return ''
-        data = self._text[self._pos:end]
         self._pos = end
-        return data
+        return text[start:end]
     def readline(self, size=-1):
-        size = _size(size)
+        if type(size) is not int or size > _MAXSIZE or size < _MINSIZE:
+            size = _size(size)
         self._checkClosed()
-        self._materialize()
-        if self._newline != '':
+        if self._chunks:
+            self._materialize()
+        newline = self._newline
+        if newline != '':
+            text = self._text
             start = self._pos
-            end = len(self._text)
+            end = len(text)
             if start >= end:
                 return ''
-            newline = self._newline or '\n'
-            found = self._text.find(newline, start)
+            if newline is None:
+                newline = '\n'
+            found = text.find(newline, start)
             if found >= 0:
                 end = found + len(newline)
-            if size >= 0:
-                end = min(end, start + size)
+            if size >= 0 and end > start + size:
+                end = start + size
             self._pos = end
-            return self._text[start:end]
+            return text[start:end]
         start = self._pos
         length = len(self._text)
         if start >= length:
