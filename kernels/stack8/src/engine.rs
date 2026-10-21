@@ -2552,8 +2552,9 @@ impl<'a> Engine<'a> {
         let quiet_cells = quiet_slots.iter().filter_map(|&slot| self.world.get(slot).cloned());
         let bookkeeping = self.function_members.iter().map(|(_, holder)| Value::Object(holder.clone()))
             .chain(books).chain(crate::faint::anchored_values()).chain(retained.iter().cloned()).chain(quiet_cells).collect();
+        let quiet_positions: std::collections::HashSet<usize> = quiet_slots.iter().copied().collect();
         let active_world = self.world.iter().enumerate().filter_map(|(at, value)|
-            (!quiet_slots.contains(&at)).then_some(value));
+            (!quiet_positions.contains(&at)).then_some(value));
         let live = active_world.chain(&self.data).chain(&self.caught).chain(&self.buffer)
             .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
             .chain(self.native_exceptions.values()).chain(std::iter::once(&self.trace_hook)).cloned()
