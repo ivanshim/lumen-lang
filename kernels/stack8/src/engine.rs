@@ -162,7 +162,7 @@ pub struct Engine<'a> {
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>), crate::value::FxBuildHasher>,
-    delegated_tokens: std::collections::HashSet<usize>,
+    delegated_tokens: std::collections::HashSet<usize, crate::value::FxBuildHasher>,
     code_watches: Vec<(Weak<RefCell<Value>>, bool)>,
     frame_codes: HashMap<usize, Weak<(u8, Vec<Value>)>>,
     class_root: Option<Rc<Class>>,
@@ -192,7 +192,7 @@ pub struct Engine<'a> {
     prepared_hint: std::cell::Cell<Option<usize>>,
     collecting_cycles: bool,
     kind_names: RefCell<HashMap<String, Vec<String>>>,
-    member_words: [&'a str; 25],
+    member_words: [&'a str; 26],
     opened_descriptors: HashMap<i32, std::fs::File>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
@@ -249,7 +249,7 @@ pub struct Engine<'a> {
     module_locations: RefCell<Option<SourceLocations>>,
     pub module_aliases: HashMap<String, String>,
     embedded_names: std::collections::HashSet<String>,
-    modules: HashMap<String, Value>,
+    modules: HashMap<String, Value, std::hash::BuildHasherDefault<crate::value::QuickHash>>,
     /// Each module's own dictionary, made the first time globals() asks
     /// for it and handed back every time after: one map, so that a name
     /// written through it is a name written in the module.
@@ -1741,6 +1741,7 @@ impl<'a> Engine<'a> {
                 lang.class_details.get("subclass").and_then(|list| list.first()).map_or("", String::as_str),
                 lang.class_details.get("text_signature").and_then(|list| list.first()).map_or("", String::as_str),
                 lang.class_details.get("slots").and_then(|list| list.first()).map_or("", String::as_str),
+                lang.class_details.get("descriptor.name").and_then(|list| list.first()).map_or("", String::as_str),
             ],
             lang,
             world,
@@ -1781,7 +1782,7 @@ impl<'a> Engine<'a> {
             generator_frames: HashMap::new(),
             coroutines: HashMap::new(),
             async_generators: HashMap::default(),
-            delegated_tokens: std::collections::HashSet::new(),
+            delegated_tokens: std::collections::HashSet::default(),
             code_watches: Vec::new(), frame_codes: HashMap::new(),
             source: Rc::from(""),
             root_source: Rc::from(""),
@@ -1856,7 +1857,7 @@ impl<'a> Engine<'a> {
             module_locations: RefCell::new(None),
             module_aliases: HashMap::new(),
             embedded_names: std::collections::HashSet::new(),
-            modules: HashMap::new(),
+            modules: HashMap::default(),
             module_globals: HashMap::new(),
             globals_by_cell: HashMap::default(),
             native_slots: lang.class_special.iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
@@ -12199,7 +12200,7 @@ impl<'a> Engine<'a> {
         if phase == 0 { *owner.borrow_mut() = Some(stage.clone()); }
         *stage.borrow_mut() = Value::Small(1);
         driving.set(true);
-        self.delegated_tokens.remove(&(Rc::as_ptr(generator) as usize));
+        if !self.delegated_tokens.is_empty() { self.delegated_tokens.remove(&(Rc::as_ptr(generator) as usize)); }
         let result = (|| {
             if ended {
                 if let Some(value) = thrown {
@@ -12236,7 +12237,7 @@ impl<'a> Engine<'a> {
             };
             // A delegate callback returns an await token even if a lookup
             // resumed the parent and cleared its delegation in the meantime.
-            let delegated = self.delegated_tokens.remove(&(Rc::as_ptr(generator) as usize));
+            let delegated = !self.delegated_tokens.is_empty() && self.delegated_tokens.remove(&(Rc::as_ptr(generator) as usize));
             match stepped {
                 Ok(Some(value)) if delegated || generator.try_borrow().is_ok_and(|body| body.delegate.is_some()) => Ok(AsyncStep::Pending(value)),
                 Ok(Some(_)) if *operation == 3 => Err(self.lang.async_generator_close_ignored[0].clone().into()),
@@ -12982,8 +12983,8 @@ impl<'a> Engine<'a> {
                     let coroutine = self.drop_top()?;
                     Some(self.class_get(coroutine, name, false)?)
                 },
-                Action::Grab(name) if self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name.as_ref()))
-                    && self.data.last().map_or(false, |value| matches!(value.contents(), Value::Class(_) | Value::Native(Builtin::AsReal, _))) => {
+                Action::Grab(name) if self.data.last().map_or(false, |value| matches!(value.contents(), Value::Class(_) | Value::Native(Builtin::AsReal, _)))
+                    && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name.as_ref())) => {
                     let class = self.drop_top()?.contents();
                     Some(self.class_get(class, name, false)?)
                 },

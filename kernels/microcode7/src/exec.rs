@@ -598,7 +598,7 @@ pub struct Machine<'a> {
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
     coroutine_bodies: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<Routine>, Option<Weak<Thing>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>)>,
-    delegated_answers: std::collections::HashSet<usize>,
+    delegated_answers: std::collections::HashSet<usize, crate::table::FxBuildHasher>,
     code_observers: Vec<(Weak<RefCell<Value>>, bool)>,
     pub(super) code_handles: HashMap<usize, (Weak<Routine>, Weak<Vec<Value>>)>,
     pub library_sources: HashMap<String, String>,
@@ -609,6 +609,8 @@ pub struct Machine<'a> {
     library_origins: std::collections::HashSet<String>,
     imported: HashMap<String, Value, crate::table::FxBuildHasher>,
     recursion_hint: Cell<usize>,
+    // Class words outside the fixed roster, looked up once each.
+    detail_kept: RefCell<Vec<(String, &'a str)>>,
     /// The dictionary of a loaded space, built the first time globals()
     /// wants it and answered every time after: one dictionary, so a
     /// name changed through it is changed in the space.
@@ -618,7 +620,7 @@ pub struct Machine<'a> {
     native_slots: HashMap<String, usize>,
     wildcard_names: HashMap<Rc<str>, HashMap<String, usize, crate::table::FxBuildHasher>, crate::table::FxBuildHasher>,
     wildcard_source: RefCell<Option<(Rc<str>, (bool, bool))>>,
-    namespace_places: RefCell<Option<HashMap<usize, String>>>,
+    namespace_places: RefCell<Option<HashMap<usize, String, crate::table::FxBuildHasher>>>,
     /// The place the recursion limit was last read from in the system namespace.
     revised_members: RefCell<HashMap<usize, (usize, HashMap<String, usize, crate::table::FxBuildHasher>)>>,
     revised_namespaces: std::collections::HashSet<Rc<str>>,
@@ -2182,6 +2184,7 @@ impl<'a> Machine<'a> {
             importing: std::collections::HashSet::new(),
             imported: HashMap::default(),
             recursion_hint: Cell::new(0),
+            detail_kept: RefCell::new(Vec::new()),
             space_books: HashMap::new(),
             globals_by_cell: HashMap::new(),
             native_slots: table.strings("ext.stmt.class.special").iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
@@ -2255,7 +2258,7 @@ impl<'a> Machine<'a> {
             generator_frames: HashMap::new(),
             coroutine_bodies: HashMap::new(),
             async_generators: HashMap::new(),
-            delegated_answers: std::collections::HashSet::new(),
+            delegated_answers: std::collections::HashSet::default(),
             code_observers: Vec::new(), code_handles: HashMap::new(),
             holding_fault: Vec::new(),
             holding_below: 0,
@@ -20325,7 +20328,7 @@ impl<'a> Machine<'a> {
         if phase == 0 { *claim.borrow_mut() = Some(stage.clone()); }
         *stage.borrow_mut() = Value::Small(1);
         driving.set(true);
-        self.delegated_answers.remove(&(Rc::as_ptr(generator) as usize));
+        if !self.delegated_answers.is_empty() { self.delegated_answers.remove(&(Rc::as_ptr(generator) as usize)); }
         let outcome = (|| {
             if ended {
                 if let Some(value) = thrown {
@@ -20362,7 +20365,7 @@ impl<'a> Machine<'a> {
             };
             // A delegate callback returns an await token even if a lookup
             // resumed the parent and cleared its delegation in the meantime.
-            let delegated = self.delegated_answers.remove(&(Rc::as_ptr(generator) as usize));
+            let delegated = !self.delegated_answers.is_empty() && self.delegated_answers.remove(&(Rc::as_ptr(generator) as usize));
             match advanced {
                 Ok(Some(item)) if delegated || generator.try_borrow().is_ok_and(|held| held.inner.is_some()) => Ok(AsyncStep::Waiting(item)),
                 Ok(Some(_)) if *operation == 3 => Err(self.table.strings("ext.stmt.async.generator.close.ignored").first().map(String::as_str).unwrap_or_default().to_owned().into()),
