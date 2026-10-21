@@ -11,32 +11,63 @@ def _lumen_interact(source, filename, namespace, quiet=False, version="3.14.8"):
 
     def _lumen_advance(state, text):
         # Carry the reading of one more line over the state: the mark of a
-        # string not yet closed, the count of brackets still open, the last
+        # literal/field stack, the count of statement brackets still open, the last
         # sign written outside any string, the statement's first word,
         # whether it holds an assignment or a statement separator, whether
         # it began with a decorator, whether the line was blank, and
         # whether it ended by joining the next line. Only the line just
         # added is walked, so a long session costs no more than its text.
-        logical_start = state[0] is None and state[1] == 0 and not state[8]
+        frames = state[11]
+        logical_start = not frames and state[1] == 0 and not state[8]
         state[8] = False
         at = 0
         end = len(text)
         while at < end:
             mark = text[at]
-            if state[0] is not None:
-                delimiter = state[0]
-                if mark == '\\':
-                    if len(delimiter) == 1 and text[at + 1:] in ('', '\n', '\r\n'):
-                        state[8] = True
-                    at += 3 if text[at + 1:at + 3] == '\r\n' else 2
-                    continue
-                if text[at:at + len(delimiter)] == delimiter:
-                    state[0] = None
-                    state[2] = mark
-                    at += len(delimiter)
-                    continue
-                if len(delimiter) == 1 and mark == '\n':
-                    state[0] = None
+            frame = frames[-1] if frames else None
+            if frame is not None and frame[0] in ('string', 'format'):
+                if frame[0] == 'string':
+                    delimiter = frame[1]
+                    if mark == '\\':
+                        if text[at + 1:] in ('', '\n', '\r\n'):
+                            state[8] = True
+                        # Backslashes do not escape replacement-field braces.
+                        if frame[2] and text[at + 1:at + 2] in ('{', '}'):
+                            at += 1
+                        elif frame[2] and not frame[3] and text[at + 1:at + 3] == 'N{':
+                            closing = text.find('}', at + 3)
+                            at = closing + 1 if closing >= 0 else end
+                        else:
+                            at += 3 if text[at + 1:at + 3] == '\r\n' else 2
+                        continue
+                    if text[at:at + len(delimiter)] == delimiter:
+                        frames.pop()
+                        if not frames:
+                            state[2] = mark
+                        at += len(delimiter)
+                        continue
+                    if len(delimiter) == 1 and mark == '\n':
+                        frames.pop()
+                        at += 1
+                        continue
+                    formatted = frame[2]
+                else:
+                    formatted = True
+                    if mark == '\\' and not frame[1] and text[at + 1:at + 3] == 'N{':
+                        closing = text.find('}', at + 3)
+                        at = closing + 1 if closing >= 0 else end
+                        continue
+                if formatted and mark == '{':
+                    if frame[0] == 'string' and text[at + 1:at + 2] == '{':
+                        at += 2
+                        continue
+                    frames.append(['field', 0, frame[3] if frame[0] == 'string' else frame[1]])
+                elif formatted and mark == '}':
+                    if frame[0] == 'format':
+                        frames.pop()
+                    elif text[at + 1:at + 2] == '}':
+                        at += 2
+                        continue
                 at += 1
                 continue
             if mark == '#':
@@ -46,25 +77,28 @@ def _lumen_interact(source, filename, namespace, quiet=False, version="3.14.8"):
                     state[8] = True
                 at += 2
                 continue
-            if mark == '\'' or mark == '"':
-                if text[at:at + 3] == mark * 3:
-                    state[0] = mark * 3
-                    at += 3
-                    continue
-                quote = mark
+            if mark in ("'", '"'):
+                start = at
+                while start > 0 and (text[start - 1].isalnum() or text[start - 1] == '_'):
+                    start -= 1
+                prefix = text[start:at].lower()
+                formatted = prefix in ('f', 'fr', 'rf', 't', 'tr', 'rt')
+                delimiter = mark * 3 if text[at:at + 3] == mark * 3 else mark
+                frames.append(['string', delimiter, formatted, 'r' in prefix])
+                at += len(delimiter)
+                continue
+            if frame is not None:
+                # Field brackets and nested literals do not affect the
+                # surrounding statement's depth or assignment classification.
+                if mark == '}' and frame[1] == 0:
+                    frames.pop()
+                elif mark == ':' and frame[1] == 0:
+                    frames[-1] = ['format', frame[2]]
+                elif mark in '([{':
+                    frame[1] += 1
+                elif mark in ')]}':
+                    frame[1] -= 1
                 at += 1
-                while at < end and text[at] != '\n':
-                    if text[at] == '\\':
-                        if text[at + 1:] in ('', '\n', '\r\n'):
-                            state[0] = quote
-                            state[8] = True
-                        at += 3 if text[at + 1:at + 3] == '\r\n' else 2
-                        continue
-                    if text[at] == quote:
-                        at += 1
-                        break
-                    at += 1
-                state[2] = quote
                 continue
             if mark in '([{':
                 state[1] = state[1] + 1
@@ -81,6 +115,7 @@ def _lumen_interact(source, filename, namespace, quiet=False, version="3.14.8"):
             if state[1] == 0 and mark not in ' \t\r\n':
                 state[2] = mark
             at += 1
+        state[0] = bool(frames)
         state[7] = text.strip() == ""
         lead = text.lstrip()
         if logical_start and state[6] and _lumen_word(lead, 0) in ('def', 'class', 'async'):
@@ -93,9 +128,9 @@ def _lumen_interact(source, filename, namespace, quiet=False, version="3.14.8"):
 
 
     def _lumen_fresh():
-        # quote, depth, last sign, first word, assignment, separator,
-        # decorator, blank, joined, compound, header indent.
-        return [None, 0, None, None, False, False, False, False, False, False, 0]
+        # literal pending, depth, last sign, first word, assignment, separator,
+        # decorator, blank, joined, compound, header indent, literal/field stack.
+        return [False, 0, None, None, False, False, False, False, False, False, 0, []]
 
 
     import codeop
@@ -138,7 +173,7 @@ def _lumen_interact(source, filename, namespace, quiet=False, version="3.14.8"):
                 return
             pending.append(line.rstrip('\n'))
             _lumen_advance(state, line)
-            if state[0] is not None or state[1] > 0 or state[8] or state[6]:
+            if state[0] or state[1] > 0 or state[8] or state[6]:
                 continue
             if state[9]:
                 if not state[7]:
