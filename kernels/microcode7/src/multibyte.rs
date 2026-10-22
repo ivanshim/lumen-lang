@@ -66,6 +66,135 @@ fn integer(item: &Value) -> Result<u32, String> {
 fn bytes(raw: &[u8]) -> Value {
     Value::Octets {cell: Rc::new(RefCell::new(raw.into())), changeable: false, lead: "b".into()}
 }
+/// A table opened by codec name: its base offsets and record counts.
+struct Table { data: &'static [u8], name: String, encoders: usize, decoders: usize, decoder_base: usize, range_base: usize }
+impl Table {
+    fn open(name: &str) -> Result<Table, String> {
+        let data = table_for(name).ok_or_else(|| String::from("LookupError: unknown multibyte codec"))?;
+        let encoders = uint(data,0) as usize; let decoders = uint(data,4) as usize;
+        let decoder_base = 8+20*encoders;
+        Ok(Table { data, name: name.to_owned(), encoders, decoders, decoder_base, range_base: decoder_base+20*decoders })
+    }
+    /// Does any pair in the table open with this character?
+    fn opens_pair(&self, point: u32) -> bool {
+        let row = lower_bound(self.data,8,self.encoders,(point,1),false);
+        row != self.encoders && key(self.data,8+row*20,false).0 == point && uint(self.data,12+row*20) != 0
+    }
+    /// The bytes for a character, or for the pair it makes with the next.
+    fn bytes_for(&self, point: u32, next: u32) -> Option<Vec<u8>> {
+        let table = self.data;
+        let wanted = (point,u64::from(next)); let row = lower_bound(table,8,self.encoders,wanted,false);
+        if row < self.encoders && key(table,8+row*20,false) == wanted {
+            let index = 8+row*20; let packed = ulong(table,index+12).to_be_bytes();
+            return Some(packed[8-uint(table,index+8) as usize..].to_vec());
+        }
+        if self.name == "gb18030" && next == 0 {
+            let mut offset = self.range_base+4;
+            for _ in 0..uint(table,self.range_base) {
+                let start = uint(table,offset); let end = uint(table,offset+4);
+                if point >= start && point <= end {
+                    let mut number = uint(table,offset+8)+point-start;
+                    let fourth = (number%10+48) as u8; number /= 10;
+                    let third = (number%126+129) as u8; number /= 126;
+                    let second = (number%10+48) as u8; number /= 10;
+                    return Some(vec![(number+129) as u8,second,third,fourth]);
+                }
+                offset += 16;
+            }
+        }
+        None
+    }
+    /// The character(s) one unit of bytes stands for.
+    fn text_for(&self, raw: &[u8]) -> Option<Vec<u32>> {
+        let table = self.data;
+        if raw.len() > 8 { return None; }
+        let packed = raw.iter().fold(0u64,|number,byte| number*256+u64::from(*byte));
+        let width = raw.len() as u32;
+        let wanted = (width,packed); let row = lower_bound(table,self.decoder_base,self.decoders,wanted,true);
+        if row != self.decoders && key(table,self.decoder_base+20*row,true) == wanted {
+            let at = self.decoder_base+20*row; let mut text = vec![uint(table,at+12)];
+            if uint(table,at+16) > 0 { text.push(uint(table,at+16)); }
+            return Some(text);
+        }
+        if self.name == "gb18030" && width == 4 {
+            let good = raw.iter().enumerate().all(|(i,b)| if i%2==0 { (129..=254).contains(b) } else { (48..=57).contains(b) });
+            if good {
+                let number = (((u32::from(raw[0])-129)*10+u32::from(raw[1])-48)*126+u32::from(raw[2])-129)*10+u32::from(raw[3])-48;
+                let mut row = self.range_base+4;
+                while row < table.len() {
+                    if number >= uint(table,row+8) && number <= uint(table,row+12) { return Some(vec![number-uint(table,row+8)+uint(table,row)]); }
+                    row += 16;
+                }
+            }
+        }
+        None
+    }
+    /// Could a longer unit begin with these bytes?
+    fn continues(&self, raw: &[u8]) -> bool {
+        let table = self.data;
+        if raw.len() > 8 { return false; }
+        let packed = raw.iter().fold(0u64,|number,byte| number*256+u64::from(*byte));
+        let width = raw.len() as u32;
+        let mut total = width+1;
+        while total <= 8 {
+            let bits = 8*(total-width);
+            if bits < 64 {
+                let start = packed << bits; let end = start | ((1u64<<bits)-1);
+                let row = lower_bound(table,self.decoder_base,self.decoders,(total,start),true);
+                if row < self.decoders {
+                    let found = key(table,self.decoder_base+row*20,true);
+                    if found.0 == total && found.1 <= end { return true; }
+                }
+            }
+            total += 1;
+        }
+        self.name == "gb18030" && width > 0 && width < 4 && raw.iter().enumerate().all(|(i,b)| if i%2==0 { (129..=254).contains(b) } else { (48..=57).contains(b) })
+    }
+    /// A stateless codec writing text from `from`: the bytes, the place it
+    /// stopped, and a reason (0 done, 1 unwritable character, 2 a final
+    /// character that may begin a pair once more text arrives).
+    fn write_run(&self, codes: &[u32], from: usize, complete: bool) -> (Vec<u8>, usize, i64) {
+        let mut wire = Vec::new();
+        let mut at = from;
+        let reason = loop {
+            let Some(&point) = codes.get(at) else { break 0 };
+            let trailing = at + 1 == codes.len();
+            if trailing && !complete && self.opens_pair(point) { break 2 }
+            let paired = if trailing { None } else { self.bytes_for(point, codes[at + 1]) };
+            if let Some(part) = paired { wire.extend(part); at += 2; continue; }
+            match self.bytes_for(point, 0) {
+                Some(part) => { wire.extend(part); at += 1; }
+                None => break 1,
+            }
+        };
+        (wire, at, reason)
+    }
+    /// A stateless codec reading bytes from `from`: the text, the place it
+    /// stopped, and a reason (0 done, 1 illegal unit, 2 unfinished unit
+    /// with more to come, 3 unfinished unit at the very end).
+    fn read_run(&self, raw: &[u8], from: usize, complete: bool) -> (Vec<u32>, usize, i64) {
+        let shift_jis = ["cp932", "shift_jis", "shift_jis_2004", "shift_jisx0213"].contains(&self.name.as_str());
+        let mut text = Vec::new();
+        let mut at = from;
+        let reason = loop {
+            if at >= raw.len() { break 0 }
+            let mut width = 1;
+            loop {
+                if width > 8 || at + width > raw.len() { break }
+                let unit = &raw[at..at + width];
+                if self.text_for(unit).is_some() || !self.continues(unit) { break }
+                width += 1;
+            }
+            let lone_high = width == 1 && raw[at] >= 128 && !shift_jis && self.text_for(&raw[at..at + 1]).is_none();
+            if lone_high { width = if self.name.starts_with("euc_j") && raw[at] == 143 { 3 } else { 2 }; }
+            if at + width > raw.len() { break if complete { 3 } else { 2 } }
+            let Some(points) = self.text_for(&raw[at..at + width]) else { break 1 };
+            text.extend(points);
+            at += width;
+        };
+        (text, at, reason)
+    }
+}
 pub fn invoke(parameters: &[Value]) -> Result<Value, String> {
     let [action, named, input, following] = parameters else { return Err(String::from("TypeError: multibyte mapping expects four arguments")); };
     let name = match named.settled() { Value::Text(s) => s, _ => return Err(String::from("TypeError: codec name must be str")) };
@@ -76,80 +205,27 @@ pub fn invoke(parameters: &[Value]) -> Result<Value, String> {
             else {return Err(String::from("LookupError: unknown Unicode database"));};
         return Ok(ucd_record(content,operation,integer(input)?,integer(following)?));
     }
-    let table = table_for(&name).ok_or_else(|| String::from("LookupError: unknown multibyte codec"))?;
-    let encoders = uint(table,0) as usize; let decoders = uint(table,4) as usize;
-    let decoder_base = 8+20*encoders; let range_base = decoder_base+20*decoders;
+    let table = Table::open(&name)?;
     let action = integer(action)?;
     match action {
-        3 => {
-            let point = integer(input)?;
-            let row = lower_bound(table,8,encoders,(point,1),false);
-            Ok(Value::Flag(row != encoders && key(table,8+row*20,false).0 == point && uint(table,12+row*20) != 0))
+        3 => Ok(Value::Flag(table.opens_pair(integer(input)?))),
+        0 => Ok(table.bytes_for(integer(input)?, integer(following)?).map_or(Value::Nil, |part| bytes(&part))),
+        7 => {
+            let Some(codes) = input.settled().character_numbers() else { return Err(String::from("TypeError: mapping input must be str")); };
+            let marker = integer(following)?;
+            let (wire, at, reason) = table.write_run(&codes, (marker / 2) as usize, marker % 2 == 1);
+            Ok(Value::tuple(vec![bytes(&wire), Value::Small(at as i64), Value::Small(reason)]))
         }
-        0 => {
-            let point = integer(input)?; let next = integer(following)?;
-            let wanted = (point,u64::from(next)); let row = lower_bound(table,8,encoders,wanted,false);
-            if row < encoders && key(table,8+row*20,false) == wanted {
-                let index = 8+row*20; let packed = ulong(table,index+12).to_be_bytes();
-                return Ok(bytes(&packed[8-uint(table,index+8) as usize..]));
-            }
-            if name.as_ref() == "gb18030" && next == 0 {
-                let mut offset = range_base+4;
-                for _ in 0..uint(table,range_base) {
-                    let start = uint(table,offset); let end = uint(table,offset+4);
-                    if point >= start && point <= end {
-                        let mut number = uint(table,offset+8)+point-start;
-                        let fourth = (number%10+48) as u8; number /= 10;
-                        let third = (number%126+129) as u8; number /= 126;
-                        let second = (number%10+48) as u8; number /= 10;
-                        return Ok(bytes(&[(number+129) as u8,second,third,fourth]));
-                    }
-                    offset += 16;
-                }
-            }
-            Ok(Value::Nil)
-        }
-        1 | 2 => {
+        1 | 2 | 8 => {
             let Value::Octets {cell, ..} = input.settled() else { return Err(String::from("TypeError: mapping input must be bytes")); };
             let raw = cell.borrow();
-            if raw.len() > 8 { return Ok(Value::Nil); }
-            let packed = raw.iter().fold(0u64,|number,byte| number*256+u64::from(*byte));
-            let width = raw.len() as u32;
-            if action == 1 {
-                let wanted = (width,packed); let row = lower_bound(table,decoder_base,decoders,wanted,true);
-                if row != decoders && key(table,decoder_base+20*row,true) == wanted {
-                    let at = decoder_base+20*row; let mut text = vec![uint(table,at+12)];
-                    if uint(table,at+16) > 0 { text.push(uint(table,at+16)); }
-                    return Ok(Value::characters(text));
-                }
-                if name.as_ref() == "gb18030" && width == 4 {
-                    let good = raw.iter().enumerate().all(|(i,b)| if i%2==0 { (129..=254).contains(b) } else { (48..=57).contains(b) });
-                    if good {
-                        let number = (((u32::from(raw[0])-129)*10+u32::from(raw[1])-48)*126+u32::from(raw[2])-129)*10+u32::from(raw[3])-48;
-                        let mut row = range_base+4;
-                        while row < table.len() {
-                            if number >= uint(table,row+8) && number <= uint(table,row+12) { return Ok(Value::characters(vec![number-uint(table,row+8)+uint(table,row)])); }
-                            row += 16;
-                        }
-                    }
-                }
-                return Ok(Value::Nil);
+            if action == 8 {
+                let marker = integer(following)?;
+                let (text, at, reason) = table.read_run(&raw, (marker / 2) as usize, marker % 2 == 1);
+                return Ok(Value::tuple(vec![Value::characters(text), Value::Small(at as i64), Value::Small(reason)]));
             }
-            let mut total = width+1;
-            while total <= 8 {
-                let bits = 8*(total-width);
-                if bits < 64 {
-                    let start = packed << bits; let end = start | ((1u64<<bits)-1);
-                    let row = lower_bound(table,decoder_base,decoders,(total,start),true);
-                    if row < decoders {
-                        let found = key(table,decoder_base+row*20,true);
-                        if found.0 == total && found.1 <= end { return Ok(Value::Flag(true)); }
-                    }
-                }
-                total += 1;
-            }
-            let gb_prefix = name.as_ref() == "gb18030" && width > 0 && width < 4 && raw.iter().enumerate().all(|(i,b)| if i%2==0 { (129..=254).contains(b) } else { (48..=57).contains(b) });
-            Ok(Value::Flag(gb_prefix))
+            if action == 1 { return Ok(table.text_for(&raw).map_or(Value::Nil, Value::characters)); }
+            Ok(Value::Flag(table.continues(&raw)))
         }
         _ => Err(String::from("ValueError: invalid multibyte mapping operation")),
     }

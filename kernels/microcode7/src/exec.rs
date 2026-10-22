@@ -618,9 +618,12 @@ pub struct Machine<'a> {
     // These dictionaries remain strongly owned by the module inventory.
     globals_by_cell: HashMap<usize, String>,
     native_slots: HashMap<String, usize>,
-    wildcard_names: HashMap<Rc<str>, HashMap<String, usize, crate::table::FxBuildHasher>, crate::table::FxBuildHasher>,
+    wildcard_names: HashMap<Rc<str>, Rc<HashMap<String, usize, crate::table::FxBuildHasher>>, crate::table::FxBuildHasher>,
     wildcard_source: RefCell<Option<(Rc<str>, (bool, bool))>>,
-    namespace_places: RefCell<Option<HashMap<usize, String>>>,
+    /// The wildcard names of the module being written in, found once for
+    /// as long as the reader stays in that module's own text.
+    wildcard_view: RefCell<Option<(Rc<str>, Option<Rc<HashMap<String, usize, crate::table::FxBuildHasher>>>)>>,
+    namespace_places: RefCell<Option<HashMap<usize, String, crate::table::FxBuildHasher>>>,
     /// The place the recursion limit was last read from in the system namespace.
     revised_members: RefCell<HashMap<usize, (usize, HashMap<String, usize, crate::table::FxBuildHasher>)>>,
     revised_namespaces: std::collections::HashSet<Rc<str>>,
@@ -2242,6 +2245,7 @@ impl<'a> Machine<'a> {
             native_slots: table.strings("ext.stmt.class.special").iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
             wildcard_names: HashMap::with_hasher(crate::table::FxBuildHasher::default()),
             wildcard_source: RefCell::new(None),
+            wildcard_view: RefCell::new(None),
             namespace_places: RefCell::new(None),
             revised_members: RefCell::new(HashMap::new()),
             revised_namespaces: std::collections::HashSet::new(),
@@ -17573,6 +17577,15 @@ impl<'a> Machine<'a> {
         }
         let alphabet = self.octet_encoding(values.get(1));
         if !matches!(alphabet, Ok(0..=2)) {
+            if let Some((width, order)) = Self::unit_codec(values.get(1)) {
+                if !writing || values[0].character_numbers().is_some() {
+                    if validate_policy && values.get(2).is_some() && std::env::var("LUMEN_PYTHON_DEV_MODE").ok().as_deref() == Some("1") {
+                        let requested = Value::text(&handling);
+                        let _registered = self.codec_function("lookup_error", vec![requested])?;
+                    }
+                    return if writing { self.units_out(width, order, &values[0], &handling) } else { self.units_in(width, order, input, &handling) };
+                }
+            }
             let function = if validate_policy { if writing { "_text_encode" } else { "_text_decode" } } else if writing { "_encode" } else { "_decode" };
             return self.codec_function(function, values.to_vec());
         }
@@ -17825,6 +17838,137 @@ impl<'a> Machine<'a> {
         }
         let value = outcome.map_err(|escape| self.carried_native_fault(escape))?;
         self.octet_contents(&value, false)
+    }
+
+    /// Which UTF-16 or UTF-32 spelling an encoding name is, if any: the
+    /// bytes to a unit, and the order (None: a byte order mark decides,
+    /// and is written). Only the spellings the library itself knows are
+    /// read, separated or run together as it allows them.
+    fn unit_codec(argument: Option<&Value>) -> Option<(usize, Option<bool>)> {
+        let Some(Value::Text(encoding)) = argument else { return None; };
+        let lowered = encoding.to_lowercase();
+        for (width, digits) in [(2usize, "16"), (4usize, "32")] {
+            for (separated, head) in [(false, format!("utf{digits}")), (true, format!("utf-{digits}")), (true, format!("utf_{digits}"))] {
+                let Some(tail) = lowered.strip_prefix(head.as_str()) else { continue };
+                let order = match tail {
+                    "" => None,
+                    "le" => Some(true),
+                    "be" => Some(false),
+                    "-le" | "_le" if separated => Some(true),
+                    "-be" | "_be" if separated => Some(false),
+                    _ => return None,
+                };
+                return Some((width, order));
+            }
+        }
+        None
+    }
+
+    /// A character's bytes in units of the width, least significant byte
+    /// first when little-endian. Past the BMP, UTF-16 writes two units.
+    fn unit_bytes(wire: &mut Vec<u8>, code: u32, width: usize, little: bool) {
+        if width == 2 && code > 0xffff {
+            let beyond = code - 0x10000;
+            Self::unit_bytes(wire, 0xd800 | (beyond >> 10), 2, little);
+            Self::unit_bytes(wire, 0xdc00 | (beyond & 0x3ff), 2, little);
+            return;
+        }
+        let mut shifts: Vec<u32> = (0..width as u32).map(|k| 8 * k).collect();
+        if !little { shifts.reverse(); }
+        for shift in shifts { wire.push((code >> shift) as u8); }
+    }
+
+    /// Text written in UTF-16 or UTF-32: the mark first when no order was
+    /// named, then every character in units. A surrogate goes to the
+    /// error policy, whose answer is written in the same units.
+    fn units_out(&mut self, width: usize, order: Option<bool>, text: &Value, handling: &str) -> Result<Value, String> {
+        let Some(numbers) = text.character_numbers() else { return Err(self.octet_error("arguments")); };
+        let little = order != Some(false);
+        let bits = 8 * width;
+        let mut wire = Vec::with_capacity(width * (numbers.len() + 1));
+        if order.is_none() { wire.extend_from_slice(&[0xff, 0xfe, 0, 0][..width]); }
+        let name = match order { None => format!("utf-{bits}"), Some(true) => format!("utf-{bits}-le"), Some(false) => format!("utf-{bits}-be") };
+        let mut cursor = 0;
+        while let Some(&code) = numbers.get(cursor) {
+            if handling == "surrogatepass" || !(0xd800..0xe000).contains(&code) {
+                Self::unit_bytes(&mut wire, code, width, little);
+                cursor += 1;
+                continue;
+            }
+            if handling != "strict" {
+                // A handler's answer is checked and written by the library's own loop.
+                let spelled = match order { None => format!("utf_{bits}"), Some(true) => format!("utf_{bits}_le"), Some(false) => format!("utf_{bits}_be") };
+                return self.codec_function("_wide_encode", vec![text.clone(), Value::text(&spelled), Value::text(handling)]);
+            }
+            let call = vec![Value::text(&name), text.clone(), Value::Small(cursor as i64), Value::Small(cursor as i64 + 1), Value::text("surrogates not allowed"), Value::text(handling)];
+            let Value::Tuple(parts) = self.codec_function("_encode_error", call)? else { return Err(self.octet_error("arguments")); };
+            if let Value::Octets { cell, .. } = &parts[0] { wire.extend_from_slice(&cell.borrow()); }
+            else if let Value::Text(word) = &parts[0] { for ch in word.chars() { Self::unit_bytes(&mut wire, ch as u32, width, little); } }
+            else {
+                // An answer holding surrogates is written by the library's own loop.
+                let plain = Self::underlying(&parts[0]).unwrap_or_else(|| parts[0].settled());
+                let spelled = format!("utf_{bits}_{}", if little { "le" } else { "be" });
+                let Value::Octets { cell, .. } = self.codec_function("_wide_encode", vec![plain, Value::text(&spelled), Value::text(handling)])? else { return Err(self.octet_error("arguments")); };
+                wire.extend_from_slice(&cell.borrow());
+            }
+            cursor = parts[1].as_big()?.to_usize().ok_or_else(|| self.octet_error("arguments"))?;
+        }
+        Ok(self.octets(wire, false))
+    }
+
+    /// The number a unit holds, read from its bytes in the given order.
+    fn read_unit(input: &[u8], at: usize, width: usize, little: bool) -> u32 {
+        let bytes = &input[at..at + width];
+        let join = |total: u32, byte: &u8| (total << 8) | *byte as u32;
+        if little { bytes.iter().rev().fold(0, join) } else { bytes.iter().fold(0, join) }
+    }
+
+    /// UTF-16 or UTF-32 read back. With no order named, a leading byte
+    /// order mark picks it and is dropped. Whatever cannot be read goes to
+    /// the error policy under the library's reason and span, and reading
+    /// resumes where the policy points.
+    fn units_in(&mut self, width: usize, order: Option<bool>, input: &[u8], handling: &str) -> Result<Value, String> {
+        let mut little = order != Some(false);
+        let mut cursor = 0;
+        if order.is_none() {
+            if input.starts_with(&[0xff, 0xfe, 0, 0][..width]) { cursor = width; }
+            else if input.starts_with(&[0, 0, 0xfe, 0xff][4 - width..]) { little = false; cursor = width; }
+        }
+        let encoding = format!("utf-{}-{}", 8 * width, if little { "le" } else { "be" });
+        let lenient = handling == "surrogatepass";
+        let mut result = Vec::<u32>::new();
+        // A handler may hand back a new row of bytes as the fault's object;
+        // reading goes on in that row, as the library's own loop does.
+        let mut held = input.to_vec();
+        while cursor < held.len() {
+            let input: &[u8] = &held;
+            let mut stop = cursor + width;
+            let mut code = 0;
+            let fault = if stop > input.len() { stop = input.len(); Some("truncated data") } else {
+                code = Self::read_unit(input, cursor, width, little);
+                if width == 4 {
+                    if code > 0x10ffff { Some("code point not in range(0x110000)") }
+                    else if !lenient && (0xd800..0xe000).contains(&code) { Some("code point in surrogate code point range(0xd800, 0xe000)") }
+                    else { None }
+                } else if (0xd800..0xdc00).contains(&code) {
+                    if stop + 2 > input.len() {
+                        if lenient { None } else { stop = input.len(); Some("unexpected end of data") }
+                    } else {
+                        let trail = Self::read_unit(input, stop, 2, little);
+                        if (0xdc00..0xe000).contains(&trail) { code = 0x10000 + ((code - 0xd800) << 10) + (trail - 0xdc00); stop += 2; None }
+                        else if lenient { None } else { Some("illegal UTF-16 surrogate") }
+                    }
+                } else if !lenient && (0xdc00..0xe000).contains(&code) { Some("illegal encoding") } else { None }
+            };
+            let Some(why) = fault else { result.push(code); cursor = stop; continue; };
+            let call = vec![Value::text(&encoding), self.octets(input.to_vec(), false), Value::Small(cursor as i64), Value::Small(stop as i64), Value::text(why), Value::text(handling)];
+            let Value::Tuple(parts) = self.codec_function("_decode_error_full", call)? else { return Err(self.octet_error("arguments")); };
+            let answer = Self::underlying(&parts[0]).unwrap_or_else(|| parts[0].settled());
+            result.extend(answer.character_numbers().ok_or_else(|| self.octet_error("arguments"))?);
+            cursor = parts[1].as_big()?.to_usize().ok_or_else(|| self.octet_error("arguments"))?;
+            if let Some(Value::Octets { cell, .. }) = parts.get(2).map(|row| Self::underlying(row).unwrap_or_else(|| row.settled())) { held = cell.borrow().to_vec(); }
+        }
+        Ok(Value::characters(result))
     }
 
     fn octet_routine(&mut self, operation: u8, values: &[Value]) -> Result<Value, String> {
@@ -26243,8 +26387,8 @@ impl<'a> Machine<'a> {
                         // Ordinary imported names already use their shared global slots.
                         if self.rules.names_shadow_builtins && self.table.prims.contains_key(&name) {
                             *self.wildcard_source.borrow_mut() = None;
-                            self.wildcard_names.entry(self.written_in.clone())
-                                .or_default().insert(name, slot);
+                            *self.wildcard_view.borrow_mut() = None;
+                            Rc::make_mut(self.wildcard_names.entry(self.written_in.clone()).or_default()).insert(name, slot);
                         }
                     }
                 }
@@ -33817,7 +33961,17 @@ impl Machine<'_> {
         // the calling module has imported a replacement for that word.
         if self.calls.last().is_some_and(|call| call.of_library && !self.stands_for_the_run(&call.named)) { return None; }
         if !wildcard { return None; }
-        let names = self.wildcard_names.get(&self.written_in)?;
+        let names = {
+            let mut view = self.wildcard_view.borrow_mut();
+            match view.as_ref() {
+                Some((source, names)) if Rc::ptr_eq(source, &self.written_in) => names.clone(),
+                _ => {
+                    let names = self.wildcard_names.get(&self.written_in).cloned();
+                    *view = Some((self.written_in.clone(), names.clone()));
+                    names
+                }
+            }
+        }?;
         let slot = names.get(word)?;
         let cells = self.outermost.cells.borrow();
         match cells.get(*slot)? {

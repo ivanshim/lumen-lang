@@ -23297,7 +23297,16 @@ impl<'a> Engine<'a> {
         }
         let codec = match self.byte_codec(args.get(1)) {
             Ok(n) if n < 3 => n,
-            _ => return self.codec_library(match (encode, text_method) { (true, true) => "_text_encode", (false, true) => "_text_decode", (true, false) => "_encode", (false, false) => "_decode" }, args.to_vec()),
+            _ => {
+                let shape = Self::wide_codec(args.get(1)).filter(|_| !encode || args[0].text_codes().is_some());
+                if let Some((width, order)) = shape {
+                    if text_method && args.len() == 3 && std::env::var("LUMEN_PYTHON_DEV_MODE").is_ok_and(|flag| flag == "1") {
+                        self.codec_library("lookup_error", vec![Value::text(&policy)])?;
+                    }
+                    return if encode { self.wide_write(width, order, &args[0], &policy) } else { self.wide_read(width, order, row, &policy) };
+                }
+                return self.codec_library(match (encode, text_method) { (true, true) => "_text_encode", (false, true) => "_text_decode", (true, false) => "_encode", (false, false) => "_decode" }, args.to_vec());
+            }
         };
         if text_method && args.len() == 3 && std::env::var("LUMEN_PYTHON_DEV_MODE").is_ok_and(|flag| flag == "1") {
             self.codec_library("lookup_error", vec![Value::text(&policy)])?;
@@ -23520,6 +23529,128 @@ impl<'a> Engine<'a> {
             Err(Fault::Note(words)) => Err(words),
             Err(raised) => { self.carried = Some(raised); Err(String::new()) }
         }
+    }
+
+    /// The UTF-16 and UTF-32 spellings the kernel reads for itself, in
+    /// the forms the library accepts: `utf-16`, `utf_16le`, `UTF-32-BE`
+    /// and so on. The width is in bytes; the order is little-endian,
+    /// big-endian, or None where a byte order mark is read and written.
+    fn wide_codec(value: Option<&Value>) -> Option<(usize, Option<bool>)> {
+        let Some(Value::Text(name)) = value else { return None; };
+        let spelled = name.to_ascii_lowercase();
+        let mut rest = spelled.strip_prefix("utf")?;
+        let separated = rest.starts_with(['-', '_']);
+        if separated { rest = &rest[1..]; }
+        let (width, tail) = if let Some(tail) = rest.strip_prefix("16") { (2, tail) } else { (4, rest.strip_prefix("32")?) };
+        let order = match tail {
+            "" => None,
+            "le" => Some(true),
+            "be" => Some(false),
+            "-le" | "_le" if separated => Some(true),
+            "-be" | "_be" if separated => Some(false),
+            _ => return None,
+        };
+        Some((width, order))
+    }
+
+    /// One character as units of the width, little- or big-endian; a
+    /// character past the BMP is a surrogate pair in UTF-16.
+    fn wide_units(row: &mut Vec<u8>, code: u32, width: usize, little: bool) {
+        if width == 2 && code >= 0x10000 {
+            Self::wide_units(row, 0xd800 + ((code - 0x10000) >> 10), 2, little);
+            Self::wide_units(row, 0xdc00 + ((code - 0x10000) & 1023), 2, little);
+            return;
+        }
+        let bytes = &code.to_le_bytes()[..width];
+        if little { row.extend_from_slice(bytes); } else { row.extend(bytes.iter().rev()); }
+    }
+
+    /// Text written in UTF-16 or UTF-32 units, a byte order mark first
+    /// where the spelling names no order. A surrogate is handed to the
+    /// error policy as the library hands it, and the answer is written
+    /// in the same units.
+    fn wide_write(&mut self, width: usize, order: Option<bool>, text: &Value, policy: &str) -> Res<Value> {
+        let codes = text.text_codes().ok_or_else(|| self.byte_fault("arguments"))?;
+        let little = order.unwrap_or(true);
+        let mut row: Vec<u8> = if order.is_none() { [255, 254, 0, 0][..width].to_vec() } else { Vec::new() };
+        let name = format!("utf-{}{}", width * 8, match order { None => "", Some(true) => "-le", Some(false) => "-be" });
+        let mut at = 0;
+        while at < codes.len() {
+            let code = codes[at];
+            if !(0xd800..=0xdfff).contains(&code) || policy == "surrogatepass" {
+                Self::wide_units(&mut row, code, width, little);
+                at += 1;
+                continue;
+            }
+            if policy != "strict" {
+                // A handler's answer is checked and written by the library's own loop.
+                let spelled = format!("utf_{}{}", width * 8, match order { None => "", Some(true) => "_le", Some(false) => "_be" });
+                return self.codec_library("_wide_encode", vec![text.clone(), Value::text(&spelled), Value::text(policy)]);
+            }
+            let answer = self.codec_library("_encode_error", vec![Value::text(&name), text.clone(), Value::Small(at as i64), Value::Small(at as i64 + 1), Value::text("surrogates not allowed"), Value::text(policy)])?;
+            let Value::Tuple(pair) = answer else { return Err(self.byte_fault("arguments")); };
+            match &pair[0] {
+                Value::Bytes(bytes, ..) => row.extend_from_slice(&bytes.borrow()),
+                Value::Text(replacement) => replacement.chars().for_each(|c| Self::wide_units(&mut row, c as u32, width, little)),
+                other => {
+                    // A replacement holding surrogates goes back through the library's own loop.
+                    let plain = Self::worth_of(other).unwrap_or_else(|| other.contents());
+                    let spelled = format!("utf_{}_{}", width * 8, if little { "le" } else { "be" });
+                    let again = self.codec_library("_wide_encode", vec![plain, Value::text(&spelled), Value::text(policy)])?;
+                    let Value::Bytes(bytes, ..) = again else { return Err(self.byte_fault("arguments")); };
+                    row.extend_from_slice(&bytes.borrow());
+                }
+            }
+            at = pair[1].as_big()?.to_usize().ok_or_else(|| self.byte_fault("arguments"))?;
+        }
+        Ok(self.byte_make(row, false))
+    }
+
+    /// UTF-16 or UTF-32 read back, the byte order mark read and dropped
+    /// where the spelling names no order. Every fault is handed to the
+    /// error policy with the library's own reason and span, and reading
+    /// goes on from where the policy says.
+    fn wide_read(&mut self, width: usize, order: Option<bool>, row: &[u8], policy: &str) -> Res<Value> {
+        let mut little = order.unwrap_or(true);
+        let mut at = 0;
+        if order.is_none() && row.len() >= width {
+            if row[..width] == [255, 254, 0, 0][..width] { at = width; }
+            else if row[..width] == [0, 0, 254, 255][4 - width..] { little = false; at = width; }
+        }
+        let name = format!("utf-{}-{}", width * 8, if little { "le" } else { "be" });
+        let pass = policy == "surrogatepass";
+        let mut decoded: Vec<u32> = Vec::new();
+        // A handler may hand back a new row of bytes as the fault's object;
+        // reading goes on in that row, as the library's own loop does.
+        let mut held = row.to_vec();
+        while at < held.len() {
+            let row: &[u8] = &held;
+            let unit = |from: usize| row[from..from + width].iter().enumerate().fold(0u32, |n, (k, b)| n | (*b as u32) << (8 * if little { k } else { width - 1 - k }));
+            let (mut code, mut end, mut reason) = (0u32, at + width, None);
+            if end > row.len() { end = row.len(); reason = Some("truncated data"); }
+            else {
+                code = unit(at);
+                if width == 4 {
+                    if code > 0x10ffff { reason = Some("code point not in range(0x110000)"); }
+                    else if (0xd800..=0xdfff).contains(&code) && !pass { reason = Some("code point in surrogate code point range(0xd800, 0xe000)"); }
+                } else if (0xd800..=0xdbff).contains(&code) {
+                    if end + 2 > row.len() { if !pass { end = row.len(); reason = Some("unexpected end of data"); } }
+                    else {
+                        let low = unit(end);
+                        if (0xdc00..=0xdfff).contains(&low) { code = 0x10000 + ((code - 0xd800) << 10) + low - 0xdc00; end += 2; }
+                        else if !pass { reason = Some("illegal UTF-16 surrogate"); }
+                    }
+                } else if (0xdc00..=0xdfff).contains(&code) && !pass { reason = Some("illegal encoding"); }
+            }
+            let Some(why) = reason else { decoded.push(code); at = end; continue; };
+            let answer = self.codec_library("_decode_error_full", vec![Value::text(&name), self.byte_make(row.to_vec(), false), Value::Small(at as i64), Value::Small(end as i64), Value::text(why), Value::text(policy)])?;
+            let Value::Tuple(pair) = answer else { return Err(self.byte_fault("arguments")); };
+            let replacement = Self::worth_of(&pair[0]).unwrap_or_else(|| pair[0].contents());
+            decoded.extend(replacement.text_codes().ok_or_else(|| self.byte_fault("arguments"))?);
+            at = pair[1].as_big()?.to_usize().ok_or_else(|| self.byte_fault("arguments"))?;
+            if let Some(Value::Bytes(cell, ..)) = pair.get(2).map(|bytes| Self::worth_of(bytes).unwrap_or_else(|| bytes.contents())) { held = cell.borrow().clone(); }
+        }
+        Ok(Value::from_codes(decoded))
     }
 
     fn byte_call(&mut self, task: u8, args: &[Value]) -> Res<Value> {

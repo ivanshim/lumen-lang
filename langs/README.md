@@ -526,9 +526,11 @@ only. The extension labels so far, all from PHP:
   which: the wide encoding, then the seven-bit one, then the one holding
   every byte to be the character of that number, then the one which
   writes a character past a byte as a backslash escape and reads such an
-  escape back. UTF-8, ASCII and Latin-1 conversion runs in each kernel.
-  Other codecs are dispatched through the Python `codecs` library:
-  UTF-16/32, UTF-7, Unicode escapes, single-byte character maps and IDNA.
+  escape back. UTF-8, ASCII and Latin-1 conversion runs in each kernel,
+  and so does UTF-16/32 under its usual spellings, its error handlers
+  still called back in the library. Other codecs are dispatched through
+  the Python `codecs` library: UTF-7, Unicode escapes, single-byte
+  character maps and IDNA.
   `ext.system.bytes.strict` names strict conversion. The standard error
   handlers and registered callbacks receive Unicode exception objects
   with the original input, encoding, half-open error span and reason.

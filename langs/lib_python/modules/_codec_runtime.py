@@ -454,6 +454,15 @@ def decode(obj, encoding='utf-8', errors=_default_errors):
 # UTF-16/32 operate on code units; error spans always refer to the
 # original byte string, including its byte order mark.
 def _wide_encode(text, name, errors):
+    # Plain text the strict policy accepts goes to the kernel. A str subclass,
+    # or text a handler must answer for, keeps the loop below, which hands
+    # the object itself to the error handlers and checks their answers.
+    if type(text) is str and name in ('utf_16', 'utf_16_le', 'utf_16_be', 'utf_32', 'utf_32_le', 'utf_32_be'):
+        try:
+            return _raw_text_encode(text, name.replace('_', '-'), 'strict')
+        except UnicodeEncodeError:
+            if errors == 'strict':
+                raise
     width = 4 if name.startswith('utf_32') else 2
     little = not name.endswith('_be')
     row = []
@@ -492,6 +501,10 @@ def _wide_encode(text, name, errors):
             row.extend([(n >> shift) & 255 for shift in shifts])
         i += 1
     return bytes(row)
+
+_wide_forms = {'utf_16': (2, True, 'utf-16'), 'utf_16_le': (2, True, 'utf-16-le'), 'utf_16_be': (2, False, 'utf-16-be'),
+               'utf_32': (4, True, 'utf-32'), 'utf_32_le': (4, True, 'utf-32-le'), 'utf_32_be': (4, False, 'utf-32-be')}
+_aligned_handlers = frozenset(('strict', 'ignore', 'replace', 'surrogatepass', 'backslashreplace'))
 
 def _wide_decode(data, name, errors, final=True, start=0):
     # Valid scalar chunks avoid the interpreted code-unit loop. Rejected
@@ -559,43 +572,95 @@ def _wide_decode(data, name, errors, final=True, start=0):
     return result, i
 
 _b64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+_utf7_kinds = {}
 
 def _utf7_encode(text):
-    result = ''
-    i = 0
-    while i < len(text):
-        c = text[i]
-        if c == '+':
-            result += '+-'
-            i += 1
-        elif c in '\t\r\n' or 32 <= ord(c) < 127 and c not in '\\~':
-            result += c
-            i += 1
-        else:
-            bits = 0
-            count = 0
-            result += '+'
-            while i < len(text):
-                c = text[i]
-                if c in '\t\r\n' or 32 <= ord(c) < 127 and c not in '\\+~':
-                    break
-                n = ord(c)
-                units = [n] if n < 65536 else [0xd800 + ((n - 65536) >> 10), 0xdc00 + ((n - 65536) & 1023)]
-                for unit in units:
-                    bits = (bits << 16) | unit
-                    count += 16
-                    while count >= 6:
-                        count -= 6
-                        result += _b64[(bits >> count) & 63]
-                    bits &= (1 << count) - 1
-                i += 1
-            if count:
-                result += _b64[(bits << (6 - count)) & 63]
-            if i == len(text) or text[i] in _b64 + '-':
-                result += '-'
-    return result.encode('ascii')
+    # Text of directly encoded characters alone is its own ASCII spelling.
+    if type(text) is str and text.isascii() and text.replace('\t', '').replace('\r', '').replace('\n', '').isprintable() and '+' not in text and '\\' not in text and '~' not in text:
+        return _raw_text_encode(text, 'ascii', 'strict')
+    import binascii
+    kinds = _utf7_kinds
+    try:
+        marks = ''.join(map(kinds.__getitem__, text))
+    except KeyError:
+        if len(kinds) > 4096:
+            kinds.clear()
+        for c in set(text):
+            if c not in kinds:
+                kinds[c] = 'p' if c == '+' else 'd' if c in '\t\r\n' or 32 <= ord(c) < 127 and c not in '\\~' else 's'
+        marks = ''.join(map(kinds.__getitem__, text))
+    # A run starts at a character that must be shifted and goes on through any
+    # plus signs (shifted with it) up to the next directly written character;
+    # a plus sign outside a run is written '+-'.
+    parts = []
+    at = 0
+    while True:
+        begin = marks.find('s', at)
+        if begin < 0:
+            break
+        end = marks.find('d', begin)
+        if end < 0:
+            end = len(text)
+        parts.append(text[at:begin].replace('+', '+-'))
+        shifted = binascii.b2a_base64(text[begin:end].encode('utf-16-be', 'surrogatepass'), newline=False).rstrip(b'=').decode('ascii')
+        parts.append('+' + shifted)
+        if end == len(text) or text[end] in _b64 + '-':
+            parts.append('-')
+        at = end
+    parts.append(text[at:].replace('+', '+-'))
+    return ''.join(parts).encode('ascii')
+
+# Shift sequences read whole: the Base64 by the native decoder and the
+# units as UTF-16-BE. Anything irregular answers None, and the loop in
+# _utf7_decode reports it under its own reason and span.
+_b64_marks = None
+def _utf7_bulk_decode(data, final):
+    global _b64_marks
+    import binascii
+    if _b64_marks is None:
+        _b64_marks = bytes(65 if chr(i) in _b64 else 46 for i in range(256))
+    marks = data.translate(_b64_marks)
+    parts = []
+    pos = 0
+    while True:
+        plus = data.find(b'+', pos)
+        head = data[pos:] if plus < 0 else data[pos:plus]
+        if not head.isascii():
+            return None
+        parts.append(_raw_text_decode(head, 'ascii', 'strict'))
+        if plus < 0:
+            return ''.join(parts), len(data)
+        if plus + 1 == len(data):
+            return ''.join(parts), len(data) if final else plus
+        if data[plus + 1] == 45:
+            parts.append('+')
+            pos = plus + 2
+            continue
+        if marks[plus + 1] != 65:
+            return None
+        end = marks.find(b'.', plus + 1)
+        if end < 0:
+            if not final:
+                return ''.join(parts), plus
+            end = len(data)
+        run = data[plus + 1:end]
+        leftover = 6 * len(run) % 16
+        if leftover >= 6 or leftover and _b64.index(chr(run[-1])) & ((1 << leftover) - 1):
+            return None
+        try:
+            units = _raw_text_decode(binascii.a2b_base64(run + b'=' * (-len(run) % 4)), 'utf-16-be', 'strict')
+        except (UnicodeDecodeError, binascii.Error):
+            return None
+        parts.append(units)
+        pos = end + 1 if end < len(data) and data[end] == 45 else end
 
 def _utf7_decode(data, errors, final=True):
+    # Plain ASCII without a shift character reads as itself.
+    if data.isascii() and 43 not in data:
+        return _raw_text_decode(data, 'ascii', 'strict'), len(data)
+    whole = _utf7_bulk_decode(data, final)
+    if whole is not None:
+        return whole
     result = ''
     i = 0
     shifted = False
@@ -675,32 +740,102 @@ def _utf7_decode(data, errors, final=True):
 
 _escape_decode = {'a': '\a', 'b': '\b', 'f': '\f', 'n': '\n', 'r': '\r', 't': '\t', 'v': '\v', '\\': '\\', "'": "'", '"': '"'}
 
+def _escaped_row(c, raw):
+    n = ord(c)
+    if raw and n < 256 or not raw and 32 <= n < 127 and c != '\\':
+        return bytes([n])
+    if not raw and c in ('\t', '\n', '\r', '\\'):
+        return ('\\' + {'\t': 't', '\n': 'n', '\r': 'r', '\\': '\\'}[c]).encode('ascii')
+    return _escape(c).encode('ascii')
+
+# Each character's escaped spelling, kept for the characters met so far.
+_escaped_rows = ({}, {})
+
 def _escaped_encode(text, raw):
-    out = []
-    for c in text:
-        n = ord(c)
-        if raw and n < 256 or not raw and 32 <= n < 127 and c != '\\':
-            out.append(n)
-        elif not raw and c in ('\t', '\n', '\r', '\\'):
-            out.extend(list(('\\' + {'\t': 't', '\n': 'n', '\r': 'r', '\\': '\\'}[c]).encode('ascii')))
-        else:
-            out.extend(list(_escape(c).encode('ascii')))
-    return bytes(out)
+    rows = _escaped_rows[raw]
+    try:
+        return b''.join(map(rows.__getitem__, text))
+    except KeyError:
+        pass
+    if len(rows) > 4096:
+        rows.clear()
+    for c in set(text):
+        if c not in rows:
+            rows[c] = _escaped_row(c, raw)
+    return b''.join(map(rows.__getitem__, text))
+
+# Text whose escapes are all plain ones (the one-letter names and the \x,
+# \u, \U forms with their full digits) is read here with a few whole-string
+# passes, one pair of backslashes at a time; anything else (octal, \N, a
+# bad or short escape, a trailing backslash) answers None and goes to the
+# full loop below.
+_escape_widths = {'u': 4, 'U': 8, 'x': 2}
+_escape_hex_codecs = {2: 'latin-1', 4: 'utf-16-be', 8: 'utf-32-be'}
+
+# Every `marker` + digits in `rest`, read together. None: leave it to the loop.
+def _escaped_hex(rest, marker, width):
+    pieces = rest.split(marker)
+    count = len(pieces) - 1
+    # In a run of escapes each piece but the last is just its digits.
+    middle = ''.join(pieces[1:-1])
+    dense = len(middle) == width * (count - 1) and set(map(len, pieces[1:-1])) <= {width}
+    if dense:
+        digits = middle + pieces[-1][:width]
+    else:
+        digits = ''.join([piece[:width] for piece in pieces[1:]])
+    if len(digits) != width * count or digits.strip('0123456789abcdefABCDEF'):
+        return None
+    # A unit that could be half of a surrogate pair is not paired here.
+    if width == 4 and 'd' in digits[0::4].lower():
+        return None
+    try:
+        chars = _raw_text_decode(bytes.fromhex(digits), _escape_hex_codecs[width], 'strict')
+    except UnicodeDecodeError:
+        return None
+    if '\\' in chars:
+        return None
+    if dense:
+        return pieces[0] + chars + pieces[-1][width:]
+    return pieces[0] + ''.join([char + piece[width:] for char, piece in zip(chars, pieces[1:])])
+
+def _escaped_plain(text, raw):
+    segments = text.split('\\\\')
+    for at in range(len(segments)):
+        rest = segments[at]
+        if '\\' not in rest:
+            continue
+        hexed = []
+        for letter in set([piece[:1] for piece in rest.split('\\')[1:]]):
+            if letter in _escape_widths and not (raw and letter == 'x'):
+                hexed.append(letter)
+            elif raw or letter not in _escape_decode:
+                return None
+            else:
+                rest = rest.replace('\\' + letter, _escape_decode[letter])
+        for letter in hexed:
+            rest = _escaped_hex(rest, '\\' + letter, _escape_widths[letter])
+            if rest is None:
+                return None
+        segments[at] = rest
+    return ('\\\\' if raw else '\\').join(segments)
 
 def _escaped_decode(data, raw, errors):
     text = data.decode('latin-1')
+    quick = _escaped_plain(text, raw)
+    if quick is not None:
+        return quick
     out = ''
     i = 0
     deprecated = None
     encoding = 'rawunicodeescape' if raw else 'unicodeescape'
     warning = None
     while i < len(text):
-        start = i
-        c = text[i]
-        i += 1
-        if c != '\\':
-            out += c
-            continue
+        start = text.find('\\', i)
+        if start < 0:
+            out += text[i:]
+            break
+        out += text[i:start]
+        i = start + 1
         if i == len(text):
             if raw:
                 out += '\\'
@@ -710,6 +845,10 @@ def _escaped_decode(data, raw, errors):
             text = data.decode('latin-1')
             continue
         c = text[i]
+        if not raw and c in _escape_decode:
+            out += _escape_decode[c]
+            i += 1
+            continue
         if raw and c not in 'uU':
             out += '\\'
             if c == '\\':
@@ -784,12 +923,33 @@ def unicode_escape_decode(data, errors='strict'):
 def raw_unicode_escape_decode(data, errors='strict'):
     return (_escaped_decode(bytes(data), True, errors), len(data))
 
+# Decode indexed character mappings and validate mapping result types.
+_decode_translations = {}
+_charmap_helpers = None
+def _charmap_tools():
+    global _charmap_helpers
+    if _charmap_helpers is None:
+        from _codecs import _buffer, _error_argument, _text
+        _charmap_helpers = (_buffer, _error_argument, _text)
+    return _charmap_helpers
+
 def charmap_decode(data, errors='strict', mapping=None):
-    from _codecs import _buffer, _error_argument
+    _buffer, _error_argument, _text = _charmap_helpers or _charmap_tools()
     errors = _error_argument(errors, 'charmap_decode')
     data = _buffer(data)
     if mapping is None:
         return (data.decode('latin-1', errors), len(data))
+    # A full table of characters is applied natively; a byte it leaves
+    # undefined sends the row through the loop below for its error span.
+    if type(mapping) is str and len(mapping) >= 256:
+        table = _decode_translations.get(mapping)
+        if table is None:
+            if len(_decode_translations) >= 64:
+                _decode_translations.clear()
+            table = _decode_translations[mapping] = {i: c for i, c in enumerate(mapping[:256])}
+        result = _raw_text_decode(data, 'latin-1', 'strict').translate(table)
+        if '\ufffe' not in result:
+            return (result, len(data))
     result = ''
     i = 0
     while i < len(data):
@@ -830,12 +990,17 @@ def _mapped(mapping, code):
 
 # Encode arbitrary indexed character maps, including multi-byte replacements.
 def charmap_encode(text, errors='strict', mapping=None):
-    from _codecs import _error_argument
+    _buffer, _error_argument, _text = _charmap_helpers or _charmap_tools()
     errors = _error_argument(errors, 'charmap_encode')
-    from _codecs import _text
     text = _text(text)
     if mapping is None:
         return (text.encode('latin-1', errors), len(text))
+    if type(mapping) is dict and type(text) is str:
+        # Every character mapped to a byte: no handler can be involved.
+        try:
+            return (bytes(list(map(mapping.__getitem__, map(ord, text)))), len(text))
+        except (KeyError, ValueError, TypeError):
+            pass
     def piece(letter):
         try:
             value = mapping[ord(letter)]
@@ -932,9 +1097,14 @@ def _encode(obj, encoding='utf-8', errors=_default_errors):
     supplied_errors = errors
     if errors is _default_errors:
         errors = 'strict'
-    name = _normalize(encoding)
+    name = encoding if type(encoding) is str and encoding in _canonical else _normalize(encoding)
     if not isinstance(errors, str):
         raise TypeError('errors must be str')
+    if name in _charmaps:
+        table = _charmap_tables.get(name)
+        if table is None:
+            table = _charmap_tables[name] = charmap_build(_charmaps[name])
+        return charmap_encode(obj, errors, table)[0]
     if name in ('utf_8', 'ascii', 'latin_1'):
         return _raw_text_encode(obj, name, errors)
     if name == 'utf_8_sig':
@@ -944,9 +1114,10 @@ def _encode(obj, encoding='utf-8', errors=_default_errors):
     if name == 'utf_7':
         return _utf7_encode(obj)
     if name in ('unicode_escape', 'raw_unicode_escape'):
+        # Printable ASCII without a backslash is its own escaped spelling.
+        if type(obj) is str and obj.isascii() and (name == 'raw_unicode_escape' or ('\\' not in obj and obj.isprintable())):
+            return _raw_text_encode(obj, 'ascii', 'strict')
         return _escaped_encode(obj, name == 'raw_unicode_escape')
-    if name in _charmaps:
-        return charmap_encode(obj, errors, charmap_build(_charmaps[name]))[0]
     entry = lookup(encoding)
     if not getattr(entry, '_is_text_encoding', True):
         raise LookupError("'%s' is not a text encoding; use codecs.encode() to handle arbitrary codecs" % encoding)
@@ -959,10 +1130,17 @@ def _decode(obj, encoding='utf-8', errors=_default_errors):
     supplied_errors = errors
     if errors is _default_errors:
         errors = 'strict'
-    name = _normalize(encoding)
+    name = encoding if type(encoding) is str and encoding in _canonical else _normalize(encoding)
     obj = bytes(obj)
     if not isinstance(errors, str):
         raise TypeError('errors must be str')
+    if name in ('unicode_escape', 'raw_unicode_escape'):
+        # Without a backslash there is no escape to read: Latin-1 as it stands.
+        if 92 not in obj:
+            return _raw_text_decode(obj, 'latin-1', 'strict')
+        return _escaped_decode(obj, name == 'raw_unicode_escape', errors)
+    if name in _charmaps:
+        return charmap_decode(obj, errors, _charmaps[name])[0]
     if name in ('utf_8', 'ascii', 'latin_1'):
         return _raw_text_decode(obj, name, errors)
     if name == 'utf_8_sig':
@@ -971,10 +1149,6 @@ def _decode(obj, encoding='utf-8', errors=_default_errors):
         return _wide_decode(obj, name, errors)[0]
     if name == 'utf_7':
         return _utf7_decode(obj, errors)[0]
-    if name in ('unicode_escape', 'raw_unicode_escape'):
-        return _escaped_decode(obj, name == 'raw_unicode_escape', errors)
-    if name in _charmaps:
-        return charmap_decode(obj, errors, _charmaps[name])[0]
     entry = lookup(encoding)
     if not getattr(entry, '_is_text_encoding', True):
         raise LookupError("'%s' is not a text encoding; use codecs.decode() to handle arbitrary codecs" % encoding)
@@ -1046,6 +1220,10 @@ _charmaps = {
     'mac_turkish': '\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f\xc4\xc5\xc7\xc9\xd1\xd6\xdc\xe1\xe0\xe2\xe4\xe3\xe5\xe7\xe9\xe8\xea\xeb\xed\xec\xee\xef\xf1\xf3\xf2\xf4\xf6\xf5\xfa\xf9\xfb\xfc\u2020\xb0\xa2\xa3\xa7\u2022\xb6\xdf\xae\xa9\u2122\xb4\xa8\u2260\xc6\xd8\u221e\xb1\u2264\u2265\xa5\xb5\u2202\u2211\u220f\u03c0\u222b\xaa\xba\u03a9\xe6\xf8\xbf\xa1\xac\u221a\u0192\u2248\u2206\xab\xbb\u2026\xa0\xc0\xc3\xd5\u0152\u0153\u2013\u2014\u201c\u201d\u2018\u2019\xf7\u25ca\xff\u0178\u011e\u011f\u0130\u0131\u015e\u015f\u2021\xb7\u201a\u201e\u2030\xc2\xca\xc1\xcb\xc8\xcd\xce\xcf\xcc\xd3\xd4\uf8ff\xd2\xda\xdb\xd9\uf8a0\u02c6\u02dc\xaf\u02d8\u02d9\u02da\xb8\u02dd\u02db\u02c7',
 }
 
+# Names already spelled canonically need no normalization; the single-byte
+# tables are built once each.
+_canonical = frozenset(_charmaps) | frozenset(('ascii', 'latin_1', 'utf_8', 'utf_8_sig', 'utf_7', 'utf_16', 'utf_16_le', 'utf_16_be', 'utf_32', 'utf_32_le', 'utf_32_be', 'unicode_escape', 'raw_unicode_escape', 'idna'))
+_charmap_tables = {}
 
 # Stateful codec interfaces used by the unmodified _pyio algorithms.
 class IncrementalDecoder:
@@ -1117,7 +1295,8 @@ class _IncrementalDecoder(IncrementalDecoder):
             if name in ('utf_8', 'utf_8_sig'):
                 # Retain only a valid, unfinished UTF-8 prefix. Malformed bytes
                 # belong to the current decode and its configured error policy.
-                start = max(0, len(data) - 3)
+                # A row ending in ASCII can hold no unfinished character.
+                start = max(0, len(data) - 3) if data and data[-1] >= 0x80 else len(data)
                 for at in range(start, len(data)):
                     lead = data[at]
                     need = 2 if 0xc2 <= lead <= 0xdf else 3 if 0xe0 <= lead <= 0xef else 4 if 0xf0 <= lead <= 0xf4 else 0
@@ -1135,7 +1314,13 @@ class _IncrementalDecoder(IncrementalDecoder):
                         end -= 2
             elif name.startswith('utf_32'):
                 end -= end % 4
-        result = _decode(data[:end], 'utf_8' if name == 'utf_8_sig' else name, self.errors)
+        payload = data[:end]
+        if name in ('utf_8', 'utf_8_sig', 'ascii', 'latin_1'):
+            result = _raw_text_decode(payload, 'utf-8' if name.startswith('utf_8') else name, self.errors)
+        elif name in _charmaps:
+            result = charmap_decode(payload, self.errors, _charmaps[name])[0]
+        else:
+            result = _wide_decode(payload, name, self.errors)[0]
         self.buffer = data[end:]
         return result
 
