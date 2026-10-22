@@ -415,9 +415,9 @@ pub(crate) fn prepared_tokens(source: &str, lang: &Lang) -> Option<(Vec<Token>, 
 pub fn source_stamp(source: &str) -> u64 { token_stamp(source.as_bytes()) }
 
 fn token_stamp(bytes: &[u8]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hash);
+    use std::hash::Hasher;
+    let mut hash = crate::value::QuickHash::default();
+    hash.write(bytes);
     hash.finish()
 }
 
@@ -981,7 +981,7 @@ fn private_tokens<'t>(source: &'t [Token], lang: &Lang) -> std::borrow::Cow<'t, 
                 Shape::Instr if lang.builtins.contains_key(&source[i].lexeme) => {}
                 Shape::Instr => {
                     let keyword = in_pattern && source.get(i + 1).map_or(false, |next| lang.assign_words.contains(&next.lexeme));
-                    if !keyword {
+                    if !keyword && source[i].lexeme.starts_with("__") && !source[i].lexeme.ends_with("__") && !source[i].lexeme.contains('.') {
                         let changed = private_name(&owner.lexeme, &source[i].lexeme);
                         if changed != source[i].lexeme { result.to_mut()[i].lexeme = changed; }
                     }
@@ -1829,24 +1829,26 @@ impl<'a> Compiler<'a> {
         // The routine a piece is written in, the class that routine
         // belongs to, and the two written together: all known while the
         // program is put together, so each stands for what it names.
-        let unit = self.piece();
-        let routine = match unit.outermost {
-            true => String::new(),
-            false => unit.ident.clone(),
-        };
-        let within = self.within.as_ref().map(|(named, _)| named.clone()).unwrap_or_default();
-        for (binding, said) in [
-            (&self.lang.routine_binding, routine.clone()),
-            (&self.lang.class_binding, within.clone()),
-            (&self.lang.method_binding, match within.is_empty() {
-                true => routine,
-                false => format!("{}::{}", within, routine),
-            }),
-        ] {
-            if binding.as_deref() == Some(name) {
-                self.constant(Value::text(&said));
-                return;
-            }
+        if self.lang.routine_binding.as_deref() == Some(name) {
+            let unit = self.pieces.last().expect("a unit");
+            let said = if unit.outermost { "" } else { &unit.ident };
+            let value = Value::text(said);
+            self.constant(value);
+            return;
+        }
+        if self.lang.class_binding.as_deref() == Some(name) {
+            let said = self.within.as_ref().map_or("", |(owner, _)| owner.as_str());
+            let value = Value::text(said);
+            self.constant(value);
+            return;
+        }
+        if self.lang.method_binding.as_deref() == Some(name) {
+            let unit = self.pieces.last().expect("a unit");
+            let routine = if unit.outermost { "" } else { &unit.ident };
+            let owner = self.within.as_ref().map_or("", |(owner, _)| owner.as_str());
+            let said = if owner.is_empty() { routine.to_owned() } else { format!("{owner}::{routine}") };
+            self.constant(Value::text(&said));
+            return;
         }
         // A name an annotation reads is read when the annotation is, not settled
         // here, so that reading it afresh can stand for it.
@@ -4604,7 +4606,7 @@ impl<'a> Compiler<'a> {
                         self.pass_token(); sliced = true;
                     } else {
                         if self.on_any(&self.lang.pipe_words) && self.look_ahead(1).lexeme == self.look().lexeme && self.look_ahead(2).lexeme == self.look().lexeme {
-                            self.pass_token(); self.take(); self.take();
+                            self.pass_token(); self.pass_token(); self.take();
                             self.constant(Value::Null);
                             sliced = true;
                         } else { self.expr(0)?; }
@@ -6964,7 +6966,7 @@ impl<'a> Compiler<'a> {
             if kind == 4 {
                 self.read(&word);
                 self.write(&held);
-                self.pass_token(); self.take(); self.take();
+                self.pass_token(); self.pass_token(); self.take();
             } else if kind == 0 {
                 self.expr(0)?;
                 self.write(&held);
@@ -11635,7 +11637,7 @@ impl<'a> Compiler<'a> {
             let mut star_at = self.pos;
             if delegated || !ended(self) {
                 let spread = !delegated && !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest);
-                if spread { spread_seen = true; star_at = self.pos; self.take(); }
+                if spread { spread_seen = true; star_at = self.pos; self.pass_token(); }
                 self.expr(0)?;
                 if spread {
                     self.act(Action::Unpack(1, Some(0)), 1);
@@ -11650,7 +11652,7 @@ impl<'a> Compiler<'a> {
                         self.pass_token();
                         if ended(self) { break; }
                         let spread = !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest);
-                        if spread { spread_seen = true; star_at = self.pos; self.take(); }
+                        if spread { spread_seen = true; star_at = self.pos; self.pass_token(); }
                         self.expr(0)?;
                         count += 1;
                         if spread {

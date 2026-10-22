@@ -430,9 +430,19 @@ impl std::hash::Hasher for QuickHash {
         let mut at = 0;
         // Eight bytes to a turn; indexing keeps the loop free of iterator calls.
         while at + 8 <= length {
-            let word = bytes[at] as u64 | (bytes[at + 1] as u64) << 8 | (bytes[at + 2] as u64) << 16 | (bytes[at + 3] as u64) << 24
-                | (bytes[at + 4] as u64) << 32 | (bytes[at + 5] as u64) << 40 | (bytes[at + 6] as u64) << 48 | (bytes[at + 7] as u64) << 56;
-            running = (running ^ word).wrapping_mul(Self::PRIME).rotate_left(29);
+            // One range check, then the same little-endian word the eight
+            // indexes built. The product is unchanged.
+            let chunk = &bytes[at..at + 8];
+            let word = chunk[0] as u64
+                | (chunk[1] as u64) << 8
+                | (chunk[2] as u64) << 16
+                | (chunk[3] as u64) << 24
+                | (chunk[4] as u64) << 32
+                | (chunk[5] as u64) << 40
+                | (chunk[6] as u64) << 48
+                | (chunk[7] as u64) << 56;
+            let mixed = (running ^ word).wrapping_mul(Self::PRIME);
+            running = mixed << 29 | mixed >> 35;
             at += 8;
         }
         while at < length {
@@ -440,6 +450,11 @@ impl std::hash::Hasher for QuickHash {
             at += 1;
         }
         self.0 = running;
+    }
+    #[inline]
+    fn write_u8(&mut self, byte: u8) {
+        // Same step as write() of one byte. String hashing ends with this.
+        self.0 = (self.0 ^ byte as u64).wrapping_mul(Self::PRIME);
     }
     #[inline]
     fn finish(&self) -> u64 {

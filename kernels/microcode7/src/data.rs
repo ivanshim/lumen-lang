@@ -1525,19 +1525,17 @@ impl Value {
     }
 
     pub fn equals(&self, other: &Value) -> bool {
+        // Two numbers or two pieces of text are settled before anything
+        // wrapped is looked for: a plain pair is none of the wrapped kinds.
+        if let (Value::Small(here), Value::Small(there)) = (self, other) { return here == there; }
+        if let (Value::Huge(here), Value::Huge(there)) = (self, other) { return here.as_ref() == there.as_ref(); }
+        if let (Value::Text(here), Value::Text(there)) = (self, other) { return here.as_ref() == there.as_ref(); }
         for (candidate, text) in [(self, other), (other, self)] {
             if let (Value::Thing(object), Value::Text(word)) = (candidate, text) {
                 let slots = object.holds.borrow();
                 if let Some((_, Value::Text(under))) = slots.iter().find(|entry| entry.0 == "\0underlying") { return under == word; }
             }
         }
-        // Most askings are of two small numbers, two great ones, or two
-        // pieces of text, and all three can be settled here and now.
-        // Left to the ratios below, a pair of small numbers would have
-        // two great numbers made of it and then be cross-multiplied.
-        if let (Value::Small(here), Value::Small(there)) = (self, other) { return here == there; }
-        if let (Value::Huge(here), Value::Huge(there)) = (self, other) { return here.as_ref() == there.as_ref(); }
-        if let (Value::Text(here), Value::Text(there)) = (self, other) { return here.as_ref() == there.as_ref(); }
         if let Value::Mutable(cell, _) = self { return cell.borrow().equals(&other.settled()); }
         if let Value::Mutable(cell, _) = other { return self.equals(&cell.borrow()); }
         // A view of the entries a routine keeps is equal to whatever

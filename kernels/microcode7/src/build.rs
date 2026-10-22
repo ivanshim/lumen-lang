@@ -266,10 +266,10 @@ pub(crate) fn library_tokens(source: &str, table: &Table) -> Option<Vec<Token>> 
 pub fn source_key(source: &str) -> u64 { input_key(source.as_bytes()) }
 
 fn input_key(proof: &[u8]) -> u64 {
-    use std::hash::Hash;
-    let mut digest = std::collections::hash_map::DefaultHasher::new();
-    proof.hash(&mut digest);
-    std::hash::Hasher::finish(&digest)
+    use std::hash::Hasher;
+    let mut digest = crate::table::FxHasher::default();
+    digest.write(proof);
+    digest.finish()
 }
 
 // Decode a build-owned proof with a bounded native codec result.
@@ -474,6 +474,7 @@ struct CompileWords<'a> {
     single_ext_stmt_yield_unrun: Option<&'a str>,
     single_ext_system_scope_unready: Option<&'a str>,
     single_ext_system_source_line: Option<&'a str>,
+    source_names: [Option<&'a str>; 3],
     single_op_index_close: Option<&'a str>,
     single_op_index_open: Option<&'a str>,
     single_op_pipe: Option<&'a str>,
@@ -596,6 +597,7 @@ impl<'a> CompileWords<'a> {
             single_ext_stmt_yield_unrun: table.single("ext.stmt.yield.unrun"),
             single_ext_system_scope_unready: table.single("ext.system.scope.unready"),
             single_ext_system_source_line: table.single("ext.system.source.line"),
+            source_names: [table.single("ext.system.source.routine"), table.single("ext.system.source.class"), table.single("ext.system.source.method")],
             single_op_index_close: table.single("op.index.close"),
             single_op_index_open: table.single("op.index.open"),
             single_op_pipe: table.single("op.pipe"),
@@ -1177,8 +1179,8 @@ fn class_spellings<'t>(input: &'t [Token], table: &Table) -> std::borrow::Cow<'t
                 // in a class body as out of one: the private-name
                 // mangling does not reach it.
                 let word = &input[offset].lexeme;
-                let named = word.starts_with("__") && !word.ends_with("__")
-                    && crate::table::BUILTIN_LABELS.iter().any(|(label, _)| table.spells(label, word));
+                if !word.starts_with("__") || word.ends_with("__") || word.contains('.') { continue; }
+                let named = crate::table::BUILTIN_LABELS.iter().any(|(label, _)| table.spells(label, word));
                 let keyword = in_pattern && input.get(offset + 1).map_or(false, |next| next.shape == Shape::Sign && table.spells("stmt.assign", &next.lexeme));
                 if !named && !keyword {
                     let changed = member_spelling(owner, word);
@@ -2502,19 +2504,17 @@ impl<'a> Builder<'a> {
         // The routine a piece stands in, the class that routine belongs
         // to, and the two written together: each is known while the form
         // is built, so each stands for what it names.
-        let routine = self.naming.last().cloned().unwrap_or_default();
-        let within = self.within.as_ref().map(|(called, _)| called.clone()).unwrap_or_default();
-        for (label, said) in [
-            ("ext.system.source.routine", routine.clone()),
-            ("ext.system.source.class", within.clone()),
-            ("ext.system.source.method", match within.is_empty() {
-                true => routine,
-                false => format!("{}::{}", within, routine),
-            }),
-        ] {
-            if self.table.single(label) == Some(name) {
-                return constant(Value::text(&said));
-            }
+        let source_word = self.grammar.source_names.iter().position(|word| *word == Some(name));
+        if let Some(which) = source_word {
+            let routine = self.naming.last().map_or("", String::as_str);
+            let class = self.within.as_ref().map_or("", |(called, _)| called.as_str());
+            let text = match which {
+                0 => routine.to_string(),
+                1 => class.to_string(),
+                _ if class.is_empty() => routine.to_string(),
+                _ => [class, routine].join("::"),
+            };
+            return constant(Value::text(&text));
         }
         // A name an annotation reads is read when the annotation is, not settled
         // here, so that reading it afresh can stand for it.
@@ -5214,7 +5214,7 @@ impl<'a> Builder<'a> {
                         self.move_past();
                     } else {
                         if self.on_any("op.pipe") && self.glance(1).lexeme == self.look().lexeme && self.glance(2).lexeme == self.look().lexeme {
-                            self.move_past(); self.advance(); self.advance();
+                            self.move_past(); self.move_past(); self.advance();
                             indices.push(constant(Value::Nil));
                             special = true;
                         } else { indices.push(self.expr(0)?); }
@@ -11387,7 +11387,7 @@ impl<'a> Builder<'a> {
             if from || !at_end(self) {
                 loop {
                     let star = !from && self.grammar.single_ext_op_tuple.is_some() && self.on_any("ext.stmt.unpack.rest");
-                    if star { spread_met = true; star_at = self.pos; self.advance(); }
+                    if star { spread_met = true; star_at = self.pos; self.move_past(); }
                     let part = self.expr(0)?;
                     values.push((if star {
                         prim_call(Prim::Apart, vec![prim_call(Prim::Partition(1, Some(0)), vec![part]), constant(Value::Small(0))])
