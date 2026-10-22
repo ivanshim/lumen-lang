@@ -19,7 +19,8 @@ impl<'a> Engine<'a> {
             Some(b'c') if part == "call" => 7,
             Some(b'a') if part == "allocate" => 10,
             Some(b'd') => match part {
-                "descriptor.get" => 11, "descriptor.set" => 12, "descriptor.delete" => 13, "doc" => 14, "defaults" => 15, _ => NO_PLACE,
+                "descriptor.get" => 11, "descriptor.set" => 12, "descriptor.delete" => 13,
+                "descriptor.name" => 25, "doc" => 14, "defaults" => 15, _ => NO_PLACE,
             },
             Some(b'b') => match part { "base" => 16, "bases" => 17, _ => NO_PLACE },
             Some(b'o') if part == "order" => 19,

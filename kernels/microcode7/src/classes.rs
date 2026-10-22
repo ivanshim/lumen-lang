@@ -55,7 +55,14 @@ impl<'a> Machine<'a> {
         }
     }
     fn detail_other(&self, key: &str) -> &str {
-        self.table.single(&format!("ext.stmt.class.detail.{key}")).unwrap_or("")
+        // A word outside the fixed roster is looked up once and kept.
+        if let Some(word) = self.detail_kept.borrow().iter().find(|(held, _)| held == key).map(|(_, word)| *word) {
+            return word;
+        }
+        let table: &'a Table = self.table;
+        let word = table.single(&format!("ext.stmt.class.detail.{key}")).unwrap_or("");
+        self.detail_kept.borrow_mut().push((key.to_string(), word));
+        word
     }
     // Read once when the roster itself was read, since no program still
     // running can change which words a class stands under: every value
