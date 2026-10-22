@@ -1163,6 +1163,9 @@
     "gi_yieldfrom",
     "__unused_python314_generator_state__",
     "tb_lasti",
+    "cr_code",
+    "cr_await",
+    "cr_origin",
     "f_builtins"
   ],
   "ext.builtin.exceptions.traceback.member": [
@@ -1439,6 +1442,9 @@
   ],
   "ext.builtin.method.__ceil__": [
     "__ceil__"
+  ],
+  "ext.builtin.method.__trunc__": [
+    "__trunc__"
   ],
   "ext.builtin.method.isalnum": [
     "isalnum"
@@ -3219,6 +3225,15 @@
   ],
   "ext.builtin.partial_repr": [
     "__partial_repr__"
+  ],
+  "ext.builtin.method_descriptor": [
+    "__method_descriptor"
+  ],
+  "ext.builtin.datetime.capi": [
+    "__lumen_datetime_capi__"
+  ],
+  "ext.builtin.capsule_type": [
+    "__capsule_type"
   ],
   "ext.builtin.namespace_type": [
     "__namespace_type"

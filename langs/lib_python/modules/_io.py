@@ -1841,3 +1841,12 @@ _builtins.open = open
 
 for _type in (BytesIO, StringIO, TextIOWrapper, IncrementalNewlineDecoder, BufferedReader, BufferedWriter, BufferedRandom, BufferedRWPair, FileIO):
     _type.__module__ = '_io'
+
+# The runtime I/O bases expose native descriptors; their bodies retain
+# the same unsupported-operation checks and subclass dispatch.
+_method_descriptor = __method_descriptor
+for _base in (_IOBase, _RawIOBase, _BufferedIOBase, _TextIOBase):
+    for _method_name, _implementation in list(vars(_base).items()):
+        if not _method_name.startswith('_') and isinstance(_implementation, type(lambda: None)):
+            setattr(_base, _method_name, _method_descriptor(_base, _implementation))
+del _base, _method_name, _implementation, _method_descriptor

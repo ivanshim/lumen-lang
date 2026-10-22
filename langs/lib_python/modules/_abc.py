@@ -28,6 +28,12 @@ def _abc_register(cls, subclass, /):
 def _abc_subclasscheck(cls, subclass, /):
     return _RegistryMeta.__subclasscheck__(cls, subclass)
 
+# The registry algorithm stands in for C code: its frames stay off the
+# Python frame chain, so a hook it reaches sees abc as its caller.
+for _bridge in (_abc_register, _abc_subclasscheck, _RegistryMeta.register, _RegistryMeta.__subclasscheck__):
+    __native_frame__(_bridge)
+del _bridge
+
 # Resolve cached instance membership before the native bridge calls type hooks.
 def _prepare_instancecheck(cls, instance, /):
     try:

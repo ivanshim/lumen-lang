@@ -37,6 +37,8 @@ mod complex;
 mod byteformat;
 mod crypto;
 mod context;
+pub mod capsule;
+pub mod datetime_api;
 pub mod tuples;
 
 use std::cell::RefCell;

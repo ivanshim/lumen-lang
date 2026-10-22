@@ -251,6 +251,7 @@ impl Drop for MethodMark {
 
 #[derive(Clone)]
 pub enum Value {
+    Opaque(Rc<crate::capsule::PointerCapsule>),
     Unpaired(Rc<[u32]>),
     Mutable(Rc<RefCell<Value>>, bool),
     Member(Rc<Value>, String),
@@ -1027,6 +1028,7 @@ impl Value {
 
     pub fn hash_address(&self) -> Result<String, &'static str> {
         match self {
+            Value::Opaque(held) => Ok(format!("capsule/{:p}", Rc::as_ptr(held))),
             Value::Tuple(items) | Value::Row(items) => {
                 let parts = items.iter().map(Value::hash_address).collect::<Result<Vec<_>, _>>()?;
                 Ok(format!("row:{parts:?}"))
@@ -1360,6 +1362,7 @@ impl Value {
 
     pub fn kind(&self) -> Option<Kind> {
         Some(match self {
+            Value::Opaque(_) => return None,
             Value::Small(_) | Value::Huge(_) => Kind::Whole,
             Value::Frac(e) => if e.places.is_some() { Kind::Decimal } else { Kind::Fraction },
             Value::Text(_) | Value::Unpaired(_) => Kind::Chars,
@@ -1418,7 +1421,7 @@ impl Value {
             Value::Unpaired(_) => return Err("ValueError: invalid literal for int()".to_string()),
             Value::Text(s) => s.parse().map_err(|_| format!("Cannot coerce '{}' to number", s))?,
             Value::TextRow(..) | Value::Arguments(_) | Value::Set(_) | Value::Tuple(_) | Value::Vector(_) | Value::Dict(_) | Value::Couple(_) | Value::Row(_) | Value::Window(..) => return Err("Cannot coerce array to number".to_string()),
-            Value::Wrapped(..) | Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
+            Value::Opaque(_) | Value::Wrapped(..) | Value::Blueprint(_) | Value::Thing(_) => return Err("Cannot coerce object to number".to_string()),
             Value::Shared(cell) => return cell.borrow().as_big(),
             Value::TextCall { .. } | Value::Adorned(_) | Value::Dim(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) | Value::Bound(..) => return Err("Cannot coerce function to number".to_string()),
             Value::Mutable(place, _) => return place.borrow().as_big(),
@@ -1543,6 +1546,7 @@ impl Value {
         if let Value::Attributes(held) = self { return held.entries_shown().equals(other); }
         if let Value::Attributes(held) = other { return self.equals(&held.entries_shown()); }
         match (self, other) {
+            (Value::Opaque(left), Value::Opaque(right)) => return Rc::ptr_eq(left, right),
             (Value::TextRow(a, fixed), Value::TextRow(b, closed)) => return fixed == closed && a == b,
             (Value::Span(a), Value::Span(b)) => return a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y)),
             (Value::TextRow(words, false), Value::Vector(values)) | (Value::Vector(values), Value::TextRow(words, false)) => {
@@ -1624,6 +1628,16 @@ impl Value {
                     }
                     return false;
                 }
+                // Two subscripted kinds built apart (list[int], list[int]) are one.
+                let is_alias = |thing: &Thing| thing.blueprint().constants.iter().any(|(word, held)| word == "\0native" && matches!(held, Value::Text(text) if text.as_ref() == "GenericAlias"));
+                if is_alias(a) && is_alias(b) {
+                    let held = |thing: &Thing, key: &str| thing.holds.borrow().iter().find(|(name, _)| name == key).map(|(_, item)| item.clone());
+                    return match (held(a, "__origin__"), held(b, "__origin__"), held(a, "__args__"), held(b, "__args__")) {
+                        (Some(left), Some(right), Some(Value::Tuple(xs)), Some(Value::Tuple(ys))) =>
+                            left.equals(&right) && xs.len() == ys.len() && xs.iter().zip(ys.iter()).all(|(p, q)| p.equals(q)),
+                        _ => false,
+                    };
+                }
                 // Two code values read from the same text in the same
                 // manner weigh the same, the way the reference compares
                 // its code objects' bytecode; the file each names is no
@@ -1689,6 +1703,7 @@ impl Value {
     /// place of their own.
     pub fn one_place(&self, other: &Value) -> bool {
         match (self, other) {
+            (Value::Opaque(left), Value::Opaque(right)) => Rc::ptr_eq(left, right),
             (Value::Shared(x), _) | (Value::Mutable(x, _), _) => x.borrow().one_place(other),
             (_, Value::Shared(y)) | (_, Value::Mutable(y, _)) => self.one_place(&y.borrow()),
             (Value::Frac(x), Value::Frac(y)) => Rc::ptr_eq(x, y),
@@ -1722,6 +1737,7 @@ impl Value {
             items.iter().enumerate().map(|(at, x)| (Value::Small(at as i64), x.clone())).collect()
         };
         match (self, other) {
+            (Value::Opaque(left), Value::Opaque(right)) => Rc::ptr_eq(left, right),
             (Value::Vector(a), Value::Vector(b)) => alike(&numbered(a), &numbered(b)),
             (Value::Dict(a), Value::Dict(b)) => alike(a, b),
             // Written with keys or written without, an array is an
@@ -1917,6 +1933,7 @@ impl Value {
     }
     pub fn bare(&self) -> String {
         match self {
+            Value::Opaque(held) => held.written(),
             Value::Complex(pair) => crate::complex::written(pair),
             Value::Imaginary { coefficient, .. } => brief_decimal(*coefficient) + "j",
             Value::Mutable(place, _) => within_cell(place, Value::bare),
@@ -2105,7 +2122,7 @@ impl Value {
             ("getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor", "__get__") => return Some(("slot wrapper", "wrapper_descriptor")),
             _ => (),
         }
-        if (kind, name) == ("dict", "fromkeys") { return Some(("method", "classmethod_descriptor")); }
+        if matches!((kind, name), ("dict", "fromkeys") | ("int", "from_bytes")) { return Some(("method", "classmethod_descriptor")); }
         match (name, kind) {
             ("__getitem__", "dict" | "list") | ("__contains__", "frozenset" | "set" | "dict") => return Some(("method", "method_descriptor")),
             _ => (),
@@ -2301,6 +2318,10 @@ pub struct Blueprint {
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
     pub shared: BlueprintEntries,
+    /// Keep allocated storage and the exact bases tuple outside the writable namespace.
+    pub instance_slots: RefCell<Option<Vec<String>>>,
+    pub namespace_layout: std::cell::Cell<Option<bool>>,
+    pub supplied_bases: RefCell<Option<Value>>,
     /// Set from the declared layout before class-creation hooks run;
     /// subsequent edits to members do not add or remove weak storage.
     pub weak_slot: Cell<Option<bool>>,

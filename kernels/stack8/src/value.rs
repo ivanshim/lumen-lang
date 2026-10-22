@@ -199,6 +199,9 @@ pub struct Step {
 pub struct Generator {
     pub name: String,
     pub qualified: String,
+    /// The name and qualified name as values, kept so that reading one twice
+    /// hands back the very same text.
+    pub named: [Option<Value>; 2],
     pub coroutine_identity: usize,
     pub coroutine_origin: Value,
     pub async_hooks_initialized: bool,
@@ -248,7 +251,7 @@ pub struct Generator {
 
 impl Generator {
     pub fn new(program: Option<Rc<Routine>>, frame: Vec<Value>, items: Vec<Value>) -> Self {
-        Self { name: String::new(), qualified: String::new(), coroutine_identity: 0, coroutine_origin: Value::Null, async_hooks_initialized: false, async_finalizer: Value::Null, trace_frame: None, suspended_position: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
+        Self { name: String::new(), qualified: String::new(), named: [None, None], coroutine_identity: 0, coroutine_origin: Value::Null, async_hooks_initialized: false, async_finalizer: Value::Null, trace_frame: None, suspended_position: None, program, frame, items, stack: Vec::new(), pc: 0, started: false,
             closed: false, finalized: false, waiting: false, handed: None, returned: Value::Null,
             delegate: None, sent: Value::Null, current: None, watched: None, reversed_walk: None,
             resume: Vec::new(), resuming: false, running: false, held: Vec::new(), hurled: None, walked: None }
@@ -324,6 +327,7 @@ impl Drop for MethodStamp {
 
 #[derive(Debug, Clone)]
 pub enum Value {
+    Capsule(Rc<crate::capsule::NativeCapsule>),
     Codepoints(Rc<Vec<u32>>),
     Collection(Rc<RefCell<Value>>, bool),
     ValueMethod(Rc<(Value, String)>),
@@ -1076,6 +1080,16 @@ impl Value {
         match self {
             Value::Collection(cell, _) | Value::Bond(cell) => cell.borrow().contents(),
             Value::View(view) => {
+                // A reading of a mapping is that mapping, for whatever is asked of it unnamed.
+                if view.1 == "mapping" {
+                    let whole = view.0.proxy_dictionary();
+                    if let Value::Map(pairs) = &whole {
+                        if pairs.iter().any(|(_, held)| matches!(held.contents(), Value::Blank | Value::Gap)) {
+                            return Value::Map(Rc::new(pairs.iter().filter(|(_, held)| !matches!(held.contents(), Value::Blank | Value::Gap)).cloned().collect()));
+                        }
+                    }
+                    return whole;
+                }
                 let Value::Map(pairs) = view.0.proxy_dictionary() else { return Value::array(Vec::new()); };
                 // A key kept beside its hash is handed out as the thing
                 // itself: the hash is the map's own reckoning of where
@@ -1419,6 +1433,7 @@ impl Value {
             return Ok(format!("n{}/{}", p / &common, q / common));
         }
         match self {
+            Value::Capsule(capsule) => Ok(format!("capsule/{:p}", Rc::as_ptr(capsule))),
             Value::Flag(b) => Ok(format!("n{}/1", u8::from(*b))),
             Value::Codepoints(row) => Ok(format!("codepoints:{row:?}")),
             Value::Text(s) => Ok(format!("s{}", s)),
@@ -1505,6 +1520,7 @@ impl Value {
 
     pub fn is_true(&self) -> bool {
         match self {
+            Value::Capsule(_) => true,
             Value::Complex(z) => z.real != 0.0 || z.imag != 0.0,
             Value::Imaginary(n, _) => *n != 0.0,
             Value::Collection(cell, _) => cell.borrow().is_true(),
@@ -1551,7 +1567,7 @@ impl Value {
             Value::Text(s) => s.parse::<BigInt>().map_err(|_| format!("Cannot coerce '{}' to number", s)),
             Value::Frac(_) => Err("Cannot coerce rational to integer".to_string()),
             Value::Words(..) | Value::Set(_) | Value::Tuple(_) | Value::Array(_) | Value::Map(_) | Value::Tie(_) | Value::View(_) => Err("Cannot coerce array to number".to_string()),
-            Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
+            Value::Capsule(_) | Value::Class(_) | Value::Object(_) => Err("Cannot coerce object to number".to_string()),
             Value::Bond(shared) | Value::Binding(shared) => shared.borrow().as_big(),
             Value::TextMethod(..) | Value::Descriptor(_) | Value::Faint(_) | Value::Generator(_) | Value::Method(..) | Value::Routine(_) => Err("Cannot coerce function to number".to_string()),
             Value::Collection(cell, _) => cell.borrow().as_big(),
@@ -1571,6 +1587,7 @@ impl Value {
     /// pointer.
     pub fn same_value(&self, other: &Value) -> bool {
         match (self, other) {
+            (Value::Capsule(a), Value::Capsule(b)) => Rc::ptr_eq(a, b),
             (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
             (Value::Native(x, a), Value::Native(y, b)) => x == y && a == b,
             (Value::ByteKind(x, _), Value::ByteKind(y, _)) => x == y,
@@ -1694,6 +1711,7 @@ impl Value {
         // before the number tower is entered or a cell is looked into.
         // These three are the great bulk of all the asking.
         match (self, other) {
+            (Value::Capsule(a), Value::Capsule(b)) => return Rc::ptr_eq(a, b),
             (Value::Small(here), Value::Small(there)) => return here == there,
             (Value::Huge(here), Value::Huge(there)) => return here == there,
             (Value::Text(here), Value::Text(there)) => return here == there,
@@ -1819,6 +1837,8 @@ impl Value {
     /// worth alone. Nothing for kinds that have no place of their own.
     pub fn same_place(&self, other: &Value) -> bool {
         match (self, other) {
+            (Value::Class(left), Value::Class(right)) => Rc::ptr_eq(left, right),
+            (Value::Capsule(a), Value::Capsule(b)) => Rc::ptr_eq(a, b),
             (Value::Adapter(first),Value::Adapter(second))=>Rc::ptr_eq(first,second),
             (Value::Bond(x), _) => x.borrow().same_place(other),
             (_, Value::Bond(y)) => self.same_place(&y.borrow()),
@@ -2023,6 +2043,7 @@ impl Value {
     /// The machine's own text for a value.
     pub fn plain(&self) -> String {
         match self {
+            Value::Capsule(capsule) => capsule.representation(),
             Value::Complex(z) => crate::complex::shown(z),
             Value::Imaginary(n, _) => format!("{}j", shortest_real(*n)),
             Value::Collection(cell, _) => shown_once(cell, "[...]", |held| held.plain()),
@@ -2143,7 +2164,7 @@ impl Value {
         if name == "__get__" && matches!(kind, "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor") {
             return Some(("slot wrapper", "wrapper_descriptor"));
         }
-        if kind == "dict" && name == "fromkeys" { return Some(("method", "classmethod_descriptor")); }
+        if matches!((kind, name), ("dict", "fromkeys") | ("int", "from_bytes")) { return Some(("method", "classmethod_descriptor")); }
         let coexist = (matches!(kind, "list" | "dict") && name == "__getitem__")
             || (matches!(kind, "dict" | "set" | "frozenset") && name == "__contains__");
         if coexist { return Some(("method", "method_descriptor")); }
@@ -2396,6 +2417,10 @@ pub struct Class {
     pub methods: Vec<(String, Rc<Routine>)>,
     pub constants: Vec<(String, Value)>,
     pub shared: ClassMembers,
+    /// Keep allocated storage and the exact bases tuple outside the writable namespace.
+    pub slot_layout: RefCell<Option<Vec<String>>>,
+    pub dictionary_layout: std::cell::Cell<Option<bool>>,
+    pub python_bases: RefCell<Option<Value>>,
     /// The weak-reference layout fixed when a Python class is created.
     /// Namespace writes cannot change an already allocated layout.
     pub weak_storage: std::cell::Cell<Option<bool>>,

@@ -457,3 +457,7 @@ def fast_compile(pattern, flags):
         return None
     flags, code, groups, names, indexgroup = found
     return Pattern(_TOKEN, pattern, flags, code, groups, dict(names), indexgroup)
+
+# Neither class is an acceptable base type, as the C types are not.
+__seal_class(Pattern)
+__seal_class(Match)

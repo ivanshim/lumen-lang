@@ -35,6 +35,8 @@ mod complex;
 mod structpack;
 mod crypto;
 mod context;
+pub mod capsule;
+pub mod datetime_api;
 pub mod tuples;
 
 use lang::Lang;

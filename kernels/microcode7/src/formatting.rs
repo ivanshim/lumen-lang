@@ -96,6 +96,8 @@ impl Layout<'_> {
 
         Ok(match item {
             Value::Shared(cell) | Value::Mutable(cell, _) => return self.quote(&cell.borrow(), escaped),
+            // A mapping proxy is quoted as the proxy it is.
+            Value::Window(_, 'm') => format!("mappingproxy({})", self.quote(&item.proxy_pairs(), escaped)?),
             // A text is quoted by the hand that quotes it everywhere
             // else, so that a field and the representation builtin
             // agree on a letter that cannot be shown as itself.
@@ -150,6 +152,8 @@ impl Layout<'_> {
     }
 
     fn plain(&self, item: &Value) -> Answer {
+        // What a mapping proxy writes for `str` is the mapping it reads.
+        if let Value::Window(_, 'm') = item { return self.quote(&item.proxy_pairs(), false); }
         if let Value::Text(s) = item { Ok(s.to_string()) } else { self.quote(item, false) }
     }
 
@@ -234,8 +238,11 @@ impl Layout<'_> {
     }
 
     pub fn presented_value(&self, item: &Value, pattern: &str, convert: &str) -> Result<Value, String> {
-        if let Value::Shared(cell) | Value::Mutable(cell, _) = item { return self.presented_value(&cell.borrow(), pattern, convert); }
-        if matches!(item, Value::Window(_, 'm')) { return self.present(item, pattern, convert).map(|text| Value::text(&text)); }
+        match item {
+            Value::Shared(cell) | Value::Mutable(cell, _) => return self.presented_value(&cell.borrow(), pattern, convert),
+            Value::Window(_, 'm') => return self.present(item, pattern, convert).map(|text| Value::text(&text)),
+            _ => (),
+        }
         let plain = item.settled();
         if self.table.flag("ext.op.arithmetic.python_numbers") && matches!(plain, Value::Unpaired(_)) && (convert.is_empty() || convert == "s") {
             self.present(&Value::text(""), pattern, "")?;
@@ -254,6 +261,7 @@ impl Layout<'_> {
 
     pub fn present(&self, item: &Value, pattern: &str, convert: &str) -> Answer {
         if let Value::Shared(held) | Value::Mutable(held, _) = item { return self.present(&held.borrow(), pattern, convert); }
+        if let (Value::Window(_, 'm'), false) = (item, matches!(convert, "r" | "a")) { return self.present(&item.proxy_pairs(), pattern, convert); }
         if !convert.is_empty() {
             let rendered = match convert {
                 "a" => self.quote(item, true)?, "r" => self.quote(item, false)?, "s" => self.plain(item)?,
@@ -515,7 +523,13 @@ impl Layout<'_> {
     /// keyed mark's name among keys that are rows of bytes, and a
     /// character mark holds one byte alone.
     pub fn remainder(&self, pattern: &str, supplied: &Value, asked: &mut dyn Elsewhere, of_bytes: bool) -> Answer {
-        let mut stored = supplied.settled();
+        if let Value::Shared(cell) | Value::Mutable(cell, _) = supplied {
+            let held = cell.borrow().clone();
+            return self.remainder(pattern, &held, asked, of_bytes);
+        }
+        let proxy = matches!(supplied, Value::Window(_, 'm'));
+        let original = supplied;
+        let mut stored = if proxy { supplied.proxy_pairs() } else { supplied.settled() };
         if let Value::Thing(object) = &stored {
             let contents = object.holds.borrow().iter().find_map(|(key, item)| {
                 if key != "\0underlying" { return None; }
@@ -524,7 +538,7 @@ impl Layout<'_> {
             if let Some(row) = contents { stored = row; }
         }
         let supplied = &stored;
-        let positional = match supplied { Value::Tuple(items) | Value::Row(items) | Value::Arguments(items) => items.as_slice(), _ => std::slice::from_ref(supplied) };
+        let positional = match supplied { Value::Tuple(items) | Value::Row(items) | Value::Arguments(items) => items.as_slice(), _ => std::slice::from_ref(if proxy { original } else { supplied }) };
         let mut used = 0usize;
         let mut named_seen = false;
         let mut input = pattern.chars().peekable();
