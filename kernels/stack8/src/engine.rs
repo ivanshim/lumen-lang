@@ -24623,6 +24623,22 @@ impl<'a> Engine<'a> {
 
         if builtin == Builtin::Math {
             if let Some(Value::Text(operation)) = args.first().map(Value::contents) {
+                // The host error number, and only in a language that
+                // measures with floating math. Library code plants one,
+                // or clears one, ahead of a magnitude that must not
+                // inherit a stale range error. Every other language
+                // falls through to the ordinary missing-working complaint.
+                if operation.as_ref() == "set_errno" && self.lang.math_floating {
+                    if args.len() != 2 { return Err("TypeError: set_errno() takes exactly one argument".into()); }
+                    let planted = match args[1].contents() {
+                        Value::Small(n) => i32::try_from(n).map_err(|_| "OverflowError: Python int too large to convert to C int".to_string())?,
+                        Value::Flag(bit) => i32::from(u8::from(bit)),
+                        Value::Huge(n) => n.to_i32().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())?,
+                        _ => return Err("TypeError: an integer is required".into()),
+                    };
+                    unsafe { *libc::__errno_location() = planted };
+                    return Ok(Value::Null);
+                }
                 if operation.as_ref() == "mt19937" && self.lang.random_words {
                     return match args.len() {
                         3 => self.random_word(&args[1], &args[2]),
@@ -32315,9 +32331,7 @@ impl Engine<'_> {
             Builtin::Absolute => {
                 arity(1, 1)?;
                 if let Value::Complex(z) = &args[0] {
-                    let length = z.real.hypot(z.imag);
-                    if length.is_infinite() && z.real.is_finite() && z.imag.is_finite() { return Err(self.core_fault("core.power.overflow", "")); }
-                    return Ok(crate::complex::real(length));
+                    return Ok(crate::complex::real(crate::complex::modulus(z.real, z.imag)?));
                 }
                 let x = number(&args[0]);
                 if let Value::Real(r) = &x {
