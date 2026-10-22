@@ -923,6 +923,10 @@ import time
 SHORT_TIMEOUT = 30.0
 STDLIB_DIR = TEST_HOME_DIR
 TEST_SUPPORT_DIR = os.path.join(TEST_HOME_DIR, 'test', 'support')
+# The reference names a frozen module's source inside the standard library
+# root.  When the reference suite runs, its own home is that root, so the
+# finder computes the same places the suite's support module computes.
+sys._stdlib_dir = STDLIB_DIR
 is_android = False
 is_apple = sys.platform in ("darwin", "ios", "tvos", "watchos")
 has_socket_support = False
