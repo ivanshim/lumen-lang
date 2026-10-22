@@ -876,8 +876,10 @@ pub enum Builtin {
 #[derive(Debug, Clone)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum Operand {
-    Cell(Cell),
-    Const(Value),
+    /// Boxed, with the constant below, so that a fused word is no wider
+    /// than any other: every body keeps a vector of them for good.
+    Cell(Box<Cell>),
+    Const(Box<Value>),
     /// The top of the stack, popped.
     Top,
 }
@@ -975,7 +977,7 @@ pub enum Instr {
     /// stack for a binding.
     Dyad { op: Action, a: Operand, b: Operand },
     /// A binding stepped by a constant in place.
-    Bump { slot: Cell, by: Value },
+    Bump { slot: Cell, by: Box<Value> },
     /// A comparison of two operands and a jump when it fails: the test of
     /// a loop or a branch in one word.
     SkipCmp { op: Action, a: Operand, b: Operand, to: usize },
@@ -1217,11 +1219,11 @@ impl Routine {
                     if !matches!(updated, Value::Small(_)) {
                         return Err("NotImplementedError: changing the type of a fused increment is unavailable".into());
                     }
-                    *by = updated;
+                    **by = updated;
                 }
                 Instr::Dyad { a, b, .. } | Instr::SkipCmp { a, b, .. } => {
                     for operand in [a, b] {
-                        if let Operand::Const(value) = operand { *value = swap(value)?; }
+                        if let Operand::Const(value) = operand { **value = swap(value)?; }
                     }
                 }
                 _ => {}

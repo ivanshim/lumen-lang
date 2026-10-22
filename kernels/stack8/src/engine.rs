@@ -3856,13 +3856,13 @@ impl<'a> Engine<'a> {
         // popped for a stack operand, or what a shared cell holds.
         let av: &Value = match (at, a) {
             (Some(v), _) => v,
-            (None, Operand::Const(v)) => v,
+            (None, Operand::Const(v)) => &**v,
             (None, Operand::Cell(s)) => self.peek_cell(s, frame)?,
             (None, Operand::Top) => return Err("Stack underflow".to_string()),
         };
         let bv: &Value = match (bt, b) {
             (Some(v), _) => v,
-            (None, Operand::Const(v)) => v,
+            (None, Operand::Const(v)) => &**v,
             (None, Operand::Cell(s)) => self.peek_cell(s, frame)?,
             (None, Operand::Top) => return Err("Stack underflow".to_string()),
         };
@@ -8074,7 +8074,7 @@ impl<'a> Engine<'a> {
                         continue;
                     }
                     let cell = self.peek_cell_mut(slot, frame)?;
-                    let fast = match (&*cell, by) {
+                    let fast = match (&*cell, &**by) {
                         (Value::Small(x), Value::Small(k)) => x.checked_add(*k),
                         _ => None,
                     };
