@@ -709,6 +709,10 @@ pub struct Machine<'a> {
     fault_kinds: HashMap<String, Value>,
     pub outermost: Rc<Env>,
     idents: Vec<String>,
+    /// The newest roster place under each spelled name, and how far
+    /// along the roster it was read: a lookup reads only the names added
+    /// since, never the whole roster again.
+    newest_places: RefCell<(usize, HashMap<String, usize, crate::table::FxBuildHasher>)>,
     /// Names bound by the source after its library prefix.
     pub main_bindings: std::collections::HashSet<String, crate::table::FxBuildHasher>,
     memo: HashMap<String, Value>,
@@ -2230,6 +2234,7 @@ impl<'a> Machine<'a> {
             args_cell: find("system.args"),
             memo_cell: find("system.memoization"),
             idents,
+            newest_places: RefCell::new((0, HashMap::default())),
             main_bindings: std::collections::HashSet::default(),
             memo: HashMap::new(),
             identities: std::collections::BTreeMap::new(),
@@ -2881,6 +2886,17 @@ impl<'a> Machine<'a> {
                 self.idents.len() - 1
             }
         }
+    }
+
+    /// The newest place in the roster spelled `word`, if there is one:
+    /// the roster only ever grows, so the places read before stay right
+    /// and only the tail added since is read now.
+    fn newest_place(&self, word: &str) -> Option<usize> {
+        let mut known = self.newest_places.borrow_mut();
+        let read = known.0;
+        for (at, name) in self.idents.iter().enumerate().skip(read) { known.1.insert(name.clone(), at); }
+        known.0 = self.idents.len();
+        known.1.get(word).copied()
     }
 
     /// What a value is worth as a number: text for the number it opens
@@ -4132,6 +4148,7 @@ impl<'a> Machine<'a> {
             Err((said, row, _)) => return Err(Escape::Error(self.text_would_not_read(said, row))),
         };
         self.idents = built.globals;
+        self.newest_places.borrow_mut().0 = 0;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         let wanted = built.program.idents.len().max(held.len());
         if !Rc::ptr_eq(frame, &self.outermost) || frame.cells.borrow().len() < wanted {
@@ -4197,6 +4214,7 @@ impl<'a> Machine<'a> {
             false => crate::build::build_from(&tokens, self.table, &self.idents, HashMap::new(), true, 0, came_out_of.as_deref().map(Rc::from))?,
         };
         self.idents = built.globals;
+        self.newest_places.borrow_mut().0 = 0;
         // Names the new source brought with it want room to stand in.
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         let (was_in, was_on) = (self.written_in.clone(), self.row);
@@ -25960,7 +25978,7 @@ impl<'a> Machine<'a> {
                             Some(Value::Thing(module)) => format!("\0import/{}/{name}", module.of.name),
                             _ => name.clone(),
                         };
-                        let slot = if let Some(index) = self.idents.iter().rposition(|word| word == &key) { index }
+                        let slot = if let Some(index) = self.newest_place(&key) { index }
                             else { self.idents.push(key); self.idents.len() - 1 };
                         let entry_binding = owner.is_none() && self.reading_now.is_none()
                             && self.user_source_started && self.written_in == self.entry_file;
@@ -37113,6 +37131,7 @@ impl<'a> Machine<'a> {
         // What the build noted about how the text is written is said
         // once the text stands, each warning through the warnings module.
         self.idents = built.globals.clone();
+        self.newest_places.borrow_mut().0 = 0;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         if warn_source {
             for (message, row, column) in built.warnings.clone() {
@@ -37175,6 +37194,7 @@ impl<'a> Machine<'a> {
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
         self.idents = built.globals.clone();
+        self.newest_places.borrow_mut().0 = 0;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         if warn_source {
             for (message, row, column) in built.warnings.clone() {

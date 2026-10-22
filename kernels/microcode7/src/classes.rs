@@ -7564,7 +7564,7 @@ impl<'a> Machine<'a> {
                     let wanted = format!("\0import/{}/{key}", t.blueprint().name);
                     // A module read in again owns fresh cells at the
                     // end of the roster; the newest of the name answers.
-                    if let Some(at) = self.idents.iter().rposition(|word| word == &wanted) {
+                    if let Some(at) = self.newest_place(&wanted) {
                         let linked = Value::Shared(Rc::new(RefCell::new(replacement.clone().unwrap())));
                         self.outermost.cells.borrow_mut()[at] = linked.clone();
                         t.holds.borrow_mut().push((key.to_owned(), linked));

@@ -1973,7 +1973,7 @@ impl<'a> Builder<'a> {
         }
         // The class's kind word where the routine keeps no name of its
         // own for it is the hidden cell a class around closes over.
-        if !self.layers.last().map_or(false, |layer| layer.idents.iter().any(|named| named == name)) {
+        if !self.layers.last().map_or(false, |layer| layer.named_position(name).is_some()) {
             if let Some(slot) = self.class_cell_read(name) { return slot; }
         }
         // Text read inside a routine stands where its caller stands: the
