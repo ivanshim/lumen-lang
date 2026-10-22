@@ -29405,7 +29405,8 @@ impl<'a> Engine<'a> {
 
         let result = match builtin {
             Builtin::SortOf => {
-                if self.fuller_classes() && (args.len() != 1 || args.first().is_some_and(|value| matches!(value.contents(), Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)))) {
+                // A mapping proxy is its own kind, whatever mapping it reads.
+                if self.fuller_classes() && (args.len() != 1 || args.first().is_some_and(|value| Self::proxy_reading(value).is_none() && matches!(value.contents(), Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_)))) {
                     return self.class_type(args.clone()).map_err(|fault| match fault {
                         Fault::Note(message) => message,
                         raised => { self.carried = Some(raised); String::new() },
