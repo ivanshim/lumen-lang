@@ -695,6 +695,8 @@ pub struct Machine<'a> {
     routine_member_positions: HashMap<(u8, usize, usize), usize, crate::table::FxBuildHasher>,
     reaping: bool,
     cycle_checkpoint_slots: usize,
+    /// How many bytes were alive once the last reaping was done.
+    reaped_at_bytes: usize,
     // World size, inventory identities, and retired native slot positions.
     quiet_module_slots: (usize, Vec<(String, usize)>, Vec<usize>),
     loose_entries: RefCell<HashMap<(String, String), Value>>,
@@ -2226,7 +2228,7 @@ impl<'a> Machine<'a> {
             code_kind: None,
             cached_forms: None,
             member_inventories: RefCell::new(HashMap::new()),
-            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: HashMap::default(), reaping: false, cycle_checkpoint_slots: 0, quiet_module_slots: Default::default(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
+            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: HashMap::default(), reaping: false, cycle_checkpoint_slots: 0, reaped_at_bytes: 0, quiet_module_slots: Default::default(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
             stack_origin: &table as *const &Table as usize,
             descriptor_files: std::collections::BTreeMap::new(),
             table,
@@ -3266,12 +3268,23 @@ impl<'a> Machine<'a> {
         rows.iter().any(|(member, slot)| member == &words[1] && matches!(slot.settled(), Value::Dict(_)))
     }
 
+    /// Whether a module the machine read in has since left the import
+    /// dictionary: its reading is garbage only a reaping takes away.
+    fn modules_retired(&self) -> bool {
+        self.import_dictionary_ready()
+            && self.imported.keys().any(|path| !self.importing.contains(path) && self.cached_import(path).is_none())
+    }
+
     /// Compilation and import batches provide safe points for cyclic
     /// garbage, including programs that never explicitly ask for it.
     fn collect_namespace_garbage(&mut self, large_source: bool) {
         if self.reaping { return; }
         let growth = self.idents.len().saturating_sub(self.cycle_checkpoint_slots);
-        if !large_source && growth < 128_000 { return; }
+        // A large source is a safe moment to reap, but not a reason: with
+        // little taken since the last reaping there is little to find,
+        // and every reaping weaves the whole web.
+        let laden = lumen_room::used().saturating_sub(self.reaped_at_bytes) >= 32 * 1024 * 1024;
+        if large_source { if !laden && !self.modules_retired() { return; } } else if growth < 128_000 { return; }
         let limit = self.imported.get("gc").and_then(|module| {
             let Value::Thing(space) = module.settled() else { return None };
             let rows = space.holds.try_borrow().ok()?;
@@ -3469,6 +3482,7 @@ impl<'a> Machine<'a> {
             drop(web);
             self.attend_to_gone();
             self.clear_collector_skips();
+            self.reaped_at_bytes = lumen_room::used();
             self.reaping = false;
             return 0;
         }
@@ -3541,7 +3555,26 @@ impl<'a> Machine<'a> {
         drop(checked);
         drop(taken);
         self.attend_to_gone();
+        // The discounted cell of a retired module that no namespace holds
+        // any longer was all that kept its reading's code alive: unset it.
+        {
+            let skips = self.outermost.collector_skips.borrow();
+            let mut cells = self.outermost.cells.borrow_mut();
+            for (at, _) in skips.iter().enumerate().filter(|(_, &quiet)| quiet) {
+                let Some(place) = cells.get_mut(at) else { break };
+                let alone = matches!(place, Value::Shared(cell) if Rc::strong_count(cell) == 1);
+                if alone { *place = Value::Unset; }
+            }
+        }
         self.clear_collector_skips();
+        // What the reaping freed is handed back to the system at once,
+        // rather than kept resident by the allocator for the rest of the run.
+        #[cfg(target_os = "linux")]
+        unsafe {
+            unsafe extern "C" { fn malloc_trim(pad: usize) -> i32; }
+            malloc_trim(0);
+        }
+        self.reaped_at_bytes = lumen_room::used();
         self.reaping = false;
         found
     }
