@@ -7672,10 +7672,11 @@ impl<'a> Engine<'a> {
                 // the place its routines read it from, as the reference's
                 // module.__dict__ write is a global write.
                 if module && value.is_some() && !o.fields.borrow().iter().any(|(n,_)| n == name) {
-                    let suffix = format!(":{}:{}", o.class_now().name, name);
                     // The newest incarnation of the module answers for
                     // the name: a module read in again owns fresh cells.
-                    if let Some(slot) = self.registry.idents.iter().rposition(|word| word.starts_with("\0module:") && word.ends_with(&suffix)) {
+                    // The member index names that newest slot outright; a
+                    // scan of every spelled name grew with the whole world.
+                    if let Some(slot) = self.registry.module_slot(&o.class_now().name, name) {
                         let shared = Value::Bond(Rc::new(RefCell::new(value.clone().unwrap())));
                         self.world.resize(self.registry.idents.len(), Value::Blank);
                         self.world[slot] = shared.clone();

@@ -192,6 +192,8 @@ pub struct Engine<'a> {
     prepared_hint: std::cell::Cell<Option<usize>>,
     collecting_cycles: bool,
     cycle_checkpoint_slots: usize,
+    /// The bytes alive after the last collection.
+    cycle_checkpoint_bytes: usize,
     // World size, inventory identities, and retired native slot positions.
     quiet_module_slots: (usize, Vec<(String, usize)>, Vec<usize>),
     kind_names: RefCell<HashMap<String, Vec<String>>>,
@@ -1765,7 +1767,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, byte_members_seen: RefCell::new(HashMap::default()), prepared_hint: std::cell::Cell::new(None), collecting_cycles: false, cycle_checkpoint_slots: 0, quiet_module_slots: Default::default(), kind_names: RefCell::new(HashMap::new()),
+            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, byte_members_seen: RefCell::new(HashMap::default()), prepared_hint: std::cell::Cell::new(None), collecting_cycles: false, cycle_checkpoint_slots: 0, cycle_checkpoint_bytes: 0, quiet_module_slots: Default::default(), kind_names: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
             exception_roster,
@@ -2546,8 +2548,12 @@ impl<'a> Engine<'a> {
     fn collect_namespace_garbage(&mut self, large_source: bool) {
         if self.collecting_cycles { return; }
         let growth = self.world.len().saturating_sub(self.cycle_checkpoint_slots);
+        // The heap's own growth asks for a collection as well: a module
+        // read in again leaves its earlier incarnation as garbage that
+        // never widens the world, and only a collection takes it away.
+        let swollen = lumen_room::used().saturating_sub(self.cycle_checkpoint_bytes) >= 128 << 20;
         // A large source alone collects only after some namespace growth: each collection walks the whole world.
-        if growth < if large_source { 100_000 } else { 128_000 } { return; }
+        if !swollen && growth < if large_source { 100_000 } else { 128_000 } { return; }
         let limit = self.modules.get("gc").and_then(|module| {
             let Value::Object(object) = module.contents() else { return None };
             let fields = object.fields.try_borrow().ok()?;
@@ -2559,7 +2565,7 @@ impl<'a> Engine<'a> {
                 _ => None,
             }
         });
-        if limit.is_some_and(|limit| large_source || growth >= limit) {
+        if limit.is_some_and(|limit| swollen || large_source || growth >= limit) {
             let pending = self.carried.take();
             self.collect_cycles();
             self.carried = pending;
@@ -2711,6 +2717,7 @@ impl<'a> Engine<'a> {
             self.reindex_function_rows();
             drop(graph);
             self.settle_departed();
+            self.cycle_checkpoint_bytes = lumen_room::used();
             self.collecting_cycles = false;
             return 0;
         }
@@ -2759,6 +2766,21 @@ impl<'a> Engine<'a> {
         drop(after);
         drop(grave);
         self.settle_departed();
+        // A retired module's cell that nothing holds any more kept the
+        // module's code alive through the world alone: let it go now.
+        for &at in &quiet_slots {
+            if let Some(slot) = self.world.get_mut(at) {
+                if matches!(slot, Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) if Rc::strong_count(cell) == 1) { *slot = Value::Blank; }
+            }
+        }
+        // The pages a collection frees go back to the system now: left
+        // with the allocator they stay resident through a long run.
+        #[cfg(target_os = "linux")]
+        {
+            unsafe extern "C" { fn malloc_trim(pad: usize) -> i32; }
+            unsafe { malloc_trim(0) };
+        }
+        self.cycle_checkpoint_bytes = lumen_room::used();
         self.collecting_cycles = false;
         count
     }
@@ -3906,13 +3928,13 @@ impl<'a> Engine<'a> {
         // popped for a stack operand, or what a shared cell holds.
         let av: &Value = match (at, a) {
             (Some(v), _) => v,
-            (None, Operand::Const(v)) => v,
+            (None, Operand::Const(v)) => &**v,
             (None, Operand::Cell(s)) => self.peek_cell(s, frame)?,
             (None, Operand::Top) => return Err("Stack underflow".to_string()),
         };
         let bv: &Value = match (bt, b) {
             (Some(v), _) => v,
-            (None, Operand::Const(v)) => v,
+            (None, Operand::Const(v)) => &**v,
             (None, Operand::Cell(s)) => self.peek_cell(s, frame)?,
             (None, Operand::Top) => return Err("Stack underflow".to_string()),
         };
@@ -8124,7 +8146,7 @@ impl<'a> Engine<'a> {
                         continue;
                     }
                     let cell = self.peek_cell_mut(slot, frame)?;
-                    let fast = match (&*cell, by) {
+                    let fast = match (&*cell, &**by) {
                         (Value::Small(x), Value::Small(k)) => x.checked_add(*k),
                         _ => None,
                     };
