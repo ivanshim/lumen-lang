@@ -114,6 +114,35 @@ fn group_record(group: &libc::group) -> Value {
     Value::tuple(vec![text(group.gr_name), text(group.gr_passwd),
         Value::Small(group.gr_gid.into()), Value::Vector(crate::tuples::Sequence::plain(members))])
 }
+
+// Open a terminal, fork, and make the child the session leader on the slave.
+fn split_onto_terminal() -> Result<Value, i32> {
+    let mut held: libc::c_int = -1;
+    let born = unsafe {
+        libc::forkpty(&mut held, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut())
+    };
+    if born < 0 {
+        return Err(errno());
+    }
+    // Leave the disposition alone. Whatever was installed before the split,
+    // including the default, is what the child still answers a hangup with.
+    Ok(Value::tuple(vec![Value::Small(i64::from(born)), Value::Small(i64::from(held))]))
+}
+
+// A wait cut short by a signal runs the Python handlers, then waits again.
+fn harvest(pid: i64, flags: i64, mut interrupted: impl FnMut() -> Result<(), String>) -> Result<Result<Value, i32>, String> {
+    loop {
+        let mut code: libc::c_int = 0;
+        let got = unsafe { libc::waitpid(pid as libc::pid_t, &mut code, flags as libc::c_int) };
+        if got >= 0 {
+            return Ok(Ok(Value::tuple(vec![Value::Small(i64::from(got)), Value::Small(i64::from(code))])));
+        }
+        let cause = errno();
+        if cause != libc::EINTR { return Ok(Err(cause)); }
+        interrupted()?;
+    }
+}
+
 pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), String>) -> Result<Value, String> {
     let operation = match given.first().map(Value::settled) {
         Some(Value::Text(name)) => name,
@@ -659,6 +688,9 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                 let result = std::fs::File::open("/dev/urandom").and_then(|mut source| source.read_exact(&mut content));
                 match result {Err(e) => Err(e.raw_os_error().unwrap_or(libc::EIO)), Ok(()) => Ok(octets(content))}
             }
+            "forkpty" => split_onto_terminal(),
+            "_exit" => { libc::_exit(int(0)? as libc::c_int); },
+            "waitpid" => harvest(int(0)?, int(1)?, &mut interrupted)?,
             _ => return Err(String::from("NotImplementedError: unknown POSIX operation")),
         }
     };

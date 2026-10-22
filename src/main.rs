@@ -706,21 +706,34 @@ fn main() {
         if error != 0 { panic!("Failed to set signal mask: {}", std::io::Error::from_raw_os_error(error)); }
         previous
     };
+    let (python_run, learn) = std::sync::mpsc::channel::<()>();
     let roomy = std::thread::Builder::new()
         .stack_size(1 << 30)
         .spawn(move || {
             let error = unsafe { libc::pthread_sigmask(libc::SIG_SETMASK, &previous_mask, std::ptr::null_mut()) };
             if error != 0 { panic!("Failed to restore signal mask: {}", std::io::Error::from_raw_os_error(error)); }
-            run_all();
+            run_all(python_run);
         })
         .expect("a thread for the run");
+    // A Python run only: the waiting thread takes no signals, so one sent to
+    // the process lands on the running thread and interrupts its blocking
+    // calls (waitpid, select) instead of sitting unseen while they carry on.
+    // (The run ending without a word drops the sender and ends the wait.)
+    #[cfg(target_os = "linux")]
+    if learn.recv().is_ok() {
+        unsafe {
+            let mut every = std::mem::zeroed();
+            libc::sigfillset(&mut every);
+            libc::pthread_sigmask(libc::SIG_BLOCK, &every, std::ptr::null_mut());
+        }
+    }
     match roomy.join() {
         Ok(()) => {}
         Err(panicked) => std::panic::resume_unwind(panicked),
     }
 }
 
-fn run_all() {
+fn run_all(python_run: std::sync::mpsc::Sender<()>) {
     let args: Vec<OsString> = env::args_os().collect();
     let inv = parse_args(&args);
 
@@ -732,6 +745,7 @@ fn run_all() {
     std::env::set_var("LUMEN_KERNEL", inv.kernel.as_str());
     std::env::set_var("LUMEN_LANG", inv.language.name());
     if inv.language.name() == "python" {
+        let _ = python_run.send(());
         if inv.python_development { std::env::set_var("LUMEN_PYTHON_DEV_MODE", "1"); }
         else { std::env::remove_var("LUMEN_PYTHON_DEV_MODE"); }
         std::env::set_var("LUMEN_PYTHON_SAFE_PATH", if inv.python_safe_path { "1" } else { "0" });
