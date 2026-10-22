@@ -121,6 +121,9 @@
   "ext.builtin.tokenize.scan": [
     "__tokenize_scan"
   ],
+  "ext.builtin.io.text_append": [
+    "__io_text_append"
+  ],
   "ext.builtin.text.scan_ascii": [
     "__text_scan_ascii"
   ],

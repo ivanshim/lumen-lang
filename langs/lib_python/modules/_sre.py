@@ -56,6 +56,7 @@ class Pattern:
         self._pattern = pattern
         self._flags = flags
         self._code = code
+        self._ccode = tuple(code)
         self._groups = groups
         self._groupindex = dict(groupindex)
         self._indexgroup = indexgroup
@@ -87,7 +88,7 @@ class Pattern:
         pos, endpos = _native(9, text, _index(pos), _index(endpos))
         return text, pos, endpos
     def _run(self, string, text, pos, endpos, mode, must_advance=0):
-        state = _native(0, self._code, text, pos, endpos, self._groups, mode, must_advance)
+        state = _native(0, self._ccode, text, pos, endpos, self._groups, mode, must_advance)
         if state is None:
             return None
         return Match(_TOKEN, self, string, text, pos, endpos, state)
@@ -99,10 +100,8 @@ class Pattern:
             return None if state is None else Match(_TOKEN, self, string, string, 0, len(string), state)
         if type(string) is str and type(pos) is int and type(endpos) is int and self._isbytes is not True:
             pos, endpos = _native(9, string, pos, endpos)
-            state = _native(0, self._code, string, pos, endpos, self._groups, 0, 0)
-            if state is None:
-                return None
-            return Match(_TOKEN, self, string, string, pos, endpos, state)
+            state = _native(0, self._ccode, string, pos, endpos, self._groups, 0, 0)
+            return None if state is None else Match(_TOKEN, self, string, string, pos, endpos, state)
         text, pos, endpos = self._input(string, pos, endpos)
         return self._run(string, text, pos, endpos, 0)
     match = prefixmatch
@@ -112,10 +111,8 @@ class Pattern:
             return None if state is None else Match(_TOKEN, self, string, string, 0, len(string), state)
         if type(string) is str and type(pos) is int and type(endpos) is int and self._isbytes is not True:
             pos, endpos = _native(9, string, pos, endpos)
-            state = _native(0, self._code, string, pos, endpos, self._groups, 1, 0)
-            if state is None:
-                return None
-            return Match(_TOKEN, self, string, string, pos, endpos, state)
+            state = _native(0, self._ccode, string, pos, endpos, self._groups, 1, 0)
+            return None if state is None else Match(_TOKEN, self, string, string, pos, endpos, state)
         text, pos, endpos = self._input(string, pos, endpos)
         return self._run(string, text, pos, endpos, 1)
     def search(self, string, pos=0, endpos=9223372036854775807):
@@ -124,10 +121,8 @@ class Pattern:
             return None if state is None else Match(_TOKEN, self, string, string, 0, len(string), state)
         if type(string) is str and type(pos) is int and type(endpos) is int and self._isbytes is not True:
             pos, endpos = _native(9, string, pos, endpos)
-            state = _native(0, self._code, string, pos, endpos, self._groups, 2, 0)
-            if state is None:
-                return None
-            return Match(_TOKEN, self, string, string, pos, endpos, state)
+            state = _native(0, self._ccode, string, pos, endpos, self._groups, 2, 0)
+            return None if state is None else Match(_TOKEN, self, string, string, pos, endpos, state)
         text, pos, endpos = self._input(string, pos, endpos)
         return self._run(string, text, pos, endpos, 2)
     def scanner(self, string, pos=0, endpos=9223372036854775807):
@@ -138,7 +133,7 @@ class Pattern:
     def findall(self, string, pos=0, endpos=9223372036854775807):
         if type(string) is str:
             text, pos, endpos = self._input(string, pos, endpos)
-            return _native(7, self._code, text, pos, endpos, self.groups)
+            return _native(7, self._ccode, text, pos, endpos, self._groups)
         empty = b'' if not isinstance(string, str) else ''
         result = []
         for m in self.finditer(string, pos, endpos):
@@ -160,17 +155,21 @@ class Pattern:
         maxsplit = _index(0 if maxsplit is _NO_COUNT else maxsplit)
         text, pos, end = self._input(string, 0, 9223372036854775807)
         if type(string) is str and -9223372036854775808 <= maxsplit <= 9223372036854775807:
-            return _native(13, self._code, text, pos, end, self.groups, maxsplit)
+            return _native(13, self._ccode, text, pos, end, self.groups, maxsplit)
         source = text.encode('latin1') if not isinstance(string, str) else text
         result = []
         used = 0
         if maxsplit >= 0:
-            for m in self.finditer(string):
-                if maxsplit and used >= maxsplit:
+            scanner = _Scanner(self, string, text, pos, end)
+            while True:
+                m = scanner._next(2)
+                if m is None or (maxsplit and used >= maxsplit):
                     break
-                result.append(source[pos:m.start()])
-                result.extend(m.groups())
-                pos = m.end()
+                state = m._state
+                result.append(source[pos:state[0]])
+                if self._groups:
+                    result.extend(m.groups())
+                pos = state[1]
                 used += 1
         result.append(source[pos:])
         return result
@@ -185,7 +184,7 @@ class Pattern:
         text, pos, end = self._input(string, 0, 9223372036854775807)
         isbytes = not isinstance(string, str)
         if type(string) is str and type(repl) is str and '\\' not in repl and -9223372036854775808 <= count <= 9223372036854775807:
-            return _native(8, self._code, text, pos, end, self.groups, count, repl)
+            return _native(8, self._ccode, text, pos, end, self._groups, count, repl)
         source = text.encode('latin1') if isbytes else text
         empty = b'' if isbytes else ''
         if not callable(repl):
@@ -200,14 +199,17 @@ class Pattern:
         chunks = []
         used = 0
         if count >= 0:
-            for m in self.finditer(string):
-                if count and used >= count:
+            scanner = _Scanner(self, string, text, pos, end)
+            while True:
+                m = scanner._next(2)
+                if m is None or (count and used >= count):
                     break
                 value = repl(m) if callable(repl) else replacement.expand(m)
-                chunks.append(source[pos:m.start()])
+                state = m._state
+                chunks.append(source[pos:state[0]])
                 if value is not None:
                     chunks.append(value)
-                pos = m.end()
+                pos = state[1]
                 used += 1
         chunks.append(source[pos:])
         return empty.join(chunks), used
@@ -329,9 +331,22 @@ class Match:
     def __getitem__(self, group):
         return self.group(group)
     def groups(self, default=None):
-        return tuple(default if self.start(i) < 0 else self.group(i) for i in range(1, self.re.groups+1))
+        count = self._re._groups
+        if count == 0:
+            return ()
+        values = self.group(*range(1, count + 1)) if count > 1 else (self.group(1),)
+        if default is not None and None in values:
+            return tuple(default if value is None else value for value in values)
+        return values
     def groupdict(self, default=None):
-        return {name: default if self.start(i) < 0 else self.group(i) for name, i in self.re._groupindex.items()}
+        index = self._re._groupindex
+        if not index:
+            return {}
+        values = self.group(*index.values()) if len(index) > 1 else (self.group(*index.values()),)
+        result = {}
+        for name, value in zip(index, values):
+            result[name] = default if value is None else value
+        return result
     def expand(self, template):
         from re import _compile_template
         return _compile_template(self.re, template).expand(self)
@@ -359,15 +374,17 @@ class _Scanner:
     def _next(self, mode):
         if self.done:
             return None
-        m = self.pattern._run(self.string, self.text, self.pos, self.endpos, mode, self.advance)
-        if m is None:
+        pattern = self.pattern
+        state = _native(0, pattern._ccode, self.text, self.pos, self.endpos, pattern._groups, mode, self.advance)
+        if state is None:
             self.done = True
             if self._lease is not None:
                 self._lease.release()
                 self._lease = None
-        else:
-            self.advance = int(m.start() == m.end())
-            self.pos = m.end()
+            return None
+        m = Match(_TOKEN, pattern, self.string, self.text, self.pos, self.endpos, state)
+        self.advance = int(state[0] == state[1])
+        self.pos = state[1]
         return m
     def search(self):
         return self._next(2)
@@ -381,7 +398,7 @@ class _Iterator:
     def __iter__(self):
         return self
     def __next__(self):
-        match = self.scanner.search()
+        match = self.scanner._next(2)
         if match is None:
             raise StopIteration
         return match

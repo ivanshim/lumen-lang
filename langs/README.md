@@ -4759,6 +4759,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.input` | - | - | `input` | - | - | - | - | - | - | - |
 | `ext.builtin.input.reader` | - | - | `sys` `_input` | - | - | - | - | - | - | - |
 | `ext.builtin.instance` | - | - | `isinstance` | - | - | - | - | - | - | - |
+| `ext.builtin.io.text_append` | - | - | `__io_text_append` | - | - | - | - | - | - | - |
 | `ext.builtin.isinstance` | - | - | `isinstance` | - | - | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.issubclass` | - | - | `issubclass` | - | - | - | - | - | - | - |
@@ -6174,6 +6175,11 @@ retrying. Matching
 space-only indentation and blank lines can be prepared natively; indentation
 transitions, tabs, complex interpolation and diagnostic cases retain the
 adapter's scanner.
+
+`ext.builtin.io.text_append` appends exact strings to initialized memory text
+streams at their end, updating position, length and newline history together.
+The adapter retains the general path for subclasses, overwrites and unpaired
+surrogates. A missing native result leaves the stream unchanged.
 
 `ext.builtin.text.scan_ascii` scans the bounded ASCII span accepted by a
 character set and returns its ending code-point index. The regular-expression

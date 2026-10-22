@@ -1675,6 +1675,70 @@ impl<'a> Engine<'a> {
         let of = match thing { Value::Object(o) => { let class = o.class_now(); let shown = class.python_names.borrow().as_ref().map_or_else(|| class.name.clone(), |names| names.1.type_text().plain()); shown }, Value::Class(c) => if self.class_word("name").is_empty() { c.name.clone() } else { Self::maker_beneath(c).map_or_else(|| c.name.clone(), |maker| maker.python_names.borrow().as_ref().map_or_else(|| maker.name.clone(), |names| names.0.type_text().plain())) }, other => other.plain() };
         format!("{}{named}{}{of}{}", pieces[0], pieces[1], pieces[2]).into()
     }
+    // Append native text without repeating the adapter's slot and helper calls.
+    pub(super) fn io_text_append(&self, args: &[Value]) -> Flow<Value> {
+        let (Value::Object(stream), Value::Text(text), Value::Class(class)) = (&args[0], &args[1], &args[2]) else { return Ok(Value::Null) };
+        if !Rc::ptr_eq(&stream.class_now(), class) { return Ok(Value::Null); }
+        let words = ["_text", "_closed", "_newline", "_chunks", "_length", "_pos", "_seen"];
+        for word in words {
+            let Some(Value::Adapter(slot)) = class.shared.read(word, true) else { return Ok(Value::Null) };
+            if slot.0 != 16 || slot.1.len() != 2 || !matches!(&slot.1[0], Value::Text(name) if name.as_ref() == word)
+                || !matches!(&slot.1[1], Value::Class(owner) if Rc::ptr_eq(owner, class)) { return Ok(Value::Null); }
+        }
+        let layout = self.storage_slots(class);
+        let Some(own) = layout.last() else { return Ok(Value::Null) };
+        let inherited = layout.iter().take(layout.len() - 1).map(Vec::len).sum::<usize>();
+        let keys: Vec<_> = words.iter().map(|word| format!("\0slot:{word}:{}", inherited + own.iter().position(|name| name == word).unwrap_or(0))).collect();
+        let fields = stream.fields.borrow();
+        if !fields.iter().any(|(key, _)| key == &keys[0]) { return Err("ValueError: I/O operation on uninitialized object".into()); }
+        let positions: Vec<_> = keys.iter().map(|key| fields.iter().position(|(name, _)| name == key)).collect();
+        let Some(closed_at) = positions[1] else { return Ok(Value::Null) };
+        match fields[closed_at].1.contents() {
+            Value::Flag(true) => return Err("ValueError: I/O operation on closed file".into()),
+            Value::Flag(false) => (),
+            _ => return Ok(Value::Null),
+        }
+        let count = if text.is_ascii() { text.len() } else { text.chars().count() };
+        if count == 0 { return Ok(Value::Small(0)); }
+        if positions.iter().any(Option::is_none) { return Ok(Value::Null); }
+        let positions: Vec<_> = positions.into_iter().map(Option::unwrap).collect();
+        let Value::Small(length) = fields[positions[4]].1.contents() else { return Ok(Value::Null) };
+        if length < 0 || !matches!(fields[positions[5]].1.contents(), Value::Small(pos) if pos == length) { return Ok(Value::Null); }
+        let Some(chunks) = Self::holding_cell(&fields[positions[3]].1) else { return Ok(Value::Null) };
+        if !matches!(&*chunks.borrow(), Value::Array(_)) { return Ok(Value::Null); }
+        let Value::Small(seen) = fields[positions[6]].1.contents() else { return Ok(Value::Null) };
+        let newline = fields[positions[2]].1.contents();
+        let universal = matches!(&newline, Value::Null) || matches!(&newline, Value::Text(word) if word.is_empty());
+        if !universal && !matches!(&newline, Value::Text(word) if matches!(word.as_ref(), "\n" | "\r" | "\r\n")) { return Ok(Value::Null); }
+        let mut history = seen;
+        if universal {
+            let bytes = text.as_bytes();
+            let mut at = 0;
+            while at < bytes.len() {
+                if bytes[at] == 13 {
+                    if bytes.get(at + 1) == Some(&10) { history |= 4; at += 2; continue; }
+                    history |= 2;
+                } else if bytes[at] == 10 { history |= 1; }
+                at += 1;
+            }
+        }
+        let translated = match &newline {
+            Value::Null if text.contains('\r') => Value::text(&text.replace("\r\n", "\n").replace('\r', "\n")),
+            Value::Text(ending) if matches!(ending.as_ref(), "\r" | "\r\n") && text.contains('\n') => Value::text(&text.replace('\n', ending)),
+            _ => Value::Text(text.clone()),
+        };
+        let Value::Text(data) = &translated else { unreachable!() };
+        let size = if data.is_ascii() { data.len() } else { data.chars().count() };
+        let Some(end) = length.checked_add(size as i64) else { return Ok(Value::Null) };
+        drop(fields);
+        if let Value::Array(row) = &mut *chunks.borrow_mut() { Rc::make_mut(row).push(translated); }
+        let mut fields = stream.fields.borrow_mut();
+        fields[positions[4]].1 = Value::Small(end);
+        fields[positions[5]].1 = Value::Small(end);
+        if universal { fields[positions[6]].1 = Value::Small(history); }
+        Ok(Value::Small(count as i64))
+    }
+
     /// The workings of the property class, each handed the property
     /// first and then what the program gave.
     fn property_work(&mut self, tag: u8, args: Vec<Value>) -> Flow<Value> {

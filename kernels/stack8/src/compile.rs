@@ -13301,6 +13301,17 @@ impl<'a> Compiler<'a> {
                     [Instr::Read(slot)] => Some(slot.ident.to_string()),
                     _ => None,
                 };
+                // A member read plainly, of a name no value kind answers for by itself,
+                // takes the same road whether or not the receiver has it: asking first
+                // would only repeat the answer the read gives.
+                let alike = call.is_none() && lang.member_amiss.is_some()
+                    && !lang.value_methods.contains_key(&named) && !lang.builtins.contains_key(&named)
+                    && !(lang.yield_suspends && [&lang.yield_send, &lang.yield_close, &lang.yield_throw].iter().any(|words| Lang::spells(words, &named)));
+                if alike {
+                    if !lang.trace_fields.is_empty() { self.put(member_range); }
+                    self.act(Action::Grab(named.as_str().into()), 1);
+                    continue;
+                }
                 let held = self.gensym("receiver");
                 self.write(&held);
                 self.read(&held);

@@ -23,6 +23,43 @@ fn subject_codes(value: &Value) -> Result<Rc<Vec<u32>>, String> {
     held.text_codes().map(Rc::new).ok_or_else(|| "TypeError: SRE input must be text".to_string())
 }
 
+// A compiled pattern hands its program over as a tuple, which cannot change;
+// the tuple is kept in the table beside its words so its address stays its own.
+thread_local! {
+    static PROGRAMS: RefCell<Vec<(usize, Value, Rc<Vec<u32>>)>> = const { RefCell::new(Vec::new()) };
+}
+
+fn program_words(value: &Value) -> Result<Rc<Vec<u32>>, String> {
+    let held = value.contents();
+    let (sealed, items) = match &held {
+        Value::Tuple(items) => (true, items),
+        Value::Array(items) => (false, items),
+        _ => return Err("TypeError: SRE code must be a list".into()),
+    };
+    let place = Rc::as_ptr(&**items) as usize;
+    if sealed {
+        let known = PROGRAMS.with(|table| table.borrow().iter().find(|row| row.0 == place).map(|row| row.2.clone()));
+        if let Some(words) = known { return Ok(words); }
+    }
+    let mut words = Vec::with_capacity(items.len());
+    for item in items.iter() {
+        let word = match item {
+            Value::Small(n) => *n, Value::Flag(flag) => i64::from(*flag),
+            _ => item.as_big()?.to_i64().ok_or("OverflowError: regular expression code size limit exceeded")?,
+        };
+        words.push(u32::try_from(word).map_err(|_| "OverflowError: regular expression code size limit exceeded".to_string())?);
+    }
+    let words = Rc::new(words);
+    if sealed {
+        PROGRAMS.with(|table| {
+            let mut table = table.borrow_mut();
+            if table.len() >= 96 { table.remove(0); }
+            table.push((place, held.clone(), words.clone()));
+        });
+    }
+    Ok(words)
+}
+
 #[derive(Clone)]
 struct Repeat { body: usize, tail: usize, min: usize, max: usize, count: usize, before: usize }
 #[derive(Clone)]
@@ -493,15 +530,7 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         else { Value::Flag(char::from_u32(n).is_some_and(|c| if op == 3 { c.is_ascii_alphabetic() } else { crate::unicode::bits(c) & 16 != 0 })) });
     }
     if args.len() != match op { 7 => 6, 13 => 7, _ => 8 } { return Err("TypeError: invalid SRE matcher argument count".into()); }
-    let Value::Array(items) = args[1].contents() else { return Err("TypeError: SRE code must be a list".into()) };
-    let mut code = Vec::with_capacity(items.len());
-    for item in items.iter() {
-        let word = match item {
-            Value::Small(n) => *n, Value::Flag(flag) => i64::from(*flag),
-            _ => item.as_big()?.to_i64().ok_or("OverflowError: regular expression code size limit exceeded")?,
-        };
-        code.push(u32::try_from(word).map_err(|_| "OverflowError: regular expression code size limit exceeded".to_string())?);
-    }
+    let code = program_words(&args[1])?;
     let text = subject_codes(&args[2])?;
     let start = number(3)?.max(0) as usize;
     let end = (number(4)?.max(0) as usize).min(text.len());
@@ -509,7 +538,7 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
     let mode = if op != 0 { 2 } else { number(6)? };
     let advance = op == 0 && number(7)? != 0;
     if start > end { return Ok(if op == 7 { Value::array(Vec::new()) } else { Value::Null }); }
-    let machine = Machine { code: &code, text: &text, end };
+    let machine = Machine { code: &code[..], text: &text, end };
     if matches!(op, 7 | 8 | 13) {
         let limit = if op == 7 { 0 } else { number(6)? };
         let replacement = if op == 8 { args[7].contents().text_codes().ok_or_else(|| "TypeError: replacement must be text".to_string())? } else { Vec::new() };

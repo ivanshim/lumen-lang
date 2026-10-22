@@ -349,6 +349,45 @@ impl Regex<'_> {
         Ok(None)
     }
 }
+// The program a pattern keeps arrives as a tuple, which nothing can change
+// afterwards. Each tuple is held in the book beside its decoded words, so
+// the place it lives at is never lent to another tuple while the entry stands.
+thread_local! {
+    static DECODED_PROGRAMS: RefCell<VecDeque<(usize, Value, Rc<Vec<u32>>)>> = const { RefCell::new(VecDeque::new()) };
+}
+const PROGRAMS_KEPT: usize = 80;
+
+fn compiled_program(source: &Value) -> Result<Rc<Vec<u32>>, String> {
+    fn word_of(item: &Value) -> Result<u32, String> {
+        let overflow = || String::from("OverflowError: regular expression code size limit exceeded");
+        let number = match item {
+            Value::Small(whole) => *whole,
+            Value::Flag(truth) => i64::from(*truth),
+            other => other.as_big()?.to_i64().ok_or_else(overflow)?,
+        };
+        u32::try_from(number).map_err(|_| overflow())
+    }
+    let (fixed, row) = match source {
+        Value::Tuple(row) => (true, row),
+        Value::Vector(row) => (false, row),
+        _ => return Err(String::from("TypeError: SRE code must be a list")),
+    };
+    let address = Rc::as_ptr(&**row) as usize;
+    if fixed {
+        let seen = DECODED_PROGRAMS.with(|book| book.borrow().iter().find(|entry| entry.0 == address).map(|entry| entry.2.clone()));
+        if let Some(words) = seen { return Ok(words); }
+    }
+    let words = Rc::new(row.iter().map(word_of).collect::<Result<Vec<u32>, String>>()?);
+    if fixed {
+        DECODED_PROGRAMS.with(|book| {
+            let mut book = book.borrow_mut();
+            if book.len() >= PROGRAMS_KEPT { book.pop_front(); }
+            book.push_back((address, source.clone(), words.clone()));
+        });
+    }
+    Ok(words)
+}
+
 pub fn invoke(input: &[Value]) -> Result<Value, String> {
     fn integer(v: &Value) -> Result<i64, String> {
         match v {
@@ -491,8 +530,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
     }
     let required = match action { 13 => 7, 7 => 6, _ => 8 };
     if input.len() != required { return Err(String::from("TypeError: invalid SRE matcher argument count")); }
-    let Value::Vector(raw) = &input[1] else { return Err(String::from("TypeError: SRE code must be a list")); };
-    let program: Vec<u32> = raw.iter().map(|v| integer(v).and_then(|n| u32::try_from(n).map_err(|_| String::from("OverflowError: regular expression code size limit exceeded")))).collect::<Result<_, _>>()?;
+    let program = compiled_program(&input[1])?;
     let subject = characters_for_regex(&input[2])?;
     let begin = integer(&input[3])?.max(0) as usize;
     let limit = (integer(&input[4])?.max(0) as usize).min(subject.len());
@@ -500,7 +538,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
     let mode = if action == 0 { integer(&input[6])? } else { 2 };
     let skip_empty = action == 0 && integer(&input[7])? != 0;
     if begin > limit { return Ok(if action == 7 { vector(Vec::new()) } else { Value::Nil }); }
-    let regex = Regex { program: &program, subject: &subject, limit };
+    let regex = Regex { program: &program[..], subject: &subject, limit };
     if matches!(action, 7 | 8 | 13) {
         let permitted = if action == 7 { 0 } else { integer(&input[6])? };
         let inserted = if action == 8 { input[7].character_numbers().ok_or_else(|| String::from("TypeError: replacement must be text"))? } else { vec![] };

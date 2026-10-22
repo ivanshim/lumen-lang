@@ -1940,6 +1940,79 @@ impl<'a> Machine<'a> {
 
     /// The workings of the property blueprint. Each is handed the
     /// property first, then whatever the program gave.
+    // Handle an append to an exact memory text stream in one native operation.
+    pub(super) fn append_memory_text(&self, given: &[Value]) -> Res {
+        let [Value::Thing(receiver), Value::Text(source), Value::Blueprint(declared)] = given else { return Ok(Value::Nil) };
+        if !Rc::ptr_eq(&receiver.blueprint(), declared) { return Ok(Value::Nil); }
+        let names = ["_pos", "_length", "_chunks", "_text", "_newline", "_closed", "_seen"];
+        let shape = self.inherited_storage(declared);
+        let Some(local) = shape.last() else { return Ok(Value::Nil) };
+        let prefix: usize = shape[..shape.len() - 1].iter().map(|group| group.len()).sum();
+        let mut addresses = Vec::new();
+        for name in names {
+            match declared.shared.named(name, true) {
+                Some(Value::Wrapped(32, parts)) if parts.len() == 2
+                    && matches!(&parts[0], Value::Text(word) if word.as_ref() == name)
+                    && matches!(&parts[1], Value::Blueprint(owner) if Rc::ptr_eq(owner, declared)) => (),
+                _ => return Ok(Value::Nil),
+            }
+            let offset = local.iter().position(|word| word == name).unwrap_or_default();
+            addresses.push(format!("\0slot:{name}:{}", prefix + offset));
+        }
+        let body = receiver.holds.borrow();
+        let locate = |index: usize| body.iter().position(|entry| entry.0 == addresses[index]);
+        if locate(3).is_none() { return Err("ValueError: I/O operation on uninitialized object".to_owned().into()); }
+        let Some(closed) = locate(5) else { return Ok(Value::Nil) };
+        match body[closed].1.settled() {
+            Value::Flag(false) => (),
+            Value::Flag(true) => return Err("ValueError: I/O operation on closed file".to_owned().into()),
+            _ => return Ok(Value::Nil),
+        }
+        let size = if source.is_ascii() { source.len() } else { source.chars().count() };
+        if size == 0 { return Ok(Value::Small(0)); }
+        let Some(indices) = (0..7).map(locate).collect::<Option<Vec<_>>>() else { return Ok(Value::Nil) };
+        let Value::Small(position) = body[indices[0]].1.settled() else { return Ok(Value::Nil) };
+        let Value::Small(length) = body[indices[1]].1.settled() else { return Ok(Value::Nil) };
+        if position != length || position < 0 { return Ok(Value::Nil); }
+        let Some(buffer) = Self::native_cell(&body[indices[2]].1) else { return Ok(Value::Nil) };
+        if !matches!(&*buffer.borrow(), Value::Vector(_)) { return Ok(Value::Nil); }
+        let ending = body[indices[4]].1.settled();
+        let Value::Small(old_lines) = body[indices[6]].1.settled() else { return Ok(Value::Nil) };
+        let tracking = match &ending {
+            Value::Nil => true,
+            Value::Text(word) if word.is_empty() => true,
+            Value::Text(word) if ["\n", "\r", "\r\n"].contains(&word.as_ref()) => false,
+            _ => return Ok(Value::Nil),
+        };
+        let mut lines = old_lines;
+        if tracking {
+            let mut characters = source.bytes().peekable();
+            while let Some(byte) = characters.next() {
+                match byte {
+                    13 if characters.peek() == Some(&10) => { characters.next(); lines |= 4; }
+                    13 => lines |= 2,
+                    10 => lines |= 1,
+                    _ => (),
+                }
+            }
+        }
+        let output = match ending {
+            Value::Nil if source.contains('\r') => Value::text(&source.replace("\r\n", "\n").replace('\r', "\n")),
+            Value::Text(delimiter) if delimiter.as_ref() != "\n" && !delimiter.is_empty() && source.contains('\n') => Value::text(&source.replace('\n', delimiter.as_ref())),
+            _ => Value::Text(source.clone()),
+        };
+        let Value::Text(word) = &output else { unreachable!() };
+        let added = if word.is_ascii() { word.len() } else { word.chars().count() };
+        let Some(end) = position.checked_add(added as i64) else { return Ok(Value::Nil) };
+        drop(body);
+        if let Value::Vector(sequence) = &mut *buffer.borrow_mut() { Rc::make_mut(sequence).push(output); }
+        let mut body = receiver.holds.borrow_mut();
+        body[indices[0]].1 = Value::Small(end);
+        body[indices[1]].1 = Value::Small(end);
+        if tracking { body[indices[6]].1 = Value::Small(lines); }
+        Ok(Value::Small(size as i64))
+    }
+
     fn property_operation(&mut self,tag:u8,values:Vec<Value>)->Res {
         let Some(Value::Thing(property))=values.first().cloned() else{return Err(self.class_unready())};
         let rest=&values[1..];
@@ -5835,24 +5908,6 @@ impl<'a> Machine<'a> {
                 match self.read_class_member(native,key,direct) {
                     Ok(Value::Wrapped(31,_)) if key==self.detail("descriptor.get")=>(),
                     Ok(answer)=>return Ok(answer),Err(error) if self.missing_member_escape(&error)=>(),Err(error)=>return Err(error),
-                }
-            }
-        }
-        if self.names_in_calls && !key.starts_with("__") {
-            if let Value::Thing(instance) = &value {
-                let class = instance.blueprint();
-                let ordinary = Self::native_word(&class).is_none() && Self::native_beneath(&class).map_or(true, |base| base == self.detail("root"));
-                if ordinary {
-                    let attributes = instance.holds.borrow();
-                    let isolated = attributes.iter().all(|(word, _)| !word.starts_with('\0'));
-                    let stored = isolated.then(|| attributes.iter().find(|(word, _)| word == key)
-                        .map(|(_, worth)| worth.clone())).flatten();
-                    drop(attributes);
-                    if let Some(stored) = stored {
-                        let intercepts = !direct && self.inherited_entry(&class, self.detail("get")).is_some();
-                        let data = self.inherited_entry(&class, key).is_some_and(|entry| self.writes_too(&entry));
-                        if !intercepts && !data { return Ok(stored); }
-                    }
                 }
             }
         }

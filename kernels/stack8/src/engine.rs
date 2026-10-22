@@ -23303,7 +23303,26 @@ impl<'a> Engine<'a> {
             self.codec_library("lookup_error", vec![Value::text(&policy)])?;
         }
         // Resolve custom error handlers only when a conversion actually fails.
-        if encode && matches!(args[0], Value::Codepoints(_)) { return self.codec_library("_encode_surrogates", args.to_vec()); }
+        if encode && matches!(args[0], Value::Codepoints(_)) {
+            // Builtin surrogate escapes consume a valid prefix without an error callback.
+            if policy == "surrogateescape" {
+                let Value::Codepoints(points) = &args[0] else { unreachable!() };
+                let limit = if codec == Self::CODEC_SEVEN { 128 } else { 256 };
+                let mut bytes = Vec::with_capacity(points.len());
+                let complete = points.iter().all(|&point| {
+                    if (0xdc80..=0xdcff).contains(&point) { bytes.push((point - 0xdc00) as u8); return true; }
+                    if codec != Self::CODEC_WIDE && point < limit { bytes.push(point as u8); return true; }
+                    if codec == Self::CODEC_WIDE {
+                        if let Some(letter) = char::from_u32(point) {
+                            let mut encoded = [0; 4]; bytes.extend_from_slice(letter.encode_utf8(&mut encoded).as_bytes()); return true;
+                        }
+                    }
+                    false
+                });
+                if complete { return Ok(self.byte_make(bytes, false)); }
+            }
+            return self.codec_library("_encode_surrogates", args.to_vec());
+        }
         let name = self.byte_codec_name(codec);
         let mut output = Vec::new();
         let mut decoded: Vec<u32> = Vec::new();
@@ -23340,6 +23359,10 @@ impl<'a> Engine<'a> {
             return Ok(self.byte_make(output, false));
         }
         if codec == Self::CODEC_BYTEWISE { return self.byte_decode(row, codec); }
+        // ASCII surrogateescape maps every byte directly, with no per-byte exceptions.
+        if codec == Self::CODEC_SEVEN && policy == "surrogateescape" {
+            return Ok(Value::from_codes(row.iter().map(|&byte| if byte < 128 { u32::from(byte) } else { 0xdc00 + u32::from(byte) }).collect()));
+        }
         // A reading handler may set the fault's object to a fresh row of
         // bytes; the reader works on that row from then on.
         let mut input = row.to_vec();
@@ -23366,6 +23389,10 @@ impl<'a> Engine<'a> {
             let end = start + count;
             if policy == "replace" { decoded.push(0xfffd); offset = end; }
             else if policy == "ignore" { offset = end; }
+            else if policy == "surrogateescape" && input[start..end].iter().all(|byte| *byte >= 128) {
+                decoded.extend(input[start..end].iter().map(|byte| 0xdc00 + u32::from(*byte)));
+                offset = end;
+            }
             else {
                 let answer = self.codec_library("_decode_error_full", vec![Value::text(&name), self.byte_make(input.clone(), false), Value::Small(start as i64), Value::Small(end as i64), Value::text(why), Value::text(&policy)])?;
                 let Value::Tuple(parts) = answer else { return Err(self.byte_fault("arguments")); };
@@ -25210,6 +25237,7 @@ impl<'a> Engine<'a> {
             // second is kept as its own pipe, and the library that
             // asked reads the two together afterwards.
             Builtin::TokenScan => return crate::tokenize::scan(args),
+            Builtin::IoTextAppend => { return self.builtin_arm_27(builtin, name, args); }
             Builtin::AsciiSpan => { return self.builtin_arm_27(builtin, name, args); }
             Builtin::JsonString => { return self.builtin_arm_28(builtin, name, args); }
             Builtin::Subprocess => { return self.builtin_arm_29(builtin, name, args); }
@@ -26814,6 +26842,14 @@ impl<'a> Engine<'a> {
         };
 
         let result = match builtin {
+            Builtin::IoTextAppend => {
+                arity(3)?;
+                return match self.io_text_append(args) {
+                    Ok(value) => Ok(value),
+                    Err(Fault::Note(message)) => Err(message),
+                    Err(fault) => { self.carried = Some(fault); Err(String::new()) }
+                };
+            }
             Builtin::AsciiSpan
             => {
                 arity(4)?;
