@@ -709,6 +709,7 @@ pub struct Machine<'a> {
     written_over: HashMap<(usize, usize), (Rc<Routine>, Rc<Env>, Rc<Routine>, Rc<Env>, Rc<Routine>)>,
     table: &'a Table,
     fault_kinds: HashMap<String, Value>,
+    numbered_faults: Vec<Value>,
     pub outermost: Rc<Env>,
     idents: Vec<String>,
     /// Names bound by the source after its library prefix.
@@ -1148,6 +1149,8 @@ impl<'a> Machine<'a> {
                     ancestry.insert(1, ordinary.clone());
                 }
             }
+            // A native fault's stored ancestry already includes every forebear.
+            seed.push((String::from("\0fixed-fault-ancestry"), Value::Flag(true)));
             let kind = Blueprint { parents: std::cell::RefCell::new(parents), ancestry: RefCell::new(ancestry), presentation: Some(format!("<class '{word}'>")),
                 name: word.clone(), under: std::cell::RefCell::new(under),
                 fields: seed, reaches: vec![], answers: vec![], methods: vec![],
@@ -1170,8 +1173,9 @@ impl<'a> Machine<'a> {
     /// The furnished fault kind at a place in the roster, and whether a
     /// kind stands under it.
     fn furnished_kind(&self, place: usize) -> Option<Rc<Blueprint>> {
-        let word = self.rules.words_ext_builtin_exceptions.get(place)?;
-        match self.fault_kinds.get(word) { Some(Value::Blueprint(kind)) => Some(kind.clone()), _ => None }
+        if let Some(Value::Blueprint(ancestor)) = self.numbered_faults.get(place) {
+            Some(Rc::clone(ancestor))
+        } else { None }
     }
 
     fn stands_under(&self, kind: &Rc<Blueprint>, place: usize) -> bool {
@@ -1330,6 +1334,13 @@ impl<'a> Machine<'a> {
         Value::Thing(instance)
     }
 
+    /// Notes that some fault now stands behind this one as its context. A fault no context
+    /// points at lies in no chain, which lets a raise pass over the walk along one.
+    pub(crate) fn stand_behind(held: &Rc<Thing>) {
+        let mut holds = held.holds.borrow_mut();
+        if holds.iter().all(|(k, _)| k != "\0stood-behind") { holds.push(("\0stood-behind".into(), Value::Flag(true))); }
+    }
+
     /// What was being handled when a value is raised stays with that
     /// value as its context, where the table names a member for it: the
     /// innermost fault held, unless that is the value itself. Should the
@@ -1341,7 +1352,17 @@ impl<'a> Machine<'a> {
         let Value::Thing(thing) = raised.settled() else { return };
         let Some(Value::Thing(handled)) = self.holding_fault.last().map(Value::settled) else { return };
         if Rc::ptr_eq(&handled, &thing) { return; }
-        let context_of = |of: &Rc<Thing>| of.holds.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.settled());
+        let spot = Cell::new(0usize);
+        let context_of = |of: &Rc<Thing>| {
+            let holds = of.holds.borrow();
+            let at = match holds.get(spot.get()) {
+                Some((k, _)) if k == key => spot.get(),
+                _ => { let at = holds.iter().position(|(k, _)| k == key)?; spot.set(at); at }
+            };
+            match &holds[at].1 { Value::Thing(older) => Some(Value::Thing(older.clone())), other => Some(other.settled()) }
+        };
+        let lies_in_chain = thing.holds.borrow().iter().any(|(k, _)| k == "\0stood-behind");
+        Self::stand_behind(&handled);
         let mut step = handled.clone();
         // A chain already standing behind `handled` may loop back on
         // itself without ever passing through the value being raised
@@ -1350,7 +1371,7 @@ impl<'a> Machine<'a> {
         // again if that is so, so the search still ends.
         let mut runner = handled.clone();
         let mut alternate = false;
-        while let Some(Value::Thing(older)) = context_of(&step) {
+        while let Some(Value::Thing(older)) = if lies_in_chain { context_of(&step) } else { None } {
             if Rc::ptr_eq(&older, &thing) {
                 if let Some((_, slot)) = step.holds.borrow_mut().iter_mut().find(|(k, _)| k == key) { *slot = Value::Nil; }
                 break;
@@ -1379,11 +1400,21 @@ impl<'a> Machine<'a> {
         let Some(Value::Thing(handled)) = self.holding_fault.get(base..).and_then(|tail| tail.last()).map(Value::settled) else { return };
         let Value::Thing(thing) = raised.settled() else { return };
         if Rc::ptr_eq(&handled, &thing) { return; }
-        let context_of = |of: &Rc<Thing>| of.holds.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.settled());
+        let spot = Cell::new(0usize);
+        let context_of = |of: &Rc<Thing>| {
+            let holds = of.holds.borrow();
+            let at = match holds.get(spot.get()) {
+                Some((k, _)) if k == key => spot.get(),
+                _ => { let at = holds.iter().position(|(k, _)| k == key)?; spot.set(at); at }
+            };
+            match &holds[at].1 { Value::Thing(older) => Some(Value::Thing(older.clone())), other => Some(other.settled()) }
+        };
+        let lies_in_chain = thing.holds.borrow().iter().any(|(k, _)| k == "\0stood-behind");
+        Self::stand_behind(&handled);
         let mut step = handled.clone();
         let mut runner = handled.clone();
         let mut alternate = false;
-        while let Some(Value::Thing(older)) = context_of(&step) {
+        while let Some(Value::Thing(older)) = if lies_in_chain { context_of(&step) } else { None } {
             if Rc::ptr_eq(&older, &thing) {
                 if let Some((_, slot)) = step.holds.borrow_mut().iter_mut().find(|(k, _)| k == key) { *slot = Value::Nil; }
                 break;
@@ -1482,9 +1513,11 @@ impl<'a> Machine<'a> {
         let second = kind.fields.iter().find_map(|(key, held)| match held { Value::Blueprint(other) if key == "\0also-under" => Some(other), _ => None });
         // A kind drawn with several parents stands under every one of
         // them, the whole of its gathered line holding each.
-        second.map_or(false, |other| Self::fault_descends(other, ancestor))
-            || kind.ancestry.borrow().iter().any(|parent| Rc::ptr_eq(parent, ancestor))
-            || kind.under().as_ref().map_or(false, |parent| Self::fault_descends(parent, ancestor))
+        if second.is_some_and(|other| Self::fault_descends(other, ancestor))
+            || kind.ancestry.borrow().iter().any(|parent| Rc::ptr_eq(parent, ancestor)) { return true; }
+        let fixed = kind.type_names.borrow().is_none()
+            && kind.fields.iter().any(|entry| entry.0 == "\0fixed-fault-ancestry");
+        !fixed && kind.under().as_ref().is_some_and(|parent| Self::fault_descends(parent, ancestor))
     }
 
     /// A fault made by a call: what was given by position is its row,
@@ -1695,8 +1728,13 @@ impl<'a> Machine<'a> {
         let source = source.holds.borrow();
         let mut target = target.holds.borrow_mut();
         let notes = self.table.single("ext.builtin.exceptions.notes");
+        // Noted once the borrows are released: the context may be the source itself.
+        let mut older_later = None;
         for key in labels.iter().filter_map(|label| self.table.single(label)) {
             let Some((_, held)) = source.iter().find(|(k, _)| k == key) else { continue };
+            if self.table.single("ext.builtin.exceptions.context") == Some(key) {
+                if let Value::Thing(older) = held.settled() { older_later = Some(older); }
+            }
             // Only a sequence of notes is handed to both halves; notes
             // that are not a sequence are left behind, as the reference does.
             let held = match notes == Some(key) {
@@ -1714,6 +1752,9 @@ impl<'a> Machine<'a> {
                 None => target.push((key.to_string(), held)),
             }
         }
+        drop(source);
+        drop(target);
+        if let Some(older) = older_later { Self::stand_behind(&older); }
     }
 
     fn syntax_detail_count(&mut self, values: &[Value]) -> Result<Vec<Value>, String> {
@@ -2053,6 +2094,9 @@ impl<'a> Machine<'a> {
             parents: std::cell::RefCell::new(Vec::new()), ancestry: RefCell::new(Vec::new()), under: std::cell::RefCell::new(None), answers: Vec::new(), fields: Vec::new(),
             reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: crate::data::BlueprintEntries::new(Vec::new()), instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: std::cell::Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         let fault_kinds = Self::given_faults(table, &ancestor);
+        // Preserve roster aliases while resolving numeric checks without spelling lookups.
+        let numbered_faults = table.strings("ext.builtin.exceptions").iter()
+            .map(|word| fault_kinds.get(word).cloned().unwrap_or(Value::Unset)).collect();
         for (i, word) in idents.iter().enumerate() {
             if let Some(value) = fault_kinds.get(word) { outermost.cells.borrow_mut()[i] = value.clone(); }
         }
@@ -2183,6 +2227,7 @@ impl<'a> Machine<'a> {
                 builtin_namespace_words: table.strings("ext.system.module.builtins"),
             },
             fault_kinds,
+            numbered_faults,
             library_sources: HashMap::new(),
             library_directory: None,
             library_files: HashMap::new(),
@@ -3400,7 +3445,12 @@ impl<'a> Machine<'a> {
         self.outermost.collector_skips.borrow_mut().clear();
     }
 
-    fn round_web(&self, retained: &[crate::ghost::Knot], enumerate: bool) -> crate::ghost::Web {
+    ///
+    /// Reaping weaves from the notable things alone: whatever the machine itself holds is
+    /// held from outside the web, which counts everything under it as reached, as weaving
+    /// it in would have. Only the listing of heap values (`whole`) takes the machine's
+    /// own holdings in, and that same switch asks the web to trace every edge.
+    fn round_web(&self, retained: &[crate::ghost::Knot], whole: bool) -> crate::ghost::Web {
         use crate::ghost::{Knot, Web};
         let books = self.readings.iter().flat_map(|book| {
             std::iter::once(Knot::Held(Value::Shared(book.near.clone())))
@@ -3412,15 +3462,15 @@ impl<'a> Machine<'a> {
         });
         let bookkeeping = self.routine_members.iter().map(|(_, holder)| Knot::Held(Value::Thing(holder.clone())))
             .chain(books).chain(crate::ghost::anchored_values()).chain(original).collect();
-        let live = self.imported.values().chain(self.memo.values()).chain(self.fault_kinds.values())
+        let live = if !whole { Vec::new() } else { self.imported.values().chain(self.memo.values()).chain(self.fault_kinds.values())
             .chain(&self.holding_fault).chain(std::iter::once(&self.tracing_function)).cloned().map(Knot::Held)
             .chain(std::iter::once(Knot::Frame(self.outermost.clone())))
             .chain(self.world_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
             .chain(self.supplied_books.iter().flatten().cloned().map(|book| Knot::Held(Value::Shared(book))))
             .chain(self.natives_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
-            .collect();
+            .collect() };
         {
-            let mut web = Web::from_notable(bookkeeping, live, enumerate);
+            let mut web = Web::from_notable(bookkeeping, live, whole);
             for (function, holder) in &self.routine_members { if let Some(function) = function.revive() { web.link_attributes(&function, &Value::Thing(holder.clone())); } }
             web
         }
@@ -3460,7 +3510,9 @@ impl<'a> Machine<'a> {
         }
         original.sort_by_key(|node| match node { Knot::Held(Value::Thing(thing)) => thing.turn, _ => usize::MAX });
         let notices = crate::ghost::silence_group(&original);
+        let mut called = false;
         for (notify, bearer) in notices {
+            called = true;
             self.call_unheard(notify, vec![bearer], "callback");
         }
         for knot in &original {
@@ -3468,12 +3520,14 @@ impl<'a> Machine<'a> {
                 Knot::Held(Value::Thing(thing)) => {
                     if let Some(farewell) = crate::ghost::farewell_of(&thing.of) {
                         if crate::ghost::first_farewell(thing) {
+                            called = true;
                             self.call_unheard(farewell, vec![Value::Thing(thing.clone())], "deallocator");
                             crate::ghost::release_anchor(thing);
                         }
                     }
                 }
                 Knot::Held(Value::Generator(walk)) if walk.try_borrow().map_or(false, |state| state.asleep()) => {
+                    called = true;
                     if let Err(away) = self.shut_departed_generator(walk) {
                         let reason = if walk.borrow().coroutine_address == 0 { "generator" } else { "coroutine" };
                     self.report_unraisable(away, &Value::Generator(walk.clone()), reason);
@@ -3482,42 +3536,48 @@ impl<'a> Machine<'a> {
                 _ => {}
             }
         }
-        drop(web);
-        // Cells the frame still holds need a second count: one for the
-        // frame and one for this vec, which stays alive so a finalizer's
-        // new reference is the extra hold that saves the knot.
-        let quiet_again = self.skipped_module_cells();
-        let mut candidates = original;
-        let mut seen = std::collections::HashSet::new();
-        for knot in &candidates {
-            if let Knot::Held(Value::Shared(slot)) = knot {
-                seen.insert(Rc::as_ptr(slot) as usize);
+        // No call made means the machine is as the first web saw it: it still answers.
+        let (checked, lost) = if called {
+            drop(web);
+            // Cells the frame still holds need a second count: one for the
+            // frame and one for this vec, which stays alive so a finalizer's
+            // new reference is the extra hold that saves the knot.
+            let quiet_again = self.skipped_module_cells();
+            let mut candidates = original;
+            let mut seen = std::collections::HashSet::new();
+            for knot in &candidates {
+                if let Knot::Held(Value::Shared(slot)) = knot {
+                    seen.insert(Rc::as_ptr(slot) as usize);
+                }
             }
-        }
-        for value in &quiet_again {
-            let Value::Shared(slot) = value else { continue };
-            if seen.insert(Rc::as_ptr(slot) as usize) {
-                candidates.push(Knot::Held(value.clone()));
+            for value in &quiet_again {
+                let Value::Shared(slot) = value else { continue };
+                if seen.insert(Rc::as_ptr(slot) as usize) {
+                    candidates.push(Knot::Held(value.clone()));
+                }
             }
-        }
-        let mut books = Vec::with_capacity(candidates.len() + quiet_again.len());
-        for knot in &candidates {
-            books.push(match knot {
-                Knot::Held(value) => Knot::Held(value.clone()),
-                Knot::Frame(frame) => Knot::Frame(frame.clone()),
-            });
-        }
-        for value in &quiet_again {
-            books.push(Knot::Held(value.clone()));
-        }
-        let mut checked = self.round_web(&books, false);
-        drop(books);
-        drop(quiet_again);
-        let _marked = checked.unreachable();
-        let mut lost = Vec::new();
-        for knot in candidates {
-            if checked.given_up(&knot) { lost.push(knot); }
-        }
+            let mut books = Vec::with_capacity(candidates.len() + quiet_again.len());
+            for knot in &candidates {
+                books.push(match knot {
+                    Knot::Held(value) => Knot::Held(value.clone()),
+                    Knot::Frame(frame) => Knot::Frame(frame.clone()),
+                });
+            }
+            for value in &quiet_again {
+                books.push(Knot::Held(value.clone()));
+            }
+            let mut checked = self.round_web(&books, false);
+            drop(books);
+            drop(quiet_again);
+            let _marked = checked.unreachable();
+            let mut lost = Vec::new();
+            for knot in candidates {
+                if checked.given_up(&knot) { lost.push(knot); }
+            }
+            (checked, lost)
+        } else {
+            (web, original)
+        };
         let found = lost.len();
         self.routine_members.retain(|(function, _)| function.revive().is_some_and(|function| !checked.unowned(&function)));
         self.reindex_routine_members();
@@ -5794,6 +5854,9 @@ impl<'a> Machine<'a> {
                     for label in ["ext.builtin.exceptions.cause", "ext.builtin.exceptions.context", "ext.builtin.exceptions.suppress"] {
                         if let Some(key) = self.table.single(label) {
                             let carried = if label.ends_with("suppress") { Value::Flag(true) } else { original.clone() };
+                            if label.ends_with("context") {
+                                if let Value::Thing(older) = original.settled() { Self::stand_behind(&older); }
+                            }
                             let mut entries = thing.holds.borrow_mut();
                             match entries.iter_mut().find(|entry| entry.0 == key) {
                                 Some(entry) => entry.1 = carried,

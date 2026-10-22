@@ -1252,7 +1252,8 @@ fn compile_pass(
     let mut unit = a.pieces.pop().expect("the top unit");
     if !lang.compile_modes.is_empty() { fold_boolean_branches(&mut unit.instrs); }
     a.registry.top_level_coroutine = unit.generator;
-    let (root_constants, root_names) = code_metadata(&unit.instrs, &None, &[], false);
+    // Discovery retains bindings and syntax checks, not discarded runtime metadata.
+    let (root_constants, root_names) = if discovering { (Vec::new(), Vec::new()) } else { code_metadata(&unit.instrs, &None, &[], false) };
     a.registry.future_bits = a.future_bits;
     Ok(Rc::new(Routine { globals_rebound: false, code_snapshot: Default::default(), image_origin: (0, a.before, a.future_bits | a.image_modes), instruction_image: None, exception_image: None, code_identity: Rc::new(()), embedded_integers: None, source_end: a.pos, source_content: a.source_content.clone(), source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), cell_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, location_bytes: None, declared_stack: None, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(if discovering { unit.instrs } else { peephole(unit.instrs) }), revised: std::cell::RefCell::new(None) }))
 }
@@ -2484,7 +2485,7 @@ impl<'a> Compiler<'a> {
         let native_async = if name == "<genexpr>" { unit.asynchronous_walk } else { unit.asynchronous };
         code_flags |= if native_async { if instrs.iter().any(|i| matches!(i, Instr::Act(Action::Suspend, _))) { 512 } else { 128 } } else if unit.generator { 32 } else { 0 };
         if !self.lang.compile_modes.is_empty() { fold_boolean_branches(&mut instrs); }
-        let (mut code_constants, mut code_names) = code_metadata(&instrs, &doc, &local_names, !self.lang.class_builder.is_empty());
+        let (mut code_constants, mut code_names) = if self.discovering { (Vec::new(), Vec::new()) } else { code_metadata(&instrs, &doc, &local_names, !self.lang.class_builder.is_empty()) };
         code_names.sort_by_key(|name| self.tokens[source..self.pos].iter().position(|token| token.shape == Shape::Instr && token.lexeme == *name).unwrap_or(usize::MAX));
         if doc.is_some() && code_constants.len() == 1 { code_constants.push(Value::Null); }
         let mut cell_names = Vec::new();

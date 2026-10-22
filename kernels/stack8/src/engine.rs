@@ -199,6 +199,7 @@ pub struct Engine<'a> {
     opened_descriptors: HashMap<i32, std::fs::File>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
+    exception_roster: Vec<Option<Rc<Class>>>,
     world: Vec<Value>,
     /// The dictionary the outermost names are read from and written
     /// to once the program has asked for it: what the program writes
@@ -257,6 +258,8 @@ pub struct Engine<'a> {
     /// for it and handed back every time after: one map, so that a name
     /// written through it is a name written in the module.
     module_globals: HashMap<String, Rc<RefCell<Value>>>,
+    /// Where a module-level name last stood among its dictionary's rows, by the name's slot.
+    mirrored_rows: HashMap<usize, usize>,
     // These dictionaries remain strongly owned by the module inventory.
     globals_by_cell: HashMap<usize, String, crate::value::FxBuildHasher>,
     native_slots: HashMap<String, usize>,
@@ -780,6 +783,8 @@ impl<'a> Engine<'a> {
                     lineage.insert(1, ordinary.clone());
                 }
             }
+            // Native exception ancestry is complete and cannot be reassigned.
+            fields.push(("\0complete-exception-lineage".into(), Value::Flag(true)));
             classes[at] = Some(Rc::new(Class { direct: std::cell::RefCell::new(direct), lineage: RefCell::new(lineage), outline: Some(format!("<class '{name}'>")),
                 name: name.clone(), base: std::cell::RefCell::new(base),
                 fields, answers: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
@@ -809,7 +814,7 @@ impl<'a> Engine<'a> {
     /// The furnished class standing at a place in the roster, and
     /// whether a class stands beneath it.
     fn furnished(&self, at: usize) -> Option<Rc<Class>> {
-        match self.native_exceptions.get(self.lang.exceptions.get(at)?) { Some(Value::Class(class)) => Some(class.clone()), _ => None }
+        self.exception_roster.get(at).and_then(Clone::clone)
     }
 
     fn stands_on(&self, class: &Rc<Class>, at: usize) -> bool {
@@ -967,16 +972,41 @@ impl<'a> Engine<'a> {
     /// behind the innermost of those, with the same cycle handling a
     /// raise's chaining asks for. Nothing the body was handling, no
     /// chaining at all.
+    /// Records that some exception now stands behind this one as its context. A value no
+    /// context points at cannot lie in any chain, which lets a raise skip the walk along one.
+    pub(super) fn mark_context_target(target: &Rc<Instance>) {
+        let mut fields = target.fields.borrow_mut();
+        if !fields.iter().any(|(n, _)| n == "\0context-target") { fields.push(("\0context-target".into(), Value::Flag(true))); }
+    }
+
+    /// The exception standing behind another, read at the slot where the last one was
+    /// found: the members of one family of values sit alike, so a long chain is walked
+    /// without a search at each link.
+    fn context_behind(link: &Rc<Instance>, name: &str, slot: &StateCell<usize>) -> Option<Rc<Instance>> {
+        let fields = link.fields.borrow();
+        let at = match fields.get(slot.get()) {
+            Some((n, _)) if n == name => slot.get(),
+            _ => { let at = fields.iter().position(|(n, _)| n == name)?; slot.set(at); at }
+        };
+        match &fields[at].1 {
+            Value::Object(further) => Some(further.clone()),
+            other => match other.contents() { Value::Object(further) => Some(further), _ => None },
+        }
+    }
+
     fn chain_context_from(&self, raised: &Value, base: usize) {
         let Some(name) = &self.lang.exception_context else { return };
         let Some(Value::Object(handling)) = self.caught.get(base..).and_then(|tail| tail.last()).map(Value::contents) else { return };
         let Value::Object(object) = raised.contents() else { return };
         if Rc::ptr_eq(&handling, &object) { return; }
-        let behind = |link: &Rc<Instance>| link.fields.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.contents());
+        let slot = StateCell::new(0);
+        let behind = |link: &Rc<Instance>| Self::context_behind(link, name, &slot);
+        let pointed_at = object.fields.borrow().iter().any(|(n, _)| n == "\0context-target");
+        Self::mark_context_target(&handling);
         let mut link = handling.clone();
         let mut hare = handling.clone();
         let mut alternate = false;
-        while let Some(Value::Object(further)) = behind(&link) {
+        while let Some(further) = if pointed_at { behind(&link) } else { None } {
             if Rc::ptr_eq(&further, &object) {
                 if let Some((_, held)) = link.fields.borrow_mut().iter_mut().find(|(n, _)| n == name) { *held = Value::Null; }
                 break;
@@ -984,7 +1014,7 @@ impl<'a> Engine<'a> {
             link = further;
             if Rc::ptr_eq(&link, &hare) { break; }
             if alternate {
-                if let Some(Value::Object(ahead)) = behind(&hare) { hare = ahead; }
+                if let Some(ahead) = behind(&hare) { hare = ahead; }
             }
             alternate = !alternate;
         }
@@ -999,7 +1029,10 @@ impl<'a> Engine<'a> {
         let Value::Object(object) = raised.contents() else { return };
         let Some(Value::Object(handling)) = self.caught.last().map(Value::contents) else { return };
         if Rc::ptr_eq(&handling, &object) { return; }
-        let behind = |link: &Rc<Instance>| link.fields.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.contents());
+        let slot = StateCell::new(0);
+        let behind = |link: &Rc<Instance>| Self::context_behind(link, name, &slot);
+        let pointed_at = object.fields.borrow().iter().any(|(n, _)| n == "\0context-target");
+        Self::mark_context_target(&handling);
         let mut link = handling.clone();
         // A chain already standing behind `handling` may loop back on
         // itself without ever passing through the value being raised
@@ -1008,7 +1041,7 @@ impl<'a> Engine<'a> {
         // the walk again if that is so, so the search still ends.
         let mut hare = handling.clone();
         let mut alternate = false;
-        while let Some(Value::Object(further)) = behind(&link) {
+        while let Some(further) = if pointed_at { behind(&link) } else { None } {
             if Rc::ptr_eq(&further, &object) {
                 if let Some((_, held)) = link.fields.borrow_mut().iter_mut().find(|(n, _)| n == name) { *held = Value::Null; }
                 break;
@@ -1016,7 +1049,7 @@ impl<'a> Engine<'a> {
             link = further;
             if Rc::ptr_eq(&link, &hare) { break; }
             if alternate {
-                if let Some(Value::Object(ahead)) = behind(&hare) { hare = ahead; }
+                if let Some(ahead) = behind(&hare) { hare = ahead; }
             }
             alternate = !alternate;
         }
@@ -1079,6 +1112,7 @@ impl<'a> Engine<'a> {
             if current.lineage.borrow().iter().any(|b| Rc::ptr_eq(b, wanted)) { return true; }
             // An order a metaclass's own mro supplied is complete.
             if current.mro_adopted.get() { return false; }
+            if current.python_names.borrow().is_none() && current.fields.iter().any(|(key, _)| key == "\0complete-exception-lineage") { return false; }
             let parent = current.base();
             class = parent;
         }
@@ -1296,10 +1330,15 @@ impl<'a> Engine<'a> {
         let carried = [&self.lang.notes_member, &self.lang.exception_cause, &self.lang.exception_context, &self.lang.exception_suppress, &self.lang.traceback_member];
         let source = source.fields.borrow();
         let mut target = target.fields.borrow_mut();
+        // Marked once the field borrows are released: the context may be the source itself.
+        let mut behind_later = None;
         for key in carried.into_iter().flatten() {
             let Some((_, held)) = source.iter().find(|(n, _)| n == key) else { continue };
             // Only a sequence of notes is handed to both halves; notes
             // that are not a sequence are left behind, as the reference does.
+            if self.lang.exception_context.as_deref() == Some(key.as_str()) {
+                if let Value::Object(behind) = held.contents() { behind_later = Some(behind); }
+            }
             let held = if self.lang.notes_member.as_deref() == Some(key) {
                 match held.contents() {
                     Value::Array(row) | Value::Tuple(row) => Value::array(row.to_vec()).held(false),
@@ -1311,6 +1350,9 @@ impl<'a> Engine<'a> {
                 None => target.push((key.clone(), held)),
             }
         }
+        drop(source);
+        drop(target);
+        if let Some(behind) = behind_later { Self::mark_context_target(&behind); }
     }
 
     fn check_syntax_details(&mut self, args: &[Value]) -> Res<Vec<Value>> {
@@ -1554,6 +1596,7 @@ impl<'a> Engine<'a> {
     fn caused_fault_words(&mut self, stopped: Value, words: String) -> Fault {
         let Some(raised) = self.as_fault(&words) else { return Fault::Note(words) };
         if let Value::Object(object) = &raised {
+            if let Value::Object(behind) = stopped.contents() { Self::mark_context_target(&behind); }
             let mut fields = object.fields.borrow_mut();
             for (name, value) in [(&self.lang.exception_cause, stopped.clone()), (&self.lang.exception_context, stopped), (&self.lang.exception_suppress, Value::Flag(true))] {
                 if let Some(key) = name {
@@ -1714,6 +1757,10 @@ impl<'a> Engine<'a> {
             direct: std::cell::RefCell::new(vec![]), lineage: RefCell::new(vec![]), base: std::cell::RefCell::new(None), answers: vec![], fields: vec![], reaches: vec![],
             methods: vec![], constants: vec![], shared: crate::value::ClassMembers::new(vec![]), slot_layout: std::cell::RefCell::new(None), dictionary_layout: std::cell::Cell::new(None), python_bases: std::cell::RefCell::new(None), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         let native_exceptions = Self::exception_classes(&lang.exceptions, &root);
+        // Runtime checks already know the roster position; keep the same classes there.
+        let exception_roster = lang.exceptions.iter().map(|name| match native_exceptions.get(name) {
+            Some(Value::Class(class)) => Some(class.clone()), _ => None,
+        }).collect();
         for (i, word) in idents.iter().enumerate() {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
@@ -1721,6 +1768,7 @@ impl<'a> Engine<'a> {
             class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, byte_members_seen: RefCell::new(HashMap::default()), prepared_hint: std::cell::Cell::new(None), collecting_cycles: false, cycle_checkpoint_slots: 0, quiet_module_slots: Default::default(), kind_names: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
+            exception_roster,
             contexts: crate::context::ContextStore::default(),
             allocation_retained_depth: std::env::var("LUMEN_TRACE_FRAMES").ok().and_then(|s| s.parse().ok()).unwrap_or(1),
             allocation_depth: if lang.allocation_trace.is_empty() { 0 } else { std::env::var("LUMEN_TRACE_FRAMES").ok().and_then(|s| s.parse().ok()).unwrap_or(0) }, allocation_sites: HashMap::new(),
@@ -1868,6 +1916,7 @@ impl<'a> Engine<'a> {
             embedded_names: std::collections::HashSet::new(),
             modules: HashMap::new(),
             module_globals: HashMap::new(),
+            mirrored_rows: HashMap::new(),
             globals_by_cell: HashMap::default(),
             native_slots: lang.class_special.iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
             module_by_address: RefCell::new(HashMap::with_hasher(crate::value::FxBuildHasher::default())),
@@ -2596,7 +2645,12 @@ impl<'a> Engine<'a> {
     }
 
     /// Build ownership including any nodes retained by this collection.
-    fn cycle_graph(&self, retained: &[Value], complete: bool, quiet_slots: &[usize]) -> crate::faint::Graph {
+    ///
+    /// A collection walks only from the remembered candidates and the function members:
+    /// what the engine itself holds is held from outside the graph, which keeps all that
+    /// is under it, exactly as walking it would have. `whole` also walks the engine's
+    /// own values and traces every edge, for listing the objects.
+    fn cycle_graph(&self, retained: &[Value], whole: bool, quiet_slots: &[usize]) -> crate::faint::Graph {
         let books = self.text_books.iter().flat_map(|book| {
             std::iter::once(Value::Bond(book.near.clone()))
                 .chain(book.outer.iter().cloned().map(Value::Bond))
@@ -2610,22 +2664,25 @@ impl<'a> Engine<'a> {
         }).cloned();
         let bookkeeping = self.function_members.iter().map(|(_, holder)| Value::Object(holder.clone()))
             .chain(books).chain(crate::faint::anchored_values()).chain(retained.iter().cloned()).chain(quiet_cells).collect();
-        // Slot indices are dense: a byte per slot avoids a large hash table
-        // for long-running import programs with many retired namespaces.
-        let mut quiet_positions = vec![false; self.world.len()];
-        for &at in quiet_slots { if let Some(quiet) = quiet_positions.get_mut(at) { *quiet = true; } }
-        let active_world = self.world.iter().enumerate().filter_map(|(at, value)|
-            (!quiet_positions[at] && !matches!(value, Value::Blank | Value::Null)).then_some(value));
-        let live = active_world.chain(&self.data).chain(&self.caught).chain(&self.buffer)
+        // Function metadata keys stay weak candidates: as live roots they would
+        // keep a dropped module's functions, and so its globals, alive.
+        let live = if !whole { Vec::new() } else {
+            // Slot indices are dense: a byte per slot avoids a large hash table
+            // for long-running import programs with many retired namespaces.
+            let mut quiet_positions = vec![false; self.world.len()];
+            for &at in quiet_slots { if let Some(quiet) = quiet_positions.get_mut(at) { *quiet = true; } }
+            let active_world = self.world.iter().enumerate().filter_map(|(at, value)|
+                (!quiet_positions[at] && !matches!(value, Value::Blank | Value::Null)).then_some(value));
+            active_world.chain(&self.data).chain(&self.caught).chain(&self.buffer)
             .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
             .chain(self.native_exceptions.values()).chain(std::iter::once(&self.trace_hook)).cloned()
             .chain(self.outer_book.iter().cloned().map(Value::Bond))
             .chain(self.function_books.iter().flatten().cloned().map(Value::Bond))
-            .chain(self.natives.iter().cloned().map(Value::Bond)).collect();
+            .chain(self.natives.iter().cloned().map(Value::Bond)).collect() };
         {
             // Weak metadata keys are candidates, never proven outside owners.
             let weak_keys = self.function_members.iter().filter_map(|(function, _)| function.revive()).collect();
-            let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live, weak_keys, complete);
+            let mut graph = crate::faint::Graph::from_candidates(bookkeeping, live, weak_keys, whole);
             for (function, holder) in &self.function_members { if let Some(function) = function.revive() { graph.link_attributes(&function, &Value::Object(holder.clone())); } }
             graph
         }
@@ -2657,7 +2714,9 @@ impl<'a> Engine<'a> {
             return 0;
         }
         group.sort_by_key(|value| match value { Value::Object(object) => object.mark, _ => usize::MAX });
+        let mut spoke = false;
         for (callback, bearer) in crate::faint::clear_group(&group) {
+            spoke = true;
             self.speak_ignoring(callback, vec![bearer], "callback");
         }
         for value in &group {
@@ -2665,12 +2724,14 @@ impl<'a> Engine<'a> {
                 Value::Object(object) => {
                     if let Some(words) = crate::faint::last_word_of(&object.class) {
                         if crate::faint::first_words(object) {
+                            spoke = true;
                             self.speak_ignoring(words, vec![Value::Object(object.clone())], "deallocator");
                             crate::faint::release_anchor(object);
                         }
                     }
                 }
                 Value::Generator(walk) if crate::faint::asleep(walk) => {
+                    spoke = true;
                     if let Err(fault) = self.close_departed_generator(walk) {
                         let kind = if walk.borrow().coroutine_identity != 0 { "coroutine" } else { "generator" };
                         self.ignore_fault(fault, value, kind);
@@ -2679,9 +2740,15 @@ impl<'a> Engine<'a> {
                 _ => {}
             }
         }
-        drop(graph);
-        let mut after = self.cycle_graph(&group, false, &quiet_slots);
-        let unreached = after.still_unreached(group);
+        // Where nothing was called, the heap is as the first walk saw it: the group still
+        // stands and that walk answers for it.
+        let (unreached, after) = if spoke {
+            drop(graph);
+            let mut after = self.cycle_graph(&group, false, &quiet_slots);
+            (after.still_unreached(group), after)
+        } else {
+            (group, graph)
+        };
         let count = unreached.len();
         self.function_members.retain(|(function, _)| function.revive().is_some_and(|function| !after.unowned(&function)));
         self.reindex_function_rows();
@@ -34195,9 +34262,12 @@ impl Engine<'_> {
     /// String keys alone name module attributes; rendering another key
     /// cannot make it a binding name.
     fn globals_key_word(key: &Value) -> Option<String> {
+        Self::globals_key_text(key).map(|word| word.to_string())
+    }
+    fn globals_key_text(key: &Value) -> Option<Rc<str>> {
         let held = match key { Value::Hashed(pair) => pair.0.contents(), other => other.contents() };
         match Self::worth_of(&held).unwrap_or(held).contents() {
-            Value::Text(word) => Some(word.to_string()),
+            Value::Text(word) => Some(word),
             _ => None,
         }
     }
@@ -34452,7 +34522,15 @@ impl Engine<'_> {
         let mut book_mut = book.borrow_mut();
         if let Value::Map(pairs) = &mut *book_mut {
             let rows = Rc::make_mut(pairs);
-            if !rows.iter().any(|(key, _)| Self::globals_key_is(key, name)) { rows.push((Value::text(name), Value::Bond(binding.clone()))); }
+            let named = |row: &(Value, Value)| Self::globals_key_is(&row.0, name);
+            if self.mirrored_rows.get(&far).is_some_and(|&at| rows.get(at).is_some_and(named)) { return; }
+            match rows.iter().position(named) {
+                Some(at) => { self.mirrored_rows.insert(far, at); }
+                None => {
+                    self.mirrored_rows.insert(far, rows.len());
+                    rows.push((Value::text(name), Value::Bond(binding.clone())));
+                }
+            }
         }
     }
     /// A name written into a module's own dictionary that the module
