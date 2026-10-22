@@ -816,6 +816,31 @@ class TextIOWrapper(_TextIOBase):
             self._writeflush()
         function = _TEXT.get('readline') or _text_function('readline')
         return function(self, size)
+    def readlines(self, hint=-1):
+        hint = _size(hint)
+        # A whole stream whose lines end in a plain line feed (the reader has
+        # translated the others, or was told to split at it) is read in one
+        # piece and cut there, which is what asking for each line in turn
+        # amounts to, at a small part of the cost.
+        if (hint <= 0 and self._initialized and (self._readtranslate or self._readnl == '\n')
+                # Subclasses may route method lookup dynamically as well as
+                # replacing iterator methods; preserve their normal dispatch.
+                and type(self) is TextIOWrapper
+                # Iteration that has switched telling off ends by switching it
+                # on again; a stream that was replaced piecemeal is iterated.
+                and self._telling is not False
+                and not ('readline' in vars(self) or '__next__' in vars(self) or 'read' in vars(self) or '__iter__' in vars(self))):
+            self._checkClosed()
+            text = self.read()
+            if not text:
+                return []
+            lines = text.split('\n')
+            last = lines.pop()
+            lines = [line + '\n' for line in lines]
+            if last:
+                lines.append(last)
+            return lines
+        return _TextIOBase.readlines(self, hint)
     def write(self, text):
         if not self._write_ok and not self.writable():
             raise UnsupportedOperation('not writable')

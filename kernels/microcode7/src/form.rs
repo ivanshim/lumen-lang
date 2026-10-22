@@ -272,6 +272,7 @@ pub enum Prim {
     /// is on. Only a language spelling this may raise a second
     /// interpreter beside itself and read what it writes back.
  AsciiRun,
+ PythonAtom,
     JsonStringScan,
     Subprocess,
     /// The host's signals, one word told which step it is on
@@ -1241,11 +1242,11 @@ impl Routine {
     }
     pub fn with_literals(&self, values: &[Value]) -> Result<Self, String> {
         let mut literals = Vec::new();
-        for value in values {
-            literals.push(match value.settled() {
-                Value::Wrapped(7, parts) => parts[0].clone(),
-                plain => plain,
-            });
+        for (index, value) in values.iter().enumerate() {
+            let replacement = value.settled();
+            literals.push(if matches!(self.literals[index], Value::Routine(_)) {
+                match replacement { Value::Wrapped(7, parts) => parts[0].clone(), other => other }
+            } else { replacement });
         }
         let mut inline = self.immediate_slots.clone().unwrap_or_else(|| self.literals.iter()
             .map(|value| matches!(value, Value::Small(0..=255))).collect());

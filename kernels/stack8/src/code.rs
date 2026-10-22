@@ -723,6 +723,7 @@ pub enum Builtin {
     /// writing back.
 
     AsciiSpan,
+    TokenScan,
     JsonString,
     Subprocess,
     /// The host's own signals, one word told which step it is on
@@ -1161,8 +1162,8 @@ impl Drop for Routine {
 
 impl Routine {
     pub fn replacing_constants(&self, supplied: &[Value]) -> Result<Self, String> {
-        let replacements: Vec<Value> = supplied.iter().map(|value| match value.contents() {
-            Value::Adapter(parts) if parts.0 == 7 => parts.1[0].clone(),
+        let replacements: Vec<Value> = supplied.iter().enumerate().map(|(index, value)| match value.contents() {
+            Value::Adapter(parts) if parts.0 == 7 && matches!(self.code_constants.get(index), Some(Value::Routine(_))) => parts.1[0].clone(),
             other => other,
         }).collect();
         let mut embedded = self.embedded_integers.clone().unwrap_or_else(|| self.code_constants.iter()

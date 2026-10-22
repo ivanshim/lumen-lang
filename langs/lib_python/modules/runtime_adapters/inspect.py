@@ -36,7 +36,6 @@ def unwrap(func, *, stop=None):
 # Coroutine recognition follows CPython v3.14.8 inspect; PSF License.
 import functools
 import types
-_void = object()
 _is_coroutine_mark = object()
 
 def ismethod(object):
@@ -136,6 +135,21 @@ def _unwrap_coroutine_callable(func):
             return func
 
 
+# Identify module filenames using the installed loader suffixes.
+import os
+import importlib.machinery
+
+def getmodulename(path):
+    """Return the module name for a given file, or None."""
+    fname = os.path.basename(path)
+    # Check for paths that look like an actual module file
+    suffixes = [(-len(suffix), suffix)
+                    for suffix in importlib.machinery.all_suffixes()]
+    suffixes.sort() # try longest suffixes first, in case they overlap
+    for neglen, suffix in suffixes:
+        if fname.endswith(suffix):
+            return fname[:neglen]
+    return None
 # Read exposed native frames using the accepted yield-from introspection adapter.
 from collections import namedtuple
 _Traceback = namedtuple('_Traceback', ['filename', 'lineno', 'function', 'code_context', 'index'])
@@ -217,3 +231,10 @@ def stack(context=1):
 def currentframe():
     # The frame of the caller of currentframe.
     return sys._getframe(1)
+
+
+def isabstract(object):
+    """Recognize abstract classes through their abstract method metadata."""
+    if not isinstance(object, type):
+        return False
+    return bool(getattr(object, '__abstractmethods__', False))

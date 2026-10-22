@@ -203,6 +203,7 @@ struct Invocation {
     program_name: Option<String>,
     python_ignore_environment: bool,
     python_interactive: bool,
+    python_safe_path: bool,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -502,7 +503,10 @@ fn source_of(written: Vec<u8>, as_bytes: bool) -> String {
 }
 
 /// Native cache markers written by the two full Python kernels.
-const PYC_MAGICS: [[u8; 4]; 2] = [*b"L8C\x04", *b"L7C\x04"];
+const PYC_MAGICS: [[u8; 4]; 2] = [
+    lumen_stack8::PYTHON_CACHE_MAGIC,
+    lumen_microcode7::PYTHON_CACHE_MAGIC,
+];
 
 /// Whether bytes open with the bytecode marker, and so are a compiled
 /// module rather than source.
@@ -692,9 +696,23 @@ fn main() {
     // it complains, which wants more of the machine's stack than a run
     // is given by default; the whole run is therefore made on a thread
     // with room for it.
+    // The waiting host thread must not take signals meant for the interpreter.
+    let previous_mask = unsafe {
+        let mut blocked = std::mem::zeroed();
+        let mut previous = std::mem::zeroed();
+        libc::sigemptyset(&mut blocked);
+        libc::sigaddset(&mut blocked, libc::SIGINT);
+        let error = libc::pthread_sigmask(libc::SIG_BLOCK, &blocked, &mut previous);
+        if error != 0 { panic!("Failed to set signal mask: {}", std::io::Error::from_raw_os_error(error)); }
+        previous
+    };
     let roomy = std::thread::Builder::new()
         .stack_size(1 << 30)
-        .spawn(run_all)
+        .spawn(move || {
+            let error = unsafe { libc::pthread_sigmask(libc::SIG_SETMASK, &previous_mask, std::ptr::null_mut()) };
+            if error != 0 { panic!("Failed to restore signal mask: {}", std::io::Error::from_raw_os_error(error)); }
+            run_all();
+        })
         .expect("a thread for the run");
     match roomy.join() {
         Ok(()) => {}
@@ -716,6 +734,7 @@ fn run_all() {
     if inv.language.name() == "python" {
         if inv.python_development { std::env::set_var("LUMEN_PYTHON_DEV_MODE", "1"); }
         else { std::env::remove_var("LUMEN_PYTHON_DEV_MODE"); }
+        std::env::set_var("LUMEN_PYTHON_SAFE_PATH", if inv.python_safe_path { "1" } else { "0" });
         if inv.python_ignore_environment { std::env::set_var("LUMEN_PYTHON_IGNORE_ENV", "1"); }
         else { std::env::remove_var("LUMEN_PYTHON_IGNORE_ENV"); }
     }
@@ -944,7 +963,23 @@ fn run_all() {
     };
 
     if let Err(message) = result {
-        if !message.is_empty() { eprintln!("{}", message); }
+        let interrupted = message.strip_suffix("\u{1}SIGINT");
+        let report = interrupted.unwrap_or(&message);
+        if !report.is_empty() { eprintln!("{}", report); }
+        if interrupted.is_some() {
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            let _ = std::io::stderr().flush();
+            // Restore the signal disposition after Python reports an uncaught interrupt.
+            unsafe {
+                libc::signal(libc::SIGINT, libc::SIG_DFL);
+                let mut signals = std::mem::zeroed();
+                libc::sigemptyset(&mut signals);
+                libc::sigaddset(&mut signals, libc::SIGINT);
+                libc::pthread_sigmask(libc::SIG_UNBLOCK, &signals, std::ptr::null_mut());
+                libc::raise(libc::SIGINT);
+            }
+        }
         process::exit(1);
     }
 }
@@ -1087,15 +1122,6 @@ fn plainly(e: &std::io::Error) -> String {
     }
 }
 
-/// Where this build keeps the Python library, which is the first
-/// directory a name is looked for in.
-fn python_library_root() -> String {
-    match env::var_os("LUMEN_ROOT") {
-        Some(root) => std::path::PathBuf::from(root).join("langs/lib_python/modules").to_string_lossy().into_owned(),
-        None => concat!(env!("CARGO_MANIFEST_DIR"), "/langs/lib_python/modules").to_string(),
-    }
-}
-
 fn parse_args(args: &[OsString]) -> Invocation {
     let held = args.first().map(|a| a.to_string_lossy().into_owned()).unwrap_or_else(|| "lumen-lang".to_string());
     let program = held.as_str();
@@ -1122,6 +1148,8 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut extended_options = Vec::new();
     let mut python_ignore_environment = false;
     let mut python_interactive = false;
+    let mut python_safe_path = !env::var("LUMEN_LANG").is_ok_and(|held| held == "python");
+    let mut explicit_safe_path = false;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
     // The name a Python program sees as its own first argument. It is
@@ -1210,6 +1238,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
             // to the program and is left to it.
             Some(flag) if file.is_none() && (flag == "-m" || flag.starts_with("-m") && flag.len() > 2
                 && (python.is_some() || language.as_ref().is_some_and(|held| held.name() == "python") || env::var("LUMEN_LANG").is_ok_and(|held| held == "python"))) => {
+                python_safe_path = explicit_safe_path;
                 let (module, used) = if flag == "-m" {
                     if rest.len() < 2 { usage(program); }
                     (said(&rest[1]), 2)
@@ -1218,49 +1247,9 @@ fn parse_args(args: &[OsString]) -> Invocation {
                     eprintln!("Error: -m requires the Python language");
                     process::exit(1);
                 }
-                let path = module.replace('.', "/");
-                let mut found = None;
-                let mut directories = vec![std::path::PathBuf::from(".")];
-                if !python_ignore_environment {
-                    if let Some(search) = env::var_os("PYTHONPATH") { directories.extend(env::split_paths(&search)); }
-                }
-                for directory in directories {
-                    for (at, relative) in [format!("{path}/__main__.py"), format!("{path}/__main__.pyc"), format!("{path}.py"), format!("{path}.pyc")].into_iter().enumerate() {
-                        let candidate = directory.join(relative).to_string_lossy().into_owned();
-                        let source = if candidate.ends_with(".pyc") {
-                            fs::metadata(&candidate).ok().map(|_| compiled_source(&candidate))
-                        } else { fs::read_to_string(&candidate).ok() };
-                        if let Some(source) = source { found = Some((candidate, source, at < 2)); break; }
-                    }
-                    if found.is_some() { break; }
-                }
-                if found.is_none() {
-                    // A name the library keeps is found where the library
-                    // keeps it, as the reference finds one walking sys.path.
-                    let root = python_library_root();
-                    for candidate in [format!("{root}/{path}/__main__.py"), format!("{root}/{path}.py")] {
-                        if let Ok(source) = fs::read_to_string(&candidate) { let via_main = candidate.ends_with("/__main__.py"); found = Some((candidate, source, via_main)); break; }
-                    }
-                }
-                if found.is_none() {
-                    let executable_module = format!("{module}.__main__");
-                    if let Some((_, source, filename)) = embedded_modules::MODULES.iter().find(|(name, _, _)| *name == executable_module)
-                        .or_else(|| embedded_modules::MODULES.iter().find(|(name, _, _)| *name == module)) {
-                        found = Some((format!("langs/lib_python/modules/{filename}"), source.to_string(), false));
-                    }
-                }
-                let Some((filename, source, via_main)) = found else {
-                    eprintln!("No module named {module}");
-                    process::exit(1);
-                };
-                // Naming the package finds its __main__.py and runs as
-                // package.__main__; naming package.__main__ itself finds
-                // that same file directly and keeps its own name, so the
-                // module identity is right either way.
-                module_name = Some(if via_main { format!("{module}.__main__") } else { module });
-                file = Some(filename);
-                module_source = Some(source);
-                language = Some(Language::Named("python".to_string()));
+                file = Some("-m".to_owned());
+                module_source = Some(format!("import runpy\nrunpy._run_module_as_main({})\n", python_string_literal(&module)));
+                language.get_or_insert_with(|| Language::Named("python".to_string()));
                 rest = &rest[used..];
                 break;
             }
@@ -1268,6 +1257,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
             Some("-c") if file.is_none() && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
                 if rest.len() < 2 { usage(program); }
                 module_source = Some(said(&rest[1]));
+                python_safe_path = explicit_safe_path;
                 file = Some("<string>".to_owned());
                 program_name = Some("-c".to_owned());
                 language = Some(Language::Named("python".to_owned()));
@@ -1337,12 +1327,20 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 language = Some(Language::Named("python".to_owned()));
                 rest = &rest[used..];
             }
+            Some("-P") if file.is_none() => {
+                explicit_safe_path = true;
+                python_safe_path = true;
+                language.get_or_insert_with(|| Language::Named("python".to_owned()));
+                rest = &rest[1..];
+            }
             Some("-E") if file.is_none() => {
+                python_safe_path = explicit_safe_path;
                 python_ignore_environment = true;
                 language = Some(Language::Named("python".to_string()));
                 rest = &rest[1..];
             }
             Some("-") if file.is_none() => {
+                python_safe_path = explicit_safe_path;
                 file = Some("-".to_string());
                 language = Some(Language::Named("python".to_string()));
                 rest = &rest[1..];
@@ -1429,7 +1427,11 @@ fn parse_args(args: &[OsString]) -> Invocation {
         module_source = Some(String::new());
         program_name = Some(String::new());
     }
-    let file = file.unwrap_or_else(|| usage(program));
+    let file = file.unwrap_or_else(|| {
+        if language.as_ref().is_some_and(|held| held.name() == "python") || env::var("LUMEN_LANG").is_ok_and(|held| held == "python") {
+            "-".to_owned()
+        } else { usage(program) }
+    });
     let language = language.unwrap_or_else(|| {
         // A language not named on the command line may be carried in
         // the environment, by a host that started this binary again
@@ -1482,8 +1484,8 @@ fn parse_args(args: &[OsString]) -> Invocation {
         }
     }
 
-    if python_development && language.name() != "python" {
-        eprintln!("Error: -X dev requires the Python language");
+    if (python_development || python_ignore_environment) && language.name() != "python" {
+        eprintln!("Error: {} requires the Python language", if python_ignore_environment { "-E" } else { "-X dev" });
         process::exit(2);
     }
     let mut language = language;
@@ -1502,7 +1504,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         let encoded = extended_options.iter().map(|option| format!("{}:{option}", option.chars().count())).collect::<String>();
         env::set_var("LUMEN_XOPTIONS", encoded);
     } else { env::remove_var("LUMEN_XOPTIONS"); }
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_ignore_environment, python_interactive, python_development, warning_options, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_ignore_environment, python_interactive, python_safe_path, python_development, warning_options, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.

@@ -693,6 +693,22 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
             out.extend(r.born.iter().filter(|value| cycle_edge(value)).cloned());
             out.extend(r.held.iter().filter(|value| cycle_edge(value)).cloned());
             out.extend(r.enclosed.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
+            // co_consts is a second copy. The stream still owns the
+            // originals, and a nested routine's globals point at its
+            // module, so those copies have to count or the module stays.
+            for word in r.instrs.iter() {
+                let carried = match word {
+                    crate::code::Instr::Const(value) => Some(value),
+                    crate::code::Instr::Bump { by, .. } => Some(by),
+                    crate::code::Instr::Dyad { a, b, .. } | crate::code::Instr::SkipCmp { a, b, .. } => {
+                        if let crate::code::Operand::Const(value) = a { if cycle_edge(value) { out.push(value.clone()); } }
+                        if let crate::code::Operand::Const(value) = b { if cycle_edge(value) { out.push(value.clone()); } }
+                        None
+                    }
+                    _ => None,
+                };
+                if let Some(value) = carried { if cycle_edge(value) { out.push(value.clone()); } }
+            }
             if let Ok(revised) = r.revised.try_borrow() {
                 out.extend(revised.iter().map(|p| Value::Routine(p.clone())));
             }

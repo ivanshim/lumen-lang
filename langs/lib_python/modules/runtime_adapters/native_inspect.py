@@ -354,6 +354,8 @@ _is_coroutine_mark = object()
 
 
 def __getattr__(name):
+    if name in ('getfile', 'getmodulename', 'getsourcefile', 'getabsfile', 'getmodule', 'findsource', 'getblock', 'getsourcelines', 'getsource'):
+        return getattr(__load_module('_source_inspect'), name)
     if name.startswith('__'):
         raise AttributeError("module 'inspect' has no attribute '" + name + "'")
     raise AttributeError("module 'inspect' has no attribute '" + name + "'")

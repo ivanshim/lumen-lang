@@ -39,6 +39,12 @@ pub struct Env {
     /// reserved no slot for, kept here so every reading of the frame,
     /// `locals()` among them, sees them.
     pub extra: RefCell<Vec<(Value, Value)>>,
+    /// Dense mask of native import slots the outermost frame must not
+    /// treat as roots during a reaping: their namespace owns the cells.
+    /// Empty the rest of the time.
+    pub collector_skips: RefCell<Vec<bool>>,
+    /// Set while `collector_skips` is non-empty.
+    pub collector_skipping: Cell<bool>,
 }
 
 impl Drop for Env {
@@ -47,7 +53,7 @@ impl Drop for Env {
 
 impl Env {
     pub fn make(size: usize, parent: Option<Rc<Env>>) -> Rc<Env> {
-        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(CaptureSlots::default()), outer: parent, weak_callback_frame: Cell::new(false), extra: RefCell::new(Vec::new()) })
+        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(CaptureSlots::default()), outer: parent, weak_callback_frame: Cell::new(false), collector_skips: RefCell::new(Vec::new()), collector_skipping: Cell::new(false), extra: RefCell::new(Vec::new()) })
     }
 }
 
@@ -1430,6 +1436,23 @@ impl Value {
         ["source", "mode", "co_flags", "co_firstlineno", "co_consts"].contains(&name)
     }
 
+    fn source_worth(thing: &Thing) -> Vec<Value> {
+        let held = thing.holds.borrow();
+        let mut native = held.iter().find_map(|(name, value)| (name == "\0native_forms").then(|| value.clone()));
+        if held.iter().any(|(name, _)| name == "\0literal_overrides") {
+            if let Some(Value::Routine(body)) = &native {
+                let literals = held.iter().find_map(|(name, value)| match (name.as_str(), value) { ("co_consts", Value::Tuple(row)) => Some(row), _ => None });
+                if let Some(literals) = literals {
+                    native = body.with_literals(literals).ok().map(|body| Value::Routine(Rc::new(body)));
+                }
+            }
+        }
+        held.iter().filter(|(name, _)| Self::source_code_attribute(name)).map(|(name, value)| match name.as_str() {
+            "source" => native.clone().unwrap_or_else(|| value.settled()),
+            _ => value.settled(),
+        }).collect()
+    }
+
     /// Build a routine's comparison key from its compiled body address,
     /// calling layout, names and recursively replaceable literals. The token
     /// origin plus body boundary describes the original instruction tree.
@@ -1481,7 +1504,7 @@ impl Value {
             },
             Value::Routine(program) => Self::code_worth_hash(&Self::program_worth(program)),
             Value::Thing(item) if item.blueprint().constants.iter().any(|(name, value)| name == "\0native" && matches!(value, Value::Text(kind) if kind.as_ref() == "code")) => {
-                let attributes = item.holds.borrow().iter().filter(|(name, _)| Self::source_code_attribute(name)).map(|(_, worth)| worth.settled()).collect();
+                let attributes = Self::source_worth(item);
                 Self::code_worth_hash(&Value::tuple(attributes))
             }
             Value::Tuple(parts) => {
@@ -1607,7 +1630,7 @@ impl Value {
                 // part of it.
                 let is_code = |thing: &Thing| thing.blueprint().constants.iter().any(|(word, held)| word == "\0native" && matches!(held, Value::Text(text) if text.as_ref() == "code"));
                 if is_code(a) && is_code(b) {
-                    let held = |thing: &Thing| thing.holds.borrow().iter().filter(|(name, _)| Self::source_code_attribute(name)).map(|(_, item)| item.settled()).collect::<Vec<_>>();
+                    let held = |thing: &Thing| Self::source_worth(thing);
                     let (left, right) = (held(a), held(b));
                     return left.len() == right.len() && left.iter().zip(right.iter()).all(|(x, y)| Self::code_worth_eq(x, y));
                 }

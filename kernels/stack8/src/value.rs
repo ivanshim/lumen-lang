@@ -1607,6 +1607,19 @@ impl Value {
         matches!(key, "source" | "mode" | "co_flags" | "co_firstlineno" | "co_consts")
     }
 
+    fn source_code_content(object: &Instance) -> Vec<Value> {
+        let fields = object.fields.borrow();
+        let mut graph = fields.iter().find(|(key, _)| key == "\0compiled_program").map(|(_, value)| value.clone());
+        if fields.iter().any(|(key, _)| key == "\0replace_constants") {
+            if let (Some(Value::Routine(body)), Some((_, Value::Tuple(values)))) = (&graph, fields.iter().find(|(key, _)| key == "co_consts")) {
+                if let Ok(updated) = body.replacing_constants(values) { graph = Some(Value::Routine(Rc::new(updated))); }
+            }
+        }
+        fields.iter().filter(|(key, _)| Self::code_content_field(key)).map(|(key, value)| {
+            if key == "source" { graph.clone().unwrap_or_else(|| value.contents()) } else { value.contents() }
+        }).collect()
+    }
+
     /// Describe a routine's body within its token stream and its current
     /// constant table. Source and boundary identify the compiled instructions;
     /// replacements change the constants, not that original stream.
@@ -1657,7 +1670,7 @@ impl Value {
             },
             Value::Routine(body) => Self::code_field_hash(&Self::routine_content(body)),
             Value::Object(object) if object.class_now().constants.iter().any(|(key, value)| key == "\0kind" && matches!(value, Value::Text(kind) if kind.as_ref() == "code")) => {
-                let fields = object.fields.borrow().iter().filter(|(key, _)| Self::code_content_field(key)).map(|(_, value)| value.contents()).collect();
+                let fields = Self::source_code_content(object);
                 Self::code_field_hash(&Value::tuple(fields))
             }
             Value::Tuple(items) => {
@@ -1755,7 +1768,7 @@ impl Value {
                 // compares its code objects' bytecode; the file each
                 // names is no part of it.
                 if native(a).as_deref() == Some("code") && native(b).as_deref() == Some("code") {
-                    let held = |object: &Rc<Instance>| object.fields.borrow().iter().filter(|(key, _)| Self::code_content_field(key)).map(|(_, value)| value.contents()).collect::<Vec<_>>();
+                    let held = |object: &Rc<Instance>| Self::source_code_content(object);
                     let (one, two) = (held(a), held(b));
                     return one.len() == two.len() && one.iter().zip(two.iter()).all(|(x, y)| Self::code_field_eq(x, y));
                 }

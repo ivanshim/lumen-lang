@@ -587,6 +587,14 @@ def _forget_environment():
         held.clear()
 
 
+def kill(pid, signal, /):
+    target = _cint(pid)
+    number = _fd(signal)
+    if number < -9223372036854775808 or number > 9223372036854775807:
+        raise OverflowError('Python int too large to convert to C ssize_t')
+    _call('kill', target, number)
+
+
 def getpid():
     return _call('getpid')
 

@@ -10,6 +10,7 @@ path = "src/lib.rs"
 [dependencies]
 lumen-lzma = { path = "../../native/lzma" }
 lumen-zlib = { path = "../../native/zlib" }
+lumen-sre = { path = "../../native/sre" }
 num-bigint = { version = "0.4", features = ["serde"] }
 num-traits = "0.2"
 num-integer = "0.1"

@@ -77,6 +77,7 @@ def _error_argument(errors, function):
 
 # Return a stateless encoder with the C codec tuple interface.
 def _encoder(name):
+    convert = _runtime._raw_text_encode if name in ('ascii', 'latin_1', 'utf_8') else _runtime._encode
     # Encode a Unicode input and report characters consumed. A plain text
     # input with a plain error policy is checked here; anything else is
     # checked by the helpers, which answer or complain as the C codecs do.
@@ -87,7 +88,7 @@ def _encoder(name):
             errors = 'strict'
         elif type(errors) is not str or '\x00' in errors:
             errors = _error_argument(errors, name + '_encode')
-        return _runtime._encode(input, name, errors), len(input)
+        return convert(input, name, errors), len(input)
     return _CodecCall(encode, name + '_encode')
 
 # Find the prefix that ends before an unfinished escaped character.
@@ -128,6 +129,7 @@ def _escape_end(data, raw):
 
 # Return a decoder with byte consumption and non-final buffering.
 def _decoder(name, default_final=False):
+    convert = _runtime._raw_text_decode if name in ('ascii', 'latin_1') else _runtime._decode
     # Decode only complete characters when the caller has more bytes to supply.
     def decode(input, errors='strict', final=default_final):
         data = input.encode('utf-8') if isinstance(input, str) and name in ('unicode_escape', 'raw_unicode_escape') else _buffer(input)
@@ -135,6 +137,10 @@ def _decoder(name, default_final=False):
         if name.startswith('utf_16') or name.startswith('utf_32'):
             return _runtime._wide_decode(data, name, errors, final)
         if name == 'utf_8':
+            final = bool(final)
+            complete = _runtime._raw_text_decode(data, name, errors, final)
+            if complete is not None:
+                return complete
             decoder = _runtime._IncrementalDecoder(name, errors)
             output = decoder.decode(data, final)
             return output, len(data) - len(decoder.buffer)
@@ -143,7 +149,7 @@ def _decoder(name, default_final=False):
         end = len(data)
         if not final and name in ('unicode_escape', 'raw_unicode_escape'):
             end = _escape_end(data, name == 'raw_unicode_escape')
-        return _runtime._decode(data[:end], name, errors), end
+        return convert(data[:end], name, errors), end
     return _CodecCall(decode, name + '_decode')
 
 ascii_encode = _encoder('ascii')
@@ -178,6 +184,9 @@ def _wide_ex(input, errors, byteorder, final, width):
     errors = _error_argument(errors, 'utf_16_ex_decode' if width == 2 else 'utf_32_ex_decode')
     skip = 0
     prefix = 'utf_16' if width == 2 else 'utf_32'
+    complete = _runtime._raw_text_decode(data, prefix, errors, final, 0, byteorder)
+    if complete is not None:
+        return complete
     if byteorder == 0:
         le = _runtime.BOM_UTF16_LE if width == 2 else _runtime.BOM_UTF32_LE
         be = _runtime.BOM_UTF16_BE if width == 2 else _runtime.BOM_UTF32_BE

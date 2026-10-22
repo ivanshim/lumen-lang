@@ -16,8 +16,9 @@ is_emscripten = sys.platform == "emscripten"
 is_wasm32 = is_emscripten or is_wasi
 TEST_HTTP_URL = "http://www.pythontest.net"
 Py_DEBUG = False
+Py_TRACE_REFS = hasattr(sys, "getobjects")
 Py_GIL_DISABLED = False
-MS_WINDOWS = False
+MS_WINDOWS = sys.platform == "win32"
 MAX_Py_ssize_t = sys.maxsize
 NHASHBITS = 64
 _TPFLAGS_BASETYPE = 1024
@@ -472,6 +473,16 @@ def run_in_subinterp(code):
     except ImportError:
         raise unittest.SkipTest("requires _testcapi")
     return _testcapi.run_in_subinterp(code)
+
+def run_in_subinterp_with_config(code, *, own_gil=None, **config):
+    if own_gil is not None:
+        assert 'gil' not in config, (own_gil, config)
+    raise unittest.SkipTest("subinterpreters are not supported")
+
+
+def requires_gil_enabled(msg="needs the GIL enabled"):
+    return unittest.skipIf(Py_GIL_DISABLED, msg)
+
 
 def check_free_after_iterating(test, iter, cls, args=()):
     done = False
@@ -945,11 +956,19 @@ def load_package_tests(pkg_dir, loader, standard_tests, pattern):
                 pkg_dir = candidate
                 top_dir = os.path.dirname(root)
                 break
+        # Keep regular package ancestors in names used by relative imports.
+        while os.path.isfile(os.path.join(top_dir, '__init__.py')):
+            parent = os.path.dirname(top_dir)
+            if parent == top_dir:
+                break
+            top_dir = parent
     try:
         package_tests = loader.discover(start_dir=pkg_dir,
                                         top_level_dir=top_dir,
                                         pattern=pattern)
     except NotImplementedError:
+        package_tests = _discover_package_tests(pkg_dir, loader, top_dir, pattern)
+    if package_tests.countTestCases() == 0:
         package_tests = _discover_package_tests(pkg_dir, loader, top_dir, pattern)
     standard_tests.addTests(package_tests)
     return standard_tests
@@ -1865,6 +1884,20 @@ def _force_run(path, func, *args):
         os.chmod(path, stat.S_IRWXU)
         return func(*args)
 
+
+class ResourceDenied(unittest.SkipTest):
+    pass
+
+
+def requires(resource, msg=None):
+    if not is_resource_enabled(resource):
+        if msg is None:
+            msg = "Use of the %r resource not enabled" % resource
+        raise ResourceDenied(msg)
+    if resource in {"network", "urlfetch"} and not has_socket_support:
+        raise ResourceDenied("No socket support")
+
+
 # Provide the general regression-support exception base.
 class Error(Exception):
     pass
@@ -2033,3 +2066,8 @@ def set_environment_altered(reason):
     environment_altered = True
     if reason not in environment_altered_reasons:
         environment_altered_reasons.append(reason)
+def expected_failure_if_gil_disabled():
+    """Expect test failure if the GIL is disabled."""
+    if Py_GIL_DISABLED:
+        return unittest.expectedFailure
+    return lambda test_case: test_case

@@ -84,7 +84,7 @@ impl Drop for ReadingScope {
 }
 
 pub fn forms(mut record: Node, seeded: &[String], globals: Option<Value>, natives: Option<Value>, module: Option<Rc<str>>) -> Result<crate::build::Built, String> {
-    if record["format"] != "lumen-microcode7-v6" { return Err("ImportError: compiled forms use a different ABI".to_owned()); }
+    if record["format"] != crate::PYTHON_CACHE_ABI { return Err("ImportError: compiled forms use a different ABI".to_owned()); }
     let mut names = seeded.to_vec();
     let prior: Vec<String> = serde_json::from_value(record["metadata"]["globals"].clone()).map_err(|error| format!("ValueError: {error}"))?;
     let mut offsets = Vec::with_capacity(prior.len());
@@ -114,7 +114,7 @@ pub fn forms(mut record: Node, seeded: &[String], globals: Option<Value>, native
     }
     renumber(&mut record["forms"], &offsets)?;
     renumber(&mut record["bodies"], &offsets)?;
-    let spellings = serde_json::from_value(record["spellings"].clone()).map_err(|error| format!("ValueError: {error}"))?;
+    let spellings = serde_json::from_value(record["spellings"].take()).map_err(|error| format!("ValueError: {error}"))?;
     let bodies: Vec<Node> = serde_json::from_value(record["bodies"].take()).map_err(|e| format!("ValueError: {e}"))?;
     BODY_INPUT.with(|stack| stack.borrow_mut().push(BodyInput { visited: vec![None; bodies.len()], pending: Default::default(), bodies }));
     READ_NAMESPACES.with(|stack| stack.borrow_mut().push((globals, natives, module, spellings)));

@@ -300,3 +300,18 @@ def verify_stateless_code(code, globalnames=_UNSPECIFIED_CODE_NAMESPACE,
     if globals_['numglobal'] or (has_builtins and globals_['numunknown']):
         raise ValueError('globals not supported')
     return None
+
+
+# Native nested runtimes have independent modules and globals. Allocator and
+# GIL selectors do not change that state in this single-threaded Rust runtime;
+# fork, exec and starting OS threads are unavailable in these adapters.
+def run_in_subinterp_with_config(code, config, /):
+    for name in ('allow_fork', 'allow_exec', 'allow_threads',
+                 'allow_daemon_threads', 'use_main_obmalloc',
+                 'check_multi_interp_extensions'):
+        if not isinstance(getattr(config, name), int):
+            raise TypeError(name + ' must be an integer')
+    if config.gil not in (0, 1, 2, 'default', 'shared', 'own'):
+        raise ValueError('invalid GIL selector')
+    import _testcapi
+    return _testcapi.run_in_subinterp(code)

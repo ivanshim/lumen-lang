@@ -134,6 +134,11 @@ def _assert_python(expected_success, *args, **env_vars):
         p.stdout.close()
         p.stderr.close()
     rc = p.returncode
+    if rc and expected_success:
+        last_error = err.rstrip().splitlines()[-1:] or out.rstrip().splitlines()[-1:]
+        if last_error and b'SkipTest: ' in last_error[0]:
+            import unittest
+            raise unittest.SkipTest(last_error[0].split(b'SkipTest: ', 1)[1].decode('utf-8', 'replace'))
     if (rc and expected_success) or (not rc and not expected_success):
         raise AssertionError(
             'Process return code is %s\n'

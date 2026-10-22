@@ -140,17 +140,18 @@ _THREE_CHARS = {
 }
 
 
+_scan_token = __tokenize_scan
+_OPERATOR_TYPES = {**_ONE_CHAR, **_TWO_CHARS, **_THREE_CHARS}
+_IDENTIFIER_ASCII = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_'
+_FSTRING_TEXT_ASCII = '\t\x0c\r !#$%&()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz|~\x7f'
+
+
 def _is_digit(c):
     return c is not None and '0' <= c <= '9'
 
 
 def _is_xdigit(c):
     return c is not None and ('0' <= c <= '9' or 'a' <= c <= 'f' or 'A' <= c <= 'F')
-
-
-def _is_potential_identifier_start(c):
-    return c is not None and (
-        'a' <= c <= 'z' or 'A' <= c <= 'Z' or c == '_' or ord(c) >= 128)
 
 
 def _is_potential_identifier_char(c):
@@ -179,6 +180,13 @@ class _TokenizerMode(object):
 class _TokState(object):
     def __init__(self, readline, encoding):
         self.buf = ''
+        self.bufc = ''
+        self.line_null = False
+        self._maxlevel = MAXLEVEL
+        self._maxexpr = MAX_EXPR_NESTING
+        self._token_types = (NAME, NUMBER, STRING, OP, NEWLINE, COMMENT, NL,
+                             FSTRING_MIDDLE, TSTRING_MIDDLE, FSTRING_END, TSTRING_END)
+        self._operator_types = _OPERATOR_TYPES
         self.cur = 0
         self.inp = 0
         self.start = None
@@ -203,36 +211,25 @@ class _TokState(object):
         self.tok_extra_tokens = False
         self.comment_newline = False
         self.implicit_newline = False
-        self.tok_mode_stack = [_TokenizerMode() for _ in range(MAXFSTRINGLEVEL)]
+        # Create deeper interpolation modes only when nesting reaches them.
+        self.tok_mode_stack = [_TokenizerMode()]
         self.tok_mode_stack_index = 0
-
-
-def _inside_fstring(tok):
-    return tok.tok_mode_stack_index > 0
-
-
-def _inside_fstring_expr(mode):
-    return mode.curly_bracket_expr_start_depth >= 0
-
-
-def _inside_fstring_expr_at_top(mode):
-    return mode.curly_bracket_depth - mode.curly_bracket_expr_start_depth == 1
 
 
 # Parser/tokenizer/helpers.c: _syntaxerror_range.  Columns passed in are
 # character columns already, so the C byte-to-character conversion is the
 # identity here.
 def _syntaxerror_range(tok, msg, col_offset, end_col_offset):
-    errtext = ''.join(tok.bufc[tok.line_start:tok.cur])
+    errtext = tok.bufc[tok.line_start:tok.cur]
     if col_offset == -1:
         col_offset = len(errtext)
     if end_col_offset == -1:
         end_col_offset = col_offset
-    rest = ''.join(tok.bufc[tok.line_start:])
+    rest = tok.bufc[tok.line_start:]
     nl = rest.find('\n')
     line_len = nl if nl != -1 else len(rest)
     if line_len != tok.cur - tok.line_start:
-        errtext = ''.join(tok.bufc[tok.line_start:tok.line_start + line_len])
+        errtext = tok.bufc[tok.line_start:tok.line_start + line_len]
     raise SyntaxError(msg, ('<string>', tok.lineno, col_offset, errtext,
                             tok.lineno, end_col_offset))
 
@@ -266,11 +263,15 @@ def _parser_warn(tok, msg):
 # Parser/tokenizer/readline_tokenizer.c: tok_readline_string and
 # tok_underflow_readline.
 def _underflow_readline(tok):
-    if tok.start is None and not _inside_fstring(tok):
-        tok.bufc = []
+    if tok.start is None and not (tok.tok_mode_stack_index > 0):
+        tok.bufc = ''
         tok.line_null = False
         tok.cur = 0
         tok.inp = 0
+    return _append_line(tok, _read_line(tok))
+
+
+def _read_line(tok):
     try:
         line = tok.readline()
     except StopIteration:
@@ -282,9 +283,13 @@ def _underflow_readline(tok):
     else:
         if not isinstance(line, str):
             raise TypeError('readline() returned a non-string object')
+    return line
+
+
+def _append_line(tok, line):
     # The character row only ever grows, exactly as the C tokenizer's
     # buffer does, and one character read off it never rescans the text.
-    tok.bufc.extend(line)
+    tok.bufc += line
     tok.inp = len(tok.bufc)
     tok.line_null = '\x00' in line
     tok.line_start = tok.cur
@@ -293,9 +298,11 @@ def _underflow_readline(tok):
         return 0
     tok.implicit_newline = False
     if tok.bufc[tok.inp - 1] != '\n':
-        tok.bufc.append('\n')
+        tok.bufc += '\n'
         tok.inp += 1
         tok.implicit_newline = True
+    # Keep the current physical line for native buffered span scans.
+    tok.buf = str.__getitem__(line, slice(None)) + ('\n' if tok.implicit_newline else '')
     tok.lineno += 1
     return 1
 
@@ -379,7 +386,7 @@ def _verify_end_of_number(tok, c, kind):
 def _verify_identifier(tok):
     if tok.tok_extra_tokens:
         return True
-    s = ''.join(tok.bufc[tok.start:tok.cur])
+    s = tok.bufc[tok.start:tok.cur]
     invalid = len(s)
     if not s[0].isidentifier():
         invalid = 0
@@ -403,8 +410,11 @@ def _verify_identifier(tok):
 def _decimal_tail(tok):
     while True:
         c = _nextc(tok)
-        while _is_digit(c):
-            c = _nextc(tok)
+        if _is_digit(c):
+            tok.cur = tok.line_start + __text_scan_ascii(
+                tok.buf, tok.cur - tok.line_start, '0123456789', tok.inp - tok.cur)
+            c = tok.bufc[tok.cur]
+            tok.cur += 1
         if c != '_':
             return c
         c = _nextc(tok)
@@ -467,6 +477,8 @@ def _f_string_quote(tok, c):
         if tok.tok_mode_stack_index + 1 >= MAXFSTRINGLEVEL:
             _syntaxerror(tok, 'too many nested f-strings or t-strings')
         tok.tok_mode_stack_index += 1
+        if tok.tok_mode_stack_index == len(tok.tok_mode_stack):
+            tok.tok_mode_stack.append(_TokenizerMode())
         mode = tok.tok_mode_stack[tok.tok_mode_stack_index]
         mode.kind = TOK_FSTRING_MODE
         mode.quote = quote
@@ -517,12 +529,10 @@ def _letter_quote(tok, c):
         # Ordinary buffered text needs no per-character tokenizer calls.
         cur = tok.cur
         end = tok.inp
-        chars = tok.bufc
         for special in (quote, '\\', '\n'):
-            try:
-                end = chars.index(special, cur, end)
-            except ValueError:
-                pass
+            found = tok.buf.find(special, cur - tok.line_start, end - tok.line_start)
+            if found >= 0:
+                end = tok.line_start + found
         if end != cur:
             end_quote_size = 0
             tok.cur = end
@@ -532,7 +542,7 @@ def _letter_quote(tok, c):
             tok.line_start = tok.multi_line_start
             start = tok.lineno
             tok.lineno = tok.first_lineno
-            if _inside_fstring(tok):
+            if (tok.tok_mode_stack_index > 0):
                 mode = tok.tok_mode_stack[tok.tok_mode_stack_index]
                 if mode.quote == quote and mode.quote_size == quote_size:
                     prefix = 't' if mode.string_kind == TSTRING else 'f'
@@ -577,8 +587,12 @@ def _tok_get_normal_mode(tok, current_tok):
             while True:
                 c = _nextc(tok)
                 if c == ' ':
-                    col += 1
-                    altcol += 1
+                    end = tok.line_start + __text_scan_ascii(
+                        tok.buf, tok.cur - tok.line_start, ' ', tok.inp - tok.cur)
+                    width = end - tok.cur + 1
+                    tok.cur = end
+                    col += width
+                    altcol += width
                 elif c == '\t':
                     col = (col // tok.tabsize + 1) * tok.tabsize
                     altcol = (altcol // ALTTABSIZE + 1) * ALTTABSIZE
@@ -648,20 +662,31 @@ def _tok_get_normal_mode(tok, current_tok):
                 tok.pendin -= 1
                 return (INDENT, p_start, p_end)
 
-        c = _nextc(tok)
-        _backup(tok, c)
+        # Refill before clearing start, but do not peek at buffered text twice.
+        if tok.cur == tok.inp:
+            c = _nextc(tok)
+            _backup(tok, c)
 
         nextline = False
         while True:  # again
             tok.start = None
             c = _nextc(tok)
-            while c == ' ' or c == '\t' or c == '\x0c':
-                c = _nextc(tok)
+            if c == ' ' or c == '\t' or c == '\x0c':
+                tok.cur = tok.line_start + __text_scan_ascii(
+                    tok.buf, tok.cur - tok.line_start, ' \t\x0c', tok.inp - tok.cur)
+                c = tok.bufc[tok.cur]
+                tok.cur += 1
             tok.start = tok.cur - 1
 
             if c == '#':
-                while c is not None and c != '\n' and c != '\r':
-                    c = _nextc(tok)
+                # A physical line always has a real or implicit newline.
+                begin = tok.cur - tok.line_start
+                end = tok.buf.find('\n', begin)
+                cr = tok.buf.find('\r', begin)
+                if cr >= 0 and cr < end:
+                    end = cr
+                tok.cur = tok.line_start + end
+                c = _nextc(tok)
                 if tok.tok_extra_tokens:
                     _backup(tok, c)
                     tok.comment_newline = blankline
@@ -675,7 +700,8 @@ def _tok_get_normal_mode(tok, current_tok):
                 return (ERRORTOKEN, None, None)
 
             nonascii = False
-            if _is_potential_identifier_start(c):
+            if ('a' <= c <= 'z' or 'A' <= c <= 'Z'
+                    or c == '_' or ord(c) >= 128):
                 saw_b = saw_r = saw_u = saw_f = saw_t = False
                 is_string = False
                 while True:
@@ -701,11 +727,20 @@ def _tok_get_normal_mode(tok, current_tok):
                     if saw_f or saw_t:
                         return _f_string_quote(tok, c)
                     return _letter_quote(tok, c)
-                while _is_potential_identifier_char(c):
+                while c is not None and (
+                        'a' <= c <= 'z' or 'A' <= c <= 'Z' or '0' <= c <= '9'
+                        or c == '_' or ord(c) >= 128):
                     if ord(c) >= 128:
                         nonascii = True
-                    c = _nextc(tok)
-                _backup(tok, c)
+                    else:
+                        # Stop at Unicode and let the original validation handle it.
+                        tok.cur = tok.line_start + __text_scan_ascii(
+                            tok.buf, tok.cur - tok.line_start,
+                            _IDENTIFIER_ASCII, tok.inp - tok.cur)
+                    # Identifier spans stop before the buffered newline or delimiter.
+                    c = tok.bufc[tok.cur]
+                    tok.cur += 1
+                tok.cur -= 1
                 if nonascii:
                     _verify_identifier(tok)
                 return (NAME, tok.start, tok.cur)
@@ -745,7 +780,7 @@ def _tok_get_normal_mode(tok, current_tok):
                     _backup(tok, c)
                 return (DOT, tok.start, tok.cur)
 
-            if _is_digit(c):
+            if '0' <= c <= '9':
                 if c == '0':
                     c = _nextc(tok)
                     if c == 'x' or c == 'X':
@@ -857,8 +892,8 @@ def _tok_get_normal_mode(tok, current_tok):
                 continue  # again
 
             is_punctuation = c == ':' or c == '}' or c == '!' or c == '{'
-            if is_punctuation and _inside_fstring(tok) \
-                    and _inside_fstring_expr(current_tok):
+            if is_punctuation and (tok.tok_mode_stack_index > 0) \
+                    and (current_tok.curly_bracket_expr_start_depth >= 0):
                 cursor = current_tok.curly_bracket_depth - (0 if c == '{' else 1)
                 in_format_spec = current_tok.in_format_spec
                 cursor_in_format_with_debug = cursor == 1 and (
@@ -872,23 +907,27 @@ def _tok_get_normal_mode(tok, current_tok):
                     current_tok.in_format_spec = True
                     return (_ONE_CHAR[c], tok.start, tok.cur)
 
-            c2 = _nextc(tok)
-            two = None
-            if c is not None and c2 is not None:
-                two = _TWO_CHARS.get(c + c2)
-                if c == '<' and c2 == '>':
-                    two = OP
-            if two is not None and two != OP:
-                c3 = _nextc(tok)
-                three = None
-                if c3 is not None:
-                    three = _THREE_CHARS.get(c + c2 + c3)
-                if three is not None:
-                    two = three
-                else:
-                    _backup(tok, c3)
-                return (two, tok.start, tok.cur)
-            _backup(tok, c2)
+            if c in '!%&*+-/:<=>@^|':
+                # Non-newline operators always have a buffered successor.
+                c2 = tok.bufc[tok.cur]
+                tok.cur += 1
+                two = None
+                if c is not None and c2 is not None:
+                    two = _TWO_CHARS.get(c + c2)
+                    if c == '<' and c2 == '>':
+                        two = OP
+                if two is not None and two != OP:
+                    c3 = tok.bufc[tok.cur]
+                    tok.cur += 1
+                    three = None
+                    if c3 is not None:
+                        three = _THREE_CHARS.get(c + c2 + c3)
+                    if three is not None:
+                        two = three
+                    else:
+                        tok.cur -= 1
+                    return (two, tok.start, tok.cur)
+                tok.cur -= 1
 
             if c == '(' or c == '[' or c == '{':
                 if tok.level >= MAXLEVEL:
@@ -896,10 +935,10 @@ def _tok_get_normal_mode(tok, current_tok):
                 tok.parenstack.append(c)
                 tok.parenlinenostack.append(tok.lineno)
                 tok.level += 1
-                if _inside_fstring(tok):
+                if (tok.tok_mode_stack_index > 0):
                     current_tok.curly_bracket_depth += 1
             elif c == ')' or c == ']' or c == '}':
-                if _inside_fstring(tok) \
+                if (tok.tok_mode_stack_index > 0) \
                         and not current_tok.curly_bracket_depth and c == '}':
                     prefix = 't' if current_tok.string_kind == TSTRING else 'f'
                     _syntaxerror(tok, "%s-string: single '}' is not allowed"
@@ -914,7 +953,7 @@ def _tok_get_normal_mode(tok, current_tok):
                             (opening == '(' and c == ')')
                             or (opening == '[' and c == ']')
                             or (opening == '{' and c == '}')):
-                        if _inside_fstring(tok) and opening == '{':
+                        if (tok.tok_mode_stack_index > 0) and opening == '{':
                             previous_bracket = current_tok.curly_bracket_depth - 1
                             if previous_bracket == current_tok.curly_bracket_expr_start_depth:
                                 prefix = ('t' if current_tok.string_kind == TSTRING
@@ -930,7 +969,7 @@ def _tok_get_normal_mode(tok, current_tok):
                             _syntaxerror(tok, "closing parenthesis '%s' does"
                                          ' not match opening parenthesis'
                                          " '%s'" % (c, opening))
-                if _inside_fstring(tok):
+                if (tok.tok_mode_stack_index > 0):
                     current_tok.curly_bracket_depth -= 1
                     if current_tok.curly_bracket_depth < 0:
                         prefix = ('t' if current_tok.string_kind == TSTRING
@@ -948,7 +987,8 @@ def _tok_get_normal_mode(tok, current_tok):
                 _syntaxerror(tok, 'invalid non-printable character U+%04X'
                              % ord(c))
 
-            if c == '=' and _inside_fstring_expr_at_top(current_tok):
+            if c == '=' and (current_tok.curly_bracket_depth
+                             - current_tok.curly_bracket_expr_start_depth == 1):
                 current_tok.in_debug = True
 
             return (_ONE_CHAR.get(c, OP), tok.start, tok.cur)
@@ -1036,9 +1076,14 @@ def _tok_get_fstring_mode(tok, current_tok):
     end_quote_size = 0
     unicode_escape = False
     while end_quote_size != current_tok.quote_size:
+        if tok.cur < tok.inp and tok.bufc[tok.cur] in _FSTRING_TEXT_ASCII:
+            # Ordinary literal runs cannot change interpolation or quote state.
+            tok.cur = tok.line_start + __text_scan_ascii(
+                tok.buf, tok.cur - tok.line_start, _FSTRING_TEXT_ASCII, tok.inp - tok.cur)
+            end_quote_size = 0
         c = _nextc(tok)
         in_format_spec = current_tok.in_format_spec \
-            and _inside_fstring_expr(current_tok)
+            and (current_tok.curly_bracket_expr_start_depth >= 0)
         if c is None or (current_tok.quote_size == 1 and c == '\n'):
             if in_format_spec and c == '\n':
                 if current_tok.quote_size == 1:
@@ -1136,14 +1181,6 @@ def _tok_get_fstring_mode(tok, current_tok):
     return (FSTRING_MIDDLE, tok.start, tok.cur)
 
 
-# Parser/lexer/lexer.c: tok_get and _PyTokenizer_Get.
-def _tokenizer_get(tok):
-    current_tok = tok.tok_mode_stack[tok.tok_mode_stack_index]
-    if current_tok.kind == TOK_REGULAR_MODE:
-        return _tok_get_normal_mode(tok, current_tok)
-    return _tok_get_fstring_mode(tok, current_tok)
-
-
 class TokenizerIter(object):
     # Python/Python-tokenize.c: tokenizeriter_new and tokenizeriter_next.
     def __init__(self, readline, *, extra_tokens=False, encoding=None):
@@ -1154,9 +1191,8 @@ class TokenizerIter(object):
         # Line cache, as in the C tokenizeriterobject.
         self.last_line = None
         self.last_lineno = 0
-
-    def __iter__(self):
-        return self
+        self._queued = None
+        self._queued_at = 0
 
     # Python/Python-tokenize.c: _tokenizer_error, for the error codes the
     # lexer reports through tok.done rather than an exception.
@@ -1173,7 +1209,7 @@ class TokenizerIter(object):
             offset = tok.inp
             if offset < 0:
                 offset = 0
-            err.offset = len(''.join(tok.bufc[:offset]).encode('utf-8'))
+            err.offset = len(tok.bufc[:offset].encode('utf-8'))
             err.end_lineno = tok.lineno
             raise err
         if tok.done == E_TOKEN:
@@ -1197,22 +1233,75 @@ class TokenizerIter(object):
             msg = 'unknown tokenization error'
         # The C decodes the line (without its trailing newline) and counts
         # one character past its end for the column.
-        error_line = ''.join(tok.bufc[:tok.inp - 1])
+        error_line = tok.bufc[:tok.inp - 1]
         offset = len(error_line) + 1
         raise errtype(msg, ('<string>', tok.lineno, offset, error_line,
                             None, None))
 
-    def __next__(self):
+    def _native_batch(self):
+        # One native step: a batch of finished tokens, one token, or None
+        # when the Python lexer still has to classify the next lexeme.
+        buffered = _scan_token(self)
+        if buffered == -1:
+            _syntaxerror(self.tok, "source code cannot contain null bytes")
+        if buffered is False:
+            tok = self.tok
+            line = _read_line(tok)
+            prepared = _scan_token(self, line)
+            if prepared is False:
+                if not _append_line(tok, line):
+                    tok.cur = tok.inp
+                if tok.line_null:
+                    _syntaxerror(tok, 'source code cannot contain null bytes')
+            elif prepared == -1:
+                _syntaxerror(tok, 'source code cannot contain null bytes')
+            buffered = _scan_token(self)
+            if buffered is False:
+                buffered = None
+        return buffered
+
+    def __iter__(self):
+        return self
+
+    # Bind the scanner as a native iterator slot; slow lexemes still use the port.
+    __next__ = _scan_token()
+
+    # Preserve callback handling, diagnostics and unusual private queue shapes.
+    def _next_slow(self):
+        queued = self._queued
+        if queued is not None:
+            token = queued[self._queued_at]
+            self._queued_at += 1
+            if self._queued_at == len(queued):
+                self._queued = None
+            return token
+        found = self._native_batch()
+        if found is None:
+            return self._python_token()
+        if type(found) is tuple and found and type(found[0]) is tuple:
+            self._queued = found
+            self._queued_at = 1
+            return found[0]
+        return found
+
+    def _python_token(self):
         tok = self.tok
-        type_, tstart, tend = _tokenizer_get(tok)
+        # Dispatch directly, as tok_get does before entering the C scanner.
+        current_tok = tok.tok_mode_stack[tok.tok_mode_stack_index]
+        if current_tok.kind == TOK_REGULAR_MODE:
+            type_, tstart, tend = _tok_get_normal_mode(tok, current_tok)
+        else:
+            type_, tstart, tend = _tok_get_fstring_mode(tok, current_tok)
         if type_ == ERRORTOKEN:
             self._tokenizer_error()
         if self.done:
             raise StopIteration('EOF')
         if tstart is None or tend is None:
             string = ''
+        elif tstart >= tok.line_start:
+            string = tok.buf[tstart - tok.line_start:tend - tok.line_start]
         else:
-            string = ''.join(tok.bufc[tstart:tend])
+            string = tok.bufc[tstart:tend]
 
         is_trailing_token = type_ == ENDMARKER or (
             type_ == DEDENT and tok.done == E_EOF)
@@ -1230,7 +1319,10 @@ class TokenizerIter(object):
             # _get_current_line: the line is fetched once per tok.lineno and
             # then served from the cache.
             if tok.lineno != self.last_lineno:
-                line = ''.join(tok.bufc[line_start:line_start + size])
+                if line_start == tok.line_start:
+                    line = tok.buf[:size]
+                else:
+                    line = tok.bufc[line_start:line_start + size]
                 self.last_line = line
             else:
                 line = self.last_line

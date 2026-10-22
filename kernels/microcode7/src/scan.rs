@@ -1277,7 +1277,8 @@ fn scan_code_from<'a>(source: &str, table: &'a Table, first: u32, ended: &mut (u
     } else { std::borrow::Cow::Borrowed(source) };
     let source = input.as_ref();
     let text = drop_comments(source, table);
-    let src: Vec<char> = text.chars().collect();
+    let src_chars: Vec<char> = text.chars().collect();
+    let src: &[char] = &src_chars;
     let mut punctuation: std::collections::BTreeMap<char, Vec<(&String, Vec<char>)>> = std::collections::BTreeMap::new();
     for sign in &table.signs {
         if let Some(lead) = sign.chars().next() {
@@ -1328,6 +1329,11 @@ fn scan_code_from<'a>(source: &str, table: &'a Table, first: u32, ended: &mut (u
     let tok = |kind: Shape, text: String, row: u32| Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: column.get(), shape: kind, lexeme: text, raw: None, span: 0, row: row };
     let tok_spelled = |kind: Shape, text: String, raw: Option<String>, row: u32| Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: column.get(), shape: kind, lexeme: text, raw, span: 0, row: row };
     let (mut pos, mut row, mut at_bol) = (0usize, first, true);
+    // Preserve configured lexical prefixes while batching ordinary spaces and tabs.
+    let ordinary_blanks = table.ascii_quotation[9] == 0 && table.ascii_quotation[32] == 0
+        && !table.scanner.strings_lexical_comment_line.iter()
+            .chain(&table.scanner.strings_ext_lexical_line_continuation)
+            .any(|mark| mark.is_empty() || mark.starts_with(' ') || mark.starts_with('\t'));
     while pos < src.len() {
         // The row the reading has reached is kept where the caller can
         // see it, so that a reading that stops names the right line.
@@ -1358,6 +1364,11 @@ fn scan_code_from<'a>(source: &str, table: &'a Table, first: u32, ended: &mut (u
         }
         column.set(at_column(pos));
         ended.1 = column.get();
+        if ordinary_blanks && matches!(src[pos], ' ' | '\t') {
+            loop { pos += 1; if pos == src.len() || !matches!(src[pos], ' ' | '\t') { break; } }
+            ended.1 = at_column(pos - 1);
+            continue;
+        }
         if !table.scanner.strings_ext_lexical_string_long.as_slice().is_empty() {
             if table.scanner.strings_lexical_comment_line.as_slice().iter().any(|m| src[pos..].starts_with(&m.chars().collect::<Vec<_>>())) {
                 while pos < src.len() && src[pos] != '\n' { pos += 1; }

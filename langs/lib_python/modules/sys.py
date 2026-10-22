@@ -53,21 +53,61 @@ def _absolute_search_entry(entry, cwd):
 
 path = [__file__.rsplit('/', 1)[0]]
 _path_host = __host_info()
+_safe_path = _path_host[3].get('LUMEN_PYTHON_SAFE_PATH') == '1'
+if not _safe_path:
+    _startup_file = __program_namespace().get('__file__', '')
+    if _startup_file in ('<string>', '<stdin>'):
+        path.insert(0, '')
+    elif _startup_file == '-m':
+        path.insert(0, _path_host[0])
+    else:
+        _startup_file = _absolute_search_entry(_startup_file, _path_host[0])
+        path.insert(0, _startup_file.rsplit('/', 1)[0])
 _ignore_environment = int(_path_host[3].get('LUMEN_PYTHON_IGNORE_ENV') == '1')
 _python_path = '' if _ignore_environment else _path_host[3].get('PYTHONPATH', '')
 if _python_path:
     _search_paths = []
-    for _entry in _python_path.split(':') + path:
+    for _entry in _python_path.split(':'):
         _entry = _absolute_search_entry(_entry, _path_host[0])
         if _entry not in _search_paths:
             _search_paths.append(_entry)
-    path = _search_paths
+    _environment_at = 0 if _safe_path else 1
+    path[_environment_at:_environment_at] = _search_paths
 maxsize = 9223372036854775807
 # Where a written bytecode cache would live, and whether one is
 # written: the reference reads both while naming a cache file.
 pycache_prefix = None
 dont_write_bytecode = True
-version_info = (3, 14, 8, 'final', 0)
+# A struct sequence, as the reference's sys.version_info is: five named
+# fields over a tuple, built by the host the way os.stat_result is.
+_structseq = __posix
+
+
+class version_info(tuple):
+    __slots__ = ()
+    n_sequence_fields = 5
+    n_fields = 5
+    n_unnamed_fields = 0
+    __match_args__ = ('major', 'minor', 'micro', 'releaselevel', 'serial')
+
+    def __new__(cls, *args, **kwargs):
+        raise TypeError("cannot create 'sys.version_info' instances")
+
+    major = property(lambda self: self[0])
+    minor = property(lambda self: self[1])
+    micro = property(lambda self: self[2])
+    releaselevel = property(lambda self: self[3])
+    serial = property(lambda self: self[4])
+
+    def __repr__(self):
+        return 'sys.version_info(' + ', '.join(name + '=' + repr(value) for name, value in zip(self.__match_args__, self)) + ')'
+
+    def __init_subclass__(cls, **kwargs):
+        raise TypeError("type 'sys.version_info' is not an acceptable base type")
+
+
+version_info.__module__ = 'sys'
+version_info = _structseq('structseq_new', version_info, (3, 14, 8, 'final', 0), ())
 version = '3.14.8 (Lumen) [Rust]'
 # The source-control identity the reference build records beside the
 # version. This interpreter is not checked out from CPython's tree, so
@@ -134,7 +174,7 @@ class _Flags:
     @property
     def warn_default_encoding(self):
         return 1 if _environment('PYTHONWARNDEFAULTENCODING') else 0
-    safe_path = True
+    safe_path = _safe_path
     int_max_str_digits = 4300
     gil = 1
     thread_inherit_context = 0
@@ -662,6 +702,45 @@ def settrace(trace):
     __trace_native__(1, trace)
 def getdefaultencoding():
     return "utf-8"
+
+_import_shadow_root = None if flags.safe_path else path[0]
+
+# Resolve path entries lazily so bootstrap imports can use the native source reader.
+def _zip_path_hook(path):
+    from zipimport import zipimporter
+    return zipimporter(path)
+
+# Build the source finder only when an ordinary directory is first searched.
+def _file_path_hook(path):
+    from importlib._bootstrap_external import FileFinder, _get_supported_file_loaders
+    return FileFinder.path_hook(*_get_supported_file_loaders())(path)
+
+# Delegate path searching to the upstream finder and its importer cache.
+class _PathFinder:
+    @classmethod
+    def find_spec(cls, fullname, path=None, target=None):
+        external = modules.get('importlib._bootstrap_external')
+        finder = getattr(external, 'PathFinder', None)
+        if finder is None:
+            return None
+        return finder.find_spec(fullname, path, target)
+
+    @classmethod
+    def invalidate_caches(cls):
+        from importlib._bootstrap_external import _NamespacePath
+        for path, finder in list(path_importer_cache.items()):
+            if finder is None or not path.startswith('/'):
+                del path_importer_cache[path]
+            elif hasattr(finder, 'invalidate_caches'):
+                finder.invalidate_caches()
+        _NamespacePath._epoch += 1
+
+path_importer_cache = {}
+path_hooks = [_zip_path_hook, _file_path_hook]
+import _imp
+meta_path = [_PathFinder, _SourceFinder(), _imp._NativeFinder]
+
+stdlib_module_names = frozenset(__load_module('', 'names'))
 # Source and native modules participate in the same finder protocol.
 
 
@@ -703,3 +782,6 @@ def set_asyncgen_hooks(firstiter=_asyncgen_hook_missing, finalizer=_asyncgen_hoo
 
 def is_finalizing():
     return __trace_native__(9)
+
+# The builtin interface has no filesystem origin after bridge initialization.
+globals().pop('__file__', None)

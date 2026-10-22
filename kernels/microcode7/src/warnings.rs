@@ -273,12 +273,17 @@ impl Machine<'_> {
         if !matches!(namespace.settled(), Value::Dict(_) | Value::Attributes(_)) { return Err(format!("TypeError: module_globals must be a dict, not '{}'", namespace.kind_word())); }
         let bootstrap = self.load_namespace("importlib._bootstrap_external")?;
         let loader = self.warning_send(bootstrap, "_bless_my_loader", vec![namespace.clone()])?;
-        if self.attribute(&loader, "get_source").is_none() { return Ok(Value::Nil); }
+        let reader = self.core_primitive(Prim::GetMember, "getattr",
+            vec![loader, Value::text("get_source"), Value::Nil], Vec::new())?;
+        if matches!(reader.settled(), Value::Nil) { return Ok(Value::Nil); }
         let specification = self.warning_send(namespace.clone(), "get", vec![Value::text("__spec__"), Value::Nil])?;
-        let spec_name = self.attribute(&specification, "name").filter(|name| !matches!(name, Value::Nil));
-        let name = if let Some(name) = spec_name { name } else { self.warning_send(namespace.clone(), "get", vec![Value::text("__name__"), Value::Nil])? };
+        let spec_name = self.core_primitive(Prim::GetMember, "getattr",
+            vec![specification, Value::text("name"), Value::Nil], Vec::new())?;
+        let name = if matches!(spec_name.settled(), Value::Nil) {
+            self.warning_send(namespace.clone(), "get", vec![Value::text("__name__"), Value::Nil])?
+        } else { spec_name };
         if matches!(name, Value::Nil) { return Ok(Value::Nil); }
-        let code = match self.warning_send(loader, "get_source", vec![name]) {
+        let code = match self.warning_apply(reader, vec![name]) {
             Ok(code) => code,
             Err(message) if self.got_away.as_ref().map_or(message.starts_with("ImportError:"), |raised| self.escape_names(raised, "ImportError")) => { self.got_away = None; return Ok(Value::Nil); }
             Err(message) => return Err(message),
@@ -312,6 +317,15 @@ impl Machine<'_> {
 }
 
 impl Machine<'_> {
+    // Keep only the internal request out of finder dispatch; its dependencies import normally.
+    fn bootstrap_namespace(&mut self, path: &str) -> Result<Value, String> {
+        match self.imported.get(path).cloned() { Some(namespace) => return Ok(namespace), None => () }
+        let fresh = self.finding_import.insert(String::from(path));
+        let outcome = self.load_namespace(path);
+        if fresh { self.finding_import.remove(path); }
+        outcome
+    }
+
     fn import_from_finders(&mut self, qualified: &str) -> Result<Option<Value>, String> {
         let Some(system) = self.imported.get("sys").cloned() else { return Ok(None); };
         if self.attribute(&system, "meta_path").is_none() { return Ok(None); }
@@ -341,6 +355,9 @@ impl Machine<'_> {
                     }
                     if let Value::Blueprint(kind) = searcher.settled() {
                         if matches!(kind.name.rsplit('.').next(), Some("BuiltinImporter" | "FrozenImporter" | "PathFinder")) { continue; }
+                        let bootstrap_proxy = kind.name.rsplit('.').next() == Some("_PathFinder")
+                            && self.inherited_entry(&kind, "__module__").is_some_and(|module| module.bare() == "sys");
+                        if bootstrap_proxy { continue; }
                     }
                 }
                 let builtin_searcher = self.imported.get("_imp").and_then(|module| match module { Value::Thing(object) => object.holds.borrow().iter().find(|field| field.0 == "_NativeFinder").map(|field| field.1.clone()), _ => None });
@@ -353,7 +370,15 @@ impl Machine<'_> {
                 if matches!(find_spec.settled(), Value::Nil) { continue; }
                 let specification = self.warning_apply(find_spec, vec![Value::text(qualified), location.clone(), Value::Nil])?;
                 if matches!(specification.settled(), Value::Nil) { continue; }
-                let bootstrap_module = self.load_namespace("importlib._bootstrap")?;
+                let booted = self.imported.get("importlib").cloned().is_some_and(|root| self.attribute(&root, "_native_spec").is_some());
+                if !self.importing.contains("_zipimport_path") && (self.imported.contains_key("_zipimport_path") || booted) {
+                    let helper = self.bootstrap_namespace("_zipimport_path")?;
+                    let namespace = self.warning_send(helper, "load", vec![specification])?;
+                    self.imported.insert(qualified.to_owned(), namespace.clone());
+                    self.namespace_places.borrow_mut().take(); self.revised_members.borrow_mut().clear();
+                    return Ok(Some(namespace));
+                }
+                let bootstrap_module = self.bootstrap_namespace("importlib._bootstrap")?;
                 // Let the upstream load transaction choose the final public cache entry.
                 let completion = self.warning_send(bootstrap_module, "_load_unlocked", vec![specification]);
                 if completion.is_err() { self.imported.remove(qualified); }

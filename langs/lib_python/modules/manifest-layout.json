@@ -40,7 +40,12 @@
     "_py_abc": "runtime_adapters/_py_abc.py",
     "marshal": "runtime_adapters/marshal.py",
     "gettext": "runtime_adapters/gettext.py",
-    "test.encoded_modules": "runtime_adapters/encoded_modules.py"
+    "test.encoded_modules": "runtime_adapters/encoded_modules.py",
+    "test.support.script_helper": "runtime_adapters/script_helper.py",
+    "zipimport": "runtime_adapters/zipimport.py",
+    "test": "runtime_adapters/test_package.py",
+    "test.support.warnings_helper": "runtime_adapters/warnings_helper.py",
+    "re._compiler": "runtime_adapters/re_compiler.py"
   },
   "data": {
     "_codec_sjis": {
@@ -58,17 +63,22 @@
     "test.support.threading_helper": "runtime_adapters/native_test_support_threading_helper.py",
     "importlib._bootstrap_external": "runtime_adapters/importlib_external.py",
     "http.server": "runtime_adapters/native_http_server.py",
-    "runpy": "runtime_adapters/native_runpy.py",
     "signal": "runtime_adapters/native_signal.py",
     "test.support.script_helper": "runtime_adapters/native_test_support_script_helper.py",
     "threading": "runtime_adapters/native_threading.py",
     "unittest.mock": "runtime_adapters/native_unittest_mock.py",
     "tracemalloc": "runtime_adapters/native_tracemalloc.py",
     "doctest": "runtime_adapters/native_doctest.py",
-    "ast": "runtime_adapters/native_ast.py"
+    "ast": "runtime_adapters/native_ast.py",
+    "test.test_importlib.util": "runtime_adapters/native_test_importlib_util.py"
   },
   "names": {
     "runtime_sources/unittest_case.py": "unittest.case",
-    "runtime_sources/unittest_result.py": "unittest.result"
+    "runtime_sources/unittest_result.py": "unittest.result",
+    "runtime_sources/test_package_main.py": "test.test_dataclasses.__main__",
+    "runtime_sources/source_inspect.py": "_source_inspect"
+  },
+  "preludes": {
+    "zipimport": "runtime_adapters/zipimport_bootstrap.py"
   }
 }

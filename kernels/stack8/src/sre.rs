@@ -28,6 +28,9 @@ struct Repeat { body: usize, tail: usize, min: usize, max: usize, count: usize, 
 #[derive(Clone)]
 struct State { pc: usize, pos: usize, marks: Vec<i64>, last: i64, loops: Vec<Repeat> }
 struct Machine<'a> { code: &'a [u32], text: &'a [u32], end: usize }
+// A place to resume after a failure: one saved state, or a run of
+// positions of one saved state still to be tried from `high` down to `low`.
+enum Later { Whole(State), Span { base: State, low: usize, high: usize } }
 
 fn lower(n: u32, ascii: bool) -> u32 {
     if ascii { return if (65..=90).contains(&n) { n + 32 } else { n }; }
@@ -38,6 +41,14 @@ fn word(n: u32, wide: bool) -> bool {
     else { n < 128 && char::from_u32(n).is_some_and(|c| c.is_ascii_alphanumeric()) }
 }
 fn category(kind: u32, n: u32) -> bool {
+    // The four ASCII-only kinds need no property lookup.
+    match kind & !1 {
+        0 => return (48..=57).contains(&n) != (kind & 1 != 0),
+        2 => return [9,10,11,12,13,32].contains(&n) != (kind & 1 != 0),
+        4 | 8 => return word(n, false) != (kind & 1 != 0),
+        6 => return (n == 10) != (kind & 1 != 0),
+        _ => {}
+    }
     let c = char::from_u32(n);
     let b = c.map_or(0, crate::unicode::bits);
     let alpha = general_category(n).starts_with('L');
@@ -141,9 +152,37 @@ impl Machine<'_> {
         }
         false
     }
+    // Width of the instruction at `pc` when it tests exactly one character
+    // and is followed by SUCCESS, as the body of a one-item repeat is.
+    fn unit_width(&self, pc: usize) -> Option<usize> {
+        let op = *self.code.get(pc)?;
+        let arg = self.code.get(pc + 1).copied().unwrap_or(0) as usize;
+        let width = match op {
+            2 | 3 => 1,
+            13 | 31 | 35 | 39 => arg + 1,
+            8 | 16 | 20 | 32 | 33 | 36 | 37 | 40 | 41 => 2,
+            _ => return None,
+        };
+        (self.code.get(pc + width) == Some(&1)).then_some(width)
+    }
+    // Whether the single-character instruction at `pc` takes `ch`.
+    fn unit_takes(&self, pc: usize, mut ch: u32) -> bool {
+        let op = self.code[pc];
+        let arg = self.code.get(pc + 1).copied().unwrap_or(0);
+        if matches!(op,31..=33 | 35..=37 | 39..=41) { ch = lower(ch, op < 39); }
+        match op {
+            2 => ch != 10, 3 => true, 8 => category(arg, ch),
+            16 | 32 | 40 => ch == arg,
+            36 => ch == lower(arg, true),
+            20 | 33 | 41 => ch != arg,
+            37 => ch != lower(arg, true),
+            35 => self.charset(pc+2, ch, if (97..=122).contains(&ch) { ch-32 } else { ch }),
+            _ => self.charset(pc+2, ch, ch),
+        }
+    }
     fn run(&self, mut s: State, stop: Option<usize>, full: bool, advance: Option<usize>, depth: usize) -> Result<Option<State>, String> {
         if depth > 512 { return Err("RecursionError: regular expression assertion nesting exceeded".into()); }
-        let mut pending = Vec::new();
+        let mut pending: Vec<Later> = Vec::new();
         'backtrack: loop {
             loop {
                 if stop == Some(s.pc) { return Ok(Some(s)); }
@@ -170,7 +209,7 @@ impl Machine<'_> {
                             branch += skip as usize;
                         }
                         let Some(first) = choices.first().cloned() else { break };
-                        pending.extend(choices.into_iter().skip(1).rev()); s = first;
+                        pending.extend(choices.into_iter().skip(1).rev().map(Later::Whole)); s = first;
                     }
                     4 | 5 => {
                         let back = self.code.get(s.pc+2).copied().unwrap_or(0) as usize;
@@ -206,6 +245,7 @@ impl Machine<'_> {
                         let max = self.code[s.pc + 3] as usize;
                         let body = s.pc + 4;
                         let tail = s.pc + arg + 1;
+                        let unit = self.unit_width(body).is_some();
                         let mut consumed = 0;
                         loop {
                             if consumed >= min {
@@ -213,6 +253,11 @@ impl Machine<'_> {
                                 if let Some(result) = self.run(continuation, stop, full, advance, depth + 1)? { return Ok(Some(result)); }
                             }
                             if consumed == max { break; }
+                            if unit {
+                                if s.pos >= self.end || !self.unit_takes(body, self.text[s.pos]) { break; }
+                                s.pos += 1; consumed += 1;
+                                continue;
+                            }
                             let mut atom = s.clone(); atom.pc = body;
                             let Some(next) = self.run(atom, None, false, None, depth + 1)? else { break };
                             let unchanged = next.pos == s.pos;
@@ -224,6 +269,22 @@ impl Machine<'_> {
                     24 | 29 => {
                         let min = self.code.get(s.pc+2).copied().unwrap_or(0) as usize;
                         let max = self.code.get(s.pc+3).copied().unwrap_or(0) as usize;
+                        if self.unit_width(s.pc + 4).is_some() {
+                            // One character per step: count the run once
+                            // and let backtracking shorten it lazily.
+                            let body = s.pc + 4;
+                            let mut reach = s.pos;
+                            while reach - s.pos < max && reach < self.end && self.unit_takes(body, self.text[reach]) { reach += 1; }
+                            if reach - s.pos < min { break; }
+                            let low = s.pos + min;
+                            s.pc += 1 + arg;
+                            if op != 29 && reach > low {
+                                let mut base = s.clone(); base.pos = low;
+                                pending.push(Later::Span { base, low, high: reach - 1 });
+                            }
+                            s.pos = reach;
+                            continue;
+                        }
                         let mut ends = vec![s.clone()];
                         let mut inner = s.clone(); inner.pc += 4;
                         while ends.len()-1 < max {
@@ -236,7 +297,7 @@ impl Machine<'_> {
                         let mut choices: Vec<State> = ends.into_iter().skip(min).map(|mut v| { v.pc = tail; v }).collect();
                         choices.reverse();
                         let first = choices.remove(0);
-                        if op != 29 { pending.extend(choices.into_iter().rev()); }
+                        if op != 29 { pending.extend(choices.into_iter().rev().map(Later::Whole)); }
                         s = first;
                     }
                     28 => {
@@ -271,54 +332,61 @@ impl Machine<'_> {
                         let mut more = s.clone(); more.pc = r.body; more.loops.push(r);
                         if !enough { if !grow { break; } s = more; }
                         else if !grow { s = tail; }
-                        else if op == 18 { pending.push(tail); s = more; }
-                        else { pending.push(more); s = tail; }
+                        else if op == 18 { pending.push(Later::Whole(tail)); s = more; }
+                        else { pending.push(Later::Whole(more)); s = tail; }
                     }
                     2 | 3 | 8 | 13 | 16 | 20 | 31 | 32 | 33 | 35 | 36 | 37 | 39 | 40 | 41 => {
-                        let Some(mut ch) = n else { break };
-                        if matches!(op,31..=33 | 35..=37 | 39..=41) { ch = lower(ch, op < 39); }
-                        let accepted = match op {
-                            2 => ch != 10, 3 => true, 8 => category(arg as u32, ch),
-                            16 | 32 | 40 => ch == arg as u32,
-                            36 => ch == lower(arg as u32, true),
-                            20 | 33 | 41 => ch != arg as u32,
-                            37 => ch != lower(arg as u32, true),
-                            35 => self.charset(s.pc+2, ch, if (97..=122).contains(&ch) { ch-32 } else { ch }),
-                            _ => self.charset(s.pc+2, ch, ch),
-                        };
-                        if !accepted { break; }
+                        let Some(ch) = n else { break };
+                        if !self.unit_takes(s.pc, ch) { break; }
                         s.pos += 1;
                         s.pc += if matches!(op,13 | 31 | 35 | 39) { arg+1 } else if op == 2 || op == 3 { 1 } else { 2 };
                     }
                     _ => return Err(format!("RuntimeError: unsupported SRE opcode {op}")),
                 }
             }
-            if let Some(next) = pending.pop() { s = next; continue 'backtrack; }
+            match pending.pop() {
+                Some(Later::Whole(next)) => { s = next; continue 'backtrack; }
+                Some(Later::Span { base, low, high }) => {
+                    s = base.clone(); s.pos = high;
+                    if high > low { pending.push(Later::Span { base, low, high: high - 1 }); }
+                    continue 'backtrack;
+                }
+                None => {}
+            }
             return Ok(None);
         }
     }
 }
 
 pub fn call(args: &[Value]) -> Result<Value, String> {
-    let number = |i: usize| -> Result<i64, String> {
-        args.get(i).and_then(|v| match v {
+    let numeric = |v: &Value| -> Option<i64> {
+        match v {
             Value::Small(n) => Some(*n), Value::Flag(flag) => Some(i64::from(*flag)),
             _ => v.as_big().ok().and_then(|n| n.to_i64()),
-        }).ok_or_else(|| "TypeError: SRE argument must be an integer".into())
+        }
+    };
+    let number = |i: usize| -> Result<i64, String> {
+        args.get(i).and_then(numeric).ok_or_else(|| "TypeError: SRE argument must be an integer".into())
     };
     let op = number(0)?;
     if op == 10 {
-        if args.len() != 6 { return Err("TypeError: invalid SRE capture argument count".into()); }
-        let Value::Tuple(selectors) = args[5].contents() else { return Err("TypeError: SRE groups must be a tuple".into()); };
+        // The match hands over its subject, state, group count and group
+        // names as one tuple, then the groups asked for.
+        if args.len() != 3 { return Err("TypeError: invalid SRE capture argument count".into()); }
+        let Value::Tuple(bundle) = args[1].contents() else { return Err("TypeError: invalid SRE match state".into()); };
+        let [subject_value, state_value, limit_value, names_value] = bundle.iter().collect::<Vec<_>>()[..] else {
+            return Err("TypeError: invalid SRE match state".into());
+        };
+        let Value::Tuple(selectors) = args[2].contents() else { return Err("TypeError: SRE groups must be a tuple".into()); };
         if selectors.iter().any(|group| !matches!(group, Value::Text(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_))) {
             return Ok(Value::Null);
         }
-        let Value::Array(state) = args[2].contents() else { return Err("TypeError: invalid SRE match state".into()); };
+        let Value::Array(state) = state_value.contents() else { return Err("TypeError: invalid SRE match state".into()); };
         if state.len() < 3 { return Err("TypeError: invalid SRE match state".into()); }
         let Value::Array(marks) = state[2].contents() else { return Err("TypeError: invalid SRE capture marks".into()); };
-        let Value::Map(names) = args[4].contents() else { return Err("TypeError: invalid SRE group names".into()); };
-        let subject = subject_codes(&args[1])?;
-        let limit = number(3)?;
+        let Value::Map(names) = names_value.contents() else { return Err("TypeError: invalid SRE group names".into()); };
+        let subject = subject_codes(subject_value)?;
+        let limit = numeric(limit_value).ok_or("TypeError: SRE argument must be an integer")?;
         if limit < 0 || limit as u64 > (marks.len() / 2) as u64 {
             return Err("TypeError: invalid SRE capture marks".into());
         }
@@ -342,6 +410,25 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         }
         let value = if found.len() == 1 { found.pop().unwrap() } else { Value::tuple(found) };
         return Ok(Value::tuple(vec![value]));
+    }
+    // Pattern text goes through the shared native compiler; Null sends the pattern to the Python one.
+    if op == 20 {
+        if args.len() != 4 { return Err("TypeError: invalid SRE compile argument count".into()); }
+        let source = subject_codes(&args[1])?;
+        let case = lumen_sre::Case {
+            lower: &|n| lower(n, false),
+            cased: &|n| char::from_u32(n).is_some_and(|c| crate::unicode::bits(c) & 16 != 0),
+        };
+        let Some(done) = lumen_sre::compile(&source, number(3)? != 0, number(2)?, &case) else { return Ok(Value::Null); };
+        let names = done.names.iter().map(|(name, group)| Value::tuple(vec![Value::text(name), Value::Small(i64::from(*group))])).collect();
+        let slots = done.indexgroup.iter().map(|name| name.as_deref().map_or(Value::Null, Value::text)).collect();
+        return Ok(Value::tuple(vec![
+            Value::Small(done.flags),
+            Value::array(done.code.iter().map(|&word| Value::Small(i64::from(word))).collect()),
+            Value::Small(done.groups as i64),
+            Value::tuple(names),
+            Value::tuple(slots),
+        ]));
     }
     if op == 9 {
         if args.len() != 4 { return Err("TypeError: invalid SRE bounds argument count".into()); }

@@ -537,8 +537,9 @@ impl<'a> Machine<'a> {
         }
     }
     fn namespace_provider_entries(&mut self, provider: &Value) -> Res<Option<Value>> {
+        // Prefer the live sys.modules entry: that is the interpreter's own external bootstrap, not a test's fresh copy.
         let module = ["_frozen_importlib_external", "importlib._bootstrap_external"].iter()
-            .find_map(|name| self.imported.get(*name).cloned());
+            .find_map(|name| match self.cached_import(name) { Some(Value::Nil) | None => self.imported.get(*name).cloned(), found => found });
         match module {
             None => Ok(None),
             Some(module) => {
@@ -3301,7 +3302,9 @@ impl<'a> Machine<'a> {
     /// through that metaclass's own call, which says what comes of it.
     pub(super) fn type_support_namespace(&mut self) -> Value {
         if let Some(cached) = self.imported.get("_typing") { return cached.clone(); }
-        let mut entries = vec![(String::from("__name__"), Value::text("_typing"))];
+        let mut entries = vec![(String::from("__name__"), Value::text("_typing")),
+            ("__doc__".into(), Value::Nil), ("__package__".into(), Value::Nil),
+            ("__loader__".into(), Value::Nil), ("__spec__".into(), Value::Nil)];
         entries.push(("Union".into(), Value::Blueprint(self.native_kind("Union"))));
         for title in ["TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "Generic", "NoDefaultType", "ParamSpecArgs", "ParamSpecKwargs"] {
             let kind = self.native_kind(title);
@@ -3324,6 +3327,7 @@ impl<'a> Machine<'a> {
         let space = Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: self.native_kind("module"),
             holds: RefCell::new(entries), turn: self.made }));
         self.imported.insert(String::from("_typing"), space.clone()); self.namespace_places.borrow_mut().take(); self.revised_members.borrow_mut().clear();
+        self.refresh_import_table("_typing");
         space
     }
     fn absent_type_default(&mut self) -> Value {
@@ -3866,6 +3870,7 @@ impl<'a> Machine<'a> {
     fn explain_absence(&self, escaped: Escape, value: &Value, key: &str) -> Escape {
         let Escape::Thrown(Value::Thing(fault)) = &escaped else { return escaped };
         if !self.missing_member_escape(&escaped) { return escaped; }
+        if let Some(fault) = self.shadow_name_hash_fault(value) { return Escape::Error(fault); }
         // Do not replace metadata supplied by the lookup inside a hook.
         let name_word = self.rules.words_ext_builtin_exceptions_name.first();
         if fault.holds.borrow().iter().any(|entry| name_word == Some(&entry.0) && !matches!(entry.1.settled(), Value::Nil)) { return escaped; }
@@ -3880,7 +3885,7 @@ impl<'a> Machine<'a> {
                     held.iter().find(|(name, _)| name == "__name__").map(|(_, item)| item)
                 };
                 let label = title.and_then(|item| match item.settled() { Value::Text(word) => Some(word.to_string()), _ => None });
-                label.map_or_else(|| format!("module has no attribute '{key}'"), |label| format!("module '{label}' has no attribute '{key}'"))
+                label.map_or_else(|| format!("module has no attribute '{key}'"), |label| self.namespace_absence_message(&label, key))
             }
             Value::Thing(thing) => format!("'{}' object has no attribute '{key}'", self.full_class_name(&thing.blueprint())),
             _ => return escaped,
@@ -5002,17 +5007,6 @@ impl<'a> Machine<'a> {
             _ => None,
         }
     }
-    /// Find native documentation while leaving Python objects to their attribute road.
-    pub(super) fn primitive_doc(&self, subject: &Value) -> Option<&'static str> {
-        match subject.settled() {
-            Value::Intrinsic(op, title) if op.names_a_kind() => Self::builtin_kind_doc(&title),
-            Value::OctetKind { changeable, .. } => Self::builtin_kind_doc(if changeable { "bytearray" } else { "bytes" }),
-            primitive @ (Value::Text(_) | Value::Unpaired(_) | Value::Small(_) | Value::Huge(_)
-                | Value::Flag(_) | Value::Frac(_) | Value::Complex(_) | Value::Vector(_) | Value::Tuple(_)
-                | Value::Dict(_) | Value::Set(_) | Value::Progression(_) | Value::Span(_) | Value::Octets { .. }) => Self::builtin_kind_doc(&primitive.kind_word()),
-            _ => None,
-        }
-    }
     pub(super) fn clock_record_type(&mut self) -> Rc<Blueprint> {
         for (spelling, class) in &self.native_kinds { if spelling == "struct_time" { return class.clone(); } }
         let parent=self.native_kind("tuple");
@@ -5074,6 +5068,17 @@ impl<'a> Machine<'a> {
     fn native_allocation(&self, spelling: &str) -> Value {
         let mut saved = self.loose_members.borrow_mut();
         saved.entry(format!("allocate {spelling}")).or_insert_with(|| Self::wrap(14, vec![Value::text(spelling)])).clone()
+    }
+    /// Find native documentation while leaving Python objects to their attribute road.
+    pub(super) fn primitive_doc(&self, subject: &Value) -> Option<&'static str> {
+        match subject.settled() {
+            Value::Intrinsic(op, title) if op.names_a_kind() => Self::builtin_kind_doc(&title),
+            Value::OctetKind { changeable, .. } => Self::builtin_kind_doc(if changeable { "bytearray" } else { "bytes" }),
+            primitive @ (Value::Text(_) | Value::Unpaired(_) | Value::Small(_) | Value::Huge(_)
+                | Value::Flag(_) | Value::Frac(_) | Value::Complex(_) | Value::Vector(_) | Value::Tuple(_)
+                | Value::Dict(_) | Value::Set(_) | Value::Progression(_) | Value::Span(_) | Value::Octets { .. }) => Self::builtin_kind_doc(&primitive.kind_word()),
+            _ => None,
+        }
     }
     pub(super) fn integer_attribute(&self, value: &Value, key: &str) -> Option<Value> {
         if let Value::Intrinsic(Prim::Truthful, title) = value {
@@ -5337,6 +5342,9 @@ impl<'a> Machine<'a> {
             }
         }
         if let Value::Thing(item) = &value {
+            if self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) && self.table.strings("ext.stmt.class.detail.code.replace").get(2).is_some_and(|word| word == key) {
+                return Ok(Value::Member(Rc::new(value.clone()), "code_position_rows".to_owned()));
+            }
             let replace = self.table.strings("ext.stmt.class.detail.code.replace").first();
             if replace.is_some_and(|word| word == key) && self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &item.blueprint())) {
                 return Ok(Value::Member(Rc::new(value.clone()), String::from("code_replace")));
@@ -7093,7 +7101,16 @@ impl<'a> Machine<'a> {
         }else if let Some(v)=replacement{entries.push((key.to_owned(),v));true}else{false}
     }
     pub(super) fn alter_class_member(&mut self,subject:Value,key:&str,replacement:Option<Value>,direct:bool)->Res {
+        // Bindings of blueprints and instances forward attribute writes
+        // to that value; callable and collection wrappers remain intact.
+        let subject = match &subject {
+            Value::Shared(_) | Value::Mutable(_, _) if matches!(subject.settled(), Value::Blueprint(_) | Value::Thing(_)) => subject.settled(),
+            _ => subject,
+        };
         if self.namespace_holding(&subject).is_some() { self.revised_members.borrow_mut().clear(); }
+        let replacement = if self.namespace_holding(&subject).is_some() {
+            replacement.map(|item| item.keep(false))
+        } else { replacement };
         self.has_nonstring_class_keys |= key == "\0type-keys";
         if let Some(dictionary)=self.decorator_dictionary(&subject)? {
             if key=="__wrapped__" || key==self.detail("function") || key==self.detail("abstractmethod") {return Err(self.readonly_attribute(&subject,key));}
@@ -7133,13 +7150,6 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        // A blueprint standing behind a binding's cell is altered as
-        // the blueprint itself, there being no cell in the reference's
-        // own accounts; anything else keeps the form it was handed in.
-        let subject = match &subject {
-            Value::Shared(_) | Value::Mutable(_, _) if matches!(subject.settled(), Value::Blueprint(_)) => subject.settled(),
-            _ => subject,
-        };
         // Assigning or removing the abstract marker invalidates only this class.
         if self.rules.words_ext_stmt_class_detail_abstract.first().is_some_and(|name| name == key) {
             if let Value::Blueprint(class) = subject.settled() { self.unmarked_classes.borrow_mut().remove(&(Rc::as_ptr(&class) as usize)); }
@@ -7450,16 +7460,33 @@ impl<'a> Machine<'a> {
                     match replacement {
                         Some(Value::Blueprint(next)) => {
                             let previous = t.blueprint();
+                            let alike = self.reclassification_storage_matches(&previous, &next);
+                            // Module subclasses can replace the native class if no slot adds storage.
+                            let plain_module = |kind: &Blueprint| {
+                                if Self::native_beneath(kind).as_deref() != Some("module") { return false; }
+                                for base in std::iter::once(kind).chain(kind.ancestry.borrow().iter().map(Rc::as_ref)) {
+                                    if let Some(declared) = Self::own_entry(base, self.detail("slots")) {
+                                        match declared.settled() {
+                                            Value::Tuple(row) | Value::Vector(row) if row.is_empty() => {},
+                                            _ => return false,
+                                        }
+                                    }
+                                }
+                                true
+                            };
+                            let native_namespace = self.namespace_holding(&subject).is_some() && Self::native_beneath(&previous).is_none();
+                            let module_storage = (plain_module(&previous) || native_namespace) && plain_module(&next);
                             let heap_pair=previous.type_names.borrow().is_some() && next.type_names.borrow().is_some();
                             let module_pair=Self::native_beneath(&previous).as_deref()==Some("module") && Self::native_beneath(&next).as_deref()==Some("module");
-                            if !Rc::ptr_eq(&previous,&next) && (!(heap_pair||module_pair)||!self.matching_bases(&previous,&next)||!self.reclassification_storage_matches(&previous,&next)) {
+                            if !module_storage && !Rc::ptr_eq(&previous,&next) && (!(heap_pair||module_pair)||!self.matching_bases(&previous,&next)||!self.reclassification_storage_matches(&previous,&next)) {
                                 return Err("TypeError: __class__ assignment: object layout differs".to_owned().into());
                             }
-                            let old_tag = format!(":{:p}", Rc::as_ptr(&previous));
-                            let new_tag = format!(":{:p}", Rc::as_ptr(&next));
-                            for entry in t.holds.borrow_mut().iter_mut() {
-                                if let Some(prefix) = entry.0.strip_suffix(&old_tag).filter(|name| name.starts_with("\0slot:")) {
-                                    entry.0 = format!("{prefix}{new_tag}");
+                            // The worth a slot keeps stands under the key of
+                            // the blueprint that declared it: move it over.
+                            if alike {
+                                let (was, now) = (format!(":{:p}", Rc::as_ptr(&previous)), format!(":{:p}", Rc::as_ptr(&next)));
+                                for entry in t.holds.borrow_mut().iter_mut() {
+                                    if entry.0.starts_with("\0slot:") && entry.0.ends_with(&was) { let cut = entry.0.len() - was.len(); entry.0.truncate(cut); entry.0.push_str(&now); }
                                 }
                             }
                             t.reclassified.replace(Some(next));
@@ -7475,7 +7502,10 @@ impl<'a> Machine<'a> {
                 if self.namespace_holding(&subject).is_some() {
                     self.space_member_mirror(t, key, &replacement);
                     let link = t.holds.borrow().iter().find(|(k, _)| k == key).and_then(|(_, held)| match held { Value::Shared(link) => Some(link.clone()), _ => None });
-                    if let (Some(link), Some(v)) = (link.as_ref(), replacement.clone()) { *link.borrow_mut() = self.collection_cell(v.settled()); return Ok(Value::Nil); }
+                    if let (Some(link), Some(v)) = (link.as_ref(), replacement.clone()) {
+                        if !matches!(&v, Value::Shared(other) | Value::Mutable(other, _) if Rc::ptr_eq(link, other)) { *link.borrow_mut() = self.collection_cell(v); }
+                        return Ok(Value::Nil);
+                    }
                     if replacement.is_none() {
                         // The cell is emptied first, so the name is gone
                         // from compiled readings of it too; a name that
@@ -7493,7 +7523,7 @@ impl<'a> Machine<'a> {
                             _ => None,
                         });
                         if let Some(Value::Shared(cell)) = again {
-                            *cell.borrow_mut() = self.collection_cell(v.settled());
+                            *cell.borrow_mut() = self.collection_cell(v);
                             Self::change_entry(&mut t.holds.borrow_mut(), key, Some(Value::Shared(cell)));
                             return Ok(Value::Nil);
                         }
@@ -9417,12 +9447,12 @@ impl<'a> Machine<'a> {
         for base in &lookup_order {
             if passed {
                 if key == self.detail("allocate") {
+                    if Self::native_word(base).as_deref() == Some("GenericAlias") {
+                        if let Some(entry) = Self::own_entry(base, key) { return Ok(Some(self.member_binding(entry, None, actual.clone())?)); }
+                    }
                     if let Some(declared) = Self::own_entry(base, key) { return Ok(Some(declared)); }
                     if let Some(native) = Self::native_word(base).filter(|word| word != self.detail("root")) {
-                        return Ok(Some(match Self::own_entry(base, key) {
-                            Some(allocator) => allocator,
-                            None => Self::wrap(14, vec![Value::text(&native)]),
-                        }));
+                        return Ok(Some(Self::wrap(14, vec![Value::text(&native)])));
                     }
                 }
                 if self.is_fault_kind(base) && self.fault_method_word(key) {
