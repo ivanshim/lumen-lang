@@ -415,9 +415,9 @@ pub(crate) fn prepared_tokens(source: &str, lang: &Lang) -> Option<(Vec<Token>, 
 pub fn source_stamp(source: &str) -> u64 { token_stamp(source.as_bytes()) }
 
 fn token_stamp(bytes: &[u8]) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hash = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hash);
+    use std::hash::Hasher;
+    let mut hash = crate::value::QuickHash::default();
+    hash.write(bytes);
     hash.finish()
 }
 
@@ -981,7 +981,7 @@ fn private_tokens<'t>(source: &'t [Token], lang: &Lang) -> std::borrow::Cow<'t, 
                 Shape::Instr if lang.builtins.contains_key(&source[i].lexeme) => {}
                 Shape::Instr => {
                     let keyword = in_pattern && source.get(i + 1).map_or(false, |next| lang.assign_words.contains(&next.lexeme));
-                    if !keyword {
+                    if !keyword && source[i].lexeme.starts_with("__") && !source[i].lexeme.ends_with("__") && !source[i].lexeme.contains('.') {
                         let changed = private_name(&owner.lexeme, &source[i].lexeme);
                         if changed != source[i].lexeme { result.to_mut()[i].lexeme = changed; }
                     }
@@ -1252,7 +1252,8 @@ fn compile_pass(
     let mut unit = a.pieces.pop().expect("the top unit");
     if !lang.compile_modes.is_empty() { fold_boolean_branches(&mut unit.instrs); }
     a.registry.top_level_coroutine = unit.generator;
-    let (root_constants, root_names) = code_metadata(&unit.instrs, &None, &[], false);
+    // Discovery retains bindings and syntax checks, not discarded runtime metadata.
+    let (root_constants, root_names) = if discovering { (Vec::new(), Vec::new()) } else { code_metadata(&unit.instrs, &None, &[], false) };
     a.registry.future_bits = a.future_bits;
     Ok(Rc::new(Routine { globals_rebound: false, code_snapshot: Default::default(), image_origin: (0, a.before, a.future_bits | a.image_modes), instruction_image: None, exception_image: None, code_identity: Rc::new(()), embedded_integers: None, source_end: a.pos, source_content: a.source_content.clone(), source_tokens: a.source_tokens.clone(), class_namespace: None, postponed_annotation: false, annotation_source: None, checks_annotation_format: false, reads_annotation: false, annotation: None, code_constants: root_constants, code_names: root_names, local_names: Vec::new(), cell_names: Vec::new(), code_flags: 0, future_bits: a.future_bits, lineless: false, location_bytes: None, declared_stack: None, qualified: String::new(), doc: None, generator: unit.generator, rest_at: None, ident: unit.ident, formals: Vec::new(), formal_kinds: Vec::new(), parameter_rules: None, least: 0, idents: unit.idents, returns_value: false, body_of_all: alone, written_in: a.written_in.clone(), within: None, type_params: Vec::new(), globe: a.registry.globe.clone(), born: a.registry.born.clone(), home: a.registry.home.clone(), declared_on: 0, carried: Vec::new(), held: Vec::new(), enclosed: Vec::new(), enclosing: unit.enclosed, instrs: Rc::new(if discovering { unit.instrs } else { peephole(unit.instrs) }), revised: std::cell::RefCell::new(None) }))
 }
@@ -1828,24 +1829,26 @@ impl<'a> Compiler<'a> {
         // The routine a piece is written in, the class that routine
         // belongs to, and the two written together: all known while the
         // program is put together, so each stands for what it names.
-        let unit = self.piece();
-        let routine = match unit.outermost {
-            true => String::new(),
-            false => unit.ident.clone(),
-        };
-        let within = self.within.as_ref().map(|(named, _)| named.clone()).unwrap_or_default();
-        for (binding, said) in [
-            (&self.lang.routine_binding, routine.clone()),
-            (&self.lang.class_binding, within.clone()),
-            (&self.lang.method_binding, match within.is_empty() {
-                true => routine,
-                false => format!("{}::{}", within, routine),
-            }),
-        ] {
-            if binding.as_deref() == Some(name) {
-                self.constant(Value::text(&said));
-                return;
-            }
+        if self.lang.routine_binding.as_deref() == Some(name) {
+            let unit = self.pieces.last().expect("a unit");
+            let said = if unit.outermost { "" } else { &unit.ident };
+            let value = Value::text(said);
+            self.constant(value);
+            return;
+        }
+        if self.lang.class_binding.as_deref() == Some(name) {
+            let said = self.within.as_ref().map_or("", |(owner, _)| owner.as_str());
+            let value = Value::text(said);
+            self.constant(value);
+            return;
+        }
+        if self.lang.method_binding.as_deref() == Some(name) {
+            let unit = self.pieces.last().expect("a unit");
+            let routine = if unit.outermost { "" } else { &unit.ident };
+            let owner = self.within.as_ref().map_or("", |(owner, _)| owner.as_str());
+            let said = if owner.is_empty() { routine.to_owned() } else { format!("{owner}::{routine}") };
+            self.constant(Value::text(&said));
+            return;
         }
         // A name an annotation reads is read when the annotation is, not settled
         // here, so that reading it afresh can stand for it.
@@ -2484,7 +2487,7 @@ impl<'a> Compiler<'a> {
         let native_async = if name == "<genexpr>" { unit.asynchronous_walk } else { unit.asynchronous };
         code_flags |= if native_async { if instrs.iter().any(|i| matches!(i, Instr::Act(Action::Suspend, _))) { 512 } else { 128 } } else if unit.generator { 32 } else { 0 };
         if !self.lang.compile_modes.is_empty() { fold_boolean_branches(&mut instrs); }
-        let (mut code_constants, mut code_names) = code_metadata(&instrs, &doc, &local_names, !self.lang.class_builder.is_empty());
+        let (mut code_constants, mut code_names) = if self.discovering { (Vec::new(), Vec::new()) } else { code_metadata(&instrs, &doc, &local_names, !self.lang.class_builder.is_empty()) };
         code_names.sort_by_key(|name| self.tokens[source..self.pos].iter().position(|token| token.shape == Shape::Instr && token.lexeme == *name).unwrap_or(usize::MAX));
         if doc.is_some() && code_constants.len() == 1 { code_constants.push(Value::Null); }
         let mut cell_names = Vec::new();
@@ -4603,7 +4606,7 @@ impl<'a> Compiler<'a> {
                         self.pass_token(); sliced = true;
                     } else {
                         if self.on_any(&self.lang.pipe_words) && self.look_ahead(1).lexeme == self.look().lexeme && self.look_ahead(2).lexeme == self.look().lexeme {
-                            self.pass_token(); self.take(); self.take();
+                            self.pass_token(); self.pass_token(); self.take();
                             self.constant(Value::Null);
                             sliced = true;
                         } else { self.expr(0)?; }
@@ -6963,7 +6966,7 @@ impl<'a> Compiler<'a> {
             if kind == 4 {
                 self.read(&word);
                 self.write(&held);
-                self.pass_token(); self.take(); self.take();
+                self.pass_token(); self.pass_token(); self.take();
             } else if kind == 0 {
                 self.expr(0)?;
                 self.write(&held);
@@ -11634,7 +11637,7 @@ impl<'a> Compiler<'a> {
             let mut star_at = self.pos;
             if delegated || !ended(self) {
                 let spread = !delegated && !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest);
-                if spread { spread_seen = true; star_at = self.pos; self.take(); }
+                if spread { spread_seen = true; star_at = self.pos; self.pass_token(); }
                 self.expr(0)?;
                 if spread {
                     self.act(Action::Unpack(1, Some(0)), 1);
@@ -11649,7 +11652,7 @@ impl<'a> Compiler<'a> {
                         self.pass_token();
                         if ended(self) { break; }
                         let spread = !lang.unpack_rest.is_empty() && self.on_any(&lang.unpack_rest);
-                        if spread { spread_seen = true; star_at = self.pos; self.take(); }
+                        if spread { spread_seen = true; star_at = self.pos; self.pass_token(); }
                         self.expr(0)?;
                         count += 1;
                         if spread {
@@ -11711,7 +11714,7 @@ impl<'a> Compiler<'a> {
             && !lang.exceptions.iter().any(|w| w == tok.spelling())
             && !self.piece().idents.contains(&tok.lexeme) {
             self.pass_token();
-            let class = crate::value::Class { direct: std::cell::RefCell::new(Vec::new()), lineage: std::cell::RefCell::new(Vec::new()), outline: None, name: tok.lexeme.clone(), base: std::cell::RefCell::new(None), answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: crate::value::ClassMembers::new(Vec::new()), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: std::cell::RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
+            let class = crate::value::Class { direct: std::cell::RefCell::new(Vec::new()), lineage: std::cell::RefCell::new(Vec::new()), outline: None, name: tok.lexeme.clone(), base: std::cell::RefCell::new(None), answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: crate::value::ClassMembers::new(Vec::new()), slot_layout: std::cell::RefCell::new(None), dictionary_layout: std::cell::Cell::new(None), python_bases: std::cell::RefCell::new(None), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: std::cell::RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
             self.constant(Value::Class(Rc::new(class)));
             return self.indexing(from, origin);
         }
@@ -13300,6 +13303,17 @@ impl<'a> Compiler<'a> {
                     [Instr::Read(slot)] => Some(slot.ident.to_string()),
                     _ => None,
                 };
+                // A member read plainly, of a name no value kind answers for by itself,
+                // takes the same road whether or not the receiver has it: asking first
+                // would only repeat the answer the read gives.
+                let alike = call.is_none() && lang.member_amiss.is_some()
+                    && !lang.value_methods.contains_key(&named) && !lang.builtins.contains_key(&named)
+                    && !(lang.yield_suspends && [&lang.yield_send, &lang.yield_close, &lang.yield_throw].iter().any(|words| Lang::spells(words, &named)));
+                if alike {
+                    if !lang.trace_fields.is_empty() { self.put(member_range); }
+                    self.act(Action::Grab(named.as_str().into()), 1);
+                    continue;
+                }
                 let held = self.gensym("receiver");
                 self.write(&held);
                 self.read(&held);

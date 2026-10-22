@@ -2,6 +2,10 @@
 import codecs
 _mapping = __multibyte_native
 
+# Bytes that are neither controls nor beyond ASCII, for finding the
+# runs a stateful codec passes through untouched.
+_plain_marks = bytes(65 if 32 <= i < 128 else 46 for i in range(256))
+
 class _CodecCall:
     def __init__(self, codec, encoding):
         self.codec = codec
@@ -119,7 +123,37 @@ class MultibyteIncrementalEncoder(_State):
         self._pending = ''
         result = b''
         pos = 0
+        plain = self.codec.name != 'hz' and not self.codec.name.startswith('iso2022_')
         while pos < len(text):
+            if plain:
+                # A stateless codec writes natively up to a character it has no
+                # bytes for, or a final one that may still begin a pair.
+                wire, pos, stop = _mapping(7, self.codec.name, text, pos * 2 + bool(final))
+                result += wire
+                if stop == 0:
+                    break
+                if stop == 2:
+                    self._pending = text[pos:]
+                    break
+                error = UnicodeEncodeError(self.codec.name, text, pos, pos+1, 'illegal multibyte sequence')
+                replacement, pos = _handler(self.errors, error, len(text))
+                result += replacement if isinstance(replacement, bytes) else self.encode(replacement, False)
+                continue
+            if self._state[0] == (0 if self.codec.name == 'hz' else 66) and not self._state[4] & 1:
+                # In the unshifted state, an ASCII run that the table writes as
+                # itself needs no escapes: it goes out whole.
+                try:
+                    text[pos:].encode('ascii')
+                    run = len(text) - pos
+                except UnicodeEncodeError as fault:
+                    run = fault.start
+                if run:
+                    piece = text[pos:pos + run]
+                    wire, done, stop = _mapping(7, self.codec.name, piece, bool(final) if run == len(text) - pos else 1)
+                    if done and wire == piece[:done].encode('ascii'):
+                        result += wire
+                        pos += done
+                        continue
             first = ord(text[pos])
             if pos+1 == len(text) and not final and _mapping(3, self.codec.name, first, 0):
                 self._pending = text[pos:]
@@ -183,7 +217,38 @@ class MultibyteIncrementalDecoder(_State):
         pos = 0
         result = ''
         name = self.codec.name
+        plain = name != 'hz' and not name.startswith('iso2022_')
         while pos < len(data):
+            if plain:
+                # A stateless codec reads natively up to an illegal or unfinished unit.
+                text, pos, stop = _mapping(8, name, data, pos * 2 + bool(final))
+                result += text
+                if stop == 0 or stop == 2:
+                    break
+                reason = 'illegal multibyte sequence' if stop == 1 else 'incomplete multibyte sequence'
+                error = UnicodeDecodeError(name, data, pos, pos+1 if stop == 1 else len(data), reason)
+                replacement, pos = _handler(self.errors, error, len(data))
+                if not isinstance(replacement, str):
+                    raise TypeError('decoding error handler must return (str, int) tuple')
+                result += replacement
+                continue
+            if self._state[0] == (0 if name == 'hz' else 66) and not self._state[4] & 1:
+                # In the unshifted state, a run of plain bytes the table reads
+                # as themselves comes in whole.
+                end = data.translate(_plain_marks).find(b'.', pos)
+                if end < 0:
+                    end = len(data)
+                if name == 'hz':
+                    tilde = data.find(b'~', pos, end)
+                    if tilde >= 0:
+                        end = tilde
+                if end > pos:
+                    piece = data[pos:end]
+                    text, done, stop = _mapping(8, name, piece, 1)
+                    if done and text == piece[:done].decode('ascii'):
+                        result += text
+                        pos += done
+                        continue
             begin = pos
             prefix = b''
             width = 1

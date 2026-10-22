@@ -46,6 +46,18 @@ list. It answers only for patterns that parse without any error or warning; ever
 other pattern runs the unchanged Python compiler, which raises its own exceptions
 and warnings.
 
+`types.py` is the unchanged CPython v3.14.8 `Lib/types.py` (sha256
+8c54d3d5ffc1d1204237e6c69b25c27c7b05b483128f185eeed9ba7ef2229ac2); it star-imports
+`_types`, the runtime export layer corresponding to `Modules/_typesmodule.c`, whose names are
+the runtime's own kinds (the pure fallback in `types.py` reads the same values)
+including the native mapping proxy, plus helpers for unions and subscripted
+kinds. `CapsuleType` binds the native opaque-pointer value kind, whose owned name and finalizer keep native resources alive across value clones. `_datetime` re-exports the classes of `_pydatetime`, the very objects `datetime`
+exposes. Its native `datetime_CAPI` capsule owns the versioned C table described
+in `../../python_datetime_capi.h`: constructors call those classes, results retain native
+values, and errors retain their original exception payload. The capsule name
+`lumen.datetime_CAPI.v1` distinguishes this opaque-handle ABI from CPython
+PyObject/PyDateTime_CAPI binary layouts. It does not provide a CPython extension loader.
+
 Frame, C-API, dataclass, and pickle limitations remain visible as failures or
 honest skips in the reference suite. No reference test is rewritten to conceal
 a runtime limitation.
@@ -60,3 +72,18 @@ That constructor currently accepts positional code, globals and an optional
 name for module code; the remaining optional constructor arguments are not
 yet supported on this code representation. Generator expression operands
 retain their `.0` binding and are checked as iterators when resumed.
+
+`concurrent/interpreters/__init__.py` is a byte-for-byte copy of CPython
+v3.14.8 `Lib/concurrent/interpreters/__init__.py`. Importing it requires the
+absent `_interpreters` backend and propagates `ModuleNotFoundError`; callers
+can detect the unavailable facility through the standard import exception.
+
+`_queue.py` is a runtime implementation, not a copied CPython source file.
+It stores FIFO items in the runtime deque and exposes methods through native
+method descriptors. Reads can be non-blocking, timed, or indefinite; waiting
+polls the deque against monotonic deadlines. The runtime has no shared-thread
+backend. The same descriptor factory binds the native I/O base methods.
+
+Object and tuple layout attributes report Rust storage sizes: the allocated
+instance payload, the tuple carrier plus its vector header, and the size of
+each stored tuple value. They describe this runtime, not CPython C layouts.

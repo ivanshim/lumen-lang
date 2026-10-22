@@ -711,6 +711,7 @@ impl Knot {
                     if let Ok(shared) = b.shared.try_borrow() {
                         for (_, v) in shared.iter() { held(out, v); }
                     }
+                    if let Ok(bases) = b.supplied_bases.try_borrow() { for value in bases.iter() { held(out, value); } }
                     for (_, p) in &b.methods { out.push(Knot::Held(Value::Routine(p.clone()))); }
                     for parent in b.under().iter().chain(&b.ancestry()).chain(&b.parents()).chain(&b.answers) {
                         out.push(Knot::Held(Value::Blueprint(parent.clone())));
@@ -1040,6 +1041,7 @@ impl Web {
                     }
                 }
                 Knot::Held(Value::Blueprint(b)) => {
+                    if let Ok(mut bases) = b.supplied_bases.try_borrow_mut() { taken.extend(bases.take()); }
                     if let Ok(mut shared) = b.shared.try_borrow_mut() {
                         taken.extend(std::mem::take(&mut *shared).into_iter().map(|(_, v)| v));
                     }

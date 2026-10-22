@@ -105,9 +105,13 @@ class Mock:
             return
         object.__setattr__(self, name, value)
 
-    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None, spec=None):
+    def __init__(self, spec=None, side_effect=None, return_value=DEFAULT, wraps=None, name=None):
         self._mock_name = name
         self._mock_wraps = wraps
+        self._spec_class = None
+        self._mock_children = {}
+        if spec is not None and not isinstance(spec, (list, tuple)):
+            self._spec_class = spec if isinstance(spec, type) else type(spec)
         self._mock_methods = _spec_names(spec)
         self.return_value = return_value
         self._side_effect = None
@@ -186,6 +190,9 @@ class Mock:
         self.call_args = None
         self.call_args_list = []
 
+        for child in list(self._mock_children.values()):
+            child.reset_mock()
+
     def assert_called(self):
         if not self.called:
             raise AssertionError('expected a call and there was none')
@@ -230,7 +237,14 @@ class Mock:
             raise AttributeError(name)
         child = type(self)(name=name)
         setattr(self, name, child)
+        self._mock_children[name] = child
         return child
+
+    @property
+    def __class__(self):
+        spec = self.__dict__.get('_spec_class')
+        return type(self) if spec is None else spec
+
 
 
 # What the reference hands back from each of the double-underscore names
@@ -276,9 +290,9 @@ class MagicMock(Mock):
     # The item, unary and arithmetic names are given to the class
     # below from one list; the asynchronous ones and the rest the
     # reference carries are not here.
-    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None, spec=None):
+    def __init__(self, spec=None, side_effect=None, return_value=DEFAULT, wraps=None, name=None):
         self._magic = {}
-        Mock.__init__(self, name, return_value, side_effect, wraps, spec)
+        Mock.__init__(self, spec, side_effect, return_value, wraps, name)
         for word in _MAGIC_ANSWERS:
             child = Mock(name=word)
             child.return_value = _MAGIC_ANSWERS[word]
@@ -288,6 +302,10 @@ class MagicMock(Mock):
         walker.return_value = iter([])
         self._magic['__iter__'] = walker
         setattr(self, '__iter__', walker)
+        if self._mock_methods is None or '__next__' in self._mock_methods:
+            stepper = Mock(name='__next__')
+            self._magic['__next__'] = stepper
+            setattr(self, '__next__', stepper)
 
     def __repr__(self):
         if self._mock_name is None:
@@ -713,4 +731,6 @@ def mock_open(mock=None, read_data=''):
 
 
 def __getattr__(name):
-    raise 'NotImplementedError: unittest.mock.' + name + ' is not supported'
+    # An absent name is an AttributeError, as a module protocol asks: a
+    # getattr with a default, and pickle's scan of sys.modules, rely on it.
+    raise AttributeError("module 'unittest.mock' has no attribute '" + name + "'")

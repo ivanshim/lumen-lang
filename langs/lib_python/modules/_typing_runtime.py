@@ -106,11 +106,13 @@ def union_equal(union, other):
     from typing import Union
     if not isinstance(other, Union):
         return NotImplemented
+    if union is other:
+        return True
     if getattr(union, '\0union-hashable') != getattr(other, '\0union-hashable'):
         return False
     left = getattr(union, '\0union-unhashable')
     right = getattr(other, '\0union-unhashable')
-    return len(left) == len(right) and all(member in right for member in left) and all(member in left for member in right)
+    return len(left) == len(right) and all(any(member is candidate or member == candidate for candidate in right) for member in left) and all(any(member is candidate or member == candidate for candidate in left) for member in right)
 
 # Give unordered alternatives the same hash regardless of their insertion order.
 def union_hash(union):
@@ -210,7 +212,7 @@ def union_state(arguments):
         try:
             hash(argument)
         except Exception:
-            if argument in unhashable:
+            if any(member is argument or member == argument for member in unhashable):
                 continue
             unhashable.append(argument)
         else:
@@ -250,7 +252,9 @@ def type_alias_subscribe(alias, arguments):
 
 # GenericAlias calls attach their actual specialization when the result permits it.
 def alias_call(alias, packed):
-    result = alias.__origin__(*packed)
+    return alias_result(alias, alias.__origin__(*packed))
+
+def alias_result(alias, result):
     try:
         result.__orig_class__ = alias
     except (AttributeError, TypeError):

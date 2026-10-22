@@ -526,9 +526,11 @@ only. The extension labels so far, all from PHP:
   which: the wide encoding, then the seven-bit one, then the one holding
   every byte to be the character of that number, then the one which
   writes a character past a byte as a backslash escape and reads such an
-  escape back. UTF-8, ASCII and Latin-1 conversion runs in each kernel.
-  Other codecs are dispatched through the Python `codecs` library:
-  UTF-16/32, UTF-7, Unicode escapes, single-byte character maps and IDNA.
+  escape back. UTF-8, ASCII and Latin-1 conversion runs in each kernel,
+  and so does UTF-16/32 under its usual spellings, its error handlers
+  still called back in the library. Other codecs are dispatched through
+  the Python `codecs` library: UTF-7, Unicode escapes, single-byte
+  character maps and IDNA.
   `ext.system.bytes.strict` names strict conversion. The standard error
   handlers and registered callbacks receive Unicode exception objects
   with the original input, encoding, half-open error span and reason.
@@ -3120,7 +3122,7 @@ only. The extension labels so far, all from PHP:
   fourth says how many keepings are in force. A keeping within a keeping
   writes into the one around it, and whatever is still being kept when
   the run ends is let go then.
-  
+
   Only these four are kernel work, because only the kernel knows where
   what a program writes out goes. Everything else a language spells over
   them — letting a keeping go out again, emptying one without letting it
@@ -4598,6 +4600,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.call.outcome` | - | - | `__call_outcome` | - | - | - | - | - | - | - |
 | `ext.builtin.callable` | - | - | `callable` | - | - | - | - | - | - | - |
 | `ext.builtin.calls` | - | - | `__warning_calls` | - | `__calls` | - | - | - | - | - |
+| `ext.builtin.capsule_type` | - | - | `__capsule_type` | - | - | - | - | - | - | - |
 | `ext.builtin.cell.repr` | - | - | `<cell at 0x` `: ` ` object at 0x` `>` `empty` | - | - | - | - | - | - | - |
 | `ext.builtin.class.beneath` | - | - | - | - | `__class_beneath` | - | - | - | - | - |
 | `ext.builtin.class.derive` | - | - | `__derive_class` | - | - | - | - | - | - | - |
@@ -4670,6 +4673,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.core.vars` | - | - | `TypeError: vars() argument must have __dict__ attribute` | - | - | - | - | - | - | - |
 | `ext.builtin.core.zero` | - | - | `ZeroDivisionError: division by zero` | - | - | - | - | - | - | - |
 | `ext.builtin.crypto` | - | - | `__crypto` | - | - | - | - | - | - | - |
+| `ext.builtin.datetime.capi` | - | - | `__lumen_datetime_capi__` | - | - | - | - | - | - | - |
 | `ext.builtin.default` | - | - | `default` | - | - | - | - | - | - | - |
 | `ext.builtin.define` | - | - | - | - | `define` | - | - | - | - | - |
 | `ext.builtin.define.class_constant` | - | - | - | - | `define(): Argument #1 ($constant_name) cannot be a class constant` | - | - | - | - | - |
@@ -4717,7 +4721,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.exceptions.setstate` | - | - | `__setstate__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.suppress` | - | - | `__suppress_context__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.syntax` | - | - | `msg` `filename` `lineno` `offset` `text` `end_lineno` `end_offset` `print_file_and_line` | - | - | - | - | - | - | - |
-| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` `f_back` `f_locals` `f_globals` `gi_frame` `gi_code` `tb_end_lineno` `tb_colno` `tb_end_colno` `ag_frame` `cr_frame` `gi_suspended` `cr_suspended` `cr_running` `gi_yieldfrom` `__unused_python314_generator_state__` `tb_lasti` `f_builtins` | - | - | - | - | - | - | - |
+| `ext.builtin.exceptions.traceback` | - | - | `traceback` `tb_lineno` `tb_next` `tb_frame` `f_lineno` `f_code` `co_name` `co_filename` `co_firstlineno` `frame` `<module>` `f_back` `f_locals` `f_globals` `gi_frame` `gi_code` `tb_end_lineno` `tb_colno` `tb_end_colno` `ag_frame` `cr_frame` `gi_suspended` `cr_suspended` `cr_running` `gi_yieldfrom` `__unused_python314_generator_state__` `tb_lasti` `cr_code` `cr_await` `cr_origin` `f_builtins` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.member` | - | - | `__traceback__` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.traceback.with` | - | - | `with_traceback` | - | - | - | - | - | - | - |
 | `ext.builtin.exceptions.unicode` | - | - | `encoding` `object` `start` `end` `reason` | - | - | - | - | - | - | - |
@@ -4757,6 +4761,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.input` | - | - | `input` | - | - | - | - | - | - | - |
 | `ext.builtin.input.reader` | - | - | `sys` `_input` | - | - | - | - | - | - | - |
 | `ext.builtin.instance` | - | - | `isinstance` | - | - | - | - | - | - | - |
+| `ext.builtin.io.text_append` | - | - | `__io_text_append` | - | - | - | - | - | - | - |
 | `ext.builtin.isinstance` | - | - | `isinstance` | - | - | - | - | - | - | - |
 | `ext.builtin.isset` | - | - | - | - | `isset` | - | - | - | - | - |
 | `ext.builtin.issubclass` | - | - | `issubclass` | - | - | - | - | - | - | - |
@@ -4793,6 +4798,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.__floor__` | - | - | `__floor__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.__index__` | - | - | `__index__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.__truediv__` | - | - | `int.__truediv__` | - | - | - | - | - | - | - |
+| `ext.builtin.method.__trunc__` | - | - | `__trunc__` | - | - | - | - | - | - | - |
 | `ext.builtin.method.append` | - | - | `append` | - | - | - | - | - | - | - |
 | `ext.builtin.method.as_integer_ratio` | - | - | `as_integer_ratio` | - | - | - | - | - | - | - |
 | `ext.builtin.method.bit_count` | - | - | `bit_count` | - | - | - | - | - | - | - |
@@ -4883,6 +4889,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.method.upper` | - | - | `upper` | - | - | - | - | - | - | - |
 | `ext.builtin.method.values` | - | - | `values` | - | - | - | - | - | - | - |
 | `ext.builtin.method.zfill` | - | - | `zfill` | - | - | - | - | - | - | - |
+| `ext.builtin.method_descriptor` | - | - | `__method_descriptor` | - | - | - | - | - | - | - |
 | `ext.builtin.min` | - | - | `min` | - | - | - | - | - | - | - |
 | `ext.builtin.module.helper.amiss` | - | - | `TypeError: invalid module helper arguments` | - | - | - | - | - | - | - |
 | `ext.builtin.module.load` | - | - | `__load_module` | - | - | - | - | - | - | - |
@@ -6171,6 +6178,11 @@ space-only indentation and blank lines can be prepared natively; indentation
 transitions, tabs, complex interpolation and diagnostic cases retain the
 adapter's scanner.
 
+`ext.builtin.io.text_append` appends exact strings to initialized memory text
+streams at their end, updating position, length and newline history together.
+The adapter retains the general path for subclasses, overwrites and unpaired
+surrogates. A missing native result leaves the stream unchanged.
+
 `ext.builtin.text.scan_ascii` scans the bounded ASCII span accepted by a
 character set and returns its ending code-point index. The regular-expression
 adapter uses it for repeated atoms and captured spans, retaining its Unicode
@@ -6296,16 +6308,23 @@ routine's frame is absent: the frame walk in `sys._getframe` and along
 `ext.builtin.static_namespace` reads stored namespaces and class linearizations
 without invoking attribute hooks, metaclass properties, or other descriptors.
 `ext.builtin.multibyte` names the Python-only CJK mapping primitive used by the multibyte codec state machines. It uses the codec port's released mapping tables; other languages leave it unregistered.
+
+`ext.builtin.method_descriptor` binds a library method to a native method descriptor, preserving its declaring class and validating receivers before calling its implementation.
+
 `ext.stmt.class.detail.text_signature` names optional native callable signature metadata.
 `ext.stmt.class.detail.native.getsets` declares triples of module, native class, and getter names whose adapter implementations become read-only native data descriptors. Class access returns the descriptor; instance access validates its owner and calls the getter.
 
 Python text methods validate named error policies in development mode (`-X dev`). Private `__codec_encode` and `__codec_decode` spellings reuse the bytes encode/decode labels for low-level registry conversion, where unused policies remain lazy.
 `ext.builtin.multibyte` names the Python native CJK mapping primitive. It provides complete CJK character mappings, prefix validation, GB18030 ranges, and Unicode 16.0/3.2 normalization data to the Python codec state machines. Other languages do not register it.
+
+`ext.builtin.capsule_type` exposes the native opaque-pointer capsule kind to the Python types module; pointer lifetime and finalization belong to the runtime.
 Python's `ext.builtin.system.refcount` exposes the live strong-owner count of
 reference-backed values for `sys.getrefcount`; values without reference-counted
 storage report that limitation instead of inventing a count.
 
 `ext.builtin.partial.call` supplies native invocation for Python partial objects, merging their stored positional and keyword arguments without adding a Python frame.
+
+`ext.builtin.datetime.capi` binds the datetime classes and UTC into the owned, versioned native C interface documented in `python_datetime_capi.h`. Its opaque handles use lumen ownership, not the CPython PyObject ABI.
 `ext.builtin.lzma_decode` names the Python-only one-stream system liblzma decoder. It returns decoder status, output bytes and consumed input; the Python facade joins concatenated XZ/LZMA streams. Raw filter chains and incremental codec objects are not yet exposed.
 
 Python text methods validate named error policies in development mode (`-X dev`). Private `__codec_encode` and `__codec_decode` spellings reuse the bytes encode/decode labels for low-level registry conversion, where unused policies remain lazy.

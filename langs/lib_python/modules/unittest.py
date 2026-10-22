@@ -951,8 +951,68 @@ def _compile_regex(pattern):
     # CPython's own unittest compiles it.
     if getattr(pattern, 'search', None) is not None:
         return pattern
+    if type(pattern) is str:
+        literal = _literal_text(pattern)
+        if literal is not None:
+            return _LiteralPattern(pattern, literal)
     import re
     return re.compile(pattern)
+
+
+# What a pattern spells when it holds nothing but plain characters and
+# backslash-escaped punctuation (so the whole regular expression engine,
+# whose compiling dwarfs the matching, has nothing to add); None otherwise.
+def _literal_text(pattern):
+    parts = []
+    for piece in pattern.split('\\\\'):
+        pieces = piece.split('\\')
+        for at in range(len(pieces)):
+            part = pieces[at]
+            if at:
+                if not part or part[0].isalnum() or not part[0].isascii():
+                    return None
+                part = part[1:]
+            for meta in '.^$*+?{}[]|()':
+                if meta in part:
+                    return None
+        parts.append(''.join(pieces))
+    return '\\'.join(parts)
+
+
+class _LiteralMatch:
+    def __init__(self, string, begin, end):
+        self.string = string
+        self._span = (begin, end)
+
+    def start(self, group=0):
+        return self._span[0]
+
+    def end(self, group=0):
+        return self._span[1]
+
+    def span(self, group=0):
+        return self._span
+
+    def group(self, group=0):
+        return self.string[self._span[0]:self._span[1]]
+
+    def __bool__(self):
+        return True
+
+
+class _LiteralPattern:
+    def __init__(self, pattern, literal):
+        self.pattern = pattern
+        self._literal = literal
+
+    def search(self, string):
+        if not isinstance(string, str):
+            import re
+            return re.compile(self.pattern).search(string)
+        begin = string.find(self._literal)
+        if begin < 0:
+            return None
+        return _LiteralMatch(string, begin, begin + len(self._literal))
 
 
 def _matches(pattern, text):

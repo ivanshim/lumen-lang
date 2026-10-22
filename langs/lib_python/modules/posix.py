@@ -970,6 +970,26 @@ def statvfs(path):
 def fstatvfs(fd):
     return statvfs_result(_call('fstatvfs', _cint(fd)))
 
+# Linux waitpid option: return at once when the child is still running.
+WNOHANG = 1
+
+
+def forkpty():
+    """Fork a session leader whose standard streams are a new terminal.
+
+    Returns (pid, master_fd). The child sees pid 0.
+    """
+    return _call('forkpty')
+
+
+def _exit(status):
+    _call('_exit', _cint(status))
+
+
+def waitpid(pid, options, /):
+    return _call('waitpid', _cint(pid), _cint(options))
+
+
 # Keep native module functions callable without Python function binding.
 class _BuiltinFunction(staticmethod):
     __hash__ = object.__hash__

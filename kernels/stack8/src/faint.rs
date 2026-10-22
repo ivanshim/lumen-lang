@@ -366,7 +366,7 @@ pub fn walk_departing(dying: &mut Generator) {
         // not drop a captured suspended body and recursively rebuild it.
         let _ = UNFINISHED.try_with(|q| {
             let again = Generator {
-                name: dying.name.clone(), qualified: dying.qualified.clone(), coroutine_identity: dying.coroutine_identity, coroutine_origin: dying.coroutine_origin.clone(), async_hooks_initialized: dying.async_hooks_initialized, async_finalizer: dying.async_finalizer.clone(), trace_frame: dying.trace_frame.take(), suspended_position: dying.suspended_position,
+                name: dying.name.clone(), qualified: dying.qualified.clone(), named: [None, None], coroutine_identity: dying.coroutine_identity, coroutine_origin: dying.coroutine_origin.clone(), async_hooks_initialized: dying.async_hooks_initialized, async_finalizer: dying.async_finalizer.clone(), trace_frame: dying.trace_frame.take(), suspended_position: dying.suspended_position,
                 program: dying.program.clone(),
                 frame: std::mem::take(&mut dying.frame),
                 stack: std::mem::take(&mut dying.stack),
@@ -596,6 +596,12 @@ fn place_of(value: &Value) -> Option<usize> {
     })
 }
 
+/// A variable slot nothing was ever assigned to: it holds nothing to reach and cannot
+/// be part of a round, so the graph leaves it out (every hold on it counts as outside).
+fn unset_slot(value: &Value) -> bool {
+    matches!(value, Value::Bond(cell) if matches!(cell.try_borrow().as_deref(), Ok(Value::Blank)))
+}
+
 /// How many strong holds there are on a value's pointer.
 fn holds_on(value: &Value) -> usize {
     match value {
@@ -645,6 +651,7 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
             if let Ok(shared) = c.shared.try_borrow() {
                 out.extend(shared.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
             }
+            if let Ok(bases) = c.python_bases.try_borrow() { out.extend(bases.iter().cloned()); }
             out.extend(c.methods.iter().map(|(_, p)| Value::Routine(p.clone())));
             out.extend(c.base().iter().map(|b| Value::Class(b.clone())));
             out.extend(c.lineage().iter().chain(&c.direct()).chain(&c.answers).map(|b| Value::Class(b.clone())));
@@ -890,6 +897,7 @@ impl Graph {
         }
         for root in roots {
             let Some(place) = place_of(&root) else { continue };
+            if unset_slot(&root) { continue; }
             row_of(&mut nodes, &mut rows, &mut open, root, place, 0);
         }
         let mut children = Vec::new();
@@ -905,9 +913,13 @@ impl Graph {
                     Value::Method(o, r, _) => (Value::Object(o), Some(Value::Routine(r))),
                     other => (other, None),
                 };
-                if let Some(place) = place_of(&first) { reached.push(row_of(&mut nodes, &mut rows, &mut open, first, place, 1)); }
+                if let Some(place) = place_of(&first) {
+                    if !unset_slot(&first) { reached.push(row_of(&mut nodes, &mut rows, &mut open, first, place, 1)); }
+                }
                 if let Some(second) = second {
-                    if let Some(place) = place_of(&second) { reached.push(row_of(&mut nodes, &mut rows, &mut open, second, place, 1)); }
+                    if let Some(place) = place_of(&second) {
+                        if !unset_slot(&second) { reached.push(row_of(&mut nodes, &mut rows, &mut open, second, place, 1)); }
+                    }
                 }
             }
             nodes[at].reaches = reached;
@@ -970,6 +982,7 @@ impl Graph {
                     }
                 }
                 Value::Class(c) => {
+                    if let Ok(mut bases) = c.python_bases.try_borrow_mut() { grave.extend(bases.take()); }
                     if let Ok(mut shared) = c.shared.try_borrow_mut() {
                         grave.extend(std::mem::take(&mut *shared).into_iter().map(|(_, v)| v));
                     }

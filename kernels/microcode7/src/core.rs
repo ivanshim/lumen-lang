@@ -158,6 +158,7 @@ impl Value {
                 _ => state.walks.as_deref().unwrap_or("iterator"),
             })),
             Self::Backtrace(_) => "traceback",
+            Self::Opaque(_) => "PyCapsule",
             Self::Span(_) => "slice", Self::Ellipsis => "ellipsis", Self::Refusal(_) => "NotImplementedType",
             Self::Blueprint(_) | Self::KindOf(_) | Self::OctetKind { .. } => "type",
             // A member of a row, a map or a text, handed over bound to
@@ -182,6 +183,7 @@ impl Value {
             Self::Wrapped(31, held) => match held.is_empty() { true => "wrapper_descriptor", false => "method-wrapper" },
             Self::Wrapped(78, _) => "wrapper_descriptor",
             Self::Wrapped(1 | 2 | 10..=12 | 36 | 59 | 120 | 200 | 202, _) => "wrapper_descriptor",
+            Self::Wrapped(239, _) => "method-wrapper",
             Self::Wrapped(133, _) => "method_descriptor",
             Self::Wrapped(134, _) => "builtin_function_or_method",
             Self::Wrapped(3, kept) if matches!(kept.first(), Some(Self::Wrapped(133, _) | Self::Intrinsic(..))) => "builtin_function_or_method",
@@ -326,6 +328,7 @@ impl Value {
 
     pub fn hash_number(&self) -> Option<i64> {
         let raw = match self {
+            Self::Opaque(capsule) => (std::rc::Rc::as_ptr(capsule) as usize >> 4) as i64,
             Self::Wrapped(185, contents) => {
                 match (contents.first(), contents.last()) {
                     (Some(Self::Blueprint(class)), Some(Self::Thing(instance))) => {

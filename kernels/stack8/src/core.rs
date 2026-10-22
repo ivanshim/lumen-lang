@@ -143,6 +143,7 @@ impl Value {
             Value::View(view) => crate::value::view_kind(&view.1),
             Value::Trace(_) => "traceback",
             Value::Slice(_) => "slice",
+            Value::Capsule(_) => "PyCapsule",
             Value::Ellipsis => "ellipsis",
             Value::Declined(_) => "NotImplementedType",
             // A cursor is known by what it walks, as CPython names it:
@@ -189,6 +190,7 @@ impl Value {
             Value::Adapter(w) if w.0 == 206 => "method-wrapper",
             Value::Adapter(w) if w.0 == 207 => "wrapper_descriptor",
             Value::Adapter(w) if w.0 == 129 => "function",
+            Value::Adapter(w) if w.0 == 239 => "method-wrapper",
             Value::Adapter(w) if w.0 == 63 => "method_descriptor",
             Value::Adapter(w) if w.0 == 64 => "builtin_function_or_method",
             Value::Adapter(w) if w.0 == 3 && matches!(w.1.first(), Some(Value::Adapter(draw)) if draw.0 == 63) => "builtin_function_or_method",
@@ -278,6 +280,7 @@ impl Value {
     pub fn core_hash(&self) -> Option<i64> {
         let finish = |n| if n == -1 { -2 } else { n };
         match self {
+            Value::Capsule(held) => Some(finish((std::rc::Rc::as_ptr(held) as usize >> 4) as i64)),
             Value::Adapter(slot) if slot.0 == 183 => {
                 let hashed = match (slot.1.first(), slot.1.last()) {
                     (Some(Value::Class(owner)), Some(Value::Object(receiver))) => {

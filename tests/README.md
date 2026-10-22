@@ -205,7 +205,7 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `python-3.14.8/test_pep646_syntax.py` | `Lib/test/test_pep646_syntax.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_charmapcodec.py`, `python-3.14.8/test/testcodec.py` | `Lib/test/test_charmapcodec.py`, `Lib/test/testcodec.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
-| `langs/lib_python/modules/xml/` | [python/cpython](https://github.com/python/cpython) `Lib/xml/__init__.py`, `Lib/xml/dom/__init__.py`, `Lib/xml/dom/domreg.py`, `Lib/xml/dom/minicompat.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/xml/` | [python/cpython](https://github.com/python/cpython) `Lib/xml/__init__.py`, `Lib/xml/dom/__init__.py`, `Lib/xml/dom/domreg.py`, `Lib/xml/dom/minicompat.py`, `Lib/xml/etree/__init__.py`, `Lib/xml/etree/ElementTree.py`, `Lib/xml/etree/ElementPath.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_copyreg.py`, `python-3.14.8/test/{pickletester,picklecommon}.py` | `Lib/test/test_copyreg.py` and the pickle support classes it imports, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_rlcompleter.py`, `langs/lib_python/modules/rlcompleter.py` | CPython `Lib/test/test_rlcompleter.py`, `Lib/rlcompleter.py`, unchanged | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/` | `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -529,6 +529,9 @@ source exists. Full working measurements are in ignored `probe/`.
 | `xml/dom/__init__.py` | unchanged release copy | `e7139ed583a7f60fbbc750044df4f1e3655371d8b8c4f80a43bff4aa3ba97857` | `e7139ed583a7f60fbbc750044df4f1e3655371d8b8c4f80a43bff4aa3ba97857` |
 | `xml/dom/domreg.py` | unchanged release copy | `826b02a803930834b96b1086cbee7db1d21c684f65dd3073706dc7bb5ba1a3e8` | `826b02a803930834b96b1086cbee7db1d21c684f65dd3073706dc7bb5ba1a3e8` |
 | `xml/dom/minicompat.py` | unchanged release copy | `42974c4c67803dfe80b016ff8aeea0d1e5c751703ab3aec5be765f4e534367be` | `42974c4c67803dfe80b016ff8aeea0d1e5c751703ab3aec5be765f4e534367be` |
+| `xml/etree/__init__.py` | unchanged release copy | `91950edfb196c105d93886f8af7ea3c0a79e06a6b63be3e5a4ea09804e8672a6` | `91950edfb196c105d93886f8af7ea3c0a79e06a6b63be3e5a4ea09804e8672a6` |
+| `xml/etree/ElementTree.py` | unchanged release copy | `850760098750fbce571ca4411ec444e70d73a0afe3efe74541d4eb99b3ab1b63` | `850760098750fbce571ca4411ec444e70d73a0afe3efe74541d4eb99b3ab1b63` |
+| `xml/etree/ElementPath.py` | unchanged release copy | `f9c2102cf56cf9859d34e69877ad4e8a04a0cdabb6390cf2189f04aa8101759f` | `f9c2102cf56cf9859d34e69877ad4e8a04a0cdabb6390cf2189f04aa8101759f` |
 
 ### Reference measurements
 

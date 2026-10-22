@@ -146,6 +146,7 @@ def _environment(name):
     return value
 
 # Stub: startup flags describe the fixed library environment.
+_dev_mode = None
 class _Flags:
     debug = 0
     inspect = 0
@@ -167,10 +168,15 @@ class _Flags:
     # interpreter hand over as those) turn on or off, read when asked.
     @property
     def dev_mode(self):
-        return bool(_environment('PYTHONDEVMODE')) or _host_environment('environ')[1].get(b'LUMEN_PYTHON_DEV_MODE') == b'1'
+        # Settled at start-up like the real flag: read once, then kept.
+        global _dev_mode
+        if _dev_mode is None:
+            _dev_mode = bool(_environment('PYTHONDEVMODE')) or _host_environment('environ')[1].get(b'LUMEN_PYTHON_DEV_MODE') == b'1'
+        return _dev_mode
     @property
     def utf8_mode(self):
-        return 0 if _environment('PYTHONUTF8') == '0' else 1
+        # 3.14 leaves this off unless PYTHONUTF8=1. Unset and 0 stay off.
+        return 1 if _environment('PYTHONUTF8') == '1' else 0
     @property
     def warn_default_encoding(self):
         return 1 if _environment('PYTHONWARNDEFAULTENCODING') else 0
@@ -250,10 +256,7 @@ def set_int_max_str_digits(maxdigits):
         raise ValueError('maxdigits must be 0 or larger than 640')
     _int_max_str_digits = maxdigits
 
-# None of the three streams a program finds here is ever the far end
-# of a real terminal, whatever the host's own stdio happens to be, so
-# isatty() always answers no and a test that only runs against a tty
-# takes its own skip road instead of finding an attribute missing.
+# Standard streams validate their descriptor before asking os.isatty.
 class _StandardStream:
     closed = False
     encoding = 'utf-8'
