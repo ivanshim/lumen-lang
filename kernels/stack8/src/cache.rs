@@ -32,6 +32,10 @@ fn constant(value: &Value) -> Result<Json, String> {
         Value::SortOf(kind) => ("kind", serde_json::to_value(kind).map_err(|e| e.to_string())?),
         Value::Words(words, marked) => ("words", json!([words, marked])),
         Value::Declined(words) => ("declined", json!(words)),
+        Value::Set(members) if members.borrow().fixed => {
+            let members = members.borrow();
+            ("frozenset", json!([members.word, members.items()]))
+        }
         _ => return Err(format!("ValueError: code cache cannot store {}", value.core_kind())),
     };
     Ok(json!({"kind": kind, "data": data}))
@@ -71,6 +75,15 @@ fn restore(record: Json) -> Result<Value, String> {
         "kind" => Value::SortOf(read!(crate::value::Sort)),
         "words" => { let (words, marked) = read!((Rc<Vec<String>>, bool)); Value::Words(words, marked) },
         "declined" => Value::Declined(read!(Rc<str>)),
+        "frozenset" => {
+            let (word, items) = read!((String, Vec<Value>));
+            let mut members = crate::value::Members::empty(word, true);
+            for item in items {
+                let key = item.member_key().map_err(|kind| format!("unaddressable set member {kind}"))?;
+                members.insert(key, item);
+            }
+            Value::Set(Rc::new(RefCell::new(members)))
+        }
         _ => return Err("unknown constant kind".into()),
     })
 }
