@@ -40,6 +40,7 @@ INT_MAX = (1 << 31) - 1
 LONG_MIN = -(1 << 63)
 LONG_MAX = (1 << 63) - 1
 ULONG_MAX = (1 << 64) - 1
+FLT_MAX = 3.4028234663852886e+38
 
 def PyTime_AsSecondsDouble(value):
     import operator
@@ -72,3 +73,9 @@ def Py_CompileStringExFlags(source, filename, start, flags=0, optimize=-1):
 # This interpreter uses IEEE-754 quiet NaNs: the most significant
 # fraction bit is set. Platforms that invert that bit use 1.
 nan_msb_is_signaling = 0
+
+def set_errno(code):
+    # Plant the host C library's error number. A magnitude that overflows
+    # records a range error there; the next magnitude must not treat a
+    # number left behind as its own overflow.
+    __math('set_errno', code)

@@ -230,9 +230,19 @@ from test import support
 
 TESTFN_ASCII = '@test_{}_tmp'.format(os.getpid())
 TESTFN_UNICODE = TESTFN_ASCII + '-\xe0\xf2\u0258\u0141\u011f'
-# The runtime supports UTF-8 text paths, but not surrogateescape/bytes paths.
+# Surrogate-escaped names decode and quote correctly, so UNDECODABLE follows CPython.
 TESTFN_UNENCODABLE = None
 TESTFN_UNDECODABLE = None
+for _name in (b'\xe7w\xf0', b'\xff', b'\xae\xd5' b'\xed\xb2\x80', b'\xed\xb4\x80', b'\x81\x98'):
+    try:
+        _name.decode(sys.getfilesystemencoding())
+    except UnicodeDecodeError:
+        try:
+            _name.decode(sys.getfilesystemencoding(), sys.getfilesystemencodeerrors())
+        except UnicodeDecodeError:
+            continue
+        TESTFN_UNDECODABLE = os.fsencode(TESTFN_ASCII) + _name
+        break
 FS_NONASCII = '\u00e6'
 TESTFN_NONASCII = TESTFN_ASCII + FS_NONASCII
 SAVEDCWD = os.getcwd()

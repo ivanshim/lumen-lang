@@ -221,6 +221,33 @@ pub fn real(n: f64) -> Value {
     value
 }
 
+/// Length of the two parts. The host error number is cleared on entry so a
+/// range error remembered from earlier work is not mistaken for this length
+/// overflowing. An infinite part yields an infinite length and a cleared
+/// error number; a NaN with no infinite part yields a NaN, likewise cleared.
+/// Two finite parts whose length will not fit record ERANGE and refuse.
+pub fn modulus(real: f64, imag: f64) -> Result<f64, String> {
+    unsafe { *libc::__errno_location() = 0 };
+    if !real.is_finite() || !imag.is_finite() {
+        let length = if real.is_infinite() {
+            real.abs()
+        } else if imag.is_infinite() {
+            imag.abs()
+        } else {
+            f64::NAN
+        };
+        unsafe { *libc::__errno_location() = 0 };
+        return Ok(length);
+    }
+    let length = real.hypot(imag);
+    if !length.is_finite() {
+        unsafe { *libc::__errno_location() = libc::ERANGE };
+        return Err("OverflowError: absolute value too large".to_string());
+    }
+    unsafe { *libc::__errno_location() = 0 };
+    Ok(length)
+}
+
 /// A complaint already bearing its kind needs no outer banner.
 pub fn says(lang: &Lang, message: &str) -> bool {
     if lang.complex_words["ext.builtin.complex"].is_empty() { return false; }
