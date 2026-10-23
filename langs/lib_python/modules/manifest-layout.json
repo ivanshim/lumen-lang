@@ -69,7 +69,8 @@
     "unittest.mock": "runtime_adapters/native_unittest_mock.py",
     "tracemalloc": "runtime_adapters/native_tracemalloc.py",
     "ast": "runtime_adapters/native_ast.py",
-    "test.test_importlib.util": "runtime_adapters/native_test_importlib_util.py"
+    "test.test_importlib.util": "runtime_adapters/native_test_importlib_util.py",
+    "unittest.result": "runtime_adapters/native_unittest_result.py"
   },
   "names": {
     "runtime_sources/unittest_case.py": "unittest.case",

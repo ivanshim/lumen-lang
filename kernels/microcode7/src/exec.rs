@@ -37639,7 +37639,7 @@ impl<'a> Machine<'a> {
                 }
             }
             if let Some(Value::Thing(local)) = v.get(2).map(Value::settled) {
-                let maps = self.inherited_entry(&local.blueprint(), "__getitem__").is_some() || Self::underlying(&Value::Thing(local.clone())).map_or(false, |inner| matches!(inner.settled(), Value::Dict(_)));
+                let maps = self.locals_proxy(&Value::Thing(local.clone())).is_some() || self.inherited_entry(&local.blueprint(), "__getitem__").is_some() || Self::underlying(&Value::Thing(local.clone())).map_or(false, |inner| matches!(inner.settled(), Value::Dict(_)));
                 if !maps {
                     return Err(if weighing { "TypeError: locals must be a mapping".to_owned() } else { format!("TypeError: locals must be a mapping or None, not {}", local.blueprint().name) });
                 }
@@ -37971,7 +37971,7 @@ impl<'a> Machine<'a> {
             Ok(()) => self.value_of(&built.program.body, &top),
         };
         let ran = match ran {
-            Ok(answer) if traced => self.emit_trace("return", if mode == 1 { answer.clone() } else { Value::Nil }).map(|()| answer),
+            Ok(answer) if !built.program.generator && !matches!(self.tracing_function, Value::Nil) => self.emit_trace("return", if mode == 1 { answer.clone() } else { Value::Nil }).map(|()| answer),
             other => other,
         };
         let ran = self.traced_result(ran);

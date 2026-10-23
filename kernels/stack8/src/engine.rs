@@ -33424,6 +33424,9 @@ impl Engine<'_> {
     /// for the member's own file and bytes, the way the reference zip
     /// importer reads a module out of an archive.
     fn zip_module_source(&mut self, where_: &str, leaf: &str) -> Option<(String, Vec<u8>)> {
+        // The archive reader needs buffer types supplied by builtins. Its
+        // bootstrap dependencies must be read before path hooks can run.
+        if self.importing.contains("builtins") || self.importing.contains("sys") { return None; }
         let library = self.modules.get("_imp").cloned()?;
         let reader = self.member_of(library, "_zip_module_source").ok()??;
         let answer = self.call_held(reader, vec![Value::text(where_), Value::text(leaf)]).ok()?;

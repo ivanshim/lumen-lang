@@ -437,7 +437,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_source_inspect", include_str!("runtime_sources/source_inspect.py"), "runtime_sources/source_inspect.py"),
     ("test.test_dataclasses.__main__", include_str!("runtime_sources/test_package_main.py"), "runtime_sources/test_package_main.py"),
     ("unittest.case", include_str!("runtime_sources/unittest_case.py"), "unittest/case.py"),
-    ("unittest.result", include_str!("runtime_sources/unittest_result.py"), "unittest/result.py"),
+    ("unittest.result", include_str!("runtime_adapters/native_unittest_result.py"), "unittest/result.py"),
     ("sched", include_str!("sched.py"), "sched.py"),
     ("secrets", include_str!("secrets.py"), "secrets.py"),
     ("select", include_str!("select.py"), "select.py"),

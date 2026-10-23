@@ -6088,6 +6088,9 @@ impl<'a> Machine<'a> {
             };
             if let Some(class) = class { return Ok(Value::Member(Rc::new(class), String::from("float_getformat"))); }
         }
+        if key == self.detail("module") && matches!(&value, Value::Wrapped(..)) && value.kind_word() == "builtin_function_or_method" {
+            return Ok(Value::Nil);
+        }
         let binding = match &value {
             Value::Member(receiver, working) => {
                 let public = match working.as_str() {
@@ -6546,6 +6549,7 @@ impl<'a> Machine<'a> {
                 }
             }
             let builtin_origin = Self::native_word(b).is_some()
+                || self.property_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, b))
                 || (b.under().is_none() && b.name == self.detail("root"));
             if builtin_origin && !key.is_empty() && key == self.detail("module") {
                 let home = match Self::native_word(b).as_deref() { Some("SimpleNamespace" | "GenericAlias") => "types", Some("Union") => "typing", _ => self.builtin_module() };
@@ -8391,7 +8395,7 @@ impl<'a> Machine<'a> {
         let concrete_module = match value.settled() {
             Value::Thing(object) => {
                 let owner = object.blueprint();
-                (Self::native_beneath(&owner).as_deref() == Some("module")).then_some(owner)
+                { let concrete = Self::native_beneath(&owner).as_deref() == Some("module") || !owner.parents.borrow().is_empty(); concrete.then_some(owner) }
             }
             _ => None,
         };

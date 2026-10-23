@@ -1842,7 +1842,7 @@ def _lex(source, start, end, row, col, for_field, comments=None):
                 continue
             toks.append(_Tok('newline', '\n', srow, scol, srow, scol + 1))
             continue
-        if c == '#' and not for_field:
+        if c == '#':
             j = i
             while j < end and source[j] != '\n':
                 j += 1
@@ -2467,7 +2467,7 @@ class _Parser:
     def parse_suite(self, header):
         self.expect_op(':')
         if self.peek().kind != 'newline':
-            body = [self.parse_simple_stmt()]
+            body = [self.parse_stmt()]
             while self.at_op(';'):
                 self.pop()
                 if self.peek().kind in ('end', 'newline'):
@@ -2574,7 +2574,7 @@ class _Parser:
                         defaults.append(default)
             more = self.at_op(',')
             row = self.pop().srow if more else self.toks[self.at - 1].erow
-            if argument is not None:
+            if argument is not None and self.peek().srow > row:
                 argument.type_comment = self.take_comment(row)
             if not more:
                 break
@@ -2773,17 +2773,19 @@ class _Parser:
             comment = self.suite_comment()
             body = self.parse_suite(first)
             return self.located(With, first, body[-1], items=items, body=body, type_comment=comment)
-        if word == 'match' and self.toks[self.at + 1].text not in ('=', '(', '.', '[', ':', ';'):
+        if word == 'match' and self.match_runs_to_colon():
             self.pop()
             subject, ss, se = self.parse_expr(True)
             self.expect_op(':')
             while self.peek().kind == 'newline':
                 self.pop()
-            indent = self.peek().scol
-            if indent <= first.scol:
+            indent = self.indent_col(self.peek())
+            if indent <= self.indent_col(first):
                 raise IndentationError('expected an indented block')
+            self.indent_stack.append(indent)
+            self.alt_stack.append(self.alt_indent_col(self.peek()))
             cases = []
-            while self.at_name('case') and self.peek().scol == indent:
+            while self.at_name('case') and self.indent_col(self.peek()) == indent:
                 header = self.pop()
                 pattern, vs, ve = self.parse_case_as()
                 if isinstance(pattern, MatchStar) and not self.at_op(','):
@@ -2808,6 +2810,8 @@ class _Parser:
                 cases.append(match_case(pattern=pattern, guard=guard, body=body))
                 while self.peek().kind == 'newline':
                     self.pop()
+            self.indent_stack.pop()
+            self.alt_stack.pop()
             if not cases:
                 _syntax('invalid syntax')
             return self.located(Match, first, cases[-1].body[-1], subject=subject, cases=cases)
@@ -3190,6 +3194,10 @@ class _Parser:
         if type(node) == Name or type(node) == Attribute or type(node) == Subscript:
             node.ctx = context()
             return
+        if type(node) == Starred:
+            node.ctx = context()
+            self.set_store(node.value, context)
+            return
         if type(node) == Tuple or type(node) == List:
             node.ctx = context()
             for elt in node.elts:
@@ -3227,7 +3235,7 @@ class _Parser:
                 comma = self.pop()
                 le = (comma.erow, comma.ecol)
                 tok = self.peek()
-                if tok.kind in ('newline', 'end') or self.at_op(';') or self.at_op(')') or self.at_op(']') or self.at_op('}'):
+                if tok.kind in ('newline', 'end') or self.at_op(';') or self.at_op(')') or self.at_op(']') or self.at_op('}') or self.at_op('=') or (tok.kind == 'op' and tok.text.endswith('=') and tok.text[:-1] in _BINOPS):
                     break
                 elt, es, ee = self.parse_expr(False)
                 elts.append(elt)
@@ -3624,6 +3632,7 @@ class _Parser:
                 return (node, (open_tok.srow, open_tok.scol),
                         (close_tok.erow, close_tok.ecol))
             close_tok = self.expect_op(')')
+            node._paren = True
             return (node, (open_tok.srow, open_tok.scol),
                     (close_tok.erow, close_tok.ecol))
         if self.at_op('['):
@@ -3766,6 +3775,8 @@ class _Parser:
                     pieces.append(value)
         values = []
         for piece in pieces:
+            if type(piece) == Constant and piece.value == '':
+                continue
             if values and type(values[-1]) == Constant and type(piece) == Constant:
                 prev = values[-1]
                 values[-1] = Constant(value=prev.value + piece.value,
@@ -3934,6 +3945,11 @@ def _parse_for_compile(source, filename, mode, type_comments, optimize):
 
 def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
           feature_version=None, optimize=-1, fold_debug=False):
+    if isinstance(source, AST):
+        expected = {'exec': Module, 'eval': Expression, 'single': Interactive, 'func_type': FunctionType}.get(mode)
+        if expected is None or not isinstance(source, expected):
+            raise TypeError('expected ' + (expected.__name__ if expected else mode) + ' node, got ' + type(source).__name__)
+        return _optimized_tree(_copy_ast(source), max(optimize, 0), fold_debug) if optimize > 0 or fold_debug else source
     if isinstance(source, (bytes, bytearray)):
         source = source.decode('utf-8')
     if not isinstance(source, str):
@@ -3947,9 +3963,14 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         toks = _lex(source, 0, len(source), 1, 0, False)
         parser = _Parser(source, toks, optimize, fold_debug, fv=feature_version)
         tree = parser.parse_func_type()
-        _check_features(tree, feature_version)
-        return tree
+        _check_features(tree, feature_version, source)
+        return _optimized_tree(tree, max(optimize, 0), fold_debug) if optimize > 0 or fold_debug else tree
     if mode == 'eval':
+        for line in source.split('\n'):
+            if line.strip() and not line.lstrip().startswith('#'):
+                if line[:1] in (' ', '\t'):
+                    raise IndentationError('unexpected indent')
+                break
         toks = _lex(source, 0, len(source), 1, 0, False)
         parser = _Parser(source, toks, optimize, fold_debug, fv=feature_version)
         while parser.peek().kind == 'newline':
@@ -3962,8 +3983,8 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         if parser.peek().kind != 'end':
             _syntax('invalid syntax')
         tree = Expression(body=node)
-        _check_features(tree, feature_version)
-        return tree
+        _check_features(tree, feature_version, source)
+        return _optimized_tree(tree, max(optimize, 0), fold_debug) if optimize > 0 or fold_debug else tree
     if mode not in ('exec', 'single'):
         raise ValueError("compile() mode must be 'exec', 'eval', 'single' or 'func_type'")
     comments = []
@@ -3983,8 +4004,8 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         if not tree.body:
             raise SyntaxError('invalid syntax')
         tree = Interactive(body=tree.body)
-    _check_features(tree, feature_version)
-    return tree
+    _check_features(tree, feature_version, source)
+    return _optimized_tree(tree, max(optimize, 0), fold_debug) if optimize > 0 or fold_debug else tree
 
 def _tree_for_compile(source, filename, mode, type_comments, optimize):
     # compile() reaches the reader with the flags already read: whether
@@ -4522,7 +4543,7 @@ def _literal_node(node_or_string):
     return _convert(node_or_string)
 
 # Enforce older grammar versions on the resulting syntax tree.
-def _check_features(tree, version):
+def _check_features(tree, version, source=None):
     if version is None:
         return
     if isinstance(version, tuple):
@@ -4541,6 +4562,10 @@ def _check_features(tree, version):
             minimum = 8
         elif isinstance(node, Match):
             minimum = 10
+        elif isinstance(node, ExceptHandler) and isinstance(node.type, Tuple) and source is not None:
+            line = source.split('\n')[node.type.lineno - 1].encode('utf-8')
+            if line[node.type.col_offset:node.type.col_offset + 1] != b'(':
+                minimum = 14
         elif isinstance(node, TryStar):
             minimum = 11
         elif isinstance(node, (TypeAlias, type_param)) or getattr(node, 'type_params', []):
@@ -4893,7 +4918,8 @@ def _optimized_tree(tree, optimize, fold_debug=False):
                 if body and isinstance(body[0], Expr) and isinstance(body[0].value, Constant) and isinstance(body[0].value.value, str):
                     removed = body.pop(0)
                     if not body:
-                        body.append(copy_location(Pass(), removed))
+                        body.append(Pass(lineno=removed.lineno, col_offset=removed.col_offset,
+                                         end_lineno=removed.lineno, end_col_offset=removed.col_offset + 4))
             return result
     return Optimizer().visit(tree)
 

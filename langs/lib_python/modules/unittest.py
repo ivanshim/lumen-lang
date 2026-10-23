@@ -1,3 +1,4 @@
+__unittest = True
 # Host primitives used by class bodies need non-private module bindings.
 _host_call_outcome = __call_outcome
 _host_class_methods = __class_methods
@@ -516,7 +517,11 @@ class TestCase:
         if outcome[0]:
             return result
         error = outcome[1]
-        entry = _Entry(self, getattr(error, 'message', outcome[2]), self._method, self.id())
+        message = getattr(error, 'message', outcome[2])
+        formatter = getattr(result, '_exc_info_to_string', None)
+        if formatter is not None and not isinstance(error, (SkipTest, _Expected, _Unexpected)):
+            message = formatter((type(error), error, getattr(error, '__traceback__', None)), self)
+        entry = _Entry(self, message, self._method, self.id())
         if isinstance(error, self.failureException):
             result.failures = [*result.failures, entry]
         elif isinstance(error, SkipTest):
@@ -659,6 +664,12 @@ class TestSuite:
 
     def countTestCases(self):
         return self._removed_tests + sum(test.countTestCases() for test in self.tests if test is not None)
+
+    def _removeTestAtIndex(self, index):
+        test = self.tests[index]
+        if hasattr(test, 'countTestCases'):
+            self._removed_tests += test.countTestCases()
+        self.tests[index] = None
 
     def __call__(self, result):
         return self.run(result)
@@ -1174,9 +1185,8 @@ class TextTestRunner:
                                 break
                             # A test that has run is let go, as CPython's suite does,
                             # so what it holds is not kept alive to the end of the run.
-                            if hasattr(member, 'countTestCases'):
-                                test._removed_tests += member.countTestCases()
-                            members[at] = None
+                            if getattr(test, '_cleanup', True):
+                                test._removeTestAtIndex(at)
                             member = None
                     finally:
                         test._fixture('tearDownClass', result)
@@ -1272,8 +1282,12 @@ class TextTestRunner:
         where = getattr(entry, 'where', test.id() if hasattr(test, 'id') else '')
         self._write(label + ': ' + name + ' (' + where + ')\n')
         self._write('----------------------------------------------------------------------' + '\n')
-        self._write('Traceback (most recent call last):\n')
-        self._write(prefix + entry[1] + '\n\n')
+        message = entry[1]
+        if not message.startswith('Traceback (most recent call last):'):
+            self._write('Traceback (most recent call last):\n')
+        if prefix and not message.startswith(prefix):
+            message = prefix + message
+        self._write(message + '\n\n')
 
 
 # Whether a name is one a program could have written, as against one

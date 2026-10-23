@@ -5240,6 +5240,9 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        if name == self.class_word("module") && matches!(&subject, Value::Adapter(_)) && subject.core_kind() == "builtin_function_or_method" {
+            return Ok(Value::Null);
+        }
         if name == "__replace__" && matches!(&subject, Value::Class(kind) if Self::own_kind(kind).as_deref() == Some("code")) {
             let module = self.import_module("_code_metadata")?;
             return self.class_get(module, "replace", false);
@@ -5969,7 +5972,7 @@ impl<'a> Engine<'a> {
                     if let Some(kind) = Self::own_kind(c).filter(|word| matches!(word.as_str(), "SimpleNamespace" | "GenericAlias" | "Union")) {
                         return Ok(Value::text(match kind.as_str() { "Union" => "typing", _ => "types" }));
                     }
-                    if is_root || self.is_metaclass_root(c) || Self::own_kind(c).is_some() {
+                    if is_root || self.is_metaclass_root(c) || Self::own_kind(c).is_some() || self.property_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, c)) {
                         // A few kinds are made in the module that names them, not the home one.
                         let home = match Self::own_kind(c).as_deref() { Some("SimpleNamespace" | "GenericAlias") => "types", Some("Union") => "typing", _ => self.home_module_word() };
                         return Ok(Value::text(home));
