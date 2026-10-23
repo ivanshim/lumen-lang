@@ -61,30 +61,35 @@ def _text_of(data, encoding, errors):
 
 
 class _Readable:
+    # Buffer a borrowed child descriptor with the ordinary file implementation.
     def __init__(self, handle, which, text=False, encoding='utf-8', errors=None):
+        import io
         self._handle = handle
         self._which = which
-        self._text = text
-        self._encoding = encoding
-        self._errors = errors
         self.encoding = encoding if text else None
         self.errors = errors if text else None
+        fd = _subprocess(8, handle, which)
+        self._stream = io.open(fd, 'r' if text else 'rb', closefd=False,
+                               encoding=encoding if text else None,
+                               errors=errors if text else None)
         self.closed = False
 
-    # Decode captured bytes and apply universal newline translation.
+    # Honor the requested size instead of waiting for end-of-file.
     def read(self, size=-1):
-        if self.closed:
-            raise ValueError('I/O operation on closed file')
-        result = _subprocess(3, self._handle, self._which)
-        if result is None or result is False:
-            result = b''
-        if self._text:
-            return _text_of(result, self._encoding, self._errors)
-        return result
+        return self._stream.read(size)
 
-    # Close the host pipe as well as the Python wrapper.
+    # Read a single buffered line from the child's stream.
+    def readline(self, size=-1):
+        return self._stream.readline(size)
+
+    # Expose the real descriptor to readiness APIs.
+    def fileno(self):
+        return self._stream.fileno()
+
+    # Close the buffer before releasing the kernel-owned descriptor.
     def close(self):
         if not self.closed:
+            self._stream.close()
             _subprocess(7, self._handle, self._which)
             self.closed = True
 
@@ -111,12 +116,23 @@ class _Writable:
             # bytes they were written as; the caller advances by that.
             written = len(data)
             data = data.encode(self._encoding, self._errors or 'strict')
-        result = _subprocess(1, self._handle, data)
-        if isinstance(result, tuple):
-            error, message = result
-            kind = BrokenPipeError if error == 32 else OSError
-            raise kind(error, message)
-        return result if written is None else written
+        import os
+        at = 0
+        fd = self.fileno()
+        while at < len(data):
+            at += os.write(fd, memoryview(data)[at:])
+        return at if written is None else written
+
+    # Expose the child's input descriptor while this wrapper is open.
+    def fileno(self):
+        if self.closed:
+            raise ValueError('I/O operation on closed file')
+        return _subprocess(8, self._handle, 2)
+
+    # Writes are unbuffered, so there are no pending bytes to flush.
+    def flush(self):
+        if self.closed:
+            raise ValueError('I/O operation on closed file')
 
     def close(self):
         if not self.closed:
@@ -167,6 +183,7 @@ class Popen:
         if handle is False:
             raise OSError(2, 'No such file or directory', cwd if cwd is not None and not os.path.isdir(cwd) else argv[0])
         self._handle = handle
+        self.pid = handle
         self._stderr_to_stdout = stderr == STDOUT
         self.args = args
         self.returncode = None
@@ -204,13 +221,9 @@ class Popen:
                 raise TimeoutExpired(self.args, timeout)
             _wait(10000)
 
+    # Drain merged stderr through the same interruptible file reader.
     def _read_stream(self, which):
-        result = _subprocess(3, self._handle, which)
-        if result is None or result is False:
-            result = b''
-        if self._text:
-            return _text_of(result, self._encoding, self._errors)
-        return result
+        return _Readable(self._handle, which, self._text, self._encoding, self._errors).read()
 
     # Drain open captures and tolerate streams already closed by the caller.
     def communicate(self, input=None, timeout=None):
@@ -261,11 +274,16 @@ class Popen:
         _subprocess(6, self._handle)
         self.returncode = -9
 
+    # Deliver termination using its documented signal rather than SIGKILL.
     def terminate(self):
-        self.kill()
+        import signal
+        self.send_signal(signal.SIGTERM)
 
+    # Forward exactly the requested signal without waiting for process exit.
     def send_signal(self, sig):
-        self.kill()
+        import os
+        if self.poll() is None:
+            os.kill(self.pid, sig)
 
     def __enter__(self):
         return self

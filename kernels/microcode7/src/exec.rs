@@ -97,33 +97,35 @@ pub(crate) static SIGNALS_DUE: std::sync::atomic::AtomicU64 = std::sync::atomic:
 /// statement edges.
 static HOST_ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+static PYTHON_THREAD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+// Let the kernel validate the destination instead of retaining a pthread pointer.
 extern "C" fn note_signal(number: i32) {
-    if (1..=64).contains(&number) {
-        SIGNALS_DUE.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+    let errno_address = unsafe {libc::__errno_location()};
+    let errno_before = unsafe {*errno_address};
+    let destination = PYTHON_THREAD.load(std::sync::atomic::Ordering::Relaxed);
+    let current = unsafe {libc::syscall(libc::SYS_gettid)} as libc::pid_t;
+    match destination {
+        target if target > 0 && target != current => {
+            unsafe {libc::syscall(libc::SYS_tgkill, libc::getpid() as libc::c_long, target as libc::c_long, number as libc::c_long);}
+        }
+        _ if (1..=64).contains(&number) => {
+            SIGNALS_DUE.fetch_or(1u64 << (number - 1), std::sync::atomic::Ordering::Relaxed);
+        }
+        _ => (),
     }
+    unsafe {*errno_address = errno_before;}
 }
 
 /// Ask the host to set the interrupt's bit when it comes in; the
 /// machine takes the bit up itself, where a raised value may be caught.
 fn ask_host_for_signals() {
+    PYTHON_THREAD.store(unsafe {libc::syscall(libc::SYS_gettid)} as i32, std::sync::atomic::Ordering::Relaxed);
     if HOST_ASKED.swap(true, std::sync::atomic::Ordering::Relaxed) { return; }
-    unsafe extern "C" { fn signal(number: i32, taker: extern "C" fn(i32)) -> usize; }
-    unsafe { signal(2, note_signal) };
-}
-
-/// Keep a cancellable alarm attached to the owning interpreter's lifetime.
-struct TimedSignal {
-    until: std::time::Instant,
-    wake: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
-    task: Option<std::thread::JoinHandle<()>>,
-}
-impl Drop for TimedSignal {
-    fn drop(&mut self) {
-        let (flag, condition) = &*self.wake;
-        *flag.lock().unwrap() = true;
-        condition.notify_one();
-        self.task.take().map(|task| task.join());
-    }
+    // Leave SA_RESTART clear so a default KeyboardInterrupt can leave a wait.
+    let mut disposition = unsafe {std::mem::zeroed::<libc::sigaction>()};
+    disposition.sa_sigaction = note_signal as *const () as usize;
+    unsafe {libc::sigemptyset(&mut disposition.sa_mask);}
+    let _ = unsafe {libc::sigaction(libc::SIGINT, &disposition, std::ptr::null_mut())};
 }
 
 pub enum Escape {
@@ -908,7 +910,6 @@ pub struct Machine<'a> {
     /// the mark for the signal's own way. A number never given one
     /// keeps its own way.
     signal_takers: Vec<(i64, Value)>,
-    timer: Option<TimedSignal>,
     /// Whether the run watches the edge between one statement and the
     /// next for signals left waiting (ext.builtin.signal).
     watches_signals: bool,
@@ -1094,6 +1095,26 @@ fn words_of(table: &Table) -> Names<'_> {
 }
 
 include!("native_code.rs");
+
+// Stop host callbacks from referring to handlers owned by a finished machine.
+impl Drop for Machine<'_> {
+    fn drop(&mut self) {
+        if self.watches_signals {
+            let mut default_interrupt = true;
+            for (number, taker) in &self.signal_takers {
+                if *number == i64::from(libc::SIGINT) {default_interrupt = false;}
+                match taker.settled() {
+                    Value::Small(0) | Value::Small(1) => (),
+                    _ => {unsafe {libc::signal(*number as libc::c_int, libc::SIG_DFL);}}
+                }
+            }
+            if default_interrupt {unsafe {libc::signal(libc::SIGINT, libc::SIG_DFL);}}
+            PYTHON_THREAD.swap(0, std::sync::atomic::Ordering::Relaxed);
+            SIGNALS_DUE.store(0, std::sync::atomic::Ordering::Relaxed);
+            HOST_ASKED.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+}
 
 impl<'a> Machine<'a> {
 
@@ -2384,7 +2405,7 @@ impl<'a> Machine<'a> {
             any_unheard: std::cell::Cell::new(false),
             ghost_tap: crate::ghost::tap(),
             builds_places: table.flag("ext.op.index.makes"),
-            signal_takers: Vec::new(), timer: None,
+            signal_takers: Vec::new(),
             watches_signals: table.has_any("ext.builtin.signal"),
             names_in_calls: table.flag("ext.syntax.call.bind_names"),
             native_slot_names: if table.flag("ext.syntax.call.bind_names") {
@@ -29533,6 +29554,7 @@ impl<'a> Machine<'a> {
                 let tiny = as_index(&v[0])?;
                 let span = std::time::Duration::from_micros(tiny as u64);
                 let mut remaining = libc::timespec { tv_sec: span.as_secs() as _, tv_nsec: i64::from(span.subsec_nanos()) as _ };
+                let deadline = std::time::Instant::now() + span;
                 self.observe_host_interrupts()?;
                 loop {
                     let mut unused = unsafe { std::mem::zeroed::<libc::timespec>() };
@@ -29541,7 +29563,11 @@ impl<'a> Machine<'a> {
                     self.observe_host_interrupts()?;
                     match errno {
                         None => break,
-                        Some(problem) if problem.raw_os_error() == Some(libc::EINTR) => remaining = unused,
+                        Some(problem) if problem.raw_os_error() == Some(libc::EINTR) => {
+                            let residual = deadline.saturating_duration_since(std::time::Instant::now());
+                            if residual.is_zero() {break;}
+                            remaining = libc::timespec {tv_sec: residual.as_secs() as _, tv_nsec: residual.subsec_nanos() as _};
+                        },
                         Some(problem) => return Err(format!("OSError: {problem}")),
                     }
                 }
@@ -29972,6 +29998,17 @@ impl<'a> Machine<'a> {
                             Value::Flag(true)
                         } else { Value::Flag(false) }
                     }
+                    // Expose a borrowed child descriptor for readiness waits.
+                    8 if v.len() == 3 => {
+                        use std::os::unix::io::AsRawFd as _;
+                        let token = as_index(&v[1])? as i64;
+                        let stream = as_index(&v[2])?;
+                        let Some(process) = self.alongside.get(&token) else {return Err("OSError: Bad file descriptor".into())};
+                        let descriptor = if stream == 2 {process.in_pipe.as_ref().map(|pipe| pipe.as_raw_fd())}
+                            else if stream == 1 {process.err_pipe.as_ref().map(|pipe| pipe.as_raw_fd())}
+                            else {process.out_pipe.as_ref().map(|pipe| pipe.as_raw_fd())};
+                        match descriptor {Some(fd) => Value::Small(i64::from(fd)), None => return Err("OSError: Bad file descriptor".into())}
+                    }
                     // Begin output collection while stdin and process status remain usable.
                     8 => {
                         n(2)?;
@@ -30047,24 +30084,8 @@ impl<'a> Machine<'a> {
                     3 => {
                         n(2)?;
                         let amount = v[1].as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?;
-                        let old = self.timer.take();
-                        let left = old.as_ref().map(|alarm| alarm.until.saturating_duration_since(std::time::Instant::now()));
-                        let left = left.map_or(0, |time| time.as_secs() + if time.subsec_nanos() == 0 { 0 } else { 1 });
-                        drop(old);
-                        if amount != 0 {
-                            let span = std::time::Duration::from_secs(u64::from(amount as u32));
-                            let until = std::time::Instant::now() + span;
-                            let wake = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
-                            let waiter = wake.clone();
-                            let owner = unsafe { libc::pthread_self() };
-                            let task = std::thread::Builder::new().stack_size(128 * 1024).spawn(move || {
-                                let (lock, condition) = &*waiter;
-                                let (cancelled, _) = condition.wait_timeout_while(lock.lock().unwrap(), span, |done| !*done).unwrap();
-                                if !*cancelled { unsafe { libc::pthread_kill(owner, libc::SIGALRM); } }
-                            }).map_err(|failure| format!("OSError: {failure}"))?;
-                            self.timer = Some(TimedSignal { until, wake, task: Some(task) });
-                        }
-                        Value::Small(left as i64)
+                        let preceding = unsafe {libc::alarm(amount as u32)};
+                        Value::Small(i64::from(preceding))
                     }
                     4 => {
                         n(1)?;
@@ -32151,7 +32172,12 @@ impl<'a> Machine<'a> {
                     let mut bytes = Vec::new();
                     while limit < 0 || (bytes.len() as i64) < limit {
                         let mut byte = [0u8];
-                        match input.read(&mut byte) { Ok(0) => break, Ok(_) => (), Err(_) => return Err(self.argument_fault("ext.builtin.stream.failed", None)) }
+                        match input.read(&mut byte) {
+                            Ok(0) => break,
+                            Ok(_) => (),
+                            Err(problem) if problem.kind() == std::io::ErrorKind::Interrupted => {self.observe_host_interrupts()?; continue;}
+                            Err(_) => return Err(self.argument_fault("ext.builtin.stream.failed", None)),
+                        }
                         bytes.push(byte[0]);
                         if by_line && byte[0] == b'\n' { break; }
                     }
@@ -32161,7 +32187,8 @@ impl<'a> Machine<'a> {
                     return Err(self.argument_fault("ext.builtin.stream.amiss", None));
                 };
                 let (limit, stop_at_line) = (*limit, self.stands_true(&v[1]));
-                let failed = || self.argument_fault("ext.builtin.stream.failed", None);
+                let stream_failure = self.argument_fault("ext.builtin.stream.failed", None);
+                let failed = || stream_failure.clone();
                 let mut channel = std::io::stdin().lock();
                 let mut drawn: Vec<u8> = Vec::new();
                 let mut characters = 0;
@@ -32170,11 +32197,20 @@ impl<'a> Machine<'a> {
                     match channel.read(&mut lead) {
                         Ok(0) => break,
                         Ok(_) => (),
+                        Err(problem) if problem.kind() == std::io::ErrorKind::Interrupted => {self.observe_host_interrupts()?; continue;}
                         Err(_) => return Err(failed()),
                     }
                     let more = match lead[0] { 0x00..=0x7f => 0, 0xc2..=0xdf => 1, 0xe0..=0xef => 2, 0xf0..=0xf4 => 3, _ => return Err(failed()) };
                     let mut rest = vec![0u8; more];
-                    if channel.read_exact(&mut rest).is_err() { return Err(failed()); }
+                    let mut filled = 0;
+                    while filled < more {
+                        match channel.read(&mut rest[filled..]) {
+                            Ok(0) => return Err(failed()),
+                            Ok(amount) => filled += amount,
+                            Err(problem) if problem.kind() == std::io::ErrorKind::Interrupted => self.observe_host_interrupts()?,
+                            Err(_) => return Err(failed()),
+                        }
+                    }
                     drawn.push(lead[0]);
                     drawn.extend(rest);
                     characters += 1;
