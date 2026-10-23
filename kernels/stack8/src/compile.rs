@@ -5895,8 +5895,7 @@ impl<'a> Compiler<'a> {
             while self.look().shape == Shape::Bytes {
                 octets.extend(self.take().lexeme.chars().map(|c| c as u8));
             }
-            return Ok(Pattern::Literal(Value::Bytes(Rc::new(std::cell::RefCell::new(octets)), false,
-                Rc::from(lang.byte_words["ext.system.bytes.repr"][0].as_str()))));
+            return Ok(Pattern::Literal(Value::quoted_bytes(octets, Rc::from(lang.byte_words["ext.system.bytes.repr"][0].as_str()))));
         }
         if matches!(token.shape, Shape::Quote | Shape::Codepoints) {
             let mut points = Vec::new();
@@ -11107,6 +11106,7 @@ impl<'a> Compiler<'a> {
         let near = self.gensym("near");
         let far = self.gensym("far");
         let answer = self.gensym("comparison");
+        let saved_left = self.mark();
         self.write(&near);
         let mut exits = Vec::new();
         loop {
@@ -11120,7 +11120,16 @@ impl<'a> Compiler<'a> {
                     self.constant(value);
                 }
             }
+            let saved_right = self.mark();
             self.write(&far);
+            let following = self.comparison()?.filter(|(_, level, _)| *level == tier);
+            if exits.is_empty() && following.is_none() {
+                // A single comparison needs no cells to preserve a middle operand.
+                self.piece().instrs[saved_left] = Instr::Nothing;
+                self.piece().instrs[saved_right] = Instr::Nothing;
+                self.act(op, 2);
+                return Ok(());
+            }
             // Each side is moved out of its temporary at its last use, so
             // that the temporaries hold nothing once the link is judged:
             // a value's last holder may be one of them, and it must go
@@ -11129,7 +11138,7 @@ impl<'a> Compiler<'a> {
             self.read(&far);
             self.act(op, 2);
             self.write(&answer);
-            let Some((next, level, words)) = self.comparison()?.filter(|(_, level, _)| *level == tier) else { break; };
+            let Some((next, level, words)) = following else { break; };
             let _ = level;
             self.read(&answer);
             exits.push(self.skip());
@@ -11263,8 +11272,7 @@ impl<'a> Compiler<'a> {
     fn string_piece(&mut self) -> Res<()> {
         let token = self.take();
         match token.shape {
-            Shape::Bytes => self.constant(Value::Bytes(Rc::new(std::cell::RefCell::new(token.lexeme.chars().map(|c| c as u8).collect())), false,
-                Rc::from(self.lang.byte_words["ext.system.bytes.repr"][0].as_str()))),
+            Shape::Bytes => self.constant(Value::quoted_bytes(token.lexeme.chars().map(|c| c as u8).collect(), Rc::from(self.lang.byte_words["ext.system.bytes.repr"][0].as_str()))),
             Shape::Codepoints => self.constant(Value::from_codes(token.lexeme.split(',').map(|n| n.parse::<u32>().unwrap()).collect())),
             Shape::Quote => self.constant(Value::text(&token.lexeme)),
             Shape::StringFault => {
@@ -14383,6 +14391,20 @@ fn fold_boolean_branches(words: &mut [Instr]) {
     };
     for word in words.iter() {
         for to in destinations(word) { if to < entrances.len() { entrances[to] = true; } }
+    }
+    for at in 0..words.len() {
+        let opposite = match words[at] {
+            Instr::Act(Action::Same, 2) => Action::Unsame,
+            Instr::Act(Action::Unsame, 2) => Action::Same,
+            _ => continue,
+        };
+        let mut after = at + 1;
+        while after < words.len() && matches!(words[after], Instr::Line(_) | Instr::Location(..) | Instr::Nothing) { after += 1; }
+        if after < words.len() && matches!(words[after], Instr::Act(Action::Not, 1))
+            && !entrances[at + 1..=after].iter().any(|entry| *entry) {
+            words[at] = Instr::Act(opposite, 2);
+            words[after] = Instr::Nothing;
+        }
     }
     for first in 0..words.len() {
         let Instr::Const(Value::Flag(truth)) = words[first] else { continue; };

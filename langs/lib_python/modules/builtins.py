@@ -258,6 +258,10 @@ class _HostFile:
         self._lines = None
         self._lines_at = 0
         self._lines_pos = 0
+        # Which of the three endings a text read has met so far, as the
+        # reference's own decoder counts them: bit 0 \n, bit 1 \r, bit 2
+        # \r\n.  A binary read meets none of them.
+        self._seennl = 0
         reading = 'r' in mode or '+' in mode and 'w' not in mode and 'a' not in mode
         writing = 'w' in mode or 'x' in mode
         appending = 'a' in mode
@@ -327,15 +331,81 @@ class _HostFile:
         return text if not self._binary or isinstance(text, bytes) else text.encode('utf-8')
 
     def read(self, size=-1):
+        import _io
+        size = _io._size(size)
         self._open()
         if not self.readable():
             raise OSError('File not open for reading')
         if size is None or size < 0:
-            size = len(self._buffer) - self._pos
-        value = self._buffer[self._pos:self._pos + size]
-        self._pos += len(value)
+            value = self._buffer[self._pos:]
+            self._pos += len(value)
+            self._lines = None
+            if self._binary:
+                return self._carried(value)
+            self._note_newlines(value)
+            return value.replace('\r\n', '\n').replace('\r', '\n')
+        if self._binary:
+            value = self._buffer[self._pos:self._pos + size]
+            self._pos += len(value)
+            self._lines = None
+            return self._carried(value)
+        # A size counts what the reader sees, so a \r\n inside the
+        # window stands for a single character.
+        start = self._pos
+        at = start
+        end = len(self._buffer)
+        seen = []
+        while at < end and len(seen) < size:
+            char = self._buffer[at]
+            if char == '\r':
+                at += 2 if at + 1 < end and self._buffer[at + 1] == '\n' else 1
+                seen.append('\n')
+            else:
+                seen.append(char)
+                at += 1
+        self._note_newlines(self._buffer[start:at])
+        self._pos = at
         self._lines = None
-        return self._carried(value)
+        return ''.join(seen)
+
+    _NEWLINE_NAMES = (None, '\n', '\r', ('\r', '\n'), '\r\n',
+                      ('\n', '\r\n'), ('\r', '\r\n'),
+                      ('\r', '\n', '\r\n'))
+
+    @property
+    def newlines(self):
+        # The endings a text read has met, in the reference's fixed
+        # order, not the order they were met; None before the first.
+        return self._NEWLINE_NAMES[self._seennl]
+
+    def _note_newlines(self, text):
+        crlf = text.count('\r\n')
+        cr = text.count('\r') - crlf
+        lf = text.count('\n') - crlf
+        self._seennl |= (1 if lf else 0) | (2 if cr else 0) | (4 if crlf else 0)
+
+    def _split_newlines(self, text):
+        # Universal newlines cut after \r\n, \r or \n and after no
+        # other character, so the extra breaks str.splitlines knows
+        # stay inside their line.
+        lines = []
+        start = 0
+        at = 0
+        end = len(text)
+        while at < end:
+            char = text[at]
+            if char == '\n':
+                at += 1
+            elif char == '\r':
+                at += 2 if at + 1 < end and text[at + 1] == '\n' else 1
+            else:
+                at += 1
+                continue
+            lines.append(text[start:at])
+            start = at
+        if start < end:
+            lines.append(text[start:])
+        return lines
 
     def _ensure_lines(self):
         if self._lines is None or self._lines_pos != self._pos:
@@ -345,20 +415,42 @@ class _HostFile:
                 if parts[-1]:
                     self._lines.append(parts[-1])
             else:
-                self._lines = self._buffer[self._pos:].splitlines(True)
+                self._lines = self._split_newlines(self._buffer[self._pos:])
             self._lines_at = 0
             self._lines_pos = self._pos
 
     def readline(self, size=-1):
+        import _io
+        size = _io._size(_io._index(size))
         self._open()
         if size is not None and size >= 0:
             start = self._pos
-            limit = min(len(self._buffer), start + size)
-            found = self._buffer.find(b'\n' if self._binary else '\n', start, limit)
-            stop = limit if found < 0 else found + 1
-            self._pos = stop
+            if self._binary:
+                limit = min(len(self._buffer), start + size)
+                found = self._buffer.find(b'\n', start, limit)
+                stop = limit if found < 0 else found + 1
+                self._pos = stop
+                self._lines = None
+                return self._carried(self._buffer[start:stop])
+            at = start
+            end = len(self._buffer)
+            seen = []
+            while at < end and len(seen) < size:
+                char = self._buffer[at]
+                if char == '\n':
+                    seen.append('\n')
+                    at += 1
+                    break
+                if char == '\r':
+                    at += 2 if at + 1 < end and self._buffer[at + 1] == '\n' else 1
+                    seen.append('\n')
+                    break
+                seen.append(char)
+                at += 1
+            self._note_newlines(self._buffer[start:at])
+            self._pos = at
             self._lines = None
-            return self._carried(self._buffer[start:stop])
+            return ''.join(seen)
         self._ensure_lines()
         if self._lines_at >= len(self._lines):
             return self._carried('')
@@ -366,7 +458,10 @@ class _HostFile:
         self._lines_at += 1
         self._pos += len(line)
         self._lines_pos = self._pos
-        return self._carried(line)
+        if self._binary:
+            return self._carried(line)
+        self._note_newlines(line)
+        return line.replace('\r\n', '\n').replace('\r', '\n')
 
     def readlines(self, hint=-1):
         self._open()
@@ -378,7 +473,11 @@ class _HostFile:
             self._lines_pos = self._pos
             if self._binary:
                 return [self._carried(line) for line in remaining]
-            return remaining
+            lines = []
+            for line in remaining:
+                self._note_newlines(line)
+                lines.append(line.replace('\r\n', '\n').replace('\r', '\n'))
+            return lines
         lines = []
         total = 0
         while True:
@@ -538,6 +637,17 @@ def open(*args, **kwargs):
 
 # One-dimensional views use byte offsets into the original storage. A slice
 # keeps those offsets, and a cast groups them without copying the storage.
+def _buffer_hook(owner, name):
+    kind = type(owner)
+    for base in kind.__mro__:
+        namespace = vars(base)
+        if name in namespace:
+            member = namespace[name]
+            bind = getattr(type(member), '__get__', None)
+            return bind(member, owner, kind) if bind is not None else member
+    return None
+
+
 class memoryview:
     def __buffer__(self, flags, /):
         from _buffer import getbuffer
@@ -567,9 +677,17 @@ class memoryview:
         self._object = object.obj if isinstance(object, memoryview) else object
         self._owner = None
         self._owner_view = None
-        if not isinstance(object, (memoryview, bytes, bytearray, array)) and hasattr(type(object), '__buffer__'):
+        kind = type(object)
+        native = (memoryview, bytes, bytearray, array)
+        custom = not isinstance(object, native)
+        if not custom and kind is not memoryview and kind is not bytes and kind is not bytearray and kind is not array:
+            for base in kind.__mro__:
+                if '__buffer__' in vars(base):
+                    custom = base is not memoryview and base is not bytes and base is not bytearray and base is not array
+                    break
+        if custom and hasattr(kind, '__buffer__'):
             self._owner = object
-            object = type(object).__buffer__(object, flags)
+            object = _buffer_hook(object, '__buffer__')(flags)
             if not isinstance(object, memoryview):
                 raise TypeError('__buffer__ returned non-memoryview')
             self._owner_view = object
@@ -898,9 +1016,9 @@ class memoryview:
         self._export = None
         self._object = None
         if self._owner is not None:
-            callback = getattr(type(self._owner), '__release_buffer__', None)
+            callback = _buffer_hook(self._owner, '__release_buffer__')
             if callback is not None:
-                callback(self._owner, self._owner_view)
+                callback(self._owner_view)
             self._owner = None
             self._owner_view = None
 
