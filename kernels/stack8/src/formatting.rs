@@ -59,62 +59,10 @@ impl Writer<'_> {
             let kind = pieces[2].rsplit('.').next().unwrap_or(pieces[2]);
             return format!("TypeError: %{} format: an integer is required, not {}", pieces[1], kind);
         }
-        let words = match key {
-            "ext.text.format.zero.string" => &self.lang.fmt_text_format_zero_string,
-            "ext.text.format.zero.integer" => &self.lang.fmt_text_format_zero_integer,
-            "ext.op.rem.format.infinity" => &self.lang.fmt_op_rem_format_infinity,
-            "ext.op.rem.format.nan" => &self.lang.fmt_op_rem_format_nan,
-            "ext.text.format.invalid" => &self.lang.fmt_text_format_invalid,
-            "ext.text.format.invalid.detail" => &self.lang.fmt_text_format_invalid_detail,
-            "ext.text.format.group.conflict" => &self.lang.fmt_text_format_group_conflict,
-            "ext.text.format.group.type" => &self.lang.fmt_text_format_group_type,
-            "ext.text.format.unknown" => &self.lang.fmt_text_format_unknown,
-            "ext.text.format.kinds" => &self.lang.fmt_text_format_kinds,
-            "ext.text.format.unready" => &self.lang.fmt_text_format_unready,
-            "ext.text.format.digits" => &self.lang.fmt_text_format_digits,
-            "ext.text.format.width.big" => &self.lang.fmt_text_format_width_big,
-            "ext.text.format.precision.big" => &self.lang.fmt_text_format_precision_big,
-            "ext.text.format.precision.integer" => &self.lang.fmt_text_format_precision_integer,
-            "ext.text.format.precision.missing" => &self.lang.fmt_text_format_precision_missing,
-            "ext.text.format.sign.string" => &self.lang.fmt_text_format_sign_string,
-            "ext.text.format.alternate.string" => &self.lang.fmt_text_format_alternate_string,
-            "ext.text.format.align.string" => &self.lang.fmt_text_format_align_string,
-            "ext.text.format.sign.character" => &self.lang.fmt_text_format_sign_character,
-            "ext.text.format.alternate.character" => &self.lang.fmt_text_format_alternate_character,
-            "ext.text.format.character" => &self.lang.fmt_text_format_character,
-            "ext.text.format.spec.type" => &self.lang.fmt_text_format_spec_type,
-            "ext.text.format.numbered.auto" => &self.lang.fmt_text_format_numbered_auto,
-            "ext.text.format.numbered.manual" => &self.lang.fmt_text_format_numbered_manual,
-            "ext.text.format.index" => &self.lang.fmt_text_format_index,
-            "ext.text.format.key" => &self.lang.fmt_text_format_key,
-            "ext.text.format.brace.open" => &self.lang.fmt_text_format_brace_open,
-            "ext.text.format.brace.close" => &self.lang.fmt_text_format_brace_close,
-            "ext.text.format.brace.single" => &self.lang.fmt_text_format_brace_single,
-            "ext.text.format.conversion" => &self.lang.fmt_text_format_conversion,
-            "ext.text.format.recursion" => &self.lang.fmt_text_format_recursion,
-            "ext.op.rem.format.few" => &self.lang.fmt_op_rem_format_few,
-            "ext.op.rem.format.many" => &self.lang.fmt_op_rem_format_many,
-            "ext.op.rem.format.mapping" => &self.lang.fmt_op_rem_format_mapping,
-            "ext.op.rem.format.mapping.key" => &self.lang.fmt_op_rem_format_mapping_key,
-            "ext.op.rem.format.mapping.star" => &self.lang.fmt_op_rem_format_mapping_star,
-            "ext.op.rem.format.width.big" => &self.lang.fmt_op_rem_format_width_big,
-            "ext.op.rem.format.precision.big" => &self.lang.fmt_op_rem_format_precision_big,
-            "ext.op.rem.format.number" => &self.lang.fmt_op_rem_format_number,
-            "ext.op.rem.format.integer" => &self.lang.fmt_op_rem_format_integer,
-            "ext.op.rem.format.real" => &self.lang.fmt_op_rem_format_real,
-            "ext.op.rem.format.character" => &self.lang.fmt_op_rem_format_character,
-            "ext.op.rem.format.character.range" => &self.lang.fmt_op_rem_format_character_range,
-            "ext.op.rem.format.byte" => &self.lang.fmt_op_rem_format_byte,
-            "ext.op.rem.format.star" => &self.lang.fmt_op_rem_format_star,
-            "ext.op.rem.format.star.big" => &self.lang.fmt_op_rem_format_star_big,
-            "ext.op.rem.format.incomplete" => &self.lang.fmt_op_rem_format_incomplete,
-            "ext.op.rem.format.key.incomplete" => &self.lang.fmt_op_rem_format_key_incomplete,
-            "ext.op.rem.format.unexpected" => &self.lang.fmt_op_rem_format_unexpected,
-            "ext.op.rem.format.code" => &self.lang.fmt_op_rem_format_code,
-            "ext.stmt.class.format.amiss" => &self.lang.format_spec_amiss,
-            "ext.text.format.complex.zero" => &self.lang.fmt_text_format_complex_zero,
-            "ext.text.format.complex.align" => &self.lang.fmt_text_format_complex_align,
-            _ => &self.lang.fmt_text_format_invalid,
+        let words = if key == "ext.stmt.class.format.amiss" {
+            &self.lang.format_spec_amiss
+        } else {
+            self.lang.format_words.get(key).unwrap_or(&self.lang.format_words["ext.text.format.invalid"])
         };
         let mut out = String::new();
         for (i, word) in words.iter().enumerate() {
@@ -135,7 +83,7 @@ impl Writer<'_> {
             Value::Class(_) | Value::ByteKind(..) => 14,
             _ => 7,
         };
-        self.lang.fmt_text_format_kinds.get(at).map_or("", String::as_str)
+        self.lang.format_words["ext.text.format.kinds"].get(at).map_or("", String::as_str)
     }
 
     /// The dictionary a mapping proxy reads, where the value is one (however it is held).
@@ -1078,56 +1026,10 @@ fn decimal(number: f64, rule: &Rule) -> String {
 }
 
 pub fn names_fault(lang: &Lang, text: &str) -> bool {
-    [
-        &lang.fmt_text_format_zero_string,
-        &lang.fmt_text_format_zero_integer,
-        &lang.fmt_text_format_complex_zero,
-        &lang.fmt_text_format_complex_align,
-        &lang.fmt_op_rem_format_infinity,
-        &lang.fmt_op_rem_format_nan,
-        &lang.fmt_text_format_invalid,
-        &lang.fmt_text_format_invalid_detail,
-        &lang.fmt_text_format_group_conflict,
-        &lang.fmt_text_format_unknown,
-        &lang.fmt_text_format_unready,
-        &lang.fmt_text_format_digits,
-        &lang.fmt_text_format_width_big,
-        &lang.fmt_text_format_precision_big,
-        &lang.fmt_text_format_precision_integer,
-        &lang.fmt_text_format_precision_missing,
-        &lang.fmt_text_format_sign_string,
-        &lang.fmt_text_format_alternate_string,
-        &lang.fmt_text_format_align_string,
-        &lang.fmt_text_format_sign_character,
-        &lang.fmt_text_format_alternate_character,
-        &lang.fmt_text_format_character,
-        &lang.fmt_text_format_spec_type,
-        &lang.fmt_text_format_numbered_auto,
-        &lang.fmt_text_format_numbered_manual,
-        &lang.fmt_text_format_index,
-        &lang.fmt_text_format_key,
-        &lang.fmt_text_format_brace_open,
-        &lang.fmt_text_format_brace_close,
-        &lang.fmt_text_format_brace_single,
-        &lang.fmt_text_format_conversion,
-        &lang.fmt_text_format_recursion,
-        &lang.fmt_op_rem_format_few,
-        &lang.fmt_op_rem_format_many,
-        &lang.fmt_op_rem_format_mapping,
-        &lang.fmt_op_rem_format_mapping_key,
-        &lang.fmt_op_rem_format_mapping_star,
-        &lang.fmt_op_rem_format_width_big,
-        &lang.fmt_op_rem_format_precision_big,
-        &lang.fmt_op_rem_format_number,
-        &lang.fmt_op_rem_format_integer,
-        &lang.fmt_op_rem_format_real,
-        &lang.fmt_op_rem_format_character,
-        &lang.fmt_op_rem_format_character_range,
-        &lang.fmt_op_rem_format_star,
-        &lang.fmt_op_rem_format_star_big,
-        &lang.fmt_op_rem_format_incomplete,
-        &lang.fmt_op_rem_format_key_incomplete,
-        &lang.fmt_op_rem_format_unexpected,
-        &lang.fmt_op_rem_format_code,
-    ].iter().any(|parts| parts.first().map_or(false, |start| !start.is_empty() && text.starts_with(start)))
+    // kinds is a type-name list and group.type is not an error prefix.
+    // The byte format is loaded for fault() and has never been matched here.
+    lang.format_words.iter().any(|(key, parts)| {
+        !matches!(key.as_str(), "ext.text.format.kinds" | "ext.text.format.group.type" | "ext.op.rem.format.byte")
+            && parts.first().map_or(false, |start| !start.is_empty() && text.starts_with(start))
+    })
 }
