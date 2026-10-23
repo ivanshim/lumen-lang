@@ -1747,7 +1747,7 @@ def _adv(source, i, count, row, col):
     breaks = chunk.count('\n')
     if breaks:
         row += breaks
-        col = len(chunk) - chunk.rfind('\n') - 1
+        col = len(chunk[chunk.rfind('\n') + 1:].encode('utf-8'))
     else:
         col += len(chunk.encode('utf-8'))
     return (stop, row, col)
@@ -4504,12 +4504,6 @@ def _validate_node(node, active=None):
         raise TypeError('expected AST, got ' + repr(type(node).__name__))
     cls = type(node)
     category = 'stmt' if isinstance(node, stmt) else 'expr' if isinstance(node, expr) else cls.__name__
-    # Two shapes the reference refuses before it looks at fields: a named
-    # expression binds a name, and a type alias is named by a name.
-    if isinstance(node, NamedExpr) and not isinstance(node.target, Name):
-        raise TypeError('NamedExpr target must be a Name')
-    if isinstance(node, TypeAlias) and not isinstance(node.name, Name):
-        raise TypeError('TypeAlias with non-Name name')
     for attr in ('lineno', 'col_offset'):
         if attr in node._attributes:
             if not hasattr(node, attr):
@@ -4545,6 +4539,13 @@ def _validate_node(node, active=None):
             raise TypeError('expected ' + str(typ) + ', but got ' + repr(value))
         elif isinstance(value, AST):
             _validate_node(value, active)
+    # Two shapes the reference refuses once every field is present and
+    # well formed: a named expression binds a name, a type alias is
+    # named by a name.
+    if isinstance(node, NamedExpr) and not isinstance(node.target, Name):
+        raise TypeError('NamedExpr target must be a Name')
+    if isinstance(node, TypeAlias) and not isinstance(node.name, Name):
+        raise TypeError('TypeAlias with non-Name name')
     if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef, For, AsyncFor, While, If, With, AsyncWith, ExceptHandler, Try, TryStar)) and not node.body:
         raise ValueError('empty body on ' + cls.__name__)
     if isinstance(node, Assign) and not node.targets:
