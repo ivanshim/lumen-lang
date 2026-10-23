@@ -80,12 +80,6 @@ system.collection.render:W system.entry:L \
 system.kind.integer:L system.kind.rational:L system.kind.real:L system.kind.string:L \
 system.kind.boolean:L system.kind.array:L system.kind.null:L";
 
-#[allow(dead_code)]
-const EMPTY_ONLY: [&str; 8] = [
-    "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close",
-    "stmt.foreach", "stmt.foreach.as", "stmt.foreach.pair", "stmt.emit",
-];
-
 /// Builtin labels and the operation each names.
 pub const BUILTIN_LABELS: [(&str, Op); 21] = [
     ("builtin.emit", Op::Emit), ("builtin.print", Op::Print), ("builtin.write", Op::Write), ("builtin.len", Op::Len),

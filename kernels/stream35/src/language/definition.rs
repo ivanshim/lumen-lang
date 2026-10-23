@@ -66,15 +66,6 @@ const LABELS: &[&str] = &[
     "system.kind.boolean", "system.kind.array", "system.kind.null",
 ];
 
-/// Labels the stream kernel recognises but does not implement: it reads
-/// past them, as it reads past an ext.* label, and a program using what
-/// they spell fails here instead.
-#[allow(dead_code)]
-const UNSUPPORTED: &[&str] = &[
-    "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close",
-    "stmt.foreach", "stmt.foreach.as", "stmt.foreach.pair", "stmt.emit",
-];
-
 pub struct Definition {
     pub name: String,
     pub extensions: Vec<String>,

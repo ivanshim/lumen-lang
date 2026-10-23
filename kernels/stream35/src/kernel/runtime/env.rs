@@ -77,15 +77,6 @@ impl Env {
         Ok(())
     }
 
-    /// Replace the innermost existing binding of `name`; if there is none,
-    /// bind it in the current scope.
-    pub fn update(&mut self, name: &str, value: Value) {
-        match self.get_mut(name) {
-            Some(slot) => *slot = value,
-            None => self.define(name.to_string(), value),
-        }
-    }
-
     /// Look up `name` from the innermost scope in view outward.
     pub fn get(&self, name: &str) -> Result<Value, String> {
         self.in_view()

@@ -55,14 +55,6 @@ impl LumenRational {
         self.denominator == BigInt::from(1)
     }
 
-    /// Get as integer if denominator is 1, otherwise None
-    pub fn as_integer(&self) -> Option<&BigInt> {
-        if self.is_integer() {
-            Some(&self.numerator)
-        } else {
-            None
-        }
-    }
 }
 
 impl RuntimeValue for LumenRational {

@@ -65,14 +65,6 @@ const SCHEMA: &[(&str, Shape)] = &[
     ("system.kind.string", Words), ("system.kind.boolean", Words), ("system.kind.array", Words), ("system.kind.null", Words),
 ];
 
-/// Labels with no meaning in this kernel: their value is read past, as
-/// an ext.* label's is, and a program using what they spell fails here.
-#[allow(dead_code)]
-const MUST_BE_EMPTY: &[&str] = &[
-    "syntax.map.open", "syntax.map.separator", "syntax.map.pair", "syntax.map.close",
-    "stmt.foreach", "stmt.foreach.as", "stmt.foreach.pair", "stmt.emit",
-];
-
 /// The builtin each label names.
 pub const NATIVES: &[(&str, Native)] = &[
     ("builtin.emit", Native::Emit), ("builtin.print", Native::Print), ("builtin.write", Native::Write),
