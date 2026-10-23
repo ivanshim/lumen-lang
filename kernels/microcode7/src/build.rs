@@ -12662,6 +12662,14 @@ impl<'a> Builder<'a> {
                     if table.prims.get(&named).is_none() && table.strings("ext.builtin.method.error.attribute").len() == 3 {
                         return Ok(r.located(member_bounds, prim_call(Prim::Of, vec![Form::Read(held.clone()), constant(Value::text(&named))])));
                     }
+                    if calling && table.strings("ext.builtin.method.error.attribute").len() == 3
+                        && !matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {
+                        // The callee belongs to the subject, even when a local has its spelling.
+                        args.remove(0);
+                        let attribute = prim_call(Prim::Of, vec![Form::Read(held.clone()), constant(Value::text(&named))]);
+                        let callable = r.located(member_bounds, attribute);
+                        return Ok(r.located(r.span_since(origin), invoke(callable, args)));
+                    }
                     let fallback = r.named_call(&named, args)?;
                     if matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {
                         return Ok(match &target {
