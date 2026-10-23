@@ -235,6 +235,8 @@ class Mock:
             raise AttributeError(name)
         if self._mock_methods is not None and name not in self._mock_methods:
             raise AttributeError(name)
+        if self._mock_methods is None and name.startswith(('assert', 'assret', 'asert', 'aseert', 'assrt')):
+            raise AttributeError(name)
         child = type(self)(name=name)
         setattr(self, name, child)
         self._mock_children[name] = child
@@ -734,3 +736,140 @@ def __getattr__(name):
     # An absent name is an AttributeError, as a module protocol asks: a
     # getattr with a default, and pickle's scan of sys.modules, rely on it.
     raise AttributeError("module 'unittest.mock' has no attribute '" + name + "'")
+
+
+def _async_stand_in_step(*args, **kwargs):
+    return None
+
+# The flags the reference gives the code object of an asynchronous
+# stand-in: a coroutine that takes arguments of any kind.
+_ASYNC_CODE = _async_stand_in_step.__code__.replace(co_flags=128 | 4 | 8)
+
+
+class AsyncMock(MagicMock):
+    # A stand-in for something awaited. Its own code stands for a
+    # coroutine, so a reader asking whether it is an asynchronous
+    # callable is told yes. A call is written down where it is made and
+    # hands back a coroutine; the effect, the wrapped callable and the
+    # answer are settled when that coroutine is awaited, as the
+    # reference settles them.
+    def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None):
+        MagicMock.__init__(self, name, return_value, side_effect, wraps)
+        self.__dict__['_mock_await_count'] = 0
+        self.__dict__['_mock_await_args'] = None
+        self.__dict__['_mock_await_args_list'] = []
+        self.__dict__['__name__'] = 'AsyncMock'
+        self.__dict__['__code__'] = _ASYNC_CODE
+        self.__dict__['__defaults__'] = ()
+        self.__dict__['__kwdefaults__'] = {}
+
+    def __repr__(self):
+        if self._mock_name is None:
+            return '<AsyncMock>'
+        return '<AsyncMock ' + str(self._mock_name) + '>'
+
+    @property
+    def await_count(self):
+        return self._mock_await_count
+
+    @property
+    def await_args(self):
+        return self._mock_await_args
+
+    @property
+    def await_args_list(self):
+        return self._mock_await_args_list
+
+    def __call__(self, *args, **kwargs):
+        # The call stands on the stand-in at once; only awaiting it runs
+        # the effect, so a call left unawaited changes nothing.
+        self.called = True
+        self.call_count += 1
+        self.call_args = _Call(args, kwargs)
+        self.call_args_list.append(self.call_args)
+        return self._execute_mock_call(args, kwargs)
+
+    async def _execute_mock_call(self, args, kwargs):
+        self.__dict__['_mock_await_count'] += 1
+        record = _Call(args, kwargs)
+        self.__dict__['_mock_await_args'] = record
+        self.__dict__['_mock_await_args_list'].append(record)
+        effect = self._side_effect
+        if effect is not None:
+            if _is_exception(effect):
+                raise effect
+            if not callable(effect):
+                try:
+                    answer = next(effect)
+                except StopIteration:
+                    # A StopIteration cannot travel through a coroutine.
+                    raise StopAsyncIteration
+                if _is_exception(answer):
+                    raise answer
+            elif inspect.iscoroutinefunction(effect):
+                answer = await effect(*args, **kwargs)
+            else:
+                answer = effect(*args, **kwargs)
+            if answer is not DEFAULT:
+                return answer
+        if self.return_value is DEFAULT:
+            if self._mock_wraps is not None:
+                if inspect.iscoroutinefunction(self._mock_wraps):
+                    return await self._mock_wraps(*args, **kwargs)
+                return self._mock_wraps(*args, **kwargs)
+            self.return_value = AsyncMock(name='()')
+        return self.return_value
+
+    def reset_mock(self, *args, **kwargs):
+        Mock.reset_mock(self)
+        self.__dict__['_mock_await_count'] = 0
+        self.__dict__['_mock_await_args'] = None
+        self.__dict__['_mock_await_args_list'] = []
+
+    def assert_awaited(self):
+        if self.await_count == 0:
+            raise AssertionError('Expected ' + (self._mock_name or 'mock') + ' to have been awaited.')
+
+    def assert_awaited_once(self):
+        if self.await_count != 1:
+            raise AssertionError('Expected ' + (self._mock_name or 'mock') + ' to have been awaited once. Awaited ' + str(self.await_count) + ' times.')
+
+    def assert_awaited_with(self, *args, **kwargs):
+        wanted = (args, kwargs)
+        if self.await_args is None:
+            raise AssertionError('Expected await: ' + repr(wanted) + '\nNot awaited')
+        if self.await_args != wanted:
+            raise AssertionError('Expected await: ' + repr(wanted) + '\nActual: ' + repr(self.await_args))
+
+    def assert_awaited_once_with(self, *args, **kwargs):
+        self.assert_awaited_once()
+        self.assert_awaited_with(*args, **kwargs)
+
+    def assert_any_await(self, *args, **kwargs):
+        wanted = (args, kwargs)
+        for made in self.await_args_list:
+            if made == wanted:
+                return
+        raise AssertionError(repr(wanted) + ' await not found')
+
+    def assert_has_awaits(self, calls, any_order=False):
+        expected = list(calls)
+        made = list(self.await_args_list)
+        if not any_order:
+            for at in range(len(made) - len(expected) + 1):
+                if made[at:at + len(expected)] == expected:
+                    return
+            raise AssertionError('Awaits not found.\nExpected: ' + repr(expected) + '\nActual: ' + repr(made))
+        rest = list(made)
+        missing = []
+        for one in expected:
+            try:
+                rest.remove(one)
+            except ValueError:
+                missing.append(one)
+        if missing:
+            raise AssertionError(repr(tuple(missing)) + ' not all found in await list')
+
+    def assert_not_awaited(self):
+        if self.await_count != 0:
+            raise AssertionError('Expected ' + (self._mock_name or 'mock') + ' to not have been awaited. Awaited ' + str(self.await_count) + ' times.')

@@ -54,7 +54,6 @@
   },
   "replacements": {
     "annotationlib": "runtime_adapters/native_annotationlib.py",
-    "inspect": "runtime_adapters/native_inspect.py",
     "test.support": "runtime_adapters/native_test_support.py",
     "test.support.os_helper": "runtime_adapters/native_test_support_os_helper.py",
     "socket": "runtime_adapters/native_socket.py",

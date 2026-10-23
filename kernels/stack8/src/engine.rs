@@ -7306,6 +7306,7 @@ impl<'a> Engine<'a> {
             return Some(walking.map_or(Value::Null, Value::Generator));
         }
         let index = self.lang.trace_fields.iter().position(|key| key == name)?;
+        if name == "f_lasti" { return Some(Value::Small(Self::frame_instruction(object))); }
         if index == 5 {
             let ready = object.fields.borrow()[1].1.clone();
             if !matches!(ready, Value::Null) { return Some(ready); }
@@ -9177,8 +9178,15 @@ impl<'a> Engine<'a> {
             match word.as_ref() {
                 "function" => return Some(Self::adapter(15, vec![])),
                 "staticmethod" | "classmethod" => return Some(Self::adapter(79, vec![])),
+                "property" => return Some(Self::adapter(20, vec![])),
                 _ => {},
             }
+        }
+        // A property also writes and deletes, through its own workings:
+        // a hook called directly reaches the accessor it names.
+        if self.lang.bind_names && word.as_ref() == "property" {
+            if name == self.class_word("descriptor.set") { return Some(Self::adapter(21, vec![])); }
+            if name == self.class_word("descriptor.delete") { return Some(Self::adapter(22, vec![])); }
         }
         if word.as_ref() == "function" && [self.class_word("code"), self.class_word("globals")].contains(&name) {
             return Some(Self::adapter(29, vec![Value::text(&word), Value::text(name)]));
@@ -9392,11 +9400,13 @@ impl<'a> Engine<'a> {
             if self.is_async_generator(&Value::Generator(held.clone())) {
                 if let Some(index) = self.lang.async_generator_fields.iter().position(|word| word == name) {
                     if index == 2 { return Ok(Some(Value::Flag(self.async_generator_running(&Value::Generator(held.clone()))))); }
+                    if index == 4 && held.try_borrow().is_err() { return Ok(Some(Value::Flag(false))); }
                     let state = held.try_borrow().map_err(|_| self.lang.yield_busy[0].clone())?;
                     return Ok(Some(match index {
                         0 => state.program.as_ref().map_or(Value::Null, |body| self.routine_code(body)),
                         1 => if state.closed { Value::Null } else { state.trace_frame.clone().map_or(Value::Null, Value::Object) },
                         2 => Value::Flag(false),
+                        4 => Value::Flag(state.started && !state.closed),
                         _ => match state.delegate.clone().unwrap_or(Value::Null) { Value::Adapter(parts) if parts.0 == 33 => parts.1[0].clone(), other => other },
                     }));
                 }

@@ -121,6 +121,8 @@ impl<'a> Machine<'a> {
             protocols.push((self.detail("descriptor.get").to_owned(), Self::wrap(246, Vec::new())));
         }
         if word == "Union" {
+            let namespace = (self.detail("module").to_string(), Value::text("typing"));
+            protocols.push(namespace);
             protocols.push(("__repr__".to_owned(), Self::wrap(127, Vec::new())));
             if self.table.flag("ext.stmt.type_parameters") {
                 let subscription = Self::wrap(77, vec![Value::text("#union")]);
@@ -224,6 +226,12 @@ impl<'a> Machine<'a> {
         }
         let final_parameter = ["TypeVar", "ParamSpec", "TypeVarTuple", "TypeAliasType", "NoDefaultType", "Union", "ParamSpecArgs", "ParamSpecKwargs"].contains(&word);
         if final_parameter && self.table.flag("ext.stmt.type_parameters") { kind.sealed.set(true); }
+        if !self.rules.words_ext_stmt_class_builder.is_empty() && self.table.prims.get(word) == Some(&Prim::ClassWork(11)) {
+            kind.shared.borrow_mut().push((self.detail("descriptor.get").to_owned(), Self::wrap(50, Vec::new())));
+                kind.shared.borrow_mut().push((self.detail("descriptor.set").to_owned(), Self::wrap(51, Vec::new())));
+                kind.shared.borrow_mut().push((self.detail("descriptor.delete").to_owned(), Self::wrap(52, Vec::new())));
+
+        }
         if !self.rules.words_ext_stmt_class_builder.is_empty() && matches!(self.table.prims.get(word), Some(Prim::ClassWork(9..=10))) {
             kind.shared.borrow_mut().push((self.detail("descriptor.get").to_owned(), Self::wrap(78, Vec::new())));
             for key in [self.detail("function"),"__wrapped__"] {kind.shared.borrow_mut().push((key.to_owned(),Self::wrap(58,vec![Value::text("\0callable")])));}
@@ -267,6 +275,16 @@ impl<'a> Machine<'a> {
                 "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor" => {
                     let reader = self.detail("descriptor.get").to_string();
                     kind.shared.borrow_mut().push((reader.clone(), self.kind_entry(word, &reader)));
+                    // The reading kinds that also write carry those hooks
+                    // on the kind, the way the reference's own types do.
+                    if matches!(word, "getset_descriptor" | "member_descriptor") {
+                        for part in ["descriptor.set", "descriptor.delete"] {
+                            let hook = self.detail(part).to_string();
+                            if !hook.is_empty() {
+                                kind.shared.borrow_mut().push((hook.clone(), self.kind_entry(word, &hook)));
+                            }
+                        }
+                    }
                 }
                 _ => (),
             }
@@ -6541,6 +6559,9 @@ impl<'a> Machine<'a> {
                     if Self::native_beneath(b).is_none() { bits |= 4; }
                 }
                 if let Some(Value::Small(protocol)) = self.inherited_entry(b, "__abc_tpflags__").map(|v| v.settled()) { bits |= protocol & 96; }
+                if let Some(marker) = self.rules.words_ext_stmt_class_detail_abstract.first() {
+                    if Self::own_entry(b, marker).is_some_and(|held| held.settled().is_true()) { bits |= 1048576; }
+                }
                 return Ok(Value::Small(bits));
             }
             if (Self::native_word(b).as_deref() == Some("float") || Self::native_beneath(b).as_deref() == Some("float")) && self.rules.words_ext_builtin_method_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(key)) {
@@ -7183,7 +7204,7 @@ impl<'a> Machine<'a> {
             if key==self.detail("namespace"){let index=self.routine_storage(&value);return Ok(Value::Attributes(self.routine_members[index].1.clone()));}
             if key==self.detail("defaults"){
                 let defaults:Vec<Value>=if matches!(value,Value::Bound(..))||self.written_over.contains_key(&Self::written_key(&value,&self.outermost)) {self.spare_worths(&code,&room,'p').into_iter().map(|(_,v)|v).collect()} else {Vec::new()};
-                if defaults.is_empty() && !code.local_defaults.is_empty(){return Err(self.class_unready());}
+                if defaults.is_empty() && code.local_defaults.iter().any(|slot| code.formal_slots.iter().position(|s| s == slot).is_some_and(|at| code.taking.as_ref().map_or(true, |rules| rules[at] != 'n'))){return Err(self.class_unready());}
                 return Ok(if defaults.is_empty(){Value::Nil}else{Value::tuple(defaults)});
             }
             // A routine answers its own call, so reading it back and
@@ -7193,11 +7214,13 @@ impl<'a> Machine<'a> {
             if self.is_async_generator(&value) {
                 if let Some(index) = self.table.strings("ext.stmt.async.generator.fields").iter().position(|word| word == key) {
                     if index == 2 { return Ok(Value::Flag(self.async_running(&value))); }
+                    if index == 4 && state.try_borrow().is_err() { return Ok(Value::Flag(false)); }
                     let held = state.try_borrow().map_err(|_| self.class_unready())?;
                     return Ok(match index {
                         0 => held.of.as_ref().map_or(Value::Nil, |body| self.code_handle(body)),
                         1 => if held.ended { Value::Nil } else { held.trace_state.clone().map_or(Value::Nil, Value::Thing) },
                         2 => Value::Flag(false),
+                        4 => Value::Flag(held.asleep()),
                         _ => match held.inner.clone().unwrap_or(Value::Nil) { Value::Wrapped(63, parts) => parts[0].clone(), other => other },
                     });
                 }
@@ -8655,11 +8678,14 @@ impl<'a> Machine<'a> {
         // intrinsic words, so each is asked after under its own word.
         if let Value::OctetKind { changeable, .. } = subject { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(&word)]).into()), choice, class_only); }
         if let Value::OctetKind { changeable, .. } = choice { let word=self.octet_kind_word(*changeable).to_owned(); return self.is_beneath(subject, &Value::Wrapped(8, Rc::new(vec![Value::text(&word)]).into()), class_only); }
-        // A method read off a builtin kind's word is asked about as the kind type() names it.
-        if let Value::Intrinsic(_, word) = subject {
-            if !class_only && word.contains('.') { let kind = self.kind_named_after(subject); return self.is_beneath(&kind, choice, true); }
+        // Only an intrinsic that names a kind stands for the kind's
+        // blueprint; a native function is a thing of its own kind and is
+        // left to answer by the kind it already reports.
+        if let Value::Intrinsic(op, word) = subject {
+            if Self::names_a_kind(op) {
+                return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(word)]).into()), choice, class_only);
+            }
         }
-        if let Value::Intrinsic(_, word) = subject { return self.is_beneath(&Value::Wrapped(8, Rc::new(vec![Value::text(word)]).into()), choice, class_only); }
         // The property and the two method wrappers name a class of
         // their own where they are asked after as one: a wrapper of
         // their kind, or a class built upon them, answers to them.
@@ -8713,7 +8739,15 @@ impl<'a> Machine<'a> {
                 }
                 match (class_only, subject, Self::native_word(c)) {
                     (false, Value::Thing(_), _) => {},
-                    (false, _, Some(word)) => return Ok(subject.kind_word()==word),
+                    (false, _, Some(word)) => {
+                        // A native text method's dotted word names the
+                        // method descriptor kind rather than the general
+                        // native kind, just as the value's own type is told.
+                        if matches!(subject, Value::Intrinsic(Prim::Textual(_), name) if name.contains('.')) {
+                            return Ok(word == "method_descriptor");
+                        }
+                        return Ok(subject.kind_word()==word);
+                    },
                     _ => {},
                 }
                 if !class_only {

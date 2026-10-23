@@ -366,7 +366,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("importlib.resources.simple", include_str!("importlib/resources/simple.py"), "importlib/resources/simple.py"),
     ("importlib.simple", include_str!("importlib/simple.py"), "importlib/simple.py"),
     ("importlib.util", include_str!("importlib/util.py"), "importlib/util.py"),
-    ("inspect", concat!(include_str!("runtime_adapters/native_inspect.py"), "\n", include_str!("runtime_adapters/inspect.py")), "inspect.py"),
+    ("inspect", concat!(include_str!("inspect.py"), "\n", include_str!("runtime_adapters/inspect.py")), "inspect.py"),
     ("io", concat!(include_str!("io.py"), "\n", include_str!("runtime_adapters/io.py")), "io.py"),
     ("ipaddress", include_str!("ipaddress.py"), "ipaddress.py"),
     ("itertools", include_str!("itertools.py"), "itertools.py"),

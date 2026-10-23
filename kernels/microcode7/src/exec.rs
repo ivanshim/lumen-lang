@@ -6875,6 +6875,7 @@ impl<'a> Machine<'a> {
                 state.of.as_ref().map(|body| self.code_handle(body))
             }
             Value::Thing(item) if self.activation_kind.as_ref().map_or(false, |kind| Rc::ptr_eq(kind, &item.blueprint())) => {
+                if name == "f_lasti" { return Some(Value::Small(Self::activation_instruction(item))); }
                 if index == 5 {
                     let current = item.holds.borrow()[1].1.clone();
                     if matches!(current, Value::Nil) {
@@ -6966,6 +6967,15 @@ impl<'a> Machine<'a> {
             let value = value.settled();
             let visible = if body.ident == "<genexpr>" && body.formals.first() == Some(word) { ".0" } else { word.as_str() };
             if Self::visible_name(visible) && !matches!(value, Value::Unset) { entries.push((Value::text(visible), value)); }
+        }
+        // Captured bindings are locals of this frame too, even before it runs.
+        for reach in &body.reaching {
+            let name = Self::capture_title(&reach.ident);
+            if !Self::visible_name(name) || entries.iter().any(|(key, _)| key.bare() == name) { continue; }
+            let origin = ascend(environment, reach.up);
+            let Some(binding) = origin.cells.borrow().get(reach.at).cloned() else { continue };
+            let content = binding.settled();
+            if !matches!(content, Value::Unset) { entries.push((Value::text(name), content)); }
         }
         if let Some((owner, names, frame)) = &self.gathering_locals {
             if *owner == Rc::as_ptr(item) as usize {
@@ -11490,6 +11500,13 @@ impl<'a> Machine<'a> {
         if self.names_in_calls && self.detail("descriptor.get") == name {
             if word == "function" { return Some(Value::Wrapped(31, Rc::new(Vec::new()).into())); }
             if matches!(word.as_str(), "classmethod" | "staticmethod") { return Some(Value::Wrapped(78, Rc::new(Vec::new()).into())); }
+            if word == "property" { return Some(Value::Wrapped(50, Rc::new(Vec::new()).into())); }
+        }
+        // A property also writes and deletes, through its own workings:
+        // a hook called directly reaches the accessor it names.
+        if self.names_in_calls && word == "property" {
+            if self.detail("descriptor.set") == name { return Some(Value::Wrapped(51, Rc::new(Vec::new()).into())); }
+            if self.detail("descriptor.delete") == name { return Some(Value::Wrapped(52, Rc::new(Vec::new()).into())); }
         }
         if word == "function" && (name == self.detail("code") || name == self.detail("globals")) {
             return Some(self.kind_entry(&word, name));
@@ -11775,11 +11792,13 @@ impl<'a> Machine<'a> {
             if self.is_async_generator(value) {
                 if let Some(index) = self.table.strings("ext.stmt.async.generator.fields").iter().position(|word| word == name) {
                     if index == 2 { return Some(Value::Flag(self.async_running(value))); }
+                    if index == 4 && state.try_borrow().is_err() { return Some(Value::Flag(false)); }
                     let held = state.try_borrow().ok()?;
                     return Some(match index {
                         0 => held.of.as_ref().map(|body| self.code_handle(body)).unwrap_or(Value::Nil),
                         1 => if held.ended { Value::Nil } else { held.trace_state.clone().map_or(Value::Nil, Value::Thing) },
                         2 => Value::Flag(false),
+                        4 => Value::Flag(held.asleep()),
                         _ => match held.inner.clone().unwrap_or(Value::Nil) { Value::Wrapped(63, parts) => parts[0].clone(), other => other },
                     });
                 }
@@ -32021,6 +32040,14 @@ impl<'a> Machine<'a> {
     /// belongs to none of them.
     fn sequence_working(&mut self, op: Prim, v: &[Value]) -> Result<Option<Value>, String> {
         let [left, right] = v else { return Ok(None) };
+        if op == Prim::Plus {
+            // Tuple slots accept subclass storage after custom operations decline.
+            let left_tuple = Self::underlying(left).filter(|worth| matches!(worth, Value::Tuple(_)));
+            let right_tuple = Self::underlying(right).filter(|worth| matches!(worth, Value::Tuple(_)));
+            if left_tuple.is_some() || right_tuple.is_some() {
+                return self.sequence_working(op, &[left_tuple.unwrap_or_else(|| left.clone()), right_tuple.unwrap_or_else(|| right.clone())]);
+            }
+        }
         let strung = |x: &Value| matches!(x, Value::Vector(_) | Value::Tuple(_));
         let inside = |x: &Value| match x { Value::Vector(row) | Value::Tuple(row) => row.as_ref().clone(), _ => Vec::new() };
         match op {

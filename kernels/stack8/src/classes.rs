@@ -189,6 +189,12 @@ impl<'a> Engine<'a> {
             c.shared.borrow_mut().push((name.clone(), Self::adapter(16, vec![Value::text(&name), Value::Class(c.clone()), Value::text("\0instance-namespace")])));
         }
         if self.lang.type_parameters && matches!(word, "TypeVar" | "ParamSpec" | "TypeVarTuple" | "TypeAliasType" | "NoDefaultType" | "Union" | "ParamSpecArgs" | "ParamSpecKwargs") { c.sealed.set(true); }
+        if !self.lang.class_builder.is_empty() && self.lang.builtins.get(word) == Some(&Builtin::ClassTool(11)) {
+            c.shared.borrow_mut().push((self.class_word("descriptor.get").to_string(), Self::adapter(20, vec![])));
+                c.shared.borrow_mut().push((self.class_word("descriptor.set").to_string(), Self::adapter(21, vec![])));
+                c.shared.borrow_mut().push((self.class_word("descriptor.delete").to_string(), Self::adapter(22, vec![])));
+
+        }
         if !self.lang.class_builder.is_empty() && matches!(self.lang.builtins.get(word), Some(Builtin::ClassTool(9..=10))) {
             c.shared.borrow_mut().push((self.class_word("descriptor.get").to_string(), Self::adapter(79, vec![])));
             for key in [self.class_word("function"),"__wrapped__"] {c.shared.borrow_mut().push((key.to_owned(),Self::adapter(28,vec![Value::text("\0callable")])));}
@@ -227,6 +233,18 @@ impl<'a> Engine<'a> {
         if self.lang.bind_names && matches!(word, "getset_descriptor" | "member_descriptor" | "method_descriptor" | "wrapper_descriptor" | "classmethod_descriptor") {
             let get = self.class_word("descriptor.get").to_owned();
             c.shared.borrow_mut().push((get.clone(), self.held_kind_descriptor(word, &get)));
+            // A member or a getset kind also writes, and says so on its
+            // own type: that is how the reference separates a data
+            // descriptor from a method descriptor.
+            if matches!(word, "getset_descriptor" | "member_descriptor") {
+                for part in ["descriptor.set", "descriptor.delete"] {
+                    let hook = self.class_word(part).to_owned();
+                    if !hook.is_empty() {
+                        let entry = self.held_kind_descriptor(word, &hook);
+                        c.shared.borrow_mut().push((hook, entry));
+                    }
+                }
+            }
         }
         if !self.lang.class_builder.is_empty() && matches!(word,"member_descriptor"|"getset_descriptor"|"NoneType"|"function"|"builtin_function_or_method"|"method"|"method_descriptor"|"wrapper_descriptor"|"method-wrapper"|"code"|"frame"|"traceback"|"generator"|"coroutine"|"async_generator"|"mappingproxy"|"cell") {c.sealed.set(true);}
         self.kind_classes.push((word.to_string(), c.clone()));
@@ -5548,11 +5566,13 @@ impl<'a> Engine<'a> {
             if self.is_async_generator(&subject) {
                 if let Some(index) = self.lang.async_generator_fields.iter().position(|word| word == name) {
                     if index == 2 { return Ok(Value::Flag(self.async_generator_running(&subject))); }
+                    if index == 4 && generator.try_borrow().is_err() { return Ok(Value::Flag(false)); }
                     let state = generator.try_borrow().map_err(|_| self.class_refusal())?;
                     return Ok(match index {
                         0 => state.program.as_ref().map_or(Value::Null, |body| self.routine_code(body)),
                         1 => if state.closed { Value::Null } else { state.trace_frame.clone().map_or(Value::Null, Value::Object) },
                         2 => Value::Flag(false),
+                        4 => Value::Flag(state.started && !state.closed),
                         _ => match state.delegate.clone().unwrap_or(Value::Null) { Value::Adapter(parts) if parts.0 == 33 => parts.1[0].clone(), other => other },
                     });
                 }
@@ -8054,7 +8074,9 @@ impl<'a> Engine<'a> {
         let tracked = (Self::own_kind(c).is_none() || generic_heap)
             && !matches!(Self::kind_beneath(c).as_deref(), Some("tuple" | "int" | "float" | "complex" | "str" | "bytes" | "bytearray"));
         let protocol = self.class_value(c, "__abc_tpflags__").map_or(0, |v| match v.contents() { Value::Small(n) => n, _ => 0 }) & 96;
-        protocol + if c.constants.iter().any(|(key, _)| key == "\0native-name") && !Self::class_sealed(c) && !generic_heap { 256 } else { 0 } + if c.python_names.borrow().is_some() || generic_heap { 512 } else { 0 } + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
+        let abstract_bit = self.lang.class_details.get("abstract").and_then(|words| words.first())
+            .and_then(|word| Self::own_class_value(c, word)).is_some_and(|value| value.is_true());
+        (if abstract_bit { 1 << 20 } else { 0 }) + protocol + if c.constants.iter().any(|(key, _)| key == "\0native-name") && !Self::class_sealed(c) && !generic_heap { 256 } else { 0 } + if c.python_names.borrow().is_some() || generic_heap { 512 } else { 0 } + if Self::class_sealed(c) { 256 } else { 1024 } + if dictionary { 16 } else { 0 } + if inline { 4 } else { 0 } + if tracked { 16384 } else { 0 }
     }
     pub(super) fn type_base(&mut self, value: &Value) -> Flow<Rc<Class>> {
         if !self.lang.class_builder.is_empty() {
@@ -8501,11 +8523,14 @@ impl<'a> Engine<'a> {
         // builtin words, so each is asked about under its own word.
         if let Value::ByteKind(mutable, _) = value { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(&Self::adapter(8, vec![Value::text(&word)]), wanted, subclass); }
         if let Value::ByteKind(mutable, _) = wanted { let word=self.byte_kind_word(*mutable).to_string(); return self.beneath(value, &Self::adapter(8, vec![Value::text(&word)]), subclass); }
-        // A method read off a builtin kind's word is asked about as the kind type() names it.
-        if let Value::Native(_, word) = value {
-            if !subclass && word.contains('.') { let kind = self.named_kind(value); return self.beneath(&kind, wanted, true); }
+        // Only a word that names a kind stands for the class it names;
+        // a native function or method is a thing of its own kind and is
+        // left to answer by the kind it already reports.
+        if let Value::Native(operation, word) = value {
+            if Self::kind_builtin(operation) {
+                return self.beneath(&Self::adapter(8, vec![Value::text(word)]), wanted, subclass);
+            }
         }
-        if let Value::Native(_, word) = value { return self.beneath(&Self::adapter(8, vec![Value::text(word)]), wanted, subclass); }
         // The property and the two method wrappers name a class of
         // their own where they are asked after as one: a wrapper of
         // their kind, or a class written upon them, answers to them.
@@ -8559,7 +8584,15 @@ impl<'a> Engine<'a> {
             // kind, whatever class a module keeps for its members.
             if Self::own_kind(c).as_deref()==Some("module") && self.module_holding(value).is_some(){return Ok(true);}
             if !subclass && !matches!(value, Value::Object(_)) {
-                if let Some(word)=Self::own_kind(c) { return Ok(value.core_kind()==word); }
+                if let Some(word)=Self::own_kind(c) {
+                    // A native text method's dotted word names the method
+                    // descriptor kind rather than the general native kind,
+                    // just as the value's own type is told.
+                    if matches!(value, Value::Native(Builtin::Text(_), name) if name.contains('.')) {
+                        return Ok(word == "method_descriptor");
+                    }
+                    return Ok(value.core_kind()==word);
+                }
             }
             if !subclass {
                 if let Value::Class(held) = value {

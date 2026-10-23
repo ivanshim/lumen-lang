@@ -1169,7 +1169,8 @@
     "cr_code",
     "cr_await",
     "cr_origin",
-    "f_builtins"
+    "f_builtins",
+    "f_lasti"
   ],
   "ext.builtin.exceptions.traceback.member": [
     "__traceback__"
@@ -2897,7 +2898,8 @@
     "ag_code",
     "ag_frame",
     "ag_running",
-    "ag_await"
+    "ag_await",
+    "ag_suspended"
   ],
   "ext.stmt.async.generator.methods": [
     "asend",
