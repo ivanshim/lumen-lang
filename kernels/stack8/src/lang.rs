@@ -65,62 +65,10 @@ pub struct Lang {
     /// The same, for a member sought on a module, which is named by
     /// the name it was read in under.
     pub member_absent_module: Option<(String, String, String)>,
-    pub fmt_text_format_zero_string: Vec<String>,
-    pub fmt_text_format_zero_integer: Vec<String>,
-    pub fmt_op_rem_format_infinity: Vec<String>,
-    pub fmt_op_rem_format_nan: Vec<String>,
+    pub format_words: HashMap<String, Vec<String>, crate::value::FxBuildHasher>,
     pub open_decimal_point: bool,
     pub format_builtin: Vec<String>,
     pub format_method: Vec<String>,
-    pub fmt_text_format_invalid: Vec<String>,
-    pub fmt_text_format_invalid_detail: Vec<String>,
-    pub fmt_text_format_group_conflict: Vec<String>,
-    pub fmt_text_format_group_type: Vec<String>,
-    pub fmt_text_format_unknown: Vec<String>,
-    pub fmt_text_format_kinds: Vec<String>,
-    pub fmt_text_format_unready: Vec<String>,
-    pub fmt_text_format_digits: Vec<String>,
-    pub fmt_text_format_width_big: Vec<String>,
-    pub fmt_text_format_precision_big: Vec<String>,
-    pub fmt_text_format_precision_integer: Vec<String>,
-    pub fmt_text_format_precision_missing: Vec<String>,
-    pub fmt_text_format_sign_string: Vec<String>,
-    pub fmt_text_format_alternate_string: Vec<String>,
-    pub fmt_text_format_align_string: Vec<String>,
-    pub fmt_text_format_sign_character: Vec<String>,
-    pub fmt_text_format_alternate_character: Vec<String>,
-    pub fmt_text_format_character: Vec<String>,
-    pub fmt_text_format_complex_zero: Vec<String>,
-    pub fmt_text_format_complex_align: Vec<String>,
-    pub fmt_text_format_spec_type: Vec<String>,
-    pub fmt_text_format_numbered_auto: Vec<String>,
-    pub fmt_text_format_numbered_manual: Vec<String>,
-    pub fmt_text_format_index: Vec<String>,
-    pub fmt_text_format_key: Vec<String>,
-    pub fmt_text_format_brace_open: Vec<String>,
-    pub fmt_text_format_brace_close: Vec<String>,
-    pub fmt_text_format_brace_single: Vec<String>,
-    pub fmt_text_format_conversion: Vec<String>,
-    pub fmt_text_format_recursion: Vec<String>,
-    pub fmt_op_rem_format_few: Vec<String>,
-    pub fmt_op_rem_format_many: Vec<String>,
-    pub fmt_op_rem_format_mapping: Vec<String>,
-    pub fmt_op_rem_format_mapping_key: Vec<String>,
-    pub fmt_op_rem_format_mapping_star: Vec<String>,
-    pub fmt_op_rem_format_width_big: Vec<String>,
-    pub fmt_op_rem_format_precision_big: Vec<String>,
-    pub fmt_op_rem_format_number: Vec<String>,
-    pub fmt_op_rem_format_integer: Vec<String>,
-    pub fmt_op_rem_format_real: Vec<String>,
-    pub fmt_op_rem_format_character: Vec<String>,
-    pub fmt_op_rem_format_character_range: Vec<String>,
-    pub fmt_op_rem_format_byte: Vec<String>,
-    pub fmt_op_rem_format_star: Vec<String>,
-    pub fmt_op_rem_format_star_big: Vec<String>,
-    pub fmt_op_rem_format_incomplete: Vec<String>,
-    pub fmt_op_rem_format_key_incomplete: Vec<String>,
-    pub fmt_op_rem_format_unexpected: Vec<String>,
-    pub fmt_op_rem_format_code: Vec<String>,
 
     pub text_words: HashMap<String, Vec<String>, crate::value::FxBuildHasher>,
     pub text_repeat: bool,
@@ -1461,6 +1409,18 @@ impl<'a> Reader<'a> {
         Ok(self.strings(key)?.into_iter().next())
     }
 
+    /// Names that have a head word, in the order given, each with that
+    /// word. A name whose label has no word is left out.
+    fn heads<K: Clone>(&self, named: &[(K, &str)]) -> Result<Vec<(K, String)>, String> {
+        let mut found = Vec::new();
+        for (kind, tag) in named {
+            if let Some(word) = self.head(tag)? {
+                found.push((kind.clone(), word));
+            }
+        }
+        Ok(found)
+    }
+
     /// A label whose words stand on either side of what the kernel puts
     /// between them: the first word before it, the second after. One
     /// word alone leaves the kernel nothing to close with, so it is
@@ -1484,6 +1444,16 @@ impl<'a> Reader<'a> {
             (Some(first), Some(second), Some(third)) => Ok(Some((first, second, third))),
             (Some(_), ..) => Err(format!("label '{key}' wants three words about the two things it names")),
             _ => Ok(None),
+        }
+    }
+
+    /// Nothing where the label lists no words, and its two words where
+    /// it lists exactly two. Any other count is the error `{key} {what}`.
+    fn pair(&self, key: &str, what: &str) -> Result<Option<(String, String)>, String> {
+        match self.strings(key)?.as_slice() {
+            [] => Ok(None),
+            [before, after] => Ok(Some((before.clone(), after.clone()))),
+            _ => Err(format!("{key} {what}")),
         }
     }
 
@@ -1591,6 +1561,68 @@ fn name_like(s: &str, unicode: bool, prefix: Option<char>) -> bool {
         _ => false,
     }
 }
+
+const FORMAT_LABELS: &[&str] = &[
+    "ext.op.rem.format.nan",
+    "ext.op.rem.format.infinity",
+    "ext.text.format.zero.integer",
+    "ext.text.format.zero.string",
+    "ext.text.format.invalid",
+    "ext.text.format.invalid.detail",
+    "ext.text.format.group.conflict",
+    "ext.text.format.group.type",
+    "ext.text.format.unknown",
+    "ext.text.format.kinds",
+    "ext.text.format.unready",
+    "ext.text.format.digits",
+    "ext.text.format.width.big",
+    "ext.text.format.precision.big",
+    "ext.text.format.precision.integer",
+    "ext.text.format.precision.missing",
+    "ext.text.format.sign.string",
+    "ext.text.format.alternate.string",
+    "ext.text.format.align.string",
+    "ext.text.format.sign.character",
+    "ext.text.format.alternate.character",
+    "ext.text.format.character",
+    "ext.text.format.complex.zero",
+    "ext.text.format.complex.align",
+    "ext.text.format.spec.type",
+    "ext.text.format.numbered.auto",
+    "ext.text.format.numbered.manual",
+    "ext.text.format.index",
+    "ext.text.format.key",
+    "ext.text.format.brace.open",
+    "ext.text.format.brace.close",
+    "ext.text.format.brace.single",
+    "ext.text.format.conversion",
+    "ext.text.format.recursion",
+    "ext.op.rem.format.few",
+    "ext.op.rem.format.many",
+    "ext.op.rem.format.mapping",
+    "ext.op.rem.format.mapping.key",
+    "ext.op.rem.format.mapping.star",
+    "ext.op.rem.format.width.big",
+    "ext.op.rem.format.precision.big",
+    "ext.op.rem.format.number",
+    "ext.op.rem.format.integer",
+    "ext.op.rem.format.real",
+    "ext.op.rem.format.character",
+    "ext.op.rem.format.character.range",
+    "ext.op.rem.format.byte",
+    "ext.op.rem.format.star",
+    "ext.op.rem.format.star.big",
+    "ext.op.rem.format.incomplete",
+    "ext.op.rem.format.key.incomplete",
+    "ext.op.rem.format.unexpected",
+    "ext.op.rem.format.code",
+];
+
+/// Order of `ext.system.kind.brief`: the place a kind's short word
+/// occupies in that list.
+const IN_ORDER: [Sort; 7] = [
+    Sort::Integer, Sort::Rational, Sort::Real, Sort::Text, Sort::Boolean, Sort::Array, Sort::Null,
+];
 
 impl Lang {
     /// Text of a number with the digit separators taken out, or nothing
@@ -2305,61 +2337,9 @@ impl Lang {
             tuple_unready: r.strings("ext.op.tuple.unready")?,
             byte_words: ["ext.builtin.bytes.memory", "ext.builtin.text.intern", "ext.builtin.pickle_buffer", "ext.builtin.bytes.escape_decode", "ext.builtin.bytes.signed", "ext.system.bytes.strict", "ext.builtin.bytes", "ext.builtin.bytearray", "ext.builtin.bytes.encode", "ext.builtin.bytes.decode", "ext.builtin.bytes.hex", "ext.builtin.bytes.fromhex", "ext.builtin.bytes.maketrans", "ext.builtin.bytes.upper", "ext.builtin.bytes.lower", "ext.builtin.bytes.split", "ext.builtin.bytes._export", "ext.builtin.bytes.resize", "ext.builtin.bytes.join", "ext.builtin.bytes.startswith", "ext.builtin.bytes.replace", "ext.builtin.bytes.strip", "ext.builtin.bytes.find", "ext.builtin.bytes.from_int", "ext.builtin.bytes.to_int", "ext.builtin.isinstance", "ext.builtin.hash", "ext.system.bytes.repr", "ext.system.bytes.type", "ext.system.bytes.encodings", "ext.system.bytes.order", "ext.system.bytes.unready", "ext.system.bytes.arguments", "ext.system.bytes.range", "ext.system.bytes.negative", "ext.system.bytes.index", "ext.system.bytes.subscript", "ext.system.bytes.concat", "ext.system.bytes.missing", "ext.system.bytes.immutable", "ext.system.bytes.unhashable", "ext.system.bytes.separator", "ext.system.bytes.hex", "ext.system.bytes.overflow", "ext.system.bytes.unsigned", "ext.system.bytes.bad_order", "ext.system.bytes.decode", "ext.system.bytes.encode", "ext.lexical.string.bytes.ascii", "ext.lexical.string.bytes.mixed", "ext.lexical.string.template.mixed"].iter().map(|key| Ok((key.to_string(), r.strings(key)?))).collect::<Result<_, String>>()?,
             bytes_unready: r.strings("ext.lexical.string.prefix.bytes.unready")?,
-            fmt_op_rem_format_nan: r.strings("ext.op.rem.format.nan")?,
-            fmt_op_rem_format_infinity: r.strings("ext.op.rem.format.infinity")?,
-            fmt_text_format_zero_integer: r.strings("ext.text.format.zero.integer")?,
-            fmt_text_format_zero_string: r.strings("ext.text.format.zero.string")?,
+            format_words: FORMAT_LABELS.iter().map(|key| Ok(((*key).to_string(), r.strings(key)?))).collect::<Result<_, String>>()?,
             format_builtin: r.strings("ext.builtin.format")?,
             format_method: r.strings("ext.text.format")?,
-            fmt_text_format_invalid: r.strings("ext.text.format.invalid")?,
-            fmt_text_format_invalid_detail: r.strings("ext.text.format.invalid.detail")?,
-            fmt_text_format_group_conflict: r.strings("ext.text.format.group.conflict")?,
-            fmt_text_format_group_type: r.strings("ext.text.format.group.type")?,
-            fmt_text_format_unknown: r.strings("ext.text.format.unknown")?,
-            fmt_text_format_kinds: r.strings("ext.text.format.kinds")?,
-            fmt_text_format_unready: r.strings("ext.text.format.unready")?,
-            fmt_text_format_digits: r.strings("ext.text.format.digits")?,
-            fmt_text_format_width_big: r.strings("ext.text.format.width.big")?,
-            fmt_text_format_precision_big: r.strings("ext.text.format.precision.big")?,
-            fmt_text_format_precision_integer: r.strings("ext.text.format.precision.integer")?,
-            fmt_text_format_precision_missing: r.strings("ext.text.format.precision.missing")?,
-            fmt_text_format_sign_string: r.strings("ext.text.format.sign.string")?,
-            fmt_text_format_alternate_string: r.strings("ext.text.format.alternate.string")?,
-            fmt_text_format_align_string: r.strings("ext.text.format.align.string")?,
-            fmt_text_format_sign_character: r.strings("ext.text.format.sign.character")?,
-            fmt_text_format_alternate_character: r.strings("ext.text.format.alternate.character")?,
-            fmt_text_format_character: r.strings("ext.text.format.character")?,
-            fmt_text_format_complex_zero: r.strings("ext.text.format.complex.zero")?,
-            fmt_text_format_complex_align: r.strings("ext.text.format.complex.align")?,
-            fmt_text_format_spec_type: r.strings("ext.text.format.spec.type")?,
-            fmt_text_format_numbered_auto: r.strings("ext.text.format.numbered.auto")?,
-            fmt_text_format_numbered_manual: r.strings("ext.text.format.numbered.manual")?,
-            fmt_text_format_index: r.strings("ext.text.format.index")?,
-            fmt_text_format_key: r.strings("ext.text.format.key")?,
-            fmt_text_format_brace_open: r.strings("ext.text.format.brace.open")?,
-            fmt_text_format_brace_close: r.strings("ext.text.format.brace.close")?,
-            fmt_text_format_brace_single: r.strings("ext.text.format.brace.single")?,
-            fmt_text_format_conversion: r.strings("ext.text.format.conversion")?,
-            fmt_text_format_recursion: r.strings("ext.text.format.recursion")?,
-            fmt_op_rem_format_few: r.strings("ext.op.rem.format.few")?,
-            fmt_op_rem_format_many: r.strings("ext.op.rem.format.many")?,
-            fmt_op_rem_format_mapping: r.strings("ext.op.rem.format.mapping")?,
-            fmt_op_rem_format_mapping_key: r.strings("ext.op.rem.format.mapping.key")?,
-            fmt_op_rem_format_mapping_star: r.strings("ext.op.rem.format.mapping.star")?,
-            fmt_op_rem_format_width_big: r.strings("ext.op.rem.format.width.big")?,
-            fmt_op_rem_format_precision_big: r.strings("ext.op.rem.format.precision.big")?,
-            fmt_op_rem_format_number: r.strings("ext.op.rem.format.number")?,
-            fmt_op_rem_format_integer: r.strings("ext.op.rem.format.integer")?,
-            fmt_op_rem_format_real: r.strings("ext.op.rem.format.real")?,
-            fmt_op_rem_format_character: r.strings("ext.op.rem.format.character")?,
-            fmt_op_rem_format_character_range: r.strings("ext.op.rem.format.character.range")?,
-            fmt_op_rem_format_byte: r.strings("ext.op.rem.format.byte")?,
-            fmt_op_rem_format_star: r.strings("ext.op.rem.format.star")?,
-            fmt_op_rem_format_star_big: r.strings("ext.op.rem.format.star.big")?,
-            fmt_op_rem_format_incomplete: r.strings("ext.op.rem.format.incomplete")?,
-            fmt_op_rem_format_key_incomplete: r.strings("ext.op.rem.format.key.incomplete")?,
-            fmt_op_rem_format_unexpected: r.strings("ext.op.rem.format.unexpected")?,
-            fmt_op_rem_format_code: r.strings("ext.op.rem.format.code")?,
             format_unready: r.strings("ext.lexical.string.prefix.format.unready")?,
             identity_unready: r.strings("ext.op.identical.unsupported")?,
             in_values: r.strings("ext.op.in")?,
@@ -2609,21 +2589,12 @@ impl Lang {
             assign_gives_value: r.flag("ext.op.assign.value")?,
             plain_keys: r.flag("ext.op.index.plain_keys")?,
             loose_equality: tells_same && r.strings("ext.op.identical.negated")?.is_empty(),
-            complaint_words: {
-                let named = [
-                    (Complaint::Warning, "ext.system.complaint.warning"),
-                    (Complaint::Notice, "ext.system.complaint.notice"),
-                    (Complaint::Deprecated, "ext.system.complaint.deprecated"),
-                    (Complaint::Fatal, "ext.system.complaint.fatal"),
-                ];
-                let mut found = Vec::new();
-                for (kind, tag) in named {
-                    if let Some(word) = r.head(tag)? {
-                        found.push((kind, word));
-                    }
-                }
-                found
-            },
+            complaint_words: r.heads(&[
+                (Complaint::Warning, "ext.system.complaint.warning"),
+                (Complaint::Notice, "ext.system.complaint.notice"),
+                (Complaint::Deprecated, "ext.system.complaint.deprecated"),
+                (Complaint::Fatal, "ext.system.complaint.fatal"),
+            ])?,
             markup_setting: r.head("ext.system.complaint.markup.setting")?,
             markup_kind: r.about_two("ext.system.complaint.markup.kind")?,
             markup_place: r.around("ext.system.complaint.markup.place")?,
@@ -2704,16 +2675,11 @@ impl Lang {
             step_down_text: r.head("ext.op.decrement.text")?,
             warns_of_unwritten: r.head("ext.system.complaint.warning")?.is_some(),
             tells_place: tells_complaints,
-            source_bindings: {
-                let named = [("file", "ext.system.source.file"), ("directory", "ext.system.source.directory"), ("runner", "ext.system.runner")];
-                let mut found = Vec::new();
-                for (part, tag) in named {
-                    if let Some(word) = r.head(tag)? {
-                        found.push((part.to_string(), word));
-                    }
-                }
-                found
-            },
+            source_bindings: r.heads(&[
+                ("file", "ext.system.source.file"),
+                ("directory", "ext.system.source.directory"),
+                ("runner", "ext.system.runner"),
+            ])?.into_iter().map(|(part, word)| (part.to_string(), word)).collect(),
             debug_binding: r.head("ext.system.debug")?,
             ellipsis_words: r.strings("ext.literal.ellipsis")?,
             ellipsis_unready: r.head("ext.literal.ellipsis.unready")?,
@@ -2876,11 +2842,7 @@ impl Lang {
             default_words: r.strings("ext.stmt.default")?,
             case_marks: r.strings("ext.stmt.case.mark")?,
             case_mark_instead: r.head("ext.stmt.case.mark.instead")?,
-            ternary: match r.strings("ext.op.ternary")?.as_slice() {
-                [] => None,
-                [q, m] => Some((q.clone(), m.clone())),
-                _ => return Err("ext.op.ternary takes exactly two signs, the question and the mark".to_string()),
-            },
+            ternary: r.pair("ext.op.ternary", "takes exactly two signs, the question and the mark")?,
             lone_stmt: r.flag("ext.block.lone_statement")?,
             hoisted: r.flag("ext.stmt.function.hoisted")?,
             routines_outermost: r.flag("ext.stmt.function.outermost")?,
@@ -2893,21 +2855,12 @@ impl Lang {
             static_read_in: r.flag("ext.stmt.static.read_in")?,
             body_binding: r.head("ext.system.request.body")?,
             amiss_binding: r.head("ext.system.request.amiss")?,
-            amiss_words: {
-                let kinds = [
-                    ("boundary", "ext.system.request.amiss.boundary"),
-                    ("boundary.wrong", "ext.system.request.amiss.boundary.wrong"),
-                    ("part", "ext.system.request.amiss.part"),
-                    ("body.large", "ext.system.request.amiss.body.large"),
-                ];
-                let mut said = Vec::new();
-                for (kind, tag) in kinds {
-                    if let Some(words) = r.head(tag)? {
-                        said.push((kind, words));
-                    }
-                }
-                said
-            },
+            amiss_words: r.heads(&[
+                ("boundary", "ext.system.request.amiss.boundary"),
+                ("boundary.wrong", "ext.system.request.amiss.boundary.wrong"),
+                ("part", "ext.system.request.amiss.part"),
+                ("body.large", "ext.system.request.amiss.body.large"),
+            ])?,
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
             imaginary_unrun: r.head("ext.lexical.number.imaginary.unrun")?.unwrap_or_default(),
             plus_words: r.strings("ext.op.plus")?,
@@ -3039,11 +2992,7 @@ impl Lang {
             walk_onward: r.head("ext.op.walk.onward")?,
             giver_class: r.head("ext.op.walk.giver.class")?,
             walk_giver: r.head("ext.op.walk.giver")?,
-            giver_unwalkable: match r.strings("ext.op.walk.giver.unwalkable")?.as_slice() {
-                [] => None,
-                [before, after] => Some((before.clone(), after.clone())),
-                _ => return Err("ext.op.walk.giver.unwalkable takes exactly two pieces, what is said before the name and what is said after".to_string()),
-            },
+            giver_unwalkable: r.pair("ext.op.walk.giver.unwalkable", "takes exactly two pieces, what is said before the name and what is said after")?,
             walk_no_cell: r.head("ext.op.walk.no_cell")?,
             walk_key_no_cell: r.head("ext.op.walk.key.no_cell")?,
             walk_alive: r.flag("ext.op.walk.live")?,
@@ -3119,11 +3068,7 @@ impl Lang {
             parameters_amiss: r.strings("ext.stmt.function.parameters.amiss")?,
             parameters_duplicate: r.strings("ext.stmt.function.parameters.duplicate")?,
 
-            short_function: match r.strings("ext.stmt.function.short")?.as_slice() {
-                [] => None,
-                [word, mark] => Some((word.clone(), mark.clone())),
-                _ => return Err("ext.stmt.function.short takes exactly two words, the one it opens with and the mark before its body".to_string()),
-            },
+            short_function: r.pair("ext.stmt.function.short", "takes exactly two words, the one it opens with and the mark before its body")?,
             lambda_name: r.strings("ext.stmt.function.anonymous")?,
             uses_alias: r.strings("ext.stmt.class.uses.alias")?,
             interface_words: r.strings("ext.stmt.class.interface")?,
@@ -3160,21 +3105,16 @@ impl Lang {
             absent_index: r.flag("ext.op.index.absent")?,
             scalar_index: r.head("ext.op.index.scalar")?,
             nothing_index: r.head("ext.op.index.nothing")?,
-            request_bindings: {
-                let groups = [
-                    ("GET", "ext.system.request.query"), ("POST", "ext.system.request.form"),
-                    ("COOKIE", "ext.system.request.cookies"), ("SERVER", "ext.system.request.server"),
-                    ("ENV", "ext.system.request.env"), ("FILES", "ext.system.request.files"),
-                    ("ALL", "ext.system.request.all"), ("SETTINGS", "ext.system.request.settings"),
-                ];
-                let mut named = Vec::new();
-                for (group, tag) in groups {
-                    if let Some(name) = r.head(tag)? {
-                        named.push((group.to_string(), name));
-                    }
-                }
-                named
-            },
+            request_bindings: r.heads(&[
+                ("GET", "ext.system.request.query"),
+                ("POST", "ext.system.request.form"),
+                ("COOKIE", "ext.system.request.cookies"),
+                ("SERVER", "ext.system.request.server"),
+                ("ENV", "ext.system.request.env"),
+                ("FILES", "ext.system.request.files"),
+                ("ALL", "ext.system.request.all"),
+                ("SETTINGS", "ext.system.request.settings"),
+            ])?.into_iter().map(|(group, name)| (group.to_string(), name)).collect(),
         };
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
@@ -3351,9 +3291,6 @@ impl Lang {
     /// The word this language names a value's kind by, the shorter one
     /// where it has one.
     pub fn kind_word(&self, v: &crate::value::Value) -> String {
-        use crate::value::Sort;
-        const IN_ORDER: [Sort; 7] =
-            [Sort::Integer, Sort::Rational, Sort::Real, Sort::Text, Sort::Boolean, Sort::Array, Sort::Null];
         let Some(kind) = v.sort() else { return "value".to_string() };
         let at = IN_ORDER.iter().position(|k| *k == kind);
         match at.and_then(|i| self.brief_kinds.get(i)).filter(|word| *word != "-") {
@@ -3366,9 +3303,6 @@ impl Lang {
     /// kind with or by the shorter word it complains with. Nothing where
     /// the word names no kind of the language's.
     pub fn kind_of_word(&self, word: &str) -> Option<crate::value::Sort> {
-        use crate::value::Sort;
-        const IN_ORDER: [Sort; 7] =
-            [Sort::Integer, Sort::Rational, Sort::Real, Sort::Text, Sort::Boolean, Sort::Array, Sort::Null];
         if let Some((_, kind)) = self.sort_bindings.iter().find(|(n, _)| n == word) {
             return Some(*kind);
         }
