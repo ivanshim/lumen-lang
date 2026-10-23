@@ -21,49 +21,30 @@ impl StmtNode for IfStmt {
         let cond_bool = as_bool(cond.as_ref())?;
         let branch_taken = cond_bool.value;
 
-        if branch_taken {
-            let mut result = Control::None;
-            for stmt in &self.then_block {
-                let ctl = stmt.exec(env)?;
-                match ctl {
-                    Control::None => {
-                        // Statement completed normally
-                    }
-                    Control::ExprValue(val) => {
-                        // Update result for implicit return from expression
-                        result = Control::ExprValue(val);
-                    }
-                    // Break/Continue/Return control flow
-                    other => {
-                        result = other;
-                        break;
-                    }
+        let block = if branch_taken {
+            self.then_block.as_slice()
+        } else {
+            self.else_block.as_deref().unwrap_or(&[])
+        };
+        let mut result = Control::None;
+        for stmt in block {
+            let ctl = stmt.exec(env)?;
+            match ctl {
+                Control::None => {
+                    // Statement completed normally
+                }
+                Control::ExprValue(val) => {
+                    // Update result for implicit return from expression
+                    result = Control::ExprValue(val);
+                }
+                // Break/Continue/Return control flow
+                other => {
+                    result = other;
+                    break;
                 }
             }
-            return Ok(result);
-        } else if let Some(ref else_block) = self.else_block {
-            let mut result = Control::None;
-            for stmt in else_block {
-                let ctl = stmt.exec(env)?;
-                match ctl {
-                    Control::None => {
-                        // Statement completed normally
-                    }
-                    Control::ExprValue(val) => {
-                        // Update result for implicit return from expression
-                        result = Control::ExprValue(val);
-                    }
-                    // Break/Continue/Return control flow
-                    other => {
-                        result = other;
-                        break;
-                    }
-                }
-            }
-            return Ok(result);
         }
-
-        Ok(Control::None)
+        Ok(result)
     }
 }
 
