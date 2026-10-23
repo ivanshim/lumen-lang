@@ -35,6 +35,16 @@ fn folded(value: u32, narrow: bool) -> u32 {
         (false, _) => char::from_u32(value).and_then(|ch| ch.to_lowercase().next()).map_or(value, |ch| ch as u32),
     }
 }
+fn ctype_case(value: u32) -> (u32, u32) {
+    match i32::try_from(value).ok().filter(|&byte| byte <= 255) {
+        Some(byte) => unsafe { (libc::tolower(byte) as u32, libc::toupper(byte) as u32) },
+        None => (value, value),
+    }
+}
+fn ctype_word(value: u32) -> bool {
+    if value == u32::from(b'_') { return true; }
+    u8::try_from(value).is_ok_and(|byte| unsafe { libc::isalnum(i32::from(byte)) != 0 })
+}
 fn has_property(value: u32, mask: u16) -> bool { char::from_u32(value).is_some_and(|ch| crate::unicode::property(ch, mask)) }
 fn is_word(value: u32, unicode: bool) -> bool {
     if value == 95 { return true; }
@@ -44,7 +54,8 @@ fn is_word(value: u32, unicode: bool) -> bool {
 fn in_category(tag: u32, value: u32) -> bool {
     let result = match tag / 2 {
         0 => (48..=57).contains(&value), 1 => matches!(value, 9..=13 | 32),
-        2 | 4 => is_word(value, false), 3 => value == 10,
+        2 => is_word(value, false), 3 => value == 10,
+        4 => ctype_word(value),
         5 => has_property(value, 2), 6 => white(value),
         7 => is_word(value, true), 8 => matches!(value, 10..=13 | 28..=30 | 133 | 8232 | 8233),
         9 => alphabetic(value), 10 => has_property(value, 128),
@@ -105,8 +116,9 @@ impl Regex<'_> {
             return at == self.limit || tag != 7 && self.subject.get(at) == Some(&10) && (tag == 6 || at+1 == self.limit);
         }
         let unicode = tag == 10 || tag == 11;
-        let left = at > 0 && self.subject.get(at-1).is_some_and(|&n| is_word(n, unicode));
-        let right = at < self.limit && is_word(self.subject[at], unicode);
+        let classify = |n| match tag { 8 | 9 => ctype_word(n), _ => is_word(n, unicode) };
+        let left = at > 0 && self.subject.get(at-1).is_some_and(|&n| classify(n));
+        let right = at < self.limit && classify(self.subject[at]);
         (left != right) ^ matches!(tag, 4 | 9 | 11)
     }
     fn contains(&self, mut here: usize, value: u32, companion: u32) -> bool {
@@ -158,15 +170,21 @@ impl Regex<'_> {
     fn takes_one(&self, at: usize, mut value: u32) -> bool {
         let tag = self.instruction(at);
         let operand = self.instruction(at+1);
+        // Consult the current C locale, rather than the locale used by the compiler.
+        match tag {
+            35 => {
+                let (small, capital) = ctype_case(value);
+                return self.contains(at + 2, small, capital);
+            }
+            36 | 37 => return (ctype_case(value).0 == ctype_case(operand).0) == (tag == 36),
+            _ => {}
+        }
         if tag >= 31 { value = folded(value, tag < 39); }
         match tag {
             2 => value != 10, 3 => true,
             8 => in_category(operand, value),
             16 | 32 | 40 => value == operand,
-            36 => value == folded(operand, true),
             20 | 33 | 41 => value != operand,
-            37 => value != folded(operand, true),
-            35 => self.contains(at+2, value, match value { 97..=122 => value-32, _ => value }),
             _ => self.contains(at+2, value, value),
         }
     }
@@ -237,7 +255,11 @@ impl Regex<'_> {
                         if current.offset+width > self.limit { break; }
                         let a = &self.subject[from as usize..until as usize];
                         let b = &self.subject[current.offset..current.offset+width];
-                        let equal = if tag == 11 { a == b } else { a.iter().zip(b).all(|(&x,&y)| folded(x, tag != 38) == folded(y, tag != 38)) };
+                        let equal = match tag {
+                            11 => a == b,
+                            34 => a.iter().zip(b).all(|(&x, &y)| ctype_case(x).0 == ctype_case(y).0),
+                            _ => a.iter().zip(b).all(|(&x, &y)| folded(x, tag != 38) == folded(y, tag != 38)),
+                        };
                         if !equal { break; }
                         current.offset += width; current.instruction += 2;
                     }

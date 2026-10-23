@@ -73,6 +73,14 @@ fn lower(n: u32, ascii: bool) -> u32 {
     if ascii { return if (65..=90).contains(&n) { n + 32 } else { n }; }
     char::from_u32(n).and_then(|c| c.to_lowercase().next()).map_or(n, u32::from)
 }
+// Locale opcodes read LC_CTYPE while matching, including already compiled patterns.
+fn locale_case(n: u32, upper: bool) -> u32 {
+    if n > 255 { return n; }
+    unsafe { if upper { libc::toupper(n as i32) as u32 } else { libc::tolower(n as i32) as u32 } }
+}
+fn locale_word(n: u32) -> bool {
+    n == 95 || n < 256 && unsafe { libc::isalnum(n as i32) != 0 }
+}
 fn word(n: u32, wide: bool) -> bool {
     n == 95 || if wide { char::from_u32(n).is_some_and(|c| crate::unicode::bits(c) & 512 != 0 || general_category(n).starts_with('L')) }
     else { n < 128 && char::from_u32(n).is_some_and(|c| c.is_ascii_alphanumeric()) }
@@ -82,7 +90,8 @@ fn category(kind: u32, n: u32) -> bool {
     match kind & !1 {
         0 => return (48..=57).contains(&n) != (kind & 1 != 0),
         2 => return [9,10,11,12,13,32].contains(&n) != (kind & 1 != 0),
-        4 | 8 => return word(n, false) != (kind & 1 != 0),
+        4 => return word(n, false) != (kind & 1 != 0),
+        8 => return locale_word(n) != (kind & 1 != 0),
         6 => return (n == 10) != (kind & 1 != 0),
         _ => {}
     }
@@ -149,7 +158,8 @@ impl Machine<'_> {
             6 => p == self.end || following == Some(10), 7 => p == self.end,
             3 | 4 | 8 | 9 | 10 | 11 => {
                 let wide = kind >= 10;
-                let different = preceding.is_some_and(|v| word(v, wide)) != following.is_some_and(|v| word(v, wide));
+                let classify = |v| if matches!(kind, 8 | 9) { locale_word(v) } else { word(v, wide) };
+                let different = preceding.is_some_and(classify) != following.is_some_and(classify);
                 different != matches!(kind, 4 | 9 | 11)
             }
             _ => false,
@@ -206,14 +216,19 @@ impl Machine<'_> {
     fn unit_takes(&self, pc: usize, mut ch: u32) -> bool {
         let op = self.code[pc];
         let arg = self.code.get(pc + 1).copied().unwrap_or(0);
-        if matches!(op,31..=33 | 35..=37 | 39..=41) { ch = lower(ch, op < 39); }
+        if matches!(op, 35..=37) {
+            let folded = locale_case(ch, false);
+            return match op {
+                35 => self.charset(pc + 2, folded, locale_case(ch, true)),
+                36 => folded == locale_case(arg, false),
+                _ => folded != locale_case(arg, false),
+            };
+        }
+        if matches!(op,31..=33 | 39..=41) { ch = lower(ch, op < 39); }
         match op {
             2 => ch != 10, 3 => true, 8 => category(arg, ch),
             16 | 32 | 40 => ch == arg,
-            36 => ch == lower(arg, true),
             20 | 33 | 41 => ch != arg,
-            37 => ch != lower(arg, true),
-            35 => self.charset(pc+2, ch, if (97..=122).contains(&ch) { ch-32 } else { ch }),
             _ => self.charset(pc+2, ch, ch),
         }
     }
@@ -273,6 +288,7 @@ impl Machine<'_> {
                         if a < 0 || b < a || s.pos + (b-a) as usize > self.end { break; }
                         let same = (a as usize..b as usize).zip(s.pos..).all(|(i,j)| {
                             if op == 11 { self.text[i] == self.text[j] }
+                            else if op == 34 { locale_case(self.text[i], false) == locale_case(self.text[j], false) }
                             else { lower(self.text[i], op != 38) == lower(self.text[j], op != 38) }
                         });
                         if !same { break; } s.pos += (b-a) as usize; s.pc += 2;
