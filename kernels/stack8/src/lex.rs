@@ -860,8 +860,17 @@ impl<'a> Cursor<'a> {
         let expression_start = self.at;
         let mut expression = String::new();
         let mut brackets = Vec::new();
+        // Spaces inside brackets carry no field syntax when neither a string
+        // nor a comment can begin with one. Keep their spelling and positions
+        // without reconsidering every space as an opening mark.
+        let plain_space = !self.lang.string_starters[b' ' as usize]
+            && self.lang.line_comments.iter().all(|mark| !mark.is_empty() && !mark.starts_with(' '));
         loop {
             let Some(c) = self.look(0) else { self.incomplete_format = true; return Err(self.field_error(14)); };
+            if plain_space && c == ' ' && !brackets.is_empty() {
+                while self.look(0) == Some(' ') { expression.push(self.step()); }
+                continue;
+            }
             // A field is code, so a backslash in it stands exactly as one
             // written outside of any string does: it joins a line ending
             // right after it, and names nothing else. Caught here, before

@@ -1087,8 +1087,17 @@ impl Quotation<'_, '_> {
         let field_row = self.row;
         let mut nesting = Vec::new();
         let mut comments = Vec::new();
+        // A run of ordinary spaces in a bracketed expression cannot change
+        // nesting. Leave it in the source slice used for the field's value.
+        let spaces_are_plain = self.table.ascii_quotation.get(b' ' as usize) == Some(&0)
+            && self.table.scanner.strings_lexical_comment_line.iter().all(|mark| !mark.is_empty() && !mark.starts_with(' '));
         loop {
             let ch = self.here().ok_or_else(|| { self.pending_literal = true; self.field_fault(14, &[], template) })?;
+            if spaces_are_plain && ch == ' ' && !nesting.is_empty() {
+                let width = self.source[self.next..].iter().take_while(|&&c| c == ' ').count();
+                self.forward(width);
+                continue;
+            }
             // A field is code, so a backslash in it stands exactly as one
             // written outside of any string does: it joins a line ending
             // right after it, and names nothing else. Caught here, before
