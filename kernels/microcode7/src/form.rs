@@ -977,68 +977,101 @@ impl Drop for Routine {
 }
 
 impl Form {
+    /// The forms directly beneath this one, in the order the tree is
+    /// numbered; a clause's reraise cleanup only when asked for.
+    pub fn children_mut(&mut self, with_reraise: bool) -> Vec<&mut Form> {
+        match self {
+            Self::Located(_, _, inner) | Self::OnLine(_, _, inner)
+            | Self::Write(_, inner) | Self::Tie(_, inner)
+            | Self::ShareItem(_, inner) | Self::ShareField(inner, _) | Self::ShareOwn(inner, _)
+            | Self::ShareCalled(inner) | Self::ForgetCalled(inner) | Self::ReadyCalled(inner)
+            | Self::Muted(inner) | Self::Silenced(inner) | Self::Called(inner)
+            | Self::CellOrSaid(_, _, _, inner) | Self::HeldEither(_, _, _, inner) => vec![&mut **inner],
+            Self::Const(Value::Routine(body)) if body.frameless => vec![&mut Rc::make_mut(body).body],
+            Self::Apply(callee, args) => {
+                let mut found = Vec::new();
+                if let Callee::Code(target) = callee { found.push(&mut **target); }
+                found.extend(args.iter_mut());
+                found
+            }
+            Self::Dyad { a, b, .. } => [a, b].into_iter().filter_map(|input| match input { Input::Form(form) => Some(&mut **form), _ => None }).collect(),
+            Self::Cycle { test, body, step, otherwise, .. } => {
+                let mut found = vec![&mut **test, &mut **body];
+                found.extend([step, otherwise].into_iter().flatten().map(|child| &mut **child));
+                found
+            }
+            Self::Attempt { body, clauses, last, otherwise, .. } => {
+                let mut found = vec![&mut **body];
+                for clause in clauses {
+                    found.extend(clause.choices.iter_mut().flatten());
+                    found.push(&mut clause.body);
+                    if with_reraise { found.extend(clause.reraise_position.as_deref_mut()); }
+                }
+                found.extend([otherwise, last].into_iter().flatten().map(|child| &mut **child));
+                found
+            }
+            Self::Class { values, .. } | Self::SharePlace(_, values) => values.iter_mut().collect(),
+            Self::Assert { condition: left, message: right }
+            | Self::ForgetWithin(left, right) | Self::TieCalled(left, right) | Self::CallWrite(left, right) => vec![&mut **left, &mut **right],
+            Self::Fits { value, kinds, .. } | Self::ShareWithin(value, kinds) => {
+                let mut found = vec![&mut **value];
+                found.extend(kinds.iter_mut());
+                found
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The same walk over a tree that stays as it is.
+    pub fn children(&self, with_reraise: bool) -> Vec<&Form> {
+        match self {
+            Self::Located(_, _, inner) | Self::OnLine(_, _, inner)
+            | Self::Write(_, inner) | Self::Tie(_, inner)
+            | Self::ShareItem(_, inner) | Self::ShareField(inner, _) | Self::ShareOwn(inner, _)
+            | Self::ShareCalled(inner) | Self::ForgetCalled(inner) | Self::ReadyCalled(inner)
+            | Self::Muted(inner) | Self::Silenced(inner) | Self::Called(inner)
+            | Self::CellOrSaid(_, _, _, inner) | Self::HeldEither(_, _, _, inner) => vec![&**inner],
+            Self::Const(Value::Routine(body)) if body.frameless => vec![&body.body],
+            Self::Apply(callee, args) => {
+                let mut found = Vec::new();
+                if let Callee::Code(target) = callee { found.push(&**target); }
+                found.extend(args);
+                found
+            }
+            Self::Dyad { a, b, .. } => [a, b].into_iter().filter_map(|input| match input { Input::Form(form) => Some(&**form), _ => None }).collect(),
+            Self::Cycle { test, body, step, otherwise, .. } => {
+                let mut found = vec![&**test, &**body];
+                found.extend([step, otherwise].into_iter().flatten().map(|child| &**child));
+                found
+            }
+            Self::Attempt { body, clauses, last, otherwise, .. } => {
+                let mut found = vec![&**body];
+                for clause in clauses {
+                    found.extend(clause.choices.iter().flatten());
+                    found.push(&clause.body);
+                    if with_reraise { found.extend(clause.reraise_position.as_deref()); }
+                }
+                found.extend([otherwise, last].into_iter().flatten().map(|child| &**child));
+                found
+            }
+            Self::Class { values, .. } | Self::SharePlace(_, values) => values.iter().collect(),
+            Self::Assert { condition: left, message: right }
+            | Self::ForgetWithin(left, right) | Self::TieCalled(left, right) | Self::CallWrite(left, right) => vec![&**left, &**right],
+            Self::Fits { value, kinds, .. } | Self::ShareWithin(value, kinds) => {
+                let mut found = vec![&**value];
+                found.extend(kinds);
+                found
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// Number the actual compiled tree, independently of source coordinates.
     /// Frameless arms belong to this tree; functions start a new address space.
     pub fn number_instructions(&mut self, next: &mut usize) {
         *next += 1;
-        match self {
-            Self::Located(_, at, inner) | Self::OnLine(_, at, inner) => {
-                *at = *next;
-                inner.number_instructions(next);
-            }
-            Self::Const(Value::Routine(body)) if body.frameless => {
-                Rc::make_mut(body).body.number_instructions(next);
-            }
-            Self::Write(_, inner) | Self::Tie(_, inner)
-            | Self::ShareItem(_, inner) | Self::ShareField(inner, _) | Self::ShareOwn(inner, _)
-            | Self::ShareCalled(inner) | Self::ForgetCalled(inner) | Self::ReadyCalled(inner)
-            | Self::Muted(inner) | Self::Silenced(inner) | Self::Called(inner)
-            | Self::CellOrSaid(_, _, _, inner) | Self::HeldEither(_, _, _, inner) => inner.number_instructions(next),
-            Self::Apply(callee, args) => {
-                if let Callee::Code(target) = callee { target.number_instructions(next); }
-                for argument in args { argument.number_instructions(next); }
-            }
-            Self::Dyad { a, b, .. } => {
-                for input in [a, b] {
-                    if let Input::Form(form) = input { form.number_instructions(next); }
-                }
-            }
-            Self::Cycle { test, body, step, otherwise, .. } => {
-                test.number_instructions(next);
-                body.number_instructions(next);
-                for child in [step, otherwise].into_iter().flatten() { child.number_instructions(next); }
-            }
-            Self::Attempt { body, clauses, last, otherwise, .. } => {
-                body.number_instructions(next);
-                for clause in clauses {
-                    if let Some(choices) = &mut clause.choices { for choice in choices { choice.number_instructions(next); } }
-                    clause.body.number_instructions(next);
-                    if let Some(cleanup) = &mut clause.reraise_position { cleanup.number_instructions(next); }
-                }
-                for child in [otherwise, last].into_iter().flatten() { child.number_instructions(next); }
-            }
-            Self::Class { values, .. } => {
-                for value in values { value.number_instructions(next); }
-            }
-            Self::Assert { condition, message } => {
-                condition.number_instructions(next);
-                message.number_instructions(next);
-            }
-            Self::Fits { value, kinds, .. } => {
-                value.number_instructions(next);
-                for kind in kinds { kind.number_instructions(next); }
-            }
-            Self::SharePlace(_, keys) => { for key in keys { key.number_instructions(next); } }
-            Self::ShareWithin(value, keys) => {
-                value.number_instructions(next);
-                for key in keys { key.number_instructions(next); }
-            }
-            Self::ForgetWithin(left, right) | Self::TieCalled(left, right) | Self::CallWrite(left, right) => {
-                left.number_instructions(next);
-                right.number_instructions(next);
-            }
-            _ => {}
-        }
+        if let Self::Located(_, at, _) | Self::OnLine(_, at, _) = self { *at = *next; }
+        for child in self.children_mut(true) { child.number_instructions(next); }
     }
 
     pub fn instruction_listing(&self, next: &mut usize, mut coordinates: (u32, u32, u32, u32), output: &mut Vec<Value>) {
@@ -1092,62 +1125,7 @@ impl Form {
         let branches = matches!(self, Self::Cycle { .. } | Self::Apply(Callee::Prim(Prim::Choose, _), _));
         output.push(Value::tuple(vec![Value::Small(*next as i64), Value::text(tag), Value::Nil, Value::Flag(branches),
             Value::tuple([coordinates.0, coordinates.2, coordinates.1, coordinates.3].into_iter().map(|number| if number == u32::MAX { Value::Nil } else { Value::Small(number as i64) }).collect())]));
-        match self {
-            Self::Located(_, _, inner) | Self::OnLine(_, _, inner) => {
-                inner.instruction_listing(next, coordinates, output);
-            }
-            Self::Const(Value::Routine(body)) if body.frameless => {
-                body.body.instruction_listing(next, coordinates, output);
-            }
-            Self::Write(_, inner) | Self::Tie(_, inner)
-            | Self::ShareItem(_, inner) | Self::ShareField(inner, _) | Self::ShareOwn(inner, _)
-            | Self::ShareCalled(inner) | Self::ForgetCalled(inner) | Self::ReadyCalled(inner)
-            | Self::Muted(inner) | Self::Silenced(inner) | Self::Called(inner)
-            | Self::CellOrSaid(_, _, _, inner) | Self::HeldEither(_, _, _, inner) => inner.instruction_listing(next, coordinates, output),
-            Self::Apply(callee, args) => {
-                if let Callee::Code(target) = callee { target.instruction_listing(next, coordinates, output); }
-                for argument in args { argument.instruction_listing(next, coordinates, output); }
-            }
-            Self::Dyad { a, b, .. } => {
-                for input in [a, b] {
-                    if let Input::Form(form) = input { form.instruction_listing(next, coordinates, output); }
-                }
-            }
-            Self::Cycle { test, body, step, otherwise, .. } => {
-                test.instruction_listing(next, coordinates, output);
-                body.instruction_listing(next, coordinates, output);
-                for child in [step, otherwise].into_iter().flatten() { child.instruction_listing(next, coordinates, output); }
-            }
-            Self::Attempt { body, clauses, last, otherwise, .. } => {
-                body.instruction_listing(next, coordinates, output);
-                for clause in clauses {
-                    if let Some(choices) = &clause.choices { for choice in choices { choice.instruction_listing(next, coordinates, output); } }
-                    clause.body.instruction_listing(next, coordinates, output);
-                }
-                for child in [otherwise, last].into_iter().flatten() { child.instruction_listing(next, coordinates, output); }
-            }
-            Self::Class { values, .. } => {
-                for value in values { value.instruction_listing(next, coordinates, output); }
-            }
-            Self::Assert { condition, message } => {
-                condition.instruction_listing(next, coordinates, output);
-                message.instruction_listing(next, coordinates, output);
-            }
-            Self::Fits { value, kinds, .. } => {
-                value.instruction_listing(next, coordinates, output);
-                for kind in kinds { kind.instruction_listing(next, coordinates, output); }
-            }
-            Self::SharePlace(_, keys) => { for key in keys { key.instruction_listing(next, coordinates, output); } }
-            Self::ShareWithin(value, keys) => {
-                value.instruction_listing(next, coordinates, output);
-                for key in keys { key.instruction_listing(next, coordinates, output); }
-            }
-            Self::ForgetWithin(left, right) | Self::TieCalled(left, right) | Self::CallWrite(left, right) => {
-                left.instruction_listing(next, coordinates, output);
-                right.instruction_listing(next, coordinates, output);
-            }
-            _ => {}
-        }
+        for child in self.children(false) { child.instruction_listing(next, coordinates, output); }
     }
 }
 
@@ -1280,63 +1258,7 @@ impl Form {
             _ => inherited,
         };
         entries.push(current);
-        match self {
-            Self::Located(_, _, inner) | Self::OnLine(_, _, inner) => {
-                inner.position_rows(entries, current);
-            }
-            Self::Const(Value::Routine(body)) if body.frameless => {
-                body.body.position_rows(entries, current);
-            }
-            Self::Write(_, inner) | Self::Tie(_, inner)
-            | Self::ShareItem(_, inner) | Self::ShareField(inner, _) | Self::ShareOwn(inner, _)
-            | Self::ShareCalled(inner) | Self::ForgetCalled(inner) | Self::ReadyCalled(inner)
-            | Self::Muted(inner) | Self::Silenced(inner) | Self::Called(inner)
-            | Self::CellOrSaid(_, _, _, inner) | Self::HeldEither(_, _, _, inner) => inner.position_rows(entries, current),
-            Self::Apply(callee, args) => {
-                if let Callee::Code(target) = callee { target.position_rows(entries, current); }
-                for argument in args { argument.position_rows(entries, current); }
-            }
-            Self::Dyad { a, b, .. } => {
-                for input in [a, b] {
-                    if let Input::Form(form) = input { form.position_rows(entries, current); }
-                }
-            }
-            Self::Cycle { test, body, step, otherwise, .. } => {
-                test.position_rows(entries, current);
-                body.position_rows(entries, current);
-                for child in [step, otherwise].into_iter().flatten() { child.position_rows(entries, current); }
-            }
-            Self::Attempt { body, clauses, last, otherwise, .. } => {
-                body.position_rows(entries, current);
-                for clause in clauses {
-                    if let Some(choices) = &clause.choices { for choice in choices { choice.position_rows(entries, current); } }
-                    clause.body.position_rows(entries, current);
-                    if let Some(cleanup) = &clause.reraise_position { cleanup.position_rows(entries, current); }
-                }
-                for child in [otherwise, last].into_iter().flatten() { child.position_rows(entries, current); }
-            }
-            Self::Class { values, .. } => {
-                for value in values { value.position_rows(entries, current); }
-            }
-            Self::Assert { condition, message } => {
-                condition.position_rows(entries, current);
-                message.position_rows(entries, current);
-            }
-            Self::Fits { value, kinds, .. } => {
-                value.position_rows(entries, current);
-                for kind in kinds { kind.position_rows(entries, current); }
-            }
-            Self::SharePlace(_, keys) => { for key in keys { key.position_rows(entries, current); } }
-            Self::ShareWithin(value, keys) => {
-                value.position_rows(entries, current);
-                for key in keys { key.position_rows(entries, current); }
-            }
-            Self::ForgetWithin(left, right) | Self::TieCalled(left, right) | Self::CallWrite(left, right) => {
-                left.position_rows(entries, current);
-                right.position_rows(entries, current);
-            }
-            _ => {}
-        }
+        for child in self.children(true) { child.position_rows(entries, current); }
     }
 }
 
