@@ -44,18 +44,7 @@ impl crate::language::registry::StmtHandler for MemoizationHandler {
     fn parse(&self, parser: &mut Parser, _registry: &super::super::registry::Registry) -> LumenResult<Box<dyn StmtNode>> {
         parser.advance(); // consume 'MEMOIZATION'
 
-        // Skip whitespace to find '='
-        loop {
-            let lexeme = &parser.peek().lexeme;
-            if lexeme.chars().count() == 1 {
-                let ch = lexeme.chars().next().unwrap();
-                if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
-                    parser.advance();
-                    continue;
-                }
-            }
-            break;
-        }
+        parser.skip_tokens();
 
         // Expect the assignment sign
         if !def().is("stmt.assign", &parser.peek().lexeme) {
@@ -63,18 +52,7 @@ impl crate::language::registry::StmtHandler for MemoizationHandler {
         }
         parser.advance(); // consume the assignment sign
 
-        // Skip whitespace to find boolean value
-        loop {
-            let lexeme = &parser.peek().lexeme;
-            if lexeme.chars().count() == 1 {
-                let ch = lexeme.chars().next().unwrap();
-                if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
-                    parser.advance();
-                    continue;
-                }
-            }
-            break;
-        }
+        parser.skip_tokens();
 
         // Expect a boolean literal word, lexed whole as a reserved word
         let value = parser.advance().lexeme;

@@ -89,28 +89,19 @@ fn reachable(body: &[Node], functions: &HashMap<String, &Node>, provided: &HashS
     let mut seen = HashSet::new();
     let mut todo: Vec<&Node> = body.iter().collect();
     while let Some(node) = todo.pop() {
-        for name in called_names(node) {
-            if seen.insert(name.clone()) && !provided.contains(&name) {
-                if let Some(def) = functions.get(&name) {
+        walk(node, &mut |n| {
+            let slot = match &n.form {
+                Form::Call { callee: Callee::Named(slot), .. } | Form::Load(slot) => slot,
+                _ => return,
+            };
+            if seen.insert(slot.name.to_string()) && !provided.contains(slot.name.as_ref()) {
+                if let Some(def) = functions.get(slot.name.as_ref()) {
                     todo.push(def);
                 }
             }
-        }
+        });
     }
     seen
-}
-
-fn called_names(node: &Node) -> Vec<String> {
-    let mut out = Vec::new();
-    walk(node, &mut |n| {
-        if let Form::Call { callee: Callee::Named(slot), .. } = &n.form {
-            out.push(slot.name.to_string());
-        }
-        if let Form::Load(slot) = &n.form {
-            out.push(slot.name.to_string());
-        }
-    });
-    out
 }
 
 fn walk<'n>(node: &'n Node, f: &mut dyn FnMut(&'n Node)) {
@@ -118,18 +109,11 @@ fn walk<'n>(node: &'n Node, f: &mut dyn FnMut(&'n Node)) {
     match &node.form {
         Form::Sequence(items) => items.iter().for_each(|n| walk(n, f)),
         Form::Scope { body, .. } => walk(body, f),
-        Form::Branch { test, then, otherwise } => {
-            walk(test, f);
-            walk(then, f);
-            if let Some(o) = otherwise {
-                walk(o, f);
-            }
-        }
-        Form::Loop { test, body, step } => {
+        Form::Branch { test, then: body, otherwise: tail } | Form::Loop { test, body, step: tail } => {
             walk(test, f);
             walk(body, f);
-            if let Some(s) = step {
-                walk(s, f);
+            if let Some(last) = tail {
+                walk(last, f);
             }
         }
         Form::Assign { value, .. } => walk(value, f),

@@ -330,34 +330,8 @@ impl LumenReal {
             let (numerator, denominator) = super::real_decimal::exact(super::real_decimal::nearest(&num, &denom));
             return Self { numerator, denominator, precision };
         }
-        // Handle zero denominator
-        if denom == BigInt::from(0) {
-            panic!("Denominator cannot be zero");
-        }
-
-        // If numerator is zero, return 0 with specified precision
-        if num == BigInt::from(0) {
-            return Self {
-                numerator: BigInt::from(0),
-                denominator: BigInt::from(1),
-                precision,
-            };
-        }
-
-        // Normalize sign: always keep denominator positive
-        let (numerator, denominator) = if denom < BigInt::from(0) {
-            (-num, -denom)
-        } else {
-            (num, denom)
-        };
-
-        // Reduce to canonical form by dividing by GCD
-        let g = gcd(numerator.clone(), denominator.clone());
-        Self {
-            numerator: numerator / &g,
-            denominator: denominator / &g,
-            precision,
-        }
+        let LumenRational { numerator, denominator } = LumenRational::new(num, denom);
+        Self { numerator, denominator, precision }
     }
 
     /// Convert to integer by truncating toward zero

@@ -12,23 +12,17 @@
 // Token skipping (whitespace, comments) is handled by language-specific extension traits.
 
 use crate::kernel::lexer::{SpannedToken, Token};
-use crate::kernel::registry::{KernelResult, TokenRegistry};
 
-pub struct Parser<'a> {
+pub struct Parser {
     pub toks: Vec<SpannedToken>,
     pub i: usize,
-    _token_registry: std::marker::PhantomData<&'a TokenRegistry>,
 }
 
-impl<'a> Parser<'a> {
+impl Parser {
     /// Create parser with pre-tokenized token stream.
     /// Used when language-specific token processing is needed.
-    pub fn new_with_tokens(toks: Vec<SpannedToken>, _token_registry: &'a TokenRegistry) -> KernelResult<Self> {
-        Ok(Self {
-            toks,
-            i: 0,
-            _token_registry: std::marker::PhantomData,
-        })
+    pub fn new_with_tokens(toks: Vec<SpannedToken>) -> Self {
+        Self { toks, i: 0 }
     }
 
     /// Get diagnostic line/column position of current token.

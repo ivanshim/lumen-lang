@@ -49,7 +49,7 @@ fn run_installed(source: &str, program_args: &[String]) -> Result<(), String> {
     let banner = it.next().map_or("Error".to_string(), |c| format!("{}{}Error", c.to_uppercase(), it.as_str()));
     let raw_tokens = lex(source, &registry.tokens).map_err(|e| format!("{banner}: {e}"))?;
     let processed_tokens = structural::process(source, raw_tokens).map_err(|e| format!("{banner}: {e}"))?;
-    let mut parser = Parser::new_with_tokens(processed_tokens, &registry.tokens).map_err(|e| format!("{banner}: {e}"))?;
+    let mut parser = Parser::new_with_tokens(processed_tokens);
     let program = structural::parse_program(&mut parser, &registry).map_err(|e| format!("{banner}: {e}"))?;
 
     let args_str = program_args.join(" ");

@@ -241,18 +241,14 @@ pub fn marked(text: &str) -> String {
     let mark = if text.contains('\'') && !text.contains('"') { '"' } else { '\'' };
     let mut out = String::from(mark);
     for c in text.chars() {
-        let spelt = match c {
-            '\n' => Some("\\n".to_string()),
-            '\t' => Some("\\t".to_string()),
-            '\r' => Some("\\r".to_string()),
-            '\\' => Some("\\\\".to_string()),
-            _ if c == mark => Some(format!("\\{c}")),
-            _ if c.is_control() => Some(by_place(u32::from(c))),
-            _ => None,
-        };
-        match spelt {
-            Some(letters) => out.push_str(&letters),
-            None => out.push(c),
+        match c {
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            '\\' => out.push_str("\\\\"),
+            _ if c == mark => { out.push('\\'); out.push(c); }
+            _ if c.is_control() => out.push_str(&by_place(u32::from(c))),
+            _ => out.push(c),
         }
     }
     out.push(mark);

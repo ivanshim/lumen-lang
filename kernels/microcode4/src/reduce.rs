@@ -363,7 +363,6 @@ impl<'a> Reducer<'a> {
     {
         let slot = self.hidden("loop");
         let name = slot.name.to_string();
-        let name2 = name.clone();
         let program = self.program("<loop>", Owns::None, Catch::Break, Vec::new(), |r| {
             let test = test(r)?;
             let again = r.arm(Catch::Nothing, |r| {
@@ -372,7 +371,7 @@ impl<'a> Reducer<'a> {
                 if let Some(step) = step {
                     items.push(step(r)?);
                 }
-                let again = r.read_slot(&name2);
+                let again = r.read_slot(&name);
                 items.push(run(Node::Load(again), Vec::new()));
                 Ok(seq(items))
             })?;
@@ -391,14 +390,13 @@ impl<'a> Reducer<'a> {
     {
         let slot = self.hidden("loop");
         let name = slot.name.to_string();
-        let name2 = name.clone();
         let program = self.program("<loop>", Owns::None, Catch::Break, Vec::new(), |r| {
             // Read in source order: the test is written before the body.
             let test = test(r)?;
             let body = r.arm(Catch::Continue, body)?;
             let stop = r.arm(Catch::Nothing, |_| Ok(lit(Value::Null)))?;
             let again = r.arm(Catch::Nothing, |r| {
-                let again = r.read_slot(&name2);
+                let again = r.read_slot(&name);
                 Ok(run(Node::Load(again), Vec::new()))
             })?;
             Ok(seq(vec![run(body, Vec::new()), r.branch(test, stop, again)]))
@@ -416,18 +414,17 @@ impl<'a> Reducer<'a> {
         let limit_name = limit.name.to_string();
         let set_limit = Node::Assign(limit, Box::new(end));
         let set_var = self.assign(var, start);
-        let (v1, v2) = (var.to_string(), var.to_string());
         let looped = self.looping(
             move |r| {
-                let v = r.load(&v1);
+                let v = r.load(var);
                 let l = r.load(&limit_name);
                 Ok(call(Op::Lt, vec![v, l]))
             },
             body,
             Some(move |r: &mut Self| {
-                let v = r.load(&v2);
+                let v = r.load(var);
                 let next = call(Op::Add, vec![v, lit(Value::Int(1))]);
-                Ok(r.assign(&v2, next))
+                Ok(r.assign(var, next))
             }),
         )?;
         Ok(seq(vec![set_limit, set_var, looped]))
@@ -1008,6 +1005,12 @@ impl<'a> Reducer<'a> {
         Ok(self.load(&name))
     }
 
+    fn take_args(&mut self, stack: &mut Vec<Node>, count: usize) -> Out<Vec<Node>> {
+        let mut args = (0..count).map(|_| self.pop(stack)).collect::<Out<Vec<_>>>()?;
+        args.reverse();
+        Ok(args)
+    }
+
     /// Whether the program being read binds the word itself, as a
     /// parameter or a name assigned so far: a load then, not a call of
     /// whatever program the file binds under that name elsewhere.
@@ -1411,11 +1414,7 @@ impl<'a> Reducer<'a> {
                 _ if self.strict => return Err("eval needs a program written out where it is used".to_string()),
                 _ => Arity { takes: 0, leaves: false },
             };
-            let mut args = Vec::new();
-            for _ in 0..arity.takes {
-                args.push(self.pop(stack)?);
-            }
-            args.reverse();
+            let args = self.take_args(stack, arity.takes)?;
             let node = run(program, args);
             if arity.leaves {
                 stack.push(node);
@@ -1444,11 +1443,7 @@ impl<'a> Reducer<'a> {
                 Op::CharAt | Op::Get | Op::Real => (2, true),
                 _ => (1, true),
             };
-            let mut args = Vec::new();
-            for _ in 0..takes {
-                args.push(self.pop(stack)?);
-            }
-            args.reverse();
+            let args = self.take_args(stack, takes)?;
             let node = Node::Call(Target::Op(op, Rc::from(w)), args);
             if leaves {
                 stack.push(node);
@@ -1462,11 +1457,7 @@ impl<'a> Reducer<'a> {
             return Err(format!("Unexpected '{}'", w));
         }
         if let Some(arity) = self.assumed.get(w).copied().filter(|_| !self.bound_here(w)) {
-            let mut args = Vec::new();
-            for _ in 0..arity.takes {
-                args.push(self.pop(stack)?);
-            }
-            args.reverse();
+            let args = self.take_args(stack, arity.takes)?;
             let target = self.load(w);
             let node = run(target, args);
             if arity.leaves {

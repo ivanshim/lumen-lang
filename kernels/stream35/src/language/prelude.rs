@@ -22,7 +22,7 @@ pub trait LumenParserExt {
     fn take_word(&mut self) -> Option<String>;
 }
 
-impl LumenParserExt for Parser<'_> {
+impl LumenParserExt for Parser {
     fn parse_expr_prec(&mut self, registry: &Registry, min_prec: Precedence) -> LumenResult<Box<dyn ExprNode>> {
         parse_expr_with_prec(self, registry, min_prec)
     }
@@ -66,27 +66,13 @@ impl LumenParserExt for Parser<'_> {
         if !self.at_identifier() {
             return None;
         }
-        let mut name = self.advance().lexeme;
-        let mut whole = name.chars().count() > 1;
-        if !name.chars().next().map_or(false, word_start) {
-            // The prefix; the word itself follows
-            let word = self.advance().lexeme;
-            whole = word.chars().count() > 1;
-            name.push_str(&word);
+        if self.peek().lexeme.chars().next().map_or(false, word_start) {
+            self.take_word()
+        } else {
+            let mut name = self.advance().lexeme;
+            name.push_str(&self.take_word()?);
+            Some(name)
         }
-        if whole {
-            // A whole lexeme (a compound builtin name) is the name by itself
-            return Some(name);
-        }
-        loop {
-            let lexeme = &self.peek().lexeme;
-            let mut chars = lexeme.chars();
-            match (chars.next(), chars.next()) {
-                (Some(c), None) if word_char(c) => name.push_str(&self.advance().lexeme),
-                _ => break,
-            }
-        }
-        Some(name)
     }
 
     /// Consume a word whether or not it is reserved: type names such as

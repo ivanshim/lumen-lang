@@ -51,7 +51,6 @@ impl TokenDefinition {
 
 /// Registry of token definitions used by the lexer.
 pub struct TokenRegistry {
-    token_defs: Vec<TokenDefinition>,
     /// Multi-character lexemes in descending length order (maximal munch).
     multichar_lexemes: Vec<String>,
     /// Lexemes that require word boundaries.
@@ -64,7 +63,6 @@ pub struct TokenRegistry {
 impl TokenRegistry {
     pub fn new() -> Self {
         Self {
-            token_defs: Vec::new(),
             multichar_lexemes: Vec::new(),
             word_boundary_lexemes: Vec::new(),
             word_chars: None,
@@ -73,8 +71,17 @@ impl TokenRegistry {
 
     /// Replace all token definitions and rebuild the lexer caches.
     pub fn set_token_definitions(&mut self, defs: Vec<TokenDefinition>) {
-        self.token_defs = defs;
-        self.rebuild_caches();
+        self.multichar_lexemes.clear();
+        self.word_boundary_lexemes.clear();
+        for def in defs {
+            if def.requires_word_boundary {
+                self.word_boundary_lexemes.push(def.lexeme.clone());
+            }
+            if def.lexeme.len() > 1 {
+                self.multichar_lexemes.push(def.lexeme);
+            }
+        }
+        self.multichar_lexemes.sort_by_key(|s| std::cmp::Reverse(s.len()));
     }
 
     /// Tell the lexer which characters form words, for keyword boundary checks.
@@ -95,22 +102,6 @@ impl TokenRegistry {
     /// Whether a character belongs to a word, per the language's definition.
     pub fn is_word_char(&self, c: char) -> bool {
         self.word_chars.map_or(false, |pred| pred(c))
-    }
-
-    fn rebuild_caches(&mut self) {
-        let mut multichar = Vec::new();
-        let mut word_boundary = Vec::new();
-        for def in &self.token_defs {
-            if def.lexeme.len() > 1 {
-                multichar.push(def.lexeme.clone());
-            }
-            if def.requires_word_boundary {
-                word_boundary.push(def.lexeme.clone());
-            }
-        }
-        multichar.sort_by(|a, b| b.len().cmp(&a.len()));
-        self.multichar_lexemes = multichar;
-        self.word_boundary_lexemes = word_boundary;
     }
 }
 

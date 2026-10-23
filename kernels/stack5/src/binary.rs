@@ -53,12 +53,12 @@ pub fn as_ratio(real: f64) -> (BigInt, BigInt) {
 pub fn display(real: f64) -> String {
     if real.is_nan() { return "nan".to_owned(); }
     if !real.is_finite() { return real.to_string(); }
-    let candidates = (0..17).map(|places| format!("{real:.places$e}"));
-    let chosen = candidates.filter(|s| s.parse::<f64>().unwrap().to_bits() == real.to_bits()).next().unwrap();
-    let halves: Vec<&str> = chosen.split('e').collect();
-    let power = halves[1].parse::<i32>().unwrap();
-    if !(-4..16).contains(&power) { return format!("{}e{:+03}", halves[0], power); }
-    let mut digits: Vec<char> = halves[0].chars().filter(|c| c.is_ascii_digit()).collect();
+    let mut candidates = (0..17).map(|places| format!("{real:.places$e}"));
+    let chosen = candidates.find(|s| s.parse::<f64>().unwrap().to_bits() == real.to_bits()).unwrap();
+    let (mantissa, exponent) = chosen.split_once('e').unwrap();
+    let power = exponent.parse::<i32>().unwrap();
+    if !(-4..16).contains(&power) { return format!("{}e{:+03}", mantissa, power); }
+    let mut digits: Vec<char> = mantissa.chars().filter(|c| c.is_ascii_digit()).collect();
     let point = power + 1;
     let body = if point <= 0 { format!("0.{}{}", "0".repeat(-point as usize), digits.iter().collect::<String>()) }
         else {

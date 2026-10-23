@@ -212,19 +212,32 @@ pub fn in_quotes(text: &str) -> String {
         (true, false) => '"',
         _ => '\'',
     };
-    let body: String = text
-        .chars()
-        .map(|letter| match letter {
-            '\r' => String::from("\\r"),
-            '\t' => String::from("\\t"),
-            '\n' => String::from("\\n"),
-            '\\' => String::from("\\\\"),
-            same if same == mark => format!("\\{same}"),
-            odd if odd.is_control() => numbered(odd),
-            other => String::from(other),
-        })
-        .collect();
-    format!("{mark}{body}{mark}")
+    let mut body = String::with_capacity(text.len() + 2);
+    body.push(mark);
+    for letter in text.chars() {
+        let escape = match letter {
+            '\r' => "\\r",
+            '\t' => "\\t",
+            '\n' => "\\n",
+            '\\' => "\\\\",
+            same if same == mark => {
+                body.push('\\');
+                body.push(same);
+                continue;
+            }
+            odd if odd.is_control() => {
+                body.push_str(&numbered(odd));
+                continue;
+            }
+            other => {
+                body.push(other);
+                continue;
+            }
+        };
+        body.push_str(escape);
+    }
+    body.push(mark);
+    body
 }
 
 /// A character spelled by its number, in the shortest of the three widths

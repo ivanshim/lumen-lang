@@ -56,7 +56,7 @@ pub fn parse_selector(input: &str) -> LumenResult<Vec<SelectorClause>> {
         if let Some(parts) = split_top_level(input, '|') {
             let mut clauses = Vec::new();
             for part in parts {
-                clauses.extend(parse_selector(part.as_str())?);
+                clauses.extend(parse_selector(part)?);
             }
             return Ok(clauses);
         }
@@ -130,36 +130,26 @@ fn strip_wrapping_parens(input: &str) -> Option<&str> {
 }
 
 /// Split a string by a separator at top level (not inside parentheses).
-fn split_top_level(input: &str, separator: char) -> Option<Vec<String>> {
+fn split_top_level(input: &str, separator: char) -> Option<Vec<&str>> {
     let mut parts = Vec::new();
-    let mut current = String::new();
     let mut depth = 0;
-    let mut found = false;
-
-    for ch in input.chars() {
+    let mut start = 0;
+    for (i, ch) in input.char_indices() {
         match ch {
-            '(' => {
-                depth += 1;
-                current.push(ch);
-            }
-            ')' => {
-                depth -= 1;
-                current.push(ch);
-            }
+            '(' => depth += 1,
+            ')' => depth -= 1,
             c if c == separator && depth == 0 => {
-                found = true;
-                parts.push(current.trim().to_string());
-                current.clear();
+                parts.push(input[start..i].trim());
+                start = i + ch.len_utf8();
             }
-            _ => current.push(ch),
+            _ => {}
         }
     }
-
-    if found {
-        parts.push(current.trim().to_string());
-        Some(parts)
-    } else {
+    if parts.is_empty() {
         None
+    } else {
+        parts.push(input[start..].trim());
+        Some(parts)
     }
 }
 
@@ -177,43 +167,15 @@ fn parse_backend_list(input: &str) -> LumenResult<Vec<String>> {
         return parse_backend_list(inner);
     }
 
-    // Split by '|' at top level (not inside parens)
-    let mut backends = Vec::new();
-    let mut current = String::new();
-    let mut depth = 0;
-
-    for ch in input.chars() {
-        match ch {
-            '(' => {
-                depth += 1;
-                current.push(ch);
-            }
-            ')' => {
-                depth -= 1;
-                current.push(ch);
-            }
-            '|' if depth == 0 => {
-                let backend = current.trim().to_string();
-                if !backend.is_empty() {
-                    backends.push(backend);
-                }
-                current.clear();
-            }
-            _ => current.push(ch),
-        }
-    }
-
-    let backend = current.trim().to_string();
-    if !backend.is_empty() {
-        backends.push(backend);
-    }
+    let backends: Vec<_> = split_top_level(input, '|').unwrap_or_else(|| vec![input])
+        .into_iter().filter(|b| !b.is_empty()).collect();
 
     if backends.is_empty() {
         return Err("No backends in backend list".into());
     }
 
     // Validate all backends and unwrap parentheses if needed
-    backends = backends
+    let backends: Vec<String> = backends
         .into_iter()
         .map(|b| {
             let b = b.trim();
