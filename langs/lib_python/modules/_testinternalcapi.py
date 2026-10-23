@@ -91,6 +91,277 @@ def DecodeLocaleEx(data, current_locale=0, errors='strict', /):
         raise RuntimeError('decode error: pos=%d, reason=%s' % (exc.start, 'decoding error' if current_locale else exc.reason)) from None
 
 
+# The persistent map CPython exposes as _testinternalcapi.hamt, the store
+# behind a context. set and delete hand back the same object when nothing
+# would change (the stored value is that same object, or the key is
+# absent) and a fresh map otherwise. A stored key matches itself before
+# equality is asked, so a key that is not equal to itself is still found,
+# and the lookup key is the left operand of that comparison. Hashing and
+# equality errors escape. An empty map has no entry, so get and
+# membership do not hash. An iterator keeps its
+# map alive and reports the length the map had when the iterator was
+# made, so a cycle that runs through the iterator can be collected.
+#
+# The map is a hash-array trie: each level takes five bits of the key's
+# hash, and only the nodes on the edited path are rebuilt. Keys whose
+# hashes are equal live together in one collision list.
+
+
+_MASK64 = (1 << 64) - 1
+_FAN = 32
+_SLOT = _FAN - 1
+
+
+def _hash_bits(key):
+    return hash(key) & _MASK64
+
+
+# Not a KeyError: a key callback may raise KeyError, and that has to
+# reach the caller. Lookup hands this back when the key is not there.
+_MISSING = object()
+
+
+def _same_key(stored, key):
+    return stored is key or key == stored
+
+
+def _empty_slots():
+    return [None] * _FAN
+
+
+def _write_slot(children, index, child):
+    slots = _empty_slots() if children is None else list(children)
+    slots[index] = child
+    return ('B', tuple(slots))
+
+
+def _join(left, right, shift):
+    if shift >= 64 or left[1] == right[1]:
+        pairs = []
+        for node in (left, right):
+            if node[0] == 'C':
+                pairs.extend(node[2])
+            else:
+                pairs.append((node[2], node[3]))
+        return ('C', left[1], tuple(pairs))
+    left_i = (left[1] >> shift) & _SLOT
+    right_i = (right[1] >> shift) & _SLOT
+    if left_i == right_i:
+        return _write_slot(None, left_i, _join(left, right, shift + 5))
+    slots = _empty_slots()
+    slots[left_i] = left
+    slots[right_i] = right
+    return ('B', tuple(slots))
+
+
+def _put(node, key, value, hashed, shift):
+    if node is None:
+        return ('L', hashed, key, value), True
+    kind = node[0]
+    if kind == 'L':
+        if node[1] == hashed:
+            if _same_key(node[2], key):
+                if node[3] is value:
+                    return node, False
+                return ('L', hashed, node[2], value), False
+            return ('C', hashed, ((node[2], node[3]), (key, value))), True
+        return _join(node, ('L', hashed, key, value), shift), True
+    if kind == 'C':
+        if node[1] != hashed:
+            return _join(node, ('L', hashed, key, value), shift), True
+        entries = node[2]
+        for at in range(len(entries)):
+            old_key, old_value = entries[at]
+            if _same_key(old_key, key):
+                if old_value is value:
+                    return node, False
+                return ('C', hashed, entries[:at] + ((old_key, value),) + entries[at + 1:]), False
+        return ('C', hashed, entries + ((key, value),)), True
+    index = (hashed >> shift) & _SLOT
+    children = node[1]
+    child = children[index]
+    new_child, grew = _put(child, key, value, hashed, shift + 5)
+    if new_child is child:
+        return node, False
+    return _write_slot(children, index, new_child), grew
+
+
+def _delete(node, key, hashed, shift):
+    if node is None:
+        return None, False
+    kind = node[0]
+    if kind == 'L':
+        if node[1] == hashed and _same_key(node[2], key):
+            return None, True
+        return node, False
+    if kind == 'C':
+        if node[1] != hashed:
+            return node, False
+        kept = []
+        found = False
+        for old_key, old_value in node[2]:
+            if not found and _same_key(old_key, key):
+                found = True
+            else:
+                kept.append((old_key, old_value))
+        if not found:
+            return node, False
+        if len(kept) == 1:
+            only_key, only_value = kept[0]
+            return ('L', hashed, only_key, only_value), True
+        return ('C', hashed, tuple(kept)), True
+    index = (hashed >> shift) & _SLOT
+    children = node[1]
+    new_child, shrank = _delete(children[index], key, hashed, shift + 5)
+    if not shrank:
+        return node, False
+    return _write_slot(children, index, new_child), True
+
+
+def _find(node, key, hashed, shift):
+    if node is None:
+        return _MISSING
+    kind = node[0]
+    if kind == 'L':
+        if node[1] == hashed and _same_key(node[2], key):
+            return node[3]
+        return _MISSING
+    if kind == 'C':
+        if node[1] != hashed:
+            return _MISSING
+        for old_key, old_value in node[2]:
+            if _same_key(old_key, key):
+                return old_value
+        return _MISSING
+    index = (hashed >> shift) & _SLOT
+    return _find(node[1][index], key, hashed, shift + 5)
+
+
+def _walk(node, out):
+    if node is None:
+        return
+    kind = node[0]
+    if kind == 'L':
+        out.append((node[2], node[3]))
+    elif kind == 'C':
+        out.extend(node[2])
+    else:
+        for child in node[1]:
+            if child is not None:
+                _walk(child, out)
+
+
+class _HamtIter:
+    def __init__(self, owner, kind):
+        self._owner = owner
+        self._kind = kind
+        pairs = []
+        _walk(owner._root, pairs)
+        self._pairs = pairs
+        self._n = len(pairs)
+        self._i = 0
+
+    def __iter__(self):
+        return self
+
+    def __len__(self):
+        return self._n
+
+    def __next__(self):
+        if self._i >= self._n:
+            raise StopIteration
+        key, value = self._pairs[self._i]
+        self._i += 1
+        if self._kind == 'items':
+            return (key, value)
+        if self._kind == 'keys':
+            return key
+        return value
+
+
+class hamt:
+    def __init__(self):
+        self._root = None
+        self._len = 0
+
+    def __init_subclass__(cls, **kwargs):
+        raise TypeError("type 'hamt' is not an acceptable base type")
+
+    def _spawn(self, root, size):
+        born = object.__new__(hamt)
+        born._root = root
+        born._len = size
+        return born
+
+    def set(self, key, value):
+        hashed = _hash_bits(key)
+        root, grew = _put(self._root, key, value, hashed, 0)
+        if root is self._root:
+            return self
+        return self._spawn(root, self._len + (1 if grew else 0))
+
+    def get(self, key, default=None):
+        if self._root is None:
+            return default
+        found = _find(self._root, key, _hash_bits(key), 0)
+        if found is _MISSING:
+            return default
+        return found
+
+    def delete(self, key):
+        hashed = _hash_bits(key)
+        root, shrank = _delete(self._root, key, hashed, 0)
+        if not shrank:
+            return self
+        return self._spawn(root, self._len - 1)
+
+    def __len__(self):
+        return self._len
+
+    def __iter__(self):
+        return _HamtIter(self, 'keys')
+
+    def __contains__(self, key):
+        if self._root is None:
+            return False
+        found = _find(self._root, key, _hash_bits(key), 0)
+        return found is not _MISSING
+
+    def __getitem__(self, key):
+        if self._root is None:
+            raise KeyError(key)
+        found = _find(self._root, key, _hash_bits(key), 0)
+        if found is _MISSING:
+            raise KeyError(key)
+        return found
+
+    def __eq__(self, other):
+        if type(other) is not hamt:
+            return NotImplemented
+        if self is other:
+            return True
+        if self._len != other._len:
+            return False
+        pairs = []
+        _walk(self._root, pairs)
+        for key, value in pairs:
+            found = _find(other._root, key, _hash_bits(key), 0)
+            if found is _MISSING:
+                return False
+            if not (found is value or found == value):
+                return False
+        return True
+
+    def items(self):
+        return _HamtIter(self, 'items')
+
+    def keys(self):
+        return _HamtIter(self, 'keys')
+
+    def values(self):
+        return _HamtIter(self, 'values')
+
+
 def __getattr__(name):
     raise AttributeError("module '_testinternalcapi' has no attribute '" + name + "'")
 
