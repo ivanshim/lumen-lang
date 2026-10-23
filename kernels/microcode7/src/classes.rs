@@ -609,7 +609,7 @@ impl<'a> Machine<'a> {
     fn module_wording(&mut self, held: &Value, represent: bool) -> Res<String> {
         match self.object_words(held, represent) {
             Ok(words) => Ok(words),
-            Err(error) => Err(self.got_away.take().unwrap_or(Escape::Error(error))),
+            Err(error) => Err(self.act.got_away.take().unwrap_or(Escape::Error(error))),
         }
     }
     fn namespace_provider_entries(&mut self, provider: &Value) -> Res<Option<Value>> {
@@ -1176,7 +1176,7 @@ impl<'a> Machine<'a> {
             Some((owner,hook))=>{
                 let bound=self.member_binding(hook,Some(Value::Blueprint(class.clone())),owner)?;
                 let returned=self.apply_class_member(bound,Vec::new())?;
-                let members=self.object_members(&returned).map_err(|message|self.got_away.take().unwrap_or(Escape::Error(message)))?;
+                let members=self.object_members(&returned).map_err(|message|self.act.got_away.take().unwrap_or(Escape::Error(message)))?;
                 let mut normalized=Vec::with_capacity(members.len());
                 for member in members {let base=self.blueprint_in_mro(member)?;normalized.push(base);}
                 normalized
@@ -1518,7 +1518,7 @@ impl<'a> Machine<'a> {
                 if let Some(hook)=self.protocol_entry(&held,"descriptor.name") {
                     if let Err(raised)=self.through_descriptor(&held,hook,vec![Value::Blueprint(class.clone()),Value::text(&key)]) {
                         let note=format!("Error calling __set_name__ on '{}' instance '{}' in '{}'",Self::type_argument_kind(&held),key,class.name);
-                        let escape=match self.got_away.take().unwrap_or(raised) {
+                        let escape=match self.act.got_away.take().unwrap_or(raised) {
                             Escape::Thrown(value)=>{self.attach_note(&value,&note);Escape::Thrown(value)}
                             Escape::Error(words)=>match self.as_raised(&words) {
                                 Some(value)=>{self.attach_note(&value,&note);Escape::Thrown(value)}
@@ -1526,7 +1526,7 @@ impl<'a> Machine<'a> {
                             },
                             other=>other,
                         };
-                        self.got_away=Some(escape);
+                        self.act.got_away=Some(escape);
                         return Err(self.bad_answer().into());
                     }
                 }
@@ -1657,13 +1657,13 @@ impl<'a> Machine<'a> {
     }
     /// Pull every name out of an iterable that cannot be read twice.
     fn drain_slot_walk(&mut self, offered: &Value) -> Result<Vec<Value>, Escape> {
-        let walk = self.iterated_value(offered).map_err(|words| self.got_away.take().unwrap_or_else(|| words.into()))?;
+        let walk = self.iterated_value(offered).map_err(|words| self.act.got_away.take().unwrap_or_else(|| words.into()))?;
         let mut gathered = Vec::new();
         loop {
             match self.next_value(&walk) {
                 Ok(Some(item)) => gathered.push(item),
                 Ok(None) => return Ok(gathered),
-                Err(words) => return Err(self.got_away.take().unwrap_or_else(|| words.into())),
+                Err(words) => return Err(self.act.got_away.take().unwrap_or_else(|| words.into())),
             }
         }
     }
@@ -2403,7 +2403,7 @@ impl<'a> Machine<'a> {
     /// has already vetted; the generic member call would open them again.
     fn reckon_direct(&mut self, operands: Vec<Value>) -> Res {
         let outcome = self.prim(Prim::Reckon, "__math", &operands);
-        if let Some(raised) = self.got_away.take() { return Err(raised); }
+        if let Some(raised) = self.act.got_away.take() { return Err(raised); }
         Ok(outcome?)
     }
     fn get_arity(&self, name: &str, count: usize) -> Res<()> {
@@ -2459,7 +2459,7 @@ impl<'a> Machine<'a> {
                 Ok(value) => value,
                 Err(fault) => return Some(Err(fault.into())),
             };
-            if let Some(raised) = self.got_away.take() { return Some(Err(raised)); }
+            if let Some(raised) = self.act.got_away.take() { return Some(Err(raised)); }
             let Value::Small(bit) = drawn.settled() else { return None; };
             if bit < n { return Some(Ok(Value::Small(bit))); }
         }
@@ -2561,7 +2561,7 @@ impl<'a> Machine<'a> {
                 let action = if called.as_ref() == "__hash__" { "hash" } else if called.as_ref() == "__eq__" { "eq" } else { "ne" };
                 let mut request = vec![subject, Value::text(action)]; request.extend(input.into_iter().skip(1));
                 let answer = self.reference_reading("", &request);
-                if let Some(escape) = self.got_away.take() { return Err(escape); }
+                if let Some(escape) = self.act.got_away.take() { return Err(escape); }
                 Ok(answer?)
             }
             Value::Wrapped(tag @ (184 | 185), parts) => {
@@ -2640,10 +2640,10 @@ impl<'a> Machine<'a> {
                 }
                 let (mut input, keywords) = self.arguments_for_native(&name, values)?;
                 let named = self.builtin_names(operation, &name, &mut input, keywords);
-                if let Some(exception) = self.got_away.take() { return Err(exception); }
+                if let Some(exception) = self.act.got_away.take() { return Err(exception); }
                 if let Some(answer) = named? { return Ok(answer); }
                 let result = self.prim(operation, &name, &input);
-                if let Some(raised) = self.got_away.take() { return Err(raised); }
+                if let Some(raised) = self.act.got_away.take() { return Err(raised); }
                 Ok(result?)
             }
             // A method tied to a value of a native kind, reached as a
@@ -2654,7 +2654,7 @@ impl<'a> Machine<'a> {
                 } else {
                     let (positional, named) = self.open_arguments(values)?;
                     let answer = self.value_member(&receiver, &operation, positional, named);
-                    if let Some(escape) = self.got_away.take() { return Err(escape); }
+                    if let Some(escape) = self.act.got_away.take() { return Err(escape); }
                     answer
                 }
             },
@@ -2849,7 +2849,7 @@ impl<'a> Machine<'a> {
                             for member in row.iter() {
                                 match self.prim(Prim::Hashed, "hash", std::slice::from_ref(member)) {
                                     Ok(_) => {}
-                                    Err(words) => return Err(self.got_away.take().unwrap_or(Escape::Error(words))),
+                                    Err(words) => return Err(self.act.got_away.take().unwrap_or(Escape::Error(words))),
                                 }
                             }
                             return Err(format!("TypeError: union contains {} unhashable elements", row.len()).into());
@@ -3054,7 +3054,7 @@ impl<'a> Machine<'a> {
                                     request.extend(values.into_iter().skip(1));
                                     // The descriptor already validated this positional native call.
                                     let result = self.prim(Prim::Chance, "__random", &request);
-                                    if let Some(raised) = self.got_away.take() { return Err(raised); }
+                                    if let Some(raised) = self.act.got_away.take() { return Err(raised); }
                                     return Ok(result?);
                                 }
                                 Err(error) if !self.missing_member_escape(&error)=>return Err(error),
@@ -3244,11 +3244,11 @@ impl<'a> Machine<'a> {
                         let saved = self.module_function_builtins.replace(kept[6].clone());
                         let result = self.text_performed(true, "eval", &kept[..2]);
                         self.module_function_builtins = saved;
-                        result.map_err(|words| self.got_away.take().unwrap_or(Escape::Error(words)))
+                        result.map_err(|words| self.act.got_away.take().unwrap_or(Escape::Error(words)))
                     }
                     143 => {
                         if !values.is_empty() { return Err(String::from("TypeError: this code object takes no arguments").into()); }
-                        self.text_performed(true, "eval", &kept[..2]).map_err(|message| self.got_away.take().unwrap_or(Escape::Error(message)))
+                        self.text_performed(true, "eval", &kept[..2]).map_err(|message| self.act.got_away.take().unwrap_or(Escape::Error(message)))
                     }
                     43 => {
 
@@ -8678,7 +8678,7 @@ impl<'a> Machine<'a> {
                 // A reading that raised parks the value while words stand
                 // in for it; those words must not be taken for an absent
                 // entry, and the parked value is lifted again here.
-                if let Some(away)=self.got_away.take(){return Err(away);}
+                if let Some(away)=self.act.got_away.take(){return Err(away);}
                 if self.missing_member_escape(&escape){return Ok(None);}
                 Err(escape)
             }

@@ -37,6 +37,7 @@ mod complex;
 mod byteformat;
 mod crypto;
 mod context;
+mod activation;
 pub mod capsule;
 pub mod datetime_api;
 pub mod tuples;
