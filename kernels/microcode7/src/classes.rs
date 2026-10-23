@@ -8919,10 +8919,14 @@ impl<'a> Machine<'a> {
             let Value::Dict(saved_names) = saved_names else { return Err(String::from("TypeError: partial keywords must be a dictionary").into()); };
             let mut named = Vec::new();
             for pair in saved_names.iter() {
-                if !matches!(pair.0.settled(), Value::Text(_) | Value::Attributes(_)) {
+                // A hand-written dictionary key may be a string descendant,
+                // kept beside its hash: unwrap it, insist on real string
+                // ancestry and take the underlying text, not a rendering.
+                let bare = match pair.0.settled() { Value::Keyed(inner, _) => inner.settled(), other => other };
+                let Some(codes) = bare.type_text().character_numbers() else {
                     return Err(String::from("TypeError: keywords must be strings").into());
-                }
-                named.push((pair.0.bare(), pair.1.clone()));
+                };
+                named.push((Value::category_text(&codes), pair.1.clone()));
             }
             for (name, held) in overriding {
                 match named.iter_mut().find(|pair| pair.0 == name) {

@@ -8741,11 +8741,14 @@ impl<'a> Engine<'a> {
             let Value::Map(defaults) = defaults else { return Err("TypeError: partial keywords must be a dictionary".into()); };
             let mut options: Vec<(String, Value)> = Vec::new();
             for (key, value) in defaults.iter() {
-                // Keyword names are strings; a key added by hand to the dictionary may not be.
-                if !matches!(key.contents(), Value::Text(_) | Value::Object(_)) {
+                // A hand-written dictionary key may be a string descendant,
+                // kept beside its hash: unwrap it, insist on real string
+                // ancestry and take the underlying text, not a rendering.
+                let bare = match key.contents() { Value::Hashed(pair) => pair.0.clone(), other => other };
+                let Some(codes) = bare.type_text().text_codes() else {
                     return Err("TypeError: keywords must be strings".into());
-                }
-                options.push((key.plain(), value.clone()));
+                };
+                options.push((Value::predicate_text(&codes), value.clone()));
             }
             for (key, value) in keywords {
                 if let Some((_, held)) = options.iter_mut().find(|(word, _)| *word == key) { *held = value; }
