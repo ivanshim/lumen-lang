@@ -19,7 +19,8 @@ impl<'a> Engine<'a> {
             Some(b'c') if part == "call" => 7,
             Some(b'a') if part == "allocate" => 10,
             Some(b'd') => match part {
-                "descriptor.get" => 11, "descriptor.set" => 12, "descriptor.delete" => 13, "doc" => 14, "defaults" => 15, _ => NO_PLACE,
+                "descriptor.get" => 11, "descriptor.set" => 12, "descriptor.delete" => 13,
+                "descriptor.name" => 25, "doc" => 14, "defaults" => 15, _ => NO_PLACE,
             },
             Some(b'b') => match part { "base" => 16, "bases" => 17, _ => NO_PLACE },
             Some(b'o') if part == "order" => 19,
@@ -401,6 +402,12 @@ impl<'a> Engine<'a> {
         let own = |held: &Class| held.constants.iter().find(|(n, _)| n == "\0kind")
             .map(|(_, v)| match v { Value::Text(t) => t.as_ref() == word, other => other.plain() == word });
         std::iter::once(c).chain(c.lineage.borrow().iter().map(Rc::as_ref)).find_map(own).unwrap_or(false)
+    }
+
+    /// Find the native allocation kind through physical bases, independently of a supplied MRO.
+    fn allocation_kind(c: &Class) -> Option<String> {
+        if let Some(kind) = Self::own_kind(c) { return Some(kind); }
+        c.base().and_then(|parent| Self::allocation_kind(&parent))
     }
 
     /// Whether a class stands on the builtin kind named, through any of
@@ -905,8 +912,13 @@ impl<'a> Engine<'a> {
         }
     }
     fn solid_parent(&self, class: &Rc<Class>) -> Rc<Class> {
-        let has_native_storage = Self::own_kind(class).is_some_and(|kind| kind != "Generic" || !self.lang.type_parameters);
-        if has_native_storage || self.is_metaclass_root(class) || class.declares_slots { return class.clone(); }
+        // A shape is added by a kind the language keeps for its own
+        // values, or by slots of its own; a class of no extra storage
+        // takes the shape of what it stands on, however it is spelled.
+        let shaped = Self::own_kind(class).is_some_and(|kind| kind != "Generic" || !self.lang.type_parameters);
+        let adds_slots = Self::stored_slot_names(class).map_or(class.declares_slots, |names|
+            names.iter().any(|name| name != "__dict__" && name != "__weakref__"));
+        if shaped || self.is_metaclass_root(class) || adds_slots { return class.clone(); }
         class.base().as_ref().map_or_else(|| class.clone(), |parent| self.solid_parent(parent))
     }
     fn layout_parent(&self, bases: &[Rc<Class>]) -> Flow<Option<Rc<Class>>> {
@@ -1361,6 +1373,11 @@ impl<'a> Engine<'a> {
         let dictionary = self.slots_allow(c, self.class_word("namespace"));
         c.dictionary_layout.set(Some(dictionary));
         let Some(slots) = Self::own_class_value(c, self.class_word("slots")) else {
+            // A class naming no slots of its own keeps a managed
+            // dictionary and weak reference over what it stands on. Its
+            // layout is settled here, before anything asks it again.
+            c.shared.borrow_mut().push(("\0layout".into(), self.instance_layout(c, None)));
+            c.weak_storage.set(Some(self.weak_layout(c)));
             if !self.lang.weak_refused.is_empty() && self.weak_layout(c) && !c.direct().iter().any(|base| self.weak_layout(base)) {
                 c.shared.borrow_mut().push(("__weakref__".into(), Self::adapter(16, vec![Value::text("__weakref__"), Value::Class(c.clone())])));
             }
@@ -1380,7 +1397,9 @@ impl<'a> Engine<'a> {
             }
         };
         let named: Vec<Value> = named.into_iter().map(|slot| Self::worth_of(&slot).unwrap_or_else(|| slot.contents())).collect();
-        if let Some(kind @ ("int" | "tuple" | "bytes")) = Self::kind_beneath(c).as_deref() {
+        c.shared.borrow_mut().push(("\0slots".into(), Value::array(named.iter().map(|slot| Value::text(slot.plain().as_str())).collect())));
+        c.shared.borrow_mut().push(("\0layout".into(), self.instance_layout(c, Some(&named))));
+        if let Some(kind @ ("int" | "tuple" | "bytes")) = Self::allocation_kind(c).as_deref() {
             if !named.is_empty() {
                 return Err(format!("TypeError: nonempty __slots__ not supported for subtype of '{kind}'").into());
             }
@@ -1434,6 +1453,61 @@ impl<'a> Engine<'a> {
             c.shared.borrow_mut().push((word.to_string(), Self::adapter(16, vec![Value::Text(word.clone()), Value::Class(c.clone())])));
         }
         Ok(())
+    }
+    /// Preserve physical class layout independently of the supplied MRO.
+    fn instance_layout(&self, c: &Rc<Class>, names: Option<&[Value]>) -> Value {
+        let (mut size, mut dictionary, mut weak) = c.base()
+            .map(|base| Self::class_layout(&base, self.exception_class(&base)))
+            .unwrap_or((16, 0, 0));
+        let variable = matches!(Self::allocation_kind(c).as_deref(), Some("int" | "tuple" | "bytes"));
+        // Secondary bases can supply storage, but cannot enlarge a variable-sized layout.
+        for base in c.direct() {
+            let (_, base_dict, base_weak) = Self::class_layout(&base, self.exception_class(&base));
+            if dictionary == 0 && base_dict != 0 { dictionary = -1; }
+            if weak == 0 && base_weak != 0 && !variable { weak = -32; }
+        }
+        match names {
+            None => {
+                if dictionary == 0 { dictionary = -1; }
+                if weak == 0 && !variable { weak = -32; }
+            }
+            Some(names) => {
+                for name in names {
+                    match name.plain().as_str() {
+                        "__dict__" => dictionary = -1,
+                        "__weakref__" => weak = -32,
+                        _ => size += 8,
+                    }
+                }
+            }
+        }
+        Value::tuple(vec![Value::Small(size), Value::Small(dictionary), Value::Small(weak)])
+    }
+    /// Read retained layout metadata or the builtin allocation layout.
+    fn class_layout(class: &Class, exceptional: bool) -> (i64, i64, i64) {
+        if let Some(held) = Self::own_class_value(class, "\0layout") {
+            if let Value::Tuple(parts) = held.contents() {
+                if let (Some(Value::Small(size)), Some(Value::Small(dictionary)), Some(Value::Small(weak))) = (parts.first(), parts.get(1), parts.get(2)) {
+                    return (*size, *dictionary, *weak);
+                }
+            }
+        }
+        if exceptional { return (72, 16, 0); }
+        match Self::own_kind(class).as_deref() {
+            Some("int") => (24, 0, 0),
+            Some("tuple") => (32, 0, 0),
+            Some("bytes") => (33, 0, 0),
+            Some("set" | "frozenset") => (200, 0, 192),
+            _ => (16, 0, 0),
+        }
+    }
+    /// Read the slot names retained for physical storage decisions.
+    fn stored_slot_names(c: &Class) -> Option<Vec<String>> {
+        let held = Self::own_class_value(c, "\0slots")?;
+        match held.contents() {
+            Value::Array(parts) | Value::Tuple(parts) => Some(parts.iter().map(|part| part.plain()).collect()),
+            _ => None,
+        }
     }
     /// Names taken from a one-shot iterable, kept after that iterable
     /// has been spent. Absent when the declaration can be read again.
@@ -5043,6 +5117,12 @@ impl<'a> Engine<'a> {
         if matches!(&subject, Value::View(v) if v.1 == "mapping") && ["__getitem__", "__contains__", "__len__", "__iter__", "__reversed__", "__or__", "__ror__", "__ior__", "__hash__", "get", "keys", "values", "items", "copy"].contains(&name) {
             return Ok(Value::ValueMethod(Rc::new((subject, name.to_string()))));
         }
+        // A builtin kind read as a class declares no type parameters of
+        // its own, so it answers with none where the class's own line is
+        // asked, just as the maker's own parameter member does.
+        if name == self.class_word("type_params") && !matches!(&subject, Value::Class(_)) && self.stands_for_kind(&subject) {
+            return Ok(Value::tuple(Vec::new()));
+        }
         // Exact text values have intrinsic methods, with no instance hooks.
         if let (true, Value::Text(text)) = (self.lang.bind_names, &subject) {
             if let Some(Builtin::Text(operation)) = self.lang.builtins.get(name) {
@@ -6073,6 +6153,18 @@ impl<'a> Engine<'a> {
                         return Ok(Self::adapter(i,state));
                     }
                 }
+                let weak_place = self.class_word("weakrefoffset");
+                if !weak_place.is_empty() && name == weak_place {
+                    return Ok(Value::Small(Self::class_layout(c, self.exception_class(c)).2));
+                }
+                let dict_place = self.class_word("dictoffset");
+                if !dict_place.is_empty() && name == dict_place {
+                    return Ok(Value::Small(Self::class_layout(c, self.exception_class(c)).1));
+                }
+                // Every class answers for the type parameters it declared,
+                // and a class that declared none answers with none, as
+                // the maker's own type parameter member does.
+                if name == self.class_word("type_params") { return Ok(Value::tuple(Vec::new())); }
                 if let Some(root)=self.root_member(name,Some(c)) {return Ok(root);}
             }
             Value::Object(o) => {
@@ -7578,10 +7670,11 @@ impl<'a> Engine<'a> {
                 // the place its routines read it from, as the reference's
                 // module.__dict__ write is a global write.
                 if module && value.is_some() && !o.fields.borrow().iter().any(|(n,_)| n == name) {
-                    let suffix = format!(":{}:{}", o.class_now().name, name);
                     // The newest incarnation of the module answers for
                     // the name: a module read in again owns fresh cells.
-                    if let Some(slot) = self.registry.idents.iter().rposition(|word| word.starts_with("\0module:") && word.ends_with(&suffix)) {
+                    // The member index names that newest slot outright; a
+                    // scan of every spelled name grew with the whole world.
+                    if let Some(slot) = self.registry.module_slot(&o.class_now().name, name) {
                         let shared = Value::Bond(Rc::new(RefCell::new(value.clone().unwrap())));
                         self.world.resize(self.registry.idents.len(), Value::Blank);
                         self.world[slot] = shared.clone();
@@ -7910,9 +8003,12 @@ impl<'a> Engine<'a> {
     /// dictionary and of the native value kept in its fields.
     pub(super) fn weak_layout(&self, c: &Class) -> bool {
         if let Some(layout) = c.weak_storage.get() { return layout; }
-        if matches!(Self::kind_beneath(c).as_deref(), Some("int" | "tuple" | "bytes")) { return false; }
+        if matches!(Self::allocation_kind(c).as_deref(), Some("int" | "tuple" | "bytes")) { return false; }
         if let Some(kind) = Self::own_kind(c) { return matches!(kind.as_str(), "module" | "set" | "frozenset" | "TypeVar" | "ParamSpec" | "TypeVarTuple" | "Union" | "GenericAlias" | "ParamSpecArgs" | "ParamSpecKwargs"); }
         if c.direct().is_empty() { return false; }
+        if let Some(names) = Self::stored_slot_names(c) {
+            return names.iter().any(|name| name == "__weakref__") || c.direct().iter().any(|base| self.weak_layout(base));
+        }
         match Self::own_class_value(c, self.class_word("slots")) {
             None => true,
             Some(slots) => {

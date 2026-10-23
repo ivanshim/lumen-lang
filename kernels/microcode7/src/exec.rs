@@ -612,7 +612,7 @@ pub struct Machine<'a> {
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>>,
     coroutine_bodies: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<Routine>, Option<Weak<Thing>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>)>,
-    delegated_answers: std::collections::HashSet<usize>,
+    delegated_answers: std::collections::HashSet<usize, crate::table::FxBuildHasher>,
     code_observers: Vec<(Weak<RefCell<Value>>, bool)>,
     pub(super) code_handles: HashMap<usize, (Weak<Routine>, Weak<Vec<Value>>)>,
     pub library_sources: HashMap<String, String>,
@@ -623,6 +623,8 @@ pub struct Machine<'a> {
     library_origins: std::collections::HashSet<String>,
     imported: HashMap<String, Value, crate::table::FxBuildHasher>,
     recursion_hint: Cell<usize>,
+    // Class words outside the fixed roster, looked up once each.
+    detail_kept: RefCell<Vec<(String, &'a str)>>,
     /// The dictionary of a loaded space, built the first time globals()
     /// wants it and answered every time after: one dictionary, so a
     /// name changed through it is changed in the space.
@@ -712,6 +714,8 @@ pub struct Machine<'a> {
     routine_member_positions: HashMap<(u8, usize, usize), usize, crate::table::FxBuildHasher>,
     reaping: bool,
     cycle_checkpoint_slots: usize,
+    /// How many bytes were alive once the last reaping was done.
+    reaped_at_bytes: usize,
     // World size, inventory identities, and retired native slot positions.
     quiet_module_slots: (usize, Vec<(String, usize)>, Vec<usize>),
     loose_entries: RefCell<HashMap<(String, String), Value>>,
@@ -727,6 +731,10 @@ pub struct Machine<'a> {
     numbered_faults: Vec<Value>,
     pub outermost: Rc<Env>,
     idents: Vec<String>,
+    /// The newest roster place under each spelled name, and how far
+    /// along the roster it was read: a lookup reads only the names added
+    /// since, never the whole roster again.
+    newest_places: RefCell<(usize, HashMap<String, usize, crate::table::FxBuildHasher>)>,
     /// Names bound by the source after its library prefix.
     pub main_bindings: std::collections::HashSet<String, crate::table::FxBuildHasher>,
     memo: HashMap<String, Value>,
@@ -2257,6 +2265,7 @@ impl<'a> Machine<'a> {
             importing: std::collections::HashSet::new(),
             imported: HashMap::default(),
             recursion_hint: Cell::new(0),
+            detail_kept: RefCell::new(Vec::new()),
             space_books: HashMap::new(),
             globals_by_cell: HashMap::new(),
             native_slots: table.strings("ext.stmt.class.special").iter().enumerate().rev().map(|(at, name)| (name.clone(), at)).collect(),
@@ -2290,7 +2299,7 @@ impl<'a> Machine<'a> {
             code_kind: None,
             cached_forms: None,
             member_inventories: RefCell::new(HashMap::new()),
-            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: HashMap::default(), reaping: false, cycle_checkpoint_slots: 0, quiet_module_slots: Default::default(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
+            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: HashMap::default(), reaping: false, cycle_checkpoint_slots: 0, reaped_at_bytes: 0, quiet_module_slots: Default::default(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
             stack_origin: &table as *const &Table as usize,
             descriptor_files: std::collections::BTreeMap::new(),
             table,
@@ -2298,6 +2307,7 @@ impl<'a> Machine<'a> {
             args_cell: find("system.args"),
             memo_cell: find("system.memoization"),
             idents,
+            newest_places: RefCell::new((0, HashMap::default())),
             main_bindings: std::collections::HashSet::default(),
             memo: HashMap::new(),
             identities: std::collections::BTreeMap::new(),
@@ -2331,7 +2341,7 @@ impl<'a> Machine<'a> {
             generator_frames: HashMap::new(),
             coroutine_bodies: HashMap::new(),
             async_generators: HashMap::new(),
-            delegated_answers: std::collections::HashSet::new(),
+            delegated_answers: std::collections::HashSet::default(),
             code_observers: Vec::new(), code_handles: HashMap::new(),
             holding_fault: Vec::new(),
             holding_below: 0,
@@ -2953,6 +2963,17 @@ impl<'a> Machine<'a> {
         Ok((name, at))
     }
 
+    /// The newest place in the roster spelled `word`, if there is one:
+    /// the roster only ever grows, so the places read before stay right
+    /// and only the tail added since is read now.
+    fn newest_place(&self, word: &str) -> Option<usize> {
+        let mut known = self.newest_places.borrow_mut();
+        let read = known.0;
+        for (at, name) in self.idents.iter().enumerate().skip(read) { known.1.insert(name.clone(), at); }
+        known.0 = self.idents.len();
+        known.1.get(word).copied()
+    }
+
     /// What a value is worth as a number: text for the number it opens
     /// with, a flag for one or nought, nothing for nought, and an array
     /// for whether it holds anything at all.
@@ -3320,12 +3341,23 @@ impl<'a> Machine<'a> {
         rows.iter().any(|(member, slot)| member == &words[1] && matches!(slot.settled(), Value::Dict(_)))
     }
 
+    /// Whether a module the machine read in has since left the import
+    /// dictionary: its reading is garbage only a reaping takes away.
+    fn modules_retired(&self) -> bool {
+        self.import_dictionary_ready()
+            && self.imported.keys().any(|path| !self.importing.contains(path) && self.cached_import(path).is_none())
+    }
+
     /// Compilation and import batches provide safe points for cyclic
     /// garbage, including programs that never explicitly ask for it.
     fn collect_namespace_garbage(&mut self, large_source: bool) {
         if self.reaping { return; }
         let growth = self.idents.len().saturating_sub(self.cycle_checkpoint_slots);
-        if !large_source && growth < 128_000 { return; }
+        // A large source is a safe moment to reap, but not a reason: with
+        // little taken since the last reaping there is little to find,
+        // and every reaping weaves the whole web.
+        let laden = lumen_room::used().saturating_sub(self.reaped_at_bytes) >= 32 * 1024 * 1024;
+        if large_source { if !laden && !self.modules_retired() { return; } } else if growth < 128_000 { return; }
         let limit = self.imported.get("gc").and_then(|module| {
             let Value::Thing(space) = module.settled() else { return None };
             let rows = space.holds.try_borrow().ok()?;
@@ -3528,6 +3560,7 @@ impl<'a> Machine<'a> {
             drop(web);
             self.attend_to_gone();
             self.clear_collector_skips();
+            self.reaped_at_bytes = lumen_room::used();
             self.reaping = false;
             return 0;
         }
@@ -3610,7 +3643,26 @@ impl<'a> Machine<'a> {
         drop(checked);
         drop(taken);
         self.attend_to_gone();
+        // The discounted cell of a retired module that no namespace holds
+        // any longer was all that kept its reading's code alive: unset it.
+        {
+            let skips = self.outermost.collector_skips.borrow();
+            let mut cells = self.outermost.cells.borrow_mut();
+            for (at, _) in skips.iter().enumerate().filter(|(_, &quiet)| quiet) {
+                let Some(place) = cells.get_mut(at) else { break };
+                let alone = matches!(place, Value::Shared(cell) if Rc::strong_count(cell) == 1);
+                if alone { *place = Value::Unset; }
+            }
+        }
         self.clear_collector_skips();
+        // What the reaping freed is handed back to the system at once,
+        // rather than kept resident by the allocator for the rest of the run.
+        #[cfg(target_os = "linux")]
+        unsafe {
+            unsafe extern "C" { fn malloc_trim(pad: usize) -> i32; }
+            malloc_trim(0);
+        }
+        self.reaped_at_bytes = lumen_room::used();
         self.reaping = false;
         found
     }
@@ -4252,6 +4304,7 @@ impl<'a> Machine<'a> {
             Err((said, row, _)) => return Err(Escape::Error(self.text_would_not_read(said, row))),
         };
         self.idents = built.globals;
+        self.newest_places.borrow_mut().0 = 0;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         let wanted = built.program.idents.len().max(held.len());
         if !Rc::ptr_eq(frame, &self.outermost) || frame.cells.borrow().len() < wanted {
@@ -4317,6 +4370,7 @@ impl<'a> Machine<'a> {
             false => crate::build::build_from(&tokens, self.table, &self.idents, HashMap::new(), true, 0, came_out_of.as_deref().map(Rc::from))?,
         };
         self.idents = built.globals;
+        self.newest_places.borrow_mut().0 = 0;
         // Names the new source brought with it want room to stand in.
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         let (was_in, was_on) = (self.written_in.clone(), self.row);
@@ -21102,7 +21156,7 @@ impl<'a> Machine<'a> {
         if phase == 0 { *claim.borrow_mut() = Some(stage.clone()); }
         *stage.borrow_mut() = Value::Small(1);
         driving.set(true);
-        self.delegated_answers.remove(&(Rc::as_ptr(generator) as usize));
+        if !self.delegated_answers.is_empty() { self.delegated_answers.remove(&(Rc::as_ptr(generator) as usize)); }
         let outcome = (|| {
             if ended {
                 if let Some(value) = thrown {
@@ -21139,7 +21193,7 @@ impl<'a> Machine<'a> {
             };
             // A delegate callback returns an await token even if a lookup
             // resumed the parent and cleared its delegation in the meantime.
-            let delegated = self.delegated_answers.remove(&(Rc::as_ptr(generator) as usize));
+            let delegated = !self.delegated_answers.is_empty() && self.delegated_answers.remove(&(Rc::as_ptr(generator) as usize));
             match advanced {
                 Ok(Some(item)) if delegated || generator.try_borrow().is_ok_and(|held| held.inner.is_some()) => Ok(AsyncStep::Waiting(item)),
                 Ok(Some(_)) if *operation == 3 => Err(self.table.strings("ext.stmt.async.generator.close.ignored").first().map(String::as_str).unwrap_or_default().to_owned().into()),
@@ -23579,6 +23633,19 @@ impl<'a> Machine<'a> {
             let task = v.first().map(Value::settled);
             if let Some(Value::Text(task)) = task {
                 match task.as_ref() {
+                    // Host error number while floating math is on.
+                    // Otherwise the name is not a working of this language.
+                    "set_errno" if self.rules.floating_math => {
+                        if v.len() != 2 { return Err(String::from("TypeError: set_errno() takes exactly one argument")); }
+                        let planted = match v[1].settled() {
+                            Value::Small(n) => i32::try_from(n).map_err(|_| String::from("OverflowError: Python int too large to convert to C int"))?,
+                            Value::Flag(bit) => i32::from(u8::from(bit)),
+                            Value::Huge(n) => n.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?,
+                            _ => return Err(String::from("TypeError: an integer is required")),
+                        };
+                        unsafe { *libc::__errno_location() = planted };
+                        return Ok(Value::Nil);
+                    }
                     "mt19937" if self.table.flag("ext.builtin.random.words") => {
                         return if v.len() == 4 { self.twister_draw(v) } else { self.twister_next(v) };
                     },
@@ -26364,7 +26431,7 @@ impl<'a> Machine<'a> {
                             Some(Value::Thing(module)) => format!("\0import/{}/{name}", module.of.name),
                             _ => name.clone(),
                         };
-                        let slot = if let Some(index) = self.idents.iter().rposition(|word| word == &key) { index }
+                        let slot = if let Some(index) = self.newest_place(&key) { index }
                             else { self.idents.push(key); self.idents.len() - 1 };
                         let entry_binding = owner.is_none() && self.reading_now.is_none()
                             && self.user_source_started && self.written_in == self.entry_file;
@@ -37688,6 +37755,7 @@ impl<'a> Machine<'a> {
         // What the build noted about how the text is written is said
         // once the text stands, each warning through the warnings module.
         self.idents = built.globals.clone();
+        self.newest_places.borrow_mut().0 = 0;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         if warn_source {
             for (message, row, column) in built.warnings.clone() {
@@ -37747,6 +37815,7 @@ impl<'a> Machine<'a> {
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
         self.idents = built.globals.clone();
+        self.newest_places.borrow_mut().0 = 0;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         if warn_source {
             for (message, row, column) in built.warnings.clone() {
@@ -39859,9 +39928,8 @@ impl Machine<'_> {
             Magnitude => {
                 require(1, 1)?;
                 if let Value::Complex(pair) = &input[0] {
-                    let norm = pair.0.hypot(pair.1);
-                    if pair.0.is_finite() && pair.1.is_finite() && !norm.is_finite() { return Err(self.core_complaint("core.power.overflow", "")); }
-                    return Ok(crate::complex::decimal_value(norm));
+                    let span = crate::complex::distance(pair.0, pair.1)?;
+                    return Ok(crate::complex::decimal_value(span));
                 }
                 let parts = math::ratio_of(&as_number(&input[0])).ok_or_else(|| self.core_complaint("core.abs.type", &input[0].kind_word()))?;
                 Ok(math::make_number(parts.above.abs(), parts.beneath, parts.places))
