@@ -43,18 +43,6 @@ def _load():
             label = row[at + 1:]
             forward[number] = label
             reverse[label] = chr(number)
-    # Hangul and the BMP ideograph blocks are filled in whole, so the
-    # per-character calls of a full sweep are plain table hits.
-    syllables = ['HANGUL SYLLABLE ' + lead + vowel + tail for lead in _leads for vowel in _vowels for tail in _tails]
-    for offset in range(len(syllables) - 1, -1, -1):
-        forward[0xac00 + offset] = syllables[offset]
-        reverse[syllables[offset]] = chr(0xac00 + offset)
-    for start, end, prefix, shown in _ranges:
-        if shown and end < 0x10000:
-            for number in range(start, end + 1):
-                label = prefix + '-%04X' % number
-                forward[number] = label
-                reverse[label] = chr(number)
     _forward = forward
     _reverse = reverse
 
@@ -70,6 +58,10 @@ def _table_name(number):
     global _forward
     if _forward is None:
         _load()
+    if 0xac00 <= number <= 0xd7a3:
+        offset = number - 0xac00
+        return 'HANGUL SYLLABLE ' + _leads[offset // 588] \
+            + _vowels[offset % 588 // 28] + _tails[offset % 28]
     found = _forward.get(number)
     if found is not None:
         return found
@@ -78,6 +70,27 @@ def _table_name(number):
     for start, end, prefix, shown in _ranges:
         if shown and start <= number <= end:
             return '%s-%04X' % (prefix, number)
+    return None
+
+
+def _hangul(spelling):
+    head = 'HANGUL SYLLABLE '
+    if not spelling.startswith(head):
+        return None
+    body = spelling[len(head):]
+    for li in range(len(_leads)):
+        if not body.startswith(_leads[li]):
+            continue
+        rest = body[len(_leads[li]):]
+        for vi in range(len(_vowels)):
+            if not rest.startswith(_vowels[vi]):
+                continue
+            tail = rest[len(_vowels[vi]):]
+            for ti in range(len(_tails)):
+                if tail == _tails[ti]:
+                    number = 0xac00 + (li * 21 + vi) * 28 + ti
+                    if name(number) == spelling:
+                        return chr(number)
     return None
 
 
@@ -99,6 +112,9 @@ def lookup(spelling):
             for start, end in _spans[head]:
                 if start <= number <= end:
                     return chr(number)
+    found = _hangul(spelling)
+    if found is not None:
+        return found
     found = _aliases.get(spelling)
     if found is not None:
         return found
