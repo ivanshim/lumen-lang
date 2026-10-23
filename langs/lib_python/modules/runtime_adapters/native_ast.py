@@ -429,11 +429,20 @@ def _syntax(message):
 def _no_tree():
     raise _NO_TREE
 
+# The native AST makers take the call's keyword mapping as it stands: a key
+# that is no string is not refused at the call, but reaches the maker, which
+# reports it with its own repr as CPython's C constructor does. This mark tells
+# the runtime not to narrow such a key to a word before the maker sees it.
+def _native_keywords(method):
+    method._lumen_raw_keywords = True
+    return method
+
 class AST:
     _fields = ()
     _attributes = ()
 
     # Apply ASDL defaults while preserving the deprecated incomplete constructors.
+    @_native_keywords
     def __init__(self, *args, **kwargs):
         cls = type(self)
         name = cls.__name__
@@ -446,12 +455,24 @@ class AST:
         for index, value in enumerate(args):
             field = fields[index]
             if field in kwargs:
-                raise TypeError(name + " got multiple values for argument '" + field + "'")
+                # The reference names the keyword's own key, so a key that is
+                # no string is reported by its repr rather than by the field.
+                given = field
+                for key in kwargs:
+                    if key == field:
+                        given = key
+                        break
+                raise TypeError(name + " got multiple values for argument " + repr(given))
             setattr(self, field, value)
         for field, value in kwargs.items():
             if field not in fields and field not in self._attributes:
                 import warnings
-                warnings.warn(name + ".__init__ got an unexpected keyword argument " + repr(field) + ". This is deprecated and will be removed in Python 3.15.", DeprecationWarning, stacklevel=2)
+                warnings.warn(name + ".__init__ got an unexpected keyword argument " + repr(field) + ". Support for arbitrary keyword arguments is deprecated and will be removed in Python 3.15.", DeprecationWarning, stacklevel=2)
+            # A key that is no string still names a field the maker knows, but
+            # no attribute can be written under it, so the complaint is the
+            # reference's own about the kind of the attribute name.
+            if not isinstance(field, str):
+                raise TypeError("attribute name must be string, not '" + type(field).__name__ + "'")
             setattr(self, field, value)
         types = getattr(cls, '_field_types', None)
         if types is None:
@@ -480,6 +501,7 @@ class AST:
         return self.__reduce__()
 
     # Replace only declared class fields and attributes, keeping shallow values.
+    @_native_keywords
     def __replace__(self, **changes):
         cls = type(self)
         allowed = cls._fields + cls._attributes
