@@ -1019,10 +1019,7 @@ impl<'a> Engine<'a> {
             alternate = !alternate;
         }
         let mut fields = object.fields.borrow_mut();
-        match fields.iter_mut().find(|(n, _)| n == name) {
-            Some((_, held)) => *held = Value::Object(handling),
-            None => fields.push((name.clone(), Value::Object(handling))),
-        }
+        set_field(&mut *fields, name, Value::Object(handling));
     }
     fn chain_context(&self, raised: &Value) {
         let Some(name) = &self.lang.exception_context else { return };
@@ -1063,12 +1060,16 @@ impl<'a> Engine<'a> {
     /// A fault of the kernel's own, met where exceptions are furnished,
     /// becomes a raised value of the class the language names for it,
     /// so that a clause may take it; any other ending stands as it was.
+    fn fault_of_note(&mut self, words: String) -> Fault {
+        match self.as_fault(&words) {
+            Some(value) => Fault::Thrown(value),
+            None => Fault::Note(words),
+        }
+    }
+
     fn raised_of_note<T>(&mut self, ending: Flow<T>) -> Flow<T> {
         match ending {
-            Err(Fault::Note(words)) if !self.lang.exceptions.is_empty() => match self.as_fault(&words) {
-                Some(value) => Err(Fault::Thrown(value)),
-                None => Err(Fault::Note(words)),
-            },
+            Err(Fault::Note(words)) if !self.lang.exceptions.is_empty() => Err(self.fault_of_note(words)),
             other => other,
         }
     }
@@ -1345,10 +1346,7 @@ impl<'a> Engine<'a> {
                     _ => continue,
                 }
             } else { held.clone() };
-            match target.iter_mut().find(|(n, _)| n == key) {
-                Some(place) => place.1 = held,
-                None => target.push((key.clone(), held)),
-            }
+            set_field(&mut *target, key, held);
         }
         drop(source);
         drop(target);
@@ -1402,8 +1400,7 @@ impl<'a> Engine<'a> {
             let Value::Object(fresh) = self.exception_instance(object.class_now().clone(), args.to_vec(), Value::Null) else { unreachable!() };
             let mut fields = object.fields.borrow_mut();
             for (key, value) in fresh.fields.borrow().iter().filter(|(k, _)| ["msg", "name", "path", "name_from", "\0arguments"].contains(&k.as_str()) || self.lang.exception_args.as_ref() == Some(k)) {
-                if let Some(entry) = fields.iter_mut().find(|(n, _)| n == key) { entry.1 = value.clone(); }
-                else { fields.push((key.clone(), value.clone())); }
+                set_field(&mut *fields, key, value.clone());
             }
             return Ok(Value::Null);
         }
@@ -1414,8 +1411,7 @@ impl<'a> Engine<'a> {
             let mut fields = object.fields.borrow_mut();
             for (key, value) in fresh.fields.borrow().iter() {
                 if (self.lang.syntax_members.contains(key) && (args.len() == 2 || self.lang.syntax_members.first() == Some(key))) || key == "\0arguments" || self.lang.exception_args.as_ref() == Some(key) {
-                    if let Some(entry) = fields.iter_mut().find(|(n, _)| n == key) { entry.1 = value.clone(); }
-                    else { fields.push((key.clone(), value.clone())); }
+                    set_field(&mut *fields, key, value.clone());
                 }
             }
             return Ok(Value::Null);
@@ -1426,8 +1422,7 @@ impl<'a> Engine<'a> {
                 let mut fields = object.fields.borrow_mut();
                 for (key, value) in fresh.fields.borrow().iter() {
                     if self.lang.os_members.contains(key) || ["filename2", "\0shown", "\0arguments"].contains(&key.as_str()) || self.lang.exception_args.as_ref() == Some(key) {
-                        if let Some(entry) = fields.iter_mut().find(|(n, _)| n == key) { entry.1 = value.clone(); }
-                        else { fields.push((key.clone(), value.clone())); }
+                        set_field(&mut *fields, key, value.clone());
                     }
                 }
                 return Ok(Value::Null);
@@ -1600,8 +1595,7 @@ impl<'a> Engine<'a> {
             let mut fields = object.fields.borrow_mut();
             for (name, value) in [(&self.lang.exception_cause, stopped.clone()), (&self.lang.exception_context, stopped), (&self.lang.exception_suppress, Value::Flag(true))] {
                 if let Some(key) = name {
-                    if let Some((_, slot)) = fields.iter_mut().find(|(n, _)| n == key) { *slot = value; }
-                    else { fields.push((key.clone(), value)); }
+                    set_field(&mut *fields, key, value);
                 }
             }
         }
@@ -3151,10 +3145,7 @@ impl<'a> Engine<'a> {
             ("file", Value::text(&self.source)),
             ("line", Value::Small(self.line as i64)),
         ] {
-            match fields.iter_mut().find(|(n, _)| n == named) {
-                Some(place) => place.1 = held,
-                None => fields.push((named.to_string(), held)),
-            }
+            set_field(&mut fields, named, held);
         }
         Some(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(fields), mark: self.made })))
     }
@@ -3322,13 +3313,7 @@ impl<'a> Engine<'a> {
                 own.len() - 1
             }
         };
-        if let Value::Bond(shared) = &own[at].1 {
-            return shared.clone();
-        }
-        let was = std::mem::replace(&mut own[at].1, Value::Null);
-        let shared = Rc::new(RefCell::new(was));
-        own[at].1 = Value::Bond(shared.clone());
-        shared
+        bond_in(&mut own[at].1)
     }
 
     /// The method a class answers with for a property the thing does
@@ -4558,6 +4543,13 @@ impl<'a> Engine<'a> {
         })
     }
 
+    fn over_reach(&self) -> Res<()> {
+        if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
+            if self.calls.len() + self.reaching >= limit { return Err(format!("\0{}", words)); }
+        }
+        Ok(())
+    }
+
     /// One step further into a call a thing answers with its own call
     /// member: counted as a frame would be counted, and refused in the
     /// words the language gives once the calls standing reach the
@@ -4565,9 +4557,7 @@ impl<'a> Engine<'a> {
     /// routine calling itself for ever raises. What is counted here is
     /// let go again by `answered`.
     pub(super) fn reaching_further(&mut self) -> Flow<()> {
-        if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
-            if self.calls.len() + self.reaching >= limit { return Err(format!("\0{}", words).into()); }
-        }
+        self.over_reach().map_err(Fault::from)?;
         self.reaching += 1;
         Ok(())
     }
@@ -5050,9 +5040,7 @@ impl<'a> Engine<'a> {
         // beneath the limit. The outermost body is no call and is not
         // counted.
         if !program.body_of_all {
-            if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
-                if self.calls.len() + self.reaching >= limit { return Err(format!("\0{}", words).into()); }
-            }
+            self.over_reach().map_err(Fault::from)?;
         }
         let n = if let Some(rules) = &program.parameter_rules {
             let given = self.drop_many(n)?;
@@ -5227,10 +5215,7 @@ impl<'a> Engine<'a> {
                 Ok(()) => Ok(()),
                 Err(fault) => {
                     let fault = match fault {
-                        Fault::Note(words) => match self.as_fault(&words) {
-                            Some(value) => Fault::Thrown(value),
-                            None => Fault::Note(words),
-                        },
+                        Fault::Note(words) => self.fault_of_note(words),
                         other => other,
                     };
                     if let Fault::Thrown(value) = &fault { self.record_trace(value, program); }
@@ -5397,7 +5382,7 @@ impl<'a> Engine<'a> {
         }
         match outcome {
             Err(Fault::Note(told)) if !self.lang.exceptions.is_empty() && (told.starts_with('\0') || told.starts_with("Division by zero") || told.starts_with("Undefined property") || told.starts_with("Cannot read property") || told.starts_with("Array index")) => {
-                match self.as_fault(&told) { Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(told)) }
+                Err(self.fault_of_note(told))
             }
             other => other,
         }
@@ -5459,7 +5444,7 @@ impl<'a> Engine<'a> {
                 let ending = match ran {
                     Err(Fault::Note(words)) => match self.carried.take() {
                         Some(fled) => Err(fled),
-                        None => match self.as_fault(&words) { Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)) },
+                        None => Err(self.fault_of_note(words)),
                     },
                     other => other,
                 };
@@ -5556,9 +5541,7 @@ impl<'a> Engine<'a> {
         let mut ending = ending;
         if !self.lang.exceptions.is_empty() {
             ending = match ending {
-                Err(Fault::Note(words)) => match self.as_fault(&words) {
-                    Some(value) => Err(Fault::Thrown(value)), None => Err(Fault::Note(words)),
-                },
+                Err(Fault::Note(words)) => Err(self.fault_of_note(words)),
                 other => other,
             };
         }
@@ -5865,12 +5848,12 @@ impl<'a> Engine<'a> {
         let Value::Tuple(items) = pair.contents() else {
             let pattern = self.lang.group_split_pair.clone().unwrap_or_default();
             let told = pattern.replacen("{}", &Self::type_argument_kind(&value), 1).replacen("{}", &Self::type_argument_kind(&pair), 1);
-            return Err(match self.as_fault(&told) { Some(value) => Fault::Thrown(value), None => Fault::Note(told) });
+            return Err(self.fault_of_note(told));
         };
         if items.len() < 2 {
             let pattern = self.lang.group_split_size.clone().unwrap_or_default();
             let told = pattern.replacen("{}", &Self::type_argument_kind(&value), 1).replacen("{}", &items.len().to_string(), 1);
-            return Err(match self.as_fault(&told) { Some(value) => Fault::Thrown(value), None => Fault::Note(told) });
+            return Err(self.fault_of_note(told));
         }
         let taken = match items[0].clone() { Value::Null => None, other => Some(other) };
         let left = match items[1].clone() { Value::Null => None, other => Some(other) };
@@ -7762,21 +7745,7 @@ impl<'a> Engine<'a> {
                         // own faults has them raised as one of that
                         // class, so a program may take them like any
                         // other raised value.
-                        let fault = match fault {
-                            Fault::Note(told) if !guards.is_empty() => match self.as_fault(&told) {
-                                Some(made) => Fault::Thrown(made),
-                                None => Fault::Note(told),
-                            },
-                            other => other,
-                        };
-                        let Fault::Thrown(raised) = fault else { return Err(fault) };
-                        let Some((catch, depth, quiet)) = guards.pop() else { return Err(Fault::Thrown(raised)) };
-                        self.under = None;
-                        self.entering = None;
-                        self.hushed.set(quiet);
-                        self.data.truncate(depth);
-                        self.data.push(raised);
-                        pc = catch;
+                        pc = self.offer_signal_fault(fault, &mut guards)?;
                         continue;
                     }
                 }
@@ -8521,9 +8490,7 @@ impl<'a> Engine<'a> {
     /// `mapping_equality`; only a map's own keys need the interpreter
     /// to compare them.
     fn maps_equal(&mut self, one: &crate::value::KeyedPairs, other: &crate::value::KeyedPairs) -> Res<bool> {
-        if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
-            if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
-        }
+        self.over_reach()?;
         self.reaching += 1;
         let result = (|| {
             if one.len() != other.len() { return Ok(false); }
@@ -9937,6 +9904,22 @@ impl<'a> Engine<'a> {
         self.lang.special_amiss.first().cloned().unwrap_or_default()
     }
 
+    fn settle<T>(&mut self, flow: Flow<T>) -> Res<T> {
+        match flow {
+            Ok(value) => Ok(value),
+            Err(Fault::Note(words)) => Err(words),
+            Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
+        }
+    }
+
+    fn settle_quiet<T>(&mut self, flow: Flow<T>) -> Res<T> {
+        match flow {
+            Ok(value) => Ok(value),
+            Err(Fault::Note(words)) => Err(words),
+            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+        }
+    }
+
     fn special_call(&mut self, value: &Value, place: usize, args: Vec<Value>) -> Res<Option<Value>> {
         if (2..=7).contains(&place) && args.len() == 1 {
             if let Some(mapping) = Self::proxy_reading(value) {
@@ -9945,19 +9928,15 @@ impl<'a> Engine<'a> {
             }
         }
         if matches!(value, Value::Object(object) if matches!(Self::own_kind(&object.class_now()).as_deref(), Some("TypeAliasType" | "TypeVarTuple"))) {
-            match self.type_alias_protocol(value, place, &args) {
-                Ok(Some(answer)) => return Ok(Some(answer)),
-                Ok(None) => {}
-                Err(Fault::Note(words)) => return Err(words),
-                Err(fault) => { self.carried = Some(fault); return Err(self.special_fault()); }
+            let flow = self.type_alias_protocol(value, place, &args);
+            if let Some(answer) = self.settle(flow)? {
+                return Ok(Some(answer));
             }
         }
         if matches!(value, Value::Object(object) if Self::own_kind(&object.class_now()).as_deref() == Some("Union")) {
-            match self.union_protocol(value, place, &args) {
-                Ok(Some(answer)) => return Ok(Some(answer)),
-                Ok(None) => {}
-                Err(Fault::Note(words)) => return Err(words),
-                Err(fault) => { self.carried = Some(fault); return Err(self.special_fault()); }
+            let flow = self.union_protocol(value, place, &args);
+            if let Some(answer) = self.settle(flow)? {
+                return Ok(Some(answer));
             }
         }
         if place == 15 && self.lang.type_parameters {
@@ -9991,10 +9970,7 @@ impl<'a> Engine<'a> {
             // The inherited native hash slot must use the class identity fallback.
             if place == 8 && matches!(&method, Value::Adapter(slot) if slot.0 == 29) { return Ok(None); }
             let answer = self.bind_class_value(method, Some(value.clone()), maker).and_then(|bound| self.class_apply(bound, args));
-            return match answer {
-                Ok(held) => Ok(Some(held)), Err(Fault::Note(words)) => Err(words),
-                Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
-            };
+            return Ok(Some(self.settle(answer)?));
         }
         let selected = self.special_value(value, place);
         self.invoke_resolved_special(value, place, selected, args)
@@ -10012,11 +9988,8 @@ impl<'a> Engine<'a> {
         let method = match selected {
             None => return Ok(None),
             Some(Value::Adapter(wrapped)) if wrapped.0 == 4 => {
-                return match self.class_apply(wrapped.1[0].clone(), args) {
-                    Ok(answer) => Ok(Some(answer)),
-                    Err(Fault::Note(words)) => Err(words),
-                    Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
-                };
+                let flow = self.class_apply(wrapped.1[0].clone(), args);
+                return Ok(Some(self.settle(flow)?));
             }
             Some(Value::Routine(routine)) => routine,
             Some(member) => {
@@ -10032,22 +10005,14 @@ impl<'a> Engine<'a> {
                         Err(fault) => Err(fault),
                     }
                 };
-                return match result {
-                    Ok(answer) => Ok(Some(answer)), Err(Fault::Note(words)) => Err(words),
-                    Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
-                };
+                return Ok(Some(self.settle(result)?));
             }
         };
         let mut given = vec![value.clone()];
         given.extend(args);
-        match self.invoke(&method, given) {
-            Ok(()) => Ok(Some(self.drop_top().map_err(|_| self.special_fault())?)),
-            Err(Fault::Note(words)) => Err(words),
-            Err(other) => {
-                self.carried = Some(other);
-                Err(self.special_fault())
-            }
-        }
+        let flow = self.invoke(&method, given);
+        self.settle(flow)?;
+        Ok(Some(self.drop_top().map_err(|_| self.special_fault())?))
     }
 
     /// The two places a hinting alias answers of its own: reading it at
@@ -10163,9 +10128,7 @@ impl<'a> Engine<'a> {
     fn special_text(&mut self, value: &Value, representation: bool) -> Res<String> {
         let container = matches!(value, Value::Map(_) | Value::Array(_) | Value::Tuple(_) | Value::Set(_));
         if container {
-            if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
-                if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
-            }
+            self.over_reach()?;
             self.reaching += 1;
         }
         let result = self.special_text_inner(value, representation);
@@ -10253,9 +10216,7 @@ impl<'a> Engine<'a> {
                 return Ok(if alike { whole.representation(&words) } else { self.render(std::slice::from_ref(&whole)) });
             }
             if matches!(&held, Value::Array(row) if row.iter().any(|item| matches!(item.contents(), Value::Object(_)))) {
-                if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
-                    if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
-                }
+                self.over_reach()?;
                 self.reaching += 1;
                 let written = crate::value::members_once(&held, || {
                     let mut words = Vec::new();
@@ -10336,11 +10297,8 @@ impl<'a> Engine<'a> {
                 },
                 None => {
                     if self.module_holding(value).is_some() || Self::kind_beneath(&object.class_now()).as_deref() == Some("module") {
-                        return match self.module_repr_value(value.clone()) {
-                            Ok(text) => Ok(text.plain()),
-                            Err(Fault::Note(message)) => Err(message),
-                            Err(raised) => { self.carried = Some(raised); Err(String::new()) },
-                        };
+                        let flow = self.module_repr_value(value.clone());
+                        return Ok(self.settle_quiet(flow)?.plain());
                     }
                     let module = self.class_word("main");
                     Ok(if object.class_now().base().is_none() && object.class_now().name == "object" { "<object object at 0x1>".to_owned() }
@@ -10481,23 +10439,14 @@ impl<'a> Engine<'a> {
     fn bool_invert_warning(&mut self) -> Res<()> {
         if self.lang.bool_result.is_none() { return Ok(()); }
         let Some(category) = self.native_exceptions.get("DeprecationWarning").cloned() else { return Ok(()); };
-        let module = match self.import_module("warnings") {
-            Ok(value) => value,
-            Err(Fault::Note(message)) => return Err(message),
-            Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
-        };
-        let callback = match self.class_get(module, "warn_explicit", false) {
-            Ok(value) => value.contents(),
-            Err(Fault::Note(message)) => return Err(message),
-            Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
-        };
+        let flow = self.import_module("warnings");
+        let module = self.settle_quiet(flow)?;
+        let flow = self.class_get(module, "warn_explicit", false);
+        let callback = self.settle_quiet(flow)?.contents();
         let arguments = vec![Value::text("~ on an instance of bool is deprecated"), category,
             Value::text("<string>"), Value::Small(1), Value::text("__main__")];
-        match self.class_apply(callback, arguments) {
-            Ok(_) => Ok(()),
-            Err(Fault::Note(message)) => Err(message),
-            Err(raised) => { self.carried = Some(raised); Err(String::new()) }
-        }
+        let flow = self.class_apply(callback, arguments);
+        self.settle_quiet(flow).map(|_| ())
     }
 
     fn special_truth(&mut self, value: &Value) -> Res<bool> {
@@ -10770,22 +10719,13 @@ impl<'a> Engine<'a> {
         let [module_name, teller_name] = self.lang.syntax_warning_words.as_slice() else { return Ok(()) };
         let (module_name, teller_name) = (module_name.clone(), teller_name.clone());
         let Some(category) = self.native_exceptions.get(category_name).cloned() else { return Ok(()) };
-        let module = match self.import_module(&module_name) {
-            Ok(module) => module,
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-        };
-        let teller = match self.class_get(module, &teller_name, false) {
-            Ok(teller) => teller.contents(),
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-        };
+        let flow = self.import_module(&module_name);
+        let module = self.settle_quiet(flow)?;
+        let flow = self.class_get(module, &teller_name, false);
+        let teller = self.settle_quiet(flow)?.contents();
         let handed = vec![Value::text(message), category, Value::text("<string>"), Value::Small(1)];
-        match self.class_apply(teller, handed) {
-            Ok(_) => Ok(()),
-            Err(Fault::Note(told)) => Err(told),
-            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
-        }
+        let flow = self.class_apply(teller, handed);
+        self.settle_quiet(flow).map(|_| ())
     }
 
     /// The complex constructor's road for calls that carry no keyword:
@@ -10952,9 +10892,7 @@ impl<'a> Engine<'a> {
     }
 
     fn sequence_comparison(&mut self, op: &Action, left: &Value, right: &Value) -> Res<Value> {
-        if let (Some(limit), Some(words)) = (self.recursion_ceiling(), &self.lang.recursion_exceeded) {
-            if self.calls.len() + self.reaching >= limit { return Err(format!("\0{words}")); }
-        }
+        self.over_reach()?;
         self.reaching += 1;
         let answer = (|| {
             let mut at = 0;
@@ -11317,11 +11255,8 @@ impl<'a> Engine<'a> {
                 if matches!(kind, Builtin::List | Builtin::Tuple | Builtin::Dict | Builtin::Set | Builtin::Frozen)
                     && matches!(name.as_ref(), "list" | "tuple" | "dict" | "set" | "frozenset") {
                     let maker = Value::Class(self.kind_class("GenericAlias"));
-                    return match self.class_apply(maker.contents(), vec![a.clone(), b.clone()]) {
-                        Ok(alias) => Ok(alias),
-                        Err(Fault::Note(words)) => Err(words),
-                        Err(escape) => { self.carried = Some(escape); Err(self.special_fault()) }
-                    };
+                    let flow = self.class_apply(maker.contents(), vec![a.clone(), b.clone()]);
+                    return self.settle(flow);
                 }
             }
         }
@@ -11362,30 +11297,17 @@ impl<'a> Engine<'a> {
                 let asked = if matches!(&hook, Value::Adapter(w) if w.0 == 5) {
                     match self.bind_class_value(hook, None, c.clone()) { Ok(bound) => self.class_apply(bound, vec![b.clone()]), Err(fault) => Err(fault) }
                 } else { self.class_apply(hook, vec![a.clone(), b.clone()]) };
-                return match asked {
-                    Ok(answer) => Ok(answer),
-                    Err(Fault::Note(words)) => Err(words),
-                    Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
-                };
+                return self.settle(asked);
             } else if self.exception_class(c) {
                 // A group class is parameterisable, as the reference's is;
                 // the other fault kinds are not subscriptable at all.
                 if c.has_public_field("\0group") {
-                    let module = match self.import_module("types") {
-                        Ok(module) => module,
-                        Err(Fault::Note(words)) => return Err(words),
-                        Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
-                    };
-                    let maker = match self.class_get(module, "GenericAlias", false) {
-                        Ok(maker) => maker,
-                        Err(Fault::Note(words)) => return Err(words),
-                        Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
-                    };
-                    return match self.class_apply(maker.contents(), vec![a.clone(), b.clone()]) {
-                        Ok(alias) => Ok(alias),
-                        Err(Fault::Note(words)) => Err(words),
-                        Err(escape) => { self.carried = Some(escape); Err(self.special_fault()) }
-                    };
+                    let flow = self.import_module("types");
+                    let module = self.settle(flow)?;
+                    let flow = self.class_get(module, "GenericAlias", false);
+                    let maker = self.settle(flow)?;
+                    let flow = self.class_apply(maker.contents(), vec![a.clone(), b.clone()]);
+                    return self.settle(flow);
                 }
                 return Err(format!("TypeError: type '{}' is not subscriptable", c.name).into());
             } else {
@@ -11639,11 +11561,8 @@ impl<'a> Engine<'a> {
                     // gives way, so the handler that catches it sees the
                     // very object with its own arguments and not the
                     // words the class and its message would spell.
-                    return match self.bind_class_value(method, Some(a.clone()), o.class_now()).and_then(|bound| self.class_apply(bound, vec![b.clone()])) {
-                        Ok(value) => Ok(value),
-                        Err(Fault::Note(words)) => Err(words),
-                        Err(fled) => { self.carried = Some(fled); Err(String::new()) }
-                    };
+                    let flow = self.bind_class_value(method, Some(a.clone()), o.class_now()).and_then(|bound| self.class_apply(bound, vec![b.clone()]));
+                    return self.settle_quiet(flow);
                 }
             }
             let key = if matches!(op, Action::At) && matches!(left.as_ref().unwrap_or(a), Value::Map(_)) { b } else { right.as_ref().unwrap_or(b) };
@@ -11824,11 +11743,8 @@ impl<'a> Engine<'a> {
             if let (Some(Value::Map(rows)), Some(handler)) = (Self::worth_of(target).map(|value| value.contents()), self.lang.missing_key.as_ref().and_then(|name| self.class_value(&object.class_now(), name))) {
                 let (position, _) = self.map_locate(&rows, Some(&rows), key)?;
                 if let Some(position) = position { return Ok(Some(rows[position].1.clone())); }
-                return match self.class_apply(handler, vec![target.clone(), key.clone()]) {
-                    Ok(answer) => Ok(Some(answer)),
-                    Err(Fault::Note(words)) => Err(words),
-                    Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
-                };
+                let flow = self.class_apply(handler, vec![target.clone(), key.clone()]);
+                return Ok(Some(self.settle(flow)?));
             }
         }
         let first = args.first();
@@ -12314,8 +12230,7 @@ impl<'a> Engine<'a> {
             // members of another walk meets those words when that walk
             // ends, and the walk it is the method of ends there too.
             Err(Fault::Note(words)) if self.lang.special_stop.iter().any(|n| words == *n || words.starts_with(&format!("{}:", n))) => Ok(None),
-            Err(Fault::Note(words)) => Err(words),
-            Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+            Err(fault) => self.settle(Err(fault)),
         }
     }
 
@@ -12619,10 +12534,8 @@ impl<'a> Engine<'a> {
             Ok(Self::delegate_returned(&walk))
         })();
         match outcome {
-            Ok(item) => Ok(Some(item)),
             Err(fault) if self.async_exhausted(&fault) => Ok(None),
-            Err(Fault::Note(words)) => Err(words),
-            Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
+            other => self.settle(other).map(Some),
         }
     }
 
@@ -15739,17 +15652,9 @@ impl<'a> Engine<'a> {
                                 held.len() - 1
                             }
                         };
-                        if let Value::Bond(shared) = &held[at].1 {
-                            let shared = shared.clone();
-                            drop(held);
-                            Value::Bond(shared)
-                        } else {
-                            let was = std::mem::replace(&mut held[at].1, Value::Null);
-                            let shared = Rc::new(RefCell::new(was));
-                            held[at].1 = Value::Bond(shared.clone());
-                            drop(held);
-                            Value::Bond(shared)
-                        }
+                        let shared = bond_in(&mut held[at].1);
+                        drop(held);
+                        Value::Bond(shared)
                     }
                     v => return Err(format!("Cannot share property '{}' of {}", name, v.plain()).into()),
                 }
@@ -15831,9 +15736,7 @@ impl<'a> Engine<'a> {
                             };
                             let mut fields = o.fields.borrow_mut();
                             for key in [name.as_ref(), "\0arguments"] {
-                                match fields.iter_mut().find(|(n, _)| n == key) {
-                                    Some((_, value)) => *value = row.clone(), None => fields.push((key.into(), row.clone())),
-                                }
+                                set_field(&mut *fields, key, row.clone());
                             }
                             self.data.push(Value::Null);
                             return Ok(());
@@ -16094,10 +15997,7 @@ impl<'a> Engine<'a> {
                     Value::Class(c) => {
                         let holder = c.holder(&name).unwrap_or_else(||c.clone());
                         let mut shared = holder.shared.borrow_mut();
-                        match shared.iter_mut().find(|(n, _)| n == name.as_ref()) {
-                            Some(place) => place.1 = value,
-                            None => shared.push((name.to_string(), value)),
-                        }
+                        set_field(&mut *shared, name.as_ref(), value);
                         Value::Null
                     }
                     v => {
@@ -16352,8 +16252,7 @@ impl<'a> Engine<'a> {
                     let mut fields = object.fields.borrow_mut();
                     for (name, worth) in [(&self.lang.exception_cause, cause), (&self.lang.exception_suppress, Value::Flag(true))] {
                         let Some(name) = name else { continue };
-                        if let Some((_, held)) = fields.iter_mut().find(|(n, _)| n == name) { *held = worth; }
-                        else { fields.push((name.clone(), worth)); }
+                        set_field(&mut *fields, name, worth);
                     }
                 }
                 if let (Value::Trace(prior), Some(frame), Value::Object(object), Some(key)) = (self.trace_of(&value), &self.trace_frame, &value, &self.lang.traceback_member) {
@@ -17816,11 +17715,8 @@ impl<'a> Engine<'a> {
         // another union; but at least one side must itself be a kind or
         // an already-built union; `None` on both sides is no union.
         if matches!(op, Action::BitEither) && self.union_member(a) && self.union_member(b) && (self.union_anchor(a) || self.union_anchor(b)) {
-            return match self.join_types(a, b) {
-                Ok(union) => Ok(union),
-                Err(Fault::Note(words)) => Err(words),
-                Err(fault) => { self.carried = Some(fault); Err(String::new()) }
-            };
+            let flow = self.join_types(a, b);
+            return self.settle_quiet(flow);
         }
         // Rows, tuples and text as a language of sequences works them:
         // adding joins two of one kind, multiplying repeats one a whole
@@ -19921,19 +19817,13 @@ impl<'a> Engine<'a> {
                 if let Some(method) = self.class_value(&maker, name) {
                     let receiver = Value::Class(class.clone());
                     let answer = self.bind_class_value(method, Some(receiver), maker).and_then(|bound| self.class_apply(bound, Vec::new()));
-                    return match answer {
-                        Ok(walk) => Ok(Some(walk)), Err(Fault::Note(words)) => Err(words),
-                        Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
-                    };
+                    return Ok(Some(self.settle(answer)?));
                 }
             }
         }
         let Some(handing) = self.lang.class_walked.as_deref().and_then(|word| self.class_value(class, word)) else { return Ok(None) };
-        match self.class_apply(handing, vec![Value::Class(class.clone())]) {
-            Ok(yielded) => Ok(Some(yielded)),
-            Err(Fault::Note(words)) => Err(words),
-            Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
-        }
+        let flow = self.class_apply(handing, vec![Value::Class(class.clone())]);
+        Ok(Some(self.settle(flow)?))
     }
 
     fn spread_members(&mut self, next: &Value) -> Res<Vec<Value>> {
@@ -20228,10 +20118,7 @@ impl<'a> Engine<'a> {
     /// guard watches, the fault leaves the run altogether.
     fn offer_signal_fault(&mut self, fault: Fault, guards: &mut Vec<(usize, usize, usize)>) -> Flow<usize> {
         let fault = match fault {
-            Fault::Note(told) if !guards.is_empty() => match self.as_fault(&told) {
-                Some(made) => Fault::Thrown(made),
-                None => Fault::Note(told),
-            },
+            Fault::Note(told) if !guards.is_empty() => self.fault_of_note(told),
             other => other,
         };
         let Fault::Thrown(raised) = fault else { return Err(fault) };
@@ -20285,11 +20172,8 @@ impl<'a> Engine<'a> {
 
     /// Preserve a handler's raised Python value across a native builtin boundary.
     fn signal_checkpoint(&mut self) -> Res<()> {
-        match self.deliver_signals() {
-            Ok(()) => Ok(()),
-            Err(Fault::Note(words)) => Err(words),
-            Err(raised) => { self.carried = Some(raised); Err(self.special_fault()) }
-        }
+        let flow = self.deliver_signals();
+        self.settle(flow)
     }
 
     fn native_call_items<F>(&mut self, callable: Value, items: Vec<(Option<Value>, Value)>, invoke: F) -> Res<Value>
@@ -20667,10 +20551,8 @@ impl<'a> Engine<'a> {
             }
         }
         if operation == "classmethod_bind" {
-            return match self.explicit_classmethod(receiver, args, named) {
-                Ok(value) => Ok(value), Err(Fault::Note(message)) => Err(message),
-                Err(fault) => { self.carried = Some(fault); Err(String::new()) }
-            };
+            let flow = self.explicit_classmethod(receiver, args, named);
+            return self.settle_quiet(flow);
         }
         if operation == "__typing_subst__" && self.lang.type_parameters {
             if !named.is_empty() { return Err("TypeError: TypeVarTuple.__typing_subst__() takes no keyword arguments".into()); }
@@ -20683,7 +20565,7 @@ impl<'a> Engine<'a> {
             let number = self.special_index(&args[0])?.unwrap_or_else(|| args[0].contents());
             number.as_big()?.to_i32().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C int"))?;
             let answer = self.class_get(receiver.clone(), "__reduce__", false).and_then(|method| self.class_apply(method, Vec::new()));
-            return match answer { Ok(result) => Ok(result), Err(Fault::Note(message)) => Err(message), Err(raised) => { self.carried = Some(raised); Err(String::new()) } };
+            return self.settle_quiet(answer);
         }
         if matches!(operation, "descriptor_reduce" | "descriptor_reduce_ex") {
             let expected = usize::from(operation.ends_with("_ex"));
@@ -20727,11 +20609,7 @@ impl<'a> Engine<'a> {
                 let mut inputs = vec![receiver.clone()]; inputs.extend(args);
                 self.root_work(&name, inputs)
             };
-            return match answer {
-                Ok(value) => Ok(value),
-                Err(Fault::Note(words)) => Err(words),
-                Err(thrown) => { self.carried = Some(thrown); Err(String::new()) }
-            };
+            return self.settle_quiet(answer);
         }
         let window = Self::view_in(receiver);
         let receiver = window.as_ref().unwrap_or(receiver);
@@ -21119,10 +20997,7 @@ impl<'a> Engine<'a> {
             let called = self.perform(&Action::Send(Rc::from(operation)), self.data.len() - floor);
             let answer = match called { Ok(()) => self.drop_top().map_err(Fault::Note), Err(fault) => Err(fault) };
             self.data.truncate(floor);
-            return match answer {
-                Ok(value) => Ok(value), Err(Fault::Note(words)) => Err(words),
-                Err(fault) => { self.carried = Some(fault); Err(self.special_fault()) }
-            };
+            return self.settle(answer);
         }
         if operation == "__buffer__" || operation == "__release_buffer__" {
             if args.len() != 1 || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
@@ -21258,11 +21133,8 @@ impl<'a> Engine<'a> {
                 return Ok(Value::Flag(self.truth(&result)));
             }
             if let Value::Class(class) = receiver {
-                return match self.class_make(class.clone(), vec![result]) {
-                    Ok(v) => Ok(v),
-                    Err(Fault::Note(message)) => Err(message),
-                    Err(raised) => { self.carried = Some(raised); Err(String::new()) }
-                };
+                let flow = self.class_make(class.clone(), vec![result]);
+                return self.settle_quiet(flow);
             }
             return Ok(result);
         }
@@ -21428,13 +21300,9 @@ impl<'a> Engine<'a> {
         if let Value::Object(object) = &contents {
             if self.exception_class(&object.class_now()) {
                 if !named.is_empty() { return Err(self.lang.exception_unready.clone().unwrap_or_default()); }
-                return match self.exception_method(object.clone(), operation, &args) {
-                    Ok(answer) => Ok(answer),
-                    Err(Fault::Note(words)) => Err(words),
-                    // A value raised on the way is carried out past the
-                    // words this answer may hold.
-                    Err(fled) => { self.carried = Some(fled); Err(String::new()) }
-                };
+                // A value raised on the way is carried out past the words this answer may hold.
+                let flow = self.exception_method(object.clone(), operation, &args);
+                return self.settle_quiet(flow);
             }
         }
         if let Value::Slice(bounds) = &contents {
@@ -21655,22 +21523,16 @@ impl<'a> Engine<'a> {
                 _ => None,
             };
             if let Some(c) = maker.filter(|c| Self::kind_beneath(c).is_some()) {
-                let made = match self.class_apply(Value::Class(c.clone()), Vec::new()) {
-                    Ok(made) => made,
-                    Err(Fault::Note(words)) => return Err(words),
-                    Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-                };
+                let flow = self.class_apply(Value::Class(c.clone()), Vec::new());
+                let made = self.settle_quiet(flow)?;
                 let copy = Self::frozen_beneath(&made);
                 let mut working = if copy { self.frozen_rows(&made)? } else { made };
                 for key in self.comprehension_items(&target)? {
                     self.mapping_write(&mut working, key, filling.clone())?;
                 }
                 if copy {
-                    return match self.class_apply(Value::Class(c), vec![working]) {
-                        Ok(made) => Ok(made),
-                        Err(Fault::Note(words)) => Err(words),
-                        Err(fled) => { self.carried = Some(fled); Err(String::new()) }
-                    };
+                    let flow = self.class_apply(Value::Class(c), vec![working]);
+                    return self.settle_quiet(flow);
                 }
                 return Ok(working);
             }
@@ -21754,21 +21616,14 @@ impl<'a> Engine<'a> {
         let hooks = self.lang.buffer_hooks.clone();
         if hooks.len() != 2 { return Ok(None); }
         let Some(getter) = self.class_value(&object.class_now(), &hooks[0]) else { return Ok(None); };
-        let view = match self.class_apply(getter, vec![value.clone(), Value::Small(0)]) {
-            Ok(view) => view,
-            Err(Fault::Note(words)) => return Err(words),
-            Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
-        };
+        let flow = self.class_apply(getter, vec![value.clone(), Value::Small(0)]);
+        let view = self.settle_quiet(flow)?;
         let content = self.bytes_argument(&view);
         let pending = self.carried.take();
         if let Some(release) = self.class_value(&object.class_now(), &hooks[1]) {
             let released = self.class_apply(release, vec![value.clone(), view]);
             if content.is_ok() {
-                match released {
-                    Ok(_) => (),
-                    Err(Fault::Note(words)) => return Err(words),
-                    Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
-                }
+                self.settle_quiet(released)?;
             }
         }
         if pending.is_some() { self.carried = pending; }
@@ -22486,11 +22341,8 @@ impl<'a> Engine<'a> {
             Value::Bytes(row, ..) => Ok(Some(row.borrow().to_vec())),
             Value::Object(object) => {
                 let Some(method) = self.class_value(&object.class_now(), "__bytes__") else { return Ok(None); };
-                let result = match self.class_apply(method, vec![value.clone()]) {
-                    Ok(answer) => answer,
-                    Err(Fault::Note(words)) => return Err(words),
-                    Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
-                };
+                let flow = self.class_apply(method, vec![value.clone()]);
+                let result = self.settle_quiet(flow)?;
                 match result {
                     Value::Bytes(row, false, _) => Ok(Some(row.borrow().to_vec())),
                     _ => Ok(None),
@@ -23042,11 +22894,8 @@ impl<'a> Engine<'a> {
             Value::Bytes(row, ..) => row.borrow().clone(),
             Value::Object(obj) if obj.class_now().name == "memoryview" => {
                 let method = self.class_value(&obj.class_now(), "__bytes__").ok_or_else(|| self.byte_fault("arguments"))?;
-                let source = match self.class_apply(method, vec![args[0].clone()]) {
-                    Ok(bytes) => bytes,
-                    Err(Fault::Note(message)) => return Err(message),
-                    Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
-                };
+                let flow = self.class_apply(method, vec![args[0].clone()]);
+                let source = self.settle_quiet(flow)?;
                 self.byte_row(&source, false)?
             }
             Value::Text(_) => return Err(part(0)),
@@ -23857,10 +23706,8 @@ impl<'a> Engine<'a> {
             };
         }
         if task == 63 {
-            return match self.pickle_buffer_work(args) {
-                Ok(value) => Ok(value), Err(Fault::Note(message)) => Err(message),
-                Err(exception) => { self.carried = Some(exception); Err(String::new()) },
-            };
+            let flow = self.pickle_buffer_work(args);
+            return self.settle_quiet(flow);
         }
         if task == 61 {
             if args.len() != 2 { return Err("TypeError: escape_decode requires a buffer and an error policy".into()); }
@@ -23968,11 +23815,8 @@ impl<'a> Engine<'a> {
             let source = &args[0];
             let converted = if let Value::Object(object) = source {
                 if let Some(method) = self.class_value(&object.class_now(), "__bytes__") {
-                    let result = match self.class_apply(method, vec![source.clone()]) {
-                        Ok(v) => v,
-                        Err(Fault::Note(message)) => return Err(message),
-                        Err(raised) => { self.carried = Some(raised); return Err(String::new()); }
-                    };
+                    let flow = self.class_apply(method, vec![source.clone()]);
+                    let result = self.settle_quiet(flow)?;
                     if !matches!(result, Value::Bytes(_, false, _)) { return Err(self.byte_fault("arguments")); }
                     result
                 } else if let Some(bytes) = self.buffer_exported(source)? {
@@ -25552,11 +25396,7 @@ impl<'a> Engine<'a> {
                         if let Some(method) = self.class_value(&object.class_now(), "__bytes__") {
                             let called = self.bind_class_value(method, Some(args[0].clone()), object.class_now().clone())
                                 .and_then(|bound| self.class_apply(bound, Vec::new()));
-                            let answer = match called {
-                                Ok(value) => value,
-                                Err(Fault::Note(message)) => return Err(message),
-                                Err(escape) => { self.carried = Some(escape); return Err(String::new()); }
-                            };
+                            let answer = self.settle_quiet(called)?;
                             let raw = Self::worth_of(&answer).unwrap_or_else(|| answer.contents());
                             if !matches!(raw, Value::Bytes(_, false, _)) {
                                 return Err(format!("TypeError: __bytes__ returned non-bytes (type {})", Self::type_argument_kind(&answer)));
@@ -29951,6 +29791,22 @@ fn lies_at(walked: &Value, cell: &Rc<RefCell<Value>>, was: usize) -> Option<usiz
     held.iter().position(same)
 }
 
+fn set_field(fields: &mut Vec<(String, Value)>, key: &str, value: Value) {
+    match fields.iter_mut().find(|(name, _)| name == key) {
+        Some((_, held)) => *held = value,
+        None => fields.push((key.to_owned(), value)),
+    }
+}
+
+fn bond_in(place: &mut Value) -> Rc<RefCell<Value>> {
+    if let Value::Bond(shared) = place {
+        return shared.clone();
+    }
+    let shared = Rc::new(RefCell::new(std::mem::replace(place, Value::Null)));
+    *place = Value::Bond(shared.clone());
+    shared
+}
+
 /// The place an array holds, made a shared cell so that a name fastened
 /// to it writes into the array itself.
 fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
@@ -29964,12 +29820,7 @@ fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
         let Some((_, place)) = fields.get_mut(i) else {
             return Err(format!("Array index {} out of bounds (length: {})", i, reach));
         };
-        if let Value::Bond(shared) = place {
-            return Ok(shared.clone());
-        }
-        let shared = Rc::new(RefCell::new(std::mem::replace(place, Value::Null)));
-        *place = Value::Bond(shared.clone());
-        return Ok(shared);
+        return Ok(bond_in(place));
     }
     let place: &mut Value = match held {
         Value::Array(items) | Value::Tuple(items) => {
@@ -29993,12 +29844,7 @@ fn shared_item(held: &mut Value, at: &Value) -> Res<Rc<RefCell<Value>>> {
         }
         _ => return Err("Cannot walk a value that is not an array".to_string()),
     };
-    if let Value::Bond(shared) = place {
-        return Ok(shared.clone());
-    }
-    let shared = Rc::new(RefCell::new(std::mem::replace(place, Value::Null)));
-    *place = Value::Bond(shared.clone());
-    Ok(shared)
+    Ok(bond_in(place))
 }
 
 /// The cell of the place a chain of keys names, the arrays and places
@@ -30014,12 +29860,7 @@ fn shared_deep(held: &mut Value, keys: &[Value], makes: bool) -> Res<Rc<RefCell<
         spot = place_within(spot, k, makes)?;
     }
     let place = place_within(spot, last, makes)?;
-    if let Value::Bond(shared) = place {
-        return Ok(shared.clone());
-    }
-    let shared = Rc::new(RefCell::new(std::mem::replace(place, Value::Null)));
-    *place = Value::Bond(shared.clone());
-    Ok(shared)
+    Ok(bond_in(place))
 }
 
 fn place_within<'a>(held: &'a mut Value, at: &Value, makes: bool) -> Res<&'a mut Value> {
@@ -34004,11 +33845,8 @@ impl Engine<'_> {
         let dictionary = match self.modules.get("builtins").cloned() {
             Some(module) => {
                 let namespace = self.class_word("namespace").to_string();
-                match self.class_get(module, &namespace, false) {
-                    Ok(book) => book.contents(),
-                    Err(Fault::Note(words)) => return Err(words),
-                    Err(escape) => { self.carried = Some(escape); return Err(self.special_fault()); }
-                }
+                let flow = self.class_get(module, &namespace, false);
+                self.settle(flow)?.contents()
             }
             None => self.native_dict(),
         };
@@ -35774,24 +35612,15 @@ impl Engine<'_> {
     fn say_deprecation(&mut self, message: &str) -> Res<()> {
         let notice = self.lang.yield_throw_warning.clone();
         if notice.len() != 4 { return Ok(()); }
-        let module = match self.import_module(&notice[0]) {
-            Ok(module) => module,
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
-        };
-        let warn = match self.import_member(&module, &notice[0], &notice[1]) {
-            Ok(warn) => warn,
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(self.special_fault()); }
-        };
+        let flow = self.import_module(&notice[0]);
+        let module = self.settle(flow)?;
+        let flow = self.import_member(&module, &notice[0], &notice[1]);
+        let warn = self.settle(flow)?;
         let Some(category) = self.native_exceptions.get(&notice[2]).cloned() else { return Ok(()); };
         let file = Value::text(&self.source);
         let line = Value::Small(self.line as i64);
-        match self.class_apply(warn, vec![Value::text(message), category, file, line]) {
-            Ok(_) => Ok(()),
-            Err(Fault::Note(told)) => Err(told),
-            Err(fled) => { self.carried = Some(fled); Err(self.special_fault()) }
-        }
+        let flow = self.class_apply(warn, vec![Value::text(message), category, file, line]);
+        self.settle(flow).map(|_| ())
     }
 
     /// A warning the reading noted about how a compiled text is
@@ -35803,28 +35632,22 @@ impl Engine<'_> {
         let (module_name, teller_name) = (module_name.clone(), teller_name.clone());
         let Some(kind_name) = self.lang.exceptions.get(27).cloned() else { return Ok(()) };
         let Some(category) = self.native_exceptions.get(&kind_name).cloned() else { return Ok(()) };
-        let module = match self.import_module(&module_name) {
-            Ok(module) => module,
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-        };
+        let flow = self.import_module(&module_name);
+        let module = self.settle_quiet(flow)?;
         // A module carries its names in cells; the function is what the cell holds.
-        let teller = match self.class_get(module, &teller_name, false) {
-            Ok(teller) => teller.contents(),
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-        };
+        let flow = self.class_get(module, &teller_name, false);
+        let teller = self.settle_quiet(flow)?.contents();
         // The module the warning belongs to is the one the text runs
         // under where that is named, else the one its file spells.
         let mut handed = vec![Value::text(message), category, Value::text(file), Value::Small(row as i64)];
         if let Some(named) = module_hint { handed.push(Value::text(named)); }
-        match self.class_apply(teller, handed) {
+        let flow = self.class_apply(teller, handed);
+        match flow {
             Ok(_) => Ok(()),
             Err(Fault::Thrown(raised)) if matches!(&raised, Value::Object(o) if o.class_now().named(&kind_name, false)) => {
                 Err(self.text_syntax(mode, format!("SyntaxError: {message}"), file, row, column, None, source))
             }
-            Err(Fault::Note(told)) => Err(told),
-            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
+            Err(fled) => self.settle_quiet(Err(fled)),
         }
     }
 
@@ -35837,25 +35660,16 @@ impl Engine<'_> {
         let (module_name, teller_name) = (module_name.clone(), teller_name.clone());
         let Some(kind_name) = self.lang.exceptions.get(category_at).cloned() else { return Ok(()) };
         let Some(category) = self.native_exceptions.get(&kind_name).cloned() else { return Ok(()) };
-        let module = match self.import_module(&module_name) {
-            Ok(module) => module,
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-        };
+        let flow = self.import_module(&module_name);
+        let module = self.settle_quiet(flow)?;
         // A module carries its names in cells; the function is what the cell holds.
-        let teller = match self.class_get(module, &teller_name, false) {
-            Ok(teller) => teller.contents(),
-            Err(Fault::Note(told)) => return Err(told),
-            Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-        };
+        let flow = self.class_get(module, &teller_name, false);
+        let teller = self.settle_quiet(flow)?.contents();
         let file = Value::text(&self.source);
         let line = Value::Small(self.line as i64);
         let handed = vec![Value::text(message), category, file, line];
-        match self.class_apply(teller, handed) {
-            Ok(_) => Ok(()),
-            Err(Fault::Note(told)) => Err(told),
-            Err(fled) => { self.carried = Some(fled); Err(String::new()) }
-        }
+        let flow = self.class_apply(teller, handed);
+        self.settle_quiet(flow).map(|_| ())
     }
 
     /// Text, or a code value, run: as one expression where it was asked
@@ -36293,11 +36107,9 @@ impl Engine<'_> {
         let answer = if self.data.len() > base { self.drop_top()? } else { Value::Null };
         self.data.truncate(base);
         if shown {
-            match self.display_interactive(answer.contents()) {
-                Ok(()) => return Ok(Value::Null),
-                Err(Fault::Note(told)) => return Err(told),
-                Err(fled) => { self.carried = Some(fled); return Err(String::new()); }
-            }
+            let flow = self.display_interactive(answer.contents());
+            self.settle_quiet(flow)?;
+            return Ok(Value::Null);
         }
         Ok(answer)
     }
