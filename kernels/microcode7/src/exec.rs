@@ -836,6 +836,9 @@ pub struct Machine<'a> {
     /// since the answer comes of the definition alone and finding it
     /// walks every member of the kind and spells two labels for each.
     octet_names: [RefCell<HashMap<String, Option<&'static str>, crate::table::FxBuildHasher>>; 2],
+    // Spellings a row of bytes has already been given a working for by
+    // `attribute`, once everything ahead of that step had passed them by.
+    octet_passed: [RefCell<std::collections::HashSet<String, crate::table::FxBuildHasher>>; 2],
     /// The key last found absent, where the words of the fault cannot
     /// carry it: the complaint for a key names the key itself, and a
     /// key of any kind but a text or a whole number is kept here whole
@@ -2354,6 +2357,7 @@ impl<'a> Machine<'a> {
             got_away: None,
             sought_in_vain: None,
             octet_names: [RefCell::new(HashMap::default()), RefCell::new(HashMap::default())],
+            octet_passed: [RefCell::new(Default::default()), RefCell::new(Default::default())],
             key_in_vain: RefCell::new(None),
             standing: 0,
             would_not_read: None,
@@ -11451,6 +11455,13 @@ impl<'a> Machine<'a> {
             while let Value::Shared(cell) | Value::Mutable(cell, _) = seen.clone() { seen = cell.borrow().clone(); }
             if matches!(seen, Value::Window(_, 'm')) { return Some(Value::Member(Rc::new(seen), format!("mapping{name}"))); }
         }
+        if let Value::Octets { changeable, .. } = value.settled() {
+            if self.octet_passed[usize::from(changeable)].borrow().contains(name) {
+                if let Some(working) = self.octet_member(name, changeable) {
+                    return Some(Value::Member(Rc::new(value.clone()), working.to_string()));
+                }
+            }
+        }
         if matches!(value.settled(), Value::Generator(_)) {
             match self.coroutine_attribute(&value.settled(), name) {
                 Ok(Some(answer)) => return Some(answer),
@@ -11754,6 +11765,7 @@ impl<'a> Machine<'a> {
         // working read byte by byte.
         if let Value::Octets { changeable, .. } = value.settled() {
             if let Some(working) = self.octet_member(name, changeable) {
+                self.octet_passed[usize::from(changeable)].borrow_mut().insert(name.to_owned());
                 return Some(Value::Member(Rc::new(value.clone()), working.to_string()));
             }
         }
