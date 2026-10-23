@@ -139,7 +139,8 @@ class MultibyteIncrementalEncoder(_State):
         self._pending = ''
         result = b''
         pos = 0
-        plain = self.codec.name != 'hz' and not self.codec.name.startswith('iso2022_')
+        # Bulk encoding predates NUL pair handling; use scalar units for those feeds.
+        plain = self.codec.name != 'hz' and not self.codec.name.startswith('iso2022_') and '\0' not in text
         while pos < len(text):
             if plain:
                 # A stateless codec writes natively up to a character it has no
@@ -155,7 +156,7 @@ class MultibyteIncrementalEncoder(_State):
                 replacement, pos = _handler(self.errors, error, len(text))
                 result += replacement if isinstance(replacement, bytes) else self.encode(replacement, False)
                 continue
-            if self._state[0] == (0 if self.codec.name == 'hz' else 66) and not self._state[4] & 1:
+            if '\0' not in text[pos:] and self._state[0] == (0 if self.codec.name == 'hz' else 66) and not self._state[4] & 1:
                 # In the unshifted state, an ASCII run that the table writes as
                 # itself needs no escapes: it goes out whole.
                 try:
