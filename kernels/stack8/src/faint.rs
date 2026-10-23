@@ -706,10 +706,10 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
             for word in r.instrs.iter() {
                 let carried = match word {
                     crate::code::Instr::Const(value) => Some(value),
-                    crate::code::Instr::Bump { by, .. } => Some(by),
+                    crate::code::Instr::Bump { by, .. } => Some(&**by),
                     crate::code::Instr::Dyad { a, b, .. } | crate::code::Instr::SkipCmp { a, b, .. } => {
-                        if let crate::code::Operand::Const(value) = a { if cycle_edge(value) { out.push(value.clone()); } }
-                        if let crate::code::Operand::Const(value) = b { if cycle_edge(value) { out.push(value.clone()); } }
+                        if let crate::code::Operand::Const(value) = a { if cycle_edge(value) { out.push((**value).clone()); } }
+                        if let crate::code::Operand::Const(value) = b { if cycle_edge(value) { out.push((**value).clone()); } }
                         None
                     }
                     _ => None,
