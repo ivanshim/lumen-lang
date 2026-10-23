@@ -88,7 +88,7 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py`, `Lib/wave.py`, `Lib/cmd.py`, `Lib/selectors.py`, `Lib/nturl2path.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/` | `Lib/test/__init__.py`, `Lib/test/audiotests.py`, and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper,pty_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_tstring.py` | `Lib/test/test_tstring.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
-| `langs/lib_python/modules/test/test_string/` | `Lib/test/test_string/__init__.py`, `Lib/test/test_string/_support.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/test/test_string/` | `Lib/test/test_string/`: every Python source, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_module/` | [python/cpython](https://github.com/python/cpython) `Lib/test/test_module/`: `__init__.py`, `good_getattr.py`, `bad_getattr.py`, `bad_getattr2.py`, `bad_getattr3.py`, `final_a.py`, `final_b.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/` | `Lib/test/__init__.py` and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -894,3 +894,14 @@ compared by canonical instruction content. Upstream decorators determine the
 remaining CPython-specific skips.
 
 The batch21m-b4 doctest package and data are unmodified `Lib/test/test_doctest/` files from `Python-3.14.8.tar.xz` at `https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz` (archive SHA256 `c2215904f02b175596dc49351585104f4bc20341e1c47378b26a2c274360ce73`). The `__main__.py` adapter uses the existing Lumen generic package launcher; it is an adapter entry point.
+
+## bz2 release source integrity
+`langs/lib_python/modules/bz2.py` and `tests/python-3.14.8/test_bz2.py` are
+CPython `v3.14.8` (`Lib/bz2.py`, `Lib/test/test_bz2.py`), unchanged byte for byte.
+The `_bz2` extension is lumen's own `_bz2.py` over a native bzip2 codec
+written from the format description (`native/zlib/bz2.rs`, reached through
+`__zlib_native__` operations 32 to 38); randomised blocks are refused.
+| File | SHA-256 |
+|---|---|
+| `bz2.py` | `368b9ee55f0b6dbfc81b15e1a17c51cccddb009389eae8e9a7acf2402ca4109a` |
+| `test_bz2.py` | `f25711fabc69655cc4d4380f0e37aaf020538d6a01734b47b90a7e1add3aab0b` |

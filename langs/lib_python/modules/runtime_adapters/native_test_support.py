@@ -605,6 +605,19 @@ def wait_process(pid, *, exitcode, timeout=None):
     if pid2 != pid:
         raise AssertionError(f"pid {pid2} != pid {pid}")
 
+def reap_children():
+    # Collect finished child processes so no zombies outlive the test module.
+    if not (hasattr(os, 'waitpid') and hasattr(os, 'WNOHANG')):
+        return
+    while True:
+        try:
+            pid, status = os.waitpid(-1, os.WNOHANG)
+        except OSError:
+            break
+        if pid == 0:
+            break
+        print(f"Warning -- reap_children() reaped child process {pid}", file=sys.stderr)
+
 def busy_retry(timeout, err_msg=None, /, *, error=True):
     if timeout <= 0:
         raise ValueError("timeout must be greater than zero")
@@ -921,7 +934,11 @@ import time
 
 # Embedded modules use the test archive's package root for discovery.
 SHORT_TIMEOUT = 30.0
-STDLIB_DIR = TEST_HOME_DIR
+# The standard library root is wherever the interpreter says its own
+# library lives, so the paths the reference builds for frozen sources are
+# the paths the interpreter's finder computes for them.  Importing this
+# module only reads that record; it never moves it.
+STDLIB_DIR = getattr(sys, '_stdlib_dir', None) or TEST_HOME_DIR
 TEST_SUPPORT_DIR = os.path.join(TEST_HOME_DIR, 'test', 'support')
 is_android = False
 is_apple = sys.platform in ("darwin", "ios", "tvos", "watchos")

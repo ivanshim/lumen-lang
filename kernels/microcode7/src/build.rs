@@ -37,6 +37,18 @@ thread_local! {
     static TREE_SITES: std::cell::RefCell<Vec<[u32; 8]>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+thread_local! {
+    /// The most figures a decimal whole number may spell in text being
+    /// read for a language that limits them; nothing when it does not.
+    static FIGURE_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// Say how many figures the text about to be read may spell in a
+/// decimal whole number, as the running definition has it.
+pub fn holding_figures(limit: Option<usize>) {
+    FIGURE_LIMIT.with(|slot| slot.set(limit));
+}
+
 pub fn using_tree_sites<R>(sites: &[[u32; 8]], build: impl FnOnce() -> R) -> R {
     let previous = TREE_SITES.with(|slot| slot.replace(sites.to_owned()));
     let built = build();
@@ -123,6 +135,8 @@ struct OpenedBody {
     named_outside: usize,
     on_one_line: bool,
     body_source: usize,
+    outer_loops: usize,
+    outer_stars: Vec<usize>,
 }
 
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -4127,7 +4141,7 @@ impl<'a> Builder<'a> {
                 Some("'return' outside function")
             } else if (self.key("stmt.break") || self.key("stmt.continue")) && star_sealed {
                 Some("'break', 'continue' and 'return' cannot appear in an except* block")
-            } else if self.loop_depth == 0 || self.in_class_body() {
+            } else if self.loop_depth == 0 {
                 if self.key("stmt.break") { Some("'break' outside loop") }
                 else if self.key("stmt.continue") { Some("'continue' not properly in loop") } else { None }
             } else { None };
@@ -6404,18 +6418,19 @@ impl<'a> Builder<'a> {
         self.class_bindings.push((self.layers.len(), HashMap::new()));
         self.class_globals.push((self.layers.len(), Vec::new()));
         self.class_met.push(Vec::new());
+        let (outer_loops, outer_stars) = (std::mem::replace(&mut self.loop_depth, 0), std::mem::take(&mut self.except_star_bases));
         let completed_class = self.gensym("completed_class");
         self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(), self_writes: std::collections::BTreeSet::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
-        Ok(OpenedBody { previous, named_outside, on_one_line, body_source })
+        Ok(OpenedBody { previous, named_outside, on_one_line, body_source, outer_loops, outer_stars })
     }
 
     /// The items of a class body up to its close, and the class state put
     /// back as it stood before `open_class_body`.
     fn read_class_items(&mut self, opened: OpenedBody, setup: &mut Vec<Form>) -> Res<ClassParts> {
         let table = self.table;
-        let OpenedBody { previous, named_outside, on_one_line, body_source } = opened;
+        let OpenedBody { previous, named_outside, on_one_line, body_source, outer_loops, outer_stars } = opened;
         while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
             if on_one_line && self.on_stmt_end() { break; }
             if self.class_item(setup)? { continue; }
@@ -6436,6 +6451,8 @@ impl<'a> Builder<'a> {
         self.class_bindings.pop();
         self.class_globals.pop();
         self.class_met.pop();
+        self.loop_depth = outer_loops;
+        self.except_star_bases = outer_stars;
         self.within = previous;
         self.named_before = named_outside;
         Ok(self.under_way.pop().expect("class body"))
@@ -13978,7 +13995,7 @@ pub fn numeral(text: &str, table: &Table) -> Res<Value> {
     let bare = table.letter("lexical.number.decimal_point").map_or(false, |p| text.starts_with(p) || text.ends_with(p));
     let keep = table.flag("ext.builtin.print.real_point")
         && (bare || text.chars().any(|c| marks.contains(&c) || powers.contains(&c)));
-    Ok(at_language_width(read_numeral(text, table)?, table).keeping_point(keep))
+    Ok(at_language_width(read_numeral(text, table, true)?, table).keeping_point(keep))
 }
 
 const PREFIXES: [(&str, u32); 3] = [
@@ -13987,7 +14004,7 @@ const PREFIXES: [(&str, u32); 3] = [
     ("ext.lexical.number.binary_prefix", 2),
 ];
 
-fn read_numeral(text: &str, table: &Table) -> Res<Value> {
+fn read_numeral(text: &str, table: &Table, figures: bool) -> Res<Value> {
     let apart = table.letters("ext.lexical.number.separator");
     let plain: String = text.chars().filter(|c| !apart.contains(c)).collect();
     if plain != text {
@@ -14011,7 +14028,7 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
                 return Err(unreadable_numeral(text, table));
             }
         }
-        return read_numeral(&plain, table);
+        return read_numeral(&plain, table, figures);
     }
     let imaginary = table.letters("ext.lexical.number.imaginary");
     if let Some(letter) = text.chars().next_back().filter(|c| imaginary.contains(c)) {
@@ -14046,7 +14063,7 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
     if let Some(at) = text.find(|c| powers.contains(&c)) {
         let (before, power) = (&text[..at], &text[at + 1..]);
         let power: i32 = power.parse().map_err(|_| unreadable_numeral(text, table))?;
-        let (above, beneath) = match read_numeral(before, table)? {
+        let (above, beneath) = match read_numeral(before, table, false)? {
             Value::Frac(e) => (e.above.clone(), e.beneath.clone()),
             Value::Small(n) => (BigInt::from(n), BigInt::from(1)),
             Value::Huge(n) => ((*n).clone(), BigInt::from(1)),
@@ -14066,6 +14083,15 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
                 _ => f.parse().map_err(|_| unreadable_numeral(text, table))?,
             };
             return Ok(math::make_number(w * &scale + f, scale, Some(digit_run(text))));
+        }
+    }
+    // A decimal whole number with more figures than the running
+    // definition allows is refused here, before the figures are turned:
+    // the reference names the limit and counts what was written.
+    if let (true, Some(limit)) = (figures, FIGURE_LIMIT.with(|slot| slot.get())) {
+        let figures = text.chars().filter(|c| c.is_ascii_digit()).count();
+        if limit > 0 && figures > limit {
+            return Err(format!("SyntaxError: Exceeds the limit ({limit} digits) for integer string conversion: value has {figures} digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits."));
         }
     }
     text.parse::<BigInt>().map(Value::from_big).map_err(|_| unreadable_numeral(text, table))

@@ -216,6 +216,8 @@ class Popen:
     def communicate(self, input=None, timeout=None):
         if input is not None and self.stdin is None:
             raise ValueError('stdin is not a pipe')
+        # Read both output pipes while writing stdin and waiting for termination.
+        _subprocess(8, self._handle)
         if input is not None:
             if self.stdin.closed:
                 raise ValueError("I/O operation on closed file")

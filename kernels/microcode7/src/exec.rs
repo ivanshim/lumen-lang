@@ -433,6 +433,7 @@ struct Alongside {
     in_pipe: Option<std::process::ChildStdin>,
     out_pipe: Option<std::process::ChildStdout>,
     err_pipe: Option<std::process::ChildStderr>,
+    collecting: [Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>; 2],
 }
 
 /// Rules fixed by the table for the entire execution. Reading them once
@@ -13100,7 +13101,10 @@ impl<'a> Machine<'a> {
             let Some(Value::Routine(program) | Value::Bound(program, _)) = parts.first() else { return Err(self.class_unready().into()) };
             if program.locations.is_some() { return self.code_metadata_call("positions", vec![receiver.clone()]); }
             let beginning = (program.declared_on != 0).then_some(program.declared_on);
-            let resume = if beginning.is_some() && !program.generator { [beginning, beginning, Some(0), Some(0)] } else { [None; 4] };
+            // A module's opening step stands before its first line, on
+            // line nought, as the reference records it.
+            let resume = if program.ident == "<module>" { [Some(0), Some(1), Some(0), Some(0)] }
+                else if beginning.is_some() && !program.generator { [beginning, beginning, Some(0), Some(0)] } else { [None; 4] };
             let mut rows = vec![resume];
             program.body.position_rows(&mut rows, [beginning, beginning, None, None]);
             if std::env::var("PYTHONNODEBUGRANGES").ok().and_then(|flag| flag.parse::<i32>().ok()).is_some_and(|flag| flag != 0) {
@@ -28415,7 +28419,7 @@ impl<'a> Machine<'a> {
                     Err(_) => Value::Flag(false),
                     Ok(begun) => {
                         let mark = begun.id() as i64;
-                        self.alongside.insert(mark, Alongside { child: begun, in_pipe: None, out_pipe: None, err_pipe: None });
+                        self.alongside.insert(mark, Alongside { child: begun, in_pipe: None, out_pipe: None, err_pipe: None, collecting: [None, None] });
                         Value::Small(mark)
                     }
                 }
@@ -28644,7 +28648,7 @@ impl<'a> Machine<'a> {
                                 let in_pipe = if in_mode == 1 { begun.stdin.take() } else { None };
                                 let out_pipe = if out_mode == 1 { begun.stdout.take() } else { None };
                                 let err_pipe = if err_mode == 1 || err_mode == 3 { begun.stderr.take() } else { None };
-                                self.alongside.insert(mark, Alongside { child: begun, in_pipe, out_pipe, err_pipe });
+                                self.alongside.insert(mark, Alongside { child: begun, in_pipe, out_pipe, err_pipe, collecting: [None, None] });
                                 Value::Small(mark)
                             }
                         }
@@ -28684,9 +28688,12 @@ impl<'a> Machine<'a> {
                         let mut piped = false;
                         {
                             if let Some(kept) = self.alongside.get_mut(&mark) {
-                                match which {
-                                    0 => empty_pipe(&mut kept.out_pipe, &mut all, &mut piped, &mut broken),
-                                    _ => empty_pipe(&mut kept.err_pipe, &mut all, &mut piped, &mut broken),
+                                let slot = usize::from(which != 0);
+                                match kept.collecting[slot].take().map(|worker| worker.join()) {
+                                    Some(Ok(Ok(data))) => { all.extend(data); piped = true; }
+                                    Some(_) => broken = true,
+                                    None if slot == 0 => empty_pipe(&mut kept.out_pipe, &mut all, &mut piped, &mut broken),
+                                    None => empty_pipe(&mut kept.err_pipe, &mut all, &mut piped, &mut broken),
                                 }
                             } else {
                                 broken = true;
@@ -28737,6 +28744,19 @@ impl<'a> Machine<'a> {
                             if stderr { kept.err_pipe.take(); } else { kept.out_pipe.take(); }
                             Value::Flag(true)
                         } else { Value::Flag(false) }
+                    }
+                    // Begin output collection while stdin and process status remain usable.
+                    8 => {
+                        n(2)?;
+                        let id = as_index(&v[1])? as i64;
+                        match self.alongside.get_mut(&id) {
+                            None => Value::Flag(false),
+                            Some(job) => {
+                                job.collecting[0] = job.out_pipe.take().map(read_capture).or_else(|| job.collecting[0].take());
+                                job.collecting[1] = job.err_pipe.take().map(read_capture).or_else(|| job.collecting[1].take());
+                                Value::Flag(true)
+                            }
+                        }
                     }
                     _ => return Err(format!("{}() unknown step {}", name, step)),
                 }
@@ -33160,6 +33180,16 @@ impl<'a> Machine<'a> {
     }
 }
 
+/// Collect a child's output independently of writes and waits in its parent.
+fn read_capture<P>(pipe: P) -> std::thread::JoinHandle<std::io::Result<Vec<u8>>>
+where P: std::io::Read + Send + 'static {
+    std::thread::spawn(move || {
+        let mut source = pipe;
+        let mut result = Vec::<u8>::new();
+        source.read_to_end(&mut result).map(|_| result)
+    })
+}
+
 /// Empty a pipe of all it has to say, into `into`. `had_pipe` records
 /// whether there was a pipe at all, and `failed` whether the reading
 /// broke.
@@ -37286,6 +37316,7 @@ impl<'a> Machine<'a> {
             }
         };
         let sites = Self::tree_site_values(&sites_value)?;
+        crate::build::holding_figures(self.figure_limit());
         let mut built = match crate::build::using_tree_sites(&sites, || crate::build::build_text(&tokens, self.table, &[], 0, Some(Rc::from(file.as_ref())), None, None, None, mode == 1, &[], top_await, mode == 2, settling, future_bits)) {
             Ok(built) => built,
             Err((said, row, cols)) => {
@@ -37908,6 +37939,7 @@ impl<'a> Machine<'a> {
             return crate::cache::forms(saved, seeded, globe, born, framed_in).map(|built| (built, false));
         }
         let written_in: Option<Rc<str>> = Some(Rc::from(file));
+        crate::build::holding_figures(self.figure_limit());
         crate::build::using_tree_sites(sites, || crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2, settle, self.text_future_bits.get()))
             .map(|built| (built, false)).map_err(|(said, row, col)| self.text_unreadable_at(mode, said, file, row, col.0, Some((col.2, col.1)), source))
     }

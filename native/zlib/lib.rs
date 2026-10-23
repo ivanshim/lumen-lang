@@ -1,6 +1,7 @@
 //! Stateful zlib codecs, following CPython v3.14.8 Modules/zlibmodule.c.
 use libz_sys as z;
 use std::{cell::RefCell, collections::HashMap, ffi::CStr};
+mod bz2;
 
 unsafe extern "C" fn allocate(_: z::voidpf, count: z::uInt, size: z::uInt) -> z::voidpf {
     libc::calloc(count as usize, size as usize)
@@ -52,6 +53,7 @@ fn finish_error(reply: &mut Reply, code: i32, stream: &Stream) {
 /// or calculate checksums. Only interpreter-independent bytes cross this API.
 pub fn call(operation: i64, handle: i64, data: &[u8], options: [i64; 5]) -> Reply {
     let mut result = Reply::empty();
+    if operation >= 32 { return bzip2_call(operation, handle, data, options); }
     if operation == 0 {
         result.text = unsafe { CStr::from_ptr(z::zlibVersion()).to_string_lossy().into_owned() };
         return result;
@@ -156,4 +158,36 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>, String> {
         return Err("incomplete compressed stream".into());
     }
     Ok(reply.output)
+}
+
+enum Bzip2 { Pack(bz2::Compressor), Unpack(bz2::Decompressor) }
+thread_local! { static BZIP2: RefCell<(i64, HashMap<i64, Bzip2>)> = RefCell::new((1, HashMap::new())); }
+
+/// Operations 32-38: bzip2 compressors (32 new, 33 feed, 34 finish) and
+/// decompressors (35 new, 36 feed with output limit, 37 unused tail, 38 release).
+fn bzip2_call(operation: i64, handle: i64, data: &[u8], options: [i64; 5]) -> Reply {
+    let mut result = Reply::empty();
+    BZIP2.with(|store| {
+        let mut store = store.borrow_mut();
+        match operation {
+            32 | 35 => {
+                let id = store.0; store.0 += 1;
+                let codec = if operation == 32 { Bzip2::Pack(bz2::Compressor::new(options[0] as usize)) } else { Bzip2::Unpack(bz2::Decompressor::new()) };
+                store.1.insert(id, codec);
+                result.number = id;
+            }
+            38 => { store.1.remove(&handle); }
+            _ => match (store.1.get_mut(&handle), operation) {
+                (Some(Bzip2::Pack(packer)), 33) => result.output = packer.feed(data),
+                (Some(Bzip2::Pack(packer)), 34) => result.output = packer.finish(),
+                (Some(Bzip2::Unpack(unpacker)), 36) => match unpacker.feed(data, options[0]) {
+                    Ok((output, stalled)) => { result.output = output; result.ended = unpacker.eof(); result.number = stalled as i64; }
+                    Err(text) => { result.status = 1; result.text = text.into(); }
+                },
+                (Some(Bzip2::Unpack(unpacker)), 37) => result.output = unpacker.unused(),
+                _ => { result.status = -2; result.text = "inconsistent stream state".into(); }
+            },
+        }
+    });
+    result
 }

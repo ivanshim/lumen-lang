@@ -310,6 +310,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         registry.slot(name);
     }
     registry.source = Some(std::rc::Rc::from(&*source));
+    compile::holding_figures(lang.integer_digits);
     let program = match compile::compile(&tokens, lang, &mut registry, before) {
         Ok(program) => program,
         Err(said) => return Err(cannot_read(lang, &said, registry.stopped_at, request, before, registry.stopped_fatally, &source,

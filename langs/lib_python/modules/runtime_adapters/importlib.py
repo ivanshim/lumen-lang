@@ -32,6 +32,10 @@ def import_module(name, package=None):
 # Install the standard source finders after the bootstrap modules are ready.
 import sys as _sys
 _sys.meta_path = getattr(_sys, "meta_path", [_bootstrap.BuiltinImporter, _bootstrap.FrozenImporter])
+# Frozen modules live inside the interpreter, so their finder stands in the
+# search path after the native source finders, as the reference orders it.
+if _bootstrap.FrozenImporter not in _sys.meta_path:
+    _sys.meta_path.append(_bootstrap.FrozenImporter)
 _sys.path_hooks = getattr(_sys, "path_hooks", [])
 _sys.path_importer_cache = getattr(_sys, "path_importer_cache", {})
 if not getattr(_sys, '_native_importers_installed', False):
