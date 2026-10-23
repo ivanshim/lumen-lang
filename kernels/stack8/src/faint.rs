@@ -106,6 +106,20 @@ impl Hold {
             Hold::Lasts(_) => false,
         }
     }
+
+    /// Where the held value lives, for the kinds one pointer identifies.
+    fn address(&self) -> Option<usize> {
+        Some(match self {
+            Hold::Object(w) => w.as_ptr() as usize,
+            Hold::Container(w) => w.as_ptr() as usize,
+            Hold::Class(w) => w.as_ptr() as usize,
+            Hold::Generator(w) => w.as_ptr() as usize,
+            Hold::Set(w) => w.as_ptr() as usize,
+            Hold::Routine(w) => w.as_ptr() as usize,
+            Hold::Code(w) => w.as_ptr() as usize,
+            Hold::Native(..) | Hold::Octets(..) | Hold::Method(..) | Hold::Lasts(_) => return None,
+        })
+    }
 }
 
 /// Collect only identities relevant to live callbacks, including the
@@ -113,22 +127,15 @@ impl Hold {
 fn observe(reference: &Faint, addresses: &mut HashSet<usize, BuildHasherDefault<PlaceHasher>>) {
     addresses.insert(reference.bearer.as_ptr() as usize);
     match &reference.hold {
-        Hold::Object(target) => { addresses.insert(target.as_ptr() as usize); }
-        Hold::Class(target) => { addresses.insert(target.as_ptr() as usize); }
-        Hold::Routine(target) => { addresses.insert(target.as_ptr() as usize); }
-        Hold::Code(target) => { addresses.insert(target.as_ptr() as usize); }
         Hold::Method(receiver, body, identity) => {
             addresses.insert(receiver.as_ptr() as usize);
             addresses.insert(body.as_ptr() as usize);
             addresses.insert(identity.as_ptr() as usize);
         }
-        Hold::Generator(target) => {
-            if let Some(live) = target.upgrade() { addresses.insert(live.as_ptr() as usize); }
-        }
-        Hold::Set(target) => {
-            if let Some(live) = target.upgrade() { addresses.insert(live.as_ptr() as usize); }
-        }
-        Hold::Native(..) | Hold::Octets(..) | Hold::Container(_) | Hold::Lasts(_) => {}
+        // A container is never watched; a walk or set already gone has nothing left to watch.
+        Hold::Container(_) => {}
+        Hold::Generator(_) | Hold::Set(_) if reference.hold.gone() => {}
+        held => { if let Some(at) = held.address() { addresses.insert(at); } }
     }
 }
 
@@ -218,16 +225,8 @@ thread_local! {
 pub fn clear_group(group: &[Value]) -> Vec<(Value, Value)> {
     let places: HashSet<usize> = group.iter().filter_map(place_of).collect();
     let lost = |hold: &Hold| match hold {
-        Hold::Container(target) => places.contains(&(target.as_ptr() as usize)),
-        Hold::Native(..) | Hold::Octets(..) => false,
-        Hold::Object(w) => places.contains(&(w.as_ptr() as usize)),
-        Hold::Class(w) => places.contains(&(w.as_ptr() as usize)),
-        Hold::Generator(w) => places.contains(&(w.as_ptr() as usize)),
-        Hold::Set(w) => places.contains(&(w.as_ptr() as usize)),
-        Hold::Routine(w) => places.contains(&(w.as_ptr() as usize)),
-        Hold::Code(w) => places.contains(&(w.as_ptr() as usize)),
         Hold::Method(o, r, _) => places.contains(&(o.as_ptr() as usize)) || places.contains(&(r.as_ptr() as usize)),
-        Hold::Lasts(_) => false,
+        _ => hold.address().is_some_and(|at| places.contains(&at)),
     };
     let _ = REFERENCES.try_with(|all| {
         all.borrow_mut().retain(|weak| {
@@ -359,39 +358,14 @@ pub fn departing(dying: &mut Instance) {
 /// A walk is going. One asleep inside a try is rebuilt around its own
 /// frame and queued, so that its last parts run as the language asks.
 pub fn walk_departing(dying: &mut Generator) {
-    let unawaited = !dying.started && dying.program.as_ref().is_some_and(|body| body.code_flags & 128 != 0);
-    let asleep = (dying.started || unawaited) && !dying.closed && !dying.finalized && dying.program.is_some();
-    if asleep && LAST_WORD.try_with(|w| w.borrow().is_some()).unwrap_or(false) {
+    if is_asleep(dying) && LAST_WORD.try_with(|w| w.borrow().is_some()).unwrap_or(false) {
         // Build only while the queue is alive. A rejected try_with must
         // not drop a captured suspended body and recursively rebuild it.
         let _ = UNFINISHED.try_with(|q| {
-            let again = Generator {
-                name: dying.name.clone(), qualified: dying.qualified.clone(), named: [None, None], coroutine_identity: dying.coroutine_identity, coroutine_origin: dying.coroutine_origin.clone(), async_hooks_initialized: dying.async_hooks_initialized, async_finalizer: dying.async_finalizer.clone(), trace_frame: dying.trace_frame.take(), suspended_position: dying.suspended_position,
-                program: dying.program.clone(),
-                frame: std::mem::take(&mut dying.frame),
-                stack: std::mem::take(&mut dying.stack),
-                pc: dying.pc,
-                started: dying.started,
-                closed: false,
-                finalized: false,
-                waiting: dying.waiting,
-                handed: dying.handed.take(),
-                returned: std::mem::replace(&mut dying.returned, Value::Null),
-                delegate: dying.delegate.take(),
-                sent: std::mem::replace(&mut dying.sent, Value::Null),
-                items: std::mem::take(&mut dying.items),
-                current: dying.current.take(),
-                watched: dying.watched.take(),
-                reversed_walk: dying.reversed_walk.take(),
-                resume: std::mem::take(&mut dying.resume),
-                resuming: dying.resuming,
-                running: false,
-                held: std::mem::take(&mut dying.held),
-                hurled: dying.hurled.take(),
-                walked: dying.walked.take(),
-            };
-            dying.closed = true;
-            dying.finalized = true;
+            // The departing walk is read no further than its address below.
+            let mut again = std::mem::replace(dying, Generator::new(None, Vec::new(), Vec::new()));
+            again.running = false;
+            again.named = [None, None];
             q.borrow_mut().push(Rc::new(RefCell::new(again)));
         });
         wake();
@@ -1037,7 +1011,12 @@ impl Graph {
 /// Whether a walk in the graph is asleep inside a try, so that closing
 /// it is the finalisation the language asks for.
 pub fn asleep(walk: &Rc<RefCell<Generator>>) -> bool {
-    walk.try_borrow().map_or(false, |g| (g.started || g.program.as_ref().is_some_and(|code| code.code_flags & 128 != 0)) && !g.closed && !g.finalized && g.program.is_some())
+    walk.try_borrow().map_or(false, |g| is_asleep(&g))
+}
+
+/// Check whether a suspended walk still needs finalisation.
+fn is_asleep(g: &Generator) -> bool {
+    (g.started || g.program.as_ref().is_some_and(|code| code.code_flags & 128 != 0)) && !g.closed && !g.finalized && g.program.is_some()
 }
 
 /// Compare weak targets by identity, including classes and builtin types.
