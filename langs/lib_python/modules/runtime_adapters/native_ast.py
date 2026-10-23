@@ -22,6 +22,55 @@ def _malformed(source):
 def _incomplete():
     raise 'SyntaxError: invalid syntax'
 
+class _Chars:
+    """A text read one character at a time.
+
+    Looking at one place in a text that holds a character outside ASCII
+    walks the stored bytes from the start, so a reader that visits every
+    character pays for the whole text again at each step. Spreading the
+    text into a list once makes each visit a constant step; a slice is
+    joined back into the same text the reader expects.
+    """
+    __slots__ = ('text', 'items')
+
+    def __init__(self, text):
+        if isinstance(text, _Chars):
+            self.text = text.text
+            self.items = text.items
+        else:
+            self.text = text
+            self.items = list(text)
+
+    def __len__(self):
+        return len(self.items)
+
+    def __getitem__(self, at):
+        if isinstance(at, slice):
+            return ''.join(self.items[at])
+        return self.items[at]
+
+    def __repr__(self):
+        return repr(self.text)
+
+    def __str__(self):
+        return self.text
+
+    def find(self, sub, start=0, end=None):
+        return self.text.find(sub, start) if end is None else self.text.find(sub, start, end)
+
+    def rfind(self, sub, start=0, end=None):
+        return self.text.rfind(sub, start) if end is None else self.text.rfind(sub, start, end)
+
+    def count(self, sub, start=0, end=None):
+        return self.text.count(sub, start) if end is None else self.text.count(sub, start, end)
+
+    def split(self, sep=None, maxsplit=-1):
+        return self.text.split(sep, maxsplit)
+
+    def replace(self, old, new, count=-1):
+        return self.text.replace(old, new, count)
+
+
 def _is_name_start(c):
     return c == '_' or c.isalpha()
 
@@ -107,25 +156,40 @@ def _read_string(source, i, prefix):
     while True:
         if i >= n:
             _incomplete()
-        if source[i:i + len(closer)] == closer:
-            i += len(closer)
-            break
-        c = source[i]
-        if c == '\\' and i + 1 < n:
+        quote = source.find(closer, i)
+        if quote < 0:
+            _incomplete()
+        escape = source.find('\\', i)
+        if escape >= 0 and escape < quote:
+            if escape > i:
+                units.append(source[i:escape])
+            if escape + 1 >= n:
+                units.append('\\')
+                i = n
+                continue
             if raw:
                 units.append('\\')
-                units.append(source[i + 1])
-                i += 2
+                units.append(source[escape + 1])
+                i = escape + 2
                 continue
-            piece, i = _read_escape(source, i + 1, is_bytes)
+            piece, i = _read_escape(source, escape + 1, is_bytes)
             if piece is not None:
                 units.append(piece)
             continue
-        units.append(c)
-        i += 1
+        if quote > i:
+            units.append(source[i:quote])
+        i = quote + len(closer)
+        break
     if is_bytes:
         numbers = []
         for unit in units:
+            if not isinstance(unit, str) or len(unit) > 1:
+                for piece in unit:
+                    point = ord(piece)
+                    if point > 255:
+                        raise 'SyntaxError: bytes can only contain ASCII literal characters'
+                    numbers.append(point)
+                continue
             point = ord(unit)
             if point > 255:
                 raise 'SyntaxError: bytes can only contain ASCII literal characters'
@@ -1676,14 +1740,17 @@ class _Tok:
         self.cs_col = 0
 
 def _adv(source, i, count, row, col):
-    for _ in range(count):
-        if source[i] == '\n':
-            row += 1
-            col = 0
-        else:
-            col += len(source[i].encode('utf-8'))
-        i += 1
-    return (i, row, col)
+    if count <= 0:
+        return (i, row, col)
+    stop = i + count
+    chunk = source[i:stop]
+    breaks = chunk.count('\n')
+    if breaks:
+        row += breaks
+        col = len(chunk) - chunk.rfind('\n') - 1
+    else:
+        col += len(chunk.encode('utf-8'))
+    return (stop, row, col)
 
 def _string_skip(source, i):
     # i at a quote; answers the index just past the closing quote.
@@ -1695,14 +1762,14 @@ def _string_skip(source, i):
     else:
         closer = q
         i += 1
-    while i < n:
-        if source[i] == '\\':
-            i += 2
-            continue
-        if source[i:i + len(closer)] == closer:
-            return i + len(closer)
-        i += 1
-    _syntax('unterminated string literal')
+    while True:
+        quote = source.find(closer, i)
+        if quote < 0:
+            _syntax('unterminated string literal')
+        escape = source.find('\\', i)
+        if escape < 0 or quote < escape:
+            return quote + len(closer)
+        i = escape + 2
 
 def _string_skip_pos(source, i, row, col):
     start = i
@@ -1767,6 +1834,8 @@ def _check_single_line(source, q, after):
         i += 1
 
 def _lex(source, start, end, row, col, for_field, comments=None):
+    if not isinstance(source, _Chars):
+        source = _Chars(source)
     # Tokens over source[start:end], beginning at (row, col). Inside a
     # replacement field (for_field) newlines are plain whitespace; outside
     # one they end a statement unless brackets are open. When comments is
@@ -1797,9 +1866,9 @@ def _lex(source, start, end, row, col, for_field, comments=None):
             toks.append(_Tok('newline', '\n', srow, scol, srow, scol + 1))
             continue
         if c == '#' and not for_field:
-            j = i
-            while j < end and source[j] != '\n':
-                j += 1
+            j = source.find('\n', i)
+            if j < 0 or j > end:
+                j = end
             if comments is not None:
                 comments.append((srow, scol, source[i:j]))
             col += len(source[i:j].encode('utf-8'))
@@ -2694,6 +2763,11 @@ class _Parser:
             indent = self.peek().scol
             if indent <= first.scol:
                 raise IndentationError('expected an indented block')
+            # The case clauses sit at a level of their own between the
+            # subject and each body; register it so that a body's dedent
+            # back to the next case is a step the reader knows.
+            self.indent_stack.append(indent)
+            self.alt_stack.append(self.alt_indent_col(self.peek()))
             cases = []
             while self.at_name('case') and self.peek().scol == indent:
                 header = self.pop()
@@ -2720,6 +2794,8 @@ class _Parser:
                 cases.append(match_case(pattern=pattern, guard=guard, body=body))
                 while self.peek().kind == 'newline':
                     self.pop()
+            self.indent_stack.pop()
+            self.alt_stack.pop()
             if not cases:
                 _syntax('invalid syntax')
             return self.located(Match, first, cases[-1].body[-1], subject=subject, cases=cases)
@@ -4428,6 +4504,12 @@ def _validate_node(node, active=None):
         raise TypeError('expected AST, got ' + repr(type(node).__name__))
     cls = type(node)
     category = 'stmt' if isinstance(node, stmt) else 'expr' if isinstance(node, expr) else cls.__name__
+    # Two shapes the reference refuses before it looks at fields: a named
+    # expression binds a name, and a type alias is named by a name.
+    if isinstance(node, NamedExpr) and not isinstance(node.target, Name):
+        raise TypeError('NamedExpr target must be a Name')
+    if isinstance(node, TypeAlias) and not isinstance(node.name, Name):
+        raise TypeError('TypeAlias with non-Name name')
     for attr in ('lineno', 'col_offset'):
         if attr in node._attributes:
             if not hasattr(node, attr):

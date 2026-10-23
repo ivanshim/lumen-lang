@@ -37,6 +37,18 @@ thread_local! {
     static TREE_SITES: std::cell::RefCell<Vec<[u32; 8]>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+thread_local! {
+    /// The most figures a decimal whole number may spell in text being
+    /// read for a language that limits them; nothing when it does not.
+    static FIGURE_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// Say how many figures the text about to be read may spell in a
+/// decimal whole number, as the running definition has it.
+pub fn holding_figures(limit: Option<usize>) {
+    FIGURE_LIMIT.with(|slot| slot.set(limit));
+}
+
 pub fn using_tree_sites<R>(sites: &[[u32; 8]], build: impl FnOnce() -> R) -> R {
     let previous = TREE_SITES.with(|slot| slot.replace(sites.to_owned()));
     let built = build();
@@ -14292,10 +14304,10 @@ pub fn numeral(text: &str, table: &Table) -> Res<Value> {
     let bare = table.letter("lexical.number.decimal_point").map_or(false, |p| text.starts_with(p) || text.ends_with(p));
     let keep = table.flag("ext.builtin.print.real_point")
         && (bare || text.chars().any(|c| marks.contains(&c) || powers.contains(&c)));
-    Ok(at_language_width(read_numeral(text, table)?, table).keeping_point(keep))
+    Ok(at_language_width(read_numeral(text, table, true)?, table).keeping_point(keep))
 }
 
-fn read_numeral(text: &str, table: &Table) -> Res<Value> {
+fn read_numeral(text: &str, table: &Table, figures: bool) -> Res<Value> {
     let apart = table.letters("ext.lexical.number.separator");
     let plain: String = text.chars().filter(|c| !apart.contains(c)).collect();
     if plain != text {
@@ -14319,7 +14331,7 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
                 return Err(unreadable_numeral(text, table));
             }
         }
-        return read_numeral(&plain, table);
+        return read_numeral(&plain, table, figures);
     }
     let imaginary = table.letters("ext.lexical.number.imaginary");
     if let Some(letter) = text.chars().next_back().filter(|c| imaginary.contains(c)) {
@@ -14358,7 +14370,7 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
     if let Some(at) = text.find(|c| powers.contains(&c)) {
         let (before, power) = (&text[..at], &text[at + 1..]);
         let power: i32 = power.parse().map_err(|_| unreadable_numeral(text, table))?;
-        let (above, beneath) = match read_numeral(before, table)? {
+        let (above, beneath) = match read_numeral(before, table, false)? {
             Value::Frac(e) => (e.above.clone(), e.beneath.clone()),
             Value::Small(n) => (BigInt::from(n), BigInt::from(1)),
             Value::Huge(n) => ((*n).clone(), BigInt::from(1)),
@@ -14378,6 +14390,15 @@ fn read_numeral(text: &str, table: &Table) -> Res<Value> {
                 _ => f.parse().map_err(|_| unreadable_numeral(text, table))?,
             };
             return Ok(math::make_number(w * &scale + f, scale, Some(digit_run(text))));
+        }
+    }
+    // A decimal whole number with more figures than the running
+    // definition allows is refused here, before the figures are turned:
+    // the reference names the limit and counts what was written.
+    if let (true, Some(limit)) = (figures, FIGURE_LIMIT.with(|slot| slot.get())) {
+        let figures = text.chars().filter(|c| c.is_ascii_digit()).count();
+        if limit > 0 && figures > limit {
+            return Err(format!("SyntaxError: Exceeds the limit ({limit} digits) for integer string conversion: value has {figures} digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits."));
         }
     }
     text.parse::<BigInt>().map(Value::from_big).map_err(|_| unreadable_numeral(text, table))
