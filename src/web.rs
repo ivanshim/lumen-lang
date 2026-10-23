@@ -455,11 +455,7 @@ fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// `a=1&b=2` as pairs, each part unescaped.
 fn fields(text: &str, as_bytes: bool) -> Vec<(String, String)> {
-    pairs(text, '&', as_bytes)
-}
-
-fn pairs(text: &str, between: char, as_bytes: bool) -> Vec<(String, String)> {
-    text.split(between)
+    text.split('&')
         .map(str::trim)
         .filter(|part| !part.is_empty())
         .map(|part| match part.split_once('=') {
