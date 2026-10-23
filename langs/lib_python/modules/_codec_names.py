@@ -20,6 +20,10 @@ _ranges = [
 ]
 
 
+_spans = {}
+for _start, _end, _prefix, _shown in _ranges:
+    _spans.setdefault(_prefix, []).append((_start, _end))
+
 _forward = None
 _reverse = None
 
@@ -58,12 +62,11 @@ def _table_name(number):
         offset = number - 0xac00
         return 'HANGUL SYLLABLE ' + _leads[offset // 588] \
             + _vowels[offset % 588 // 28] + _tails[offset % 28]
-    try:
-        found = _forward[number]
-    except KeyError:
-        found = None
+    found = _forward.get(number)
     if found is not None:
         return found
+    if number < 0x3400:
+        return None
     for start, end, prefix, shown in _ranges:
         if shown and start <= number <= end:
             return '%s-%04X' % (prefix, number)
@@ -96,32 +99,26 @@ def lookup(spelling):
     if _reverse is None:
         _load()
     spelling = spelling.upper()
-    for start, end, prefix, shown in _ranges:
-        head = prefix + '-'
-        if spelling.startswith(head):
-            tail = spelling[len(head):]
-            try:
-                number = int(tail, 16)
-            except ValueError:
-                continue
-            if '%04X' % number != tail:
-                continue
-            if start <= number <= end:
-                return chr(number)
-            continue
+    found = _reverse.get(spelling)
+    if found is not None:
+        return found
+    head, dash, tail = spelling.rpartition('-')
+    if dash and head in _spans:
+        try:
+            number = int(tail, 16)
+        except ValueError:
+            number = -1
+        if number >= 0 and '%04X' % number == tail:
+            for start, end in _spans[head]:
+                if start <= number <= end:
+                    return chr(number)
     found = _hangul(spelling)
     if found is not None:
         return found
-    try:
-        found = _reverse[spelling]
-    except KeyError:
-        found = None
+    found = _aliases.get(spelling)
     if found is not None:
         return found
-    try:
-        return _aliases[spelling]
-    except KeyError:
-        raise KeyError('undefined character name ' + spelling)
+    raise KeyError('undefined character name ' + spelling)
 
 
 def sequence(spelling):

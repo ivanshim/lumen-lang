@@ -839,7 +839,6 @@ pub struct Web {
     strands: Vec<Strand>,
     /// Which strand stands at an address, asked once per knot met.
     placed: HashMap<usize, usize, crate::table::FxBuildHasher>,
-    bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>,
 }
 
 /// An inline value is an engine root even though it has no shared
@@ -929,7 +928,7 @@ impl Web {
     }
 
     fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>, anchored: HashSet<usize, crate::table::FxBuildHasher>) -> Web {
-        let mut web = Web { strands: Vec::new(), placed: HashMap::default(), bookkeeping };
+        let mut web = Web { strands: Vec::with_capacity(roots.len()), placed: HashMap::default() };
         let mut frontier: Vec<usize> = Vec::new();
         // Each part of a knot is placed once; a hold on a part already
         // placed is counted on it instead.
@@ -944,7 +943,7 @@ impl Web {
                     None => {
                         let position = web.strands.len();
                         web.placed.insert(at, position);
-                        web.strands.push(Strand { knot: part, place: at, onward: Vec::new(), inward, reached: false });
+                        web.strands.push(Strand { knot: part, place: at, onward: Vec::new(), inward: inward + bookkeeping.get(&at).copied().unwrap_or(0), reached: false });
                         frontier.push(position);
                         position
                     }
@@ -996,7 +995,7 @@ impl Web {
     pub fn unreachable(&mut self) -> Vec<Knot> {
         let mut frontier: Vec<usize> = Vec::new();
         for (position, strand) in self.strands.iter_mut().enumerate() {
-            if strand.knot.holds() > strand.inward + 1 + self.bookkeeping.get(&strand.place).copied().unwrap_or(0) {
+            if strand.knot.holds() > strand.inward + 1 {
                 strand.reached = true;
                 frontier.push(position);
             }

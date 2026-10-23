@@ -542,7 +542,6 @@ pub struct Graph {
     /// row rather than by address, so the walk looks nothing up.
     nodes: Vec<Node>,
     rows: Places<usize>,
-    bookkeeping: Places<usize>,
 }
 
 /// Where a value's pointer stands, for the kinds that live behind one.
@@ -612,7 +611,7 @@ fn cycle_edge(value: &Value) -> bool {
 /// as held from outside, which errs on the side of keeping.
 fn reaches(value: &Value, out: &mut Vec<Value>) {
     match value {
-        Value::Faint(r) => out.extend(r.told.borrow().iter().cloned()),
+        Value::Faint(r) => out.extend(r.told.borrow().iter().filter(|value| cycle_edge(value)).cloned()),
         Value::Object(o) | Value::Fields(o) => {
             out.push(Value::Class(o.class.clone()));
             if let Ok(fields) = o.fields.try_borrow() {
@@ -856,23 +855,23 @@ impl Graph {
     }
 
     fn build(roots: Vec<Value>, bookkeeping: Places<usize>, outside: HashSet<usize, BuildHasherDefault<PlaceHasher>>) -> Graph {
-        let mut nodes: Vec<Node> = Vec::new();
+        let mut nodes: Vec<Node> = Vec::with_capacity(roots.len());
         let mut rows: Places<usize> = Places::default();
         let mut open: Vec<usize> = Vec::new();
         // The row a value stands in, made where it has none yet, with
         // one more hold from inside the graph counted on it as asked.
-        fn row_of(nodes: &mut Vec<Node>, rows: &mut Places<usize>, open: &mut Vec<usize>, held: Value, place: usize, inward: usize) -> usize {
+        fn row_of(nodes: &mut Vec<Node>, rows: &mut Places<usize>, open: &mut Vec<usize>, held: Value, place: usize, inward: usize, bookkeeping: &Places<usize>) -> usize {
             if let Some(&at) = rows.get(&place) { nodes[at].inward += inward; return at; }
             let at = nodes.len();
             rows.insert(place, at);
-            nodes.push(Node { held, place, reaches: Vec::new(), inward, marked: false });
+            nodes.push(Node { held, place, reaches: Vec::new(), inward: inward + bookkeeping.get(&place).copied().unwrap_or(0), marked: false });
             open.push(at);
             at
         }
         for root in roots {
             let Some(place) = place_of(&root) else { continue };
             if unset_slot(&root) { continue; }
-            row_of(&mut nodes, &mut rows, &mut open, root, place, 0);
+            row_of(&mut nodes, &mut rows, &mut open, root, place, 0, &bookkeeping);
         }
         let mut children = Vec::new();
         while let Some(at) = open.pop() {
@@ -888,17 +887,17 @@ impl Graph {
                     other => (other, None),
                 };
                 if let Some(place) = place_of(&first) {
-                    if !unset_slot(&first) { reached.push(row_of(&mut nodes, &mut rows, &mut open, first, place, 1)); }
+                    if !unset_slot(&first) { reached.push(row_of(&mut nodes, &mut rows, &mut open, first, place, 1, &bookkeeping)); }
                 }
                 if let Some(second) = second {
                     if let Some(place) = place_of(&second) {
-                        if !unset_slot(&second) { reached.push(row_of(&mut nodes, &mut rows, &mut open, second, place, 1)); }
+                        if !unset_slot(&second) { reached.push(row_of(&mut nodes, &mut rows, &mut open, second, place, 1, &bookkeeping)); }
                     }
                 }
             }
             nodes[at].reaches = reached;
         }
-        Graph { nodes, rows, bookkeeping }
+        Graph { nodes, rows }
     }
 
     /// Whether this value is now unreachable once the engine's own
@@ -916,7 +915,7 @@ impl Graph {
     pub fn unreached(&mut self) -> Vec<Value> {
         let mut open: Vec<usize> = Vec::new();
         for (at, node) in self.nodes.iter_mut().enumerate() {
-            if holds_on(&node.held) > node.inward + 1 + self.bookkeeping.get(&node.place).copied().unwrap_or(0) {
+            if holds_on(&node.held) > node.inward + 1 {
                 node.marked = true;
                 open.push(at);
             }
