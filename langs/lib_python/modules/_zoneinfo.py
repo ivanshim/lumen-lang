@@ -255,7 +255,7 @@ class ZoneInfo(tzinfo):
         import pickle
 
         raise pickle.PicklingError(
-            "Cannot pickle a ZoneInfo file from a file stream."
+            "Cannot pickle a ZoneInfo file created from a file stream."
         )
 
     @classmethod
