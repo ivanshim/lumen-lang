@@ -27296,9 +27296,9 @@ impl<'a> Engine<'a> {
                     6 => {
                         arity(2)?;
                         let which = as_index(&args[1])? as i64;
-                        match self.beside.borrow_mut().remove(&which) {
+                        match self.beside.borrow_mut().get_mut(&which) {
                             None => Value::Flag(false),
-                            Some(mut kept) => {
+                            Some(kept) => {
                                 let _ = kept.child.kill();
                                 let _ = kept.child.wait();
                                 Value::Flag(true)
@@ -27316,6 +27316,41 @@ impl<'a> Engine<'a> {
                             }
                             None => Value::Flag(false),
                         }
+                    }
+                    8 => {
+                        arity(3)?;
+                        let id = as_index(&args[1])? as i64;
+                        let input = self.byte_row(&args[2], true)?;
+                        let (out, err, sent, status) = {
+                            use std::os::fd::AsRawFd;
+                            let mut processes = self.beside.borrow_mut();
+                            let process = processes.get_mut(&id).ok_or("OSError: unknown subprocess handle")?;
+                            if input.is_empty() { process.in_pipe = None; }
+                            let out = ready_pipe_bytes(&mut process.out_pipe).map_err(|error| format!("OSError: {error}"))?;
+                            let err = ready_pipe_bytes(&mut process.err_pipe).map_err(|error| format!("OSError: {error}"))?;
+                            let mut sent = if process.in_pipe.is_none() { input.len() } else { 0 };
+                            if let Some(pipe) = &mut process.in_pipe {
+                                let mut event = libc::pollfd { fd: pipe.as_raw_fd(), events: libc::POLLOUT, revents: 0 };
+                                let ready = unsafe { libc::poll(&mut event, 1, 0) };
+                                if ready < 0 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+                                    return Err(format!("OSError: {}", std::io::Error::last_os_error()));
+                                }
+                                if ready > 0 {
+                                    use std::io::Write;
+                                    match pipe.write(&input[..input.len().min(libc::PIPE_BUF as usize)]) {
+                                        Ok(count) => sent = count,
+                                        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => { process.in_pipe = None; sent = input.len(); }
+                                        Err(error) if matches!(error.kind(), std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock) => (),
+                                        Err(error) => return Err(format!("OSError: {error}")),
+                                    }
+                                }
+                            }
+                            let status = process.child.try_wait().map_err(|error| format!("OSError: {error}"))?
+                                .filter(|_| process.out_pipe.is_none() && process.err_pipe.is_none())
+                                .map(|status| status.code().unwrap_or_else(|| -std::os::unix::process::ExitStatusExt::signal(&status).unwrap_or(1)) as i64);
+                            (out, err, sent, status)
+                        };
+                        Value::tuple(vec![self.byte_make(out, false), self.byte_make(err, false), Value::Small(sent as i64), status.map_or(Value::Null, Value::Small)])
                     }
                     _ => return Err(format!("{}() unknown step {}", name, step)),
                 }
@@ -29997,6 +30032,26 @@ fn text_width(s: &str, as_bytes: bool) -> usize {
 /// Empty a pipe of everything it has to say, into `all`. `piped` says
 /// whether a pipe was there at all, and `broken` whether reading it
 /// went wrong.
+// Read only a ready pipe's next chunk, leaving other streams and stdin free
+// to make progress. EOF releases the descriptor after its final bytes.
+fn ready_pipe_bytes<R: std::io::Read + std::os::fd::AsRawFd>(pipe: &mut Option<R>) -> std::io::Result<Vec<u8>> {
+    let Some(reader) = pipe.as_mut() else { return Ok(Vec::new()); };
+    let mut event = libc::pollfd { fd: reader.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+    let ready = unsafe { libc::poll(&mut event, 1, 0) };
+    if ready < 0 {
+        let error = std::io::Error::last_os_error();
+        return if error.kind() == std::io::ErrorKind::Interrupted { Ok(Vec::new()) } else { Err(error) };
+    }
+    if ready == 0 { return Ok(Vec::new()); }
+    let mut bytes = [0; 8192];
+    match reader.read(&mut bytes) {
+        Ok(0) => { *pipe = None; Ok(Vec::new()) }
+        Ok(count) => Ok(bytes[..count].to_vec()),
+        Err(error) if matches!(error.kind(), std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock) => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
+}
+
 fn drain_pipe<R: std::io::Read>(pipe: &mut Option<R>, all: &mut Vec<u8>, piped: &mut bool, broken: &mut bool) {
     if let Some(pipe) = pipe {
         *piped = true;

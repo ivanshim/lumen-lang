@@ -216,42 +216,61 @@ class Popen:
     def communicate(self, input=None, timeout=None):
         if input is not None and self.stdin is None:
             raise ValueError('stdin is not a pipe')
-        if input is not None:
-            if self.stdin.closed:
-                raise ValueError("I/O operation on closed file")
-            try:
-                self.stdin.write(input)
-            except BrokenPipeError:
-                pass
+        if getattr(self, '_communication_started', False):
+            if input is not None:
+                raise ValueError('Cannot send input after starting communication')
+        else:
+            if input is not None and self.stdin.closed:
+                raise ValueError('I/O operation on closed file')
+            if input is None:
+                data = b''
+            elif self._text:
+                if not isinstance(input, str):
+                    raise TypeError('write() argument must be str, not %s' % type(input).__name__)
+                data = input.encode(self._encoding, self._errors)
+            else:
+                data = memoryview(input).tobytes()
+            self._communication_input = data
+            self._communication_index = 0
+            self._communication_out = []
+            self._communication_err = []
+            self._communication_started = True
+        import time
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            index = self._communication_index
+            pending = self._communication_input[index:index + 4096]
+            out, err, written, code = _subprocess(8, self._handle, pending)
+            self._communication_index += written
+            if out:
+                self._communication_out.append(out)
+            if err:
+                self._communication_err.append(err)
+            if self.stdin is not None and self._communication_index == len(self._communication_input):
+                self.stdin.close()
+                self.stdin = None
+            if code is not None and code is not False:
+                self.returncode = code
+                break
+            if deadline is not None and time.monotonic() >= deadline:
+                output = b''.join(self._communication_out) if self.stdout is not None else None
+                error = b''.join(self._communication_err) if self.stderr is not None else None
+                if self._stderr_to_stdout and output is not None:
+                    output += b''.join(self._communication_err)
+                raise TimeoutExpired(self.args, timeout, output=output, stderr=error)
+            if not out and not err and not written:
+                _wait(10000)
         if self.stdin is not None:
             self.stdin.close()
             self.stdin = None
-        if timeout is not None:
-            import time
-            deadline = time.monotonic() + timeout
-            while True:
-                code = _subprocess(5, self._handle)
-                if code is not None and code is not False:
-                    self.returncode = code
-                    break
-                if time.monotonic() >= deadline:
-                    self.kill()
-                    raise TimeoutExpired(self.args, timeout)
-                _wait(10000)
-        empty = '' if self.text_mode else b''
-        out = (empty if self.stdout.closed else self.stdout.read()) if self.stdout is not None else None
-        if self._stderr_to_stdout:
-            if self.stdout is not None:
-                out = out + self._read_stream(1)
-            err = None
-        else:
-            err = (empty if self.stderr.closed else self.stderr.read()) if self.stderr is not None else None
-        if self.returncode is None:
-            self.returncode = self.wait()
+        out = b''.join(self._communication_out) if self.stdout is not None else None
+        err = b''.join(self._communication_err) if self.stderr is not None else None
+        if self._stderr_to_stdout and out is not None:
+            out += b''.join(self._communication_err)
         if self._text:
-            if isinstance(out, bytes):
+            if out is not None:
                 out = _text_of(out, self._encoding, self._errors)
-            if isinstance(err, bytes):
+            if err is not None:
                 err = _text_of(err, self._encoding, self._errors)
         return (out, err)
 

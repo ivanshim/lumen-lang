@@ -28643,9 +28643,9 @@ impl<'a> Machine<'a> {
                     6 => {
                         if v.len() != 2 { return Err(format!("{}() expects 2 arguments, got {}", name, v.len())); }
                         let mark = as_index(&v[1])? as i64;
-                        match self.alongside.remove(&mark) {
+                        match self.alongside.get_mut(&mark) {
                             None => Value::Flag(false),
-                            Some(mut kept) => {
+                            Some(kept) => {
                                 let _ = kept.child.kill();
                                 let _ = kept.child.wait();
                                 Value::Flag(true)
@@ -28659,6 +28659,57 @@ impl<'a> Machine<'a> {
                             if stderr { kept.err_pipe.take(); } else { kept.out_pipe.take(); }
                             Value::Flag(true)
                         } else { Value::Flag(false) }
+                    }
+                    8 if v.len() == 3 => {
+                        use std::io::{Read, Write};
+                        use std::os::fd::AsRawFd;
+                        let mark = as_index(&v[1])? as i64;
+                        let pending = self.octet_contents(&v[2], true)?;
+                        let kept = self.alongside.get_mut(&mark).ok_or("OSError: unknown subprocess handle")?;
+                        if pending.is_empty() { kept.in_pipe.take(); }
+                        let mut channels = [
+                            libc::pollfd { fd: kept.out_pipe.as_ref().map_or(-1, AsRawFd::as_raw_fd), events: libc::POLLIN, revents: 0 },
+                            libc::pollfd { fd: kept.err_pipe.as_ref().map_or(-1, AsRawFd::as_raw_fd), events: libc::POLLIN, revents: 0 },
+                            libc::pollfd { fd: kept.in_pipe.as_ref().map_or(-1, AsRawFd::as_raw_fd), events: libc::POLLOUT, revents: 0 },
+                        ];
+                        let ready = unsafe { libc::poll(channels.as_mut_ptr(), channels.len() as libc::nfds_t, 0) };
+                        if ready < 0 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+                            return Err(format!("OSError: {}", std::io::Error::last_os_error()));
+                        }
+                        let mut collected = [Vec::new(), Vec::new()];
+                        for index in 0..2 {
+                            if channels[index].revents == 0 { continue; }
+                            let mut block = [0; 8192];
+                            let received = match index {
+                                0 => kept.out_pipe.as_mut().unwrap().read(&mut block),
+                                _ => kept.err_pipe.as_mut().unwrap().read(&mut block),
+                            };
+                            match received {
+                                Ok(0) => { if index == 0 { kept.out_pipe.take(); } else { kept.err_pipe.take(); } }
+                                Ok(size) => collected[index].extend_from_slice(&block[..size]),
+                                Err(problem) => match problem.kind() {
+                                    std::io::ErrorKind::Interrupted | std::io::ErrorKind::WouldBlock => (),
+                                    _ => return Err(format!("OSError: {problem}")),
+                                },
+                            }
+                        }
+                        let written = if let Some(pipe) = &mut kept.in_pipe {
+                            if channels[2].revents == 0 { 0 } else {
+                                let limit = pending.len().min(libc::PIPE_BUF as usize);
+                                match pipe.write(&pending[..limit]) {
+                                    Ok(size) => size,
+                                    Err(problem) if problem.kind() == std::io::ErrorKind::BrokenPipe => { kept.in_pipe.take(); pending.len() }
+                                    Err(problem) if problem.kind() == std::io::ErrorKind::Interrupted || problem.kind() == std::io::ErrorKind::WouldBlock => 0,
+                                    Err(problem) => return Err(format!("OSError: {problem}")),
+                                }
+                            }
+                        } else { pending.len() };
+                        let ended = kept.child.try_wait().map_err(|problem| format!("OSError: {problem}"))?;
+                        let code = if kept.out_pipe.is_none() && kept.err_pipe.is_none() {
+                            ended.map(|status| status.code().or_else(|| std::os::unix::process::ExitStatusExt::signal(&status).map(|signal| -signal)).unwrap_or(-1))
+                        } else { None };
+                        let [out, err] = collected;
+                        Value::tuple(vec![self.octets(out, false), self.octets(err, false), Value::Small(written as i64), code.map_or(Value::Nil, |code| Value::Small(i64::from(code)))])
                     }
                     _ => return Err(format!("{}() unknown step {}", name, step)),
                 }
