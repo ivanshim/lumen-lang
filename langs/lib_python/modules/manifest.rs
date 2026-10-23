@@ -1,6 +1,11 @@
 // Modules kept as source until a program asks for them.
 pub static MODULES: &[(&str, &str, &str)] = &[
     ("__future__", include_str!("__future__.py"), "__future__.py"),
+    ("__hello__", include_str!("__hello__.py"), "__hello__.py"),
+    ("__phello__", include_str!("__phello__/__init__.py"), "__phello__/__init__.py"),
+    ("__phello__.ham", include_str!("__phello__/ham/__init__.py"), "__phello__/ham/__init__.py"),
+    ("__phello__.ham.eggs", include_str!("__phello__/ham/eggs.py"), "__phello__/ham/eggs.py"),
+    ("__phello__.spam", include_str!("__phello__/spam.py"), "__phello__/spam.py"),
     ("_abc", include_str!("_abc.py"), "_abc.py"),
     ("_ast", include_str!("_ast.py"), "_ast.py"),
     ("_ast_unparse", include_str!("_ast_unparse.py"), "_ast_unparse.py"),
@@ -76,6 +81,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("_string", include_str!("_string.py"), "_string.py"),
     ("_strptime", include_str!("_strptime.py"), "_strptime.py"),
     ("_struct", include_str!("_struct.py"), "_struct.py"),
+    ("_symtable", include_str!("_symtable.py"), "_symtable.py"),
     ("_template_core", include_str!("_template_core.py"), "_template_core.py"),
     ("_testcapi", include_str!("_testcapi.py"), "_testcapi.py"),
     ("_testinternalcapi", include_str!("_testinternalcapi.py"), "_testinternalcapi.py"),
@@ -453,6 +459,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("stringprep", include_str!("stringprep.py"), "stringprep.py"),
     ("struct", include_str!("struct.py"), "struct.py"),
     ("subprocess", include_str!("subprocess.py"), "subprocess.py"),
+    ("symtable", include_str!("symtable.py"), "symtable.py"),
     ("sys", concat!(include_str!("sys.py"), "\n", include_str!("runtime_adapters/sys.py")), "sys.py"),
     ("sysconfig", include_str!("sysconfig.py"), "sysconfig.py"),
     ("tabnanny", include_str!("tabnanny.py"), "tabnanny.py"),
