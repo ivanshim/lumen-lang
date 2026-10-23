@@ -34,7 +34,8 @@ fn constant(value: &Value) -> Result<Json, String> {
         Value::Declined(words) => ("declined", json!(words)),
         Value::Set(members) if members.borrow().fixed => {
             let members = members.borrow();
-            ("frozenset", json!([members.word, members.items()]))
+            let items = serde_json::to_value(members.items()).map_err(|e| e.to_string())?;
+            ("frozenset", json!([members.word, items]))
         }
         _ => return Err(format!("ValueError: code cache cannot store {}", value.core_kind())),
     };

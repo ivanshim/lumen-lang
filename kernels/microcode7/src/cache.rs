@@ -31,7 +31,8 @@ impl Serialize for Value {
             Value::Refusal(spelling) => json!([15, spelling]),
             Value::Set(store) if store.borrow().sealed => {
                 let store = store.borrow();
-                json!([22, [store.spelling, store.values()]])
+                let members = serde_json::to_value(store.values()).map_err(serde::ser::Error::custom)?;
+                json!([22, [store.spelling, members]])
             }
             _ => return Err(serde::ser::Error::custom(format!("compiled form cannot retain {}", self.kind_word()))),
         };
