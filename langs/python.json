@@ -3136,6 +3136,12 @@
   "ext.stmt.class.detail.type_params": [
     "__type_params__"
   ],
+  "ext.stmt.class.detail.weakrefoffset": [
+    "__weakrefoffset__"
+  ],
+  "ext.stmt.class.detail.dictoffset": [
+    "__dictoffset__"
+  ],
   "ext.stmt.class.detail.doc": [
     "__doc__"
   ],
