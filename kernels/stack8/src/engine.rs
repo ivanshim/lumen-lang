@@ -162,7 +162,7 @@ pub struct Engine<'a> {
     generator_frames: HashMap<usize, Weak<RefCell<Generator>>>,
     coroutines: HashMap<usize, (Weak<RefCell<Generator>>, Rc<Routine>, Option<Weak<Instance>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Generator>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<StateCell<bool>>, Rc<StateCell<bool>>), crate::value::FxBuildHasher>,
-    delegated_tokens: std::collections::HashSet<usize>,
+    delegated_tokens: std::collections::HashSet<usize, crate::value::FxBuildHasher>,
     code_watches: Vec<(Weak<RefCell<Value>>, bool)>,
     frame_codes: HashMap<usize, Weak<(u8, Vec<Value>)>>,
     class_root: Option<Rc<Class>>,
@@ -192,10 +192,12 @@ pub struct Engine<'a> {
     prepared_hint: std::cell::Cell<Option<usize>>,
     collecting_cycles: bool,
     cycle_checkpoint_slots: usize,
+    /// The bytes alive after the last collection.
+    cycle_checkpoint_bytes: usize,
     // World size, inventory identities, and retired native slot positions.
     quiet_module_slots: (usize, Vec<(String, usize)>, Vec<usize>),
     kind_names: RefCell<HashMap<String, Vec<String>>>,
-    member_words: [&'a str; 25],
+    member_words: [&'a str; 26],
     opened_descriptors: HashMap<i32, std::fs::File>,
     lang: &'a Lang,
     native_exceptions: HashMap<String, Value>,
@@ -253,7 +255,7 @@ pub struct Engine<'a> {
     module_locations: RefCell<Option<SourceLocations>>,
     pub module_aliases: HashMap<String, String>,
     embedded_names: std::collections::HashSet<String>,
-    modules: HashMap<String, Value>,
+    modules: HashMap<String, Value, std::hash::BuildHasherDefault<crate::value::QuickHash>>,
     /// Each module's own dictionary, made the first time globals() asks
     /// for it and handed back every time after: one map, so that a name
     /// written through it is a name written in the module.
@@ -1765,7 +1767,7 @@ impl<'a> Engine<'a> {
             if let Some(value) = native_exceptions.get(word) { world[i] = value.clone(); }
         }
         let mut engine = Engine {
-            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, byte_members_seen: RefCell::new(HashMap::default()), prepared_hint: std::cell::Cell::new(None), collecting_cycles: false, cycle_checkpoint_slots: 0, quiet_module_slots: Default::default(), kind_names: RefCell::new(HashMap::new()),
+            class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, byte_members_seen: RefCell::new(HashMap::default()), prepared_hint: std::cell::Cell::new(None), collecting_cycles: false, cycle_checkpoint_slots: 0, cycle_checkpoint_bytes: 0, quiet_module_slots: Default::default(), kind_names: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
             native_exceptions,
             exception_roster,
@@ -1799,6 +1801,7 @@ impl<'a> Engine<'a> {
                 lang.class_details.get("subclass").and_then(|list| list.first()).map_or("", String::as_str),
                 lang.class_details.get("text_signature").and_then(|list| list.first()).map_or("", String::as_str),
                 lang.class_details.get("slots").and_then(|list| list.first()).map_or("", String::as_str),
+                lang.class_details.get("descriptor.name").and_then(|list| list.first()).map_or("", String::as_str),
             ],
             lang,
             world,
@@ -1839,7 +1842,7 @@ impl<'a> Engine<'a> {
             generator_frames: HashMap::new(),
             coroutines: HashMap::new(),
             async_generators: HashMap::default(),
-            delegated_tokens: std::collections::HashSet::new(),
+            delegated_tokens: std::collections::HashSet::default(),
             code_watches: Vec::new(), frame_codes: HashMap::new(),
             source: Rc::from(""),
             root_source: Rc::from(""),
@@ -1914,7 +1917,7 @@ impl<'a> Engine<'a> {
             module_locations: RefCell::new(None),
             module_aliases: HashMap::new(),
             embedded_names: std::collections::HashSet::new(),
-            modules: HashMap::new(),
+            modules: HashMap::default(),
             module_globals: HashMap::new(),
             mirrored_rows: HashMap::new(),
             globals_by_cell: HashMap::default(),
@@ -2545,8 +2548,12 @@ impl<'a> Engine<'a> {
     fn collect_namespace_garbage(&mut self, large_source: bool) {
         if self.collecting_cycles { return; }
         let growth = self.world.len().saturating_sub(self.cycle_checkpoint_slots);
+        // The heap's own growth asks for a collection as well: a module
+        // read in again leaves its earlier incarnation as garbage that
+        // never widens the world, and only a collection takes it away.
+        let swollen = lumen_room::used().saturating_sub(self.cycle_checkpoint_bytes) >= 128 << 20;
         // A large source alone collects only after some namespace growth: each collection walks the whole world.
-        if growth < if large_source { 100_000 } else { 128_000 } { return; }
+        if !swollen && growth < if large_source { 100_000 } else { 128_000 } { return; }
         let limit = self.modules.get("gc").and_then(|module| {
             let Value::Object(object) = module.contents() else { return None };
             let fields = object.fields.try_borrow().ok()?;
@@ -2558,7 +2565,7 @@ impl<'a> Engine<'a> {
                 _ => None,
             }
         });
-        if limit.is_some_and(|limit| large_source || growth >= limit) {
+        if limit.is_some_and(|limit| swollen || large_source || growth >= limit) {
             let pending = self.carried.take();
             self.collect_cycles();
             self.carried = pending;
@@ -2710,6 +2717,7 @@ impl<'a> Engine<'a> {
             self.reindex_function_rows();
             drop(graph);
             self.settle_departed();
+            self.cycle_checkpoint_bytes = lumen_room::used();
             self.collecting_cycles = false;
             return 0;
         }
@@ -2758,6 +2766,21 @@ impl<'a> Engine<'a> {
         drop(after);
         drop(grave);
         self.settle_departed();
+        // A retired module's cell that nothing holds any more kept the
+        // module's code alive through the world alone: let it go now.
+        for &at in &quiet_slots {
+            if let Some(slot) = self.world.get_mut(at) {
+                if matches!(slot, Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) if Rc::strong_count(cell) == 1) { *slot = Value::Blank; }
+            }
+        }
+        // The pages a collection frees go back to the system now: left
+        // with the allocator they stay resident through a long run.
+        #[cfg(target_os = "linux")]
+        {
+            unsafe extern "C" { fn malloc_trim(pad: usize) -> i32; }
+            unsafe { malloc_trim(0) };
+        }
+        self.cycle_checkpoint_bytes = lumen_room::used();
         self.collecting_cycles = false;
         count
     }
@@ -3905,13 +3928,13 @@ impl<'a> Engine<'a> {
         // popped for a stack operand, or what a shared cell holds.
         let av: &Value = match (at, a) {
             (Some(v), _) => v,
-            (None, Operand::Const(v)) => v,
+            (None, Operand::Const(v)) => &**v,
             (None, Operand::Cell(s)) => self.peek_cell(s, frame)?,
             (None, Operand::Top) => return Err("Stack underflow".to_string()),
         };
         let bv: &Value = match (bt, b) {
             (Some(v), _) => v,
-            (None, Operand::Const(v)) => v,
+            (None, Operand::Const(v)) => &**v,
             (None, Operand::Cell(s)) => self.peek_cell(s, frame)?,
             (None, Operand::Top) => return Err("Stack underflow".to_string()),
         };
@@ -8123,7 +8146,7 @@ impl<'a> Engine<'a> {
                         continue;
                     }
                     let cell = self.peek_cell_mut(slot, frame)?;
-                    let fast = match (&*cell, by) {
+                    let fast = match (&*cell, &**by) {
                         (Value::Small(x), Value::Small(k)) => x.checked_add(*k),
                         _ => None,
                     };
@@ -12559,7 +12582,7 @@ impl<'a> Engine<'a> {
         if phase == 0 { *owner.borrow_mut() = Some(stage.clone()); }
         *stage.borrow_mut() = Value::Small(1);
         driving.set(true);
-        self.delegated_tokens.remove(&(Rc::as_ptr(generator) as usize));
+        if !self.delegated_tokens.is_empty() { self.delegated_tokens.remove(&(Rc::as_ptr(generator) as usize)); }
         let result = (|| {
             if ended {
                 if let Some(value) = thrown {
@@ -12596,7 +12619,7 @@ impl<'a> Engine<'a> {
             };
             // A delegate callback returns an await token even if a lookup
             // resumed the parent and cleared its delegation in the meantime.
-            let delegated = self.delegated_tokens.remove(&(Rc::as_ptr(generator) as usize));
+            let delegated = !self.delegated_tokens.is_empty() && self.delegated_tokens.remove(&(Rc::as_ptr(generator) as usize));
             match stepped {
                 Ok(Some(value)) if delegated || generator.try_borrow().is_ok_and(|body| body.delegate.is_some()) => Ok(AsyncStep::Pending(value)),
                 Ok(Some(_)) if *operation == 3 => Err(self.lang.async_generator_close_ignored[0].clone().into()),
@@ -13356,8 +13379,8 @@ impl<'a> Engine<'a> {
                     let coroutine = self.drop_top()?;
                     Some(self.class_get(coroutine, name, false)?)
                 },
-                Action::Grab(name) if self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name.as_ref()))
-                    && self.data.last().map_or(false, |value| matches!(value.contents(), Value::Class(_) | Value::Native(Builtin::AsReal, _))) => {
+                Action::Grab(name) if self.data.last().map_or(false, |value| matches!(value.contents(), Value::Class(_) | Value::Native(Builtin::AsReal, _)))
+                    && self.lang.float_from_number.iter().any(|spelling| spelling.rsplit('.').next() == Some(name.as_ref())) => {
                     let class = self.drop_top()?.contents();
                     Some(self.class_get(class, name, false)?)
                 },
@@ -24622,6 +24645,22 @@ impl<'a> Engine<'a> {
 
         if builtin == Builtin::Math {
             if let Some(Value::Text(operation)) = args.first().map(Value::contents) {
+                // The host error number, and only in a language that
+                // measures with floating math. Library code plants one,
+                // or clears one, ahead of a magnitude that must not
+                // inherit a stale range error. Every other language
+                // falls through to the ordinary missing-working complaint.
+                if operation.as_ref() == "set_errno" && self.lang.math_floating {
+                    if args.len() != 2 { return Err("TypeError: set_errno() takes exactly one argument".into()); }
+                    let planted = match args[1].contents() {
+                        Value::Small(n) => i32::try_from(n).map_err(|_| "OverflowError: Python int too large to convert to C int".to_string())?,
+                        Value::Flag(bit) => i32::from(u8::from(bit)),
+                        Value::Huge(n) => n.to_i32().ok_or_else(|| "OverflowError: Python int too large to convert to C int".to_string())?,
+                        _ => return Err("TypeError: an integer is required".into()),
+                    };
+                    unsafe { *libc::__errno_location() = planted };
+                    return Ok(Value::Null);
+                }
                 if operation.as_ref() == "mt19937" && self.lang.random_words {
                     return match args.len() {
                         3 => self.random_word(&args[1], &args[2]),
@@ -32314,9 +32353,7 @@ impl Engine<'_> {
             Builtin::Absolute => {
                 arity(1, 1)?;
                 if let Value::Complex(z) = &args[0] {
-                    let length = z.real.hypot(z.imag);
-                    if length.is_infinite() && z.real.is_finite() && z.imag.is_finite() { return Err(self.core_fault("core.power.overflow", "")); }
-                    return Ok(crate::complex::real(length));
+                    return Ok(crate::complex::real(crate::complex::modulus(z.real, z.imag)?));
                 }
                 let x = number(&args[0]);
                 if let Value::Real(r) = &x {
