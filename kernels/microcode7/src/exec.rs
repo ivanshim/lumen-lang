@@ -13089,7 +13089,10 @@ impl<'a> Machine<'a> {
             let Some(Value::Routine(program) | Value::Bound(program, _)) = parts.first() else { return Err(self.class_unready().into()) };
             if program.locations.is_some() { return self.code_metadata_call("positions", vec![receiver.clone()]); }
             let beginning = (program.declared_on != 0).then_some(program.declared_on);
-            let resume = if beginning.is_some() && !program.generator { [beginning, beginning, Some(0), Some(0)] } else { [None; 4] };
+            // A module's opening step stands before its first line, on
+            // line nought, as the reference records it.
+            let resume = if program.ident == "<module>" { [Some(0), Some(1), Some(0), Some(0)] }
+                else if beginning.is_some() && !program.generator { [beginning, beginning, Some(0), Some(0)] } else { [None; 4] };
             let mut rows = vec![resume];
             program.body.position_rows(&mut rows, [beginning, beginning, None, None]);
             if std::env::var("PYTHONNODEBUGRANGES").ok().and_then(|flag| flag.parse::<i32>().ok()).is_some_and(|flag| flag != 0) {
@@ -37195,6 +37198,7 @@ impl<'a> Machine<'a> {
             }
         };
         let sites = Self::tree_site_values(&sites_value)?;
+        crate::build::holding_figures(self.figure_limit());
         let mut built = match crate::build::using_tree_sites(&sites, || crate::build::build_text(&tokens, self.table, &[], 0, Some(Rc::from(file.as_ref())), None, None, None, mode == 1, &[], top_await, mode == 2, settling, future_bits)) {
             Ok(built) => built,
             Err((said, row, cols)) => {
@@ -37817,6 +37821,7 @@ impl<'a> Machine<'a> {
             return crate::cache::forms(saved, seeded, globe, born, framed_in).map(|built| (built, false));
         }
         let written_in: Option<Rc<str>> = Some(Rc::from(file));
+        crate::build::holding_figures(self.figure_limit());
         crate::build::using_tree_sites(sites, || crate::build::build_text(tokens, self.table, seeded, 0, written_in, globe, born, framed_in, mode == 1, shadowed, top_await, mode == 2, settle, self.text_future_bits.get()))
             .map(|built| (built, false)).map_err(|(said, row, col)| self.text_unreadable_at(mode, said, file, row, col.0, Some((col.2, col.1)), source))
     }

@@ -1983,6 +1983,7 @@ impl<'a> Engine<'a> {
             };
             (named, base)
         });
+        crate::compile::holding_figures(self.current_digit_limit());
         let read = match crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, None, Some(names), within, true) {
             Ok(read) => read,
             Err(said) => {
@@ -2067,6 +2068,7 @@ impl<'a> Engine<'a> {
             Some(_) => crate::layout::layout(self.unicode_tokens(source).map_err(|(s, _, _)| s)?, self.lang, 0).map_err(|(said, _)| said)?,
         };
         self.registry.source = Some(Rc::from(source));
+        crate::compile::holding_figures(self.current_digit_limit());
         let program = match crate::compile::compile_from(&tokens, self.lang, &mut self.registry, 0, came_from.as_deref().map(Rc::from)) {
             Ok(program) => program,
             Err(said) if came_from.is_none() => {
@@ -21003,7 +21005,11 @@ impl<'a> Engine<'a> {
                 }
                 let span = if body.lineless || row == 0 { vec![Value::Null; 4] }
                     else if positions.is_empty() && body.declared_on > 0 && !body.generator {
-                        vec![Value::Small(i64::from(body.declared_on)), Value::Small(i64::from(body.declared_on)), Value::Small(0), Value::Small(0)]
+                        // A module's opening step stands before its first
+                        // line, on line nought, as the reference records
+                        // it; a routine's stands on its declaring line.
+                        let (start, finish) = if body.ident == "<module>" { (0, 1) } else { (i64::from(body.declared_on), i64::from(body.declared_on)) };
+                        vec![Value::Small(start), Value::Small(finish), Value::Small(0), Value::Small(0)]
                     } else if let Some((end, column, stop)) = extent {
                         vec![Value::Small(i64::from(row)), Value::Small(i64::from(end)), Value::Small(i64::from(column)), Value::Small(i64::from(stop))]
                     } else { vec![Value::Small(i64::from(row)), Value::Small(i64::from(row)), Value::Null, Value::Null] };
@@ -33095,6 +33101,7 @@ impl Engine<'_> {
         local.globe = Some(Value::Fields(object.clone()));
         local.born = Some(self.native_dict());
         local.source = Some(Rc::from(source.as_str()));
+        crate::compile::holding_figures(self.current_digit_limit());
         let program = match crate::compile::compile_prepared(&tokens, self.lang, &mut local, Some(Rc::from(filename)), prepared_at) {
             Ok(program) => program,
             Err(said) => {
@@ -35785,6 +35792,7 @@ impl Engine<'_> {
         trial.value_only = mode == 1;
         trial.interactive = mode == 2;
         trial.allow_top_level_await = top_await;
+        crate::compile::holding_figures(self.current_digit_limit());
         let said = match crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, None) {
             Ok(_) => return Some(Self::ran_out_place(source)),
             Err(said) => said,
@@ -36014,6 +36022,7 @@ impl Engine<'_> {
         let positions = Self::ast_position_rows(&supplied_positions)?;
         trial.optimize = optimization;
         trial.source = Some(source.clone());
+        crate::compile::holding_figures(self.current_digit_limit());
         let mut checked = match crate::compile::at_ast_positions(&positions, || crate::compile::compile_from(&tokens, self.lang, &mut trial, 0, Some(Rc::from(file.as_ref())))) {
             Ok(checked) => checked,
             Err(said) => {
@@ -36461,6 +36470,7 @@ impl Engine<'_> {
         self.registry.future_bits = self.text_future_bits.get();
         self.registry.optimize = optimization;
         self.registry.source = Some(Rc::from(source));
+        crate::compile::holding_figures(self.current_digit_limit());
         let program = match crate::compile::at_ast_positions(positions, || crate::compile::compile_within(&tokens, self.lang, &mut self.registry, 0, Some(file.clone()), Some(names), within, true)) {
             Ok(program) => program,
             Err(said) => { let row = self.registry.stopped_at; let col = self.registry.stopped_column; let end = (self.registry.stopped_end_row, self.registry.stopped_end); return Err(self.text_syntax(mode, said, &file, row, col, Some(end), source)); }
@@ -36575,6 +36585,7 @@ impl Engine<'_> {
         let mut noted = Vec::new();
         let mut compiled = None;
         {
+            let figures = self.current_digit_limit();
             let registry: &mut crate::compile::Registry = match local { Some(local) => local, None => &mut self.registry };
             registry.allow_top_level_await = top_await;
             registry.future_bits = self.text_future_bits.get();
@@ -36583,6 +36594,7 @@ impl Engine<'_> {
             if compiled.is_none() {
                 registry.value_only = mode == 1;
                 registry.interactive = mode == 2;
+                crate::compile::holding_figures(figures);
                 match crate::compile::at_ast_positions(positions, || crate::compile::compile_from(tokens, self.lang, registry, 0, Some(file.clone()))) {
                     Ok(program) => { noted = std::mem::take(&mut registry.warnings); compiled = Some((program, false)); }
                     Err(said) => amiss = (said, registry.stopped_at, registry.stopped_column, (registry.stopped_end_row, registry.stopped_end)),
