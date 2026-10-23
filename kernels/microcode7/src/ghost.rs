@@ -142,6 +142,9 @@ thread_local! {
     static REFERENCES_NEXT_SWEEP: Cell<usize> = const { Cell::new(64) };
     static REFERENCES_BY_TARGET: RefCell<(HashMap<ReferenceAddress, Vec<Weak<Dim>>>, usize)> = RefCell::new((HashMap::new(), 64));
     static ANCHORED: Rc<RefCell<Vec<Rc<Thing>>>> = Rc::new(RefCell::new(Vec::new()));
+    // Addresses already anchored, so a repeat anchor does not walk the vector.
+    // Membership, not a second owner.
+    static ANCHORED_ADDRS: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
     // The addresses of the things a listener is on. A thing leaving
     // sets the lost flag only where its address is one of these.
     static WATCHED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
@@ -151,7 +154,7 @@ thread_local! {
     static NOTABLE: RefCell<(Vec<Ghost>, usize)> = const { RefCell::new((Vec::new(), 8)) };
 }
 
-/// The three reasons a step must look at what is going.
+/// Why a step must look at what is going.
 const G_STIRRED: u8 = 1;
 const G_POLL: u8 = 2;
 const G_ANCHOR: u8 = 4;
@@ -213,11 +216,20 @@ pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
 }
 
 pub fn anchor(thing: &Rc<Thing>) {
-    let _ = ANCHORED.try_with(|all| {
+    let addr = Rc::as_ptr(thing) as usize;
+    let added = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
-        if !all.iter().any(|item| Rc::ptr_eq(item, thing)) { all.push(thing.clone()); }
-        ghost_set(G_ANCHOR, !all.is_empty());
-    });
+        let known = ANCHORED_ADDRS.try_with(|book| book.borrow().contains(&addr)).unwrap_or(false);
+        if known {
+            return false;
+        }
+        all.push(thing.clone());
+        true
+    }).unwrap_or(false);
+    if added {
+        let _ = ANCHORED_ADDRS.try_with(|book| { book.borrow_mut().insert(addr); });
+        ghost_set(G_ANCHOR, true);
+    }
 }
 
 pub fn anchored_values() -> Vec<Knot> {
@@ -225,6 +237,8 @@ pub fn anchored_values() -> Vec<Knot> {
 }
 
 pub fn release_anchor(thing: &Rc<Thing>) {
+    let addr = Rc::as_ptr(thing) as usize;
+    let _ = ANCHORED_ADDRS.try_with(|book| { book.borrow_mut().remove(&addr); });
     let _ = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         all.retain(|item| !Rc::ptr_eq(item, thing));
@@ -234,12 +248,14 @@ pub fn release_anchor(thing: &Rc<Thing>) {
 
 pub fn release_all_anchors() {
     let _ = ANCHORED.try_with(|all| all.borrow_mut().clear());
+    let _ = ANCHORED_ADDRS.try_with(|book| book.borrow_mut().clear());
     ghost_drop(G_ANCHOR);
 }
 
 fn anchor_ready(anchored: &RefCell<Vec<Rc<Thing>>>) -> bool {
     let all = anchored.borrow();
     // Avoid an iterator callback per retained owner at every interpreter step.
+    // Every anchored object is checked here, not only the newest tail.
     let mut pending = all.as_slice();
     while let [a, b, c, d, rest @ ..] = pending {
         if Rc::strong_count(a) == 1 || Rc::strong_count(b) == 1
@@ -413,11 +429,16 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
     let ready = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         let (ready, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|item| Rc::strong_count(item) == 1);
-        ghost_set(G_ANCHOR, !kept.is_empty());
         *all = kept;
         ghost_set(G_ANCHOR, !all.is_empty());
         ready
     }).unwrap_or_default();
+    let _ = ANCHORED_ADDRS.try_with(|book| {
+        let mut book = book.borrow_mut();
+        for thing in &ready {
+            book.remove(&(Rc::as_ptr(thing) as usize));
+        }
+    });
     for thing in ready {
         if first_farewell(&thing) {
             if let Some(farewell) = farewell_of(&thing.of) { farewells.push((thing, farewell)); }

@@ -380,6 +380,8 @@ class CodecInfo(tuple):
 
 _registry_cache = {}
 # Bound successful registry spellings to 256 entries, ahead of normalization.
+# This is the later cache of the same idea as a normalized-name memo:
+# a spelling that already resolved keeps the codec itself.
 _registry_spelled = {}
 _registry_started = False
 _registry_normalizer = None
