@@ -287,7 +287,7 @@ impl Value {
                         let mut descriptor = std::rc::Rc::as_ptr(owner) as usize >> 4;
                         let word = match slot.1.get(1) { Some(Value::Text(word)) => word.as_ref(), _ => "__init__" };
                         for byte in word.bytes() { descriptor = descriptor.rotate_left(5) ^ usize::from(byte); }
-                        descriptor ^ (std::rc::Rc::as_ptr(receiver) as usize >> 4)
+                        descriptor ^ (crate::value::Keep::as_ptr(receiver) as usize >> 4)
                     }
                     _ => std::rc::Rc::as_ptr(slot) as usize >> 4,
                 };
@@ -320,7 +320,7 @@ impl Value {
                     Value::Array(items) => (std::rc::Rc::as_ptr(items) as usize >> 4) as i64,
                     Value::Map(items) => (std::rc::Rc::as_ptr(items) as usize >> 4) as i64,
                     Value::Set(items) => (std::rc::Rc::as_ptr(items) as usize >> 4) as i64,
-                    Value::Object(object) => (std::rc::Rc::as_ptr(object) as usize >> 4) as i64,
+                    Value::Object(object) => (crate::value::Keep::as_ptr(object) as usize >> 4) as i64,
                     Value::Bytes(cell, ..) => (std::rc::Rc::as_ptr(cell) as usize >> 4) as i64,
                     other => other.core_hash()?,
                 };
@@ -331,11 +331,11 @@ impl Value {
             Value::Class(kind) => Some((std::rc::Rc::as_ptr(kind) as usize >> 4) as i64),
             Value::Routine(code) => Some((std::rc::Rc::as_ptr(code) as usize >> 4) as i64),
             Value::Adapter(parts) if parts.0 == 7 => Self::code_field_hash(self),
-            Value::Method(owner, code, _) => Some(((std::rc::Rc::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
+            Value::Method(owner, code, _) => Some(((crate::value::Keep::as_ptr(owner) as usize ^ std::rc::Rc::as_ptr(code) as usize) >> 4) as i64),
 
             Value::Adapter(bound) if bound.0 == 3 && matches!(bound.1.first(), Some(Value::Adapter(method)) if method.0 == 29) || bound.0 == 3 && matches!(bound.1.first(), Some(Value::Native(..))) => {
                 let owner = match bound.1.get(1)? {
-                    Value::Object(object) => (std::rc::Rc::as_ptr(object) as usize >> 4) as i64,
+                    Value::Object(object) => (crate::value::Keep::as_ptr(object) as usize >> 4) as i64,
                     Value::Collection(cell, _) | Value::Bond(cell) | Value::Binding(cell) => (std::rc::Rc::as_ptr(cell) as usize >> 4) as i64,
                     Value::Array(row) => (std::rc::Rc::as_ptr(row) as usize >> 4) as i64,
                     Value::Map(pairs) => (std::rc::Rc::as_ptr(pairs) as usize >> 4) as i64,
@@ -420,7 +420,7 @@ impl Value {
             Value::Adapter(bound) if bound.0 == 3 && bound.1.len() == 2 => {
                 let owner = &bound.1[1];
                 let identity = match owner {
-                    Value::Object(object) => (std::rc::Rc::as_ptr(object) as usize >> 4) as i64,
+                    Value::Object(object) => (crate::value::Keep::as_ptr(object) as usize >> 4) as i64,
                     Value::Bond(place) | Value::Binding(place) | Value::Collection(place, _) => (std::rc::Rc::as_ptr(place) as usize >> 4) as i64,
                     Value::Array(row) => (std::rc::Rc::as_ptr(row) as usize >> 4) as i64,
                     Value::Map(book) => (std::rc::Rc::as_ptr(book) as usize >> 4) as i64,

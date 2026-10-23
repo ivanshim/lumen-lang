@@ -450,7 +450,7 @@ impl<'a> Engine<'a> {
         if self.lang.parent_words.iter().any(|name| name == word) {
             self.made+=1;
             let binding=Self::adapter(9,vec![Value::Null,Value::Null]);
-            let object=Rc::new(Instance {replacement_class:RefCell::new(None),class:c,fields:RefCell::new(vec![("\0worth".to_owned(),binding)]),mark:self.made});
+            let object=Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class:RefCell::new(None),class:c,fields:RefCell::new(vec![("\0worth".to_owned(),binding)]),mark:self.made});
             return Ok(Value::Object(object));
         }
         if word == "Union" { return Err("TypeError: cannot create 'typing.Union' instances".into()); }
@@ -503,7 +503,7 @@ impl<'a> Engine<'a> {
             }
             let Some(name @ Value::Text(_)) = name else { return Err("TypeError: module name must be str".into()); };
             self.made += 1;
-            return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: c,
+            return Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class: c,
                 fields: RefCell::new(vec![("__name__".to_string(), name), ("__doc__".to_string(), doc),
                     ("__package__".to_string(), Value::Null), ("__loader__".to_string(), Value::Null), ("__spec__".to_string(), Value::Null)]), mark: self.made })));
         }
@@ -536,7 +536,7 @@ impl<'a> Engine<'a> {
             // including an initializer supplied by a module subclass.
             let fields = Vec::new();
             self.made += 1;
-            return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: c, fields: RefCell::new(fields), mark: self.made })));
+            return Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class: c, fields: RefCell::new(fields), mark: self.made })));
         }
         let Some(op) = self.lang.builtins.get(word).copied() else { return Err(self.class_refusal()); };
         let items = self.call_items(args)?;
@@ -555,7 +555,7 @@ impl<'a> Engine<'a> {
             other => other,
         };
         self.made += 1;
-        Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class: c, fields: RefCell::new({let mut fields=vec![("\0worth".to_string(),kept.clone())];if let Value::Adapter(wrapper)=&kept {if matches!(wrapper.0,4|5){fields.push(("\0callable".into(),wrapper.1[0].clone()));fields.push(("\0namespace".into(),wrapper.1[1].clone()));}}fields}), mark: self.made })))
+        Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None),  class: c, fields: RefCell::new({let mut fields=vec![("\0worth".to_string(),kept.clone())];if let Value::Adapter(wrapper)=&kept {if matches!(wrapper.0,4|5){fields.push(("\0callable".into(),wrapper.1[0].clone()));fields.push(("\0namespace".into(),wrapper.1[1].clone()));}}fields}), mark: self.made })))
     }
     fn module_member_or(&mut self, module: &Value, name: &str, fallback: Value) -> Flow<Value> {
         match self.class_get(module.clone(), name, false) {
@@ -1577,9 +1577,9 @@ impl<'a> Engine<'a> {
         });
         Ok(place)
     }
-    fn namespace_write(&self,o:&Rc<Instance>,value:Option<Value>)->Flow<Value> {
+    fn namespace_write(&self,o:&Keep,value:Option<Value>)->Flow<Value> {
         if Self::kind_beneath(&o.class_now()).as_deref()==Some("module") {return Err("AttributeError: readonly attribute".into());}
-        if matches!(&value,Some(Value::Fields(owner)) if Rc::ptr_eq(owner,o)){return Ok(Value::Null);}
+        if matches!(&value,Some(Value::Fields(owner)) if crate::value::Keep::ptr_eq(owner,o)){return Ok(Value::Null);}
                     let entries=match value.as_ref().map(|v| Self::worth_of(v).unwrap_or_else(|| v.clone()).contents()) {
                         None => Vec::new(),
                         Some(Value::Map(pairs)) => pairs.iter().filter_map(|(k,v)| match k {Value::Text(t)=>Some((t.to_string(),v.clone())),_=>None}).collect(),
@@ -2930,7 +2930,7 @@ impl<'a> Engine<'a> {
                     self.abstract_refusal(c)?;
                     if args.len()!=1 { self.root_refuses_arguments(c,true)?; }
                     self.made += 1;
-                    Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None), class:c.clone(),fields:RefCell::new(vec![]),mark:self.made})))
+                    Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None), class:c.clone(),fields:RefCell::new(vec![]),mark:self.made})))
                 },
             _ => unreachable!(),
         }
@@ -3374,7 +3374,7 @@ impl<'a> Engine<'a> {
                         let Value::Class(c) = &kind else { return Err(self.class_refusal()); };
                         if !Self::super_descended(c) { return Err(self.class_refusal()); }
                         self.made += 1;
-                        return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: c.clone(), fields: RefCell::new(Vec::new()), mark: self.made })));
+                        return Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class: c.clone(), fields: RefCell::new(Vec::new()), mark: self.made })));
                     }
                     if let Value::Native(op @ (Builtin::Set | Builtin::Frozen), name) = &kind {
                         if name.as_ref() != word { return Err(self.class_refusal()); }
@@ -3410,7 +3410,7 @@ impl<'a> Engine<'a> {
                     if !Self::kind_among(&c, &word) {return Err(format!("TypeError: {word}.__new__({0}): {0} is not a subtype of {word}",c.name).into())}
                     if word == "module" {
                         self.made+=1;
-                        return Ok(Value::Object(Rc::new(Instance {replacement_class:RefCell::new(None),class:c,fields:RefCell::new(Vec::new()),mark:self.made})));
+                        return Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class:RefCell::new(None),class:c,fields:RefCell::new(Vec::new()),mark:self.made})));
                     }
                     let given = if matches!(self.lang.builtins.get(&word), Some(Builtin::Set | Builtin::List | Builtin::Dict)) { Vec::new() } else { args };
                     self.thing_of_kind(c, &word, given)
@@ -3766,13 +3766,13 @@ impl<'a> Engine<'a> {
         }
         let sentinel_class = self.kind_class("NoDefaultType");
         self.made += 1;
-        let sentinel = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: sentinel_class,
+        let sentinel = Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class: sentinel_class,
             fields: RefCell::new(vec![("\0typing_repr".into(), Value::text("typing.NoDefault"))]), mark: self.made }));
         fields.push(("NoDefault".into(), sentinel));
         fields.push(("_idfunc".into(), Value::Native(Builtin::ClassTool(23), Rc::from("_idfunc"))));
         let class = self.kind_class("module");
         self.made += 1;
-        let module = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made }));
+        let module = Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made }));
         self.modules.insert("_typing".into(), module.clone()); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear();
         self.refresh_module_cache("_typing");
         module
@@ -3846,7 +3846,7 @@ impl<'a> Engine<'a> {
             fields.iter_mut().find(|(key, _)| key == "\0typing_repr").unwrap().1 = Value::text(&format!("{prefix}{title}"));
         }
         self.made += 1;
-        Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made })))
+        Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made })))
     }
     fn lazy_type_alias(&mut self, evaluator: Value) -> Flow<Value> {
         let Value::Routine(routine) = evaluator.contents() else { return Err(self.class_refusal()); };
@@ -3867,7 +3867,7 @@ impl<'a> Engine<'a> {
     fn constant_evaluator(&mut self, value: Value) -> Value {
         let class = self.kind_class("_ConstEvaluator");
         self.made += 1;
-        Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(vec![("\0constant".into(), value)]), mark: self.made }))
+        Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, fields: RefCell::new(vec![("\0constant".into(), value)]), mark: self.made }))
     }
     /// The name a globals mapping gives itself, read where the type
     /// statement that made an alias wrote its name down.
@@ -3914,7 +3914,7 @@ impl<'a> Engine<'a> {
         let globals = self.running_outer();
         let home = self.book_get(&globals, "__name__")?.map(|value| value.contents()).unwrap_or(Value::Null);
         self.made += 1;
-        Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made,
+        Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, mark: self.made,
             fields: RefCell::new(vec![("__name__".into(), Value::Text(title.clone())), ("__module__".into(), home),
                 ("\0typing_repr".into(), Value::Text(title)), ("__value__".into(), value), ("__type_params__".into(), parameters)]) })))
     }
@@ -3965,7 +3965,7 @@ impl<'a> Engine<'a> {
             let origin = origin.ok_or_else(|| format!("TypeError: {}() missing required argument 'origin' (pos 1)", c.name.to_lowercase()))?;
             let display = self.class_apply(Self::adapter(158, vec![Value::text("parameter_view_display")]), vec![origin.clone(), Value::text(&c.name)])?;
             self.made += 1;
-            return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: c, mark: self.made,
+            return Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class: c, mark: self.made,
                 fields: RefCell::new(vec![("__origin__".into(), origin), ("\0typing_repr".into(), display)]) })));
         }
         if Self::own_kind(&c).as_deref() == Some("_ConstEvaluator") { return Err("TypeError: cannot create '_typing._ConstEvaluator' instances".into()); }
@@ -4196,7 +4196,7 @@ impl<'a> Engine<'a> {
             self.thing_of_kind(c.clone(), word, initial)?
         } else {
             self.made += 1;
-            Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None), class:c.clone(),fields:RefCell::new(vec![]),mark:self.made}))
+            Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None), class:c.clone(),fields:RefCell::new(vec![]),mark:self.made}))
         };
         self.remember_allocation(&object);
         if makes_classes { self.initialise_made_class(&object, &c, args.clone())?; }
@@ -4204,7 +4204,7 @@ impl<'a> Engine<'a> {
             // One whose class has last words to say is remembered, so that
             // a round holding it may be found when the program asks.
             if self.lang.finaliser.is_some() && crate::faint::last_word_of(&o.class).is_some() {
-                crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(o)));
+                crate::faint::remember(crate::faint::Hold::Object(crate::value::Keep::downgrade(o)));
                 if !self.lang.trace_fields.is_empty() { crate::faint::anchor(o); }
             }
             if self.lang.destructor.is_some() || self.lang.finaliser.is_some() {
@@ -4920,7 +4920,7 @@ impl<'a> Engine<'a> {
         let mut fields = vec![("\0worth".into(), Value::tuple(sequence[..9].to_vec()))];
         fields.extend(NAMES.iter().zip(sequence).map(|(name,value)| (name.to_string(),value)));
         self.made += 1;
-        Ok(Value::Object(Rc::new(Instance { class, replacement_class: RefCell::new(None), fields: RefCell::new(fields), mark:self.made })))
+        Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  class, replacement_class: RefCell::new(None), fields: RefCell::new(fields), mark:self.made })))
     }
     fn calendar_repr(&mut self, value: &Value) -> Flow<Value> {
         let mut fields=Vec::new();
@@ -6295,7 +6295,7 @@ impl<'a> Engine<'a> {
                     let class = self.kind_class(if name == "args" { "ParamSpecArgs" } else { "ParamSpecKwargs" });
                     let title = o.fields.borrow().iter().find(|(key, _)| key == "__name__").map(|(_, value)| value.plain()).unwrap_or_default();
                     self.made += 1;
-                    return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made,
+                    return Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, mark: self.made,
                         fields: RefCell::new(vec![("__origin__".into(), subject.clone()), ("\0typing_repr".into(), Value::text(&format!("{title}.{name}")))]) })));
                 }
                 if name == "__parameters__" && o.class_now().name == "TypeAliasType" {
@@ -7153,8 +7153,8 @@ impl<'a> Engine<'a> {
     fn function_address(function: &Value) -> Option<(usize, usize)> {
         match function.contents() {
             Value::Routine(code) => Some((Rc::as_ptr(&code) as usize, 0)),
-            Value::Method(receiver, code, _) => Some((Rc::as_ptr(&receiver) as usize, Rc::as_ptr(&code) as usize)),
-            Value::Object(instance) => Some((Rc::as_ptr(&instance) as usize, usize::MAX)),
+            Value::Method(receiver, code, _) => Some((crate::value::Keep::as_ptr(&receiver) as usize, Rc::as_ptr(&code) as usize)),
+            Value::Object(instance) => Some((crate::value::Keep::as_ptr(&instance) as usize, usize::MAX)),
             Value::Class(class) => Some((Rc::as_ptr(&class) as usize, usize::MAX - 1)),
             _ => None,
         }
@@ -7204,7 +7204,7 @@ impl<'a> Engine<'a> {
         if let Some(at) = self.function_row(function) { return at; }
         let class = self.root_class();
         self.made += 1;
-        let fields = Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(Vec::new()), mark: self.made });
+        let fields = Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None),  class, fields: RefCell::new(Vec::new()), mark: self.made });
         let entry = (crate::faint::hold_of(function).expect("function has a weak identity"), fields);
         // Reclaim dead metadata without moving live indices held across
         // annotation callbacks. Repeated short-lived functions must not
@@ -7266,7 +7266,7 @@ impl<'a> Engine<'a> {
         self.class_write(reference.clone(), &words[3], Some(owner.map_or(Value::Null, Value::Class)), false).map_err(|fault| fault.told(&self.wording()))?;
         self.class_write(reference.clone(), &words[4], Some(Value::Flag(true)), false).map_err(|fault| fault.told(&self.wording()))?;
         if let Value::Object(object) = reference.contents() {
-            if let Some((_, _, names)) = &mut self.annotation_scope { names.push((Rc::downgrade(&object), name.to_owned())); }
+            if let Some((_, _, names)) = &mut self.annotation_scope { names.push((crate::value::Keep::downgrade(&object), name.to_owned())); }
         }
         Ok(Some(reference))
     }
@@ -7275,7 +7275,7 @@ impl<'a> Engine<'a> {
         let (body, _, names) = self.annotation_scope.as_ref()?;
         if !self.running_routine.as_ref().is_some_and(|running| Rc::ptr_eq(body, running)) { return None; }
         let Value::Object(object) = subject.contents() else { return None; };
-        let missing = names.iter().find_map(|(reference, name)| reference.upgrade().filter(|kept| Rc::ptr_eq(kept, &object))
+        let missing = names.iter().find_map(|(reference, name)| crate::value::Keep::upgrade(reference).filter(|kept| crate::value::Keep::ptr_eq(kept, &object))
             .map(|_| format!("NameError: name '{name}' is not defined")));
         missing
     }
@@ -7663,7 +7663,7 @@ impl<'a> Engine<'a> {
                 // A thing's own namespace, written back to it after an
                 // entry was put in, is where it was: nothing to do.
                 if name==self.class_word("namespace") && o.class_now().python_names.borrow().is_none() {
-                    if let Some(Value::Fields(view))=&value {if Rc::ptr_eq(view,o){return Ok(Value::Null);}}
+                    if let Some(Value::Fields(view))=&value {if crate::value::Keep::ptr_eq(view,o){return Ok(Value::Null);}}
                     return self.namespace_write(o,value);
                 }
                 if name == self.class_word("kind") {
@@ -7851,7 +7851,7 @@ impl<'a> Engine<'a> {
             Value::Routine(_) => {
                 if name == self.class_word("namespace") {
                     let at = self.function_storage(&subject);
-                    if matches!(&value, Some(Value::Fields(fields)) if Rc::ptr_eq(fields, &self.function_members[at].1)) { return Ok(Value::Null); }
+                    if matches!(&value, Some(Value::Fields(fields)) if crate::value::Keep::ptr_eq(fields, &self.function_members[at].1)) { return Ok(Value::Null); }
                     return self.routine_namespace_write(at, value);
                 }
                 if ["globals","closure"].iter().any(|k|name==self.class_word(k)) {return Err(self.class_word("property.readonly").to_string().into());}
@@ -8399,10 +8399,10 @@ impl<'a> Engine<'a> {
     /// object, the same builtin kind under whatever spelling, or the
     /// same placed value.
     /// Two subscripted kinds (list[int], list[int]) built apart stand for one kind.
-    fn alias_same(&self, x: &Rc<Instance>, y: &Rc<Instance>) -> bool {
-        let alias = |o: &Rc<Instance>| Self::kind_beneath(&o.class_now()).as_deref() == Some("GenericAlias");
+    fn alias_same(&self, x: &Keep, y: &Keep) -> bool {
+        let alias = |o: &Keep| Self::kind_beneath(&o.class_now()).as_deref() == Some("GenericAlias");
         if !alias(x) || !alias(y) { return false; }
-        let field = |o: &Rc<Instance>, key: &str| o.fields.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
+        let field = |o: &Keep, key: &str| o.fields.borrow().iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
         match (field(x, "__origin__"), field(y, "__origin__"), field(x, "__args__"), field(y, "__args__")) {
             (Some(ox), Some(oy), Some(Value::Tuple(ax)), Some(Value::Tuple(ay))) =>
                 self.one_place(&ox, &oy) && ax.len() == ay.len() && ax.iter().zip(ay.iter()).all(|(p, q)| self.one_place(p, q)),
@@ -8412,7 +8412,7 @@ impl<'a> Engine<'a> {
     fn one_place(&self, a:&Value, b:&Value) -> bool {
         match (a, b) {
             (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
-            (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y) || self.alias_same(x, y),
+            (Value::Object(x), Value::Object(y)) => Keep::ptr_eq(x, y) || self.alias_same(x, y),
             (Value::Native(x, xw), Value::Native(y, yw)) => x == y && xw == yw,
             (Value::Null, Value::Null) => true,
             _ => match (self.kind_word_of(a), self.kind_word_of(b)) {
@@ -9339,7 +9339,7 @@ impl<'a> Engine<'a> {
             let Value::Class(class) = receiver else { return Err(self.class_refusal()); };
             if Self::kind_beneath(&class).as_deref() != Some("SimpleNamespace") { return Err(self.class_refusal()); }
             self.made += 1;
-            return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class,
+            return Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class,
                 fields: RefCell::new(Vec::new()), mark: self.made })));
         }
         let Value::Object(object) = &receiver else { return Err(self.class_refusal()); };
@@ -9446,7 +9446,7 @@ impl<'a> Engine<'a> {
             if given.len() != 2 { return Err("TypeError: GenericAlias expected 2 arguments".into()); }
             let args = match given[1].contents() { Value::Tuple(_) => given[1].clone(), value => Value::tuple(vec![value]) };
             self.made += 1;
-            return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class,
+            return Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class,
                 fields: RefCell::new(vec![("__origin__".into(), given[0].clone()), ("__args__".into(), args),
                     ("__unpacked__".into(), Value::Flag(false))]), mark: self.made })));
         }
@@ -9550,7 +9550,7 @@ impl<'a> Engine<'a> {
         if members.len() == 1 { return Ok(members[0].clone()); }
         let class = self.kind_class("Union");
         self.made += 1;
-        Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made,
+        Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, mark: self.made,
             fields: RefCell::new(vec![("__args__".into(), state[0].clone()),
                 ("\0union-hashable".into(), state[1].clone()), ("\0union-unhashable".into(), state[2].clone())]) })))
     }
@@ -9844,7 +9844,7 @@ impl<'a> Engine<'a> {
             return self.class_apply(bound, given);
         }
         self.made += 1;
-        Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: c.clone(), fields: RefCell::new(Vec::new()), mark: self.made })))
+        Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class: c.clone(), fields: RefCell::new(Vec::new()), mark: self.made })))
     }
 
     /// A parent call with no argument written: the frame gave the class
@@ -9880,7 +9880,7 @@ impl<'a> Engine<'a> {
     /// The three names a parent thing keeps, filled from the class it
     /// looks past and the thing it stands on, each class kept in the
     /// form the program reads it.
-    pub(super) fn super_fill(&mut self, o: &Rc<Instance>, owner: Rc<Class>, receiver: Value) -> Flow<()> {
+    pub(super) fn super_fill(&mut self, o: &Keep, owner: Rc<Class>, receiver: Value) -> Flow<()> {
         let mut objtype = Value::Null;
         if !matches!(receiver, Value::Null) {
             let checked = self.super_check(&owner, &receiver)?;
