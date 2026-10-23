@@ -1056,6 +1056,8 @@ impl Form {
             Self::Release(..) => "Release",
             Self::Glance(..) => "Glance",
             Self::Write(..) => "Write",
+            Self::Apply(Callee::Prim(Prim::Selfsame | Prim::Unlike, _), _) => "IS_OP",
+            Self::Apply(Callee::Prim(Prim::Invert, _), _) => "UNARY_NOT",
             Self::Apply(..) => "Apply",
             Self::Cycle { .. } => "Cycle",
             Self::Dyad { .. } => "Dyad",
@@ -1090,7 +1092,12 @@ impl Form {
             Self::HeldEither(..) => "HeldEither",
         };
         let branches = matches!(self, Self::Cycle { .. } | Self::Apply(Callee::Prim(Prim::Choose, _), _));
-        output.push(Value::tuple(vec![Value::Small(*next as i64), Value::text(tag), Value::Nil, Value::Flag(branches),
+        let argument = match self {
+            Self::Apply(Callee::Prim(Prim::Selfsame, _), _) => Value::Small(0),
+            Self::Apply(Callee::Prim(Prim::Unlike, _), _) => Value::Small(1),
+            _ => Value::Nil,
+        };
+        output.push(Value::tuple(vec![Value::Small(*next as i64), Value::text(tag), argument, Value::Flag(branches),
             Value::tuple([coordinates.0, coordinates.2, coordinates.1, coordinates.3].into_iter().map(|number| if number == u32::MAX { Value::Nil } else { Value::Small(number as i64) }).collect())]));
         match self {
             Self::Located(_, _, inner) | Self::OnLine(_, _, inner) => {
