@@ -1407,6 +1407,12 @@ impl<'a> Compiler<'a> {
         self.piece().instrs.len()
     }
 
+    /// Code lifted out from `from` put back here, its marks moved along.
+    fn replay(&mut self, code: Vec<Instr>, from: usize) {
+        let at = self.mark();
+        for w in relocated(code, at as i64 - from as i64) { self.put(w); }
+    }
+
     fn constant(&mut self, v: Value) {
         self.ast_operation_location();
         self.put(Instr::Const(v));
@@ -4543,31 +4549,7 @@ impl<'a> Compiler<'a> {
                         // it does when the row is only read; the
                         // expression reader itself steps over a
                         // lambda's parameter commas.
-                        if self.on_any(&self.lang.array_spread) {
-                            self.act(Action::MakeArray, 0);
-                            loop {
-                                let spread = self.index_part(&pair.close, comma.as_deref())?;
-                                self.act(Action::GatherItem { map: false, spread }, 2);
-                                if comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) {
-                                    self.pass_token();
-                                    if self.at_symbol(&pair.close) { break; }
-                                } else { break; }
-                            }
-                            self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
-                        } else {
-                            self.slice_part(&pair.close, comma.as_deref())?;
-                            if comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) {
-                                self.act(Action::MakeArray, 1);
-                                loop {
-                                    self.pass_token();
-                                    if self.at_symbol(&pair.close) { break; }
-                                    let spread = self.index_part(&pair.close, comma.as_deref())?;
-                                    self.act(Action::GatherItem { map: false, spread }, 2);
-                                    if !comma.as_ref().map_or(false, |mark| self.at_symbol(mark)) { break; }
-                                }
-                                self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
-                            }
-                        }
+                        self.spread_index(&pair.close, comma.as_deref())?;
                     } else {
                         self.slice_part(&pair.close, comma.as_deref())?;
                         let mut parts = 1;
@@ -4977,10 +4959,7 @@ impl<'a> Compiler<'a> {
                 match read.as_slice() {
                     [rest @ .., Instr::Act(Action::Named, 1)] => {
                         let rest = rest.to_vec();
-                        let at = self.mark();
-                        for w in relocated(rest, at as i64 - from as i64) {
-                            self.put(w);
-                        }
+                        self.replay(rest, from);
                         self.act(Action::ReadyNamed, 1);
                         self.discard();
                     }
@@ -6334,9 +6313,7 @@ impl<'a> Compiler<'a> {
         self.enter_cycle(None);
         self.body()?;
         let again = self.mark();
-        for w in relocated(test, again as i64 - from as i64) {
-            self.put(w);
-        }
+        self.replay(test, from);
         self.put(Instr::Skip(top));
         self.complete_cycle(again)?;
         Ok(())
@@ -6430,9 +6407,7 @@ impl<'a> Compiler<'a> {
                 let position = self.expression_location(source_at);
                 let source: Vec<Instr> = self.piece().instrs.drain(from..).collect();
                 if !lang.trace_fields.is_empty() { self.put(position.clone()); }
-                for w in relocated(source, -(from as i64) + self.mark() as i64) {
-                    self.put(w);
-                }
+                self.replay(source, from);
                 if !lang.trace_fields.is_empty() { self.put(position); }
                 // An asynchronous walk is asked of the thing itself, in
                 // place of the gathering an ordinary walk begins with.
@@ -8217,10 +8192,7 @@ impl<'a> Compiler<'a> {
             parts
                 .into_iter()
                 .map(|(member, code)| {
-                    let at = a.mark();
-                    for w in relocated(code, at as i64) {
-                        a.put(w);
-                    }
+                    a.replay(code, 0);
                     *argc += 1;
                     member
                 })
@@ -8233,10 +8205,7 @@ impl<'a> Compiler<'a> {
         self.act(Action::Forge(Rc::new(plan)), argc);
         let filed = self.class_key(&name);
         self.write_global(&filed);
-        let at = self.mark();
-        for w in relocated(kept, at as i64 - settings as i64) {
-            self.put(w);
-        }
+        self.replay(kept, settings);
         Ok(())
     }
 
@@ -9124,8 +9093,7 @@ impl<'a> Compiler<'a> {
             }
             if lang.syntax_members.is_empty() {
                 let code = a.member_value()?;
-                let here = a.mark();
-                for word in relocated(code, here as i64) { a.put(word); }
+                a.replay(code, 0);
             } else {
                 a.bare_named_blocked = true;
                 let outcome = a.expr_at(0, false);
@@ -10274,6 +10242,43 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// `p op= e` where the place is read with one action and written
+    /// back with another: what holds it is worked out once and kept,
+    /// the member read from there, taken with the value, and what comes
+    /// of it written into the same place.
+    fn compound_member(&mut self, rest: Vec<Instr>, read: Action, write: Action, op: Action, keep: Option<&str>) -> Res<()> {
+        let holder = self.gensym("holder");
+        self.piece().instrs.extend(rest);
+        self.write(&holder);
+        self.read(&holder);
+        self.act(read, 1);
+        self.stood_before();
+        self.addend()?;
+        self.compound_act(op);
+        self.kept(keep);
+        let value = self.gensym("value");
+        self.write(&value);
+        self.read(&holder);
+        self.read(&value);
+        self.act(write, 2);
+        self.put_away();
+        Ok(())
+    }
+
+    /// A read of a place turned into a write of it: what was read
+    /// stays where it is (put back from `from`, or as it stands), the
+    /// value follows, and the writing action takes them all.
+    fn write_through(&mut self, rest: Vec<Instr>, from: Option<usize>, write: Action, argc: usize, keep: Option<&str>) -> Res<()> {
+        match from {
+            Some(from) => self.replay(rest, from),
+            None => self.piece().instrs.extend(rest),
+        }
+        self.value_written(keep)?;
+        self.act(write, argc);
+        self.put_away();
+        Ok(())
+    }
+
     /// The store itself, the sign that asked for it already read.
     fn store_into(&mut self, from: usize, keep: Option<&str>, compound: Option<Action>, assign: &str) -> Res<()> {
         let name_origin = self.pos.saturating_sub(2);
@@ -10324,8 +10329,7 @@ impl<'a> Compiler<'a> {
             && matches!(target.last(), Some(Instr::Act(Action::At, 2))) {
             let value = self.gensym("target_value");
             if compound.is_none() { self.value_written(keep)?; self.write(&value); }
-            let at = self.mark();
-            for instruction in relocated(target[..target.len() - 1].to_vec(), at as i64 - from as i64) { self.put(instruction); }
+            self.replay(target[..target.len() - 1].to_vec(), from);
             let key = self.gensym("target_key"); self.write(&key);
             let object = self.gensym("target_object"); self.write(&object);
             if let Some(operation) = compound {
@@ -10376,8 +10380,7 @@ impl<'a> Compiler<'a> {
                     && footing.as_ref().map_or(false, |base| base.iter().any(|i| matches!(i, Instr::Act(Action::Invoke(_) | Action::Send(_), _)))) => {
                 let owner = self.gensym("item_owner");
                 let key = self.gensym("item_key");
-                let offset = self.mark() as i64 - from as i64;
-                for word in relocated(prefix.to_vec(), offset) { self.put(word); }
+                self.replay(prefix.to_vec(), from);
                 self.write(&key);
                 self.write(&owner);
                 self.read(&key);
@@ -10441,10 +10444,7 @@ impl<'a> Compiler<'a> {
                 let base = footing.clone().expect("what the chain stands on");
                 let held: Vec<String> = (0..keys.len()).map(|_| self.gensym("key")).collect();
                 for (i, key) in keys.iter().enumerate() {
-                    let at = self.mark();
-                    for w in relocated(key.clone(), at as i64 - key_at[i] as i64) {
-                        self.put(w);
-                    }
+                    self.replay(key.clone(), key_at[i]);
                     self.write(&held[i]);
                 }
                 let deep = match appending { true => keys.len(), false => keys.len() - 1 };
@@ -10460,11 +10460,10 @@ impl<'a> Compiler<'a> {
                     self.write(&value);
                 }
                 self.put(Instr::Hush(true));
-                let at = self.mark();
                 let shared_target = self.lang.bind_names && !self.lang.class_special.is_empty()
                     && matches!(base.last(), Some(Instr::Read(_) | Instr::Act(Action::Grab(_) | Action::At, _)));
                 if shared_target { self.footing_cell(&base, from)?; }
-                else { for w in relocated(base.clone(), at as i64 - from as i64) { self.put(w); } }
+                else { self.replay(base.clone(), from); }
                 self.put(Instr::Hush(false));
                 self.write(&inner[0]);
                 for i in 0..deep {
@@ -10514,9 +10513,7 @@ impl<'a> Compiler<'a> {
                     // What it stood on is written back into, read again
                     // as the store it is.
                     let footing_at = self.mark();
-                    for w in relocated(base, footing_at as i64 - from as i64) {
-                        self.put(w);
-                    }
+                    self.replay(base, from);
                     let was = self.waiting.replace(made.clone());
                     let stored = self.store_into(footing_at, None, None, "=");
                     self.waiting = was;
@@ -10535,10 +10532,7 @@ impl<'a> Compiler<'a> {
                 let name = slot.ident.to_string();
                 let held: Vec<String> = (0..keys.len()).map(|_| self.gensym("key")).collect();
                 for (i, key) in keys.iter().enumerate() {
-                    let at = self.mark();
-                    for w in relocated(key.clone(), at as i64 - key_at[i] as i64) {
-                        self.put(w);
-                    }
+                    self.replay(key.clone(), key_at[i]);
                     self.write(&held[i]);
                 }
                 // Down through the arrays, keeping each one, as far as
@@ -10606,73 +10600,19 @@ impl<'a> Compiler<'a> {
             // written back into the same place.
             [rest @ .., Instr::Act(Action::Grab(member), 1)] if compound.is_some() => {
                 let (member, rest) = (member.clone(), rest.to_vec());
-                let op = compound.expect("the operation");
-                let holder = self.gensym("holder");
-                for w in relocated(rest, 0) {
-                    self.put(w);
-                }
-                self.write(&holder);
-                self.read(&holder);
-                self.act(Action::Grab(member.clone()), 1);
-                self.stood_before();
-                self.addend()?;
-                self.compound_act(op);
-                self.kept(keep);
-                let value = self.gensym("value");
-                self.write(&value);
-                self.read(&holder);
-                self.read(&value);
-                self.act(Action::Plant(member), 2);
-                self.put_away();
-                Ok(())
+                self.compound_member(rest, Action::Grab(member.clone()), Action::Plant(member), compound.expect("the operation"), keep)
             }
             // The same for a class's own value.
             [rest @ .., Instr::Act(Action::Reach(member), 1)] if compound.is_some() => {
                 let (member, rest) = (member.clone(), rest.to_vec());
-                let op = compound.expect("the operation");
-                let holder = self.gensym("holder");
-                for w in relocated(rest, 0) {
-                    self.put(w);
-                }
-                self.write(&holder);
-                self.read(&holder);
-                self.act(Action::Reach(member.clone()), 1);
-                self.stood_before();
-                self.addend()?;
-                self.compound_act(op);
-                self.kept(keep);
-                let value = self.gensym("value");
-                self.write(&value);
-                self.read(&holder);
-                self.read(&value);
-                self.act(Action::Sow(member), 2);
-                self.put_away();
-                Ok(())
+                self.compound_member(rest, Action::Reach(member.clone()), Action::Sow(member), compound.expect("the operation"), keep)
             }
             // `$$x op= e`: the name is worked out once and kept, the
             // binding it spells read under that name, taken with the
             // value, and what comes of it written back under it.
             [rest @ .., Instr::Act(Action::Named, 1)] if compound.is_some() => {
                 let rest = rest.to_vec();
-                let op = compound.expect("the operation");
-                let spelling = self.gensym("spelling");
-                for w in relocated(rest, 0) {
-                    self.put(w);
-                }
-                self.write(&spelling);
-                self.read(&spelling);
-                self.act(Action::Named, 1);
-                self.stood_before();
-                self.addend()?;
-                self.compound_act(op);
-                self.kept(keep);
-                let value = self.gensym("value");
-                self.write(&value);
-                self.read(&spelling);
-                self.read(&value);
-                self.act(Action::WriteNamed, 2);
-                self.put_away();
-                Ok(())
+                self.compound_member(rest, Action::Named, Action::WriteNamed, compound.expect("the operation"), keep)
             }
             _ if compound.is_some() => Err(format!("'{}' needs a plain variable on its left", assign)),
             // `$GLOBALS['n'][] = v`: the binding the name spells is read
@@ -10682,10 +10622,7 @@ impl<'a> Compiler<'a> {
             [rest @ .., Instr::Act(Action::Named, 1), Instr::Act(Action::AtEnd, 1)] if compound.is_none() => {
                 let rest = rest.to_vec();
                 let named = self.gensym("named");
-                let at = self.mark();
-                for w in relocated(rest, at as i64 - from as i64) {
-                    self.put(w);
-                }
+                self.replay(rest, from);
                 self.write(&named);
                 self.read(&named);
                 self.value_written(keep)?;
@@ -10705,51 +10642,21 @@ impl<'a> Compiler<'a> {
             [rest @ .., Instr::Act(Action::Named, 1)]
                 if compound.is_none() && self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) =>
             {
-                for w in relocated(rest.to_vec(), 0) {
-                    self.put(w);
-                }
+                self.piece().instrs.extend_from_slice(rest);
                 self.pass_token();
                 self.a_cell(&self.lang.unshared_written.clone(), false, None)?;
                 self.act(Action::FastenNamed, 2);
                 self.put_away();
                 Ok(())
             }
-            [rest @ .., Instr::Act(Action::Named, 1)] if compound.is_none() => {
-                for w in relocated(rest.to_vec(), 0) {
-                    self.put(w);
-                }
-                self.value_written(keep)?;
-                self.act(Action::WriteNamed, 2);
-                self.put_away();
-                Ok(())
-            }
+            [rest @ .., Instr::Act(Action::Named, 1)] if compound.is_none() => self.write_through(rest.to_vec(), None, Action::WriteNamed, 2, keep),
             // The read of a class's own value named by a value turns
             // into a write of it, the class and the name staying put.
-            [rest @ .., Instr::Act(Action::ReachNamed, 2)] => {
-                let rest = rest.to_vec();
-                let at = self.mark();
-                for w in relocated(rest, at as i64 - from as i64) {
-                    self.put(w);
-                }
-                self.value_written(keep)?;
-                self.act(Action::SowNamed, 3);
-                self.put_away();
-                Ok(())
-            }
+            [rest @ .., Instr::Act(Action::ReachNamed, 2)] => self.write_through(rest.to_vec(), Some(from), Action::SowNamed, 3, keep),
             // The read of a member named by a value turns into a write
             // of it: what it belongs to and the name both stay where
             // they are, and the value follows them.
-            [rest @ .., Instr::Act(Action::GrabNamed, 2)] => {
-                let rest = rest.to_vec();
-                let at = self.mark();
-                for w in relocated(rest, at as i64 - from as i64) {
-                    self.put(w);
-                }
-                self.value_written(keep)?;
-                self.act(Action::PlantNamed, 3);
-                self.put_away();
-                Ok(())
-            }
+            [rest @ .., Instr::Act(Action::GrabNamed, 2)] => self.write_through(rest.to_vec(), Some(from), Action::PlantNamed, 3, keep),
             // The read of a member turns into a write of it.
             [rest @ .., Instr::Act(Action::Grab(member), 1)] => {
                 if !self.lang.syntax_members.is_empty() && member.as_ref() == "__debug__" {
@@ -10764,25 +10671,9 @@ impl<'a> Compiler<'a> {
                         if place.ident.as_ref() == "self" { self.gathering().attributes.insert(member.to_string()); }
                     }
                 }
-                let (member, rest) = (member.clone(), rest.to_vec());
-                for w in relocated(rest, 0) {
-                    self.put(w);
-                }
-                self.value_written(keep)?;
-                self.act(Action::Plant(member), 2);
-                self.put_away();
-                Ok(())
+                self.write_through(rest.to_vec(), None, Action::Plant(member.clone()), 2, keep)
             }
-            [rest @ .., Instr::Act(Action::Reach(member), 1)] => {
-                let (member, rest) = (member.clone(), rest.to_vec());
-                for w in relocated(rest, 0) {
-                    self.put(w);
-                }
-                self.value_written(keep)?;
-                self.act(Action::Sow(member), 2);
-                self.put_away();
-                Ok(())
-            }
+            [rest @ .., Instr::Act(Action::Reach(member), 1)] => self.write_through(rest.to_vec(), None, Action::Sow(member.clone()), 2, keep),
             // `$o->a[i] = v` and `$o->a[] = v`: the property is read, the
             // array within it rewritten, and the property written back.
             [Instr::Read(slot), Instr::Act(Action::Grab(member), 1), index @ ..]
@@ -10794,9 +10685,7 @@ impl<'a> Compiler<'a> {
                 let appending = matches!(index.last(), Some(Instr::Act(Action::AtEnd, 1)));
                 self.read(&name);
                 if !appending {
-                    for w in relocated(index[..index.len() - 1].to_vec(), self.mark() as i64 - 2) {
-                        self.put(w);
-                    }
+                    self.replay(index[..index.len() - 1].to_vec(), 2);
                 }
                 self.value_written(keep)?;
                 self.read(&name);
@@ -10825,9 +10714,7 @@ impl<'a> Compiler<'a> {
                     && self.lang.reference_mark.as_ref().map_or(false, |m| self.at_symbol(m)) =>
             {
                 let name = slot.ident.to_string();
-                for w in relocated(index.to_vec(), self.mark() as i64 - from as i64 - 1) {
-                    self.put(w);
-                }
+                self.replay(index.to_vec(), from + 1);
                 self.pass_token();
                 self.a_cell(&self.lang.unshared_written.clone(), false, None)?;
                 self.read_to_rewrite(&name);
@@ -10841,9 +10728,7 @@ impl<'a> Compiler<'a> {
             }
             [Instr::Read(slot), index @ .., Instr::Act(Action::At, 2)] if !slot.moving => {
                 let name = slot.ident.to_string();
-                for w in relocated(index.to_vec(), self.mark() as i64 - from as i64 - 1) {
-                    self.put(w);
-                }
+                self.replay(index.to_vec(), from + 1);
                 // Where a language writes into text, only the thing
                 // written into can say whether this place holds a
                 // letter, so it is read before the value is put away:
@@ -11088,10 +10973,7 @@ impl<'a> Compiler<'a> {
                 let yes: Vec<Instr> = self.piece().instrs.drain(from..).collect();
                 self.expr(1)?;
                 let no = self.skip();
-                let here = self.mark();
-                for word in relocated(yes, here as i64 - from as i64) {
-                    self.put(word);
-                }
+                self.replay(yes, from);
                 let done = self.leap();
                 self.land(no);
                 let other = lang.if_else_words.get(1).ok_or("Conditional expression needs two words")?;
@@ -11133,10 +11015,7 @@ impl<'a> Compiler<'a> {
                 self.pass_token();
                 let left: Vec<Instr> = self.piece().instrs.drain(from..).collect();
                 self.put(Instr::Hush(true));
-                let at = self.mark();
-                for w in relocated(left, at as i64 - from as i64) {
-                    self.put(w);
-                }
+                self.replay(left, from);
                 self.put(Instr::Hush(false));
                 self.write(TEMP_CELL);
                 self.read(TEMP_CELL);
@@ -12519,8 +12398,7 @@ impl<'a> Compiler<'a> {
                 [.., Instr::Act(Action::At, 2)] if targets && !self.lang.class_builder.is_empty() && self.in_class_body() => {
                     // A computed object supplied by the class book is already
                     // the deletion receiver, rather than a name to rewrite.
-                    let at = self.mark();
-                    for instruction in relocated(named[..named.len() - 1].to_vec(), at as i64 - from as i64) { self.put(instruction); }
+                    self.replay(named[..named.len() - 1].to_vec(), from);
                     self.act(Action::ForgetWithin, 2);
                     self.discard();
                 }
@@ -12532,8 +12410,7 @@ impl<'a> Compiler<'a> {
                     let holder = named[..starts[last] - from].to_vec();
                     self.keyed = starts[..last].to_vec();
                     self.footing_cell(&holder, from)?;
-                    let at = self.mark();
-                    for word in relocated(keys[last].clone(), at as i64 - starts[last] as i64) { self.put(word); }
+                    self.replay(keys[last].clone(), starts[last]);
                     self.act(Action::ForgetWithin, 2);
                     self.discard();
                 }
@@ -12545,10 +12422,7 @@ impl<'a> Compiler<'a> {
                     let last = keys.len() - 1;
                     let holder = named[..key_at[last] - from].to_vec();
                     self.footing_cell(&holder, from)?;
-                    let at = self.mark();
-                    for w in relocated(keys[last].clone(), at as i64 - key_at[last] as i64) {
-                        self.put(w);
-                    }
+                    self.replay(keys[last].clone(), key_at[last]);
                     self.act(Action::ForgetWithin, 2);
                     self.discard();
                 }
@@ -12566,10 +12440,7 @@ impl<'a> Compiler<'a> {
                 // itself, which every name for it sees at once.
                 [rest @ .., Instr::Act(Action::Grab(member), 1)] => {
                     let (member, rest) = (member.clone(), rest.to_vec());
-                    let at = self.mark();
-                    for w in relocated(rest, at as i64 - from as i64) {
-                        self.put(w);
-                    }
+                    self.replay(rest, from);
                     self.act(Action::Uproot(member), 1);
                     self.discard();
                 }
@@ -12577,10 +12448,7 @@ impl<'a> Compiler<'a> {
                 // and the binding it spells left standing for nothing.
                 [rest @ .., Instr::Act(Action::Named, 1)] => {
                     let rest = rest.to_vec();
-                    let at = self.mark();
-                    for w in relocated(rest, at as i64 - from as i64) {
-                        self.put(w);
-                    }
+                    self.replay(rest, from);
                     self.act(Action::ForgetNamed, 1);
                     self.discard();
                 }
@@ -12722,31 +12590,21 @@ impl<'a> Compiler<'a> {
             }
             [rest @ .., Instr::Act(Action::Grab(member), 1)] => {
                 let (member, rest) = (member.clone(), rest.to_vec());
-                let at = self.mark();
-                for w in relocated(rest, at as i64 - from as i64) {
-                    self.put(w);
-                }
+                self.replay(rest, from);
                 self.act(Action::BondField(member), 1);
             }
             [rest @ .., Instr::Act(Action::Reach(member), 1)] => {
                 let (member, rest) = (member.clone(), rest.to_vec());
-                let at = self.mark();
-                for w in relocated(rest, at as i64 - from as i64) {
-                    self.put(w);
-                }
+                self.replay(rest, from);
                 self.act(Action::BondOwn(member), 1);
             }
             [rest @ .., Instr::Act(Action::Named, 1)] => {
                 let rest = rest.to_vec();
-                let at = self.mark();
-                for w in relocated(rest, at as i64 - from as i64) {
-                    self.put(w);
-                }
+                self.replay(rest, from);
                 self.act(Action::BondNamed, 1);
             }
             [.., Instr::Act(Action::At, 2)] if self.lang.bind_names => {
-                let at = self.mark();
-                for word in relocated(read.to_vec(), at as i64 - from as i64) { self.put(word); }
+                self.replay(read.to_vec(), from);
             }
             [.., Instr::Act(Action::At, 2)] => {
                 let (keys, key_at) = keys_apart(read, from, &self.keyed);
@@ -12756,18 +12614,14 @@ impl<'a> Compiler<'a> {
                 let under = read[..key_at[0] - from].to_vec();
                 self.footing_cell(&under, from)?;
                 for (i, key) in keys.iter().enumerate() {
-                    let at = self.mark();
-                    for w in relocated(key.clone(), at as i64 - key_at[i] as i64) {
-                        self.put(w);
-                    }
+                    self.replay(key.clone(), key_at[i]);
                 }
                 self.put(Instr::Hush(true));
                 self.act(Action::BondWithin(keys.len()), keys.len() + 1);
                 self.put(Instr::Hush(false));
             }
             _ if !self.lang.class_special.is_empty() && matches!(read.last(), Some(Instr::Act(Action::Invoke(_) | Action::Builtin(..), _))) => {
-                let here = self.mark();
-                for word in relocated(read.to_vec(), here as i64 - from as i64) { self.put(word); }
+                self.replay(read.to_vec(), from);
             }
             _ => return Err("Only a place in a named array has a cell to share".to_string()),
         }
@@ -12795,30 +12649,21 @@ impl<'a> Compiler<'a> {
             }
             [rest @ .., Instr::Act(Action::Grab(member), 1)] => {
                 let (member, rest) = (member.clone(), rest.to_vec());
-                let at = self.mark();
-                for w in relocated(rest, at as i64 - from as i64) {
-                    self.put(w);
-                }
+                self.replay(rest, from);
                 self.act(Action::BondField(member), 1);
             }
             // A class's own value is held once for the whole class, and
             // so has a cell as a binding does.
             [rest @ .., Instr::Act(Action::Reach(member), 1)] => {
                 let (member, rest) = (member.clone(), rest.to_vec());
-                let at = self.mark();
-                for w in relocated(rest, at as i64 - from as i64) {
-                    self.put(w);
-                }
+                self.replay(rest, from);
                 self.act(Action::BondOwn(member), 1);
             }
             // A binding named as the run goes has a cell as any binding
             // does, and asking for it is asking for that one.
             [rest @ .., Instr::Act(Action::Named, 1)] => {
                 let rest = rest.to_vec();
-                let at = self.mark();
-                for w in relocated(rest, at as i64 - from as i64) {
-                    self.put(w);
-                }
+                self.replay(rest, from);
                 self.act(Action::BondNamed, 1);
             }
             // `&$o->p[k]`: the chain stands on something that is not a
@@ -12829,10 +12674,7 @@ impl<'a> Compiler<'a> {
                 let footing = read[..key_at[0] - from].to_vec();
                 self.footing_cell(&footing, from)?;
                 for (i, key) in keys.iter().enumerate() {
-                    let at = self.mark();
-                    for w in relocated(key.clone(), at as i64 - key_at[i] as i64) {
-                        self.put(w);
-                    }
+                    self.replay(key.clone(), key_at[i]);
                 }
                 self.put(Instr::Hush(true));
                 self.act(Action::BondWithin(keys.len()), keys.len() + 1);
@@ -12847,10 +12689,7 @@ impl<'a> Compiler<'a> {
                     return Err("Only a place in a named array has a cell to share".to_string());
                 }
                 for (i, key) in keys.iter().enumerate() {
-                    let at = self.mark();
-                    for w in relocated(key.clone(), at as i64 - key_at[i] as i64) {
-                        self.put(w);
-                    }
+                    self.replay(key.clone(), key_at[i]);
                 }
                 // Asking for a place's cell is a write as much as a
                 // read, so a name holding nothing yet is not complained
@@ -12866,10 +12705,7 @@ impl<'a> Compiler<'a> {
             // language asking to share one from something that has none
             // does rather than stopping.
             _ => {
-                let at = self.mark();
-                for w in relocated(read.clone(), at as i64 - from as i64) {
-                    self.put(w);
-                }
+                self.replay(read.clone(), from);
                 // A call of a routine that gives back a cell answers
                 // with one, so nothing is said of it. Where a language
                 // has words for the rest, they are said here, once the
@@ -13195,14 +13031,47 @@ impl<'a> Compiler<'a> {
         let count = portions.len();
         if expanded { self.act(Action::MakeArray, 0); }
         for (start, code, star) in portions {
-            let destination = self.mark();
-            for word in relocated(code, destination as i64 - start as i64) { self.put(word); }
+            self.replay(code, start);
             if expanded { self.act(Action::GatherItem { map: false, spread: star }, 2); }
         }
         if expanded {
             self.act(Action::Builtin(Builtin::Tuple, Rc::from("tuple")), 1);
         } else if comma {
             self.act(if lang.slice_values() { Action::MakeTuple } else { Action::SliceUnavailable }, count);
+        }
+        Ok(())
+    }
+
+    /// The key of a subscript where a row may hold a starred place: a
+    /// row with a star, or more than one place, becomes a tuple; one
+    /// place and no star stays that place. Each place is read by the
+    /// expression reader itself, so a comma within a lambda's parameter
+    /// list is no separator and a star within one is no starred place.
+    fn spread_index(&mut self, close: &str, sep: Option<&str>) -> Res<()> {
+        if self.on_any(&self.lang.array_spread) {
+            self.act(Action::MakeArray, 0);
+            loop {
+                let spread = self.index_part(close, sep)?;
+                self.act(Action::GatherItem { map: false, spread }, 2);
+                if sep.map_or(false, |s| self.at_symbol(s)) {
+                    self.pass_token();
+                    if self.at_symbol(close) { break; }
+                } else { break; }
+            }
+            self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
+        } else {
+            self.slice_part(close, sep)?;
+            if sep.map_or(false, |s| self.at_symbol(s)) {
+                self.act(Action::MakeArray, 1);
+                loop {
+                    self.pass_token();
+                    if self.at_symbol(close) { break; }
+                    let spread = self.index_part(close, sep)?;
+                    self.act(Action::GatherItem { map: false, spread }, 2);
+                    if !sep.map_or(false, |s| self.at_symbol(s)) { break; }
+                }
+                self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
+            }
         }
         Ok(())
     }
@@ -13238,20 +13107,14 @@ impl<'a> Compiler<'a> {
                     // names the class, and the arguments.
                     let both: Vec<Instr> = self.piece().instrs.drain(from..).collect();
                     let (naming_class, naming_method) = both.split_at(names_at - from);
-                    let at = self.mark();
-                    for w in relocated(naming_method.to_vec(), at as i64 - names_at as i64) {
-                        self.put(w);
-                    }
+                    self.replay(naming_method.to_vec(), names_at);
                     let held = self.gensym("called");
                     self.write(&held);
                     match (&lang.this_word, self.within.is_some()) {
                         (Some(this), true) => self.read(&this.clone()),
                         _ => self.constant(Value::Null),
                     }
-                    let at = self.mark();
-                    for w in relocated(naming_class.to_vec(), at as i64 - from as i64) {
-                        self.put(w);
-                    }
+                    self.replay(naming_class.to_vec(), from);
                     self.pass_token();
                     let argc = self.arguments_of("the method", &call)?;
                     self.read(&held);
@@ -13422,10 +13285,7 @@ impl<'a> Compiler<'a> {
                         (Some(this), true) => self.read(&this.clone()),
                         _ => self.constant(Value::Null),
                     }
-                    let at = self.mark();
-                    for w in relocated(named_class, at as i64 - from as i64) {
-                        self.put(w);
-                    }
+                    self.replay(named_class, from);
                     let argc = self.arguments_of(&named, &call)?;
                     self.act(Action::Summon(Rc::from(named.as_str())), argc + 2);
                 }
@@ -13472,31 +13332,7 @@ impl<'a> Compiler<'a> {
                 // the expression reader itself, so a comma within a
                 // lambda's parameter list is no separator and a star
                 // within one is no starred place.
-                if self.on_any(&self.lang.array_spread) {
-                    self.act(Action::MakeArray, 0);
-                    loop {
-                        let spread = self.index_part(&index.close, separator.as_deref())?;
-                        self.act(Action::GatherItem { map: false, spread }, 2);
-                        if separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
-                            self.pass_token();
-                            if self.at_symbol(&index.close) { break; }
-                        } else { break; }
-                    }
-                    self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
-                } else {
-                    self.slice_part(&index.close, separator.as_deref())?;
-                    if separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
-                        self.act(Action::MakeArray, 1);
-                        loop {
-                            self.pass_token();
-                            if self.at_symbol(&index.close) { break; }
-                            let spread = self.index_part(&index.close, separator.as_deref())?;
-                            self.act(Action::GatherItem { map: false, spread }, 2);
-                            if !separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) { break; }
-                        }
-                        self.act(Action::Builtin(Builtin::Tuple, Rc::from("")), 1);
-                    }
-                }
+                self.spread_index(&index.close, separator.as_deref())?;
             } else {
                 self.slice_part(&index.close, separator.as_deref())?;
                 if !self.lang.slice_marks.is_empty() && separator.as_ref().map_or(false, |sep| self.at_symbol(sep)) {
@@ -14611,9 +14447,7 @@ impl<'a> Compiler<'a> {
             self.enter_cycle(None);
             self.rpn_block()?;
             let again = self.mark();
-            for w in relocated(test, again as i64 - from as i64) {
-                self.put(w);
-            }
+            self.replay(test, from);
             self.put(Instr::Skip(top));
             self.complete_cycle(again)?;
             return Ok(());
