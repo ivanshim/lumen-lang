@@ -20,6 +20,10 @@ _ranges = [
 ]
 
 
+_spans = {}
+for _start, _end, _prefix, _shown in _ranges:
+    _spans.setdefault(_prefix, []).append((_start, _end))
+
 _forward = None
 _reverse = None
 
@@ -39,6 +43,18 @@ def _load():
             label = row[at + 1:]
             forward[number] = label
             reverse[label] = chr(number)
+    # Hangul and the BMP ideograph blocks are filled in whole, so the
+    # per-character calls of a full sweep are plain table hits.
+    syllables = ['HANGUL SYLLABLE ' + lead + vowel + tail for lead in _leads for vowel in _vowels for tail in _tails]
+    for offset in range(len(syllables) - 1, -1, -1):
+        forward[0xac00 + offset] = syllables[offset]
+        reverse[syllables[offset]] = chr(0xac00 + offset)
+    for start, end, prefix, shown in _ranges:
+        if shown and end < 0x10000:
+            for number in range(start, end + 1):
+                label = prefix + '-%04X' % number
+                forward[number] = label
+                reverse[label] = chr(number)
     _forward = forward
     _reverse = reverse
 
@@ -54,40 +70,14 @@ def _table_name(number):
     global _forward
     if _forward is None:
         _load()
-    if 0xac00 <= number <= 0xd7a3:
-        offset = number - 0xac00
-        return 'HANGUL SYLLABLE ' + _leads[offset // 588] \
-            + _vowels[offset % 588 // 28] + _tails[offset % 28]
-    try:
-        found = _forward[number]
-    except KeyError:
-        found = None
+    found = _forward.get(number)
     if found is not None:
         return found
+    if number < 0x3400:
+        return None
     for start, end, prefix, shown in _ranges:
         if shown and start <= number <= end:
             return '%s-%04X' % (prefix, number)
-    return None
-
-
-def _hangul(spelling):
-    head = 'HANGUL SYLLABLE '
-    if not spelling.startswith(head):
-        return None
-    body = spelling[len(head):]
-    for li in range(len(_leads)):
-        if not body.startswith(_leads[li]):
-            continue
-        rest = body[len(_leads[li]):]
-        for vi in range(len(_vowels)):
-            if not rest.startswith(_vowels[vi]):
-                continue
-            tail = rest[len(_vowels[vi]):]
-            for ti in range(len(_tails)):
-                if tail == _tails[ti]:
-                    number = 0xac00 + (li * 21 + vi) * 28 + ti
-                    if name(number) == spelling:
-                        return chr(number)
     return None
 
 
@@ -96,32 +86,23 @@ def lookup(spelling):
     if _reverse is None:
         _load()
     spelling = spelling.upper()
-    for start, end, prefix, shown in _ranges:
-        head = prefix + '-'
-        if spelling.startswith(head):
-            tail = spelling[len(head):]
-            try:
-                number = int(tail, 16)
-            except ValueError:
-                continue
-            if '%04X' % number != tail:
-                continue
-            if start <= number <= end:
-                return chr(number)
-            continue
-    found = _hangul(spelling)
+    found = _reverse.get(spelling)
     if found is not None:
         return found
-    try:
-        found = _reverse[spelling]
-    except KeyError:
-        found = None
+    head, dash, tail = spelling.rpartition('-')
+    if dash and head in _spans:
+        try:
+            number = int(tail, 16)
+        except ValueError:
+            number = -1
+        if number >= 0 and '%04X' % number == tail:
+            for start, end in _spans[head]:
+                if start <= number <= end:
+                    return chr(number)
+    found = _aliases.get(spelling)
     if found is not None:
         return found
-    try:
-        return _aliases[spelling]
-    except KeyError:
-        raise KeyError('undefined character name ' + spelling)
+    raise KeyError('undefined character name ' + spelling)
 
 
 def sequence(spelling):
