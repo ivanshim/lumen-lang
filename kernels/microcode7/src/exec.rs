@@ -1,7 +1,7 @@
 include!("../../../src/python_encodings.rs");
 
 thread_local! {
-    static PY_ATTRIBUTE_NAMES: std::cell::RefCell<std::collections::HashMap<String, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    static PY_ATTRIBUTE_NAMES: std::cell::RefCell<std::collections::HashMap<String, Value, crate::table::FxBuildHasher>> = std::cell::RefCell::new(std::collections::HashMap::default());
     static PY_ATTRIBUTE_TEXT: std::cell::RefCell<std::collections::HashMap<Vec<u32>, Value>> = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 thread_local! {
