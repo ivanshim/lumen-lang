@@ -156,12 +156,8 @@ const G_STIRRED: u8 = 1;
 const G_POLL: u8 = 2;
 const G_ANCHOR: u8 = 4;
 
-fn ghost_raise(mask: u8) {
-    let _ = GHOST_STATE.try_with(|s| s.set(s.get() | mask));
-}
-fn ghost_drop(mask: u8) {
-    let _ = GHOST_STATE.try_with(|s| s.set(s.get() & !mask));
-}
+fn ghost_raise(mask: u8) { ghost_set(mask, true); }
+fn ghost_drop(mask: u8) { ghost_set(mask, false); }
 fn ghost_set(mask: u8, on: bool) {
     let _ = GHOST_STATE.try_with(|s| s.set(if on { s.get() | mask } else { s.get() & !mask }));
 }
@@ -413,7 +409,6 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
     let ready = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         let (ready, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|item| Rc::strong_count(item) == 1);
-        ghost_set(G_ANCHOR, !kept.is_empty());
         *all = kept;
         ghost_set(G_ANCHOR, !all.is_empty());
         ready
@@ -618,61 +613,57 @@ pub fn note_container(storage: &Rc<RefCell<Value>>) {
 
 /// One place in the web: a value, or a frame, which is no value but
 /// holds values and is held by bound routines.
+#[derive(Clone)]
 pub enum Knot {
     Held(Value),
     Frame(Rc<Env>),
 }
 
+macro_rules! knot_rc {
+    ($v:expr, |$p:ident| $e:expr) => {
+        match $v {
+            Value::Dim($p) => Some($e),
+            Value::Thing($p) | Value::Attributes($p) => Some($e),
+            Value::Blueprint($p) => Some($e),
+            Value::Generator($p) => Some($e),
+            Value::Set($p) | Value::SetCursor { source: $p, .. } => Some($e),
+            Value::Iterator($p) => Some($e),
+            Value::Backtrace($p) => Some($e),
+            Value::Shared($p) | Value::Mutable($p, _) => Some($e),
+            Value::Vector($p) | Value::Tuple($p) | Value::Row($p) | Value::Arguments($p) | Value::Span($p) | Value::Wrapped(_, $p) => Some($e),
+            Value::Dict($p) => Some($e),
+            Value::Couple($p) => Some($e),
+            Value::Member($p, _) | Value::Window($p, _) => Some($e),
+            Value::Cursor($p) => Some($e),
+            Value::Adorned($p) => Some($e),
+            Value::Routine($p) => Some($e),
+            Value::Traversal($p, _) => Some($e),
+            _ => None,
+        }
+    };
+}
+
 impl Knot {
     /// Where the knot's pointer stands, for the kinds that live behind one.
     fn place(&self) -> Option<usize> {
-        Some(match self {
-            Knot::Frame(env) => Rc::as_ptr(env) as *const () as usize,
-            Knot::Held(value) => match value {
-                Value::Dim(d) => Rc::as_ptr(d) as *const () as usize,
-                Value::Thing(t) | Value::Attributes(t) => Rc::as_ptr(t) as *const () as usize,
-                Value::Blueprint(b) => Rc::as_ptr(b) as *const () as usize,
-                Value::Generator(g) => Rc::as_ptr(g) as *const () as usize,
-                Value::Set(s) | Value::SetCursor { source: s, .. } => Rc::as_ptr(s) as *const () as usize,
-                Value::Iterator(i) => Rc::as_ptr(i) as *const () as usize,
-                Value::Backtrace(t) => Rc::as_ptr(t) as *const () as usize,
-                Value::Shared(c) | Value::Mutable(c, _) => Rc::as_ptr(c) as *const () as usize,
-                Value::Vector(v) | Value::Tuple(v) | Value::Row(v) | Value::Arguments(v) | Value::Span(v) | Value::Wrapped(_, v) => Rc::as_ptr(v) as *const () as usize,
-                Value::Dict(d) => Rc::as_ptr(d) as *const () as usize,
-                Value::Couple(c) => Rc::as_ptr(c) as *const () as usize,
-                Value::Member(v, _) | Value::Window(v, _) => Rc::as_ptr(v) as *const () as usize,
-                Value::Cursor(c) => Rc::as_ptr(c) as *const () as usize,
-                Value::Adorned(a) => Rc::as_ptr(a) as *const () as usize,
-                Value::Routine(p) => Rc::as_ptr(p) as *const () as usize,
-                Value::Traversal(v, _) => Rc::as_ptr(v) as *const () as usize,
-                _ => return None,
-            },
-        })
+        match self {
+            Knot::Frame(env) => Some(Rc::as_ptr(env) as *const () as usize),
+            Knot::Held(value) => knot_rc!(value, |p| Rc::as_ptr(p) as *const () as usize),
+        }
     }
 
     /// How many strong holds there are on the knot's pointer.
     fn holds(&self) -> usize {
         match self {
             Knot::Frame(env) => Rc::strong_count(env),
-            Knot::Held(value) => match value {
-                Value::Dim(d) => Rc::strong_count(d).saturating_sub(usize::from(d.notify.borrow().is_some())),
-                Value::Thing(t) | Value::Attributes(t) => Rc::strong_count(t),
-                Value::Blueprint(b) => Rc::strong_count(b),
-                Value::Generator(g) => Rc::strong_count(g),
-                Value::Set(s) | Value::SetCursor { source: s, .. } => Rc::strong_count(s),
-                Value::Iterator(i) => Rc::strong_count(i),
-                Value::Backtrace(t) => Rc::strong_count(t),
-                Value::Shared(c) | Value::Mutable(c, _) => Rc::strong_count(c),
-                Value::Vector(v) | Value::Tuple(v) | Value::Row(v) | Value::Arguments(v) | Value::Span(v) | Value::Wrapped(_, v) => Rc::strong_count(v),
-                Value::Dict(d) => Rc::strong_count(d),
-                Value::Couple(c) => Rc::strong_count(c),
-                Value::Member(v, _) | Value::Window(v, _) => Rc::strong_count(v),
-                Value::Cursor(c) => Rc::strong_count(c),
-                Value::Adorned(a) => Rc::strong_count(a),
-                Value::Routine(p) => Rc::strong_count(p),
-                Value::Traversal(v, _) => Rc::strong_count(v),
-                _ => 0,
-            },
+            Knot::Held(value) => {
+                let count = knot_rc!(value, |p| Rc::strong_count(p)).unwrap_or(0);
+                if let Value::Dim(d) = value {
+                    count.saturating_sub(usize::from(d.notify.borrow().is_some()))
+                } else {
+                    count
+                }
+            }
         }
     }
 
@@ -871,10 +862,7 @@ impl Web {
     pub fn from_notable(extra: Vec<Knot>, live: Vec<Knot>, enumerate: bool) -> Web {
         let mut bookkeeping = HashMap::default();
         for knot in &extra {
-            let parts = match knot {
-                Knot::Held(value) => Knot::Held(value.clone()).parts(),
-                Knot::Frame(room) => Knot::Frame(room.clone()).parts(),
-            };
+            let parts = knot.clone().parts();
             for part in parts {
                 if let Some(place) = part.place() { *bookkeeping.entry(place).or_insert(0) += 1; }
             }
@@ -1005,10 +993,7 @@ impl Web {
         let mut lost = Vec::new();
         for strand in self.strands.iter() {
             if strand.reached { continue; }
-            lost.push(match &strand.knot {
-                Knot::Held(v) => Knot::Held(v.clone()),
-                Knot::Frame(e) => Knot::Frame(e.clone()),
-            });
+            lost.push(strand.knot.clone());
         }
         lost
     }
