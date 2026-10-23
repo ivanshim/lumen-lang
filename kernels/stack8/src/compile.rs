@@ -14696,10 +14696,10 @@ fn same_cell(a: &Cell, b: &Cell) -> bool {
 
 fn operand_of(w: &Instr) -> Option<Operand> {
     match w {
-        Instr::Read(s) if !s.moving => Some(Operand::Cell(s.clone())),
+        Instr::Read(s) if !s.moving => Some(Operand::Cell(Box::new(s.clone()))),
         // Loading a routine binds its captures and creation namespace.
         Instr::Const(Value::Routine(_)) => None,
-        Instr::Const(v) => Some(Operand::Const(v.clone())),
+        Instr::Const(v) => Some(Operand::Const(Box::new(v.clone()))),
         _ => None,
     }
 }
@@ -14811,10 +14811,10 @@ fn peephole(mut instrs: Vec<Instr>) -> Vec<Instr> {
         if clear(4) {
             group = match (&instrs[i], &instrs[i + 1], &instrs[i + 2], &instrs[i + 3]) {
                 (Instr::Read(a), b, Instr::Act(op, 2), Instr::Skip(to)) if !a.moving && comparison(op) => {
-                    operand_of(b).map(|b| Instr::SkipCmp { op: op.clone(), a: Operand::Cell(a.clone()), b, to: *to })
+                    operand_of(b).map(|b| Instr::SkipCmp { op: op.clone(), a: Operand::Cell(Box::new(a.clone())), b, to: *to })
                 }
                 (Instr::Read(a), Instr::Const(k @ Value::Small(_)), Instr::Act(Action::Add, 2), Instr::Write(s)) if same_cell(a, s) => {
-                    Some(Instr::Bump { slot: s.clone(), by: k.clone() })
+                    Some(Instr::Bump { slot: s.clone(), by: Box::new(k.clone()) })
                 }
                 _ => None,
             };
@@ -14870,6 +14870,9 @@ fn peephole(mut instrs: Vec<Instr>) -> Vec<Instr> {
             _ => {}
         }
     }
+    // The fused words are fewer than the ones they came from; the room
+    // kept for the rest would otherwise sit in every body for good.
+    out.shrink_to_fit();
     out
 }
 
