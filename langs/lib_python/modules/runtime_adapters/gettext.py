@@ -41,7 +41,18 @@ def _install_catalog_discovery():
         join = os.path.join
         exists = os.path.exists
         stat = os.stat
-        if not _all(hasattr(fn, '__code__') for fn in (expand, normalizer, get, getitem, encode, decode, join, exists, stat, posix._path)):
+        # posix presents its public callables as wrappers with no code object.
+        # Discovery has to read the routine under the wrapper, and still watch
+        # the public name so a later replacement takes the slow path.
+        def _routine(fn):
+            if type(fn).__name__ == '_BuiltinFunction':
+                inner = getattr(fn, '__func__', None)
+                if hasattr(inner, '__code__'):
+                    return inner
+            return fn
+        stat_body = _routine(stat)
+        fspath_body = _routine(posix.fspath)
+        if not _all(hasattr(fn, '__code__') for fn in (expand, normalizer, get, getitem, encode, decode, join, exists, stat_body, fspath_body, posix._path)):
             globals()['find'] = original
             installed[0] = original
             return result
@@ -66,8 +77,8 @@ def _install_catalog_discovery():
                  and type(locale) is type(posix)
                  and _all(type(key) is str and type(value) is str for key, value in aliases.items())
                  and _all(type(key) is str and type(value) is str for key, value in encodings.items())
-                 and stat.__module__ == 'posix' and stat.__code__.co_name == 'stat'
-                 and stat.__code__.co_filename.endswith('posix.py')
+                 and stat_body.__module__ == 'posix' and stat_body.__code__.co_name == 'stat'
+                 and stat_body.__code__.co_filename.endswith('posix.py')
                  and join.__module__ == 'posixpath' and join.__code__.co_name == 'join'
                  and join.__code__.co_filename.endswith('posixpath.py')
                  and exists.__module__ == 'genericpath' and exists.__code__.co_name == 'exists'
@@ -98,8 +109,8 @@ def _install_catalog_discovery():
                   (builtins, 'range', range_function), (builtins, 'KeyError', key_error),
                   (builtins, '__import__', importer), (builtins, 'isinstance', instance_check),
                   (builtins, 'str', str), (builtins, 'bytes', byte_type))
-        functions = (expand, normalizer, join, exists, stat, get, getitem, encode, decode,
-                     posix._path, posix.fspath)
+        functions = (expand, normalizer, join, exists, stat_body, get, getitem, encode, decode,
+                     posix._path, fspath_body)
         owners = (os, os.path, locale, posix, environment)
         getters = tuple(type(owner).__getattribute__ for owner in owners)
         guards += tuple((type(owner), '__getattribute__', getter) for owner, getter in zip(owners, getters))

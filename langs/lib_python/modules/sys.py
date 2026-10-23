@@ -360,15 +360,147 @@ class _Error(_StandardStream):
         return os.isatty(self.fileno())
 
 class _Input(_BinaryInput):
+    # The text side of stdin is a universal-newline stream, as a
+    # terminal's is: on input \r\n and \r become \n, and the endings it
+    # has met are reported.  A \r at the end of what has arrived is held
+    # until the next read says whether a \n follows, so a \r\n split
+    # across reads still counts once and comes back as a single \n.
+    # Only the text side decodes this way; self.buffer still returns the
+    # bytes untouched.  reconfigure(newline=...) mirrors the reference:
+    # None and '' detect the endings, '' and a fixed ending (\n, \r or
+    # \r\n) leave the text untranslated, and a fixed ending is the only
+    # break lines are cut at.
+    _NEWLINES = (None, '\n', '\r', ('\r', '\n'), '\r\n',
+                 ('\n', '\r\n'), ('\r', '\r\n'),
+                 ('\r', '\n', '\r\n'))
+    _CHUNK = 8192
+
     def __init__(self):
         self.buffer = _BinaryInput()
-    def read(self, size=-1):
+        self._newline = None
+        self._seen = 0
+        self._held = ''
+        self._ready = ''
+        self._drained = False
+        self._read_started = False
+
+    @property
+    def newlines(self):
+        return self._NEWLINES[self._seen]
+
+    def reconfigure(self, *, encoding=None, errors=None, newline=Ellipsis,
+                    line_buffering=None, write_through=None):
+        # The host stream's encoding is fixed; only the newline mode can
+        # be chosen, and only up to the first read.  The reference refuses
+        # an encoding, errors or newline change once it has read, and the
+        # characters it has already decoded must survive the refusal.
         self._ensure_open()
-        return _host_stream_read(size, False)
+        if self._read_started and (encoding is not None
+                                   or errors is not None
+                                   or newline is not Ellipsis):
+            import io as _io
+            raise _io.UnsupportedOperation(
+                "It is not possible to set the encoding or newline of stream "
+                "after the first read")
+        if newline is not Ellipsis:
+            if newline not in (None, '', '\n', '\r', '\r\n'):
+                raise ValueError('illegal newline value: ' + repr(newline))
+            self._newline = newline
+            self._seen = 0
+            self._held = ''
+            self._ready = ''
+
+    def _decoded(self, raw, final):
+        newline = self._newline
+        if newline not in (None, ''):
+            return raw
+        text = self._held + raw
+        self._held = ''
+        if not final and text.endswith('\r'):
+            text = text[:-1]
+            self._held = '\r'
+        crlf = text.count('\r\n')
+        cr = text.count('\r') - crlf
+        lf = text.count('\n') - crlf
+        self._seen |= (1 if lf else 0) | (2 if cr else 0) | (4 if crlf else 0)
+        if newline is None:
+            return text.replace('\r\n', '\n').replace('\r', '\n')
+        return text
+
+    def _pull(self, count=-1, line=False):
+        # A one-character line pull resolves CR without waiting for a later LF.
+        if line or count <= 0:
+            count = 1
+        raw = _host_stream_read(count, False)
+        if raw == '':
+            self._drained = True
+            self._ready += self._decoded('', True)
+        else:
+            self._ready += self._decoded(raw, False)
+
+    def _line_stop(self):
+        ready = self._ready
+        newline = self._newline
+        if newline is None:
+            at = ready.find('\n')
+            return len(ready) if at < 0 else at + 1
+        if newline == '':
+            best = -1
+            width = 0
+            for ending in ('\r\n', '\r', '\n'):
+                at = ready.find(ending)
+                if at >= 0 and (best < 0 or at < best):
+                    best = at
+                    width = len(ending)
+            return len(ready) if best < 0 else best + width
+        at = ready.find(newline)
+        return len(ready) if at < 0 else at + len(newline)
+
+    def _line_ready(self):
+        newline = self._newline
+        if newline is None:
+            return '\n' in self._ready
+        if newline == '':
+            return '\r' in self._ready or '\n' in self._ready
+        return newline in self._ready
+
+    def read(self, size=-1):
+        import _io
+        size = _io._size(size)
+        self._ensure_open()
+        if size == 0:
+            return ''
+        self._read_started = True
+        if size is None or size < 0:
+            while not self._drained:
+                self._pull(self._CHUNK)
+            text, self._ready = self._ready, ''
+            return text
+        while len(self._ready) < size and not self._drained:
+            self._pull(size - len(self._ready))
+        text = self._ready[:size]
+        self._ready = self._ready[size:]
+        return text
 
     def readline(self, size=-1):
+        import _io
+        size = _io._ssize(size)
         self._ensure_open()
-        return _host_stream_read(size, True)
+        self._read_started = True
+        while not self._drained:
+            if self._line_ready():
+                break
+            if size is not None and size >= 0 and len(self._ready) >= size:
+                break
+            self._pull(line=True)
+        if not self._ready:
+            return ''
+        stop = self._line_stop()
+        if size is not None and size >= 0 and size < stop:
+            stop = size
+        line = self._ready[:stop]
+        self._ready = self._ready[stop:]
+        return line
 
     def isatty(self):
         import os

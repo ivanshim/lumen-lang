@@ -7738,8 +7738,7 @@ impl<'a> Builder<'a> {
             while self.look().shape == Shape::ByteQuote {
                 octets.extend(self.advance().lexeme.chars().map(|c| c as u8));
             }
-            return Ok(CaseTest::Equal(Value::Octets { cell: Rc::new(std::cell::RefCell::new(octets)), changeable: false,
-                lead: Rc::from(table.strings("ext.system.bytes.repr")[0].as_str()) }));
+            return Ok(CaseTest::Equal(Value::quoted_octets(octets, Rc::from(table.strings("ext.system.bytes.repr")[0].as_str()))));
         }
         if matches!(self.look().shape, Shape::Quote | Shape::CharacterRow) {
             let mut numbers = Vec::new();
@@ -10741,14 +10740,7 @@ impl<'a> Builder<'a> {
             if table.flag("ext.op.compare.chained") {
                 if let Some((operation, level, words)) = self.comparison_head()? {
                     if floor > level { break; }
-                    let saved = self.gensym("middle");
-                    let keep = Form::Write(saved.clone(), Box::new(left));
-                    let links = self.comparison_tail(saved.clone(), operation, level, words)?;
-                    // The middle is forgotten once the links are judged,
-                    // so that a value's last holder is never a cell no
-                    // name reaches.
-                    let judged = self.gensym("judged");
-                    left = sequence(vec![keep, Form::Write(judged.clone(), Box::new(links)), Form::Forget(saved), Form::Read(judged)]);
+                    left = self.comparison_tail(left, operation, level, words)?;
                     continue;
                 }
             }
@@ -10940,24 +10932,23 @@ impl<'a> Builder<'a> {
 
     /// The next link runs beneath the true arm of this one. Its near
     /// side is the cell this link filled, so no middle is read twice.
-    fn comparison_tail(&mut self, near: Address, operation: Prim, level: u32, words: usize) -> Res<Form> {
+    fn comparison_tail(&mut self, left: Form, operation: Prim, level: u32, words: usize) -> Res<Form> {
         for _ in 0..words { self.move_past(); }
         let mut side = self.expr(level + 1)?;
         if self.table.has_any("ext.builtin.compile.modes") && matches!(operation, Prim::Contains | Prim::Absent) {
             if let Some(set) = frozen_display(&side, self.table) { side = constant(set); }
         }
-        let far = self.gensym("next");
-        let put = Form::Write(far.clone(), Box::new(side));
-        let test = prim_call(operation, vec![Form::Read(near), Form::Read(far.clone())]);
-        let answer = match self.comparison_head()? {
-            Some((following, tier, width)) if tier == level => {
-                let rest = self.comparison_tail(far.clone(), following, tier, width)?;
-                self.choose(test, rest, constant(Value::Flag(false)))
-            }
-            _ => test,
+        let Some((following, tier, width)) = self.comparison_head()?.filter(|(_, tier, _)| *tier == level) else {
+            return Ok(prim_call(operation, vec![left, side]));
         };
+        let near = self.gensym("middle");
+        let far = self.gensym("next");
+        let test = prim_call(operation, vec![Form::Read(near.clone()), Form::Read(far.clone())]);
+        let rest = self.comparison_tail(Form::Read(far.clone()), following, tier, width)?;
+        let answer = self.choose(test, rest, constant(Value::Flag(false)));
         let judged = self.gensym("judged");
-        Ok(sequence(vec![put, Form::Write(judged.clone(), Box::new(answer)), Form::Forget(far), Form::Read(judged)]))
+        Ok(sequence(vec![Form::Write(near.clone(), Box::new(left)), Form::Write(far.clone(), Box::new(side)),
+            Form::Write(judged.clone(), Box::new(answer)), Form::Forget(near), Form::Forget(far), Form::Read(judged)]))
     }
 
     /// `++p` and `p--` over any place a write reaches: the place is
@@ -11009,8 +11000,7 @@ impl<'a> Builder<'a> {
     fn quotation(&mut self) -> Res<Form> {
         let start = self.advance();
         if start.shape == Shape::ByteQuote {
-            return Ok(constant(Value::Octets { cell: Rc::new(std::cell::RefCell::new(start.lexeme.chars().map(|c| c as u8).collect())), changeable: false,
-                lead: Rc::from(self.grammar.strings_ext_system_bytes_repr[0].as_str()) }));
+            return Ok(constant(Value::quoted_octets(start.lexeme.chars().map(|c| c as u8).collect(), Rc::from(self.grammar.strings_ext_system_bytes_repr[0].as_str()))));
         }
         if start.shape == Shape::CharacterRow {
             let numbers = start.lexeme.split_whitespace().map(|word| word.parse().unwrap()).collect();
@@ -11253,13 +11243,26 @@ impl<'a> Builder<'a> {
         if matches!(t.shape, Shape::Sign | Shape::Bare) {
             if let Some(op) = table.monadic.get(t.spelling()).copied() {
                 self.move_past();
-                let operand = self.expr(op.level)?;
+                let mut operand = self.expr(op.level)?;
                 let mut bare = &operand;
                 while let Form::Located(_, _, inner) | Form::OnLine(_, _, inner) = bare { bare = inner; }
                 if table.has_any("ext.builtin.compile.modes") {
                     if let Form::Const(number) = bare {
                         if let Some(value) = signed_literal(table, op.prim, number) { return Ok(constant(value)); }
                     }
+                }
+                if op.prim == Prim::Invert && table.has_any("ext.builtin.compile.modes") {
+                    fn flip_identity(node: &mut Form) -> bool {
+                        match node {
+                            Form::Located(_, _, child) | Form::OnLine(_, _, child) => flip_identity(child),
+                            Form::Apply(Callee::Prim(kind @ (Prim::Selfsame | Prim::Unlike), _), values) if values.len() == 2 => {
+                                *kind = if *kind == Prim::Selfsame { Prim::Unlike } else { Prim::Selfsame };
+                                true
+                            }
+                            _ => false,
+                        }
+                    }
+                    if flip_identity(&mut operand) { return Ok(operand); }
                 }
                 return Ok(prim_call(op.prim, vec![operand]));
             }

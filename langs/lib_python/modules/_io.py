@@ -60,6 +60,10 @@ def _ssize(value):
 def _whence(value):
     if type(value) is int and -2147483648 <= value <= 2147483647:
         return value
+    if value is False:
+        return 0
+    if value is True:
+        return 1
     value = _index(value)
     if value < -2147483648 or value > 2147483647:
         raise OverflowError('Python int too large to convert to C int')
@@ -629,6 +633,11 @@ def _text_option(value, name):
 
 _TEXT = {}
 _TEXT_HELPERS = []
+_TEXT_DEFAULT_CONFIG = {
+    '_encoder': None, '_decoder': None, '_b2cratio': 0.0,
+    '_readuniversal': True, '_readtranslate': True, '_readnl': None,
+    '_writetranslate': True, '_line_buffering': False, '_write_through': False,
+}
 
 def _install_text_helpers():
     # The reference's text methods call a dozen helpers on the stream
@@ -636,6 +645,7 @@ def _install_text_helpers():
     # packers). Left to __getattr__ each call cost three; standing in the
     # class they are found as any method is.
     _pyio = _text_runtime()
+    _TEXT_DEFAULT_CONFIG['_writenl'] = _pyio.os.linesep
     _TEXT_HELPERS.append(True)
     own = vars(TextIOWrapper)
     for name, value in list(vars(_pyio.TextIOWrapper).items()):
@@ -680,6 +690,7 @@ class TextIOWrapper(_TextIOBase):
     def _CHUNK_SIZE(self):
         raise AttributeError('cannot be deleted')
     def __init__(self, buffer, encoding=None, errors=None, newline=None, line_buffering=False, write_through=False):
+        self._seek_cache = None
         # Queued bytes belong to the current backing stream. Drain them
         # before initialization can replace that stream or its codec state.
         if self._pending:
@@ -736,6 +747,7 @@ class TextIOWrapper(_TextIOBase):
         finally:
             self._repr_running = False
     def reconfigure(self, *, encoding=None, errors=None, newline=Ellipsis, line_buffering=None, write_through=None):
+        self._seek_cache = None
         encoding = _text_option(encoding, 'encoding')
         errors = _text_option(errors, 'errors')
         if encoding is not None and encoding != 'locale':
@@ -746,12 +758,31 @@ class TextIOWrapper(_TextIOBase):
         if write_through is not None:
             write_through = bool(_whence(write_through))
         return _method(self, 'TextIOWrapper', 'reconfigure')(encoding=encoding, errors=errors, newline=newline, line_buffering=line_buffering, write_through=write_through)
+    def _configure(self, encoding=None, errors=None, newline=None,
+                   line_buffering=False, write_through=False):
+        # New builtin streams can install immutable default fields together.
+        # Reconfiguration and subclasses retain assignment and override hooks.
+        if (type(self) is TextIOWrapper and '_encoding' not in self.__dict__
+                and newline is None and not line_buffering and not write_through):
+            self._encoding = encoding
+            self._errors = errors
+            self.__dict__.update(_TEXT_DEFAULT_CONFIG)
+            if self._seekable and self.writable():
+                if self.buffer.tell() != 0:
+                    try:
+                        self._get_encoder().setstate(0)
+                    except LookupError:
+                        pass
+            return
+        function = _TEXT.get('_configure') or _text_function('_configure')
+        return function(self, encoding, errors, newline, line_buffering, write_through)
     def _get_encoder(self):
         codecs = _text_runtime().codecs
         factory = codecs.getincrementalencoder(self._encoding.split('\0', 1)[0])
         self._encoder = factory(self._errors.split('\0', 1)[0])
         return self._encoder
     def _get_decoder(self):
+        self._seek_cache = None
         codecs = _text_runtime().codecs
         create = codecs.getincrementaldecoder(self._encoding.split('\0', 1)[0])
         decoded = create(self._errors.split('\0', 1)[0])
@@ -825,6 +856,44 @@ class TextIOWrapper(_TextIOBase):
             raise UnsupportedOperation('not readable')
         if self._pending:
             self._writeflush()
+        buffer = self._buffer
+        native_read = False
+        if (self._initialized and type(buffer) is BufferedReader
+                and buffer._live is not None and type(buffer.raw) is FileIO):
+            if buffer.raw._closed:
+                raise ValueError('I/O operation on closed file.')
+            native_read = self._read_ok
+        # Consume an already decoded span without entering the chunk reader.
+        if type(size) is int and size >= 0 and self._decoder is not None:
+            used = self._decoded_chars_used
+            end = used + size
+            text = self._decoded_chars
+            if end <= len(text):
+                if not native_read:
+                    self._checkReadable()
+                self._decoded_chars_used = end
+                return text[used:end]
+        # Common sizes can enter the read loop without another call boundary
+        # or Python-level __index__ lookup. Other objects retain conversion hooks.
+        if size is None or type(size) is int:
+            if not native_read:
+                self._checkReadable()
+            decoder = self._decoder or self._get_decoder()
+            if size is None or size < 0:
+                data = self.buffer.read()
+                if data is None:
+                    raise BlockingIOError("Read returned None.")
+                result = self._get_decoded_chars() + decoder.decode(data, final=True)
+                if self._snapshot is not None:
+                    self._set_decoded_chars('')
+                    self._snapshot = None
+                return result
+            result = self._get_decoded_chars(size)
+            more = True
+            while len(result) < size and more:
+                more = self._read_chunk()
+                result += self._get_decoded_chars(size - len(result))
+            return result
         function = _TEXT.get('read') or _text_function('read')
         return function(self, size)
     def readline(self, size=-1):
@@ -832,6 +901,22 @@ class TextIOWrapper(_TextIOBase):
             self._unattached()
         if self._pending:
             self._writeflush()
+        # A complete buffered line needs neither a decoder call nor a rewind.
+        if (size is None or type(size) is int) and self._decoder is not None:
+            text = self._decoded_chars
+            used = self._decoded_chars_used
+            available = len(text) - used
+            if available and (self._readtranslate or not self._readuniversal):
+                if self.closed:
+                    raise ValueError('read from closed file')
+                stop = text.find('\n' if self._readtranslate else self._readnl, used)
+                end = stop + (1 if self._readtranslate else len(self._readnl)) if stop >= 0 else -1
+                if size is not None and size >= 0 and size <= available:
+                    limit = used + size
+                    end = min(end, limit) if end >= 0 else limit
+                if end >= 0:
+                    self._decoded_chars_used = end
+                    return text[used:end]
         function = _TEXT.get('readline') or _text_function('readline')
         return function(self, size)
     def readlines(self, hint=-1):
@@ -896,11 +981,148 @@ class TextIOWrapper(_TextIOBase):
     def seek(self, cookie, whence=0):
         if self._buffer is None or not self._initialized:
             self._unattached()
+        if type(whence) is not int:
+            whence = _whence(whence)
+        # A read-only stream has no encoder state to initialize or reset.
+        # Writable streams retain the original encoder-state handling.
+        if not self._write_ok and self._encoder is None and type(cookie) is int and whence == 0:
+            if self.closed:
+                raise ValueError("tell on closed file")
+            if not self._seekable:
+                raise UnsupportedOperation("underlying stream is not seekable")
+            if cookie < 0:
+                raise ValueError("negative seek position %r" % (cookie,))
+            self.flush()
+            cached = self._seek_cache
+            self._seek_cache = None
+            if (cached is not None and cookie == cached[0]
+                    and self._snapshot is cached[1]
+                    and self._decoded_chars is cached[4]
+                    and self._decoder is cached[5]):
+                buffer = self._buffer
+                data = cached[1][1]
+                buffer.seek(cached[3] - len(data))
+                replay = buffer.read(len(data))
+                # Only reuse the live decoded chunk after rereading identical
+                # bytes. Restore a real end-state snapshot, not predicted flags.
+                if type(replay) is bytes and replay == data:
+                    cached[5].setstate(cached[6])
+                    if (self._snapshot is cached[1]
+                            and self._decoded_chars is cached[4]
+                            and self._decoder is cached[5]
+                            and buffer.tell() == cached[3]):
+                        self._decoded_chars_used = cached[2]
+                        self._snapshot_eof = cached[7]
+                        self._seek_cache = cached
+                        return cookie
+            self._seek_cache = None
+            start, flags, feed, eof, skip = self._unpack_cookie(cookie)
+            self.buffer.seek(start)
+            self._set_decoded_chars('')
+            self._snapshot = None
+            decoder = self._decoder
+            if cookie == 0 and decoder:
+                decoder.reset()
+            elif decoder or flags or skip:
+                decoder = self._decoder = decoder or self._get_decoder()
+                decoder.setstate((b'', flags))
+                self._snapshot = (flags, b'')
+            if skip:
+                data = self.buffer.read(feed)
+                text = decoder.decode(data, eof)
+                self._set_decoded_chars(text)
+                self._snapshot = (flags, data)
+                if len(text) < skip:
+                    raise OSError("can't restore logical file position")
+                self._decoded_chars_used = skip
+            self._snapshot_eof = eof
+            return cookie
+        self._seek_cache = None
         function = _TEXT.get('seek') or _text_function('seek')
-        return function(self, cookie, whence)
+        result = function(self, cookie, whence)
+        result_value = result if type(result) is int else _index(result)
+        self._snapshot_eof = bool(result_value >> 256)
+        return result
+    # Assemble only populated cookie fields; ordinary offsets stay small integers.
+    def _pack_cookie(self, position, dec_flags=0, bytes_to_feed=0, need_eof=False, chars_to_skip=0):
+        if dec_flags:
+            position |= dec_flags << 64
+        if bytes_to_feed:
+            position |= bytes_to_feed << 128
+        if chars_to_skip:
+            position |= chars_to_skip << 192
+        if need_eof:
+            position |= 1 << 256
+        return position
+    # Return ordinary byte offsets without dividing four wide integer fields.
+    def _unpack_cookie(self, cookie):
+        if type(cookie) is not int and isinstance(cookie, int):
+            cookie = _index(cookie)
+        if 0 <= cookie < 18446744073709551616:
+            return cookie, 0, 0, False, 0
+        rest, position = divmod(cookie, 18446744073709551616)
+        rest, flags = divmod(rest, 18446744073709551616)
+        rest, feed = divmod(rest, 18446744073709551616)
+        eof, skip = divmod(rest, 18446744073709551616)
+        return position, flags, feed, bool(eof), skip
+    _snapshot_eof = False
+    _seek_cache = None
+    def _set_decoded_chars(self, chars):
+        self._seek_cache = None
+        self._decoded_chars = chars
+        self._decoded_chars_used = 0
+    def _read_chunk(self):
+        self._seek_cache = None
+        if self._decoder is None:
+            raise ValueError("no decoder")
+        if self._telling:
+            buffered, flags = self._decoder.getstate()
+        if self._has_read1:
+            data = self.buffer.read1(self._CHUNK_SIZE)
+        else:
+            data = self.buffer.read(self._CHUNK_SIZE)
+        eof = not data
+        text = self._decoder.decode(data, eof)
+        self._set_decoded_chars(text)
+        self._b2cratio = len(data) / len(self._decoded_chars) if text else 0.0
+        if self._telling:
+            saved = data if not buffered and type(data) is bytes else buffered + data
+            self._snapshot = (flags, saved)
+        self._snapshot_eof = eof
+        return not eof
     def tell(self):
         if self._buffer is None or not self._initialized:
             self._unattached()
+        snapshot = self._snapshot
+        used = self._decoded_chars_used
+        # Expanding codecs need not be replayed byte by byte to find another
+        # restart point: the saved chunk already provides a valid opaque cookie.
+        if snapshot is not None and used > 0 and len(self._decoded_chars) > len(snapshot[1]):
+            if not self._seekable:
+                raise UnsupportedOperation("underlying stream is not seekable")
+            if not self._telling:
+                raise OSError("telling position disabled by next() call")
+            flags, data = snapshot
+            eof = self._snapshot_eof
+            self.flush()
+            position = self.buffer.tell()
+            cookie = self._pack_cookie(position - len(data), flags,
+                                       len(data), eof, used)
+            buffer = self._buffer
+            self._seek_cache = None
+            if (type(data) is bytes and data and not self._write_ok
+                    and type(self._decoded_chars) is str
+                    and type(position) is int and type(buffer) is BufferedReader
+                    and type(buffer.raw) is FileIO):
+                text, decoder = self._decoded_chars, self._decoder
+                state = decoder.getstate()
+                if (type(state) is tuple and len(state) == 2
+                        and type(state[0]) is bytes and type(state[1]) is int
+                        and self._snapshot is snapshot
+                        and self._decoded_chars is text and self._decoder is decoder):
+                    self._seek_cache = (cookie, snapshot, used, position,
+                                        text, decoder, state, eof)
+            return cookie
         function = _TEXT.get('tell') or _text_function('tell')
         return function(self)
     def truncate(self, pos=None):
@@ -929,6 +1151,19 @@ class TextIOWrapper(_TextIOBase):
             self._unattached()
         if self._pending:
             self._writeflush()
+        # FileIO has no write buffer. Skip the call only when neither the
+        # buffer nor the raw stream replaced flush. Overridden hooks still
+        # run; every other stream flushes the buffer, then telling is reset.
+        if (not self._write_ok and type(buffer) is BufferedReader
+                and buffer._live is not None and type(buffer.raw) is FileIO):
+            raw = buffer.raw
+            if raw._closed:
+                raise ValueError('I/O operation on closed file.')
+            if (type(buffer).flush is _BUFFEREDREADER_FLUSH
+                    and type(raw).flush is _FILEIO_FLUSH
+                    and 'flush' not in buffer.__dict__ and 'flush' not in raw.__dict__):
+                self._telling = self._seekable
+                return None
         # The reference flushes the buffer and then marks telling possible.
         buffer.flush()
         self._telling = self._seekable
@@ -983,20 +1218,67 @@ class TextIOWrapper(_TextIOBase):
         return function(self)
 
 class IncrementalNewlineDecoder:
+    # Keep newline state on this decoder rather than dispatching through a second object.
     def __init__(self, decoder, translate, errors='strict'):
-        _pyio = _text_runtime()
-        self._impl = _pyio.IncrementalNewlineDecoder(decoder, translate, errors)
+        self.decoder = decoder
+        self.translate = translate
+        self.seennl = 0
+        self.pendingcr = False
+    # Hold a trailing carriage return until the next character or the end of input.
     def decode(self, input, final=False):
-        return self._impl.decode(input, final)
+        decoder = self.decoder
+        output = input if decoder is None else decoder.decode(input, final=final)
+        if self.pendingcr and (output or final):
+            output = '\r' + output
+            self.pendingcr = False
+        # Most chunks contain no carriage returns and need no counting or replacement.
+        if type(output) is str and '\r' not in output:
+            if '\n' in output:
+                self.seennl |= 1
+            return output
+        if output.endswith('\r') and not final:
+            output = output[:-1]
+            self.pendingcr = True
+        pairs = output.count('\r\n')
+        carriage = output.count('\r') - pairs
+        lines = output.count('\n') - pairs
+        if lines:
+            self.seennl |= 1
+        if carriage:
+            self.seennl |= 2
+        if pairs:
+            self.seennl |= 4
+        if self.translate:
+            if pairs:
+                output = output.replace('\r\n', '\n')
+            if carriage:
+                output = output.replace('\r', '\n')
+        return output
+    # Combine the wrapped decoder flags with the pending carriage-return bit.
     def getstate(self):
-        return self._impl.getstate()
+        decoder = self.decoder
+        buffer, flags = (b'', 0) if decoder is None else decoder.getstate()
+        return buffer, (flags << 1) | self.pendingcr
+    # Restore buffering and codec flags without forgetting which newlines were seen.
     def setstate(self, state):
-        return self._impl.setstate(state)
+        buffer, flags = state
+        self.pendingcr = bool(flags & 1)
+        decoder = self.decoder
+        if decoder is not None:
+            decoder.setstate((buffer, flags >> 1))
+    # Clear newline history together with the underlying codec's buffered input.
     def reset(self):
-        return self._impl.reset()
+        self.seennl = 0
+        self.pendingcr = False
+        decoder = self.decoder
+        if decoder is not None:
+            decoder.reset()
     @property
+    # Report each observed newline spelling in the documented order.
     def newlines(self):
-        return self._impl.newlines
+        return (None, '\n', '\r', ('\r', '\n'), '\r\n',
+                ('\n', '\r\n'), ('\r', '\r\n'),
+                ('\r', '\n', '\r\n'))[self.seennl]
 
 _PLAIN_MODES = frozenset(['r', 'rb', 'w', 'wb', 'a', 'ab', 'x', 'xb', 'r+', 'rb+', 'r+b', 'w+', 'wb+', 'w+b', 'a+', 'ab+', 'a+b', 'x+', 'xb+', 'x+b'])
 
@@ -1027,6 +1309,7 @@ def _file_plans():
     return plans
 
 _FILE_PLANS = {}
+_FILEIO_MODES = {}
 
 class FileIO(_RawIOBase):
     # What a stream whose __init__ never finished stands as, the way the C
@@ -1053,15 +1336,22 @@ class FileIO(_RawIOBase):
         self._fd = -1
         self._closed = True
         self._finalizing_state = False
-        if not isinstance(mode, str):
-            raise TypeError('mode must be a string')
-        if any(letter not in 'rwax+b' for letter in mode):
-            raise ValueError('invalid mode: ' + mode)
-        base = [letter for letter in mode if letter in 'rwax']
-        if len(base) != 1 or mode.count('+') > 1:
-            raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
-        self._readable = base[0] == 'r' or '+' in mode
-        self._writable = base[0] != 'r' or '+' in mode
+        # A mode that passed the checks once is remembered by its text.
+        parsed = _FILEIO_MODES.get(mode) if type(mode) is str else None
+        if parsed is None:
+            if not isinstance(mode, str):
+                raise TypeError('mode must be a string')
+            if any(letter not in 'rwax+b' for letter in mode):
+                raise ValueError('invalid mode: ' + mode)
+            base = [letter for letter in mode if letter in 'rwax']
+            if len(base) != 1 or mode.count('+') > 1:
+                raise ValueError('Must have exactly one of create/read/write/append mode and at most one plus')
+            parsed = (base, base[0] == 'r' or '+' in mode, base[0] != 'r' or '+' in mode)
+            if type(mode) is str:
+                _FILEIO_MODES[mode] = parsed
+        base = parsed[0]
+        self._readable = parsed[1]
+        self._writable = parsed[2]
         self._closefd = bool(closefd)
         self._fd = -1
         self._closed = True
@@ -1365,6 +1655,7 @@ class FileIO(_RawIOBase):
         return size
 
 _FILEIO_READINTO = FileIO.readinto
+_FILEIO_FLUSH = FileIO.flush
 
 class _CheckedRaw:
     # Buffered streams refill through readinto() so that every raw object's
@@ -1729,6 +2020,8 @@ class BufferedReader(_BufferedIOBase):
         if impl is None:
             impl = self._impl
         return impl.write(b)
+
+_BUFFEREDREADER_FLUSH = BufferedReader.flush
 
 class BufferedWriter(BufferedReader):
     def __init__(self, raw, buffer_size=DEFAULT_BUFFER_SIZE):
