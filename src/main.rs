@@ -202,8 +202,10 @@ struct Invocation {
     python_development: bool,
     program_name: Option<String>,
     python_ignore_environment: bool,
+    python_isolated: bool,
     python_interactive: bool,
     python_safe_path: bool,
+    python_quiet: bool,
 }
 
 /// Whether a language holds text as the bytes it was written in rather
@@ -751,6 +753,8 @@ fn run_all(python_run: std::sync::mpsc::Sender<()>) {
         std::env::set_var("LUMEN_PYTHON_SAFE_PATH", if inv.python_safe_path { "1" } else { "0" });
         if inv.python_ignore_environment { std::env::set_var("LUMEN_PYTHON_IGNORE_ENV", "1"); }
         else { std::env::remove_var("LUMEN_PYTHON_IGNORE_ENV"); }
+        if inv.python_isolated { std::env::set_var("LUMEN_PYTHON_ISOLATED", "1"); }
+        else { std::env::remove_var("LUMEN_PYTHON_ISOLATED"); }
     }
     // Only an actual -m invocation carries module execution metadata;
     // a script child must not inherit its parent's module identity.
@@ -781,7 +785,7 @@ fn run_all(python_run: std::sync::mpsc::Sender<()>) {
         env::remove_var("LUMEN_WARNOPTIONS");
     }
 
-    let written = inv.module_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| (if inv.file == "-" {
+    let written = inv.module_source.as_ref().map(|source| source.as_bytes().to_vec()).unwrap_or_else(|| (if inv.file == "-" || inv.file == "<stdin>" {
         let mut input = Vec::new();
         std::io::stdin().read_to_end(&mut input).map(|_| input)
     } else { fs::read(&inv.file) }).unwrap_or_else(|e| {
@@ -806,7 +810,7 @@ fn run_all(python_run: std::sync::mpsc::Sender<()>) {
     let source = if inv.python_interactive {
         let initial = serde_json::to_string(&source).expect("interactive initial source");
         let filename = serde_json::to_string(&inv.file).expect("interactive source filename");
-        format!("{}\n_lumen_interact({initial}, {filename}, globals())\n", include_str!("python_interactive.py"))
+        format!("{}\n_lumen_interact({initial}, {filename}, globals(), {}, {})\n", include_str!("python_interactive.py"), if inv.python_quiet { "True" } else { "False" }, serde_json::to_string(inv.python.map_or("3.14.8", |version| version.release)).expect("interactive version"))
     } else { source };
     if inv.language.name() == "python" && inv.file == "<string>" { env::set_var("LUMEN_COMMAND_SOURCE", &source); }
     else { env::remove_var("LUMEN_COMMAND_SOURCE"); }
@@ -1161,9 +1165,11 @@ fn parse_args(args: &[OsString]) -> Invocation {
     let mut tracing_limit = None;
     let mut extended_options = Vec::new();
     let mut python_ignore_environment = false;
+    let mut python_isolated = false;
     let mut python_interactive = false;
     let mut python_safe_path = !env::var("LUMEN_LANG").is_ok_and(|held| held == "python");
     let mut explicit_safe_path = false;
+    let mut python_quiet = false;
     // Whether the run was asked only to name itself and stop.
     let mut names_itself = false;
     // The name a Python program sees as its own first argument. It is
@@ -1279,7 +1285,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 break;
             }
             Some("-q") if file.is_none() && language.as_ref().is_none_or(|lang| lang.name() == "python") => {
-                // The interactive driver has no startup banner to suppress.
+                python_quiet = true;
                 language = Some(Language::Named("python".to_owned()));
                 rest = &rest[1..];
             }
@@ -1345,6 +1351,14 @@ fn parse_args(args: &[OsString]) -> Invocation {
                 explicit_safe_path = true;
                 python_safe_path = true;
                 language.get_or_insert_with(|| Language::Named("python".to_owned()));
+                rest = &rest[1..];
+            }
+            Some("-I") if file.is_none() => {
+                python_isolated = true;
+                explicit_safe_path = true;
+                python_safe_path = true;
+                python_ignore_environment = true;
+                language = Some(Language::Named("python".to_string()));
                 rest = &rest[1..];
             }
             Some("-E") if file.is_none() => {
@@ -1436,26 +1450,28 @@ fn parse_args(args: &[OsString]) -> Invocation {
 
     if let Some(limit) = tracing_limit { env::set_var("LUMEN_TRACE_FRAMES", limit.to_string()); }
     else { env::remove_var("LUMEN_TRACE_FRAMES"); }
-    if python_interactive && file.is_none() {
-        file = Some("<stdin>".to_owned());
-        module_source = Some(String::new());
-        program_name = Some(String::new());
-    }
-    let file = file.unwrap_or_else(|| {
-        if language.as_ref().is_some_and(|held| held.name() == "python") || env::var("LUMEN_LANG").is_ok_and(|held| held == "python") {
-            "-".to_owned()
-        } else { usage(program) }
-    });
     let language = language.unwrap_or_else(|| {
-        // A language not named on the command line may be carried in
-        // the environment, by a host that started this binary again
-        // without naming it; a flag always wins. Where neither names
-        // one, the file's own extension, and then the default, stand.
+        // Explicit language wins over the environment. With neither, infer
+        // a supplied file's language or start Python for no-file input.
         match env::var("LUMEN_LANG") {
             Ok(held) if !held.trim().is_empty() => language_from_flag(&held),
-            _ => Language::Named(language_from_extension(&file).unwrap_or_else(|| DEFAULT_LANGUAGE.to_string())),
+            _ => Language::Named(file.as_ref().map_or_else(|| "python".to_owned(), |file| {
+                language_from_extension(file).unwrap_or_else(|| DEFAULT_LANGUAGE.to_string())
+            })),
         }
     });
+    python_interactive &= language.name() == "python";
+    // Only Python reads no-file input as a script or terminal session.
+    // Keep an explicit dash as argv[0], and leave resolved -c/-m source intact.
+    if language.name() == "python" && file.as_deref().is_none_or(|name| name == "-") {
+        python_interactive |= std::io::IsTerminal::is_terminal(&std::io::stdin());
+        if file.is_none() {
+            file = Some("<stdin>".to_owned());
+            program_name = Some(String::new());
+        }
+        if python_interactive { module_source = Some(String::new()); }
+    }
+    let file = file.unwrap_or_else(|| usage(program));
     // A directory handed as the program is run, for Python alone, as the
     // __main__.py inside it, the way the reference runs it; it keeps its
     // own name as the program's, so a script asking for sys.argv[0] finds
@@ -1518,7 +1534,7 @@ fn parse_args(args: &[OsString]) -> Invocation {
         let encoded = extended_options.iter().map(|option| format!("{}:{option}", option.chars().count())).collect::<String>();
         env::set_var("LUMEN_XOPTIONS", encoded);
     } else { env::remove_var("LUMEN_XOPTIONS"); }
-    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_ignore_environment, python_interactive, python_safe_path, python_development, warning_options, program_args: rest.iter().map(said).collect() }
+    Invocation { kernel, file, serve, language, emit, python, module_source, module_name, program_name, python_ignore_environment, python_isolated, python_quiet, python_interactive, python_safe_path, python_development, warning_options, program_args: rest.iter().map(said).collect() }
 }
 
 /// The language whose embedded definition claims the file's extension.
