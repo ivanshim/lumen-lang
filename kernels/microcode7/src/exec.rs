@@ -13041,6 +13041,20 @@ impl<'a> Machine<'a> {
         Ok(None)
     }
     pub(super) fn value_member(&mut self, receiver: &Value, name: &str, arguments: Vec<Value>, keywords: Vec<(String, Value)>) -> Res<Value> {
+        // Locating a piece inside plain text, handed plain operands, is
+        // answered at once; every other receiver and word takes the long
+        // road below.
+        if let (Value::Text(_), true, 1..=3) = (receiver, keywords.is_empty(), arguments.len()) {
+            if let Some(work) = crate::text::named_work(name).filter(|work| matches!(*work, crate::text::Work::COUNT | crate::text::Work::FIND | crate::text::Work::RFIND
+                | crate::text::Work::INDEX | crate::text::Work::RINDEX | crate::text::Work::STARTSWITH | crate::text::Work::ENDSWITH)) {
+                if matches!(arguments[0], Value::Text(_)) && arguments[1..].iter().all(|limit| matches!(limit, Value::Small(_) | Value::Flag(_) | Value::Nil)) {
+                    let mut operands = Vec::with_capacity(arguments.len() + 1);
+                    operands.push(receiver.clone());
+                    operands.extend(arguments);
+                    return self.prim(Prim::Textual(work), name, &operands).map_err(Escape::from);
+                }
+            }
+        }
         let power_method=self.rules.specials.get(24).is_some_and(|word|word==name)||self.rules.specials.get(32).is_some_and(|word|word==name);
         if self.has_class_order() && power_method && matches!(receiver.settled(),Value::Small(_)|Value::Huge(_)|Value::Flag(_)) {
             match arguments.len(){1|2=>(),count=>return Err(format!("TypeError: expected 1 or 2 arguments, got {count}").into())}

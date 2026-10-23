@@ -1774,9 +1774,6 @@ impl<'a> Engine<'a> {
         let mut engine = Engine {
             class_root: if lang.exceptions.is_empty() { None } else { Some(root) }, class_maker: None, property_class: None, traceback_class: None, classmethod_class: None, staticmethod_class: None, kind_classes: Vec::new(), kind_descriptors: RefCell::new(Vec::new()), function_members: Vec::new(), function_rows: RefCell::new(HashMap::new()), function_sweep: 0, byte_members_seen: RefCell::new(HashMap::default()), prepared_hint: std::cell::Cell::new(None), collecting_cycles: false, cycle_checkpoint_slots: 0, cycle_checkpoint_bytes: 0, quiet_module_slots: Default::default(), kind_names: RefCell::new(HashMap::new()),
             opened_descriptors: HashMap::new(),
-            exception_roster: lang.exceptions.iter().map(|name| match native_exceptions.get(name) {
-                Some(Value::Class(class)) => Some(class.clone()), _ => None,
-            }).collect(),
             native_exceptions,
             exception_roster,
             contexts: crate::context::ContextStore::default(),
@@ -21172,6 +21169,19 @@ impl<'a> Engine<'a> {
     }
 
     fn value_method_inner(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        // A search on plain text with plain arguments is the commonest
+        // method call there is; it is answered before the long run of
+        // special receivers and words below is walked.
+        if named.is_empty() && self.lang.bind_names && (1..=3).contains(&args.len()) && matches!(receiver, Value::Text(_))
+            && matches!(args[0], Value::Text(_)) && args[1..].iter().all(|bound| matches!(bound, Value::Small(_) | Value::Flag(_) | Value::Null)) {
+            if let Some(work @ (crate::strings::TextOp::Count | crate::strings::TextOp::Find | crate::strings::TextOp::Rfind | crate::strings::TextOp::Index
+                | crate::strings::TextOp::Rindex | crate::strings::TextOp::Startswith | crate::strings::TextOp::Endswith)) = crate::strings::operation(operation) {
+                let mut given = Vec::with_capacity(args.len() + 1);
+                given.push(receiver.clone());
+                given.extend(args);
+                return self.builtin(Builtin::Text(work), operation, &mut given);
+            }
+        }
         if !self.lang.class_builder.is_empty() && [24,32].iter().any(|at|self.lang.class_special.get(*at).is_some_and(|word|word==operation)) && matches!(receiver.contents(),Value::Small(_)|Value::Huge(_)|Value::Flag(_)) && !(1..=2).contains(&args.len()) {
             return Err(format!("TypeError: expected 1 or 2 arguments, got {}",args.len()));
         }

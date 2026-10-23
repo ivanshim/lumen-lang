@@ -2791,6 +2791,15 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// Runs a kernel-private builtin by its word with arguments already
+    /// plain, skipping the spread-opening a user-written call needs.
+    fn native_named_call(&mut self, word: &str, mut args: Vec<Value>) -> Flow<Value> {
+        let Some(op) = self.lang.builtins.get(word).copied() else { return self.class_apply(Value::text(word), args); };
+        let answer = self.builtin(op, word, &mut args);
+        if let Some(raised) = self.carried.take() { return Err(raised); }
+        Ok(answer?)
+    }
+
     #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
     fn adapter_arm_9(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
 
@@ -2806,7 +2815,7 @@ impl<'a> Engine<'a> {
                             Ok(mark @ Value::Small(_)) => {
                                 let mut native = vec![w.1[0].clone(), mark];
                                 if bits { native.push(args[1].clone()); }
-                                return self.class_apply(Value::text("__random"), native);
+                                return self.native_named_call("__random", native);
                             }
                             Err(fault) if !self.attribute_fault(&fault) => return Err(fault),
                             _ => {},
@@ -2835,24 +2844,24 @@ impl<'a> Engine<'a> {
                                 let mean = crate::value::as_binary(&m.p, &m.q);
                                 let input = crate::value::as_binary(&point.p, &point.q);
                                 if mean.is_finite() && input.is_finite() && scale.is_finite() && scale * scale > 0.0 && (scale * scale).is_finite() {
-                                    return self.class_apply(Value::text("__math"), vec![w.1[0].clone(), x, mu, sigma]);
+                                    return self.native_named_call("__math", vec![w.1[0].clone(), x, mu, sigma]);
                                 }
                             }
                         }
                     }
                     if operation == "sqrt_frac_rto" && args.len() == 2 && args.iter().all(|value| matches!(value.contents(), Value::Small(_) | Value::Huge(_) | Value::Flag(_))) {
-                        return self.class_apply(Value::text("__math"), vec![w.1[0].clone(), args[0].clone(), args[1].clone()]);
+                        return self.native_named_call("__math", vec![w.1[0].clone(), args[0].clone(), args[1].clone()]);
                     }
                     if operation == "isqrt" && args.len() == 1 {
                         let number = args[0].contents();
                         if matches!(number, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
-                            return self.class_apply(Value::text("__math"), vec![w.1[0].clone(), number]);
+                            return self.native_named_call("__math", vec![w.1[0].clone(), number]);
                         }
                     }
                     if operation == "fsum" && self.lang.math_fsum && args.len() == 1 {
                         let values = match args[0].contents() { Value::Array(values) | Value::Tuple(values) => Some(values), _ => None };
                         if values.is_some_and(|row| row.iter().all(|item| matches!(item.contents(), Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Flag(_)))) {
-                            return self.class_apply(Value::text("__math"), vec![w.1[0].clone(), args[0].clone()]);
+                            return self.native_named_call("__math", vec![w.1[0].clone(), args[0].clone()]);
                         }
                     }
                     if args.len() == 1 {
@@ -2880,7 +2889,7 @@ impl<'a> Engine<'a> {
                                 _ => false,
                             };
                             if domain {
-                                return self.class_apply(Value::text("__math"), vec![w.1[0].clone(),args[0].clone()]);
+                                return self.native_named_call("__math", vec![w.1[0].clone(),args[0].clone()]);
                             }
                         }
                     }

@@ -2387,6 +2387,13 @@ impl<'a> Machine<'a> {
         }
         Ok(())
     }
+    /// The arithmetic primitive entered straight, for operands the caller
+    /// has already vetted; the generic member call would open them again.
+    fn reckon_direct(&mut self, operands: Vec<Value>) -> Res {
+        let outcome = self.prim(Prim::Reckon, "__math", &operands);
+        if let Some(raised) = self.got_away.take() { return Err(raised); }
+        Ok(outcome?)
+    }
     fn get_arity(&self, name: &str, count: usize) -> Res<()> {
         match count {
             0 => Err(format!("TypeError: {name} expected at least 1 argument, got 0").into()),
@@ -2974,20 +2981,20 @@ impl<'a> Machine<'a> {
                                         let coordinates = [a, b, c].map(|r| crate::data::nearest_binary(&r.above, &r.beneath));
                                         let variance = coordinates[2] * coordinates[2];
                                         if coordinates.iter().all(|n| n.is_finite()) && variance > 0.0 && variance.is_finite() {
-                                            return self.apply_class_member(Value::text("__math"), vec![kept[0].clone(), input, center, spread]);
+                                            return self.reckon_direct(vec![kept[0].clone(), input, center, spread]);
                                         }
                                     }
                                 }
                             }
                         }
                         if operation == "sqrt_frac_rto" && values.len() == 2 && values.iter().all(|value| matches!(value.settled(), Value::Flag(_) | Value::Huge(_) | Value::Small(_))) {
-                            return self.apply_class_member(Value::text("__math"), vec![kept[0].clone(), values[0].clone(), values[1].clone()]);
+                            return self.reckon_direct(vec![kept[0].clone(), values[0].clone(), values[1].clone()]);
                         }
                         if operation == "isqrt" {
                             if let [integer] = values.as_slice() {
                                 let native = integer.settled();
                                 if matches!(native, Value::Flag(_) | Value::Huge(_) | Value::Small(_)) {
-                                    return self.apply_class_member(Value::text("__math"), vec![kept[0].clone(), native]);
+                                    return self.reckon_direct(vec![kept[0].clone(), native]);
                                 }
                             }
                         }
@@ -2995,7 +3002,7 @@ impl<'a> Machine<'a> {
                             if let [sequence] = values.as_slice() {
                                 let items = match sequence.settled() { Value::Vector(items) | Value::Tuple(items) => Some(items), _ => None };
                                 let native = items.is_some_and(|items| items.iter().all(|item| matches!(item.settled(), Value::Frac(_) | Value::Flag(_) | Value::Huge(_) | Value::Small(_))));
-                                if native { return self.apply_class_member(Value::text("__math"), vec![kept[0].clone(), sequence.clone()]); }
+                                if native { return self.reckon_direct(vec![kept[0].clone(), sequence.clone()]); }
                             }
                         }
                         if let [integer]=values.as_slice() {
@@ -3025,7 +3032,7 @@ impl<'a> Machine<'a> {
                         if fast {
                             let mut operands=vec![kept[0].clone()];
                             operands.extend(values);
-                            self.apply_class_member(Value::text("__math"),operands)
+                            self.reckon_direct(operands)
                         } else {self.apply_class_member(kept[1].clone(),values)}
                     }
                     0=>Ok(kept[0].clone()),
