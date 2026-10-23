@@ -396,6 +396,17 @@ impl<'a> Machine<'a> {
             return Value::Vector(crate::tuples::Sequence::plain(named.iter().map(|word|Value::text(word)).collect()));
         }
         let mut names=Vec::new();
+        // Describe the exposed code slots even when no sample can be allocated.
+        let code_value = matches!(item, Value::Wrapped(7, _));
+        let code_type = matches!(item, Value::Blueprint(kind) if
+            Self::native_word(kind).is_some_and(|word| self.table.strings("ext.builtin.compile.kind").first() == Some(&word)));
+        if code_value || code_type {
+            for (offset, word) in self.rules.words_ext_stmt_class_detail_code_fields.iter().enumerate() {
+                if offset != 10 { names.push(word.to_owned()); }
+            }
+            names.extend(["argcount", "varnames"].into_iter().map(|word| self.detail(word)).filter(|word| !word.is_empty()).map(str::to_owned));
+            if let Some(replace) = self.table.strings("ext.stmt.class.detail.code.replace").first() { names.push(replace.to_owned()); }
+        }
         let class=match item{Value::Thing(t)=>{names.extend(t.holds.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));Some(&t.blueprint())},Value::Blueprint(b)=>Some(b),_=>None};
         if let Value::Thing(instance) = item {
             if let Some(kind) = Self::native_word(&instance.blueprint()) {
@@ -4008,8 +4019,16 @@ impl<'a> Machine<'a> {
     }
     /// The kind primitive allocates a thing and constructs it.
     pub(super) fn construct_plainly(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
-        // A one-shot spread is read before either construction hook is called.
-        let given = if self.table.flag("ext.op.arithmetic.python_numbers") && given.iter().any(|item| matches!(item, Value::Couple(pair) if matches!(pair.0, Value::Flag(_)))) {
+        // A one-shot spread is read before either construction hook is
+        // called. A class whose maker takes raw keys is left alone here, so
+        // that maker itself weighs a key that is no text against its fields.
+        let raw_keys = self.spreads_carry_foreign_keys(&given) && self.rules.words_ext_stmt_class_constructor.first()
+            .and_then(|key| self.inherited_entry(&class, key))
+            .is_some_and(|hook| match hook {
+                Value::Routine(code) | Value::Bound(code, _) | Value::Method(code, _, _) => self.routine_takes_raw_keys(&code),
+                _ => false,
+            });
+        let given = if !raw_keys && self.table.flag("ext.op.arithmetic.python_numbers") && given.iter().any(|item| matches!(item, Value::Couple(pair) if matches!(pair.0, Value::Flag(_)))) {
             let (mut positional, named) = self.open_arguments(given)?;
             positional.extend(named.into_iter().map(|(key, item)| Value::Couple(Rc::new((Value::text(&key), item)))));
             positional
@@ -7183,7 +7202,11 @@ impl<'a> Machine<'a> {
             if key==self.detail("namespace"){let index=self.routine_storage(&value);return Ok(Value::Attributes(self.routine_members[index].1.clone()));}
             if key==self.detail("defaults"){
                 let defaults:Vec<Value>=if matches!(value,Value::Bound(..))||self.written_over.contains_key(&Self::written_key(&value,&self.outermost)) {self.spare_worths(&code,&room,'p').into_iter().map(|(_,v)|v).collect()} else {Vec::new()};
-                if defaults.is_empty() && !code.local_defaults.is_empty(){return Err(self.class_unready());}
+                let pending_positional = code.local_defaults.iter().any(|slot| {
+                    code.formal_slots.iter().position(|formal| formal == slot).is_some_and(|at|
+                        code.taking.as_ref().is_none_or(|rules| rules[at] != 'n'))
+                });
+                if defaults.is_empty() && pending_positional { return Err(self.class_unready()); }
                 return Ok(if defaults.is_empty(){Value::Nil}else{Value::tuple(defaults)});
             }
             // A routine answers its own call, so reading it back and

@@ -1,7 +1,14 @@
 """Native codec helpers used by the Python encoding registry."""
+_normalized_encodings = {}
+
 def _normalize_encoding(encoding):
     if not isinstance(encoding, str):
         raise TypeError('encoding must be a string')
+    cacheable = type(encoding) is str and len(encoding) <= 256
+    if cacheable:
+        cached = _normalized_encodings.get(encoding)
+        if cached is not None:
+            return cached
     result = []
     separator = False
     for character in encoding:
@@ -13,7 +20,12 @@ def _normalize_encoding(encoding):
             separator = False
         else:
             separator = True
-    return ''.join(result)
+    normalized = ''.join(result)
+    if cacheable:
+        if len(_normalized_encodings) >= 256:
+            _normalized_encodings.clear()
+        _normalized_encodings[encoding] = normalized
+    return normalized
 
 import _codec_runtime as _runtime
 
