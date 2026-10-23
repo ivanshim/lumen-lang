@@ -15,6 +15,8 @@ class Pdb(cmd.Cmd):
                  nosigint=False):
         cmd.Cmd.__init__(self, completekey, stdin, stdout)
         self.nosigint = nosigint
+        if stdin is not None:
+            self.use_rawinput = False
         self.reset()
 
     def reset(self):
@@ -25,7 +27,6 @@ class Pdb(cmd.Cmd):
         self.running = False
         self.stack = []
         self.curindex = 0
-        self.cmdqueue = []
 
     def set_trace(self, frame=None, *, commands=None):
         if frame is None:

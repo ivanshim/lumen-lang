@@ -1267,7 +1267,10 @@ class TextTestRunner:
 
     def _failure(self, label, entry, prefix):
         self._write('======================================================================' + '\n')
-        self._write(label + ': ' + entry.label + ' (' + entry.where + ')\n')
+        test = entry[0]
+        name = getattr(entry, 'label', getattr(test, '_method', str(test)))
+        where = getattr(entry, 'where', test.id() if hasattr(test, 'id') else '')
+        self._write(label + ': ' + name + ' (' + where + ')\n')
         self._write('----------------------------------------------------------------------' + '\n')
         self._write('Traceback (most recent call last):\n')
         self._write(prefix + entry[1] + '\n\n')
