@@ -1,6 +1,7 @@
 # Python implementations of the C-only collections containers.
 # Behaviour follows CPython 3b564385e4c9, Modules/_collectionsmodule.c (PSF License).
 from operator import index as _index
+from operator import eq as _eq, ne as _ne, lt as _lt, le as _le, gt as _gt, ge as _ge
 from reprlib import recursive_repr as _recursive_repr
 import sys as _sys
 
@@ -552,8 +553,7 @@ class deque:
             return True
         if len(_data_of(self)) != len(_data_of(other)):
             return False
-        from operator import eq
-        return deque._compare(self, other, eq)
+        return deque._compare(self, other, _eq)
 
     @_deque_protocol('__ne__', 1)
     def __ne__(self, other):
@@ -563,8 +563,7 @@ class deque:
             return False
         if len(_data_of(self)) != len(_data_of(other)):
             return True
-        from operator import ne
-        return deque._compare(self, other, ne)
+        return deque._compare(self, other, _ne)
 
     def _compare(self, other, operation):
         if not isinstance(other, deque):
@@ -585,23 +584,19 @@ class deque:
 
     @_deque_protocol('__lt__', 1)
     def __lt__(self, other):
-        from operator import lt
-        return deque._compare(self, other, lt)
+        return deque._compare(self, other, _lt)
 
     @_deque_protocol('__le__', 1)
     def __le__(self, other):
-        from operator import le
-        return deque._compare(self, other, le)
+        return deque._compare(self, other, _le)
 
     @_deque_protocol('__gt__', 1)
     def __gt__(self, other):
-        from operator import gt
-        return deque._compare(self, other, gt)
+        return deque._compare(self, other, _gt)
 
     @_deque_protocol('__ge__', 1)
     def __ge__(self, other):
-        from operator import ge
-        return deque._compare(self, other, ge)
+        return deque._compare(self, other, _ge)
 
     @_deque_protocol('__add__', 1)
     def __add__(self, other):
@@ -1049,10 +1044,12 @@ def _native_ordered_dict(base):
 
 
 def __getattr__(name):
+    # Bind directly so later global reads do not need a mutable namespace lookup.
+    global OrderedDict
     if name == 'OrderedDict':
         from collections import OrderedDict as pure
         built = _native_ordered_dict(pure)
-        globals()['OrderedDict'] = built
+        OrderedDict = built
         return built
     raise AttributeError('module %r has no attribute %r' % (__name__, name))
 

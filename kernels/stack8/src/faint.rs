@@ -958,7 +958,7 @@ impl Graph {
             }
             self.nodes[at].reaches = reached;
         }
-        self.nodes.iter().filter(|node| !node.marked).map(|node| node.held.clone()).collect()
+        self.nodes.iter().filter(|node| !node.marked && !empty_cell(&node.held)).map(|node| node.held.clone()).collect()
     }
 
     /// Recheck ownership after finalization, retaining only the original
@@ -1032,6 +1032,17 @@ impl Graph {
             }
         }
         grave
+    }
+}
+
+/// A variable cell that holds nothing. No weak hold names one, it reaches
+/// nothing and no one can see it go, so finding it unowned is neither
+/// news nor work: counting it would only send every collection down the
+/// slow road of walking the heap a second time.
+fn empty_cell(value: &Value) -> bool {
+    match value {
+        Value::Bond(cell) | Value::Binding(cell) => cell.try_borrow().is_ok_and(|inner| matches!(*inner, Value::Null)),
+        _ => false,
     }
 }
 

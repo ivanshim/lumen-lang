@@ -249,6 +249,8 @@ pub struct Engine<'a> {
     /// Whether each definition reached makes a function of its own,
     /// which a language that tells values apart by identity wants.
     fresh_routines: bool,
+    /// The kind builtin's answer for each plain value, made once.
+    sort_answers: Vec<(Builtin, Value)>,
     pub module_sources: HashMap<String, String>,
     pub library_root: Option<String>,
     pub module_files: HashMap<String, String>,
@@ -1911,6 +1913,7 @@ impl<'a> Engine<'a> {
             archived_text: None,
             native_names: RefCell::new(std::collections::BTreeMap::new()),
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
+            sort_answers: Vec::new(),
             module_sources: HashMap::new(),
             library_root: None,
             module_files: HashMap::new(),
@@ -29477,7 +29480,14 @@ impl<'a> Engine<'a> {
                         // are a dictionary as far as the program can tell.
                         Value::Fields(_) => Some(Builtin::Dict), _ => None,
                     };
-                    if let Some(b) = which { if let Some((_, word)) = self.lang.builtin_words.iter().find(|(v, _)| *v == b) { return Ok(Value::Native(b, Rc::from(word.as_str()))); } }
+                    if let Some(b) = which {
+                        if let Some((_, answer)) = self.sort_answers.iter().find(|(v, _)| *v == b) { return Ok(answer.clone()); }
+                        if let Some((_, word)) = self.lang.builtin_words.iter().find(|(v, _)| *v == b) {
+                            let answer = Value::Native(b, Rc::from(word.as_str()));
+                            self.sort_answers.push((b, answer.clone()));
+                            return Ok(answer);
+                        }
+                    }
                 }
                 if let Value::Bytes(_, mutable, _) = &args[0] { return Ok(self.byte_kind(*mutable)); }
                 // A trace is of no kind the core knows either; a language
