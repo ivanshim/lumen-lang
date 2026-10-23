@@ -13354,6 +13354,24 @@ impl<'a> Compiler<'a> {
                 }
                 let native = lang.builtins.get(&named).copied();
                 let changes = matches!(native, Some(Builtin::Append | Builtin::Replace));
+                let generator_member = lang.yield_suspends && [&lang.yield_send, &lang.yield_close, &lang.yield_throw].iter().any(|words| Lang::spells(words, &named));
+                if let Some(brackets) = call.as_ref().filter(|_| !changes && !generator_member && !native.is_some_and(|method| method.set_method()) && lang.member_amiss.is_some()) {
+                    // Resolve a member before its arguments, without consulting bare names.
+                    self.read(&held);
+                    self.let_go(&held);
+                    if !lang.trace_fields.is_empty() { self.put(member_range.clone()); }
+                    self.act(Action::Grab(named.as_str().into()), 1);
+                    let method = self.gensym("bound_member");
+                    self.write(&method);
+                    self.pass_token();
+                    let argc = self.arguments_of(&named, brackets)?;
+                    self.read(&method);
+                    self.let_go(&method);
+                    if !lang.trace_fields.is_empty() { self.put(self.expression_location(origin)); }
+                    self.act(Action::Invoke(named.as_str().into()), argc + 1);
+                    self.land(finish);
+                    continue;
+                }
                 if !changes { self.read(&held); self.let_go(&held); }
                 let argc = if let Some(brackets) = &call {
                     self.pass_token();
@@ -13367,7 +13385,7 @@ impl<'a> Compiler<'a> {
                         self.let_go(&held);
                         self.write(&target);
                     } else { self.class_cannot_run(); }
-                } else if lang.yield_suspends && [&lang.yield_send, &lang.yield_close, &lang.yield_throw].iter().any(|words| Lang::spells(words, &named)) {
+                } else if generator_member {
                     self.act(Action::Send(Rc::from(named.as_str())), argc + 1);
                 } else if let Some(method) = native.filter(|b| b.set_method()) {
                     if call.is_some() { self.act(Action::Builtin(method, Rc::from(named.as_str())), argc + 1); }
