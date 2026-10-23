@@ -605,6 +605,19 @@ def wait_process(pid, *, exitcode, timeout=None):
     if pid2 != pid:
         raise AssertionError(f"pid {pid2} != pid {pid}")
 
+def reap_children():
+    # Collect finished child processes so no zombies outlive the test module.
+    if not (hasattr(os, 'waitpid') and hasattr(os, 'WNOHANG')):
+        return
+    while True:
+        try:
+            pid, status = os.waitpid(-1, os.WNOHANG)
+        except OSError:
+            break
+        if pid == 0:
+            break
+        print(f"Warning -- reap_children() reaped child process {pid}", file=sys.stderr)
+
 def busy_retry(timeout, err_msg=None, /, *, error=True):
     if timeout <= 0:
         raise ValueError("timeout must be greater than zero")

@@ -71,6 +71,8 @@ struct Beside {
     in_pipe: Option<std::process::ChildStdin>,
     out_pipe: Option<std::process::ChildStdout>,
     err_pipe: Option<std::process::ChildStderr>,
+    out_capture: Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>,
+    err_capture: Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>>,
 }
 
 /// One bit for each signal number waiting to be taken up: the host's
@@ -26859,7 +26861,7 @@ impl<'a> Engine<'a> {
                     Err(_) => Value::Flag(false),
                     Ok(child) => {
                         let which = child.id() as i64;
-                        self.beside.borrow_mut().insert(which, Beside { child, in_pipe: None, out_pipe: None, err_pipe: None });
+                        self.beside.borrow_mut().insert(which, Beside { child, in_pipe: None, out_pipe: None, err_pipe: None, out_capture: None, err_capture: None });
                         Value::Small(which)
                     }
                 }
@@ -27180,7 +27182,7 @@ impl<'a> Engine<'a> {
                                 let in_pipe = if stdin_mode == 1 { child.stdin.take() } else { None };
                                 let out_pipe = if stdout_mode == 1 { child.stdout.take() } else { None };
                                 let err_pipe = if stderr_mode == 1 || stderr_mode == 3 { child.stderr.take() } else { None };
-                                self.beside.borrow_mut().insert(which, Beside { child, in_pipe, out_pipe, err_pipe });
+                                self.beside.borrow_mut().insert(which, Beside { child, in_pipe, out_pipe, err_pipe, out_capture: None, err_capture: None });
                                 Value::Small(which)
                             }
                         }
@@ -27221,9 +27223,18 @@ impl<'a> Engine<'a> {
                         {
                             let mut kept = self.beside.borrow_mut();
                             if let Some(beside) = kept.get_mut(&which) {
-                                match stream {
-                                    0 => drain_pipe(&mut beside.out_pipe, &mut all, &mut piped, &mut broken),
-                                    _ => drain_pipe(&mut beside.err_pipe, &mut all, &mut piped, &mut broken),
+                                let capture = if stream == 0 { &mut beside.out_capture } else { &mut beside.err_capture };
+                                if let Some(reader) = capture.take() {
+                                    piped = true;
+                                    match reader.join() {
+                                        Ok(Ok(bytes)) => all = bytes,
+                                        _ => broken = true,
+                                    }
+                                } else {
+                                    match stream {
+                                        0 => drain_pipe(&mut beside.out_pipe, &mut all, &mut piped, &mut broken),
+                                        _ => drain_pipe(&mut beside.err_pipe, &mut all, &mut piped, &mut broken),
+                                    }
                                 }
                             } else {
                                 broken = true;
@@ -27280,6 +27291,16 @@ impl<'a> Engine<'a> {
                             }
                             None => Value::Flag(false),
                         }
+                    }
+                    // Drain both captures before a caller writes input or waits for exit.
+                    8 => {
+                        arity(2)?;
+                        let which = as_index(&args[1])? as i64;
+                        if let Some(process) = self.beside.borrow_mut().get_mut(&which) {
+                            if let Some(pipe) = process.out_pipe.take() { process.out_capture = Some(capture_pipe(pipe)); }
+                            if let Some(pipe) = process.err_pipe.take() { process.err_capture = Some(capture_pipe(pipe)); }
+                            Value::Flag(true)
+                        } else { Value::Flag(false) }
                     }
                     _ => return Err(format!("{}() unknown step {}", name, step)),
                 }
@@ -29958,6 +29979,15 @@ fn text_width(s: &str, as_bytes: bool) -> usize {
 /// The worths a value holds in a row, however it happens to hold them:
 /// a list keeps them plainly, a thing of keys and worths keeps them
 /// under their keys, and a cell that names share is looked through.
+/// Read a captured stream concurrently so a full pipe cannot stall the child.
+fn capture_pipe<R: std::io::Read + Send + 'static>(mut pipe: R) -> std::thread::JoinHandle<std::io::Result<Vec<u8>>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        pipe.read_to_end(&mut bytes)?;
+        Ok(bytes)
+    })
+}
+
 /// Empty a pipe of everything it has to say, into `all`. `piped` says
 /// whether a pipe was there at all, and `broken` whether reading it
 /// went wrong.

@@ -3849,7 +3849,7 @@ impl<'a> Compiler<'a> {
             } else { false };
             if star_blocked { return Err("SyntaxError: 'break', 'continue' and 'return' cannot appear in an except* block".into()); }
             let invalid_return = Lang::spells(&lang.return_words, &word) && (self.piece().outermost || self.in_class_body());
-            let invalid_loop = (Lang::spells(&lang.break_words, &word) || Lang::spells(&lang.continue_words, &word)) && (self.piece().cycles.is_empty() || self.in_class_body());
+            let invalid_loop = (Lang::spells(&lang.break_words, &word) || Lang::spells(&lang.continue_words, &word)) && self.piece().cycles.is_empty();
             if invalid_return || invalid_loop {
                 let last = self.tokens[self.pos..].iter().take_while(|t| !matches!(t.shape, Shape::LineEnd | Shape::Finish | Shape::Close) && t.lexeme != ";").last().unwrap_or(self.look()).clone();
                 self.registry.stopped_end = if last.end_column != 0 { last.end_column } else { last.column + last.lexeme.chars().count() };

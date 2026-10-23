@@ -1615,6 +1615,7 @@ class BufferedReader(_BufferedIOBase):
             impl = self._impl
         return impl.fileno()
     def read(self, size=-1):
+        size = _size(size)
         impl = self._live
         if impl is None:
             impl = self._impl
@@ -1631,6 +1632,7 @@ class BufferedReader(_BufferedIOBase):
                 return held[at:at + size]
         return impl.read(size)
     def read1(self, size=-1):
+        size = _size(size)
         impl = self._live
         if impl is None:
             impl = self._impl
