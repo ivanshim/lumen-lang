@@ -1409,6 +1409,18 @@ impl<'a> Reader<'a> {
         Ok(self.strings(key)?.into_iter().next())
     }
 
+    /// Names that have a head word, in the order given, each with that
+    /// word. A name whose label has no word is left out.
+    fn heads<K: Clone>(&self, named: &[(K, &str)]) -> Result<Vec<(K, String)>, String> {
+        let mut found = Vec::new();
+        for (kind, tag) in named {
+            if let Some(word) = self.head(tag)? {
+                found.push((kind.clone(), word));
+            }
+        }
+        Ok(found)
+    }
+
     /// A label whose words stand on either side of what the kernel puts
     /// between them: the first word before it, the second after. One
     /// word alone leaves the kernel nothing to close with, so it is
@@ -1432,6 +1444,16 @@ impl<'a> Reader<'a> {
             (Some(first), Some(second), Some(third)) => Ok(Some((first, second, third))),
             (Some(_), ..) => Err(format!("label '{key}' wants three words about the two things it names")),
             _ => Ok(None),
+        }
+    }
+
+    /// Nothing where the label lists no words, and its two words where
+    /// it lists exactly two. Any other count is the error `{key} {what}`.
+    fn pair(&self, key: &str, what: &str) -> Result<Option<(String, String)>, String> {
+        match self.strings(key)?.as_slice() {
+            [] => Ok(None),
+            [before, after] => Ok(Some((before.clone(), after.clone()))),
+            _ => Err(format!("{key} {what}")),
         }
     }
 
@@ -1594,6 +1616,12 @@ const FORMAT_LABELS: &[&str] = &[
     "ext.op.rem.format.key.incomplete",
     "ext.op.rem.format.unexpected",
     "ext.op.rem.format.code",
+];
+
+/// Order of `ext.system.kind.brief`: the place a kind's short word
+/// occupies in that list.
+const IN_ORDER: [Sort; 7] = [
+    Sort::Integer, Sort::Rational, Sort::Real, Sort::Text, Sort::Boolean, Sort::Array, Sort::Null,
 ];
 
 impl Lang {
@@ -2561,21 +2589,12 @@ impl Lang {
             assign_gives_value: r.flag("ext.op.assign.value")?,
             plain_keys: r.flag("ext.op.index.plain_keys")?,
             loose_equality: tells_same && r.strings("ext.op.identical.negated")?.is_empty(),
-            complaint_words: {
-                let named = [
-                    (Complaint::Warning, "ext.system.complaint.warning"),
-                    (Complaint::Notice, "ext.system.complaint.notice"),
-                    (Complaint::Deprecated, "ext.system.complaint.deprecated"),
-                    (Complaint::Fatal, "ext.system.complaint.fatal"),
-                ];
-                let mut found = Vec::new();
-                for (kind, tag) in named {
-                    if let Some(word) = r.head(tag)? {
-                        found.push((kind, word));
-                    }
-                }
-                found
-            },
+            complaint_words: r.heads(&[
+                (Complaint::Warning, "ext.system.complaint.warning"),
+                (Complaint::Notice, "ext.system.complaint.notice"),
+                (Complaint::Deprecated, "ext.system.complaint.deprecated"),
+                (Complaint::Fatal, "ext.system.complaint.fatal"),
+            ])?,
             markup_setting: r.head("ext.system.complaint.markup.setting")?,
             markup_kind: r.about_two("ext.system.complaint.markup.kind")?,
             markup_place: r.around("ext.system.complaint.markup.place")?,
@@ -2656,16 +2675,11 @@ impl Lang {
             step_down_text: r.head("ext.op.decrement.text")?,
             warns_of_unwritten: r.head("ext.system.complaint.warning")?.is_some(),
             tells_place: tells_complaints,
-            source_bindings: {
-                let named = [("file", "ext.system.source.file"), ("directory", "ext.system.source.directory"), ("runner", "ext.system.runner")];
-                let mut found = Vec::new();
-                for (part, tag) in named {
-                    if let Some(word) = r.head(tag)? {
-                        found.push((part.to_string(), word));
-                    }
-                }
-                found
-            },
+            source_bindings: r.heads(&[
+                ("file", "ext.system.source.file"),
+                ("directory", "ext.system.source.directory"),
+                ("runner", "ext.system.runner"),
+            ])?.into_iter().map(|(part, word)| (part.to_string(), word)).collect(),
             debug_binding: r.head("ext.system.debug")?,
             ellipsis_words: r.strings("ext.literal.ellipsis")?,
             ellipsis_unready: r.head("ext.literal.ellipsis.unready")?,
@@ -2828,11 +2842,7 @@ impl Lang {
             default_words: r.strings("ext.stmt.default")?,
             case_marks: r.strings("ext.stmt.case.mark")?,
             case_mark_instead: r.head("ext.stmt.case.mark.instead")?,
-            ternary: match r.strings("ext.op.ternary")?.as_slice() {
-                [] => None,
-                [q, m] => Some((q.clone(), m.clone())),
-                _ => return Err("ext.op.ternary takes exactly two signs, the question and the mark".to_string()),
-            },
+            ternary: r.pair("ext.op.ternary", "takes exactly two signs, the question and the mark")?,
             lone_stmt: r.flag("ext.block.lone_statement")?,
             hoisted: r.flag("ext.stmt.function.hoisted")?,
             routines_outermost: r.flag("ext.stmt.function.outermost")?,
@@ -2845,21 +2855,12 @@ impl Lang {
             static_read_in: r.flag("ext.stmt.static.read_in")?,
             body_binding: r.head("ext.system.request.body")?,
             amiss_binding: r.head("ext.system.request.amiss")?,
-            amiss_words: {
-                let kinds = [
-                    ("boundary", "ext.system.request.amiss.boundary"),
-                    ("boundary.wrong", "ext.system.request.amiss.boundary.wrong"),
-                    ("part", "ext.system.request.amiss.part"),
-                    ("body.large", "ext.system.request.amiss.body.large"),
-                ];
-                let mut said = Vec::new();
-                for (kind, tag) in kinds {
-                    if let Some(words) = r.head(tag)? {
-                        said.push((kind, words));
-                    }
-                }
-                said
-            },
+            amiss_words: r.heads(&[
+                ("boundary", "ext.system.request.amiss.boundary"),
+                ("boundary.wrong", "ext.system.request.amiss.boundary.wrong"),
+                ("part", "ext.system.request.amiss.part"),
+                ("body.large", "ext.system.request.amiss.body.large"),
+            ])?,
             exponent_letters: r.letters("ext.lexical.number.exponent")?,
             imaginary_unrun: r.head("ext.lexical.number.imaginary.unrun")?.unwrap_or_default(),
             plus_words: r.strings("ext.op.plus")?,
@@ -2991,11 +2992,7 @@ impl Lang {
             walk_onward: r.head("ext.op.walk.onward")?,
             giver_class: r.head("ext.op.walk.giver.class")?,
             walk_giver: r.head("ext.op.walk.giver")?,
-            giver_unwalkable: match r.strings("ext.op.walk.giver.unwalkable")?.as_slice() {
-                [] => None,
-                [before, after] => Some((before.clone(), after.clone())),
-                _ => return Err("ext.op.walk.giver.unwalkable takes exactly two pieces, what is said before the name and what is said after".to_string()),
-            },
+            giver_unwalkable: r.pair("ext.op.walk.giver.unwalkable", "takes exactly two pieces, what is said before the name and what is said after")?,
             walk_no_cell: r.head("ext.op.walk.no_cell")?,
             walk_key_no_cell: r.head("ext.op.walk.key.no_cell")?,
             walk_alive: r.flag("ext.op.walk.live")?,
@@ -3071,11 +3068,7 @@ impl Lang {
             parameters_amiss: r.strings("ext.stmt.function.parameters.amiss")?,
             parameters_duplicate: r.strings("ext.stmt.function.parameters.duplicate")?,
 
-            short_function: match r.strings("ext.stmt.function.short")?.as_slice() {
-                [] => None,
-                [word, mark] => Some((word.clone(), mark.clone())),
-                _ => return Err("ext.stmt.function.short takes exactly two words, the one it opens with and the mark before its body".to_string()),
-            },
+            short_function: r.pair("ext.stmt.function.short", "takes exactly two words, the one it opens with and the mark before its body")?,
             lambda_name: r.strings("ext.stmt.function.anonymous")?,
             uses_alias: r.strings("ext.stmt.class.uses.alias")?,
             interface_words: r.strings("ext.stmt.class.interface")?,
@@ -3112,21 +3105,16 @@ impl Lang {
             absent_index: r.flag("ext.op.index.absent")?,
             scalar_index: r.head("ext.op.index.scalar")?,
             nothing_index: r.head("ext.op.index.nothing")?,
-            request_bindings: {
-                let groups = [
-                    ("GET", "ext.system.request.query"), ("POST", "ext.system.request.form"),
-                    ("COOKIE", "ext.system.request.cookies"), ("SERVER", "ext.system.request.server"),
-                    ("ENV", "ext.system.request.env"), ("FILES", "ext.system.request.files"),
-                    ("ALL", "ext.system.request.all"), ("SETTINGS", "ext.system.request.settings"),
-                ];
-                let mut named = Vec::new();
-                for (group, tag) in groups {
-                    if let Some(name) = r.head(tag)? {
-                        named.push((group.to_string(), name));
-                    }
-                }
-                named
-            },
+            request_bindings: r.heads(&[
+                ("GET", "ext.system.request.query"),
+                ("POST", "ext.system.request.form"),
+                ("COOKIE", "ext.system.request.cookies"),
+                ("SERVER", "ext.system.request.server"),
+                ("ENV", "ext.system.request.env"),
+                ("FILES", "ext.system.request.files"),
+                ("ALL", "ext.system.request.all"),
+                ("SETTINGS", "ext.system.request.settings"),
+            ])?.into_iter().map(|(group, name)| (group.to_string(), name)).collect(),
         };
         if !lang.try_words.is_empty() && lang.catch_words.is_empty() {
             return Err("ext.stmt.try needs ext.stmt.catch".to_string());
@@ -3303,9 +3291,6 @@ impl Lang {
     /// The word this language names a value's kind by, the shorter one
     /// where it has one.
     pub fn kind_word(&self, v: &crate::value::Value) -> String {
-        use crate::value::Sort;
-        const IN_ORDER: [Sort; 7] =
-            [Sort::Integer, Sort::Rational, Sort::Real, Sort::Text, Sort::Boolean, Sort::Array, Sort::Null];
         let Some(kind) = v.sort() else { return "value".to_string() };
         let at = IN_ORDER.iter().position(|k| *k == kind);
         match at.and_then(|i| self.brief_kinds.get(i)).filter(|word| *word != "-") {
@@ -3318,9 +3303,6 @@ impl Lang {
     /// kind with or by the shorter word it complains with. Nothing where
     /// the word names no kind of the language's.
     pub fn kind_of_word(&self, word: &str) -> Option<crate::value::Sort> {
-        use crate::value::Sort;
-        const IN_ORDER: [Sort; 7] =
-            [Sort::Integer, Sort::Rational, Sort::Real, Sort::Text, Sort::Boolean, Sort::Array, Sort::Null];
         if let Some((_, kind)) = self.sort_bindings.iter().find(|(n, _)| n == word) {
             return Some(*kind);
         }
