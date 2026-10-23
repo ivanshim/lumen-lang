@@ -4,13 +4,9 @@ use super::{Engine, Res, Value};
 const BASE64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const HEX: &[u8] = b"0123456789abcdef";
 
+// Read one hexadecimal digit.
 fn digit(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
+    (byte as char).to_digit(16).map(|d| d as u8)
 }
 
 fn decode64(input: &[u8], strict: bool) -> Result<Vec<u8>, String> {

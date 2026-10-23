@@ -143,6 +143,12 @@ fn harvest(pid: i64, flags: i64, mut interrupted: impl FnMut() -> Result<(), Str
     }
 }
 
+// Build a descriptor set from the rows already range-checked by select.
+fn fd_set_of(fds: &[i32]) -> libc::fd_set {
+    let mut set = unsafe { std::mem::zeroed() };
+    for &fd in fds { unsafe { libc::FD_SET(fd, &mut set); } }
+    set
+}
 pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), String>) -> Result<Value, String> {
     let operation = match given.first().map(Value::settled) {
         Some(Value::Text(name)) => name,
@@ -513,24 +519,18 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                     Ok(Value::text(&String::from_utf8_lossy(&landing)))
                 }
             }
-            "get_inheritable" | "set_inheritable" => {
+            "get_inheritable" | "set_inheritable" | "get_blocking" | "set_blocking" => {
+            let (get, set, bit) = match operation.as_ref() {
+                "get_inheritable" | "set_inheritable" => (libc::F_GETFD, libc::F_SETFD, libc::FD_CLOEXEC),
+                _ => (libc::F_GETFL, libc::F_SETFL, libc::O_NONBLOCK),
+            };
             let fd = int(0)? as i32;
-            let flags = libc::fcntl(fd, libc::F_GETFD);
+            let flags = libc::fcntl(fd, get);
             if flags < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
-            else if operation.as_ref() == "get_inheritable" { Ok(Value::Flag(flags & libc::FD_CLOEXEC == 0)) }
+            else if matches!(operation.as_ref(), "get_inheritable" | "get_blocking") { Ok(Value::Flag(flags & bit == 0)) }
             else {
-                let next = if params[1].is_true() { flags & !libc::FD_CLOEXEC } else { flags | libc::FD_CLOEXEC };
-                checked(libc::fcntl(fd, libc::F_SETFD, next) as i64)
-            }
-        },
-        "get_blocking" | "set_blocking" => {
-            let fd = int(0)? as i32;
-            let flags = libc::fcntl(fd, libc::F_GETFL);
-            if flags < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
-            else if operation.as_ref() == "get_blocking" { Ok(Value::Flag(flags & libc::O_NONBLOCK == 0)) }
-            else {
-                let next = if params[1].is_true() { flags & !libc::O_NONBLOCK } else { flags | libc::O_NONBLOCK };
-                checked(libc::fcntl(fd, libc::F_SETFL, next) as i64)
+                let next = if params[1].is_true() { flags & !bit } else { flags | bit };
+                checked(libc::fcntl(fd, set, next) as i64)
             }
         },
         "pipe" => {
@@ -780,16 +780,15 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                 let want_write = descriptor_row(1)?;
                 let want_error = descriptor_row(2)?;
                 let mut highest = -1i32;
-                let mut read_set: libc::fd_set = std::mem::zeroed();
-                let mut write_set: libc::fd_set = std::mem::zeroed();
-                let mut error_set: libc::fd_set = std::mem::zeroed();
-                for (set, row) in [(&mut read_set, &want_read), (&mut write_set, &want_write), (&mut error_set, &want_error)] {
+                for row in [&want_read, &want_write, &want_error] {
                     for &fd in row {
                         if fd < 0 || fd as usize >= libc::FD_SETSIZE { return Err(String::from("ValueError: filedescriptor out of range in select()")); }
-                        libc::FD_SET(fd, set);
                         if fd > highest { highest = fd; }
                     }
                 }
+                let mut read_set = fd_set_of(&want_read);
+                let mut write_set = fd_set_of(&want_write);
+                let mut error_set = fd_set_of(&want_error);
                 let micros = int(3)?;
                 let kept = |set: &libc::fd_set, row: &[i32]| Value::Vector(crate::tuples::Sequence::plain(
                     row.iter().copied().filter(|fd| libc::FD_ISSET(*fd, set)).map(|fd| Value::Small(fd as i64)).collect()));
@@ -827,10 +826,9 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                         if left.subsec_nanos() % 1000 != 0 { whole += 1; }
                         time_left = Some(whole);
                     }
-                    read_set = std::mem::zeroed(); write_set = std::mem::zeroed(); error_set = std::mem::zeroed();
-                    for (set, row) in [(&mut read_set, &want_read), (&mut write_set, &want_write), (&mut error_set, &want_error)] {
-                        for &fd in row { libc::FD_SET(fd, set); }
-                    }
+                    read_set = fd_set_of(&want_read);
+                    write_set = fd_set_of(&want_write);
+                    error_set = fd_set_of(&want_error);
                 }
             }
             "urandom" => {

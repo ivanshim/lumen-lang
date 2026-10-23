@@ -159,7 +159,7 @@ pub(crate) fn expression(value: &Value, words: Names) -> String {
     }
 }
 
-fn blank(letter: char) -> bool { matches!(letter,'\u{1c}'..='\u{1f}') || letter.is_whitespace() }
+pub(crate) fn blank(letter: char) -> bool { matches!(letter,'\u{1c}'..='\u{1f}') || letter.is_whitespace() }
 
 pub(crate) fn case_changed(word: &str, work: Work) -> String {
     if word.is_ascii() {

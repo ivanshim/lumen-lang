@@ -33,6 +33,35 @@ use crate::value::{Value, Wording};
 
 type Answer = Result<Value, String>;
 
+// Test a scalar string against the requested character category.
+fn category_holds(s: &str, op: &str) -> bool {
+    let space = |c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c);
+    let valid = !s.is_empty() && match op {
+        "isdigit" => s.chars().all(|c| crate::unicode::bits(c) & 1024 != 0),
+        "isalpha" => s.chars().all(|c| crate::unicode::bits(c) & 2048 != 0),
+        "isalnum" => s.chars().all(|c| crate::unicode::bits(c) & (2048|2|512|1024) != 0),
+        "isspace" => s.chars().all(space),
+        "islower" => { let mut seen=false; s.chars().all(|c| { let b=crate::unicode::bits(c); if b&16!=0 { seen=true; b&128!=0 } else { true } }) && seen }
+        _ => { let mut seen=false; s.chars().all(|c| { let b=crate::unicode::bits(c); if b&16!=0 { seen=true; b&64!=0 } else { true } }) && seen }
+    };
+    valid
+}
+
+// Read an optional split count, saturating large integers as before.
+fn maxsplit(given: Option<&Value>) -> Result<usize, String> {
+    let raw = match given {
+        None => -1i64,
+        Some(v) => match v.contents() {
+            Value::Small(n) => n,
+            Value::Huge(n) => n.to_i64().unwrap_or(if n.is_negative() { i64::MIN } else { i64::MAX }),
+            Value::Flag(b) => i64::from(b),
+            other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind())),
+        },
+    };
+    Ok(if raw < 0 { usize::MAX } else { raw as usize })
+}
+
+
 fn alike(a: &Value, b: &Value, words: &Wording) -> bool {
     if words.value_keys { return keyed_alike(a, b); }
     match (a,b) { (Value::Real(x),Value::Real(y)) if Rc::ptr_eq(x,y) => true, _ => a.equals(b) }
@@ -295,15 +324,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
         Value::Codepoints(row) if matches!(op, "isdigit" | "isalpha" | "isalnum" | "isspace" | "islower" | "isupper") => {
             arity(0, 0)?;
             let s = Value::predicate_text(row);
-            let space = |c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c);
-            let valid = !s.is_empty() && match op {
-                "isdigit" => s.chars().all(|c| crate::unicode::bits(c) & 1024 != 0),
-                "isalpha" => s.chars().all(|c| crate::unicode::bits(c) & 2048 != 0),
-                "isalnum" => s.chars().all(|c| crate::unicode::bits(c) & (2048|2|512|1024) != 0),
-                "isspace" => s.chars().all(space),
-                "islower" => { let mut seen=false; s.chars().all(|c| { let b=crate::unicode::bits(c); if b&16!=0 { seen=true; b&128!=0 } else { true } }) && seen }
-                _ => { let mut seen=false; s.chars().all(|c| { let b=crate::unicode::bits(c); if b&16!=0 { seen=true; b&64!=0 } else { true } }) && seen }
-            };
+            let valid = category_holds(&s, op);
             return Ok(Value::Flag(valid));
         }
         // A text kept apart as bare code points -- a lone half of a
@@ -453,16 +474,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 None | Some(Value::Null) => None,
                 Some(v) => Some(v.text_codes().ok_or_else(|| fault("arguments"))?),
             };
-            let raw = match a.get(1) {
-                None => -1i64,
-                Some(v) => match v.contents() {
-                    Value::Small(n) => n,
-                    Value::Huge(n) => n.to_i64().unwrap_or(if n.is_negative() { i64::MIN } else { i64::MAX }),
-                    Value::Flag(b) => i64::from(b),
-                    other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind())),
-                },
-            };
-            let limit = if raw < 0 { usize::MAX } else { raw as usize };
+            let limit = maxsplit(a.get(1))?;
             let pieces = split_units(row.as_ref(), separator.as_deref(), limit, op == "rsplit")
                 .map_err(|_| fault("separator"))?;
             return Ok(Value::array(pieces.into_iter().map(Value::from_codes).collect()).held(true));
@@ -505,16 +517,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                 }
                 "split" | "rsplit" => {
                     arity(0,2)?;
-                    let raw = match a.get(1) {
-                        None => -1i64,
-                        Some(v) => match v.contents() {
-                            Value::Small(n) => n,
-                            Value::Huge(n) => n.to_i64().unwrap_or(if n.is_negative() { i64::MIN } else { i64::MAX }),
-                            Value::Flag(b) => i64::from(b),
-                            other => return Err(format!("TypeError: '{}' object cannot be interpreted as an integer", other.core_kind())),
-                        },
-                    };
-                    let limit = if raw < 0 { usize::MAX } else { raw as usize };
+                    let limit = maxsplit(a.get(1))?;
                     if matches!(a.first().map(Value::contents), Some(Value::Codepoints(_))) {
                         let separator = a.first().and_then(|v| v.contents().text_codes());
                         let codes: Vec<u32> = s.chars().map(u32::from).collect();
@@ -589,15 +592,7 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     // table `capitalize` and the others already draw upon,
                     // so a letter or a digit outside ASCII answers exactly
                     // as CPython's own tables say it should.
-                    let space = |c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c);
-                    let valid = !s.is_empty() && match op {
-                        "isdigit" => s.chars().all(|c| crate::unicode::bits(c) & 1024 != 0),
-                        "isalpha" => s.chars().all(|c| crate::unicode::bits(c) & 2048 != 0),
-                        "isalnum" => s.chars().all(|c| crate::unicode::bits(c) & (2048|2|512|1024) != 0),
-                        "isspace" => s.chars().all(space),
-                        "islower" => { let mut seen=false; s.chars().all(|c| { let b=crate::unicode::bits(c); if b&16!=0 { seen=true; b&128!=0 } else { true } }) && seen }
-                        _ => { let mut seen=false; s.chars().all(|c| { let b=crate::unicode::bits(c); if b&16!=0 { seen=true; b&64!=0 } else { true } }) && seen }
-                    };
+                    let valid = category_holds(&s, op);
                     return Ok(Value::Flag(valid));
                 }
                 "center" | "ljust" | "rjust" | "zfill" => {

@@ -3,11 +3,9 @@ use super::{Machine, Value};
 
 type Conversion = Result<Vec<u8>, String>;
 
+// Read one hexadecimal digit.
 fn hex_value(c: u8) -> Option<u8> {
-    let lower = c.to_ascii_lowercase();
-    if c.is_ascii_digit() { Some(c - 48) }
-    else if (b'a'..=b'f').contains(&lower) { Some(lower - 87) }
-    else { None }
+    (c as char).to_digit(16).map(|d| d as u8)
 }
 fn sextet(c: u8) -> Option<u8> {
     match c {
