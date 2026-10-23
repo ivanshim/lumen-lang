@@ -1196,7 +1196,7 @@ impl<'a> Machine<'a> {
     }
 
     fn stands_under(&self, kind: &Rc<Blueprint>, place: usize) -> bool {
-        self.furnished_kind(place).map_or(false, |ancestor| Self::fault_descends(kind, &ancestor))
+        matches!(self.numbered_faults.get(place), Some(Value::Blueprint(ancestor)) if Self::fault_descends(kind, ancestor))
     }
 
     /// The kind an operating-system number names, where the language's
@@ -1292,16 +1292,17 @@ impl<'a> Machine<'a> {
         // stood on, rather than an args tuple alone, and a decoding
         // fault holds it as octets even where a changeable row of them
         // was given, so a copy taken after cannot change what it shows.
-        let decoding = self.stands_under(&kind, 44);
+        let decoding = row.len() == 5 && self.stands_under(&kind, 44);
         let members = self.table.strings("ext.builtin.exceptions.unicode");
-        if (self.stands_under(&kind, 43) || decoding) && row.len() == 5 {
+        if row.len() == 5 && (decoding || self.stands_under(&kind, 43)) {
             let object = match &row[1] {
                 Value::Octets { cell, .. } if decoding => self.octets(cell.borrow().clone(), false),
                 other => other.clone(),
             };
             let values = [row[0].clone(), object, row[2].clone(), row[3].clone(), row[4].clone()];
             for (key, value) in members.iter().zip(values) { holds.push((key.clone(), value)); }
-        } else if self.stands_under(&kind, 45) && row.len() == 4 {
+        } else if row.len() == 4 && self.stands_under(&kind, 45) {
+            holds.extend(members.first().map(|encoding| (encoding.to_owned(), Value::Nil)));
             let values = [row[0].clone(), row[1].clone(), row[2].clone(), row[3].clone()];
             for (key, value) in members.iter().skip(1).zip(values) { holds.push((key.clone(), value)); }
         }
