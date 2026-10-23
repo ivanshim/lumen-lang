@@ -12428,28 +12428,20 @@ impl<'a> Builder<'a> {
                         }
                         return Ok(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.builtin.set.method.unavailable").unwrap_or_default()))]));
                     }
-                    if !calling && matches!(table.prims.get(&named), Some(Prim::Octets(14))) {
-                        return Ok(prim_call(Prim::Of, vec![args.remove(0), constant(Value::text(&named))]));
-                    }
-                    if !calling && matches!(table.prims.get(&named), Some(Prim::Octets(_))) {
-                        args.push(prim_call(Prim::Raise, vec![constant(Value::text(table.single("ext.system.bytes.unready").unwrap_or("")))]));
-                        return Ok(sequence(args));
-                    }
-                    // The receiver's kind answers to no such name, and
-                    // a table wording that complaint has no pipe to fall
-                    // into: the value is told it has no such member,
-                    // whatever a name of that spelling holds.
-                    if table.prims.get(&named).is_none() && table.strings("ext.builtin.method.error.attribute").len() == 3 {
-                        return Ok(r.located(member_bounds, prim_call(Prim::Of, vec![Form::Read(held.clone()), constant(Value::text(&named))])));
-                    }
-                    let fallback = r.named_call(&named, args)?;
                     if matches!(table.prims.get(&named), Some(Prim::Append | Prim::Replace)) {
+                        let fallback = r.named_call(&named, args)?;
                         return Ok(match &target {
                             Some(slot) => sequence(vec![fallback, Form::Write(slot.clone(), Box::new(Form::Read(held.clone()))), constant(Value::Nil)]),
                             None => r.class_not_ready(),
                         });
                     }
-                    Ok(fallback)
+                    // A member the receiver's kind does not answer to is
+                    // told so, whatever a name of that spelling holds
+                    // elsewhere: the value itself is asked for the member.
+                    let receiver = args.remove(0);
+                    let member = r.located(member_bounds, prim_call(Prim::Of, vec![receiver, constant(Value::text(&named))]));
+                    if calling { return Ok(r.located(r.span_since(origin), invoke(member, args))); }
+                    Ok(member)
                 })?;
                 let branch = self.choose(test, yes, no);
                 // The subject is forgotten once the member is reached or
