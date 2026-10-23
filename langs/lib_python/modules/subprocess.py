@@ -253,10 +253,10 @@ class Popen:
                 self.returncode = code
                 break
             if deadline is not None and time.monotonic() >= deadline:
-                output = b''.join(self._communication_out) if self.stdout is not None else None
-                error = b''.join(self._communication_err) if self.stderr is not None else None
-                if self._stderr_to_stdout and output is not None:
-                    output += b''.join(self._communication_err)
+                output = b''.join(self._communication_out) if self._communication_out else None
+                error = b''.join(self._communication_err) if self.stderr is not None and self._communication_err else None
+                if self._stderr_to_stdout and self._communication_err:
+                    output = (output or b'') + b''.join(self._communication_err)
                 raise TimeoutExpired(self.args, timeout, output=output, stderr=error)
             if not out and not err and not written:
                 _wait(10000)
