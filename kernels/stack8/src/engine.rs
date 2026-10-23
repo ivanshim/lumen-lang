@@ -3688,6 +3688,10 @@ impl<'a> Engine<'a> {
         }
         if unbound && self.fuller_classes() {
             if slot.ident.as_ref() == self.class_word("root") { return Ok(Value::Class(self.root_class())); }
+            // A builtin word the language's own module holds is read
+            // from there first: the kernel's kind marker answers only
+            // where that module has nothing of the name.
+            if let Some(held) = self.kept_by_module(&slot.ident) { return Ok(held); }
             if self.lang.builtins.contains_key(slot.ident.as_ref()) { return Ok(Value::Adapter(Rc::new((8,vec![Value::text(&slot.ident)])))); }
         }
         if unbound { if let Some(reference) = self.annotation_name(&slot.ident)? { return Ok(reference); } }
@@ -7244,6 +7248,16 @@ impl<'a> Engine<'a> {
                 let class = Rc::new(Class { direct: std::cell::RefCell::new(Vec::new()), lineage: RefCell::new(Vec::new()), outline: Some(format!("<class '{}'>", keys[9])),
                     name: keys[9].clone(), base: std::cell::RefCell::new(None), answers: Vec::new(), fields: Vec::new(),
                     reaches: Vec::new(), methods: Vec::new(), constants: vec![("__module__".into(), Value::text("builtins"))], shared: crate::value::ClassMembers::new(Vec::new()), slot_layout: std::cell::RefCell::new(None), dictionary_layout: std::cell::Cell::new(None), python_bases: std::cell::RefCell::new(None), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+                // The reference's frame type carries each attribute as
+                // a getset descriptor, so a kind question about the
+                // type's own f_locals reads one there rather than
+                // finding the type bare.
+                {
+                    let mut shared = class.shared.borrow_mut();
+                    for name in ["f_back", "f_code", "f_globals", "f_lasti", "f_lineno", "f_locals", "f_trace", "f_trace_lines"] {
+                        shared.push((name.to_string(), self.held_kind_descriptor("frame", name)));
+                    }
+                }
                 self.frame_class = Some(class.clone());
                 class
             }

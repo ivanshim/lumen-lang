@@ -1826,6 +1826,10 @@ impl<'a> Machine<'a> {
             }
         }
         let key=self.slot_key(thing,parts)?;
+        match parts.get(2) {
+            Some(Value::Wrapped(32, backing)) => return self.slot_value(thing, backing),
+            _ => (),
+        }
         let Value::Thing(t)=thing else{return Err(self.class_unready())};
         if parts[0].bare() == "__weakref__" && !self.rules.words_ext_builtin_weak_get.is_empty() {
             return Ok(crate::ghost::refs_for(thing).into_iter().next().unwrap_or(Value::Nil));
@@ -1855,6 +1859,9 @@ impl<'a> Machine<'a> {
             return Err(self.detail("property.readonly").to_owned().into());
         }
         let key=self.slot_key(thing,parts)?;
+        if let Some(Value::Wrapped(32, _)) = parts.get(2) {
+            return Err(String::from("AttributeError: readonly attribute").into());
+        }
         let Value::Thing(t)=thing else{return Err(self.class_unready())};
         if parts.get(2).is_some_and(|part|part.bare()=="\0instance-book" || matches!(part, Value::Small(-2))){return self.replace_instance_book(t,replacement);}
         if parts[0].bare() == "__weakref__" && !self.rules.words_ext_builtin_weak_get.is_empty() { return Err(format!("AttributeError: attribute '__weakref__' of '{}' objects is not writable", t.blueprint().name).into()); }
@@ -8853,6 +8860,17 @@ impl<'a> Machine<'a> {
         word
     }
     pub(super) fn work_on_class(&mut self,op:u8,mut values:Vec<Value>)->Res {
+        if op == 34 && self.table.has_any("ext.builtin.readonly_member") {
+            if values.len() == 2 {
+                if let (Value::Text(spelling), Value::Wrapped(32, layout)) = (&values[0], &values[1]) {
+                    if Self::valid_slot_name(spelling) && layout.len() == 2 {
+                        let alias = vec![values[0].clone(), layout[1].clone(), values[1].clone()];
+                        return Ok(Self::wrap(32, alias));
+                    }
+                }
+            }
+            return Err(String::from("TypeError: read-only member requires a name and a native slot").into());
+        }
         if op == 30 && self.table.has_any("ext.builtin.partial.call") {
             let (mut actual, overriding) = self.open_arguments(values)?;
             if actual.len() == 0 { return Err(String::from("TypeError: descriptor '__call__' requires a 'functools.partial' object").into()); }

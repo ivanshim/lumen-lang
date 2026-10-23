@@ -412,6 +412,12 @@ def exit(*args, **kwargs):
         raise TypeError('exit() takes at most 1 argument (%d given)' % len(args))
     raise SystemExit(args[0] if args else None)
 
+# The reference keeps sys.exit a built-in function, not a routine the
+# library writes. A native call entry over the reader above makes the
+# kind questions answer a builtin while the same body still gives the
+# status its meaning.
+exit = __math('method', 'exit', exit)
+
 # The default answer to breakpoint(): a name in $PYTHONBREAKPOINT picks
 # what runs in its place, '0' turns it off, and an unset or empty name
 # means the reference debugger. A name that cannot be imported or found

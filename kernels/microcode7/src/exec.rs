@@ -4674,6 +4674,10 @@ impl<'a> Machine<'a> {
         if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
         if self.has_class_order() {
             if slot.ident.as_ref()==self.rules.detail_root {if let Some(c)=&self.ancestor{return Ok(Value::Blueprint(c.clone()));}}
+            // A builtin word the language's own module holds is read
+            // from there first: the kernel's kind marker answers only
+            // where that module has nothing of the name.
+            if let Some(spare) = self.spare_name(&slot.ident) { return Ok(spare); }
             if self.table.prims.contains_key(slot.ident.as_ref()){return Ok(Value::Wrapped(8,Rc::new(vec![Value::text(&slot.ident)]).into()));}
         }
         if let Some(symbol) = self.symbolic_name(&slot.ident)? { return Ok(symbol); }
@@ -6761,6 +6765,12 @@ impl<'a> Machine<'a> {
             self.activation_kind = Some(Rc::new(Blueprint { name: words[9].to_string(), under: std::cell::RefCell::new(None), presentation: Some(format!("<class '{}'>", words[9])),
                 parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
                 answers: Vec::new(), constants: vec![("__module__".into(), Value::text("builtins"))], shared: crate::data::BlueprintEntries::new(Vec::new()), instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)}));
+            if let Some(kind) = self.activation_kind.clone() {
+                for name in ["f_back", "f_code", "f_globals", "f_lasti", "f_lineno", "f_locals", "f_trace", "f_trace_lines"] {
+                    let descriptor = self.kind_entry("frame", name);
+                    kind.shared.borrow_mut().push((name.to_owned(), descriptor));
+                }
+            }
         }
         // Capture the actual globals while this frame is made. Looking up
         // globals later would use the formatter's module instead of ours.

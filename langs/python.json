@@ -3246,6 +3246,7 @@
   "ext.builtin.capsule_type": [
     "__capsule_type"
   ],
+  "ext.builtin.readonly_member": ["__readonly_member__"],
   "ext.builtin.namespace_type": [
     "__namespace_type"
   ],

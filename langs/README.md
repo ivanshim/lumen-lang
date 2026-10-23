@@ -4146,6 +4146,10 @@ only. The extension labels so far, all from PHP:
   of making a thing, and hand over what walking the class yields. Each
   is given the class first. These stand in for a metaclass's `__call__`
   and `__iter__`, which an enumeration needs.
+- `ext.builtin.readonly_member`: private adapter bridge that gives an existing
+  native slot a public read-only member descriptor. Reads retain the slot
+  owner check; assignment and deletion raise AttributeError without changing
+  the backing storage. The original constructor still initializes that slot.
 - `ext.builtin.partial_repr`: native partial representation bridge. It retains
   the callable, positional tuple and keyword dictionary before user code runs,
   renders positional and keyword values first, then the callable, and reads
@@ -4938,6 +4942,7 @@ Extension labels, optional and read by the full kernels only (absent means empty
 | `ext.builtin.range.zero` | - | - | `ValueError: range() arg 3 must not be zero` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_start` | - | - | `true` | - | - | - | - | - | - | - |
 | `ext.builtin.range.zero_step` | - | - | `ValueError: range step must not be zero` | - | - | - | - | - | - | - |
+| `ext.builtin.readonly_member` | - | - | `__readonly_member__` | - | - | - | - | - | - | - |
 | `ext.builtin.rebuild_native` | - | - | `__rebuild_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.reduce_native` | - | - | `__reduce_native__` | - | - | - | - | - | - | - |
 | `ext.builtin.repr` | - | - | `repr` | - | - | - | - | - | - | - |

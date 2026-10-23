@@ -2164,6 +2164,7 @@ impl Value {
             "int" | "bool" | "float" if matches!(name, "real" | "imag" | "numerator" | "denominator") => Some(("attribute", "getset_descriptor")),
             "complex" if matches!(name, "real" | "imag") => Some(("member", "member_descriptor")),
             "range" | "slice" if matches!(name, "start" | "stop" | "step") => Some(("member", "member_descriptor")),
+            "frame" if matches!(name, "f_back" | "f_code" | "f_globals" | "f_lasti" | "f_lineno" | "f_locals" | "f_trace" | "f_trace_lines") => Some(("attribute", "getset_descriptor")),
             _ => None,
         }
     }

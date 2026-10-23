@@ -1628,6 +1628,9 @@ impl<'a> Engine<'a> {
                 .map_or_else(|| Value::Fields(module.clone()), |(_, book)| book.clone()));
         }
         let place = self.slot_place(thing, parts)?;
+        if let Some(Value::Adapter(source)) = parts.get(2) {
+            return self.slot_read(thing, &source.1);
+        }
         let Value::Object(o) = thing else { return Err(self.class_refusal()) };
         if parts.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") {
             return Ok(o.fields.borrow().iter().find(|(key, _)| key == "\0namespace")
@@ -1658,6 +1661,9 @@ impl<'a> Engine<'a> {
             return Err(self.class_word("property.readonly").to_string().into());
         }
         let place = self.slot_place(thing, parts)?;
+        if matches!(parts.get(2), Some(Value::Adapter(_))) {
+            return Err("AttributeError: readonly attribute".into());
+        }
         let Value::Object(o) = thing else { return Err(self.class_refusal()) };
         if parts.get(2).is_some_and(|part|part.plain()=="\0instance-namespace") {return self.namespace_write(o,value);}
         if parts[0].plain() == "__weakref__" && !self.lang.weak_refused.is_empty() { return Err(format!("AttributeError: attribute '__weakref__' of '{}' objects is not writable", o.class_now().name).into()); }
@@ -8688,6 +8694,15 @@ impl<'a> Engine<'a> {
         self.lang.builtins.iter().find(|(_,b)|**b==target).map(|(n,_)|n.clone()).unwrap_or_default()
     }
     pub(super) fn class_work(&mut self,which:u8,mut args:Vec<Value>)->Flow<Value> {
+        if which == 34 && !self.lang.readonly_member.is_empty() {
+            let [Value::Text(name), Value::Adapter(source)] = args.as_slice() else {
+                return Err("TypeError: read-only member requires a name and a native slot".into());
+            };
+            if !Self::valid_slot_name(name) || source.0 != 16 || source.1.len() != 2 {
+                return Err("TypeError: read-only member requires a name and a native slot".into());
+            }
+            return Ok(Self::adapter(16, vec![args[0].clone(), source.1[1].clone(), args[1].clone()]));
+        }
         if which == 30 && !self.lang.partial_call_words.is_empty() {
             let mut supplied = Vec::new();
             let mut keywords = Vec::new();
