@@ -245,6 +245,35 @@ pub fn decimal_value(number: f64) -> Value {
     } else { value }
 }
 
+/// How far the pair sits from the origin. Any error number the host still
+/// holds is wiped before measuring, and again when the distance itself is
+/// representable, including when a coordinate is infinite or not a number.
+/// Only a pair of finite coordinates whose distance escapes the format
+/// leaves ERANGE behind and declines.
+pub fn distance(across: f64, up: f64) -> Result<f64, String> {
+    fn plant(code: i32) {
+        unsafe { *libc::__errno_location() = code };
+    }
+    plant(0);
+    if !across.is_finite() || !up.is_finite() {
+        let answer = match (across.is_infinite(), up.is_infinite()) {
+            (true, _) => across.abs(),
+            (_, true) => up.abs(),
+            _ => f64::NAN,
+        };
+        plant(0);
+        return Ok(answer);
+    }
+    let measured = across.hypot(up);
+    if measured.is_finite() {
+        plant(0);
+        Ok(measured)
+    } else {
+        plant(libc::ERANGE);
+        Err(String::from("OverflowError: absolute value too large"))
+    }
+}
+
 /// Keep the kind which the definition itself gave the complaint.
 pub fn already_named(table: &Table, words: &str) -> bool {
     if !table.has_any("ext.builtin.complex") { return false; }
