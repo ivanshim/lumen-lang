@@ -52,6 +52,10 @@ def _absolute_search_entry(entry, cwd):
 
 
 path = [__file__.rsplit('/', 1)[0]]
+# Where the standard library this run carries lives on disk. A frozen
+# module's source is named inside it, the way the reference names the
+# source of its own frozen modules.
+_stdlib_dir = __file__.rsplit('/', 1)[0] if '/' in __file__ else ''
 _path_host = __host_info()
 _safe_path = _path_host[3].get('LUMEN_PYTHON_SAFE_PATH') == '1'
 if not _safe_path:

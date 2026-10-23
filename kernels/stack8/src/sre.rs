@@ -74,7 +74,7 @@ fn lower(n: u32, ascii: bool) -> u32 {
     char::from_u32(n).and_then(|c| c.to_lowercase().next()).map_or(n, u32::from)
 }
 fn word(n: u32, wide: bool) -> bool {
-    n == 95 || if wide { char::from_u32(n).is_some_and(|c| crate::unicode::bits(c) & 512 != 0 || general_category(n).starts_with('L')) }
+    n == 95 || if wide { char::from_u32(n).is_some_and(|c| crate::unicode::bits(c) & 512 != 0 || lumen_unicode::general_category(n).starts_with('L')) }
     else { n < 128 && char::from_u32(n).is_some_and(|c| c.is_ascii_alphanumeric()) }
 }
 fn category(kind: u32, n: u32) -> bool {
@@ -88,7 +88,7 @@ fn category(kind: u32, n: u32) -> bool {
     }
     let c = char::from_u32(n);
     let b = c.map_or(0, crate::unicode::bits);
-    let alpha = general_category(n).starts_with('L');
+    let alpha = lumen_unicode::general_category(n).starts_with('L');
     let space = (28..=31).contains(&n) || c.is_some_and(char::is_whitespace);
     let yes = match kind & !1 {
         0 => (48..=57).contains(&n), 2 => [9,10,11,12,13,32].contains(&n),
@@ -488,7 +488,7 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         return Ok(Value::Native(crate::code::Builtin::UnicodeQuery(field, number(2)? != 0), Rc::from(*word)));
     }
     if op == 6 {
-        return Ok(Value::text(general_category(number(1)? as u32)));
+        return Ok(Value::text(lumen_unicode::general_category(number(1)? as u32)));
     }
     if op == 5 {
         let Some(Value::Text(name)) = args.get(1) else { return Err("TypeError: argument must be str".into()); };
@@ -603,26 +603,6 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-fn general_category(n: u32) -> &'static str {
-    use std::sync::OnceLock;
-    static RANGES: OnceLock<Vec<(u32, u32, &'static str)>> = OnceLock::new();
-    let ranges = RANGES.get_or_init(|| {
-        let mut result = Vec::new();
-        let mut first = 0;
-        for line in include_str!("../../../unicode-data/UnicodeData.txt").lines() {
-            let mut fields = line.split(';');
-            let Some(cp) = fields.next().and_then(|v| u32::from_str_radix(v, 16).ok()) else { continue };
-            let name = fields.next().unwrap_or("");
-            let gc = fields.next().unwrap_or("Cn");
-            if name.ends_with(", First>") { first = cp; }
-            else if name.ends_with(", Last>") { result.push((first, cp, gc)); }
-            else { result.push((cp, cp, gc)); }
-        }
-        result
-    });
-    let at = ranges.partition_point(|row| row.1 < n);
-    ranges.get(at).filter(|row| row.0 <= n).map_or("Cn", |row| row.2)
-}
 
 // Return the database mapping for one Unicode character, including surrogate halves.
 pub fn decompose(args: &[Value]) -> Result<Value, String> {

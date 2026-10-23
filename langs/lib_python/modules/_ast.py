@@ -5,3 +5,8 @@ for _name, _value in vars(_ast_module).items():
     if isinstance(_value, type) and issubclass(_value, _ast_module.AST):
         globals()[_name] = _value
         __all__.append(_name)
+# The compile flags stand beside the classes in the reference's module.
+for _name, _value in vars(_ast_module).items():
+    if _name.startswith('PyCF_') and isinstance(_value, int):
+        globals()[_name] = _value
+        __all__.append(_name)

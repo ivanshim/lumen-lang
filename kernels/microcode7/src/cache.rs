@@ -29,6 +29,11 @@ impl Serialize for Value {
             Value::KindOf(kind) => json!([18, kind]),
             Value::TextRow(words, marked) => json!([19, [words, marked]]),
             Value::Refusal(spelling) => json!([15, spelling]),
+            Value::Set(store) if store.borrow().sealed => {
+                let store = store.borrow();
+                let members = serde_json::to_value(store.values()).map_err(serde::ser::Error::custom)?;
+                json!([22, [store.spelling, members]])
+            }
             _ => return Err(serde::ser::Error::custom(format!("compiled form cannot retain {}", self.kind_word()))),
         };
         tagged.serialize(output)
@@ -47,6 +52,15 @@ impl<'a> Deserialize<'a> for Value {
             2 => Value::Unset,
             20 => { let (changeable, shown) = recover!((bool, Rc<str>)); Value::OctetKind { changeable, shown } },
             21 => Value::Channel(recover!(u8)),
+            22 => {
+                let (spelling, items) = recover!((String, Vec<Value>));
+                let mut store = crate::data::SetStore::new(&spelling, true);
+                for item in items {
+                    let address = item.hash_address().map_err(serde::de::Error::custom)?;
+                    store.put(address, item);
+                }
+                Value::Set(Rc::new(RefCell::new(store)))
+            }
             3 => Value::Flag(recover!(bool)),
             4 => Value::Small(recover!(i64)),
             5 => Value::Huge(Rc::new(recover!(String).parse().map_err(serde::de::Error::custom)?)),

@@ -37,6 +37,15 @@ use crate::code::{Operand, LocalSlots, Builtin, Action, ImportStyle, Routine, Ce
 
 thread_local! {
     static PARENT_CALLABLE: Value = Value::Adapter(Rc::new((9, Vec::new())));
+    /// The most figures a decimal whole number may spell in text being
+    /// read for a language that limits them; nothing when it does not.
+    static FIGURE_LIMIT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// Say how many figures the text about to be read may spell in a
+/// decimal whole number, as the running definition has it.
+pub fn holding_figures(limit: Option<usize>) {
+    FIGURE_LIMIT.with(|slot| slot.set(limit));
 }
 
 // AST locations affect metadata only; regenerated tokens still govern grammar.
@@ -3982,7 +3991,7 @@ impl<'a> Compiler<'a> {
             } else { false };
             if star_blocked { return Err("SyntaxError: 'break', 'continue' and 'return' cannot appear in an except* block".into()); }
             let invalid_return = Lang::spells(&lang.return_words, &word) && (self.piece().outermost || self.in_class_body());
-            let invalid_loop = (Lang::spells(&lang.break_words, &word) || Lang::spells(&lang.continue_words, &word)) && (self.piece().cycles.is_empty() || self.in_class_body());
+            let invalid_loop = (Lang::spells(&lang.break_words, &word) || Lang::spells(&lang.continue_words, &word)) && self.piece().cycles.is_empty();
             if invalid_return || invalid_loop {
                 let last = self.statement_last(self.pos).unwrap_or(self.look());
                 self.registry.stopped_end = if last.end_column != 0 { last.end_column } else { last.column + last.lexeme.chars().count() };
@@ -14730,10 +14739,10 @@ fn parse_number(text: &str, lang: &Lang) -> Res<Value> {
     if lang.number_strict { crate::lex::number_spelling(text, lang)?; }
     let newer = text.chars().any(|c| lang.digit_separators.contains(&c) || lang.exponent_letters.contains(&c))
         || lang.point.map_or(false, |p| text.starts_with(p) || text.ends_with(p));
-    Ok(within_width(read_number(text, lang)?, lang).with_point(lang.print_real_point && newer))
+    Ok(within_width(read_number(text, lang, true)?, lang).with_point(lang.print_real_point && newer))
 }
 
-fn read_number(text: &str, lang: &Lang) -> Res<Value> {
+fn read_number(text: &str, lang: &Lang, figures: bool) -> Res<Value> {
     // Marks put between digits to break them up count for nothing.
     let plain: String = text.chars().filter(|c| !lang.digit_separators.contains(c)).collect();
     if plain != text {
@@ -14750,7 +14759,7 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
                 }
             }
         }
-        return read_number(&plain, lang);
+        return read_number(&plain, lang, figures);
     }
     if let Some(last) = text.chars().last().filter(|c| lang.imaginary_letters.contains(c)) {
         let coefficient = text[..text.len() - last.len_utf8()].parse::<f64>().map_err(|_| unreadable_number(text, lang))?;
@@ -14779,7 +14788,7 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
     if let Some(at) = text.find(|c| lang.exponent_letters.contains(&c)) {
         let (mantissa, power) = (&text[..at], &text[at + 1..]);
         let power: i32 = power.parse().map_err(|_| unreadable_number(text, lang))?;
-        let (p, q) = match read_number(mantissa, lang)? {
+        let (p, q) = match read_number(mantissa, lang, false)? {
             Value::Real(r) => (r.p.clone(), r.q.clone()),
             Value::Small(n) => (BigInt::from(n), BigInt::from(1)),
             Value::Huge(n) => ((*n).clone(), BigInt::from(1)),
@@ -14795,6 +14804,15 @@ fn read_number(text: &str, lang: &Lang) -> Res<Value> {
         let scale = BigInt::from(10).pow(frac.len() as u32);
         let whole = if whole.is_empty() { BigInt::from(0) } else { decimal(whole, text)? };
         return Ok(arith::shape_number(whole * &scale + if frac.is_empty() && (lang.open_decimal_point || lang.bare_number_point || lang.number_point_edge || lang.point_open) { BigInt::from(0) } else { decimal(frac, text)? }, scale, Some(precision_of(text))));
+    }
+    // A decimal whole number with more figures than the running
+    // definition allows is refused here, before the figures are turned:
+    // the reference names the limit and counts what was written.
+    if let (true, Some(limit)) = (figures, FIGURE_LIMIT.with(|slot| slot.get())) {
+        let figures = text.chars().filter(|c| c.is_ascii_digit()).count();
+        if limit > 0 && figures > limit {
+            return Err(format!("SyntaxError: Exceeds the limit ({limit} digits) for integer string conversion: value has {figures} digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits."));
+        }
     }
     Ok(Value::of_big(decimal(text, text)?))
 }

@@ -1,41 +1,165 @@
-# The source loader has no binary extensions.  The few library modules that
-# CPython ships frozen are reported as frozen; their table and the override
-# live beside the meta path entry that serves them.
 import _runtime_import as _frozen
 
+# The modules built into the interpreter.  Their source travels inside the
+# binary in this module; a frozen module is compiled the first time its code
+# object is asked for, and a name not yet compiled still answers with its
+# package flag and original name.  The table carries the reference's own
+# sample modules, which exist only as frozen modules, and the two importlib
+# spellings of the bootstrap modules.
+_FROZEN_SOURCES = {
+    '__hello__': r'''initialized = True
+
+class TestFrozenUtf8_1:
+    """\u00b6"""
+
+class TestFrozenUtf8_2:
+    """\u03c0"""
+
+class TestFrozenUtf8_4:
+    """\U0001f600"""
+
+def main():
+    print("Hello world!")
+
+if __name__ == '__main__':
+    main()
+''',
+    '__phello__': r'''initialized = True
+
+def main():
+    print("Hello world!")
+
+if __name__ == '__main__':
+    main()
+''',
+    '__phello__.spam': r'''initialized = True
+
+def main():
+    print("Hello world!")
+
+if __name__ == '__main__':
+    main()
+''',
+    '__phello__.ham': r'''initialized = True
+
+def main():
+    print("Hello world!")
+
+if __name__ == '__main__':
+    main()
+''',
+    '__phello__.ham.eggs': r'''initialized = True
+
+def main():
+    print("Hello world!")
+
+if __name__ == '__main__':
+    main()
+''',
+    '__hello_only__': r'''initialized = True
+print("Hello world!")
+''',
+}
+_FROZEN_PACKAGES = frozenset(('__phello__', '__phello__.ham'))
+# A frozen module built from a loose source file has no original name.
+_FROZEN_ORIGINLESS = frozenset(('__hello_only__',))
+_FROZEN_ALIASES = {
+    '__hello_alias__': ('__hello__', False),
+    '__phello_alias__': ('__hello__', True),
+    '_frozen_importlib': ('importlib._bootstrap', False),
+    '_frozen_importlib_external': ('importlib._bootstrap_external', False),
+}
+_FROZEN_CODES = {}
+_frozen_override = 0
+
+
 def _override_frozen_modules_for_tests(override):
+    global _frozen_override
     if override not in (-1, 0, 1):
         raise ValueError('invalid frozen module override')
+    _frozen_override = override
     _frozen.frozen_override = override
 
-def _frozen_module_names():
-    return list(_frozen.FROZEN_MODULES)
 
-def find_frozen(name, *, withdata=False):
+def _frozen_entry(name):
+    if _frozen_override == -1:
+        return None
+    if name in _FROZEN_ALIASES:
+        original, package = _FROZEN_ALIASES[name]
+        return original, package, original
+    if name.endswith('.__init__'):
+        original = name[:-len('.__init__')]
+        if original in _FROZEN_PACKAGES:
+            return original, False, '<' + original
+        return None
+    if name in _FROZEN_SOURCES:
+        original = None if name in _FROZEN_ORIGINLESS else name
+        return name, name in _FROZEN_PACKAGES, original
+    return None
+
+
+def _module_source(name):
+    # A bootstrap module's own source is the closest thing to the code a
+    # frozen table would hold for it, so it is compiled only when asked for.
+    import sys
+    module = sys.modules.get(name)
+    if module is None:
+        return None
+    loader = getattr(module, '__loader__', None)
+    fetch = getattr(loader, 'get_source', None)
+    if fetch is not None:
+        try:
+            return fetch(name)
+        except (ImportError, AttributeError):
+            pass
+    filename = getattr(module, '__file__', None)
+    if not filename:
+        return None
+    try:
+        with open(filename, 'r', encoding='utf-8') as stream:
+            return stream.read()
+    except OSError:
+        return None
+
+
+def _frozen_code(key, asked):
+    code = _FROZEN_CODES.get(asked)
+    if code is not None:
+        return code
+    source = _FROZEN_SOURCES.get(key)
+    if source is None:
+        source = _module_source(key)
+    if source is None:
+        raise ImportError(f"No such frozen object named {asked!r}", name=asked)
+    code = compile(source, '<frozen ' + key + '>', 'exec')
+    _FROZEN_CODES[asked] = code
+    return code
+
+
+def is_frozen(name):
+    return _frozen_entry(name) is not None
+
+
+def is_frozen_package(name):
+    entry = _frozen_entry(name)
+    if entry is None:
+        raise ImportError(f"No such frozen object named {name!r}", name=name)
+    return entry[1]
+
+
+# This interpreter carries source modules; the frozen table above is its own.
+def find_frozen(name, withdata=False):
     if not isinstance(name, str):
         raise TypeError('find_frozen() argument 1 must be str, not ' + type(name).__name__)
-    if _frozen.frozen_override < 0 or name not in _frozen.FROZEN_MODULES:
+    entry = _frozen_entry(name)
+    if entry is None:
         return None
-    ispkg, origname = _frozen.FROZEN_MODULES[name]
+    key, package, original = entry
     data = None
     if withdata:
         import marshal
-        data = marshal.dumps(get_frozen_object(name))
-    return (data, ispkg, origname)
-
-def _frozen_info(name):
-    info = find_frozen(name)
-    if info is None:
-        raise ImportError('No such frozen object named ' + repr(name), name=name)
-    return info
-
-def is_frozen_package(name):
-    return _frozen_info(name)[1]
-
-def init_frozen(name):
-    _frozen_info(name)
-    from importlib._bootstrap import FrozenImporter, _load_unlocked
-    return _load_unlocked(FrozenImporter.find_spec(name))
+        data = memoryview(marshal.dumps(_frozen_code(key, name)))
+    return (data, package, original)
 
 def _override_multi_interp_extensions_check(override):
     raise NotImplementedError('subinterpreters and binary extensions are not supported')
@@ -46,8 +170,6 @@ def is_builtin(name):
         return -1
     return 1 if name in ('_imp', '_thread', '_weakref', '_io', 'posix', 'marshal', '_warnings') else 0
 
-def is_frozen(name):
-    return find_frozen(name) is not None
 
 def create_builtin(spec):
     if not is_builtin(spec.name):
@@ -124,6 +246,7 @@ class _NativeLoader:
     def get_source(fullname):
         return __loader_source(fullname)
 
+
 # Cached code carries the source location through its nested definitions.
 def _fix_co_filename(code, path):
     return _code_filename(code, path)
@@ -192,11 +315,12 @@ def create_dynamic(spec, file=None):
     raise ImportError('dynamic extension loading is not supported', name=name, path=origin)
 
 
-# Compile bundled frozen sources or validate explicitly supplied marshalled code.
 def get_frozen_object(name, data=None):
     if data is None:
-        _frozen_info(name)
-        return compile(__load_module(name, 'source'), '<frozen ' + name + '>', 'exec')
+        entry = _frozen_entry(name)
+        if entry is None:
+            raise ImportError(f"No such frozen object named {name!r}", name=name)
+        return _frozen_code(entry[0], name)
     import marshal
     import types
     try:
@@ -206,3 +330,23 @@ def get_frozen_object(name, data=None):
     if not isinstance(code, types.CodeType):
         raise ImportError(f"Frozen object named {name!r} is invalid", name=name)
     return code
+
+
+# Share the expanded frozen roster with the existing meta-path finder.
+def _frozen_module_names():
+    return list(dict.fromkeys(list(_frozen.FROZEN_MODULES) + list(_FROZEN_SOURCES)
+                             + list(_FROZEN_ALIASES)
+                             + [name + '.__init__' for name in _FROZEN_PACKAGES]))
+
+
+def init_frozen(name):
+    if find_frozen(name) is None:
+        raise ImportError('No such frozen object named ' + repr(name), name=name)
+    from importlib._bootstrap import FrozenImporter, _load_unlocked
+    return _load_unlocked(FrozenImporter.find_spec(name))
+
+
+for _frozen_name in _frozen_module_names():
+    _entry = _frozen_entry(_frozen_name)
+    if _entry is not None:
+        _frozen.FROZEN_MODULES[_frozen_name] = (_entry[1], _entry[2])

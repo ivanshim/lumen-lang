@@ -338,6 +338,10 @@ fn go(table: &Table, source: &str, program_args: &[String], request: &[(String, 
     seeded.extend(table.strings("ext.system.module.name").iter().cloned());
     seeded.extend(table.strings("ext.system.module.doc").iter().cloned());
     let before: u32 = lines_before(request);
+    // The opening text is read under the same figure limit the running
+    // language declares for a decimal whole number, as every text read
+    // later is; a language that declares none keeps the whole range.
+    build::holding_figures(table.count("ext.builtin.to_int.digits"));
     let reduced = if !table.rpn {
         build::build_at(&tokens, table, &seeded, HashMap::new(), true, before)
             .map_err(|(said, row, hard, span)| cannot_read(table, &said, row, request, ahead, hard, source,

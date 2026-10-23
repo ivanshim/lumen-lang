@@ -437,6 +437,15 @@ fn fault_position(bytes: &[u8], at: usize) -> usize {
 fn python_file_source(written: Vec<u8>, given: &str) -> String {
     let signed = written.starts_with(&[0xef, 0xbb, 0xbf]);
     let bytes = written.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&written);
+    // A nought in the file is refused before any byte is read as text:
+    // the reference names the nought itself, not a decoding complaint
+    // that a later invalid byte would otherwise raise first.
+    if let Some(at) = bytes.iter().position(|byte| *byte == 0) {
+        let row = bytes[..at].iter().filter(|byte| **byte == b'\n').count() + 1;
+        let start = bytes[..at].iter().rposition(|byte| *byte == b'\n').map_or(0, |place| place + 1);
+        let line = String::from_utf8_lossy(&bytes[start..at]).into_owned();
+        source_fault(given, row, Some(&line), None, "source code cannot contain null bytes");
+    }
     let mut cookie: Option<String> = None;
     let mut cookie_row = 1usize;
     for (at, line) in bytes.split(|byte| *byte == b'\n').take(2).enumerate() {
