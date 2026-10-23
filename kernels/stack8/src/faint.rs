@@ -855,7 +855,7 @@ impl Graph {
     }
 
     fn build(roots: Vec<Value>, bookkeeping: Places<usize>, outside: HashSet<usize, BuildHasherDefault<PlaceHasher>>) -> Graph {
-        let mut nodes: Vec<Node> = Vec::new();
+        let mut nodes: Vec<Node> = Vec::with_capacity(roots.len());
         let mut rows: Places<usize> = Places::default();
         let mut open: Vec<usize> = Vec::new();
         // The row a value stands in, made where it has none yet, with

@@ -906,7 +906,7 @@ impl Web {
     }
 
     fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>, anchored: HashSet<usize, crate::table::FxBuildHasher>) -> Web {
-        let mut web = Web { strands: Vec::new(), placed: HashMap::default() };
+        let mut web = Web { strands: Vec::with_capacity(roots.len()), placed: HashMap::default() };
         let mut frontier: Vec<usize> = Vec::new();
         // Each part of a knot is placed once; a hold on a part already
         // placed is counted on it instead.
