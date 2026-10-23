@@ -5,6 +5,7 @@ import operator as _operator
 import sys as _sys
 
 _unspecified = object()
+_maxsize = _sys.maxsize
 _product_step = __itertools_product_step
 
 def _rebuild_iterator(cls, state):
@@ -17,13 +18,11 @@ class _Iterator:
     _keyword_constructor = False
     def __new__(cls, *args, **kwargs):
         result = object.__new__(cls)
-        if cls._keyword_constructor or cls.__init__ is _Iterator.__init__:
+        if cls._keyword_constructor or cls.__init__ is object.__init__:
             cls._initialize(result, *args, **kwargs)
         else:
             cls._initialize(result, *args)
         return result
-    def __init__(self, *args, **kwargs):
-        pass
     def __reduce__(self):
         return (_rebuild_iterator, (type(self), {key: value for key, value in self.__dict__.items()}))
     def __iter__(self):
@@ -98,6 +97,19 @@ class chain(_Iterator):
         self.current = state[1] if len(state) > 1 else None
 
 class islice(_Iterator):
+    def __new__(cls, *args, **kwargs):
+        # islice(it, stop) with a plain int stop is by far the commonest call: skip the generic argument checks.
+        if len(args) == 2 and not kwargs and type(args[1]) is int and 0 <= args[1] <= _maxsize:
+            result = object.__new__(cls)
+            stop = args[1]
+            result.source = iter(args[0])
+            result.target = 0
+            result.stop = stop
+            result.step = 1
+            result.position = 0
+            result.consume = stop
+            return result
+        return _Iterator.__new__(cls, *args, **kwargs)
     def _initialize(self, iterable, *args):
         if len(args) < 1 or len(args) > 3:
             raise TypeError('islice expected 2 to 4 arguments')
@@ -235,10 +247,12 @@ class dropwhile(_Iterator):
                 return value
 
 class zip_longest(_Iterator):
-    def _initialize(self, *iterables, fillvalue=None):
-        self.sources = [iter(it) for it in iterables]
-        self.active = len(self.sources)
-        self.fillvalue = fillvalue
+    def __new__(cls, *iterables, fillvalue=None):
+        result = object.__new__(cls)
+        result.sources = list(map(iter, iterables))
+        result.active = len(iterables)
+        result.fillvalue = fillvalue
+        return result
     __next__ = _product_step("zip_longest")
 
 class pairwise(_Iterator):
