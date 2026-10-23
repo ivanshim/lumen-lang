@@ -3354,6 +3354,12 @@ impl<'a> Compiler<'a> {
         })
     }
 
+    /// The expression kind a type-parameter scope refuses at `item`,
+    /// the scope's expression beginning at `begin`.
+    fn type_scope_refuses(&self, begin: usize, item: usize) -> Option<&'static str> {
+        match self.tokens[item].spelling() { ":=" => Some("named"), "yield" => Some("yield"), "await" if !self.await_in_comprehension_body(begin, item) => Some("await"), _ => None }
+    }
+
     fn python_type_scope_problem(&self) -> Option<String> {
         if self.lang.syntax_members.is_empty() { return None; }
         let spelling = |at: usize| self.tokens.get(at).map_or("", |token| token.spelling());
@@ -3436,7 +3442,7 @@ impl<'a> Compiler<'a> {
                             if let Some((_, body)) = lambdas.iter_mut().rev().find(|(level, body)| *level == nesting && !body) { *body = true; }
                         }
                         if !lambdas.iter().any(|(_, body)| *body) {
-                            let kind = match word { ":=" => Some("named"), "yield" => Some("yield"), "await" if !self.await_in_comprehension_body(begin, item) => Some("await"), _ => None };
+                            let kind = self.type_scope_refuses(begin, item);
                             if let Some(kind) = kind { return Some(format!("SyntaxError: {kind} expression cannot be used within a {scope}")); }
                         }
                         if matches!(word, "(" | "[" | "{") { nesting += 1; }
@@ -3466,8 +3472,7 @@ impl<'a> Compiler<'a> {
             for item in at + 1..self.tokens.len() {
                 let token = &self.tokens[item];
                 if depth == 0 && (matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || token.lexeme == ";") { break; }
-                let kind = match token.spelling() { ":=" => "named", "yield" => "yield", "await" if !self.await_in_comprehension_body(at + 1, item) => "await", _ => "" };
-                if !kind.is_empty() { return Some(format!("SyntaxError: {kind} expression cannot be used within a type alias")); }
+                if let Some(kind) = self.type_scope_refuses(at + 1, item) { return Some(format!("SyntaxError: {kind} expression cannot be used within a type alias")); }
                 match token.lexeme.as_str() {
                     "(" | "[" | "{" => depth += 1,
                     ")" | "]" | "}" => depth = depth.saturating_sub(1),
@@ -7631,14 +7636,14 @@ impl<'a> Compiler<'a> {
         Ok(unready)
     }
 
-    fn python_class_body(&mut self, original_name: String, qualification: String, parameters: &[String], first_row: usize) -> Res<(String, Option<String>, bool, bool)> {
-        self.piece().python_fallthrough = true;
-        let lang = self.lang;
-        let base = None;
-        let unready = false;
-        let outer = self.within.replace((original_name.clone(), base.clone()));
+    /// Open a class body: the class becomes what the reading is within
+    /// and its depth, and the header's end and the body's opening are
+    /// read. What the reading was within before, the depth before, and
+    /// whether the body stands inline on the header's line.
+    fn open_class_body(&mut self, original_name: &str, qualification: &str, base: &Option<String>) -> Res<(Option<(String, Option<String>)>, usize, bool)> {
+        let outer = self.within.replace((original_name.to_string(), base.clone()));
         let outer_depth = std::mem::replace(&mut self.class_depth, self.pieces.len());
-        if lang.class_details.get("root").map_or(false,|v|!v.is_empty()){self.within=Some((qualification.clone(),base.clone()));}
+        if self.lang.class_details.get("root").map_or(false,|v|!v.is_empty()){self.within=Some((qualification.to_string(),base.clone()));}
         self.expect_intro()?;
         let inline = !self.on_sep() && self.look().shape != Shape::Open;
         if !inline {
@@ -7647,6 +7652,58 @@ impl<'a> Compiler<'a> {
             self.pass_token();
             self.skip_seps();
         }
+        Ok((outer, outer_depth, inline))
+    }
+
+    /// The body's record goes up, with its class cell and the names a
+    /// discovering read planned for it: where the body begins.
+    fn gather_class_body(&mut self, shared: Vec<(String, String)>, documentation: Option<String>, unready: bool) -> usize {
+        let class_source = self.pos;
+        let bindings = self.plans.get(&class_source).map(|plan| plan.names.iter().cloned().collect()).unwrap_or_default();
+        let order = shared.iter().map(|(named, _)| named.clone()).collect();
+        let class_cell = self.gensym("class_cell");
+        self.cell_to_write(&class_cell);
+        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(), attributes: std::collections::BTreeSet::new(),
+            documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
+        class_source
+    }
+
+    /// The members of a class body, read to its end; a discovering read
+    /// plans the names the body bound.
+    fn read_class_body(&mut self, inline: bool, class_source: usize) -> Res<()> {
+        let lang = self.lang;
+        let mut opening = true;
+        while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
+            let heads_the_body = std::mem::take(&mut opening);
+            if self.class_member(heads_the_body)? { continue; }
+            if inline {
+                while self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme) { self.pass_token(); }
+            } else { self.skip_seps(); }
+        }
+        if !inline {
+            if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
+            self.pass_token();
+        }
+        if self.discovering {
+            let names = self.gathering().bindings.iter().cloned().collect();
+            self.plans.insert(class_source, BindingPlan { names, ..BindingPlan::default() });
+        }
+        Ok(())
+    }
+
+    /// Leave a class body: its name tables come down, and what the
+    /// reading was within before, with the depth before, come back.
+    fn close_class_body(&mut self, outer: Option<(String, Option<String>)>, outer_depth: usize) {
+        self.class_names.pop(); self.class_globals.pop(); self.class_seen.pop();
+        self.within = outer; self.class_depth = outer_depth;
+    }
+
+    fn python_class_body(&mut self, original_name: String, qualification: String, parameters: &[String], first_row: usize) -> Res<(String, Option<String>, bool, bool)> {
+        self.piece().python_fallthrough = true;
+        let lang = self.lang;
+        let base = None;
+        let unready = false;
+        let (outer, outer_depth, inline) = self.open_class_body(&original_name, &qualification, &base)?;
         let module_slot = self.gensym("class_module");
         let module_name = lang.module_names.first().cloned().unwrap_or_default();
         let mut shared: Vec<(String, String)> = Vec::new();
@@ -7670,13 +7727,7 @@ impl<'a> Compiler<'a> {
             self.write(&slot);
             documentation = Some(slot);
         }
-        let class_source = self.pos;
-        let bindings = self.plans.get(&class_source).map(|plan| plan.names.iter().cloned().collect()).unwrap_or_default();
-        let order = shared.iter().map(|(named, _)| named.clone()).collect();
-        let class_cell = self.gensym("class_cell");
-        self.cell_to_write(&class_cell);
-        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(), attributes: std::collections::BTreeSet::new(),
-            documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
+        let class_source = self.gather_class_body(shared, documentation, unready);
         // Prepare the live mapping before ordered metadata stores and body statements.
         let metadata = std::mem::take(&mut self.gathering().shared);
         self.class_book();
@@ -7691,22 +7742,7 @@ impl<'a> Compiler<'a> {
         self.constant(Value::Small(first_row as i64));
         self.write(&first_line);
         self.mirror_member("__firstlineno__", &first_line)?;
-        let mut opening = true;
-        while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
-            let heads_the_body = std::mem::take(&mut opening);
-            if self.class_member(heads_the_body)? { continue; }
-            if inline {
-                while self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme) { self.pass_token(); }
-            } else { self.skip_seps(); }
-        }
-        if !inline {
-            if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
-            self.pass_token();
-        }
-        if self.discovering {
-            let names = self.gathering().bindings.iter().cloned().collect();
-            self.plans.insert(class_source, BindingPlan { names, ..BindingPlan::default() });
-        }
+        self.read_class_body(inline, class_source)?;
         // The attributes the body's methods wrote through `self`, one
         // sorted tuple, written last into the namespace, as the
         // reference's own class body ends.
@@ -7731,8 +7767,7 @@ impl<'a> Compiler<'a> {
             self.constant(Value::text("\0annotation_strings")); self.constant(Value::Flag(self.future_annotations)); self.read(parts.book.as_ref().expect("class namespace"));
             self.act(Action::Builtin(Builtin::Replace, Rc::from("")), 3); self.discard();
         }
-        self.class_names.pop(); self.class_globals.pop(); self.class_seen.pop();
-        self.within = outer; self.class_depth = outer_depth;
+        self.close_class_body(outer, outer_depth);
         if parts.unready { self.class_cannot_run(); self.discard(); }
         self.constant(Value::Null); self.write(RESULT_CELL);
         Ok((parts.book.expect("class namespace"), parts.needs_class_cell.then_some(parts.class_cell), parts.class_cell_protocol, parts.unready))
@@ -7863,17 +7898,7 @@ impl<'a> Compiler<'a> {
             if base.is_none() { base = Some(generic); } else { further.push(generic); }
         }
         let qualification = self.qualified(&original_name);
-        let outer = self.within.replace((original_name.clone(), base.clone()));
-        let outer_depth = std::mem::replace(&mut self.class_depth, self.pieces.len());
-        if lang.class_details.get("root").map_or(false,|v|!v.is_empty()){self.within=Some((qualification.clone(),base.clone()));}
-        self.expect_intro()?;
-        let inline = !self.on_sep() && self.look().shape != Shape::Open;
-        if !inline {
-            self.skip_seps();
-            if self.look().shape != Shape::Open { return Err("Expected an indented class body".into()); }
-            self.pass_token();
-            self.skip_seps();
-        }
+        let (outer, outer_depth, inline) = self.open_class_body(&original_name, &qualification, &base)?;
         self.class_names.push((self.pieces.len(), HashMap::new()));
         self.class_globals.push((self.pieces.len(), Vec::new()));
         self.class_seen.push(Vec::new());
@@ -7902,14 +7927,8 @@ impl<'a> Compiler<'a> {
             shared.push((word.clone(), slot.clone()));
             documentation = Some(slot);
         }
-        let class_source = self.pos;
-        let bindings = self.plans.get(&class_source).map(|plan| plan.names.iter().cloned().collect()).unwrap_or_default();
         let body_at = self.mark();
-        let order = shared.iter().map(|(named, _)| named.clone()).collect();
-        let class_cell = self.gensym("class_cell");
-        self.cell_to_write(&class_cell);
-        self.gathered.push(ClassBody { bindings, class_cell, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), shared, order, annotated: Vec::new(), attributes: std::collections::BTreeSet::new(),
-            documentation, uncertain: Vec::new(), arms: 0, unready, book: None, book_tracked: HashSet::new() });
+        let class_source = self.gather_class_body(shared, documentation, unready);
         // The module a class statement is written in is the module's
         // own `__name__`, read where the class is defined, as the
         // reference reads it in the class body.
@@ -7967,28 +7986,9 @@ impl<'a> Compiler<'a> {
                 self.mirror_member(word, &slot)?;
             }
         }
-        let mut opening = true;
-        while !self.exhausted() && self.look().shape != Shape::Close && !(inline && self.on_sep()) {
-            let heads_the_body = std::mem::take(&mut opening);
-            if self.class_member(heads_the_body)? { continue; }
-            if inline {
-                while self.look().shape == Shape::Sign && lang.ends_stmt(&self.look().lexeme) { self.pass_token(); }
-            } else { self.skip_seps(); }
-        }
-        if !inline {
-            if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
-            self.pass_token();
-        }
-        if self.discovering {
-            let names = self.gathering().bindings.iter().cloned().collect();
-            self.plans.insert(class_source, BindingPlan { names, ..BindingPlan::default() });
-        }
+        self.read_class_body(inline, class_source)?;
         let ClassBody { class_cell, methods, mut shared, mut order, annotated, uncertain, unready, book, book_tracked, .. } = self.gathered.pop().expect("the class body just read");
-        self.class_names.pop();
-        self.class_globals.pop();
-        self.class_seen.pop();
-        self.within = outer;
-        self.class_depth = outer_depth;
+        self.close_class_body(outer, outer_depth);
         if unready {
             self.piece().instrs.truncate(body_at);
             self.class_cannot_run();
@@ -10181,6 +10181,68 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// The keys of a chained target, each worked out once and in order
+    /// into a place of its own; the places for the arrays along the way;
+    /// and the value, worked out first when the store is a plain one.
+    fn chain_places(&mut self, keys: &[Vec<Instr>], key_at: &[usize], deep: usize, plain: bool, keep: Option<&str>) -> Res<(Vec<String>, Vec<String>, String)> {
+        let held: Vec<String> = (0..keys.len()).map(|_| self.gensym("key")).collect();
+        for (i, key) in keys.iter().enumerate() {
+            self.replay(key.clone(), key_at[i]);
+            self.write(&held[i]);
+        }
+        let inner: Vec<String> = (0..=deep).map(|_| self.gensym("within")).collect();
+        let value = self.gensym("value");
+        if plain {
+            self.value_written(keep)?;
+            self.write(&value);
+        }
+        Ok((held, inner, value))
+    }
+
+    /// Down through the arrays from what the chain stands on, already
+    /// on the stack, to the one the write lands in; the compound
+    /// working, where there is one; then back out, each array rewritten
+    /// in the one above. The place holding the outermost rewritten array.
+    fn chain_rewrite(&mut self, held: &[String], inner: &[String], value: &str, deep: usize, appending: bool, compound: Option<Action>, keep: Option<&str>) -> Res<String> {
+        self.write(&inner[0]);
+        for i in 0..deep {
+            self.read(&inner[i]);
+            self.read(&held[i]);
+            self.act(Action::Nested, 2);
+            self.write(&inner[i + 1]);
+        }
+        if let Some(op) = compound {
+            self.read(&inner[deep]);
+            self.read(&held[deep]);
+            self.act(Action::Toward, 2);
+            self.stood_before();
+            self.addend()?;
+            self.compound_act(op);
+            self.kept(keep);
+            self.write(value);
+        }
+        let made = self.gensym("made");
+        if appending {
+            self.read(value);
+            self.read(&inner[deep]);
+            self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
+        } else {
+            self.read(&held[deep]);
+            self.read(value);
+            self.read(&inner[deep]);
+            self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
+        }
+        self.write(&made);
+        for i in (0..deep).rev() {
+            self.read(&held[i]);
+            self.read(&made);
+            self.read(&inner[i]);
+            self.act(Action::Builtin(Builtin::Restore, Rc::from("put")), 3);
+            self.write(&made);
+        }
+        Ok(made)
+    }
+
     /// The store itself, the sign that asked for it already read.
     fn store_into(&mut self, from: usize, keep: Option<&str>, compound: Option<Action>, assign: &str) -> Res<()> {
         let name_origin = self.pos.saturating_sub(2);
@@ -10344,65 +10406,20 @@ impl<'a> Compiler<'a> {
             // the whole written back into what it stood on.
             _ if footing.is_some() => {
                 let base = footing.clone().expect("what the chain stands on");
-                let held: Vec<String> = (0..keys.len()).map(|_| self.gensym("key")).collect();
-                for (i, key) in keys.iter().enumerate() {
-                    self.replay(key.clone(), key_at[i]);
-                    self.write(&held[i]);
-                }
                 let deep = match appending { true => keys.len(), false => keys.len() - 1 };
-                let inner: Vec<String> = (0..=deep).map(|_| self.gensym("within")).collect();
                 // What the chain stands on is read quietly: it is being
                 // written into, and a place not there yet is made on the
                 // way rather than complained about.
                 // The value is worked out first, while what the chain
                 // stands on is still whole.
-                let value = self.gensym("value");
-                if compound.is_none() {
-                    self.value_written(keep)?;
-                    self.write(&value);
-                }
+                let (held, inner, value) = self.chain_places(&keys, &key_at, deep, compound.is_none(), keep)?;
                 self.put(Instr::Hush(true));
                 let shared_target = self.lang.bind_names && !self.lang.class_special.is_empty()
                     && matches!(base.last(), Some(Instr::Read(_) | Instr::Act(Action::Grab(_) | Action::At, _)));
                 if shared_target { self.footing_cell(&base, from)?; }
                 else { self.replay(base.clone(), from); }
                 self.put(Instr::Hush(false));
-                self.write(&inner[0]);
-                for i in 0..deep {
-                    self.read(&inner[i]);
-                    self.read(&held[i]);
-                    self.act(Action::Nested, 2);
-                    self.write(&inner[i + 1]);
-                }
-                if let Some(op) = compound {
-                    self.read(&inner[deep]);
-                    self.read(&held[deep]);
-                    self.act(Action::Toward, 2);
-                    self.stood_before();
-                    self.addend()?;
-                    self.compound_act(op);
-                    self.kept(keep);
-                    self.write(&value);
-                }
-                let made = self.gensym("made");
-                if appending {
-                    self.read(&value);
-                    self.read(&inner[deep]);
-                    self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
-                } else {
-                    self.read(&held[deep]);
-                    self.read(&value);
-                    self.read(&inner[deep]);
-                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
-                }
-                self.write(&made);
-                for i in (0..deep).rev() {
-                    self.read(&held[i]);
-                    self.read(&made);
-                    self.read(&inner[i]);
-                    self.act(Action::Builtin(Builtin::Restore, Rc::from("put")), 3);
-                    self.write(&made);
-                }
+                let made = self.chain_rewrite(&held, &inner, &value, deep, appending, compound, keep)?;
                 // A dictionary of names handed out by a builtin is
                 // written into and never written back -- but this is
                 // still one arm of the outer match, so it falls through
@@ -10432,63 +10449,15 @@ impl<'a> Compiler<'a> {
                 if !slot.moving && (keys.len() > 1 || (keys.len() == 1 && (appending || compound.is_some()))) =>
             {
                 let name = slot.ident.to_string();
-                let held: Vec<String> = (0..keys.len()).map(|_| self.gensym("key")).collect();
-                for (i, key) in keys.iter().enumerate() {
-                    self.replay(key.clone(), key_at[i]);
-                    self.write(&held[i]);
-                }
                 // Down through the arrays, keeping each one, as far as
                 // the one the write itself lands in. The value comes
                 // first, while the array is still where it stands, since
                 // reading it out to rewrite it would leave the name
                 // holding nothing while the value is worked out.
                 let deep = match appending { true => keys.len(), false => keys.len() - 1 };
-                let inner: Vec<String> = (0..=deep).map(|_| self.gensym("within")).collect();
-                let value = self.gensym("value");
-                if compound.is_none() {
-                    self.value_written(keep)?;
-                    self.write(&value);
-                }
+                let (held, inner, value) = self.chain_places(&keys, &key_at, deep, compound.is_none(), keep)?;
                 self.read_to_rewrite(&name);
-                self.write(&inner[0]);
-                for i in 0..deep {
-                    self.read(&inner[i]);
-                    self.read(&held[i]);
-                    self.act(Action::Nested, 2);
-                    self.write(&inner[i + 1]);
-                }
-                // x op= e writes what x holds now, taken with e, which
-                // wants the place read first and so comes after.
-                if let Some(op) = compound {
-                    self.read(&inner[deep]);
-                    self.read(&held[deep]);
-                    self.act(Action::Toward, 2);
-                    self.stood_before();
-                    self.addend()?;
-                    self.compound_act(op);
-                    self.kept(keep);
-                    self.write(&value);
-                }
-                // Back out again, each array rewritten in the one above.
-                let made = self.gensym("made");
-                if appending {
-                    self.read(&value);
-                    self.read(&inner[deep]);
-                    self.act(Action::Builtin(Builtin::Append, Rc::from("push")), 2);
-                } else {
-                    self.read(&held[deep]);
-                    self.read(&value);
-                    self.read(&inner[deep]);
-                    self.act(Action::Builtin(Builtin::Replace, Rc::from("put")), 3);
-                }
-                self.write(&made);
-                for i in (0..deep).rev() {
-                    self.read(&held[i]);
-                    self.read(&made);
-                    self.read(&inner[i]);
-                    self.act(Action::Builtin(Builtin::Restore, Rc::from("put")), 3);
-                    self.write(&made);
-                }
+                let made = self.chain_rewrite(&held, &inner, &value, deep, appending, compound, keep)?;
                 self.read(&made);
                 self.rewritten(&name);
                 for temporary in inner.iter().chain(&held).chain([&made, &value]) {
@@ -11833,12 +11802,7 @@ impl<'a> Compiler<'a> {
                 self.read(owner);
                 self.act(Action::Grab(Rc::from(member)), 1);
                 if let Some(call) = lang.calling.as_ref().filter(|call| self.at_symbol(&call.open)) {
-                    let method = self.gensym("shadowed_member");
-                    self.write(&method);
-                    self.pass_token();
-                    let argc = self.arguments_of(member, &call)?;
-                    self.read(&method);
-                    self.let_go(&method);
+                    let argc = self.call_held("shadowed_member", Some(member), call)?;
                     self.act(Action::Invoke(Rc::from(member)), argc + 1);
                 }
             }
@@ -12749,6 +12713,20 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// What is about to be called, held aside while its arguments are
+    /// read and brought back above them, then let go of: how many
+    /// arguments were read. `named` is the callee's own name, where the
+    /// arguments are read as that name's.
+    fn call_held(&mut self, stem: &str, named: Option<&str>, pair: &Brackets) -> Res<usize> {
+        let held = self.gensym(stem);
+        self.write(&held);
+        self.pass_token();
+        let argc = match named { Some(called) => self.arguments_of(called, pair)?, None => self.arguments(pair)? };
+        self.read(&held);
+        self.let_go(&held);
+        Ok(argc)
+    }
+
     /// `expr[i]`, `expr->member` and `expr::member`, repeatable.
     /// A value standing in a group may be called outright: `(f)(x)`,
     /// and one call after another, `(f)(x)(y)`. What is called is held
@@ -12757,12 +12735,7 @@ impl<'a> Compiler<'a> {
     fn called_on_value(&mut self, origin: Option<usize>) -> Res<()> {
         let Some(call) = self.lang.calling.as_ref() else { return Ok(()) };
         while self.at_symbol(&call.open) {
-            let callee = self.gensym("callee");
-            self.write(&callee);
-            self.pass_token();
-            let argc = self.arguments(&call)?;
-            self.read(&callee);
-            self.let_go(&callee);
+            let argc = self.call_held("callee", None, call)?;
             if !self.lang.trace_fields.is_empty() { if let Some(start) = origin { self.put(self.expression_location(start)); } }
             self.act(Action::Invoke(Rc::from("the value the group came to")), argc + 1);
         }
@@ -13047,12 +13020,7 @@ impl<'a> Compiler<'a> {
                 if let Some(brackets) = &call {
                     if !lang.trace_fields.is_empty() { self.put(member_range.clone()); }
                     self.act(Action::Grab(named.as_str().into()), 1);
-                    let callee = self.gensym("method_value");
-                    self.write(&callee);
-                    self.pass_token();
-                    let argc = self.arguments_of(&named, brackets)?;
-                    self.read(&callee);
-                    self.let_go(&callee);
+                    let argc = self.call_held("method_value", Some(named.as_str()), brackets)?;
                     if !lang.trace_fields.is_empty() { self.put(self.expression_location(origin)); }
                     self.act(Action::Invoke(named.as_str().into()), argc + 1);
                 } else { if !lang.trace_fields.is_empty() { self.put(member_range.clone()); } self.act(Action::Grab(named.as_str().into()), 1); }
@@ -13064,12 +13032,7 @@ impl<'a> Compiler<'a> {
                     self.let_go(&held);
                     self.act(Action::BindValueMethod(Rc::from(operation.as_str())), 1);
                     if let Some(brackets) = &call {
-                        let callable = self.gensym("value_member");
-                        self.write(&callable);
-                        self.pass_token();
-                        let argc = self.arguments_of(&named, brackets)?;
-                        self.read(&callable);
-                        self.let_go(&callable);
+                        let argc = self.call_held("value_member", Some(named.as_str()), brackets)?;
                         self.act(Action::Invoke(named.as_str().into()), argc + 1);
                     }
                     self.land(finish);
@@ -13236,12 +13199,7 @@ impl<'a> Compiler<'a> {
         // wants what it calls above them.
         if let Some(call) = self.lang.calling.as_ref() {
             if stepped && self.at_symbol(&call.open) {
-                let callee = self.gensym("callee");
-                self.write(&callee);
-                self.pass_token();
-                let argc = self.arguments(&call)?;
-                self.read(&callee);
-                self.let_go(&callee);
+                let argc = self.call_held("callee", None, call)?;
                 self.act(Action::Invoke(Rc::from("the value a look came to")), argc + 1);
                 return self.indexing(from, origin);
             }
