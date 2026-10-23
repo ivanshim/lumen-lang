@@ -33133,6 +33133,17 @@ impl Engine<'_> {
         if self.lang.module_path.is_none() {
             if let Some((above, _)) = parent { self.import_module(above)?; }
         }
+        // The builtins module is read in ahead of the first module that
+        // asks for its namespace: left to that module's own set-up, it
+        // would import the module back while that module is still being
+        // made, and each of the two would be compiled and run twice.
+        if !self.lang.module_builtins.is_empty() && !self.modules.contains_key(self.home_module_word()) && !self.importing.contains(self.home_module_word()) && path != self.home_module_word() {
+            let home = self.home_module_word().to_string();
+            self.import_module(&home)?;
+            if let Some(held) = self.modules.get(path) {
+                if self.importing.contains(path) || self.module_cache_names(path) { return Ok(held.clone()); }
+            }
+        }
         let namespace_roots = own_file.as_deref().filter(|file| file.starts_with('\0'))
             .map(|file| file[1..].split('\0').collect::<Vec<_>>());
         let namespace_origin = format!("<namespace {path}>");
