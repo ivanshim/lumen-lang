@@ -126,6 +126,13 @@ class MultibyteIncrementalEncoder(_State):
     def encode(self, input, final=False):
         if not isinstance(input, str):
             input = str(input)
+        name = self.codec.name
+        if type(input) is str and type(final) is bool and name != 'hz' and not name.startswith('iso2022_'):
+            text = self._pending + input
+            wire, pos, stop = _mapping(7, name, text, int(final))
+            if stop == 0 or stop == 2:
+                self._pending = text[pos:]
+                return wire
         buffered = self._pending
         try:
             return self._encode(input, final)
@@ -169,6 +176,14 @@ class MultibyteIncrementalEncoder(_State):
                     if done and wire == piece[:done].encode('ascii'):
                         result += wire
                         pos += done
+                        continue
+            if self.codec.name.startswith('iso2022_'):
+                prefix = self._designation()
+                if prefix:
+                    wire, end = _mapping(10, self.codec.name, text, (prefix, pos * 2 + bool(final)))
+                    if end > pos:
+                        result += wire
+                        pos = end
                         continue
             first = ord(text[pos])
             if pos+1 == len(text) and not final and _mapping(3, self.codec.name, first, 0):
@@ -230,6 +245,22 @@ class MultibyteIncrementalDecoder(_State):
     def decode(self, input, final=False):
         if isinstance(input, str) or isinstance(input, int):
             raise TypeError('a bytes-like object is required, not ' + type(input).__name__)
+        # Successful stateless feeds change only pending bytes, so no rollback
+        # snapshot or second Python frame is needed. Errors use the full path.
+        name = self.codec.name
+        if type(input) is bytes and type(final) is bool and name != 'hz' and not name.startswith('iso2022_'):
+            data = self._pending + input
+            text, pos, stop = _mapping(8, name, data, int(final))
+            if stop == 0 or stop == 2:
+                self._pending = data[pos:]
+                return text
+        if type(input) is bytes and type(final) is bool and name.startswith('iso2022_'):
+            data = self._pending + input
+            trial = _mapping(11, name, data, (self._state, int(final)))
+            if trial is not None:
+                text, pos, self._state = trial
+                self._pending = data[pos:]
+                return text
         buffered = self._pending
         shift = list(self._state)
         try:
@@ -355,6 +386,12 @@ class MultibyteIncrementalDecoder(_State):
                     prefix = self._designation()
                     group = 1 if name == 'iso2022_kr' and self._state[4] & 1 else 0
                     width = 2 if self._state[group] & 128 else 1
+                    # Read the current set natively up to a control or an unmapped unit.
+                    decoded, end = _mapping(9, name, data, (prefix, width, pos))
+                    if end > pos:
+                        result += decoded
+                        pos = end
+                        continue
                     # An unknown designation cannot start a unit: report one illegal byte.
                     if width == 2 and not _mapping(2, name, prefix + data[pos:pos+1], 0):
                         width = 1
@@ -426,7 +463,8 @@ class MultibyteStreamReader:
             raise TypeError('arg 1 must be an integer')
         if size == 0:
             return ''
-        self._decoder.errors = self.errors
+        if self._decoder._errors is not self.errors:
+            self._decoder.errors = self.errors
         while True:
             data = method() if size < 0 else method(size)
             if not isinstance(data, bytes):
@@ -460,7 +498,8 @@ class MultibyteStreamWriter:
 
     # Write through private incremental state without changing Codec.encode.
     def write(self, object, /):
-        self._encoder.errors = self.errors
+        if self._encoder._errors is not self.errors:
+            self._encoder.errors = self.errors
         self.stream.write(self._encoder.encode(object, False))
 
     # Write sequence entries separately, honoring changes to its length.
