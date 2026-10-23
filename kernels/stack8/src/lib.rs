@@ -65,11 +65,7 @@ pub fn language_of(definition: &str) -> Result<String, String> {
 pub fn run(language: &str, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
     for text in BUILT_IN {
         if lang::identify(text)?.0 == language {
-            let mut lang = Lang::parse(text).map_err(|e| format!("Error: definition of '{language}': {e}"))?;
-            settle_brief(&mut lang, request);
-            settle_markup(&mut lang, request);
-            if let Some((entries, sources)) = compile::prepared_entries(text) { lang.prepared_scopes = Some(entries); lang.prepared_source_tokens = Some(sources); }
-            return go(&lang, source, program_args, request);
+            return go(&prepared(text, &format!("definition of '{language}'"), request)?, source, program_args, request);
         }
     }
     Err(format!("Error: Unknown language '{}'", language))
@@ -77,11 +73,21 @@ pub fn run(language: &str, source: &str, program_args: &[String], request: &[(St
 
 /// Run `source` under a definition given as JSON text.
 pub fn run_definition(definition: &str, source: &str, program_args: &[String], request: &[(String, String, String, bool)]) -> Result<(), String> {
-    let mut lang = Lang::parse(definition).map_err(|e| format!("Error: language definition: {e}"))?;
+    go(&prepared(definition, "language definition", request)?, source, program_args, request)
+}
+
+/// A definition read, with the host's settings applied and its prepared scopes attached.
+fn prepared(text: &str, what: &str, request: &[(String, String, String, bool)]) -> Result<Lang, String> {
+    let mut lang = Lang::parse(text).map_err(|e| format!("Error: {what}: {e}"))?;
     settle_brief(&mut lang, request);
     settle_markup(&mut lang, request);
-    if let Some((entries, sources)) = compile::prepared_entries(definition) { lang.prepared_scopes = Some(entries); lang.prepared_source_tokens = Some(sources); }
-    go(&lang, source, program_args, request)
+    if let Some((entries, sources)) = compile::prepared_entries(text) { lang.prepared_scopes = Some(entries); lang.prepared_source_tokens = Some(sources); }
+    Ok(lang)
+}
+
+/// What the request says under `key` for the program itself.
+fn self_said<'a>(request: &'a [(String, String, String, bool)], key: &str) -> Option<&'a str> {
+    request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.as_str())
 }
 
 /// What a setting the run was started with stands at, with the quotes a
@@ -170,8 +176,7 @@ fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, 
         })
     } else { None };
     if said == "SyntaxError: 'return' outside function" && !lang.syntax_members.is_empty() {
-        let file = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file")
-            .map(|(.., path, _)| path.as_str()).unwrap_or("");
+        let file = self_said(request, "file").unwrap_or("");
         let line = row.saturating_sub(before as usize);
         let shown = source.lines().nth(row.saturating_sub(1)).unwrap_or("").trim_start();
         let width = shown.split_once('#').map_or(shown, |(prefix, _)| prefix).chars().count();
@@ -192,7 +197,7 @@ fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, 
             eprintln!("{kind}: {message}");
             return String::from("\0");
         }
-        let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.as_str());
+        let named = |key: &str| self_said(request, key);
         let file = named("given").or(named("file")).unwrap_or("");
         let line = row.saturating_sub(before as usize);
         let whole = source.lines().nth(row.saturating_sub(1)).unwrap_or("");
@@ -224,7 +229,7 @@ fn cannot_read(lang: &Lang, said: &str, row: usize, request: &[(String, String, 
         false => lang.reading_word.as_deref(),
     };
     let Some(word) = word else { return said.to_string() };
-    let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.clone());
+    let named = |key: &str| self_said(request, key).map(str::to_string);
     let file = named("file").unwrap_or_default();
     let line = (row as u32).saturating_sub(before);
     print!("{}{}", engine::complaint_opening(lang, word, said), engine::complaint_place(lang, &file, line));
@@ -242,7 +247,7 @@ fn escape_notices_ahead(source: &str, lang: &Lang, before: u32, request: &[(Stri
     if lang.escape_warning.len() != 4 || lang.syntax_members.is_empty() {
         return;
     }
-    let named = |key: &str| request.iter().find(|(from, k, ..)| from == "SELF" && k == key).map(|(.., v, _)| v.as_str());
+    let named = |key: &str| self_said(request, key);
     let file = named("given").or(named("file")).unwrap_or("");
     for (message, row) in lex::escape_warnings(source, lang) {
         if (row as u32) <= before {
@@ -254,11 +259,7 @@ fn escape_notices_ahead(source: &str, lang: &Lang, before: u32, request: &[(Stri
 }
 
 fn lines_before(request: &[(String, String, String, bool)]) -> u32 {
-    request
-        .iter()
-        .find(|(from, key, ..)| from == "SELF" && key == "lines_before")
-        .and_then(|(.., n, _)| n.parse().ok())
-        .unwrap_or(0)
+    self_said(request, "lines_before").and_then(|n| n.parse().ok()).unwrap_or(0)
 }
 
 /// The host may keep the prologue before the library and put the rest
@@ -296,33 +297,16 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     // The system names are globals whether or not the program mentions them.
     let system = [&lang.args_binding, &lang.args_list, &lang.args_count, &lang.memo_binding, &lang.precision_binding, &lang.entry_binding,
         &lang.figures_binding, &lang.figures_shown_binding];
-    for name in system.into_iter().flatten() {
-        registry.slot(name);
-    }
-    if !lang.kind_spelled {
-        for (name, _) in &lang.sort_bindings {
-            registry.slot(name);
-        }
-    }
-    for (_, name) in &lang.request_bindings {
-        registry.slot(name);
-    }
-    if let Some(name) = &lang.amiss_binding {
-        registry.slot(name);
-    }
-    if let Some(name) = &lang.body_binding {
-        registry.slot(name);
-    }
-    for (_, name) in &lang.source_bindings {
-        registry.slot(name);
-    }
-    if let Some(name) = &lang.debug_binding {
-        registry.slot(name);
-    }
-    for name in &lang.module_names {
-        registry.slot(name);
-    }
-    for name in &lang.module_doc {
+    let slots = system.into_iter().flatten()
+        .chain(lang.sort_bindings.iter().filter(|_| !lang.kind_spelled).map(|(name, _)| name))
+        .chain(lang.request_bindings.iter().map(|(_, name)| name))
+        .chain(&lang.amiss_binding)
+        .chain(&lang.body_binding)
+        .chain(lang.source_bindings.iter().map(|(_, name)| name))
+        .chain(&lang.debug_binding)
+        .chain(&lang.module_names)
+        .chain(&lang.module_doc);
+    for name in slots {
         registry.slot(name);
     }
     registry.source = Some(std::rc::Rc::from(&*source));
@@ -334,9 +318,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     };
 
     let mut machine = engine::Engine::new(lang, registry);
-    machine.library_root = request.iter()
-        .find(|(from, key, ..)| from == "SELF" && key == "library_root")
-        .map(|(.., value, _)| value.clone());
+    machine.library_root = self_said(request, "library_root").map(str::to_string);
     if lang.import_values {
         machine.module_sources = request.iter().filter(|(kind, ..)| kind == "MODULE").map(|(_, name, source, _)| (name.clone(), source.clone())).collect();
     }
@@ -366,10 +348,10 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
         let as_directory = lang.python_numbers
             && std::env::var("LUMEN_RUN_MODULE").map_or(false, |name| name == "__main__");
         let wanted = if as_directory { "given" } else { "file" };
-        let file = request.iter().find(|(from, k, ..)| from == "SELF" && k == "argv0")
-            .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == wanted))
-            .or_else(|| request.iter().find(|(from, k, ..)| from == "SELF" && k == "file"))
-            .map(|(.., v, _)| v.clone());
+        let file = self_said(request, "argv0")
+            .or_else(|| self_said(request, wanted))
+            .or_else(|| self_said(request, "file"))
+            .map(str::to_string);
         let mut all: Vec<Value> = vec![Value::text(&file.unwrap_or_default())];
         all.extend(program_args.iter().map(|a| Value::text(a)));
         if let Some(name) = &lang.args_count {
@@ -400,8 +382,7 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
     }
     // The body as it came, for a program that would read it itself.
     if let Some(name) = &lang.body_binding {
-        let found = request.iter().find(|(from, key, ..)| from == "SELF" && key == "body");
-        machine.define(name, found.map_or(Value::Null, |(.., raw, _)| Value::text(raw)));
+        machine.define(name, self_said(request, "body").map_or(Value::Null, Value::text));
     }
     // What the host found amiss in the request before the program ran,
     // in the language's own words: the host names only which of them it
@@ -423,14 +404,13 @@ fn go_inner(lang: &Lang, source: &str, program_args: &[String], request: &[(Stri
             .collect();
         machine.define(name, Value::array(said));
     }
-    if let Some((.., place, _)) = request.iter().find(|(from, key, ..)| from == "SELF" && key == "file") {
+    if let Some(place) = self_said(request, "file") {
         machine.written_in(place);
     }
     machine.pages_are_kept(pages_kept(lang, request));
     // Where the program is written, as the request carries it.
     for (part, name) in &lang.source_bindings {
-        let found = request.iter().find(|(from, key, ..)| from == "SELF" && key == part);
-        if let Some((.., value, _)) = found {
+        if let Some(value) = self_said(request, part) {
             machine.define(name, Value::text(value));
         }
     }
