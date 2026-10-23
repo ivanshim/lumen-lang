@@ -34279,6 +34279,7 @@ impl Machine<'_> {
                 let source = match self.library_sources.get(path).filter(|_| split.is_none() || initializing_alias || self.table.single("ext.system.module.path").is_none()).cloned() {
                     Some(source) => source,
                     None => {
+                        if let Some(module) = self.namespace_package(path)? { return Ok(module); }
                         let fallback = match self.imported.get("importlib") {
                             Some(Value::Thing(space)) => space.holds.borrow().iter().find_map(|(key, item)| (key == "_native_import").then(|| item.settled())),
                             _ => None,
@@ -34600,20 +34601,12 @@ impl Machine<'_> {
             LibraryIndex { origin: library.to_owned(), sources, virtual_dirs, folder_marks, file_links }
     }
 
-    fn sys_path_source(&self, path: &str) -> Option<(String, Vec<u8>)> {
+    fn sys_path_source(&mut self, path: &str) -> Option<(String, Vec<u8>)> {
         let (space_name, attribute, filename) = if let Some((head, tail)) = path.rsplit_once('.') {
             (head, self.table.strings("ext.system.module.path").first().map(String::as_str)?, tail)
         } else { ("sys", "path", path) };
-        let namespace = self.cached_import(space_name).or_else(|| self.imported.get(space_name).cloned())?;
-        let mut value = Self::imported_attribute(&namespace, attribute)?;
-        while let Value::Shared(cell) | Value::Mutable(cell, _) = value {
-            value = cell.borrow().clone();
-        }
-        let items = match value {
-            Value::Vector(items) => items,
-            Value::Tuple(items) if self.table.strings("ext.system.module.path").first().map(String::as_str).is_some() => items,
-            _ => return None,
-        };
+        self.refresh_namespace_path(space_name, attribute);
+        let items = self.search_path_rows(space_name, attribute)?;
         let library = self.library_directory.as_deref().unwrap_or_else(|| std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../langs/lib_python/modules")));
         let mut index = self.library_index.borrow_mut();
         if self.table.has_any("ext.system.module.path") && index.as_ref().is_none_or(|saved| !saved.matches_disk(library)) {
@@ -34652,6 +34645,81 @@ impl Machine<'_> {
         // Defer namespace creation until no concrete module has matched.
         // The private location marker carries all namespace search portions.
         (!portions.is_empty()).then(|| (String::from("\0") + &portions.join("\0"), Vec::new()))
+    }
+
+    /// Ask a namespace path for the rows it stands in now. Its own
+    /// iteration recomputes them when the parent search path has moved
+    /// or the finder caches were cleared; a plain package path is not
+    /// one of the bootstrap's objects and is left alone.
+    fn refresh_namespace_path(&mut self, space_name: &str, attribute: &str) {
+        let held = match self.imported.get(space_name) {
+            Some(Value::Thing(space)) => space.holds.borrow().iter().find(|entry| entry.0 == attribute).map(|entry| entry.1.clone()),
+            _ => None,
+        };
+        let mut value = match held { Some(value) => value, None => return };
+        while let Value::Shared(cell) | Value::Mutable(cell, _) = value {
+            value = cell.borrow().clone();
+        }
+        let namespace = matches!(&value, Value::Thing(holder) if holder.holds.borrow().iter().any(|entry| entry.0 == "_path_finder"));
+        if !namespace { return; }
+        let Some(native) = self.imported.get("_imp").cloned() else { return };
+        let Ok(touch) = self.namespace_item(&native, "_imp", "_refresh_namespace_path") else { return };
+        let _ = self.apply_held(touch, vec![value]);
+    }
+
+    /// The rows a namespace keeps for its search path: the plain vector an
+    /// ordinary package holds, or the directories behind the bootstrap's
+    /// own namespace-path object, filed under `_path`.
+    fn search_path_rows(&self, space_name: &str, attribute: &str) -> Option<Vec<Value>> {
+        let Value::Thing(namespace) = self.imported.get(space_name)? else { return None };
+        let held = namespace.holds.borrow().iter().find(|entry| entry.0 == attribute).map(|entry| entry.1.clone())?;
+        let mut value = held;
+        while let Value::Shared(cell) | Value::Mutable(cell, _) = value {
+            value = cell.borrow().clone();
+        }
+        let behind = match &value {
+            Value::Thing(holder) => holder.holds.borrow().iter().find(|entry| entry.0 == "_path").map(|entry| entry.1.clone()),
+            _ => None,
+        };
+        if let Some(mut inner) = behind {
+            while let Value::Shared(cell) | Value::Mutable(cell, _) = inner {
+                inner = cell.borrow().clone();
+            }
+            value = inner;
+        }
+        match value {
+            Value::Vector(items) => Some(items.iter().cloned().collect()),
+            Value::Tuple(items) if self.table.strings("ext.system.module.path").first().map(String::as_str).is_some() => Some(items.iter().cloned().collect()),
+            _ => None,
+        }
+    }
+
+    /// The module a name's directories answer for when no source stands
+    /// there: the bootstrap's own namespace helper builds it, so its
+    /// search path, spec and loader match the reference's, and nothing
+    /// is run for a body it does not have.
+    fn namespace_package(&mut self, path: &str) -> Result<Option<Value>, String> {
+        if !self.imported.contains_key("importlib._bootstrap_external") { return Ok(None); }
+        let Some(native) = self.imported.get("_imp").cloned() else { return Ok(None) };
+        let build = self.namespace_item(&native, "_imp", "_initialize_namespace_module")?;
+        let made = match self.apply_held(build, vec![Value::text(path)]) {
+            Ok(made) => made,
+            Err(Escape::Error(words)) => return Err(words),
+            Err(away) => { self.got_away = Some(away); return Err(self.bad_answer()); }
+        };
+        if matches!(made, Value::Nil) { return Ok(None); }
+        self.imported.insert(path.to_string(), made.clone());
+        self.refresh_import_table(path);
+        if let Some((owner, name)) = path.rsplit_once('.') {
+            if let Some(Value::Thing(parent)) = self.imported.get(owner) {
+                let mut holdings = parent.holds.borrow_mut();
+                if let Some(at) = holdings.iter().position(|entry| entry.0 == name) {
+                    if let Value::Shared(link) = &holdings[at].1 { *link.borrow_mut() = made.clone(); }
+                    else { holdings[at].1 = made.clone(); }
+                } else { holdings.push((name.into(), made.clone())); }
+            }
+        }
+        Ok(Some(made))
     }
 
     /// Manifest locations describe the embedded library even when its files
