@@ -6817,6 +6817,8 @@ impl<'a> Engine<'a> {
                 Instr::PrepareBuiltin(..) => "PrepareBuiltin",
                 Instr::PreparedAct(..) => "PreparedAct",
                 Instr::Write(..) => "Write",
+                Instr::Act(Action::Same | Action::Unsame, 2) => "IS_OP",
+                Instr::Act(Action::Not, 1) => "UNARY_NOT",
                 Instr::Act(..) => "Act",
                 Instr::Skip(..) => "Skip",
                 Instr::Missing(..) => "Missing",
@@ -6844,7 +6846,10 @@ impl<'a> Engine<'a> {
                 Instr::SkipCmp { .. } => "SkipCmp",
             };
             let jump = matches!(instruction, Instr::Skip(_) | Instr::SkipCmp { .. } | Instr::Depart { .. });
-            let destination = match instruction { Instr::Skip(at) | Instr::SkipCmp { to: at, .. } | Instr::Depart { to: at, .. } => Value::Small(*at as i64), _ => Value::Null };
+            let destination = match instruction {
+                Instr::Act(Action::Same, 2) => Value::Small(0),
+                Instr::Act(Action::Unsame, 2) => Value::Small(1),
+                Instr::Skip(at) | Instr::SkipCmp { to: at, .. } | Instr::Depart { to: at, .. } => Value::Small(*at as i64), _ => Value::Null };
             entries.push(Value::tuple(vec![Value::Small(offset as i64), Value::text(opcode), destination, Value::Flag(jump),
                 Value::tuple(position.clone())]));
         }
