@@ -123,11 +123,10 @@ pub fn assemble(toks: &[Tok], def: &Def, table: &mut Table) -> Outcome<Rc<Progra
             a.skip_separators();
         }
     }
-    let end = a.here();
-    for at in a.unit().exits.clone() {
-        a.unit().words[at] = Word::Unless(end);
+    let mut unit = a.units.pop().expect("the top unit");
+    for at in unit.exits {
+        unit.words[at] = Word::Unless(unit.words.len());
     }
-    let unit = a.units.pop().expect("the top unit");
     Ok(Rc::new(Program { name: unit.name, params: Vec::new(), names: unit.names, yields: false, words: unit.words }))
 }
 
@@ -450,11 +449,10 @@ impl<'a> Assembler<'a> {
         if yields && used {
             self.load(RESULT);
         }
-        let end = self.here();
-        for at in self.unit().exits.clone() {
-            self.unit().words[at] = Word::Unless(end);
+        let mut unit = self.units.pop().expect("the unit");
+        for at in unit.exits {
+            unit.words[at] = Word::Unless(unit.words.len());
         }
-        let unit = self.units.pop().expect("the unit");
         let words = if yields && !used { shifted(unit.words.into_iter().skip(2).collect(), -2) } else { unit.words };
         Ok(Rc::new(Program { name: unit.name, params, names: unit.names, yields, words }))
     }

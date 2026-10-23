@@ -70,13 +70,13 @@ fn go(spec: &Spec, source: &str, program_args: &[String]) -> Result<(), String> 
             let same = r.found.iter().all(|(n, a)| assumed.get(n) == Some(a));
             assumed = r.found;
             if same {
-                settled = Some(reduce::reduce(&toks, spec, &seeded, assumed.clone(), true)?);
+                settled = Some(reduce::reduce(&toks, spec, &seeded, assumed, true)?);
                 break;
             }
         }
         settled.ok_or_else(|| "The programs of this file take and leave values in a way that does not settle".to_string())?
     };
-    let mut runner = run::Runner::new(spec, reduced.global_names.clone());
+    let mut runner = run::Runner::new(spec, reduced.global_names);
     if let Some(n) = spec.one("system.args") {
         runner.set(n, Value::str(&program_args.join(" ")));
     }

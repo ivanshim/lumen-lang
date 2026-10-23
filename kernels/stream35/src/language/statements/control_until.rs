@@ -24,38 +24,14 @@ struct UntilStmt {
 impl StmtNode for UntilStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
         loop {
-            // Execute body first (at least once) in same scope (matches Microcode kernel)
-            let mut break_occurred = false;
-            for stmt in &self.body {
-                match stmt.exec(env)? {
-                    Control::Break => {
-                        break_occurred = true;
-                        break;
-                    }
-                    Control::Continue => break,
-                    Control::ExprValue(_) => {
-                        // Expression statement value - continue loop
-                    }
-                    Control::Return(val) => {
-                        return Ok(Control::Return(val));
-                    }
-                    Control::None => {}
-                }
+            match crate::kernel::eval::block(&self.body, env)? {
+                Control::Break => break,
+                value @ Control::Return(_) => return Ok(value),
+                _ => {}
             }
-
-            if break_occurred {
-                return Ok(Control::None);
-            }
-
-            // Check condition: exit if true, continue if false
-            let cond = self.condition.eval(env)?;
-            let cond_bool = as_bool(cond.as_ref())?;
-
-            if cond_bool.value {
-                // Condition is true, exit loop
+            if as_bool(self.condition.eval(env)?.as_ref())?.value {
                 break;
             }
-            // Condition is false, continue looping
         }
         Ok(Control::None)
     }

@@ -18,35 +18,11 @@ struct WhileStmt {
 
 impl StmtNode for WhileStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
-        loop {
-            let cond = self.condition.eval(env)?;
-            let cond_bool = as_bool(cond.as_ref())?;
-
-            if cond_bool.value {
-                // Loop body executes in the same scope as the enclosing function
-                // No scope is created (matches Microcode kernel behavior)
-                let mut break_occurred = false;
-                for stmt in &self.body {
-                    match stmt.exec(env)? {
-                        Control::Break => {
-                            break_occurred = true;
-                            break;
-                        }
-                        Control::Continue => break,
-                        Control::ExprValue(_) => {
-                            // Expression statement value - continue loop
-                        }
-                        Control::Return(val) => {
-                            return Ok(Control::Return(val));
-                        }
-                        Control::None => {}
-                    }
-                }
-                if break_occurred {
-                    return Ok(Control::None);
-                }
-            } else {
-                break;
+        while as_bool(self.condition.eval(env)?.as_ref())?.value {
+            match crate::kernel::eval::block(&self.body, env)? {
+                Control::Break => break,
+                value @ Control::Return(_) => return Ok(value),
+                _ => {}
             }
         }
         Ok(Control::None)

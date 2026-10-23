@@ -271,11 +271,7 @@ impl<'a> Runner<'a> {
     }
 
     fn values(&mut self, args: &[Node], frame: &Rc<Frame>) -> R<Vec<Value>> {
-        let mut out = Vec::with_capacity(args.len());
-        for a in args {
-            out.push(self.eval(a, frame)?);
-        }
-        Ok(out)
+        args.iter().map(|node| self.eval(node, frame)).collect()
     }
 
     fn closure(&mut self, node: &Node, frame: &Rc<Frame>) -> R<(Rc<Program>, Rc<Frame>)> {
@@ -609,13 +605,10 @@ impl<'a> Runner<'a> {
                     None => return Err(format!("{}(): unknown value type", name)),
                 }
             }
-            Op::Num => {
+            Op::Num | Op::Den => {
                 n(1)?;
-                Value::big(arith::exact(&v[0]).ok_or_else(|| format!("{}() requires a number argument", name))?.num)
-            }
-            Op::Den => {
-                n(1)?;
-                Value::big(arith::exact(&v[0]).ok_or_else(|| format!("{}() requires a number argument", name))?.den)
+                let exact = arith::exact(&v[0]).ok_or_else(|| format!("{}() requires a number argument", name))?;
+                Value::big(if op == Op::Den { exact.den } else { exact.num })
             }
             Op::Get => {
                 n(2)?;

@@ -177,26 +177,15 @@ fn execute_function(
             env.define(param.clone(), arg_val.clone());
         }
 
-        let mut result = Box::new(crate::language::values::LumenNull) as Value;
-        let mut returned = false;
-        let body_ref = body.borrow();
-        for stmt in body_ref.iter() {
-            match stmt.exec(env)? {
-                crate::kernel::ast::Control::ExprValue(val) => result = val,
-                crate::kernel::ast::Control::Return(val) => {
-                    result = val;
-                    returned = true;
-                    break;
-                }
-                crate::kernel::ast::Control::Break | crate::kernel::ast::Control::Continue => {
-                    return Err("break/continue outside of loop".into());
-                }
-                crate::kernel::ast::Control::None => {}
-            }
-        }
-        // Pascal: a body that ends without returning yields what it assigned
-        // to the function's own name.
-        if !returned && def().result_by_name {
+        use crate::kernel::ast::Control;
+        let mut result = match crate::kernel::eval::block(&body.borrow(), env)? {
+            Control::Return(value) => return Ok(value),
+            Control::ExprValue(value) => value,
+            Control::None => Box::new(crate::language::values::LumenNull) as Value,
+            Control::Break | Control::Continue => return Err("break/continue outside of loop".into()),
+        };
+        // A fall-through may yield the binding of the function's own name.
+        if def().result_by_name {
             if let Ok(named) = env.get(name) {
                 result = named;
             }

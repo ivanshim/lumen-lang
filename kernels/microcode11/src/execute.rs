@@ -221,13 +221,8 @@ impl<'a> Machine<'a> {
             }
             Form::Loop { test, body, step } => {
                 while self.eval(test, frame)?.is_true() {
-                    match self.eval(body, frame) {
-                        Ok(_) | Err(Signal::Continue) => {}
-                        Err(Signal::Break) => return Ok(Value::Nothing),
-                        Err(other) => return Err(other),
-                    }
-                    if let Some(step) = step {
-                        match self.eval(step, frame) {
+                    for node in std::iter::once(body.as_ref()).chain(step.as_deref()) {
+                        match self.eval(node, frame) {
                             Ok(_) | Err(Signal::Continue) => {}
                             Err(Signal::Break) => return Ok(Value::Nothing),
                             Err(other) => return Err(other),
@@ -270,16 +265,18 @@ impl<'a> Machine<'a> {
         }
     }
 
+    /// Evaluate arguments left to right, stopping at the first signal.
+    fn arguments(&mut self, args: &[Node], frame: &mut Frame) -> Res<Vec<Value>> {
+        args.iter().map(|arg| self.eval(arg, frame)).collect()
+    }
+
     fn call(&mut self, callee: &Callee, args: &[Node], frame: &mut Frame) -> Res {
         match callee {
             Callee::Native(Native::Push, name) | Callee::Native(Native::Put, name) => {
                 let Some(Node { form: Form::Load(slot), .. }) = args.first() else {
                     return Err(format!("First argument to {}() must be an array variable name", name).into());
                 };
-                let mut values = Vec::new();
-                for a in &args[1..] {
-                    values.push(self.eval(a, frame)?);
-                }
+                let mut values = self.arguments(&args[1..], frame)?;
                 let wanted = if matches!(callee, Callee::Native(Native::Push, _)) { 1 } else { 2 };
                 if values.len() != wanted {
                     return Err(format!("{}() expects {} arguments, got {}", name, wanted + 1, values.len() + 1).into());
@@ -298,17 +295,11 @@ impl<'a> Machine<'a> {
                 Ok(Value::Nothing)
             }
             Callee::Native(native, name) => {
-                let mut values = Vec::with_capacity(args.len());
-                for a in args {
-                    values.push(self.eval(a, frame)?);
-                }
+                let values = self.arguments(args, frame)?;
                 Ok(self.native(*native, name, &values)?)
             }
             Callee::Named(slot) => {
-                let mut values = Vec::with_capacity(args.len());
-                for a in args {
-                    values.push(self.eval(a, frame)?);
-                }
+                let values = self.arguments(args, frame)?;
                 let program = self.routine(slot, frame)?;
                 Ok(self.run(&program, values)?)
             }
@@ -317,10 +308,7 @@ impl<'a> Machine<'a> {
                     Value::Routine(p) => p,
                     _ => return Err("eval needs a program".to_string().into()),
                 };
-                let mut values = Vec::with_capacity(args.len());
-                for a in args {
-                    values.push(self.eval(a, frame)?);
-                }
+                let values = self.arguments(args, frame)?;
                 Ok(self.run(&program, values)?)
             }
         }
@@ -329,13 +317,7 @@ impl<'a> Machine<'a> {
     fn operate(&mut self, op: Op, args: &[Node], frame: &mut Frame) -> Res {
         let lit = self.literals();
         Ok(match op {
-            Op::Array => {
-                let mut items = Vec::with_capacity(args.len());
-                for a in args {
-                    items.push(self.eval(a, frame)?);
-                }
-                Value::Array(Rc::new(items))
-            }
+            Op::Array => Value::Array(Rc::new(self.arguments(args, frame)?)),
             Op::Not => Value::Truth(!self.eval(&args[0], frame)?.is_true()),
             Op::Neg => {
                 let v = self.eval(&args[0], frame)?;
@@ -496,8 +478,8 @@ impl<'a> Machine<'a> {
                 Err(format!("{}() expects {} argument{}, got {}", name, n, if n == 1 { "" } else { "s" }, args.len()))
             }
         };
-        let number_arg = |v: &Value, what: &str| -> Result<(), String> {
-            if numeric::ratio(v).is_some() { Ok(()) } else { Err(format!("{}() requires a {} argument", name, what)) }
+        let number_arg = |v: &Value| {
+            numeric::ratio(v).ok_or_else(|| format!("{}() requires a number argument", name))
         };
         Ok(match native {
             Native::Emit => {
@@ -527,8 +509,8 @@ impl<'a> Machine<'a> {
                     Some(Value::Small(_)) | Some(Value::Large(_)) => return Err("Precision must be a positive integer".to_string()),
                     Some(_) => return Err("Precision argument must be an integer".to_string()),
                 };
-                number_arg(&args[0], "number, rational, or real")?;
-                numeric::as_real(&args[0], digits).unwrap()
+                numeric::as_real(&args[0], digits)
+                    .ok_or_else(|| format!("{}() requires a number, rational, or real argument", name))?
             }
             Native::Precision => {
                 exactly(1)?;
@@ -543,16 +525,15 @@ impl<'a> Machine<'a> {
             }
             Native::ToInt => {
                 exactly(1)?;
-                number_arg(&args[0], "number")?;
-                let r = numeric::ratio(&args[0]).unwrap();
+                let r = number_arg(&args[0])?;
                 Value::from_big(r.num / r.den)
             }
             Native::ToReal => {
                 exactly(1)?;
-                number_arg(&args[0], "number")?;
                 match &args[0] {
                     v @ Value::Fraction(f) if f.digits.is_some() => v.clone(),
-                    v => numeric::as_real(v, numeric::DEFAULT_DIGITS).unwrap(),
+                    v => numeric::as_real(v, numeric::DEFAULT_DIGITS)
+                        .ok_or_else(|| format!("{}() requires a number argument", name))?,
                 }
             }
             Native::Len => {
@@ -611,15 +592,10 @@ impl<'a> Machine<'a> {
                     None => return Err(format!("{}(): unknown value type", name)),
                 }
             }
-            Native::Num => {
+            Native::Num | Native::Den => {
                 exactly(1)?;
-                number_arg(&args[0], "number")?;
-                Value::from_big(numeric::ratio(&args[0]).unwrap().num)
-            }
-            Native::Den => {
-                exactly(1)?;
-                number_arg(&args[0], "number")?;
-                Value::from_big(numeric::ratio(&args[0]).unwrap().den)
+                let r = number_arg(&args[0])?;
+                Value::from_big(if native == Native::Num { r.num } else { r.den })
             }
             Native::Get => {
                 exactly(2)?;

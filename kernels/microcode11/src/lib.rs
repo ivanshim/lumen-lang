@@ -103,7 +103,7 @@ pub fn build(spec: &Spec, source: &str) -> Result<(Rc<Program>, reduce::Globals)
 }
 
 fn execute_program(spec: &Spec, program: &Rc<Program>, globals: reduce::Globals, program_args: &[String]) -> Result<(), String> {
-    let mut machine = execute::Machine::new(spec, globals.names.clone());
+    let mut machine = execute::Machine::new(spec, globals.names);
     if let Some(name) = spec.first("system.args") {
         machine.bind_global(name, Value::from_text(&program_args.join(" ")));
     }

@@ -73,15 +73,15 @@ fn go_inner(def: &Def, source: &str, program_args: &[String]) -> Result<(), Stri
     }
     let program = assemble::assemble(&toks, def, &mut table)?;
 
-    let mut machine = machine::Machine::new(def, table.names.clone());
+    let mut machine = machine::Machine::new(def, table.names);
     if let Some(name) = &def.args_name {
         machine.set_global(name, Value::str(&program_args.join(" ")));
     }
     for (name, kind) in &def.kind_names {
-        machine.set_global(name, machine::kind_value(*kind));
+        machine.set_global(name, Value::Kind(*kind));
     }
     if let Some(name) = &def.precision_name {
-        machine.set_global(name, machine::default_precision());
+        machine.set_global(name, Value::Int(numbers::PLACES as i64));
     }
     machine.call(&program, Vec::new())?;
 

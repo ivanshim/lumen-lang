@@ -9,7 +9,7 @@ use num_traits::ToPrimitive;
 
 use crate::language::Def;
 use crate::numbers::{self, Calc};
-use crate::values::{Kind, Spelling, Value};
+use crate::values::{Spelling, Value};
 use crate::words::{Native, Op, Program, Slot, Word};
 
 pub struct Machine<'a> {
@@ -226,19 +226,14 @@ impl<'a> Machine<'a> {
                     _ => Err(format!("'{}' is not a function", name)),
                 };
             }
-            Op::Eval => {
+            Op::Eval | Op::Run => {
                 return match self.pop()? {
                     Value::Program(p) => self.call(&p, Vec::new()),
-                    _ => Err("eval needs a program".to_string()),
-                };
-            }
-            Op::Run => {
-                return match self.pop()? {
-                    Value::Program(p) => self.call(&p, Vec::new()),
-                    v => {
+                    v if matches!(op, Op::Run) => {
                         self.stack.push(v);
                         Ok(())
                     }
+                    _ => Err("eval needs a program".to_string()),
                 };
             }
             Op::Array => Value::list(self.pop_many(argc)?),
@@ -544,27 +539,22 @@ impl<'a> Machine<'a> {
                 arity(2)?;
                 self.index(&args[0], &args[1])?
             }
-            Native::Push => {
-                arity(2)?;
+            Native::Push | Native::Put => {
+                arity(if native == Native::Push { 2 } else { 3 })?;
                 let Some(Value::List(mut items)) = args.pop() else {
                     return Err(format!("{}() requires an array", name));
                 };
                 let v = args.pop().expect("the value");
-                Rc::make_mut(&mut items).push(v);
-                Value::List(items)
-            }
-            Native::Put => {
-                arity(3)?;
-                let Some(Value::List(mut items)) = args.pop() else {
-                    return Err(format!("{}() requires an array", name));
-                };
-                let v = args.pop().expect("the value");
-                let i = position(&args[0])?;
-                let list = Rc::make_mut(&mut items);
-                if i >= list.len() {
-                    return Err(format!("Array index {} out of bounds (length: {})", i, list.len()));
+                if native == Native::Push {
+                    Rc::make_mut(&mut items).push(v);
+                } else {
+                    let i = position(&args[0])?;
+                    let list = Rc::make_mut(&mut items);
+                    if i >= list.len() {
+                        return Err(format!("Array index {} out of bounds (length: {})", i, list.len()));
+                    }
+                    list[i] = v;
                 }
-                list[i] = v;
                 Value::List(items)
             }
             Native::Extern => self.extern_call(name, args)?,
@@ -609,12 +599,4 @@ fn position(v: &Value) -> Outcome<usize> {
         Value::Big(n) => n.to_usize().ok_or_else(|| "Array index out of bounds".to_string()),
         _ => Err("Array index must be a number".to_string()),
     }
-}
-
-pub fn kind_value(kind: Kind) -> Value {
-    Value::Kind(kind)
-}
-
-pub fn default_precision() -> Value {
-    Value::Int(numbers::PLACES as i64)
 }

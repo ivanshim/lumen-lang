@@ -23,23 +23,10 @@ struct LogicExpr {
 
 impl ExprNode for LogicExpr {
     fn eval(&self, env: &mut Env) -> LumenResult<Value> {
-        // Implement short-circuit evaluation
         let l = self.left.eval(env)?;
-        let left_bool = as_bool(l.as_ref())?;
-
-        match self.op {
-            Logic::And => {
-                // Short-circuit: if left is false, don't evaluate right
-                if !left_bool.value {
-                    return Ok(Box::new(LumenBool::new(false)));
-                }
-            }
-            Logic::Or => {
-                // Short-circuit: if left is true, don't evaluate right
-                if left_bool.value {
-                    return Ok(Box::new(LumenBool::new(true)));
-                }
-            }
+        let left = as_bool(l.as_ref())?.value;
+        if left == (self.op == Logic::Or) {
+            return Ok(Box::new(LumenBool::new(left)));
         }
         let r = self.right.eval(env)?;
         let right_bool = as_bool(r.as_ref())?;

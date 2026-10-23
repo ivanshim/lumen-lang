@@ -31,22 +31,10 @@ impl StmtNode for ForStmt {
         while current < end {
             env.assign(&self.var, Box::new(LumenNumber::new(current.clone())))?;
 
-            // The body runs in the same scope, as in the microcode kernel
-            let mut break_occurred = false;
-            for stmt in &self.body {
-                match stmt.exec(env)? {
-                    Control::Break => {
-                        break_occurred = true;
-                        break;
-                    }
-                    Control::Continue => break,
-                    Control::ExprValue(_) => {}
-                    Control::Return(val) => return Ok(Control::Return(val)),
-                    Control::None => {}
-                }
-            }
-            if break_occurred {
-                return Ok(Control::None);
+            match crate::kernel::eval::block(&self.body, env)? {
+                Control::Break => break,
+                value @ Control::Return(_) => return Ok(value),
+                _ => {}
             }
 
             current += BigInt::from(1);

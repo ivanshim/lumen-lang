@@ -3,7 +3,7 @@
 // Core execution loop.
 // No language semantics live here.
 
-use crate::kernel::ast::{Control, Program};
+use crate::kernel::ast::{Control, Program, StmtNode};
 use crate::kernel::runtime::env::Env;
 
 /// Execute a program statement by statement and hand back the environment,
@@ -34,4 +34,17 @@ where
     }
 
     Ok(env)
+}
+
+/// Keep the last expression value, stopping on an explicit control transfer.
+pub fn block(statements: &[Box<dyn StmtNode>], env: &mut Env) -> Result<Control, String> {
+    let mut last = Control::None;
+    for stmt in statements {
+        match stmt.exec(env)? {
+            Control::None => {}
+            value @ Control::ExprValue(_) => last = value,
+            exit => return Ok(exit),
+        }
+    }
+    Ok(last)
 }

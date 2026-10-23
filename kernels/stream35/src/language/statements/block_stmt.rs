@@ -16,14 +16,9 @@ struct BlockStmt {
 
 impl StmtNode for BlockStmt {
     fn exec(&self, env: &mut Env) -> LumenResult<Control> {
-        env.with_scope(|env| {
-            for stmt in &self.body {
-                match stmt.exec(env)? {
-                    Control::None | Control::ExprValue(_) => {}
-                    other => return Ok(other),
-                }
-            }
-            Ok(Control::None)
+        env.with_scope(|env| match crate::kernel::eval::block(&self.body, env)? {
+            Control::ExprValue(_) => Ok(Control::None),
+            other => Ok(other),
         })
     }
 }
