@@ -7306,7 +7306,6 @@ impl<'a> Engine<'a> {
             return Some(walking.map_or(Value::Null, Value::Generator));
         }
         let index = self.lang.trace_fields.iter().position(|key| key == name)?;
-        if name == "f_lasti" { return Some(Value::Small(Self::frame_instruction(object))); }
         if index == 5 {
             let ready = object.fields.borrow()[1].1.clone();
             if !matches!(ready, Value::Null) { return Some(ready); }

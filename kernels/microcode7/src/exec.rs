@@ -6875,7 +6875,6 @@ impl<'a> Machine<'a> {
                 state.of.as_ref().map(|body| self.code_handle(body))
             }
             Value::Thing(item) if self.activation_kind.as_ref().map_or(false, |kind| Rc::ptr_eq(kind, &item.blueprint())) => {
-                if name == "f_lasti" { return Some(Value::Small(Self::activation_instruction(item))); }
                 if index == 5 {
                     let current = item.holds.borrow()[1].1.clone();
                     if matches!(current, Value::Nil) {

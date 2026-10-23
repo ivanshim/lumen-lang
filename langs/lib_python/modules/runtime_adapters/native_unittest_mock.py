@@ -738,6 +738,11 @@ def __getattr__(name):
     raise AttributeError("module 'unittest.mock' has no attribute '" + name + "'")
 
 
+def _is_exception(obj):
+    return (isinstance(obj, BaseException)
+            or (isinstance(obj, type) and issubclass(obj, BaseException)))
+
+
 def _async_stand_in_step(*args, **kwargs):
     return None
 
@@ -754,7 +759,7 @@ class AsyncMock(MagicMock):
     # answer are settled when that coroutine is awaited, as the
     # reference settles them.
     def __init__(self, name=None, return_value=DEFAULT, side_effect=None, wraps=None):
-        MagicMock.__init__(self, name, return_value, side_effect, wraps)
+        MagicMock.__init__(self, name=name, return_value=return_value, side_effect=side_effect, wraps=wraps)
         self.__dict__['_mock_await_count'] = 0
         self.__dict__['_mock_await_args'] = None
         self.__dict__['_mock_await_args_list'] = []
