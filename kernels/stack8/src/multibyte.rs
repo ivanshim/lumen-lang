@@ -163,7 +163,8 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         while pos < codes.len() {
             let first = codes[pos];
             if pos + 1 == codes.len() && !last_input && pair_lead(data, encoding_count, first) { stop = 2; break; }
-            if pos + 1 < codes.len() {
+            // Zero denotes a single-point lookup, not a consumable companion.
+            if pos + 1 < codes.len() && codes[pos+1] != 0 {
                 if let Some(wire) = encode_point(data, &name, encoding_count, ranges, first, codes[pos+1]) { row.extend(wire); pos += 2; continue; }
             }
             match encode_point(data, &name, encoding_count, ranges, first, 0) {

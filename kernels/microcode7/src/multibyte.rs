@@ -160,7 +160,8 @@ impl Table {
             let Some(&point) = codes.get(at) else { break 0 };
             let trailing = at + 1 == codes.len();
             if trailing && !complete && self.opens_pair(point) { break 2 }
-            let paired = if trailing { None } else { self.bytes_for(point, codes[at + 1]) };
+            // A missing companion is stored as zero; leave a following NUL for its own step.
+            let paired = if trailing || codes[at + 1] == 0 { None } else { self.bytes_for(point, codes[at + 1]) };
             if let Some(part) = paired { wire.extend(part); at += 2; continue; }
             match self.bytes_for(point, 0) {
                 Some(part) => { wire.extend(part); at += 1; }
