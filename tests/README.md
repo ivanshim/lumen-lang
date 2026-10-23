@@ -20,6 +20,7 @@ series is retained, in a window of two series; only 3.14 is registered today.
 
 | Directory | Source | Release / tag | Commit / release date | License |
 |---|---|---|---|---|
+| `python-3.14.8/test__colorize.py` | `Lib/test/test__colorize.py`, copied byte for byte (SHA-256 `4eda9d9052d4da5149eba3822348c7e2327e0e0789a45679fdfd88a5c891fbac`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/` | [python/cpython](https://github.com/python/cpython) `Lib/test`: core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, `test_super.py`, `test_csv.py`, `test_configparser.py`, `test_linecache.py`, `test_tokenize.py`, `test_abc.py`, `test_contextlib.py`, `test_ordered_dict.py`, `test_defaultdict.py`, `test_glob.py`, `test_timeit.py`, `test_datetime.py`, `test_getopt.py`, `test_optparse.py`, `test_unpack_ex.py`, `test_baseexception.py`, `test_wave.py`, `test_cmd.py`, `test_nturl2path.py`, `test_codeop.py`, and support data (`mathdata/`, `tokenizedata/`, `configdata/`, `exception_hierarchy.txt`, `audiodata/`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_raise.py`, `test_property.py`, `test_subclassinit.py` | `Lib/test/test_raise.py`, `Lib/test/test_property.py`, `Lib/test/test_subclassinit.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_pstats.py`, `pstats.pck` | `Lib/test/test_pstats.py` and its binary fixture `Lib/test/pstats.pck`, copied byte for byte (`pstats.pck` sits beside the tests, where `support.findfile` looks) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -897,3 +898,17 @@ compared by canonical instruction content. Upstream decorators determine the
 remaining CPython-specific skips.
 
 The batch21m-b4 doctest package and data are unmodified `Lib/test/test_doctest/` files from `Python-3.14.8.tar.xz` at `https://www.python.org/ftp/python/3.14.8/Python-3.14.8.tar.xz` (archive SHA256 `c2215904f02b175596dc49351585104f4bc20341e1c47378b26a2c274360ce73`). The `__main__.py` adapter uses the existing Lumen generic package launcher; it is an adapter entry point.
+
+## Colorize rebase adapter audit (2026-10-21)
+
+Main's registered runtime adapters are preserved. The mock adapter now accepts
+configured attributes in its constructors and `configure_mock`, including dotted
+child paths in parent-first order. CPython library and test bodies are unchanged.
+The following hashes cover the complete adapter files, including their headers.
+
+| File beneath `langs/lib_python/modules/` | Full-file SHA-256 |
+|---|---|
+| `runtime_adapters/native_unittest_mock.py` | `d08d5a38dab36e0070d7fbf91467b614963d44df44d076903cfda4bdc175982a` |
+| `runtime_adapters/inspect.py` | `1e1077d64c3b6f42655b5492c15588559e454b1ab66a037a2b28c147cff7880c` |
+| `runtime_adapters/native_inspect.py` | `493e39fd18a81c4fb5ef9b497ae3b0d88186815edb3a986ef2aa907f484f0b20` |
+| `runtime_adapters/native_test_support_os_helper.py` | `aacb2c1d8076e2de9c495405ea1a463336a8da1ea2710e2cc8e391e70e76d1df` |
