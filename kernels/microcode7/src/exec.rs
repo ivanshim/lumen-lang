@@ -39164,7 +39164,7 @@ impl<'a> Machine<'a> {
                     names => Rc::new(RefCell::new(names)),
                 };
                 let globals = match caller_book { Some(book) => book, None => self.standing_world() };
-                return self.perform_booked(&source, file, mode, globals, Some(locals), top_await, literals, settling, &sites);
+                return self.perform_booked(&source, file, mode, globals, Some(locals), None, top_await, literals, settling, &sites);
             }
             (None, None) => return match within.filter(|_| mode != 2) {
                 Some((names, mine)) => self.perform_within(&source, file, mode, names, mine, top_await, literals, settling, &sites),
@@ -39208,7 +39208,8 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        self.perform_booked(&source, file, mode, outer, near, top_await, literals, settling, &sites)
+        let shown = near.clone().unwrap_or_else(|| outer.clone());
+        self.perform_booked(&source, file, mode, outer, near, Some(Value::Shared(shown)), top_await, literals, settling, &sites)
     }
 
     /// Text run where the call stands: within the reading under way, in
@@ -39217,8 +39218,8 @@ impl<'a> Machine<'a> {
         if let Some(which) = self.reading_now {
             let (near, outer) = (self.readings[which].near.clone(), self.readings[which].outer.clone());
             return match outer {
-                Some(outer) => self.perform_booked(source, file, mode, outer, Some(near), top_await, literals, settling, sites),
-                None => self.perform_booked(source, file, mode, near, None, top_await, literals, settling, sites),
+                Some(outer) => self.perform_booked(source, file, mode, outer, Some(near), None, top_await, literals, settling, sites),
+                None => self.perform_booked(source, file, mode, near, None, None, top_await, literals, settling, sites),
             };
         }
         let owner = self.loaded_spaces.get(&self.written_in).and_then(|module| {
@@ -39233,7 +39234,7 @@ impl<'a> Machine<'a> {
                     self.booked_put(&book, &key, Some(defaults)).map_err(|escape| self.carried_native_fault(escape))?;
                 }
             }
-            return self.perform_booked(source, file, mode, book, None, top_await, literals, settling, sites);
+            return self.perform_booked(source, file, mode, book, None, None, top_await, literals, settling, sites);
         }
         let warn_source = file.is_none();
         let file = file.unwrap_or_else(|| "<string>".to_owned());
@@ -39353,7 +39354,7 @@ impl<'a> Machine<'a> {
 
     /// Text run in dictionaries of its own: its names are given slots
     /// among the outermost cells, and a book kept for them.
-    fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, top_await: bool, literals: Option<Vec<Value>>, settling: i64, sites: &[[u32; 8]]) -> Result<Value, String> {
+    fn perform_booked(&mut self, source: &str, file: Option<String>, mode: usize, outer: Rc<RefCell<Value>>, near: Option<Rc<RefCell<Value>>>, shown_locals: Option<Value>, top_await: bool, literals: Option<Vec<Value>>, settling: i64, sites: &[[u32; 8]]) -> Result<Value, String> {
         let captured = self.module_function_builtins.take();
         let warn_source = file.is_none();
         let file = file.unwrap_or_else(|| "<string>".to_owned());
@@ -39410,7 +39411,8 @@ impl<'a> Machine<'a> {
             .chain(crate::build::text_wide_globals(&tokens, self.table)).collect();
         self.readings.push(Namebook { builtins: born, near, outer, from: beginning, upto: beginning + fresh.len(), declared: declarations.into_iter().collect() });
         let was_reading = self.reading_now.replace(self.readings.len() - 1);
-        let answer = self.text_concluded(&built, &file, mode, shown, if explicit_locals { locals_map.map(Value::Shared) } else { None });
+        let shown_locals = shown_locals.or_else(|| if explicit_locals { locals_map.map(Value::Shared) } else { None });
+        let answer = self.text_concluded(&built, &file, mode, shown, shown_locals);
         self.reading_now = was_reading;
         // These slots mirror names owned by the dictionary only while
         // this reading runs; leave no stale strong holds behind.
