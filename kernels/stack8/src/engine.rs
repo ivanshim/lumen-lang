@@ -249,6 +249,8 @@ pub struct Engine<'a> {
     /// Whether each definition reached makes a function of its own,
     /// which a language that tells values apart by identity wants.
     fresh_routines: bool,
+    /// The kind builtin's answer for each plain value, made once.
+    sort_answers: Vec<(Builtin, Value)>,
     pub module_sources: HashMap<String, String>,
     pub library_root: Option<String>,
     pub module_files: HashMap<String, String>,
@@ -1911,6 +1913,7 @@ impl<'a> Engine<'a> {
             archived_text: None,
             native_names: RefCell::new(std::collections::BTreeMap::new()),
             fresh_routines: lang.builtins.values().any(|b| *b == Builtin::Identity),
+            sort_answers: Vec::new(),
             module_sources: HashMap::new(),
             library_root: None,
             module_files: HashMap::new(),
@@ -4216,8 +4219,8 @@ impl<'a> Engine<'a> {
                 for (key, value) in entries.iter() {
                     // Preserve a concrete dictionary key's stored hash during duplicate checks.
                     self.note_keyword(folded, key, callee)?;
-                    let key = match key { Value::Hashed(pair) => pair.0.clone(), other => other.clone() };
-                    pairs.push((Some(key), value.clone()));
+                    // Keep the hash the map stored, so a later read does not hash the key again.
+                    pairs.push((Some(key.clone()), value.clone()));
                 }
             }
             Value::Object(_) => {
@@ -4239,6 +4242,9 @@ impl<'a> Engine<'a> {
     /// The word a keyword is written under. Only text stands; anything
     /// else is the reference's own complaint, with no naming over it.
     fn word_of_key(&self, key: &Value) -> Res<String> {
+        // A key carried beside its hash is the thing itself: the hash is
+        // the map's own reckoning and no part of the word it stands under.
+        let key = match key { Value::Hashed(pair) => &pair.0, other => other };
         let bare = match key.contents() {
             Value::Text(_) => key.contents(),
             _ => Self::worth_of(key).unwrap_or_else(|| key.contents()),
@@ -4490,6 +4496,57 @@ impl<'a> Engine<'a> {
         }
     }
 
+
+    /// Whether a call's spreads carry a keyword key that is no text. Only a
+    /// mapping handed to `**` can, and a map answers from its own entries;
+    /// any other kind of spread is taken as though it might.
+    pub(super) fn spreads_carry_foreign_keys(&self, args: &[Value]) -> bool {
+        args.iter().any(|value| match value {
+            Value::Tie(pair) if matches!(pair.0, Value::Flag(true)) => match pair.1.contents() {
+                Value::Map(entries) => entries.iter().any(|(key, _)| match key {
+                    Value::Text(_) => false,
+                    Value::Hashed(pair) => !matches!(pair.0.contents(), Value::Text(_)),
+                    _ => true,
+                }),
+                _ => true,
+            },
+            _ => false,
+        })
+    }
+
+    /// Whether a routine takes the call's keyword mapping as it stands,
+    /// the way a native maker does, instead of having every key narrowed
+    /// to a word first. The standard adapter marks such a routine with an
+    /// attribute, and this reads that attribute off the routine's own book.
+    pub(super) fn maker_takes_raw_keys(&self, program: &Routine) -> bool {
+        // The raw-key making is the reference's own, so only the Python
+        // definition may opt into it; every other language keeps words.
+        if !self.lang.python_numbers { return false; }
+        for (held, attributes) in &self.function_members {
+            let same = match held.revive() {
+                Some(Value::Routine(code)) | Some(Value::Method(_, code, _)) => std::ptr::eq(code.as_ref(), program),
+                _ => false,
+            };
+            if !same { continue; }
+            let fields = attributes.fields.borrow();
+            if fields.iter().any(|(word, value)| {
+                (word == "_lumen_raw_keywords" || word == "\0_lumen_raw_keywords")
+                    && matches!(value.contents(), Value::Flag(true))
+            }) { return true; }
+            // A namespace handed to the routine keeps later attributes there.
+            if let Some((_, book)) = fields.iter().find(|(word, _)| word == "\0 namespace") {
+                if let Value::Map(pairs) = book.contents() {
+                    if pairs.iter().any(|(key, value)| {
+                        matches!(key, Value::Text(text) if text.as_ref() == "_lumen_raw_keywords")
+                            && matches!(value.contents(), Value::Flag(true))
+                    }) { return true; }
+                }
+            }
+            return false;
+        }
+        false
+    }
+
     /// Fill positional places first, then the named ones. Gatherers
     /// keep what has no ordinary place, and defaults keep the holes.
     fn bind_call(&mut self, program: &Routine, args: Vec<Value>, rules: &[u8]) -> Flow<Vec<Value>> {
@@ -4517,16 +4574,25 @@ impl<'a> Engine<'a> {
             return Ok(row);
         }
         // Empty built-in spreads cannot raise expansion diagnostics.
-        let items = if args.iter().any(|value| match value {
+        let has_spread = args.iter().any(|value| match value {
             Value::Tie(pair) if matches!(pair.0, Value::Flag(_)) => match (&pair.0, pair.1.contents()) {
                 (Value::Flag(false), Value::Tuple(items)) if items.is_empty() => false,
                 (Value::Flag(true), Value::Map(items)) if items.is_empty() => false,
                 _ => true,
             },
             _ => false,
-        }) {
-            self.call_items_for(args, Callee::Code(program))?
-        } else { self.call_items(args)? };
+        });
+        // A maker marked to take raw keys sees a non-text key whole. Every
+        // other call still narrows keys to words before they are placed.
+        let raw_maker = self.spreads_carry_foreign_keys(&args) && self.maker_takes_raw_keys(program);
+        let items: Vec<(Option<Value>, Value)> = if raw_maker {
+            if has_spread { self.expanded_call_items_for(args, Callee::Code(program))? }
+            else { self.expanded_call_items(args)? }
+        } else {
+            let narrowed = if has_spread { self.call_items_for(args, Callee::Code(program))? }
+                else { self.call_items(args)? };
+            narrowed.into_iter().map(|(name, value)| (name.map(|word| Value::text(&word)), value)).collect()
+        };
         let mut frame = vec![Value::Blank; rules.len()];
         let slots: Vec<usize> = rules.iter().enumerate().filter_map(|(i, r)| (*r < 2).then_some(i)).collect();
         let rest = rules.iter().position(|r| *r == 3);
@@ -4543,20 +4609,30 @@ impl<'a> Engine<'a> {
         }
         // The names the call gave, kept only where some place may be
         // taken in order alone and a stray keyword must be told apart.
-        let spoken: Vec<String> = if rules.contains(&1) { items.iter().filter_map(|(name, _)| name.clone()).collect() } else { Vec::new() };
+        let spoken: Vec<String> = if rules.contains(&1) {
+            items.iter().filter_map(|(name, _)| name.as_ref().and_then(|key| self.word_of_key(key).ok())).collect()
+        } else { Vec::new() };
         let mut keywords = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for (name, value) in items {
-            let Some(name) = name else { continue };
-            if !seen.insert(name.clone()) {
-                return Err(self.keyword_twice(program, &name).into());
+            let Some(key) = name else { continue };
+            let word = match self.word_of_key(&key) {
+                Ok(word) => word,
+                Err(_) if pairs.is_some() && raw_maker => {
+                    keywords.push((self.special_key(&key)?, value));
+                    continue;
+                }
+                Err(_) => return Err(self.lang.spread_pairs_keys.first().cloned().unwrap_or_default().into()),
+            };
+            if !seen.insert(word.clone()) {
+                return Err(self.keyword_twice(program, &word).into());
             }
-            let slot = program.formals.iter().enumerate().position(|(i, n)| *n == name && matches!(rules[i], 0 | 2));
+            let slot = program.formals.iter().enumerate().position(|(i, n)| *n == word && matches!(rules[i], 0 | 2));
             match slot {
                 Some(i) if matches!(frame[i], Value::Blank) => frame[i] = value,
-                Some(_) => return Err(self.place_twice(program, &name).into()),
-                None if pairs.is_some() => keywords.push((Value::text(&name), value)),
-                None => return Err(self.keyword_stray(program, rules, &spoken, &name).into()),
+                Some(_) => return Err(self.place_twice(program, &word).into()),
+                None if pairs.is_some() => keywords.push((Value::text(&word), value)),
+                None => return Err(self.keyword_stray(program, rules, &spoken, &word).into()),
             }
         }
         if rest.is_none() && in_order > slots.len() {
@@ -8228,6 +8304,9 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn special_key(&mut self, key: &Value) -> Res<Value> {
+        // A key the map already hashed is that key. Hashing it again would
+        // ask the program a second time.
+        if matches!(key, Value::Hashed(_)) { return Ok(key.clone()); }
         if !self.lang.class_special.is_empty() {
             if let Some(hash) = Self::python_constructor_hash(key) {
                 return Ok(Value::Hashed(Rc::new((key.clone(), hash))));
@@ -9149,6 +9228,17 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn loose_kind_member(&self, value: &Value, name: &str) -> Option<Value> {
+        if !name.is_empty() && name == self.class_word("get") {
+            let owner = match value {
+                Value::Class(class) => Self::own_kind(class),
+                Value::Native(operation, word) if Self::kind_builtin(operation) => Some(word.to_string()),
+                Value::ByteKind(mutable, _) => Some(self.byte_kind_word(*mutable).to_string()),
+                _ => self.kind_spelled(value).map(|word| word.to_string()),
+            };
+            if owner.as_deref().is_some_and(|word| word != "type") {
+                return Some(Self::adapter(10, vec![Value::text(self.class_word("root"))]));
+            }
+        }
         let word: Rc<str> = match value {
             Value::Class(c) => Rc::from(Self::own_kind(c)?),
             Value::Native(_, word) => word.clone(),
@@ -29482,7 +29572,14 @@ impl<'a> Engine<'a> {
                         // are a dictionary as far as the program can tell.
                         Value::Fields(_) => Some(Builtin::Dict), _ => None,
                     };
-                    if let Some(b) = which { if let Some((_, word)) = self.lang.builtin_words.iter().find(|(v, _)| *v == b) { return Ok(Value::Native(b, Rc::from(word.as_str()))); } }
+                    if let Some(b) = which {
+                        if let Some((_, answer)) = self.sort_answers.iter().find(|(v, _)| *v == b) { return Ok(answer.clone()); }
+                        if let Some((_, word)) = self.lang.builtin_words.iter().find(|(v, _)| *v == b) {
+                            let answer = Value::Native(b, Rc::from(word.as_str()));
+                            self.sort_answers.push((b, answer.clone()));
+                            return Ok(answer);
+                        }
+                    }
                 }
                 if let Value::Bytes(_, mutable, _) = &args[0] { return Ok(self.byte_kind(*mutable)); }
                 // A trace is of no kind the core knows either; a language
@@ -33040,6 +33137,17 @@ impl Engine<'_> {
         };
         if self.lang.module_path.is_none() {
             if let Some((above, _)) = parent { self.import_module(above)?; }
+        }
+        // The builtins module is read in ahead of the first module that
+        // asks for its namespace: left to that module's own set-up, it
+        // would import the module back while that module is still being
+        // made, and each of the two would be compiled and run twice.
+        if !self.lang.module_builtins.is_empty() && !self.modules.contains_key(self.home_module_word()) && !self.importing.contains(self.home_module_word()) && path != self.home_module_word() {
+            let home = self.home_module_word().to_string();
+            self.import_module(&home)?;
+            if let Some(held) = self.modules.get(path) {
+                if self.importing.contains(path) || self.module_cache_names(path) { return Ok(held.clone()); }
+            }
         }
         let namespace_roots = own_file.as_deref().filter(|file| file.starts_with('\0'))
             .map(|file| file[1..].split('\0').collect::<Vec<_>>());
