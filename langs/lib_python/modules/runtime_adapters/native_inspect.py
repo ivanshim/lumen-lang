@@ -478,6 +478,20 @@ _is_coroutine_mark = object()
 
 
 
+def getmodulename(path):
+    """Return the module name for a given file, or None."""
+    import os
+    import importlib.machinery
+    fname = os.path.basename(path)
+    suffixes = [(-len(suffix), suffix)
+                for suffix in importlib.machinery.all_suffixes()]
+    suffixes.sort()
+    for neglen, suffix in suffixes:
+        if fname.endswith(suffix):
+            return fname[:neglen]
+    return None
+
+
 def __getattr__(name):
     if name in ('getfile', 'getmodulename', 'getsourcefile', 'getabsfile', 'getmodule', 'findsource', 'getblock', 'getsourcelines', 'getsource'):
         return getattr(__load_module('_source_inspect'), name)

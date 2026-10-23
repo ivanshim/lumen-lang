@@ -34638,15 +34638,17 @@ impl Machine<'_> {
         if self.table.has_any("ext.system.module.path") && index.as_ref().is_none_or(|saved| !saved.matches_disk(library)) {
             index.replace(self.index_library_paths(library));
         }
+        drop(index);
         let empty_sources = HashMap::new();
         let empty_dirs = std::collections::HashSet::new();
-        let sources = index.as_ref().map_or(&empty_sources, |saved| &saved.sources);
-        let virtual_dirs = index.as_ref().map_or(&empty_dirs, |saved| &saved.virtual_dirs);
         let mut portions = Vec::new();
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
             if dir.is_empty() && self.table.strings("ext.system.module.path").first().map(String::as_str).is_none() { continue; }
             let folder = std::path::Path::new(if dir.is_empty() { "." } else { dir.as_ref() });
+            let index = self.library_index.borrow();
+            let sources = index.as_ref().map_or(&empty_sources, |saved| &saved.sources);
+            let virtual_dirs = index.as_ref().map_or(&empty_dirs, |saved| &saved.virtual_dirs);
             let ordinary = folder.join(format!("{filename}.py"));
             let package = folder.join(filename).join("__init__.py");
             let choices = if self.table.strings("ext.system.module.path").first().map(String::as_str).is_some() { vec![package, ordinary] } else { vec![ordinary] };
@@ -34667,10 +34669,40 @@ impl Machine<'_> {
                 && (portion.is_dir() || virtual_dirs.contains(&portion)) {
                 portions.push(made_absolute(&portion.to_string_lossy()));
             }
+            drop(index);
+            if Self::looks_archived(dir.as_ref()) {
+                if let Some(found) = self.zip_source(dir.as_ref(), filename) { return Some(found); }
+            }
         }
         // Defer namespace creation until no concrete module has matched.
         // The private location marker carries all namespace search portions.
         (!portions.is_empty()).then(|| (String::from("\0") + &portions.join("\0"), Vec::new()))
+    }
+
+    /// Whether a search-path entry names an archive that may hold a module.
+    fn looks_archived(where_: &str) -> bool {
+        let folded = where_.to_ascii_lowercase();
+        folded.contains(".zip") || folded.contains(".egg") || folded.contains(".whl")
+    }
+
+    /// A module read out of an archive on the search path: ask the library
+    /// for the member's own file and bytes, the way the reference zip
+    /// importer reads a module out of an archive.
+    fn zip_source(&mut self, where_: &str, leaf: &str) -> Option<(String, Vec<u8>)> {
+        let library = self.imported.get("_imp").cloned()?;
+        let reader = self.namespace_item(&library, "_imp", "_zip_module_source").ok()?;
+        let answer = self.apply_held(reader, vec![Value::text(where_), Value::text(leaf)]).ok()?;
+        let mut answer = answer;
+        while let Value::Shared(cell) | Value::Mutable(cell, _) = answer {
+            answer = cell.borrow().clone();
+        }
+        let Value::Tuple(parts) = answer else { return None };
+        if parts.len() != 2 { return None; }
+        let Value::Text(file) = &parts[0] else { return None };
+        let Value::Octets { cell, .. } = &parts[1] else { return None };
+        let file = file.to_string();
+        let bytes = cell.borrow().clone();
+        Some((file, bytes))
     }
 
     /// Ask a namespace path for the rows it stands in now. Its own
@@ -34697,7 +34729,7 @@ impl Machine<'_> {
     /// ordinary package holds, or the directories behind the bootstrap's
     /// own namespace-path object, filed under `_path`.
     fn search_path_rows(&self, space_name: &str, attribute: &str) -> Option<Vec<Value>> {
-        let Value::Thing(namespace) = self.imported.get(space_name)? else { return None };
+        let Value::Thing(namespace) = self.cached_import(space_name).or_else(|| self.imported.get(space_name).cloned())? else { return None };
         let held = namespace.holds.borrow().iter().find(|entry| entry.0 == attribute).map(|entry| entry.1.clone())?;
         let mut value = held;
         while let Value::Shared(cell) | Value::Mutable(cell, _) = value {

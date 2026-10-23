@@ -33339,15 +33339,17 @@ impl Engine<'_> {
         if self.lang.module_path.is_some() && !snapshot.as_ref().is_some_and(|index| index.current(root)) {
             *snapshot = Some(self.build_source_locations(root));
         }
+        drop(snapshot);
         let no_locations = HashMap::new();
         let no_directories = std::collections::HashSet::new();
-        let locations = snapshot.as_ref().map_or(&no_locations, |index| &index.locations);
-        let directories = snapshot.as_ref().map_or(&no_directories, |index| &index.directories);
         let mut namespace_roots = Vec::new();
         for item in items.iter() {
             let Value::Text(dir) = item else { continue };
             if dir.is_empty() && self.lang.module_path.is_none() { continue; }
             let directory = if dir.is_empty() { "." } else { dir.as_ref() };
+            let snapshot = self.module_locations.borrow();
+            let locations = snapshot.as_ref().map_or(&no_locations, |index| &index.locations);
+            let directories = snapshot.as_ref().map_or(&no_directories, |index| &index.directories);
             let flat = format!("{}/{leaf}.py", directory.trim_end_matches('/'));
             let candidates = if self.lang.module_path.is_some() {
                 vec![format!("{}/{leaf}/__init__.py", directory.trim_end_matches('/')), flat]
@@ -33372,11 +33374,41 @@ impl Engine<'_> {
                     namespace_roots.push(made_absolute(&folder.to_string_lossy()));
                 }
             }
+            drop(snapshot);
+            if Self::looks_archived(directory) {
+                if let Some(found) = self.zip_module_source(directory, leaf) { return Some(found); }
+            }
         }
         // Namespace portions only win after all regular packages and modules
         // have been considered. Keep every contributing search directory.
         if namespace_roots.is_empty() { None }
         else { Some((format!("\0{}", namespace_roots.join("\0")), Vec::new())) }
+    }
+
+    /// Whether a search-path entry names an archive that may hold a module.
+    fn looks_archived(where_: &str) -> bool {
+        let folded = where_.to_ascii_lowercase();
+        folded.contains(".zip") || folded.contains(".egg") || folded.contains(".whl")
+    }
+
+    /// A module read out of an archive on the search path: ask the library
+    /// for the member's own file and bytes, the way the reference zip
+    /// importer reads a module out of an archive.
+    fn zip_module_source(&mut self, where_: &str, leaf: &str) -> Option<(String, Vec<u8>)> {
+        let library = self.modules.get("_imp").cloned()?;
+        let reader = self.member_of(library, "_zip_module_source").ok()??;
+        let answer = self.call_held(reader, vec![Value::text(where_), Value::text(leaf)]).ok()?;
+        let mut answer = answer;
+        while let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = answer {
+            answer = cell.borrow().clone();
+        }
+        let Value::Tuple(parts) = answer else { return None };
+        if parts.len() != 2 { return None; }
+        let Value::Text(file) = &parts[0] else { return None };
+        let Value::Bytes(source, ..) = &parts[1] else { return None };
+        let file = file.to_string();
+        let bytes = source.borrow().clone();
+        Some((file, bytes))
     }
 
     /// Ask a namespace path for the rows it stands in now. Its own

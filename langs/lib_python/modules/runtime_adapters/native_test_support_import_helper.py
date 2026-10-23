@@ -252,6 +252,14 @@ def isolated_modules():
         modules_cleanup(saved)
 
 
+def mock_register_at_fork(func):
+    # bpo-30599: Mock os.register_at_fork() when importing the random module,
+    # since this function doesn't allow to unregister callbacks and would leak
+    # memory.
+    from unittest import mock
+    return mock.patch('os.register_at_fork', create=True)(func)
+
+
 @contextlib.contextmanager
 def ready_to_import(name=None, source=""):
     from test.support import script_helper
