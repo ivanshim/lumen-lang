@@ -94,6 +94,7 @@ def _read_string(source, i, prefix):
     # i points at the opening quote. Returns the decoded value and the
     # index just past the closing quote.
     n = len(source)
+    literal_start = i - len(prefix)
     quote = source[i]
     if source[i:i + 3] == quote * 3:
         closer = quote * 3
@@ -117,7 +118,7 @@ def _read_string(source, i, prefix):
                 units.append(source[i + 1])
                 i += 2
                 continue
-            piece, i = _read_escape(source, i + 1, is_bytes)
+            piece, i = _read_escape(source, i + 1, is_bytes, literal_start if is_bytes else None)
             if piece is not None:
                 units.append(piece)
             continue
@@ -126,18 +127,22 @@ def _read_string(source, i, prefix):
     if is_bytes:
         numbers = []
         for unit in units:
-            point = ord(unit)
-            if point > 255:
-                raise 'SyntaxError: bytes can only contain ASCII literal characters'
-            numbers.append(point)
+            for ch in unit:
+                point = ord(ch)
+                if point > 255:
+                    raise 'SyntaxError: bytes can only contain ASCII literal characters'
+                numbers.append(point)
         return (bytes(numbers), i)
     return (''.join(units), i)
 
-def _read_escape(source, i, is_bytes):
+def _read_escape(source, i, is_bytes, literal_start=None):
     # i points just past the backslash. Returns the replacement text (or
     # None for a continued line) and the index past the escape.
     n = len(source)
     c = source[i]
+    warning_at = i - 1
+    if literal_start is not None and '\n' not in source[literal_start:warning_at]:
+        warning_at = literal_start
     if c == '\n':
         return (None, i + 1)
     if c in _SIMPLE_ESCAPES:
@@ -152,10 +157,12 @@ def _read_escape(source, i, is_bytes):
         return _read_hex(source, i + 1, 2, '\\x')
     if c == 'u':
         if is_bytes:
+            _warn_invalid_escape('\\u', source, warning_at)
             return ('\\u', i + 1)
         return _read_hex(source, i + 1, 4, '\\u')
     if c == 'U':
         if is_bytes:
+            _warn_invalid_escape('\\U', source, warning_at)
             return ('\\U', i + 1)
         return _read_hex(source, i + 1, 8, '\\U')
     if c == 'N' and not is_bytes:
@@ -174,8 +181,10 @@ def _read_escape(source, i, is_bytes):
         if named is None or len(named) != 1:
             raise 'SyntaxError: unknown Unicode character name'
         return (named, close + 1)
-    # An unknown escape keeps the backslash, as Python does.
-    return ('\\' + c, i + 1)
+    # An unknown escape keeps the backslash, as Python does, and warns.
+    text = '\\' + c
+    _warn_invalid_escape(text, source, warning_at)
+    return (text, i + 1)
 
 def _read_hex(source, i, width, label):
     digits = source[i:i + width]
@@ -218,7 +227,11 @@ def _real(body, source):
         if floating:
             return float(body)
         return int(body)
-    except Exception:
+    except ValueError as error:
+        if str(error).startswith('Exceeds the limit '):
+            import sys
+            message = 'Exceeds the limit (' + str(sys.get_int_max_str_digits()) + ' digits) for integer string conversion: value has ' + str(len(body.lstrip('+-'))) + ' digits; use sys.set_int_max_str_digits() to increase the limit - Consider hexadecimal for huge integer literals to avoid decimal conversion limits.'
+            raise SyntaxError(message) from None
         _malformed(source)
 
 class _Reader:
@@ -422,10 +435,12 @@ class AST:
 
     # Apply ASDL defaults while preserving the deprecated incomplete constructors.
     def __init__(self, *args, **kwargs):
-        import warnings
         cls = type(self)
         name = cls.__name__
-        fields = self._fields
+        try:
+            fields = cls._fields
+        except AttributeError:
+            raise AttributeError("type object '" + cls.__module__ + '.' + cls.__qualname__ + "' has no attribute '_fields'") from None
         if len(args) > len(fields):
             raise TypeError(name + ' constructor takes at most ' + str(len(fields)) + ' positional arguments')
         for index, value in enumerate(args):
@@ -435,6 +450,7 @@ class AST:
             setattr(self, field, value)
         for field, value in kwargs.items():
             if field not in fields and field not in self._attributes:
+                import warnings
                 warnings.warn(name + ".__init__ got an unexpected keyword argument " + repr(field) + ". This is deprecated and will be removed in Python 3.15.", DeprecationWarning, stacklevel=2)
             setattr(self, field, value)
         types = getattr(cls, '_field_types', None)
@@ -444,6 +460,7 @@ class AST:
             if field in kwargs:
                 continue
             if field not in types:
+                import warnings
                 warnings.warn('Field ' + repr(field) + ' is missing from ' + name + '._field_types', DeprecationWarning, stacklevel=2)
                 continue
             typ = types[field]
@@ -452,7 +469,15 @@ class AST:
             elif typ is expr_context:
                 setattr(self, field, Load())
             elif not hasattr(cls, field):
+                import warnings
                 warnings.warn(name + ".__init__ missing 1 required positional argument: " + repr(field) + ". This will become an error in Python 3.15.", DeprecationWarning, stacklevel=2)
+
+    def __reduce__(self):
+        return type(self), (), self.__dict__
+
+    # Keep all pickle protocols on the same node reduction.
+    def __reduce_ex__(self, protocol):
+        return self.__reduce__()
 
     # Replace only declared class fields and attributes, keeping shallow values.
     def __replace__(self, **changes):
@@ -473,14 +498,7 @@ class AST:
 
     # Represent the actual fields, without source positions or private parser state.
     def __repr__(self):
-        parts = []
-        for field in self._fields:
-            try:
-                value = getattr(self, field)
-            except AttributeError:
-                continue
-            parts.append(field + '=' + repr(value))
-        return type(self).__name__ + '(' + ', '.join(parts) + ')'
+        return _node_repr(self, 0)
 
 
 class mod(AST):
@@ -1713,8 +1731,8 @@ def _string_skip_pos(source, i, row, col):
 def _fstring_end(source, i):
     # i at the opening quote of an f-string literal; answers the index
     # just past the closing quote, the quote and the closing quote's
-    # index. Inside a replacement field every brace is structural; only
-    # in the text between them are {{ and }} escapes.
+    # index. Dictionary/set braces nest in the expression, while format
+    # specs open replacement fields; {{ and }} escape literal text only.
     n = len(source)
     q = source[i]
     if source[i:i + 3] == q * 3:
@@ -1723,6 +1741,8 @@ def _fstring_end(source, i):
         quote = q
     i += len(quote)
     depth = 0
+    in_spec = []
+    brackets = []
     while i < n:
         c = source[i]
         if c == '\\':
@@ -1736,18 +1756,44 @@ def _fstring_end(source, i):
             if depth == 0 and source[i + 1:i + 2] == '{':
                 i += 2
                 continue
-            depth += 1
+            if depth > 0 and not in_spec[-1]:
+                brackets[-1] += 1
+            else:
+                depth += 1
+                in_spec.append(False)
+                brackets.append(0)
             i += 1
             continue
         if c == '}':
             if depth == 0 and source[i + 1:i + 2] == '}':
                 i += 2
                 continue
-            depth -= 1
+            if depth > 0 and not in_spec[-1] and brackets[-1] > 0:
+                brackets[-1] -= 1
+            else:
+                depth -= 1
+                if in_spec:
+                    in_spec.pop()
+                if brackets:
+                    brackets.pop()
             i += 1
             continue
-        if depth > 0 and (c == '"' or c == "'"):
-            i = _string_skip(source, i)
+        if depth > 0:
+            if not in_spec[-1]:
+                if c in '([':
+                    brackets[-1] += 1
+                elif c in ')]':
+                    if brackets[-1] > 0:
+                        brackets[-1] -= 1
+                elif c == ':' and brackets[-1] == 0:
+                    in_spec[-1] = True
+                elif c == '"' or c == "'":
+                    if _nested_fstring_at(source, i):
+                        i = _fstring_end(source, i)[0]
+                    else:
+                        i = _string_skip(source, i)
+                    continue
+            i += 1
             continue
         i += 1
     _syntax('unterminated f-string literal')
@@ -1848,7 +1894,13 @@ def _lex(source, start, end, row, col, for_field, comments=None):
                 toks.append(tok)
                 i, row, col = after, erow, ecol
                 continue
-            toks.append(_Tok('name', word, srow, scol, srow, scol + len(source[i:j].encode('utf-8'))))
+            normalized = word
+            if not word.isascii():
+                import unicodedata
+                normalized = unicodedata.normalize('NFKC', word)
+                if not isinstance(normalized, str) or normalized != word:
+                    _validate_identifier(normalized)
+            toks.append(_Tok('name', normalized, srow, scol, srow, scol + len(source[i:j].encode('utf-8'))))
             col += len(source[i:j].encode('utf-8'))
             i = j
             continue
@@ -1939,8 +1991,8 @@ def _joined_values(source, seg_i, seg_end, row, col, raw, spec, multi, template=
                 parts.append(Constant(value=_ftext(source, text_start, i, raw, not spec),
                                       lineno=text_srow, col_offset=text_scol,
                                       end_lineno=row, end_col_offset=col))
-            fv, i, row, col = _formatted(source, i, row, col, raw, multi, template)
-            parts.append(fv)
+            added, i, row, col = _formatted(source, i, row, col, raw, multi, template)
+            parts.extend(added)
             text_start = i
             text_srow, text_scol = row, col
             continue
@@ -1952,11 +2004,13 @@ def _joined_values(source, seg_i, seg_end, row, col, raw, spec, multi, template=
     return parts
 
 def _formatted(source, i, row, col, raw, multi, template=False):
-    # i at the '{' opening a replacement field; answers the FormattedValue
-    # node, the index just past its '}', and the position there. The
-    # node covers its braces; a format spec is a JoinedStr starting at
-    # the ':' and ending where the field's '}' stands. A field may span
-    # lines; its spec may not unless the f-string is triple-quoted.
+    # i at the '{' opening a replacement field; answers the nodes the
+    # field makes -- the text a self-documenting '=' repeats, then the
+    # FormattedValue -- the index just past its '}', and the position
+    # there. The node covers its braces; a format spec is a JoinedStr
+    # starting at the ':' and ending where the field's '}' stands. A
+    # field may span lines; its spec may not unless the f-string is
+    # triple-quoted.
     srow, scol = row, col
     i, row, col = _adv(source, i, 1, row, col)
     expr_start = i
@@ -1968,14 +2022,25 @@ def _formatted(source, i, row, col, raw, multi, template=False):
     spec_scol = 0
     body_srow = 0
     body_scol = 0
+    debug = False
+    debug_end = -1
     depth = 0
     n = len(source)
     while True:
         if i >= n:
             _syntax("f-string: valid expression required before '}'")
         c = source[i]
+        if debug and c not in ' \t\f\r!:' and c != '}' and not (c == '\n' and multi) and not (c == '\\' and source[i + 1:i + 2] == '\n'):
+            # Past the self-documenting '=', only whitespace, a line
+            # continuation, a conversion, a format spec or the closing
+            # brace may stand.
+            _syntax("f-string: expecting '!', or ':', or '}'")
         if c == '"' or c == "'":
-            i, row, col = _string_skip_pos(source, i, row, col)
+            if _nested_fstring_at(source, i):
+                end = _fstring_end(source, i)[0]
+                i, row, col = _adv(source, i, end - i, row, col)
+            else:
+                i, row, col = _string_skip_pos(source, i, row, col)
             continue
         if c == '\\':
             i, row, col = _adv(source, i, 2, row, col)
@@ -1992,15 +2057,23 @@ def _formatted(source, i, row, col, raw, multi, template=False):
             if depth == 0:
                 if expr_end < 0:
                     expr_end = i
+                if debug and debug_end < 0:
+                    debug_end = i
                 break
             depth -= 1
             i, row, col = _adv(source, i, 1, row, col)
             continue
         if depth == 0 and c == '=' and source[i + 1:i + 2] != '=' and source[i - 1:i] not in ('=', '!', '<', '>', ':'):
-            _no_tree()
+            if expr_end < 0:
+                expr_end = i
+            debug = True
+            i, row, col = _adv(source, i, 1, row, col)
+            continue
         if depth == 0 and c == '!' and source[i + 1:i + 2] != '=':
             if expr_end < 0:
                 expr_end = i
+            if debug and debug_end < 0:
+                debug_end = i
             conv = ord(source[i + 1])
             i, row, col = _adv(source, i, 2, row, col)
             continue
@@ -2009,6 +2082,8 @@ def _formatted(source, i, row, col, raw, multi, template=False):
                 _no_tree()
             if expr_end < 0:
                 expr_end = i
+            if debug and debug_end < 0:
+                debug_end = i
             spec_srow, spec_scol = row, col
             i, row, col = _adv(source, i, 1, row, col)
             spec_start = i
@@ -2018,8 +2093,12 @@ def _formatted(source, i, row, col, raw, multi, template=False):
                 if i >= n:
                     _syntax("f-string: valid expression required before '}'")
                 c2 = source[i]
-                if c2 == '"' or c2 == "'":
-                    i, row, col = _string_skip_pos(source, i, row, col)
+                if (c2 == '"' or c2 == "'") and sdepth > 0:
+                    if _nested_fstring_at(source, i):
+                        end = _fstring_end(source, i)[0]
+                        i, row, col = _adv(source, i, end - i, row, col)
+                    else:
+                        i, row, col = _string_skip_pos(source, i, row, col)
                     continue
                 if c2 == '\\':
                     i, row, col = _adv(source, i, 2, row, col)
@@ -2037,10 +2116,14 @@ def _formatted(source, i, row, col, raw, multi, template=False):
                     i, row, col = _adv(source, i, 1, row, col)
                     continue
                 i, row, col = _adv(source, i, 1, row, col)
+            if debug and debug_end < 0:
+                debug_end = i
             break
         i, row, col = _adv(source, i, 1, row, col)
     # i is at the field's closing '}' and (row, col) is its position.
     value = _parse_field_expr(source, expr_start, expr_end, esrow, escol)
+    if debug and conv == -1 and spec_start < 0:
+        conv = ord('r')
     spec = None
     if spec_start >= 0:
         values = _joined_values(source, spec_start, i, body_srow, body_scol, raw, True, multi)
@@ -2050,11 +2133,16 @@ def _formatted(source, i, row, col, raw, multi, template=False):
                           lineno=srow, col_offset=scol,
                           end_lineno=row, end_col_offset=col + 1)
     if template:
-        node = Interpolation(value=value, str=source[expr_start:expr_end].strip(),
+        node = Interpolation(value=value, str=source[expr_start:expr_end],
                              conversion=conv, format_spec=spec, lineno=srow,
                              col_offset=scol, end_lineno=row, end_col_offset=col + 1)
     i, row, col = _adv(source, i, 1, row, col)
-    return (node, i, row, col)
+    if debug:
+        repeated = Constant(value=source[expr_start:debug_end],
+                            lineno=esrow, col_offset=escol,
+                            end_lineno=row, end_col_offset=col)
+        return ([repeated, node], i, row, col)
+    return ([node], i, row, col)
 
 def _parse_field_expr(source, s, e, row, col):
     toks = _lex(source, s, e, row, col, True)
@@ -3170,36 +3258,36 @@ class _Parser:
                         end_lineno=ve[0], end_col_offset=ve[1]), (star.srow, star.scol), ve)
 
     def parse_or(self):
-        node, ls, le = self.parse_and()
-        while self.at_name('or'):
-            self.pop()
-            right, rs, re = self.parse_and()
-            if type(node) == BoolOp and type(node.op) == Or:
-                node.values.append(right)
-                node.end_lineno = re[0]
-                node.end_col_offset = re[1]
-            else:
-                node = BoolOp(op=Or(), values=[node, right], lineno=ls[0],
-                              col_offset=ls[1], end_lineno=re[0],
-                              end_col_offset=re[1])
-            le = re
-        return (node, ls, le)
+            node, ls, le = self.parse_and()
+            while self.at_name('or'):
+                self.pop()
+                right, rs, re = self.parse_and()
+                if type(node) == BoolOp and type(node.op) == Or and not getattr(node, '_paren', False):
+                    node.values.append(right)
+                    node.end_lineno = re[0]
+                    node.end_col_offset = re[1]
+                else:
+                    node = BoolOp(op=Or(), values=[node, right], lineno=ls[0],
+                                  col_offset=ls[1], end_lineno=re[0],
+                                  end_col_offset=re[1])
+                le = re
+            return (node, ls, le)
 
     def parse_and(self):
-        node, ls, le = self.parse_not()
-        while self.at_name('and'):
-            self.pop()
-            right, rs, re = self.parse_not()
-            if type(node) == BoolOp and type(node.op) == And:
-                node.values.append(right)
-                node.end_lineno = re[0]
-                node.end_col_offset = re[1]
-            else:
-                node = BoolOp(op=And(), values=[node, right], lineno=ls[0],
-                              col_offset=ls[1], end_lineno=re[0],
-                              end_col_offset=re[1])
-            le = re
-        return (node, ls, le)
+            node, ls, le = self.parse_not()
+            while self.at_name('and'):
+                self.pop()
+                right, rs, re = self.parse_not()
+                if type(node) == BoolOp and type(node.op) == And and not getattr(node, '_paren', False):
+                    node.values.append(right)
+                    node.end_lineno = re[0]
+                    node.end_col_offset = re[1]
+                else:
+                    node = BoolOp(op=And(), values=[node, right], lineno=ls[0],
+                                  col_offset=ls[1], end_lineno=re[0],
+                                  end_col_offset=re[1])
+                le = re
+            return (node, ls, le)
 
     def parse_not(self):
         if self.at_name('not'):
@@ -3692,6 +3780,85 @@ class _Parser:
                          col_offset=first.scol, end_lineno=last.erow,
                          end_col_offset=last.ecol)
         return (node, (first.srow, first.scol), (last.erow, last.ecol))
+    def match_runs_to_colon(self):
+            # A match header ends with ':' and a newline; annotation and
+            # lambda colons do not end the header, and ';' ends the statement.
+            depth = 0
+            j = self.at + 1
+            while j < len(self.toks):
+                tok = self.toks[j]
+                if tok.kind in ('end', 'newline') and depth == 0:
+                    return False
+                if tok.kind == 'op':
+                    if tok.text in '([{':
+                        depth += 1
+                    elif tok.text in ')]}':
+                        depth -= 1
+                    elif depth == 0:
+                        if tok.text == ';':
+                            return False
+                        if tok.text == ':' and self.toks[j + 1].kind == 'newline':
+                            return True
+                j += 1
+            return False
+
+    def parse_bitxor(self):
+            node, ls, le = self.parse_bitand()
+            while self.peek().kind == 'op' and self.peek().text in ('^',):
+                tok = self.pop()
+                right, rs, re = self.parse_bitand()
+                node = BinOp(left=node, op=_BINOPS[tok.text](), right=right,
+                             lineno=ls[0], col_offset=ls[1],
+                             end_lineno=re[0], end_col_offset=re[1])
+                le = re
+            return node, ls, le
+
+    def parse_bitand(self):
+            node, ls, le = self.parse_shift()
+            while self.peek().kind == 'op' and self.peek().text in ('&',):
+                tok = self.pop()
+                right, rs, re = self.parse_shift()
+                node = BinOp(left=node, op=_BINOPS[tok.text](), right=right,
+                             lineno=ls[0], col_offset=ls[1],
+                             end_lineno=re[0], end_col_offset=re[1])
+                le = re
+            return node, ls, le
+
+    def parse_shift(self):
+            node, ls, le = self.parse_arith()
+            while self.peek().kind == 'op' and self.peek().text in ('<<', '>>'):
+                tok = self.pop()
+                right, rs, re = self.parse_arith()
+                node = BinOp(left=node, op=_BINOPS[tok.text](), right=right,
+                             lineno=ls[0], col_offset=ls[1],
+                             end_lineno=re[0], end_col_offset=re[1])
+                le = re
+            return node, ls, le
+
+    def parse_arith(self):
+            node, ls, le = self.parse_term()
+            while self.at_op('+') or self.at_op('-'):
+                tok = self.pop()
+                right, rs, re = self.parse_term()
+                node = BinOp(left=node, op=_BINOPS[tok.text](), right=right,
+                             lineno=ls[0], col_offset=ls[1],
+                             end_lineno=re[0], end_col_offset=re[1])
+                le = re
+            return (node, ls, le)
+
+    def parse_term(self):
+            node, ls, le = self.parse_unary()
+            while True:
+                tok = self.peek()
+                if tok.kind == 'op' and tok.text in ('*', '/', '//', '%', '@'):
+                    self.pop()
+                    right, rs, re = self.parse_unary()
+                    node = BinOp(left=node, op=_BINOPS[tok.text](), right=right,
+                                 lineno=ls[0], col_offset=ls[1],
+                                 end_lineno=re[0], end_col_offset=re[1])
+                    le = re
+                else:
+                    return (node, ls, le)
 
 def _type_comment_payload(text):
     # The payload of a type comment, or None when the comment is not one.
@@ -4427,6 +4594,8 @@ def _validate_node(node, active=None):
     if not isinstance(node, AST):
         raise TypeError('expected AST, got ' + repr(type(node).__name__))
     cls = type(node)
+    if cls in (mod, stmt, expr, expr_context, boolop, operator, unaryop, cmpop, excepthandler, pattern, type_ignore, type_param):
+        raise TypeError('expected some sort of ' + cls.__name__ + ', but got ' + repr(node))
     category = 'stmt' if isinstance(node, stmt) else 'expr' if isinstance(node, expr) else cls.__name__
     for attr in ('lineno', 'col_offset'):
         if attr in node._attributes:
@@ -4437,9 +4606,9 @@ def _validate_node(node, active=None):
     for attr in ('end_lineno', 'end_col_offset'):
         if attr in node._attributes and getattr(node, attr, None) is not None and not isinstance(getattr(node, attr), int):
             raise ValueError('invalid integer value: ' + str(getattr(node, attr)))
-    if getattr(node, 'end_lineno', None) is not None and node.end_lineno < node.lineno:
+    if getattr(node, 'end_lineno', None) is not None and (node.end_lineno < node.lineno or (node.lineno < 0 and node.end_lineno != node.lineno)):
         raise ValueError('AST node line range (' + str(node.lineno) + ', ' + str(node.end_lineno) + ') is not valid')
-    if getattr(node, 'end_col_offset', None) is not None and node.end_lineno == node.lineno and node.end_col_offset < node.col_offset:
+    if getattr(node, 'end_col_offset', None) is not None and node.end_lineno == node.lineno and (node.end_col_offset < node.col_offset or (node.col_offset < 0 and node.end_col_offset != node.col_offset)):
         raise ValueError('line ' + str(node.lineno) + ', column ' + str(node.col_offset) + '-' + str(node.end_col_offset) + ' is not a valid range')
     for field in node._fields:
         if not hasattr(node, field):
@@ -4453,16 +4622,28 @@ def _validate_node(node, active=None):
             for item in value:
                 if item is None and ((isinstance(node, arguments) and field == 'kw_defaults') or (isinstance(node, Dict) and field == 'keys')):
                     continue
+                if item is None and element_type in (expr, stmt):
+                    raise ValueError('None disallowed in ' + ('expression' if element_type is expr else 'statement') + ' list')
+                if element_type is str:
+                    _validate_identifier(item)
                 if not isinstance(item, element_type):
                     raise TypeError('expected some sort of ' + element_type.__name__ + ', but got ' + repr(item))
                 if isinstance(item, AST):
                     _validate_node(item, active)
         elif value is None and getattr(cls, field, ...) is None:
             continue
+        elif value is None and not isinstance(value, typ):
+            raise ValueError("field '" + field + "' is required for " + cls.__name__)
+        elif typ is str:
+            if not isinstance(value, str):
+                raise TypeError('AST identifier must be of type str')
         elif not isinstance(value, typ):
             raise TypeError('expected ' + str(typ) + ', but got ' + repr(value))
         elif isinstance(value, AST):
             _validate_node(value, active)
+        if field in ('id', 'name', 'arg', 'attr', 'asname', 'rest') and isinstance(value, str):
+            _validate_identifier(value)
+    _validate_shape(node)
     if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef, For, AsyncFor, While, If, With, AsyncWith, ExceptHandler, Try, TryStar)) and not node.body:
         raise ValueError('empty body on ' + cls.__name__)
     if isinstance(node, Assign) and not node.targets:
@@ -4493,7 +4674,14 @@ def _compile_source(tree, mode):
         raise TypeError('expected ' + expected.__name__ + ' node, got ' + type(tree).__name__)
     _validate_node(tree)
     _validate_contexts(tree)
-    source = unparse(tree)
+    from _ast_unparse import Unparser
+    class _CodeUnparser(Unparser):
+        # Lower the nullable relative-import level as the compiler's zero default.
+        def visit_ImportFrom(self, node):
+            if node.level is None:
+                node = node.__replace__(level=0)
+            return super().visit_ImportFrom(node)
+    source = _CodeUnparser().visit(tree) + ('\n' if mode != 'eval' else '')
     generated = parse(source, mode='exec' if mode == 'single' else mode)
     if mode == 'single':
         generated = Interactive(body=generated.body)
@@ -4526,7 +4714,10 @@ def _validate_contexts(node, context=Load):
         raise ValueError("expression which can't be assigned to in " + context.__name__ + ' context')
     if hasattr(node, 'ctx') and not isinstance(node.ctx, context):
         raise ValueError('expression must have ' + context.__name__ + ' context but has ' + type(node.ctx).__name__ + ' instead')
-    for field, value in iter_fields(node):
+    fields = list(iter_fields(node))
+    if isinstance(node, (ListComp, SetComp, DictComp, GeneratorExp)):
+        fields = [(field, value) for field, value in fields if field == 'generators'] + [(field, value) for field, value in fields if field != 'generators']
+    for field, value in fields:
         expected = Load
         if field == 'targets' and isinstance(node, (Assign, Delete)):
             expected = Del if isinstance(node, Delete) else Store
@@ -4717,3 +4908,318 @@ def _copy_ast(value):
     if isinstance(value, list):
         return [_copy_ast(item) for item in value]
     return value
+
+def _warn_invalid_escape(text, source, index):
+    # An escape the reader does not know is still kept, but the reference
+    # warns about it, naming the text it read and the spelling that would
+    # have been meant.
+    import warnings
+    try:
+        warnings.warn(
+            '"%s" is an invalid escape sequence. Such sequences will not '
+            'work in the future. Did you mean "%s"? A raw string is also '
+            'an option.' % (text, text.replace('\\', '\\\\')),
+            SyntaxWarning, stacklevel=3)
+    except SyntaxWarning as error:
+        # The parser promotes an invalid-escape warning treated as an error.
+        message = str(error).replace(' Such sequences will not work in the future.', '')
+        line = source[:index].count('\n') + 1
+        offset = len(source[:index].rsplit('\n', 1)[-1]) + 1
+        source_line = source.split('\n')[line - 1] + '\n'
+        raise SyntaxError(message, ('<unknown>', line, offset, source_line, line, offset + len(text))) from None
+
+def _node_repr(value, depth):
+    if isinstance(value, AST):
+        name = type(value).__name__
+        if depth >= 3:
+            return name + '(...)'
+        return name + '(' + ', '.join(field + '=' + _node_repr(child, depth + 1)
+                                     for field, child in iter_fields(value)) + ')'
+    if isinstance(value, list):
+        if len(value) > 2:
+            return '[' + _node_repr(value[0], depth) + ', ..., ' + _node_repr(value[-1], depth) + ']'
+        return '[' + ', '.join(_node_repr(child, depth) for child in value) + ']'
+    return repr(value)
+
+class slice(AST):
+    """Deprecated base class for slice nodes."""
+
+class Index(slice):
+    """Deprecated index wrapper; return the index expression itself."""
+    # Preserve the historic constructor that returns its argument.
+    def __new__(cls, value, **kwargs):
+        return value
+
+class ExtSlice(slice):
+    """Deprecated slice wrapper; use a Tuple expression instead."""
+    # Preserve the historic multidimensional slice constructor.
+    def __new__(cls, dims=(), **kwargs):
+        return Tuple(list(dims), Load(), **kwargs)
+
+def _nested_fstring_at(source, i):
+    # Whether the quote at i opens a nested f- or t-string: one prefix
+    # letter stands just before it and no name runs up to that prefix.
+    p = i - 1
+    if p < 0 or source[p] not in 'fFtT':
+        return False
+    q = p - 1
+    while q >= 0 and source[q] in 'rRbBuUfFtT':
+        q -= 1
+    return q < 0 or not _is_name_char(source[q])
+
+def _parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
+          feature_version=None, optimize=-1, fold_debug=False):
+    if isinstance(source, AST):
+        # A tree goes back through the reader only where its shape suits
+        # the mode; an optimised reading settles the names it folds.
+        expected = {'exec': Module, 'eval': Expression,
+                    'single': Interactive, 'func_type': FunctionType}.get(mode)
+        if expected is None:
+            raise ValueError("compile() mode must be 'exec', 'eval', 'single' or 'func_type'")
+        if not isinstance(source, expected):
+            raise TypeError('expected ' + expected.__name__ + ' node, got ' + type(source).__name__)
+        if optimize >= 1:
+            return parse(unparse(source), filename, mode, type_comments=type_comments,
+                         optimize=optimize, fold_debug=True)
+        return source
+    if isinstance(source, (bytes, bytearray)):
+        source = source.decode('utf-8')
+    if not isinstance(source, str):
+        raise TypeError('compile() arg 1 must be a string, bytes or AST object')
+    if '\x00' in source:
+        raise SyntaxError('source code string cannot contain null bytes')
+    if optimize not in (-1, 0, 1, 2):
+        raise ValueError('compile(): invalid optimize value')
+    source = source.replace('\r\n', '\n').replace('\r', '\n')
+    if mode == 'func_type':
+        toks = _lex(source, 0, len(source), 1, 0, False)
+        parser = _Parser(source, toks, optimize, fold_debug)
+        parser.expect_op('(')
+        argtypes = []
+        while not parser.at_op(')'):
+            if parser.at_op('*') or parser.at_op('**'):
+                parser.pop()
+            argtype, ls, le = parser.parse_expr(False)
+            argtypes.append(argtype)
+            if not parser.at_op(','):
+                break
+            parser.pop()
+        parser.expect_op(')')
+        parser.expect_op('->')
+        returns, ls, le = parser.parse_expr(False)
+        while parser.peek().kind == 'newline':
+            parser.pop()
+        if parser.peek().kind != 'end':
+            _syntax('invalid syntax')
+        tree = FunctionType(argtypes=argtypes, returns=returns)
+        _check_features(tree, feature_version, source)
+        return _optimize_ast(tree, optimize) if optimize > 0 else tree
+    if mode == 'eval':
+        for line in source.split('\n'):
+            if line.strip() and not line.lstrip().startswith('#'):
+                if line[:1] in (' ', '\t'):
+                    raise IndentationError('unexpected indent')
+                break
+        toks = _lex(source, 0, len(source), 1, 0, False)
+        parser = _Parser(source, toks, optimize, fold_debug)
+        while parser.peek().kind == 'newline':
+            parser.pop()
+        if parser.peek().scol > 0:
+            raise IndentationError('unexpected indent')
+        node, ls, le = parser.parse_expr(True)
+        while parser.peek().kind == 'newline':
+            parser.pop()
+        if parser.peek().kind != 'end':
+            _syntax('invalid syntax')
+        tree = Expression(body=node)
+        _check_features(tree, feature_version, source)
+        return _optimize_ast(tree, optimize) if optimize > 0 else tree
+    if mode not in ('exec', 'single'):
+        raise ValueError("compile() mode must be 'exec', 'eval', 'single' or 'func_type'")
+    comments = []
+    toks = _lex(source, 0, len(source), 1, 0, False, comments)
+    if type_comments:
+        _check_type_comments(toks, comments)
+    parser = _Parser(source, toks, optimize, fold_debug)
+    tree = parser.parse_module(single=mode == 'single')
+    if type_comments:
+        for row, column, text in comments:
+            payload = text[1:].lstrip(' \t')
+            if payload.startswith('type:'):
+                payload = payload[5:].lstrip(' \t')
+                if payload[:6] == 'ignore' and (len(payload) == 6 or
+                        (ord(payload[6]) < 128 and not payload[6].isalnum())):
+                    tree.type_ignores.append(TypeIgnore(lineno=row, tag=payload[6:]))
+    if mode == 'single':
+        if not tree.body:
+            raise SyntaxError('invalid syntax')
+        tree = Interactive(body=tree.body)
+    _check_features(tree, feature_version, source)
+    return _optimize_ast(tree, optimize) if optimize > 0 else tree
+
+def _fold_pattern_value(node):
+    if isinstance(node, Constant) or not _pattern_value(node):
+        return node
+    if isinstance(node, (UnaryOp, BinOp)):
+        return copy_location(Constant(value=_literal_node(node)), node)
+    return node
+
+def _format_tree(node):
+    if not isinstance(node.op, Mod) or not isinstance(node.left, Constant) or type(node.left.value) is not str or not isinstance(node.right, Tuple):
+        return node
+    text = node.left.value
+    values = []
+    literal = ''
+    index = 0
+    argument = 0
+    while index < len(text):
+        if text[index] != '%':
+            literal += text[index]
+            index += 1
+            continue
+        if index + 1 == len(text):
+            return node
+        conversion = text[index + 1]
+        index += 2
+        if conversion == '%':
+            literal += '%'
+            continue
+        if conversion not in 'sra' or argument >= len(node.right.elts) or isinstance(node.right.elts[argument], Starred):
+            return node
+        if literal:
+            values.append(copy_location(Constant(value=literal), node))
+            literal = ''
+        values.append(copy_location(FormattedValue(value=node.right.elts[argument], conversion=ord(conversion)), node))
+        argument += 1
+    if argument != len(node.right.elts):
+        return node
+    if literal:
+        values.append(copy_location(Constant(value=literal), node))
+    return copy_location(JoinedStr(values=values), node)
+
+def _optimize_ast(node, level):
+    for field, value in iter_fields(node):
+        if isinstance(value, AST):
+            setattr(node, field, _optimize_ast(value, level))
+        elif isinstance(value, list):
+            setattr(node, field, [_optimize_ast(child, level) if isinstance(child, AST) else child for child in value])
+    if isinstance(node, MatchValue):
+        node.value = _fold_pattern_value(node.value)
+    elif isinstance(node, MatchMapping):
+        node.keys = [_fold_pattern_value(key) for key in node.keys]
+    elif isinstance(node, BinOp):
+        return _format_tree(node)
+    if level == 2 and isinstance(node, (Module, FunctionDef, AsyncFunctionDef, ClassDef)) and node.body:
+        first = node.body[0]
+        if isinstance(first, Expr) and isinstance(first.value, Constant) and isinstance(first.value.value, str):
+            node.body = node.body[1:]
+            if not node.body and not isinstance(node, Module):
+                node.body = [Pass(lineno=first.lineno, col_offset=first.col_offset,
+                                  end_lineno=first.lineno, end_col_offset=first.col_offset + 4)]
+    return node
+
+def _validate_identifier(value):
+    if not isinstance(value, str):
+        raise TypeError('AST identifier must be of type str')
+    if value in ('True', 'False', 'None'):
+        raise ValueError("identifier field can't represent '" + value + "' constant")
+
+def _validate_shape(node):
+    name = type(node).__name__
+    if isinstance(node, (Import, ImportFrom, Global, Nonlocal)) and not node.names:
+        raise ValueError('empty names on ' + name)
+    if isinstance(node, ImportFrom) and node.level is not None and node.level < 0:
+        raise ValueError('Negative ImportFrom level')
+    if isinstance(node, (With, AsyncWith)) and not node.items:
+        raise ValueError('empty items on ' + name)
+    if isinstance(node, Raise) and node.exc is None and node.cause is not None:
+        raise ValueError('Raise with cause but no exception')
+    if isinstance(node, (Try, TryStar)):
+        if not node.handlers and not node.finalbody:
+            raise ValueError(name + ' has neither except handlers nor finalbody')
+        if not node.handlers and node.orelse:
+            raise ValueError(name + ' has orelse but no except handlers')
+    if isinstance(node, arguments):
+        for parameter in node.posonlyargs + node.args + node.kwonlyargs:
+            _validate_contexts(parameter)
+        if len(node.defaults) > len(node.posonlyargs) + len(node.args):
+            raise ValueError('more positional defaults than args on arguments')
+        if len(node.kw_defaults) != len(node.kwonlyargs):
+            raise ValueError('length of kwonlyargs is not the same as kw_defaults on arguments')
+    if isinstance(node, (ListComp, SetComp, DictComp, GeneratorExp)) and not node.generators:
+        raise ValueError('comprehension with no generators')
+    if isinstance(node, Match):
+        if not node.cases:
+            raise ValueError('empty cases on Match')
+        for case in node.cases:
+            _validate_pattern(case.pattern)
+
+def _pattern_value(node, singleton=False):
+    if isinstance(node, Constant):
+        return type(node.value) in (int, float, complex, str, bytes) or (singleton and (node.value is None or type(node.value) is bool))
+    if isinstance(node, Attribute):
+        root = node
+        while isinstance(root, Attribute):
+            root = root.value
+        return isinstance(root, Name)
+    if isinstance(node, UnaryOp):
+        return isinstance(node.op, USub) and isinstance(node.operand, Constant) and type(node.operand.value) in (int, float, complex)
+    if isinstance(node, BinOp) and isinstance(node.op, (Add, Sub)):
+        left = node.left.operand if isinstance(node.left, UnaryOp) and isinstance(node.left.op, USub) else node.left
+        return isinstance(left, Constant) and type(left.value) in (int, float) and isinstance(node.right, Constant) and type(node.right.value) is complex
+    return False
+
+def _validate_pattern(node, star=False):
+    if isinstance(node, MatchValue):
+        if not _pattern_value(node.value):
+            if isinstance(node.value, Constant):
+                raise ValueError('unexpected constant inside of a literal pattern')
+            raise ValueError('patterns may only match literals and attribute lookups')
+    elif isinstance(node, MatchSingleton):
+        if node.value is not None and type(node.value) is not bool:
+            raise ValueError('MatchSingleton can only contain True, False and None')
+    elif isinstance(node, MatchStar):
+        if not star:
+            raise ValueError("can't use MatchStar here")
+        if node.name is not None:
+            _validate_identifier(node.name)
+            if node.name == '_':
+                raise ValueError("can't capture name '_' in patterns")
+    elif isinstance(node, MatchAs):
+        if node.name is not None:
+            _validate_identifier(node.name)
+            if node.name == '_':
+                raise ValueError("can't capture name '_' in patterns")
+        if node.pattern is not None:
+            if node.name is None:
+                raise ValueError('MatchAs must specify a target name if a pattern is given')
+            _validate_pattern(node.pattern)
+    elif isinstance(node, MatchSequence):
+        for child in node.patterns:
+            _validate_pattern(child, True)
+    elif isinstance(node, MatchOr):
+        if len(node.patterns) < 2:
+            raise ValueError('MatchOr requires at least 2 patterns')
+        for child in node.patterns:
+            _validate_pattern(child)
+    elif isinstance(node, MatchMapping):
+        if len(node.keys) != len(node.patterns):
+            raise ValueError('MatchMapping has different number of keys and patterns')
+        if node.rest is not None:
+            _validate_identifier(node.rest)
+            if node.rest == '_':
+                raise ValueError("can't capture name '_' in patterns")
+        for key in node.keys:
+            if not _pattern_value(key, True):
+                raise ValueError('patterns may only match literals and attribute lookups')
+        for child in node.patterns:
+            _validate_pattern(child)
+    elif isinstance(node, MatchClass):
+        if not isinstance(node.cls, (Name, Attribute)) or (isinstance(node.cls, Attribute) and not _pattern_value(node.cls)):
+            raise ValueError('MatchClass cls field can only contain Name or Attribute nodes.')
+        if len(node.kwd_attrs) != len(node.kwd_patterns):
+            raise ValueError('MatchClass has different number of keyword attributes and patterns')
+        for attr in node.kwd_attrs:
+            _validate_identifier(attr)
+        for child in node.patterns + node.kwd_patterns:
+            _validate_pattern(child)

@@ -11515,7 +11515,7 @@ impl<'a> Compiler<'a> {
     fn string_piece(&mut self) -> Res<()> {
         let token = self.take();
         match token.shape {
-            Shape::Bytes => self.constant(Value::Bytes(Rc::new(std::cell::RefCell::new(token.lexeme.chars().map(|c| c as u8).collect())), false,
+            Shape::Bytes => self.constant(Value::quoted_bytes(token.lexeme.chars().map(|c| c as u8).collect(),
                 Rc::from(self.lang.byte_words["ext.system.bytes.repr"][0].as_str()))),
             Shape::Codepoints => self.constant(Value::from_codes(token.lexeme.split(',').map(|n| n.parse::<u32>().unwrap()).collect())),
             Shape::Quote => self.constant(Value::text(&token.lexeme)),

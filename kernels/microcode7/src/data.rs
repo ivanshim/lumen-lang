@@ -1357,7 +1357,24 @@ impl Value {
     }
 
     pub fn text(s: &str) -> Value {
+        if s.len() <= 2 && (s.is_empty() || s.chars().count() == 1 && s.chars().next().unwrap() as u32 <= 255) {
+            thread_local! { static SINGLE_LETTERS: RefCell<std::collections::HashMap<String, Rc<str>>> = RefCell::new(std::collections::HashMap::new()); }
+            let kept = SINGLE_LETTERS.with(|cache| cache.borrow_mut().entry(s.to_owned()).or_insert_with(|| Rc::from(s)).clone());
+            return Value::Text(kept);
+        }
         Value::Text(Rc::from(s))
+    }
+
+    // Retain one storage cell for byte literals with no elements.
+    pub fn quoted_octets(bytes: Vec<u8>, lead: Rc<str>) -> Value {
+        let cell = match bytes.len() {
+            0 => {
+                thread_local! { static BLANK_OCTETS: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(vec![])); }
+                BLANK_OCTETS.with(|blank| Rc::clone(blank))
+            }
+            _ => Rc::new(RefCell::new(bytes)),
+        };
+        Value::Octets { cell, changeable: false, lead }
     }
 
     pub fn kind(&self) -> Option<Kind> {
