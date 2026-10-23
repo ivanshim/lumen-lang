@@ -332,7 +332,7 @@ def get_frozen_object(name, data=None):
     return code
 
 
-# Share the expanded frozen roster with the existing meta-path finder.
+# List both frozen catalogs without redirecting bootstrap imports through the finder.
 def _frozen_module_names():
     return list(dict.fromkeys(list(_frozen.FROZEN_MODULES) + list(_FROZEN_SOURCES)
                              + list(_FROZEN_ALIASES)
@@ -345,8 +345,3 @@ def init_frozen(name):
     from importlib._bootstrap import FrozenImporter, _load_unlocked
     return _load_unlocked(FrozenImporter.find_spec(name))
 
-
-for _frozen_name in _frozen_module_names():
-    _entry = _frozen_entry(_frozen_name)
-    if _entry is not None:
-        _frozen.FROZEN_MODULES[_frozen_name] = (_entry[1], _entry[2])
