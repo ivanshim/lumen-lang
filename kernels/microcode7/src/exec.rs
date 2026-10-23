@@ -7147,6 +7147,10 @@ impl<'a> Machine<'a> {
 
     fn locals_live_pairs(&self, proxy: &Hold) -> Vec<(Value, Value)> {
         let pairs = match Self::locals_frame(proxy) { Some(frame) => {
+            let shown = frame.holds.borrow().iter().find(|(name, _)| name == "\0eval-locals").map(|(_, value)| value.clone());
+            if let Some(Value::Shared(mapping)) = shown {
+                if let Value::Dict(entries) = &*mapping.borrow() { return entries.iter().cloned().collect(); }
+            }
             let base = self.locals_frame_pairs(&frame);
             match Self::locals_env(&frame) { Some(environment) => {
                 let mut all = base;
@@ -39253,7 +39257,7 @@ impl<'a> Machine<'a> {
             }
         }
         if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
-        self.text_concluded(&built, &file, mode, shown)
+        self.text_concluded(&built, &file, mode, shown, None)
     }
 
     /// Text read where a routine stands and handed no dictionaries: it
@@ -39399,12 +39403,14 @@ impl<'a> Machine<'a> {
             }
         }
         if let Some(values) = literals { built.program = Rc::new(built.program.with_literals(&values)?); }
+        let explicit_locals = near.is_some();
+        let locals_map = near.clone();
         let (near, outer) = match near { Some(near) => (near, Some(outer)), None => (outer, None) };
         let declarations: std::collections::BTreeSet<_> = built.outer_aliases.iter().cloned()
             .chain(crate::build::text_wide_globals(&tokens, self.table)).collect();
         self.readings.push(Namebook { builtins: born, near, outer, from: beginning, upto: beginning + fresh.len(), declared: declarations.into_iter().collect() });
         let was_reading = self.reading_now.replace(self.readings.len() - 1);
-        let answer = self.text_concluded(&built, &file, mode, shown);
+        let answer = self.text_concluded(&built, &file, mode, shown, if explicit_locals { locals_map.map(Value::Shared) } else { None });
         self.reading_now = was_reading;
         // These slots mirror names owned by the dictionary only while
         // this reading runs; leave no stale strong holds behind.
@@ -39436,13 +39442,18 @@ impl<'a> Machine<'a> {
         Ok(())
     }
 
-    fn text_concluded(&mut self, built: &crate::build::Built, file: &str, mode: usize, shown: bool) -> Result<Value, String> {
+    fn text_concluded(&mut self, built: &crate::build::Built, file: &str, mode: usize, shown: bool, locals: Option<Value>) -> Result<Value, String> {
         let (was_in, was_on) = (self.written_in.clone(), self.row);
         self.written_in = Rc::from(file);
         let top = self.outermost.clone();
         self.park_cursor();
         let prior = self.active_trace.take();
         self.active_trace = self.activation(&built.program, &top, prior.clone());
+        if let (Some(Value::Shared(mapping)), Some(frame)) = (locals, self.active_trace.as_ref()) {
+            // A text handed a locals mapping shows exactly that mapping
+            // as its frame's names, as the reference does.
+            frame.holds.borrow_mut().push((String::from("\0eval-locals"), Value::Shared(mapping)));
+        }
         self.wake_cursor();
         self.frames_named.push(built.program.clone());
         let ran = if built.program.generator { self.invoke(built.program.clone(), top.clone(), Vec::new()) } else { self.value_of(&built.program.body, &top) };
