@@ -117,6 +117,14 @@ struct ClassParts {
     book_tracked: HashSet<String>,
 }
 
+/// What `open_class_body` leaves for `read_class_items` to put back.
+struct OpenedBody {
+    previous: Option<(String, Option<String>)>,
+    named_outside: usize,
+    on_one_line: bool,
+    body_source: usize,
+}
+
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct ScopeWords {
     bound: Vec<String>,
@@ -5148,61 +5156,8 @@ impl<'a> Builder<'a> {
                 if self.grammar.has_any_ext_stmt_class_special && self.grammar.has_any_ext_op_index_slice {
                     let end = self.grammar.single_op_index_close.unwrap().to_owned();
                     let separator = self.grammar.single_syntax_call_separator.map(str::to_owned);
-                    let key = if self.grammar.has_any_ext_syntax_array_spread {
-                        // A row with a starred place becomes a tuple, as
-                        // it does when the row is only read; the
-                        // expression reader itself steps over a
-                        // lambda's parameter commas.
-                        if self.on_any("ext.syntax.array.spread") {
-                            let mut row = prim_call(Prim::MakeArray, vec![]);
-                            loop {
-                                let (part, spread) = self.bracket_item(&end, separator.as_deref())?;
-                                row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
-                                if separator.as_ref().map_or(false, |word| self.sign(word)) {
-                                    self.move_past();
-                                    if self.sign(&end) { break; }
-                                } else { break; }
-                            }
-                            self.need_sign(&end, "after the index")?;
-                            prim_call(Prim::Tupling, vec![row])
-                        } else {
-                            let first = self.bracket_part(&end, separator.as_deref())?;
-                            if separator.as_ref().map_or(false, |word| self.sign(word)) {
-                                let mut row = prim_call(Prim::MakeArray, vec![first]);
-                                loop {
-                                    self.move_past();
-                                    if self.sign(&end) { break; }
-                                    let (part, spread) = self.bracket_item(&end, separator.as_deref())?;
-                                    row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
-                                    if !separator.as_ref().map_or(false, |word| self.sign(word)) { break; }
-                                }
-                                self.need_sign(&end, "after the index")?;
-                                prim_call(Prim::Tupling, vec![row])
-                            } else {
-                                self.need_sign(&end, "after the index")?;
-                                first
-                            }
-                        }
-                    } else {
-                        let mut keys = vec![self.bracket_part(&end, separator.as_deref())?];
-                        let mut several = false;
-                        while separator.as_ref().map_or(false, |word| self.sign(word)) {
-                            several = true;
-                            self.move_past();
-                            if self.sign(&end) { break; }
-                            keys.push(self.bracket_part(&end, separator.as_deref())?);
-                        }
-                        self.need_sign(&end, "after the index")?;
-                        // Places written with commas between are one key
-                        // holding them all, where the table has slice
-                        // values; elsewhere no such place can be written to.
-                        if several && self.grammar.has_any_ext_builtin_slice {
-                            prim_call(Prim::MakeTuple, keys)
-                        } else {
-                            if several { self.unsupported_place = true; }
-                            keys.swap_remove(0)
-                        }
-                    };
+                    let key = self.index_key(&end, separator.as_deref(), true)?;
+                    self.need_sign(&end, "after the index")?;
                     place = prim_call(Prim::At, vec![place, key]);
                     continue;
                 }
@@ -6513,14 +6468,14 @@ impl<'a> Builder<'a> {
         Ok((sequence(setup), cannot))
     }
 
-    fn python_class_body(&mut self, class_title: String, full_name: String, parameters: &[String], opening_row: u32) -> Res<(Form, String, Option<String>, bool, bool)> {
+    /// The head of a class body, the same for every class: the class name
+    /// and bases in force, the indented block opened, and the parts of
+    /// the class started. `read_class_items` closes what this opens.
+    fn open_class_body(&mut self, class_title: &str, full_name: &str, parent: Option<&Address>, cannot: bool) -> Res<OpenedBody> {
         let table = self.table;
-        let parent: Option<Address> = None;
-        let cannot = false;
-        let mut setup = Vec::new();
-        let previous = self.within.replace((class_title.clone(), parent.as_ref().map(|s| s.ident.to_string())));
+        let previous = self.within.replace((class_title.to_owned(), parent.map(|s| s.ident.to_string())));
         let named_outside = std::mem::replace(&mut self.named_before, self.naming.len());
-        if table.has_any("ext.stmt.class.detail.root"){self.within=Some((full_name.clone(),parent.as_ref().map(|a|a.ident.to_string())));}
+        if table.has_any("ext.stmt.class.detail.root"){self.within=Some((full_name.to_owned(),parent.map(|a|a.ident.to_string())));}
         self.need_intro()?;
         let on_one_line = !self.on_stmt_end() && self.look().shape != Shape::Open;
         if !on_one_line {
@@ -6538,6 +6493,46 @@ impl<'a> Builder<'a> {
         self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(), self_writes: std::collections::BTreeSet::new(),
             ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
             book: None, book_tracked: HashSet::new() });
+        Ok(OpenedBody { previous, named_outside, on_one_line, body_source })
+    }
+
+    /// The items of a class body up to its close, and the class state put
+    /// back as it stood before `open_class_body`.
+    fn read_class_items(&mut self, opened: OpenedBody, setup: &mut Vec<Form>) -> Res<ClassParts> {
+        let table = self.table;
+        let OpenedBody { previous, named_outside, on_one_line, body_source } = opened;
+        while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
+            if on_one_line && self.on_stmt_end() { break; }
+            if self.class_item(setup)? { continue; }
+            if on_one_line {
+                while self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme) {
+                    self.move_past();
+                }
+            } else { self.skip_line_ends(); }
+        }
+        if !on_one_line {
+            if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
+            self.move_past();
+        }
+        if self.survey {
+            let bound = self.parts().lexical_members.clone();
+            self.surveyed.insert(body_source, ScopeWords { bound, ..ScopeWords::default() });
+        }
+        self.class_bindings.pop();
+        self.class_globals.pop();
+        self.class_met.pop();
+        self.within = previous;
+        self.named_before = named_outside;
+        Ok(self.under_way.pop().expect("class body"))
+    }
+
+    fn python_class_body(&mut self, class_title: String, full_name: String, parameters: &[String], opening_row: u32) -> Res<(Form, String, Option<String>, bool, bool)> {
+        let table = self.table;
+        let parent: Option<Address> = None;
+        let cannot = false;
+        let mut setup = Vec::new();
+        let opened = self.open_class_body(&class_title, &full_name, parent.as_ref(), cannot)?;
+        let on_one_line = opened.on_one_line;
         // The body uses the metaclass's actual mapping from its first statement.
         if table.has_any("ext.stmt.class.builder") || self.class_body_names_locals(self.pos, on_one_line) {
             let made = self.class_book();
@@ -6575,29 +6570,7 @@ impl<'a> Builder<'a> {
         // Copy the body metadata through the prepared mapping's real setter.
         let seeded = prim_call(Prim::ClassWork(15), vec![seed]);
         setup.push(Form::Write(book.clone(), Box::new(seeded)));
-        while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
-            if on_one_line && self.on_stmt_end() { break; }
-            if self.class_item(&mut setup)? { continue; }
-            if on_one_line {
-                while self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().lexeme) {
-                    self.move_past();
-                }
-            } else { self.skip_line_ends(); }
-        }
-        if !on_one_line {
-            if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
-            self.move_past();
-        }
-        if self.survey {
-            let bound = self.parts().lexical_members.clone();
-            self.surveyed.insert(body_source, ScopeWords { bound, ..ScopeWords::default() });
-        }
-        self.class_bindings.pop();
-        self.class_globals.pop();
-        self.class_met.pop();
-        self.within = previous;
-        self.named_before = named_outside;
-        let parts = self.under_way.pop().expect("class body");
+        let parts = self.read_class_items(opened, &mut setup)?;
 
         if !parts.annotated_names.is_empty() && table.has_any("ext.stmt.class.annotations") {
             let row = parts.annotated_names.iter().flat_map(|(key, routine)| [key.clone(), routine.clone()]).collect();
@@ -6748,26 +6721,8 @@ impl<'a> Builder<'a> {
             if parent.is_none() { parent = Some(generic); } else { other_parents.push(generic); }
         }
         let full_name = self.full_name_of(&class_title);
-        let previous = self.within.replace((class_title.clone(), parent.as_ref().map(|s| s.ident.to_string())));
-        let named_outside = std::mem::replace(&mut self.named_before, self.naming.len());
-        if table.has_any("ext.stmt.class.detail.root"){self.within=Some((full_name.clone(),parent.as_ref().map(|a|a.ident.to_string())));}
-        self.need_intro()?;
-        let on_one_line = !self.on_stmt_end() && self.look().shape != Shape::Open;
-        if !on_one_line {
-            self.skip_line_ends();
-            if self.look().shape != Shape::Open { return Err("Expected an indented class body".to_string()); }
-            self.move_past();
-            self.skip_line_ends();
-        }
-        let body_source = self.pos;
-        let lexical_members = self.surveyed.get(&body_source).map(|scope| scope.bound.clone()).unwrap_or_default();
-        self.class_bindings.push((self.layers.len(), HashMap::new()));
-        self.class_globals.push((self.layers.len(), Vec::new()));
-        self.class_met.push(Vec::new());
-        let completed_class = self.gensym("completed_class");
-        self.under_way.push(ClassParts { lexical_members, completed_class, needs_class_cell: false, class_cell_protocol: false, methods: Vec::new(), attributes: Vec::new(), held: Vec::new(), self_writes: std::collections::BTreeSet::new(),
-            ranking: Vec::new(), annotated_names: Vec::new(), uncertain: Vec::new(), arms: 0, cannot,
-            book: None, book_tracked: HashSet::new() });
+        let opened = self.open_class_body(&class_title, &full_name, parent.as_ref(), cannot)?;
+        let on_one_line = opened.on_one_line;
         // A body that spells `locals` or `vars` anywhere in it is
         // given its own namespace before its first statement runs, so
         // a write through either as the body's first statement finds
@@ -6846,29 +6801,7 @@ impl<'a> Builder<'a> {
             }
         }
         let before_body = setup.len();
-        while !matches!(self.look().shape, Shape::Finish | Shape::Close) {
-            if on_one_line && self.on_stmt_end() { break; }
-            if self.class_item(&mut setup)? { continue; }
-            if on_one_line {
-                while self.look().shape == Shape::Sign && table.spells("stmt.terminator", &self.look().spelling()) {
-                    self.move_past();
-                }
-            } else { self.skip_line_ends(); }
-        }
-        if !on_one_line {
-            if self.look().shape != Shape::Close { return Err("Expected the end of a class body".into()); }
-            self.move_past();
-        }
-        if self.survey {
-            let bound = self.parts().lexical_members.clone();
-            self.surveyed.insert(body_source, ScopeWords { bound, ..ScopeWords::default() });
-        }
-        self.class_bindings.pop();
-        self.class_globals.pop();
-        self.class_met.pop();
-        self.within = previous;
-        self.named_before = named_outside;
-        let ClassParts { completed_class, needs_class_cell: _, methods, mut attributes, mut held, mut ranking, annotated_names, uncertain, cannot, book, book_tracked, .. } = self.under_way.pop().expect("the class body just read");
+        let ClassParts { completed_class, needs_class_cell: _, methods, mut attributes, mut held, mut ranking, annotated_names, uncertain, cannot, book, book_tracked, .. } = self.read_class_items(opened, &mut setup)?;
         if cannot {
             setup.truncate(before_body);
             setup.push(self.class_not_ready());
@@ -8532,6 +8465,11 @@ impl<'a> Builder<'a> {
     }
 
 
+    /// The nearest token before the cursor spelt `lexeme`.
+    fn back_to(&self, lexeme: &str) -> Option<usize> {
+        (0..self.pos).rev().find(|&at| self.tokens[at].lexeme == lexeme)
+    }
+
     /// The parameters of a function or a method, up to the closing bracket.
     fn parameters(&mut self, named: &str, short: bool) -> Res<(Vec<String>, Vec<(usize, usize)>, Vec<String>, Vec<Form>)> {
         let table = self.table;
@@ -8664,9 +8602,7 @@ impl<'a> Builder<'a> {
                     if twice.is_empty() { return Err(wrong()); }
                     let message = format!("{}{}{}", twice[0], last, twice.get(1).map_or("", String::as_str));
                     if table.has_any("ext.builtin.exceptions.syntax") {
-                        let mut cursor = self.pos;
-                        while cursor > 0 { cursor -= 1; if self.tokens[cursor].lexeme == *last { break; } }
-                        repeated.get_or_insert((message, cursor));
+                        repeated.get_or_insert((message, self.back_to(last).unwrap_or(0)));
                     } else {
                         return Err(message);
                     }
@@ -8684,8 +8620,7 @@ impl<'a> Builder<'a> {
                             // takes nothing, standing over it as the
                             // reference stands.
                             let newest = params.last().cloned().unwrap_or_default();
-                            let mut cursor = self.pos;
-                            while cursor > 0 { cursor -= 1; if self.tokens[cursor].lexeme == newest { self.pos = cursor; break; } }
+                            if let Some(at) = self.back_to(&newest) { self.pos = at; }
                             return Err("SyntaxError: parameter without a default follows parameter with a default".to_string());
                         }
                         return Err(wrong());
@@ -9255,8 +9190,7 @@ impl<'a> Builder<'a> {
                 } else if way == 'b' && default_seen {
                     if table.has_any("ext.builtin.exceptions.syntax") {
                         let newest = names.last().cloned().unwrap_or_default();
-                        let mut cursor = self.pos;
-                        while cursor > 0 { cursor -= 1; if self.tokens[cursor].lexeme == newest { self.pos = cursor; break; } }
+                        if let Some(at) = self.back_to(&newest) { self.pos = at; }
                         return Err("SyntaxError: parameter without a default follows parameter with a default".to_string());
                     }
                     return Err(bad());
@@ -9453,19 +9387,12 @@ impl<'a> Builder<'a> {
         let between = table.single("syntax.call.separator").map(str::to_string);
         self.need_sign(open, "after the word for what a routine takes away")?;
         let mut names = Vec::new();
-        while !self.sign(close) {
-            if self.exhausted() {
-                return Err(format!("Expected '{}'", close));
-            }
-            let by_cell = self.skip_reference();
-            let named = self.need_word("as a name to take away")?;
+        self.separated_until(close, between.as_deref(), |this| {
+            let by_cell = this.skip_reference();
+            let named = this.need_word("as a name to take away")?;
             names.push((named, by_cell));
-            if let Some(sep) = &between {
-                if self.sign(sep) {
-                    self.move_past();
-                }
-            }
-        }
+            Ok(())
+        })?;
         self.need_sign(close, "after what a routine takes away")?;
         Ok(names)
     }
@@ -10236,6 +10163,103 @@ impl<'a> Builder<'a> {
         Ok(sequence(steps))
     }
 
+    /// A write through a chain of looks: the keys are worked out once and in
+    /// order, the arrays along the way kept from the outermost in, and each
+    /// rewritten in the one above it from the innermost out. `start` makes
+    /// the step that puts what the chain stands on into the first cell (it
+    /// may add steps of its own before). A chain on a name, `write_back`,
+    /// writes the outermost array back into that name.
+    fn rewrite_chain(
+        &mut self,
+        keys: Vec<Form>,
+        after: bool,
+        value: Form,
+        compound: Option<Prim>,
+        gives_back: bool,
+        write_back: Option<String>,
+        start: impl FnOnce(&mut Self, &mut Vec<Form>, &str) -> Res<Form>,
+    ) -> Res<Form> {
+        let mut steps = Vec::new();
+        let mut at_cells = Vec::new();
+        for key in keys {
+            self.gensyms += 1;
+            let cell = format!("#key{}", self.gensyms);
+            let stored = self.write(&cell, key);
+            steps.push(stored);
+            at_cells.push(cell);
+        }
+        // In through the arrays, each one kept as far as the one the write
+        // lands in.
+        let deep = match after { true => at_cells.len(), false => at_cells.len() - 1 };
+        let mut in_cells = Vec::new();
+        self.gensyms += 1;
+        let root = format!("#in{}", self.gensyms);
+        self.gensyms += 1;
+        let holding = format!("#value{}", self.gensyms);
+        // The value is worked out while what the chain stands on is still
+        // whole, since working it out may change that very thing. A
+        // compound write cannot: it wants the place read first, and so
+        // comes after the way in.
+        let mut afterward = None;
+        match compound {
+            None => steps.push(self.write(&holding, value)),
+            Some(_) => afterward = Some(value),
+        }
+        let first = start(self, &mut steps, &root)?;
+        steps.push(first);
+        in_cells.push(root);
+        for i in 0..deep {
+            self.gensyms += 1;
+            let cell = format!("#in{}", self.gensyms);
+            let (so_far, key) = (self.read(&in_cells[i]), self.read(&at_cells[i]));
+            let further = prim_call(Prim::Inward, vec![so_far, key]);
+            steps.push(self.write(&cell, further));
+            in_cells.push(cell);
+        }
+        if let (Some(op), Some(value)) = (compound, afterward) {
+            let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
+            let now = self.kept_before(prim_call(Prim::Toward, vec![lands_in, key]));
+            let combined = self.kept_after(prim_call(op, vec![now, value]));
+            steps.push(self.write(&holding, combined));
+        }
+        let lands_in = self.read(&in_cells[deep]);
+        let put = self.read(&holding);
+        steps.push(match after {
+            true => prim_call(Prim::Append, vec![lands_in, put]),
+            false => {
+                let key = self.read(&at_cells[deep]);
+                prim_call(Prim::Replace, vec![lands_in, key, put])
+            }
+        });
+        for i in (0..deep).rev() {
+            let (holds, key, done) = (self.read(&in_cells[i]), self.read(&at_cells[i]), self.read(&in_cells[i + 1]));
+            steps.push(prim_call(Prim::Restore, vec![holds, key, done]));
+        }
+        if let Some(name) = write_back {
+            let back = self.read(&in_cells[0]);
+            let home = self.address_to_rewrite(&name);
+            steps.push(Form::Write(home, Box::new(back)));
+            for name in at_cells.iter().chain(&in_cells) {
+                steps.push(Form::Forget(self.address_to_write(name)));
+            }
+        } else {
+            // The cells the rewriting stood on were scaffolding, and are
+            // let go now the write has landed: a cell the program itself
+            // does not share should not go on being held by a name of the
+            // builder's own making.
+            for cell in in_cells.iter().chain(&at_cells) {
+                let slot = self.address_to_write(cell);
+                steps.push(if self.grammar.flag_ext_op_arithmetic_python_numbers {
+                    Form::Release(slot)
+                } else { Form::Forget(slot) });
+            }
+        }
+        let value_slot = self.address_to_write(&holding);
+        steps.push(if gives_back { Form::Release(value_slot) }
+            else { sequence(vec![Form::Forget(value_slot), constant(Value::Nil)]) });
+        Ok(sequence(steps))
+    }
+
     fn write_into(&mut self, expr: Form, gives_back: bool, compound: Option<Prim>, assign: Token) -> Res<Form> {
         let target_start = self.pos.saturating_sub(2);
         match expr {
@@ -10461,88 +10485,24 @@ impl<'a> Builder<'a> {
             // whole written back into what it stood on.
             _ if footing.is_some() => {
                 let (stands_on, keys, after) = footing.expect("what the chain stands on");
-                let mut steps = Vec::new();
-                let mut at_cells = Vec::new();
-                for key in keys {
-                    self.gensyms += 1;
-                    let cell = format!("#key{}", self.gensyms);
-                    let stored = self.write(&cell, key);
-                    steps.push(stored);
-                    at_cells.push(cell);
-                }
-                let deep = match after { true => at_cells.len(), false => at_cells.len() - 1 };
-                let mut in_cells = Vec::new();
-                self.gensyms += 1;
-                let root = format!("#in{}", self.gensyms);
-                self.gensyms += 1;
-                let holding = format!("#value{}", self.gensyms);
-                // The value is worked out while what the chain stands on
-                // is still whole, since working it out may change that
-                // very thing. A compound write cannot: it wants the
-                // place read first, and so comes after the way in.
-                let mut afterward = None;
-                match compound {
-                    None => steps.push(self.write(&holding, value)),
-                    Some(_) => afterward = Some(value),
-                }
                 // What the chain stands on is taken as a cell, so that
                 // rewriting the arrays within it lands where it lives
                 // and nothing need be written back afterwards.
-                let start = match stands_on {
-                    place @ Form::Apply(Callee::Prim(Prim::Of | Prim::At | Prim::Within, _), _) => self.cell_of(place)?,
-                    call @ Form::Apply(..) if self.grammar.flag_ext_syntax_call_bind_names => {
-                        let saved = self.gensym("target_result");
-                        steps.push(Form::Write(saved.clone(), Box::new(call)));
-                        self.cell_of(Form::Read(saved))?
-                    }
-                    other => self.cell_of(other)?,
+                let start = |this: &mut Self, steps: &mut Vec<Form>, root: &str| {
+                    let start = match stands_on {
+                        place @ Form::Apply(Callee::Prim(Prim::Of | Prim::At | Prim::Within, _), _) => this.cell_of(place)?,
+                        call @ Form::Apply(..) if this.grammar.flag_ext_syntax_call_bind_names => {
+                            let saved = this.gensym("target_result");
+                            steps.push(Form::Write(saved.clone(), Box::new(call)));
+                            this.cell_of(Form::Read(saved))?
+                        }
+                        other => this.cell_of(other)?,
+                    };
+                    // Tied, not written: a plain write of a cell writes what
+                    // it holds, and here the cell itself is wanted.
+                    Ok(Form::Tie(this.address_to_write(root), Box::new(start)))
                 };
-                // Tied, not written: a plain write of a cell writes what
-                // it holds, and here the cell itself is wanted.
-                let tied = self.address_to_write(&root);
-                steps.push(Form::Tie(tied, Box::new(start)));
-                in_cells.push(root);
-                for i in 0..deep {
-                    self.gensyms += 1;
-                    let cell = format!("#in{}", self.gensyms);
-                    let (so_far, key) = (self.read(&in_cells[i]), self.read(&at_cells[i]));
-                    let further = prim_call(Prim::Inward, vec![so_far, key]);
-                    steps.push(self.write(&cell, further));
-                    in_cells.push(cell);
-                }
-                if let (Some(op), Some(value)) = (compound, afterward) {
-                    let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
-                    let now = self.kept_before(prim_call(Prim::Toward, vec![lands_in, key]));
-                    let combined = self.kept_after(prim_call(op, vec![now, value]));
-                    steps.push(self.write(&holding, combined));
-                }
-                let lands_in = self.read(&in_cells[deep]);
-                let put = self.read(&holding);
-                steps.push(match after {
-                    true => prim_call(Prim::Append, vec![lands_in, put]),
-                    false => {
-                        let key = self.read(&at_cells[deep]);
-                        prim_call(Prim::Replace, vec![lands_in, key, put])
-                    }
-                });
-                for i in (0..deep).rev() {
-                    let (holds, key, done) = (self.read(&in_cells[i]), self.read(&at_cells[i]), self.read(&in_cells[i + 1]));
-                    steps.push(prim_call(Prim::Restore, vec![holds, key, done]));
-                }
-                // The cells the rewriting stood on were scaffolding, and
-                // are let go now the write has landed: a cell the program
-                // itself does not share should not go on being held by a
-                // name of the builder's own making.
-                for cell in in_cells.iter().chain(&at_cells) {
-                    let slot = self.address_to_write(cell);
-                    steps.push(if self.grammar.flag_ext_op_arithmetic_python_numbers {
-                        Form::Release(slot)
-                    } else { Form::Forget(slot) });
-                }
-                let value_slot = self.address_to_write(&holding);
-                steps.push(if gives_back { Form::Release(value_slot) }
-                    else { sequence(vec![Form::Forget(value_slot), constant(Value::Nil)]) });
-                sequence(steps)
+                self.rewrite_chain(keys, after, value, compound, gives_back, None, start)?
             }
             // `a[i][j] = v` and `a[i][] = v`: the keys are worked out
             // once and in order, the arrays along the way kept, and each
@@ -10550,82 +10510,17 @@ impl<'a> Builder<'a> {
             // made on the way in, since that is what a write asks for.
             _ if chain.is_some() => {
                 let (name, keys, after) = chain.expect("a chain on a name");
-                let mut steps = Vec::new();
-                let mut at_cells = Vec::new();
-                for key in keys {
-                    self.gensyms += 1;
-                    let cell = format!("#key{}", self.gensyms);
-                    let stored = self.write(&cell, key);
-                    steps.push(stored);
-                    at_cells.push(cell);
-                }
-                // In through the arrays, each one kept as far as the one
-                // the write lands in.
-                let deep = match after { true => at_cells.len(), false => at_cells.len() - 1 };
-                let mut in_cells = Vec::new();
-                self.gensyms += 1;
-                let root = format!("#in{}", self.gensyms);
-                self.gensyms += 1;
-                let holding = format!("#value{}", self.gensyms);
-                // The value comes first, while the name still holds what
-                // it held: reading the array out to rewrite it would
-                // leave the name empty while the value is worked out,
-                // and working it out may change the array itself. A
-                // compound write wants the place read first, and waits.
-                let mut afterward = None;
-                match compound {
-                    None => steps.push(self.write(&holding, value)),
-                    Some(_) => afterward = Some(value),
-                }
-                // Where a write makes the places it needs, the name it
-                // starts from has nothing to say about being empty.
-                let start = self.read_to_write(&name);
-                let start = match self.grammar.flag_ext_op_index_makes {
-                    true => Form::Muted(Box::new(start)),
-                    false => start,
+                let start = |this: &mut Self, _: &mut Vec<Form>, root: &str| {
+                    // Where a write makes the places it needs, the name it
+                    // starts from has nothing to say about being empty.
+                    let start = this.read_to_write(&name);
+                    let start = match this.grammar.flag_ext_op_index_makes {
+                        true => Form::Muted(Box::new(start)),
+                        false => start,
+                    };
+                    Ok(this.write(root, start))
                 };
-                steps.push(self.write(&root, start));
-                in_cells.push(root);
-                for i in 0..deep {
-                    self.gensyms += 1;
-                    let cell = format!("#in{}", self.gensyms);
-                    let (so_far, key) = (self.read(&in_cells[i]), self.read(&at_cells[i]));
-                    let further = prim_call(Prim::Inward, vec![so_far, key]);
-                    steps.push(self.write(&cell, further));
-                    in_cells.push(cell);
-                }
-                if let (Some(op), Some(value)) = (compound, afterward) {
-                    let (lands_in, key) = (self.read(&in_cells[deep]), self.read(&at_cells[deep]));
-                    let now = self.kept_before(prim_call(Prim::Toward, vec![lands_in, key]));
-                    let combined = self.kept_after(prim_call(op, vec![now, value]));
-                    steps.push(self.write(&holding, combined));
-                }
-                // Writing into a place changes the array the name holds
-                // where it stands, so each array along the way is written
-                // into the one above it, from the innermost outwards.
-                let lands_in = self.read(&in_cells[deep]);
-                let put = self.read(&holding);
-                steps.push(match after {
-                    true => prim_call(Prim::Append, vec![lands_in, put]),
-                    false => {
-                        let key = self.read(&at_cells[deep]);
-                        prim_call(Prim::Replace, vec![lands_in, key, put])
-                    }
-                });
-                for i in (0..deep).rev() {
-                    let (holds, key, done) = (self.read(&in_cells[i]), self.read(&at_cells[i]), self.read(&in_cells[i + 1]));
-                    steps.push(prim_call(Prim::Restore, vec![holds, key, done]));
-                }
-                let back = self.read(&in_cells[0]);
-                let home = self.address_to_rewrite(&name);
-                steps.push(Form::Write(home, Box::new(back)));
-                for name in at_cells.iter().chain(&in_cells) {
-                    steps.push(Form::Forget(self.address_to_write(name)));
-                }
-                let returned = self.address_to_write(&holding);
-                steps.push(if gives_back { Form::Release(returned) }
-                    else { sequence(vec![Form::Forget(returned), constant(Value::Nil)]) });
-                sequence(steps)
+                self.rewrite_chain(keys, after, value, compound, gives_back, Some(name.clone()), start)?
             }
             // `a[i] = &b`: the place holds the cell itself, so a write
             // through either name is a write the other sees.
@@ -12270,36 +12165,11 @@ impl<'a> Builder<'a> {
         // its value is handed over and the language says so.
         let read = self.expr_at(0, true)?;
         Ok(match read {
-            Form::Read(slot) => {
-                let shared = self.address_to_write(&slot.ident.to_string());
-                Form::Share(shared)
-            }
-            Form::Apply(Callee::Prim(Prim::Of, _), mut args) if args.len() == 2 => {
-                let named = args.pop().expect("the property");
-                let thing = args.pop().expect("what holds it");
-                let Form::Const(Value::Text(called)) = named else {
-                    return Err("Only a property named outright has a cell to share".to_string());
-                };
-                Form::ShareField(Box::new(thing), called)
-            }
-            Form::Apply(Callee::Prim(Prim::At, _), mut args) if args.len() == 2 => {
-                let place = args.pop().expect("the place");
-                let stands_on = args.pop().expect("what holds it");
-                self.shared_at(place, stands_on)?
-            }
-            // A class's own value is kept once for the whole class, and
-            // so keeps a cell as a binding does.
-            Form::Apply(Callee::Prim(Prim::Within, _), mut args) if args.len() == 2 => {
-                let named = args.pop().expect("the value's name");
-                let class = args.pop().expect("the class");
-                let Form::Const(Value::Text(called)) = named else {
-                    return Err("Only a class's own value named outright has a cell to share".to_string());
-                };
-                Form::ShareOwn(Box::new(class), called)
-            }
-            // A binding named as the run goes has a cell as any binding
-            // does, and asking for it asks for that very one.
-            Form::Called(spells) => Form::ShareCalled(spells),
+            // A name, a property, a place in an array, a class's own
+            // value or a binding named as the run goes: each has a cell
+            // as `cell_of` finds it.
+            Form::Read(_) | Form::Called(_) => self.cell_of(read)?,
+            Form::Apply(Callee::Prim(Prim::Of | Prim::At | Prim::Within, _), ref args) if args.len() == 2 => self.cell_of(read)?,
             // A write that ties one name to another's cell has that very
             // cell to hand over: the write is done and the cell it made
             // is what goes over, not what it holds.
@@ -12447,18 +12317,11 @@ impl<'a> Builder<'a> {
         let close = table.single("syntax.call.close").unwrap().to_string();
         let sep = table.single("syntax.call.separator").map(str::to_string);
         let mut asked = Vec::new();
-        while !self.sign(&close) {
-            if self.exhausted() {
-                return Err(format!("Expected '{}'", close));
-            }
-            let one = self.expr(0)?;
+        self.separated_until(&close, sep.as_deref(), |this| {
+            let one = this.expr(0)?;
             asked.push(Form::Muted(Box::new(glancing(one))));
-            if let Some(s) = &sep {
-                if self.sign(s) {
-                    self.move_past();
-                }
-            }
-        }
+            Ok(())
+        })?;
         self.move_past();
         if asked.is_empty() {
             return Err("Nothing was asked about".to_string());
@@ -12838,6 +12701,85 @@ impl<'a> Builder<'a> {
         Ok(result)
     }
 
+    /// Read items up to the closing sign, which is left unread: each item
+    /// is read by `item`, and one separator
+    /// after it is stepped over.
+    fn separated_until(&mut self, close: &str, separator: Option<&str>, mut item: impl FnMut(&mut Self) -> Res<()>) -> Res<()> {
+        while !self.sign(close) {
+            if self.exhausted() {
+                return Err(format!("Expected '{}'", close));
+            }
+            item(self)?;
+            if let Some(word) = separator {
+                if self.sign(word) {
+                    self.move_past();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The key inside `[...]`, up to but not past the closing sign: one
+    /// place, or a row of them as a tuple. A key being written or deleted
+    /// that has several places without slice values cannot be written to.
+    fn index_key(&mut self, close: &str, separator: Option<&str>, writing: bool) -> Res<Form> {
+        let key = if self.grammar.has_any_ext_syntax_array_spread {
+            // A row with a starred place becomes a tuple; one place
+            // and no star stays that place. Each place is read by
+            // the expression reader itself, so a comma within a
+            // lambda's parameter list is no separator and a star
+            // within one is no starred place.
+            if self.on_any("ext.syntax.array.spread") {
+                let mut row = prim_call(Prim::MakeArray, vec![]);
+                loop {
+                    let (part, spread) = self.bracket_item(close, separator)?;
+                    row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
+                    if separator.map_or(false, |word| self.sign(word)) {
+                        self.move_past();
+                        if self.sign(close) { break; }
+                    } else { break; }
+                }
+                prim_call(Prim::Tupling, vec![row])
+            } else {
+                let first = self.bracket_part(close, separator)?;
+                if separator.map_or(false, |word| self.sign(word)) {
+                    let mut row = prim_call(Prim::MakeArray, vec![first]);
+                    loop {
+                        self.move_past();
+                        if self.sign(close) { break; }
+                        let (part, spread) = self.bracket_item(close, separator)?;
+                        row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
+                        if !separator.map_or(false, |word| self.sign(word)) { break; }
+                    }
+                    prim_call(Prim::Tupling, vec![row])
+                } else { first }
+            }
+        } else {
+            let mut keys = vec![self.bracket_part(close, separator)?];
+            let several = self.grammar.has_any_ext_op_index_slice && separator.map_or(false, |word| self.sign(word));
+            if several {
+                while separator.map_or(false, |word| self.sign(word)) {
+                    self.move_past();
+                    if self.sign(close) { break; }
+                    keys.push(self.bracket_part(close, separator)?);
+                }
+            }
+            match (several, self.grammar.has_any_ext_builtin_slice) {
+                (true, true) => prim_call(Prim::MakeTuple, keys),
+                (true, false) if writing => {
+                    // Places written with commas between are one key
+                    // holding them all, where the table has slice
+                    // values; elsewhere no such place can be written to.
+                    self.unsupported_place = true;
+                    keys.swap_remove(0)
+                }
+                (true, false) => prim_call(Prim::SliceRefused, keys),
+                _ => keys.pop().expect("one key"),
+            }
+        };
+        Ok(key)
+    }
+
     fn subscript(&mut self, mut node: Form, origin: usize) -> Res<Form> {
         if self.grammar.flag_ext_syntax_call_chained || self.grammar.has_any_ext_op_lambda {
             node = self.called_on_value(node, Some(origin))?;
@@ -12870,53 +12812,7 @@ impl<'a> Builder<'a> {
                 if incomplete { return Err(String::from("SyntaxError: Invalid star expression")); }
             }
             let separator = self.grammar.single_syntax_call_separator;
-            let key = if self.grammar.has_any_ext_syntax_array_spread {
-                // A row with a starred place becomes a tuple; one place
-                // and no star stays that place. Each place is read by
-                // the expression reader itself, so a comma within a
-                // lambda's parameter list is no separator and a star
-                // within one is no starred place.
-                if self.on_any("ext.syntax.array.spread") {
-                    let mut row = prim_call(Prim::MakeArray, vec![]);
-                    loop {
-                        let (part, spread) = self.bracket_item(close, separator)?;
-                        row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
-                        if separator.map_or(false, |word| self.sign(word)) {
-                            self.move_past();
-                            if self.sign(close) { break; }
-                        } else { break; }
-                    }
-                    prim_call(Prim::Tupling, vec![row])
-                } else {
-                    let first = self.bracket_part(close, separator)?;
-                    if separator.map_or(false, |word| self.sign(word)) {
-                        let mut row = prim_call(Prim::MakeArray, vec![first]);
-                        loop {
-                            self.move_past();
-                            if self.sign(close) { break; }
-                            let (part, spread) = self.bracket_item(close, separator)?;
-                            row = prim_call(Prim::ExtendLiteral(false, spread), vec![row, part]);
-                            if !separator.map_or(false, |word| self.sign(word)) { break; }
-                        }
-                        prim_call(Prim::Tupling, vec![row])
-                    } else { first }
-                }
-            } else {
-                let mut keys = vec![self.bracket_part(close, separator)?];
-                let several = self.grammar.has_any_ext_op_index_slice && separator.map_or(false, |word| self.sign(word));
-                if several {
-                    while separator.map_or(false, |word| self.sign(word)) {
-                        self.move_past();
-                        if self.sign(close) { break; }
-                        keys.push(self.bracket_part(close, separator)?);
-                    }
-                }
-                match (several, self.grammar.has_any_ext_builtin_slice) {
-                    (true, true) => prim_call(Prim::MakeTuple, keys),
-                    (true, false) => prim_call(Prim::SliceRefused, keys),
-                    _ => keys.pop().expect("one key"),
-                }
-            };
+            let key = self.index_key(close, separator, false)?;
             self.need_sign(close, "after array index")?;
             node = prim_call(Prim::At, vec![node, key]);
             // Reads carry the complete subscription; targets keep their raw
@@ -13368,35 +13264,28 @@ impl<'a> Builder<'a> {
         let sep = self.table.single(sep_key).map(str::to_string);
         let mark = self.grammar.single_syntax_map_pair.map(str::to_string);
         let mut items = Vec::new();
-        while !self.sign(&close) {
-            if self.exhausted() {
-                return Err(format!("Expected '{}'", close));
-            }
+        self.separated_until(&close, sep.as_deref(), |this| {
             // `[&$a]`: the place holds the binding's own cell, so a
             // write through either name is a write the other sees.
-            let tied = self.grammar.single_ext_op_reference.map_or(false, |m| self.sign(m));
+            let tied = this.grammar.single_ext_op_reference.map_or(false, |m| this.sign(m));
             let item = if tied {
-                self.move_past();
-                let named = self.need_word("as the name to share a cell with")?;
-                let slot = self.address_to_write(&named);
+                this.move_past();
+                let named = this.need_word("as the name to share a cell with")?;
+                let slot = this.address_to_write(&named);
                 Form::Share(slot)
             } else {
-                self.expr(0)?
+                this.expr(0)?
             };
             items.push(match &mark {
-                Some(m) if self.sign(m) => {
-                    self.move_past();
-                    let value = self.expr(0)?;
+                Some(m) if this.sign(m) => {
+                    this.move_past();
+                    let value = this.expr(0)?;
                     prim_call(Prim::Couple, vec![item, value])
                 }
                 _ => item,
             });
-            if let Some(s) = &sep {
-                if self.sign(s) {
-                    self.move_past();
-                }
-            }
-        }
+            Ok(())
+        })?;
         self.move_past();
         Ok(items)
     }
