@@ -4,6 +4,12 @@ TIMEOUT_MAX = 9223372036.0
 def get_ident():
     return 1
 
+# No second thread of control can be started here; a caller that asks for
+# one is told so at the call, as the reference does when a platform cannot
+# start a thread, instead of the name being absent from the module.
+def start_new_thread(function, args, kwargs=None):
+    raise RuntimeError("can't start new thread")
+
 class Lock:
     def __init__(self):
         self._held = False

@@ -934,7 +934,11 @@ import time
 
 # Embedded modules use the test archive's package root for discovery.
 SHORT_TIMEOUT = 30.0
-STDLIB_DIR = TEST_HOME_DIR
+# The standard library root is wherever the interpreter says its own
+# library lives, so the paths the reference builds for frozen sources are
+# the paths the interpreter's finder computes for them.  Importing this
+# module only reads that record; it never moves it.
+STDLIB_DIR = getattr(sys, '_stdlib_dir', None) or TEST_HOME_DIR
 TEST_SUPPORT_DIR = os.path.join(TEST_HOME_DIR, 'test', 'support')
 is_android = False
 is_apple = sys.platform in ("darwin", "ios", "tvos", "watchos")
