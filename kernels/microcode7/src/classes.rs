@@ -4527,6 +4527,25 @@ impl<'a> Machine<'a> {
     pub(super) fn reindex_routine_members(&mut self) {
         self.routine_member_positions = self.routine_members.iter().enumerate()
             .filter_map(|(at, (key, _))| Self::routine_member_weak_key(key).map(|key| (key, at))).collect();
+        self.routine_program_positions.clear();
+        for (at, (held, _)) in self.routine_members.iter().enumerate() {
+            if let Some((_, address, _)) = Self::routine_member_weak_key(held) {
+                self.routine_program_positions.entry(address).or_default().insert(at);
+            }
+        }
+    }
+    /// Read the same live rows as the table walk, in the same order. Weak
+    /// identities are checked after indexing, and attribute values stay live.
+    pub(super) fn routine_attribute_rows(&self, address: usize) -> impl Iterator<Item = &Rc<Thing>> + use<'_, 'a> {
+        self.routine_program_positions.get(&address).into_iter().flat_map(|rows| rows.iter())
+            .filter_map(move |at| {
+                let (held, attributes) = self.routine_members.get(*at)?;
+                let matches = match held.revive()? {
+                    Value::Routine(code) | Value::Bound(code, _) | Value::Method(code, _, _) => Rc::as_ptr(&code) as usize == address,
+                    _ => false,
+                };
+                matches.then_some(attributes)
+            })
     }
     fn routine_member_index(&self, value: &Value) -> Option<usize> {
         if let Some(identity) = Self::routine_member_key(value) {
@@ -5146,8 +5165,7 @@ impl<'a> Machine<'a> {
     /// none), or the module the file it came of was read as.
     pub(super) fn routine_module(&self, code: &Rc<Routine>) -> Value {
         let apart = format!("{}\0", self.detail("module"));
-        let kept = self.routine_members.iter().find(|(held, _)| matches!(held.revive(), Some(Value::Routine(r) | Value::Bound(r, _) | Value::Method(r, _, _)) if Rc::ptr_eq(&r, code)));
-        if let Some((_, members)) = kept {
+        if let Some(members) = self.routine_attribute_rows(Rc::as_ptr(code) as usize).next() {
             if let Some((_, v)) = members.holds.borrow().iter().find(|(k, _)| **k == apart) { return v.clone(); }
         }
         if code.globe.is_some() || code.definition.is_some() {
@@ -5197,6 +5215,11 @@ impl<'a> Machine<'a> {
                 let identity = Self::routine_member_weak_key(&entry.0);
                 let at = if let Some(vacant) = self.routine_members.iter().rposition(|(key, _)| key.departed()) {
                     if let Some(old) = Self::routine_member_weak_key(&self.routine_members[vacant].0) {
+                        let empty = self.routine_program_positions.get_mut(&old.1).is_some_and(|rows| {
+                            rows.remove(&vacant);
+                            rows.is_empty()
+                        });
+                        if empty { self.routine_program_positions.remove(&old.1); }
                         if self.routine_member_positions.get(&old) == Some(&vacant) {
                             self.routine_member_positions.remove(&old);
                         }
@@ -5207,7 +5230,10 @@ impl<'a> Machine<'a> {
                     self.routine_members.push(entry);
                     self.routine_members.len() - 1
                 };
-                if let Some(identity) = identity { self.routine_member_positions.insert(identity, at); }
+                if let Some(identity) = identity {
+                    self.routine_member_positions.insert(identity, at);
+                    self.routine_program_positions.entry(identity.1).or_default().insert(at);
+                }
                 at
             }
         }

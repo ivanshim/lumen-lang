@@ -700,6 +700,8 @@ pub struct Machine<'a> {
     native_kind_names: RefCell<HashMap<String, std::collections::HashSet<String>>>,
     routine_members: Vec<(crate::ghost::Ghost, Rc<Thing>)>,
     routine_member_positions: HashMap<(u8, usize, usize), usize, crate::table::FxBuildHasher>,
+    // Ordered weak metadata rows for each routine program, without caching values.
+    routine_program_positions: HashMap<usize, std::collections::BTreeSet<usize>, crate::table::FxBuildHasher>,
     reaping: bool,
     cycle_checkpoint_slots: usize,
     /// How many bytes were alive once the last reaping was done.
@@ -2282,7 +2284,7 @@ impl<'a> Machine<'a> {
             code_kind: None,
             cached_forms: None,
             member_inventories: RefCell::new(HashMap::new()),
-            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: HashMap::default(), reaping: false, cycle_checkpoint_slots: 0, reaped_at_bytes: 0, quiet_module_slots: Default::default(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
+            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: HashMap::default(), routine_program_positions: HashMap::default(), reaping: false, cycle_checkpoint_slots: 0, reaped_at_bytes: 0, quiet_module_slots: Default::default(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
             stack_origin: &table as *const &Table as usize,
             descriptor_files: std::collections::BTreeMap::new(),
             table,
@@ -15494,13 +15496,7 @@ impl<'a> Machine<'a> {
     /// What a routine is called in the words about a call made to it.
     fn routine_called(&self, program: &Routine) -> String {
         if self.rules.has_any_ext_stmt_class_special {
-            for (callable, attributes) in &self.routine_members {
-                let Some(value) = callable.revive() else { continue; };
-                let code = match &value {
-                    Value::Routine(code) | Value::Bound(code, _) | Value::Method(code, _, _) => code,
-                    _ => continue,
-                };
-                if !std::ptr::eq(program, code.as_ref()) { continue; }
+            for attributes in self.routine_attribute_rows(program as *const Routine as usize) {
                 let qualified_key = self.detail("qualified").to_owned() + "\0";
                 let entries = attributes.holds.borrow();
                 if let Some(entry) = entries.iter().find(|entry| entry.0 == qualified_key) {
@@ -15624,13 +15620,7 @@ impl<'a> Machine<'a> {
         // The raw-key making is the reference's own, so only the Python
         // definition may opt into it; every other language keeps words.
         if !self.table.flag("ext.op.arithmetic.python_numbers") { return false; }
-        for (callable, attributes) in &self.routine_members {
-            let Some(value) = callable.revive() else { continue; };
-            let code = match &value {
-                Value::Routine(code) | Value::Bound(code, _) | Value::Method(code, _, _) => code,
-                _ => continue,
-            };
-            if !std::ptr::eq(program, code.as_ref()) { continue; }
+        for attributes in self.routine_attribute_rows(program as *const Routine as usize) {
             let entries = attributes.holds.borrow();
             if entries.iter().any(|(word, held)| {
                 (word == "_lumen_raw_keywords" || word == "_lumen_raw_keywords\0" || word == "\0_lumen_raw_keywords\0")
