@@ -9073,7 +9073,17 @@ impl<'a> Engine<'a> {
             }
             return Value::array(names.iter().map(|n|Value::text(n)).collect());
         }
-        let mut names=vec![];let class=match one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().filter(|(n,_)|!n.starts_with(['\0', '#'])).map(|(n,_)|n.clone()));Some(&o.class_now())},_=>None};
+        let mut names=vec![];
+        // Native code fields belong in both the value and its type's directory.
+        if matches!(one, Value::Adapter(code) if code.0 == 7)
+            || matches!(one, Value::Class(kind) if Self::own_kind(kind).is_some_and(|word| self.lang.compile_kind.as_ref() == Some(&word))) {
+            names.extend(self.lang.class_details.get("code.fields").into_iter().flatten()
+                .enumerate().filter(|(index, _)| *index != 10).map(|(_, word)| word.clone()));
+            for part in ["argcount", "varnames", "code.replace"] {
+                if let Some(word) = self.lang.class_details.get(part).and_then(|words| words.first()) { names.push(word.clone()); }
+            }
+        }
+        let class=match one{Value::Class(c)=>Some(c),Value::Object(o)=>{names.extend(o.fields.borrow().iter().filter(|(n,_)|!n.starts_with(['\0', '#'])).map(|(n,_)|n.clone()));Some(&o.class_now())},_=>None};
         if let Value::Object(object) = one {
             match Self::own_kind(&object.class_now()).as_deref() {
                 Some("ParamSpec") => names.extend(["args", "kwargs"].iter().map(|word| word.to_string())),

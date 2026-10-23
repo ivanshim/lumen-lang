@@ -9223,6 +9223,17 @@ impl<'a> Engine<'a> {
     }
 
     pub(super) fn loose_kind_member(&self, value: &Value, name: &str) -> Option<Value> {
+        if !name.is_empty() && name == self.class_word("get") {
+            let owner = match value {
+                Value::Class(class) => Self::own_kind(class),
+                Value::Native(operation, word) if Self::kind_builtin(operation) => Some(word.to_string()),
+                Value::ByteKind(mutable, _) => Some(self.byte_kind_word(*mutable).to_string()),
+                _ => self.kind_spelled(value).map(|word| word.to_string()),
+            };
+            if owner.as_deref().is_some_and(|word| word != "type") {
+                return Some(Self::adapter(10, vec![Value::text(self.class_word("root"))]));
+            }
+        }
         let word: Rc<str> = match value {
             Value::Class(c) => Rc::from(Self::own_kind(c)?),
             Value::Native(_, word) => word.clone(),

@@ -396,6 +396,17 @@ impl<'a> Machine<'a> {
             return Value::Vector(crate::tuples::Sequence::plain(named.iter().map(|word|Value::text(word)).collect()));
         }
         let mut names=Vec::new();
+        // Describe the exposed code slots even when no sample can be allocated.
+        let code_value = matches!(item, Value::Wrapped(7, _));
+        let code_type = matches!(item, Value::Blueprint(kind) if
+            Self::native_word(kind).is_some_and(|word| self.table.strings("ext.builtin.compile.kind").first() == Some(&word)));
+        if code_value || code_type {
+            for (offset, word) in self.rules.words_ext_stmt_class_detail_code_fields.iter().enumerate() {
+                if offset != 10 { names.push(word.to_owned()); }
+            }
+            names.extend(["argcount", "varnames"].into_iter().map(|word| self.detail(word)).filter(|word| !word.is_empty()).map(str::to_owned));
+            if let Some(replace) = self.table.strings("ext.stmt.class.detail.code.replace").first() { names.push(replace.to_owned()); }
+        }
         let class=match item{Value::Thing(t)=>{names.extend(t.holds.borrow().iter().filter(|(k,_)|!k.starts_with('\0')).map(|(k,_)|k.clone()));Some(&t.blueprint())},Value::Blueprint(b)=>Some(b),_=>None};
         if let Value::Thing(instance) = item {
             if let Some(kind) = Self::native_word(&instance.blueprint()) {
@@ -7191,7 +7202,11 @@ impl<'a> Machine<'a> {
             if key==self.detail("namespace"){let index=self.routine_storage(&value);return Ok(Value::Attributes(self.routine_members[index].1.clone()));}
             if key==self.detail("defaults"){
                 let defaults:Vec<Value>=if matches!(value,Value::Bound(..))||self.written_over.contains_key(&Self::written_key(&value,&self.outermost)) {self.spare_worths(&code,&room,'p').into_iter().map(|(_,v)|v).collect()} else {Vec::new()};
-                if defaults.is_empty() && !code.local_defaults.is_empty(){return Err(self.class_unready());}
+                let pending_positional = code.local_defaults.iter().any(|slot| {
+                    code.formal_slots.iter().position(|formal| formal == slot).is_some_and(|at|
+                        code.taking.as_ref().is_none_or(|rules| rules[at] != 'n'))
+                });
+                if defaults.is_empty() && pending_positional { return Err(self.class_unready()); }
                 return Ok(if defaults.is_empty(){Value::Nil}else{Value::tuple(defaults)});
             }
             // A routine answers its own call, so reading it back and

@@ -11461,6 +11461,18 @@ impl<'a> Machine<'a> {
     }
 
     pub(super) fn carried_by_kind(&self, value: &Value, name: &str) -> Option<Value> {
+        if name == self.detail("get") && !name.is_empty() {
+            let is_native = match value {
+                Value::Blueprint(blueprint) => Self::native_word(blueprint).is_some_and(|word| word != "type"),
+                Value::Intrinsic(operation, word) => operation.names_a_kind() && word.as_ref() != "type",
+                Value::OctetKind { .. } => true,
+                _ => self.kind_spelling(value).is_some_and(|word| word.as_ref() != "type"),
+            };
+            if is_native {
+                let defining = Value::text(self.detail("root"));
+                return Some(Value::Wrapped(10, Rc::new(vec![defining]).into()));
+            }
+        }
         let word: String = match value {
             Value::Blueprint(b) => Self::native_word(b)?,
             Value::Intrinsic(_, word) => word.to_string(),
