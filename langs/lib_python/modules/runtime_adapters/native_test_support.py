@@ -85,11 +85,41 @@ skip_on_newlib = _identity
 # already has it and runs unchanged.
 force_not_colorized_test_class = _identity
 
+# The embedded suite opts in to expensive resources, as regrtest does.
+# Setting this to None enables every resource; runners may supply a dict.
+use_resources = {}
+
+class ResourceDenied(unittest.SkipTest):
+    pass
+
+
 def is_resource_enabled(resource):
-    return False
+    return use_resources is None or resource in use_resources
+
+
+def get_resource_value(resource):
+    return None if use_resources is None else use_resources.get(resource)
+
+
+def requires(resource, msg=None):
+    if not is_resource_enabled(resource):
+        if msg is None:
+            msg = "Use of the %r resource not enabled" % resource
+        raise ResourceDenied(msg)
+    if resource in {'network', 'urlfetch'} and not has_socket_support:
+        raise ResourceDenied('No socket support')
+    if resource == 'gui':
+        try:
+            import tkinter
+            root = tkinter.Tk()
+            root.destroy()
+        except Exception as error:
+            raise ResourceDenied('Tk unavailable due to %s: %s' % (type(error).__name__, error))
+
 
 def requires_resource(resource):
-    return unittest.skipUnless(is_resource_enabled(resource), 'resource ' + resource + ' is not enabled')
+    return unittest.skipUnless(is_resource_enabled(resource),
+                               "resource %r is not enabled" % resource)
 
 # A note for a runner that would put tests in threads at once. Nothing
 # here does, so the note is kept and the test runs.
@@ -1885,17 +1915,8 @@ def _force_run(path, func, *args):
         return func(*args)
 
 
-class ResourceDenied(unittest.SkipTest):
-    pass
 
 
-def requires(resource, msg=None):
-    if not is_resource_enabled(resource):
-        if msg is None:
-            msg = "Use of the %r resource not enabled" % resource
-        raise ResourceDenied(msg)
-    if resource in {"network", "urlfetch"} and not has_socket_support:
-        raise ResourceDenied("No socket support")
 
 
 # Provide the general regression-support exception base.

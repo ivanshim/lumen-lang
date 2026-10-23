@@ -68,7 +68,6 @@
     "threading": "runtime_adapters/native_threading.py",
     "unittest.mock": "runtime_adapters/native_unittest_mock.py",
     "tracemalloc": "runtime_adapters/native_tracemalloc.py",
-    "doctest": "runtime_adapters/native_doctest.py",
     "ast": "runtime_adapters/native_ast.py",
     "test.test_importlib.util": "runtime_adapters/native_test_importlib_util.py"
   },

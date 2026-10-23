@@ -1378,3 +1378,10 @@ def _decode_source(source_bytes):
     encoding = tokenize.detect_encoding(source_bytes_readline)
     newline_decoder = _io.IncrementalNewlineDecoder(None, True)
     return newline_decoder.decode(source_bytes.decode(encoding[0]))
+
+
+def _archived_source(path):
+    # Source of a file named through a ZIP archive ("archive.zip/member").
+    from zipimport import zipimporter
+    archive = path[:path.rindex('.zip/') + 4]
+    return _decode_source(zipimporter(archive).get_data(path))

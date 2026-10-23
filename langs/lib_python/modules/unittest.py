@@ -56,17 +56,16 @@ class _Raises:
             raise AssertionError('"' + self.phrase.pattern + '" does not match "' + str(value) + '"')
         return True
 
-class TestResult:
-    def __init__(self):
-        self.testsRun = 0
-        self.failures = []
-        self.errors = []
-        self.skipped = []
-        self.expectedFailures = []
-        self.unexpectedSuccesses = []
+from unittest.result import TestResult
 
-    def wasSuccessful(self):
-        return len(self.failures) == 0 and len(self.errors) == 0 and len(self.unexpectedSuccesses) == 0
+# One recorded outcome, a (test, message) pair as the reference keeps it;
+# the report names it by its label and the place it came from.
+class _Entry(tuple):
+    def __new__(cls, test, message, label, where):
+        entry = tuple.__new__(cls, (test, message))
+        entry.label = label
+        entry.where = where
+        return entry
 
 class TextTestResult(TestResult):
     def __repr__(self):
@@ -208,6 +207,9 @@ class TestCase:
     def id(self):
         return getattr(self, '_test_module', '__main__') + '.' + _class_name(self) + '.' + self._method
 
+    def __str__(self):
+        return self._method + ' (' + self.id() + ')'
+
     def assertNotEqual(self, a, b, msg=None):
         if not (a != b):
             self._check(False, str(a) + ' == ' + str(b), msg)
@@ -335,7 +337,7 @@ class TestCase:
                 successful = False
                 if self._result is None:
                     raise outcome[1]
-                self._result.errors = [*self._result.errors, [self._method, _message(outcome[1], outcome[2]), self.id()]]
+                self._result.errors = [*self._result.errors, _Entry(self, _message(outcome[1], outcome[2]), self._method, self.id())]
         return successful
 
     def countTestCases(self):
@@ -514,7 +516,7 @@ class TestCase:
         if outcome[0]:
             return result
         error = outcome[1]
-        entry = [self._method, getattr(error, 'message', outcome[2]), self.id()]
+        entry = _Entry(self, getattr(error, 'message', outcome[2]), self._method, self.id())
         if isinstance(error, self.failureException):
             result.failures = [*result.failures, entry]
         elif isinstance(error, SkipTest):
@@ -669,7 +671,7 @@ class TestSuite:
         outcome = _host_call_outcome(fixture)
         if outcome[0]:
             return True
-        entry = [name, _message(outcome[1], outcome[2]), self.module_namespace.get('__name__', '')]
+        entry = _Entry(name, _message(outcome[1], outcome[2]), name, self.module_namespace.get('__name__', ''))
         if isinstance(outcome[1], SkipTest):
             result.skipped = [*result.skipped, entry]
         else:
@@ -687,10 +689,10 @@ class TestSuite:
             if name == 'doClassCleanups':
                 faults = getattr(self.class_, 'tearDown_exceptions', [])
                 for kind, value, traceback in faults:
-                    result.errors = [*result.errors, [name, _message(value), _class_name(self.class_)]]
+                    result.errors = [*result.errors, _Entry(name, _message(value), name, _class_name(self.class_))]
                 return len(faults) == 0
             return True
-        entry = [name, _message(outcome[1], outcome[2]), _class_name(self.class_)]
+        entry = _Entry(name, _message(outcome[1], outcome[2]), name, _class_name(self.class_))
         if isinstance(outcome[1], SkipTest):
             result.skipped = [*result.skipped, entry]
         else:
@@ -1041,7 +1043,7 @@ class _SubTest:
             words += name + '=' + _representation(self.parameters[name])
         if words != '':
             detail += ' (' + words + ')'
-        entry = [detail, _message(value), self.case.id()]
+        entry = _Entry(detail, _message(value), detail, self.case.id())
         result = self.case._result
         if isinstance(value, SkipTest):
             result.skipped = [*result.skipped, entry]
@@ -1265,7 +1267,7 @@ class TextTestRunner:
 
     def _failure(self, label, entry, prefix):
         self._write('======================================================================' + '\n')
-        self._write(label + ': ' + entry[0] + ' (' + entry[2] + ')\n')
+        self._write(label + ': ' + entry.label + ' (' + entry.where + ')\n')
         self._write('----------------------------------------------------------------------' + '\n')
         self._write('Traceback (most recent call last):\n')
         self._write(prefix + entry[1] + '\n\n')

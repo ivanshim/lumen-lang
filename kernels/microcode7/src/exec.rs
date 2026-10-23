@@ -10659,8 +10659,12 @@ impl<'a> Machine<'a> {
         if !self.reads_manners() || !matches!(primitive, Prim::Weigh | Prim::Perform) { return None; }
         Some((|| {
             let values = self.value_list(inputs, caller)?;
-            let copied = self.frame_aside(caller);
-            let previous = self.text_within.replace(copied);
+            // At the top of a text there is no routine whose names to lend:
+            // the text beneath it reads and writes the dictionaries around it.
+            let previous = if Rc::ptr_eq(caller, &self.outermost) { self.text_within.take() } else {
+                let copied = self.frame_aside(caller);
+                self.text_within.replace(copied)
+            };
             let former_book = self.text_caller_book.take();
             let book = match self.names_here(caller, Prim::WorldBook)? { Value::Shared(cell) | Value::Mutable(cell, _) => cell, value => Rc::new(RefCell::new(value)) };
             self.text_caller_book = Some(book);
@@ -27900,8 +27904,16 @@ impl<'a> Machine<'a> {
                     _ => self.sys_path_source(&name).map(|pair| pair.1)
                         .or_else(|| self.library_module_file(&name).and_then(|filename| std::fs::read(filename).ok()))
                         .or_else(|| self.library_sources.get(&name).map(|text| text.as_bytes().to_vec())),
-                }.ok_or_else(|| String::from("ImportError: source not available through get_data()"))?;
+                };
                 let adapter = self.load_namespace("_tokenize")?;
+                let content = match content {
+                    Some(content) => content,
+                    None if name == "__main__" && self.entry_file.contains(".zip/") => {
+                        let read = self.attribute(&adapter, "_archived_source").ok_or_else(|| String::from("ImportError: archived source reader is unavailable"))?;
+                        return self.core_run(&read, vec![Value::text(self.entry_file.as_ref())]);
+                    },
+                    None => return Err(String::from("ImportError: source not available through get_data()")),
+                };
                 let Some(decode) = self.attribute(&adapter, "_decode_source") else {
                     return Err(String::from("ImportError: source decoder is unavailable"));
                 };
@@ -37948,7 +37960,20 @@ impl<'a> Machine<'a> {
         self.active_trace = self.activation(&built.program, &top, prior.clone());
         self.wake_cursor();
         self.frames_named.push(built.program.clone());
-        let ran = if built.program.generator { self.invoke(built.program.clone(), top.clone(), Vec::new()) } else { self.value_of(&built.program.body, &top) };
+        // A traced run sees the text as a frame of its own, entered and
+        // left like a routine's, so a debugger stands in the text and not
+        // in whatever the text calls.
+        let traced = !built.program.generator && !matches!(self.tracing_function, Value::Nil);
+        let entered = if traced { self.emit_trace("call", Value::Nil) } else { Ok(()) };
+        let ran = match entered {
+            Err(refused) => Err(refused),
+            Ok(()) if built.program.generator => self.invoke(built.program.clone(), top.clone(), Vec::new()),
+            Ok(()) => self.value_of(&built.program.body, &top),
+        };
+        let ran = match ran {
+            Ok(answer) if traced => self.emit_trace("return", if mode == 1 { answer.clone() } else { Value::Nil }).map(|()| answer),
+            other => other,
+        };
         let ran = self.traced_result(ran);
         self.frames_named.pop();
         self.park_cursor();

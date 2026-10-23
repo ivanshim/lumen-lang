@@ -26459,8 +26459,16 @@ impl<'a> Engine<'a> {
                     self.sys_path_source(&name).map(|(_, bytes)| bytes)
                         .or_else(|| self.library_module_file(&name).and_then(|file| std::fs::read(file).ok()))
                         .or_else(|| self.module_sources.get(name.as_ref()).map(|source| source.as_bytes().to_vec()))
-                }.ok_or_else(|| "ImportError: source not available through get_data()".to_string())?;
+                };
                 let module = self.route_module("_tokenize")?;
+                let raw = match raw {
+                    Some(raw) => raw,
+                    None if name.as_ref() == "__main__" && self.root_source.contains(".zip/") => {
+                        let reader = self.member_of(module, "_archived_source")?.ok_or_else(|| "ImportError: archived source reader is unavailable".to_string())?;
+                        return self.call_held(reader, vec![Value::text(self.root_source.as_ref())]);
+                    },
+                    None => return Err("ImportError: source not available through get_data()".to_string()),
+                };
                 let decoder = self.member_of(module, "_decode_source")?
                     .ok_or_else(|| "ImportError: source decoder is unavailable".to_string())?;
                 let bytes = self.byte_make(raw, false);
@@ -31647,6 +31655,13 @@ impl Engine<'_> {
         }
         if b == Builtin::Tuple && args.len() == 1 {
             if let Some(Value::View(view)) = Self::view_in(&args[0]) { if view.1 == "mapping" && matches!(view.0.contents(), Value::Object(_)) { return self.comprehension_items(&view.0.contents()).map(Value::tuple); } }
+        }
+        // The walk of a read-only view over a thing of the map kind is that thing's own.
+        if b == Builtin::Iter && args.len() == 1 {
+            if let Some(Value::View(view)) = Self::view_in(&args[0]) { if view.1 == "mapping" && matches!(view.0.contents(), Value::Object(_)) { args[0] = view.0.contents(); } }
+        }
+        if b == Builtin::Sorted && !args.is_empty() {
+            if let Some(Value::View(view)) = Self::view_in(&args[0]) { if view.1 == "mapping" && !matches!(view.0.contents(), Value::Class(_)) { args[0] = view.0.contents(); } }
         }
         let standing = if b == Builtin::GetAttr { args.first().cloned() } else { None };
         // A map walked backwards keeps its cell too, for the walk to watch.

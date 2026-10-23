@@ -46,7 +46,13 @@ def _native_spec(module):
     spec = _bootstrap.BuiltinImporter.find_spec(name)
     filename = getattr(module, '__file__', None)
     if spec is None and isinstance(filename, str):
-        spec = _bootstrap_external.spec_from_file_location(name, filename)
+        # A script run out of an archive carries only a placeholder spec:
+        # the archive's own importer describes it, as the reference does.
+        try:
+            from zipimport import zipimporter
+            spec = _bootstrap.spec_from_loader(name, zipimporter(filename.rsplit('/', 1)[0]))
+        except Exception:
+            spec = _bootstrap_external.spec_from_file_location(name, filename)
     if spec is not None:
         _bootstrap._init_module_attrs(spec, module, override=True)
         if spec.origin == 'built-in' and hasattr(module, '__file__'):
@@ -56,7 +62,7 @@ from _runtime_import import SourceLoader as _BootstrapSourceLoader
 for _module in list(_sys.modules.values()):
     if isinstance(_module, type(_sys)):
         _spec = getattr(_module, '__spec__', None)
-        if _spec is None or isinstance(_spec.loader, _BootstrapSourceLoader) or _spec.loader is _imp._NativeLoader:
+        if _spec is None or not hasattr(_spec, 'loader') or isinstance(_spec.loader, _BootstrapSourceLoader) or _spec.loader is _imp._NativeLoader:
             _native_spec(_module)
 
 # Let installed finders handle namespaces and other non-source path entries.
