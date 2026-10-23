@@ -135,6 +135,18 @@ class Mock:
 
 
     @property
+    def return_value(self):
+        # As in the reference, the answer is made the first time it is
+        # asked for, so what is put on it before any call is kept.
+        if self._mock_return_value is DEFAULT:
+            self._mock_return_value = self._mock_fresh()
+        return self._mock_return_value
+
+    @return_value.setter
+    def return_value(self, value):
+        self._mock_return_value = value
+
+    @property
     def side_effect(self):
         return self._side_effect
 
@@ -188,10 +200,8 @@ class Mock:
                     raise answer
                 if answer is not DEFAULT:
                     return answer
-        if self.return_value is DEFAULT:
-            if self._mock_wraps is not None:
-                return self._mock_wraps(*args, **kwargs)
-            self.return_value = self._mock_fresh()
+        if self._mock_return_value is DEFAULT and self._mock_wraps is not None:
+            return self._mock_wraps(*args, **kwargs)
         return self.return_value
 
     def _mock_fresh(self):

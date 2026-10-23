@@ -26,12 +26,16 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `python-3.14.8/test_pstats.py`, `pstats.pck` | `Lib/test/test_pstats.py` and its binary fixture `Lib/test/pstats.pck`, copied byte for byte (`pstats.pck` sits beside the tests, where `support.findfile` looks) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_codeccallbacks.py` | `Lib/test/test_codeccallbacks.py` (unchanged; SHA-256 `84306f89bdb5b1074c0b3067c465438170cce614dde70bf11f794cfdbd3ce0c7`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_multibytecodec.py`, `test_codecencodings_{cn,hk,iso2022,jp,kr,tw}.py`, `test/multibytecodec_support.py`, `test/cjkencodings/` | `Lib/test`: the CJK multibyte codec tests, their support module and encoded sample data, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+
+| `python-3.14.8/test_socket.py`, `test_select.py`, `test_poll.py`, `test_selectors.py`, `test_timeout.py`, `test_urllib_response.py`, `test_urllib2_localnet.py` | `Lib/test/test_socket.py`, `Lib/test/test_select.py`, `Lib/test/test_poll.py`, `Lib/test/test_selectors.py`, `Lib/test/test_timeout.py`, `Lib/test/test_urllib_response.py`, `Lib/test/test_urllib2_localnet.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_descrtut.py` | `Lib/test/test_descrtut.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_unpack/` | `Lib/test/test_unpack.py`, copied byte for byte as the module `__init__.py`, with a suite entry `__main__.py` that imports it as `test.test_unpack` and runs its tests | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_type_params.py` | `Lib/test/test_type_params.py`, copied byte for byte | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/` | [python/cpython](https://github.com/python/cpython) `Lib/timeit.py` and the library files it and its test import that the suite lacked: `Lib/getopt.py`, `Lib/gettext.py`, `Lib/linecache.py`, `Lib/wave.py`, `Lib/cmd.py`, `Lib/selectors.py`, `Lib/nturl2path.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_urllib.py` | `Lib/test/test_urllib.py` (unchanged) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `python-3.14.8/test_urllib2.py` | `Lib/test/test_urllib2.py` (unchanged; SHA-256 `c67976367976bc0e5552834e473b207cfbda7f9f68c0e30a57af2a09e7a7d1ba`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `langs/lib_python/modules/` | `Lib/urllib/{__init__,error,request,response}.py`, `Lib/email/**/*.py` (the whole package, without `architecture.rst`), `Lib/mimetypes.py` and `Lib/ftplib.py`, all unchanged; `Lib/http/client.py` and `Lib/socket.py` are now used as copied (their native stand-ins `runtime_adapters/native_http_client.py` and `native_socket.py` are gone; the native socket facilities live in `_socket.py`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `langs/lib_python/modules/` | `Lib/http/cookiejar.py` and `Lib/urllib/robotparser.py` (unchanged); `Lib/test/test_urllib.py` and `Lib/test/test_http_cookiejar.py` in the embedded `test` package so that `test_urllib2`'s `from test import test_urllib` and `from test.test_http_cookiejar import interact_netscape` resolve | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/` | `Lib/test/__init__.py`, `Lib/test/audiotests.py`, and `Lib/test/support/{__init__,import_helper,i18n_helper,threading_helper,os_helper,script_helper,pty_helper}.py` | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/` | [python/cpython](https://github.com/python/cpython) `Lib/test`: core-language files, `test_functools.py`, `test_operator.py`, `test_heapq.py`, `test_bisect.py`, `test_copy.py`, `test_keyword.py`, `test_itertools.py`, `test_super.py`, `test_csv.py`, `test_configparser.py`, `test_linecache.py`, `test_tokenize.py`, `test_abc.py`, `test_contextlib.py`, `test_ordered_dict.py`, `test_defaultdict.py`, `test_glob.py`, `test_timeit.py`, `test_datetime.py`, `test_getopt.py`, `test_optparse.py`, and support data (`mathdata/`, `tokenizedata/`, `configdata/`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test_shutil.py` | `Lib/test/test_shutil.py`, copied byte for byte (SHA-256 `b364c7eb02f317fd636657e75627c94cf578f2220de76424382212e68f5f3a77`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -103,6 +107,7 @@ series is retained, in a window of two series; only 3.14 is registered today.
 | `python-3.14.8/test_ast/utils.py` | `Lib/test/test_ast/utils.py`, byte for byte (SHA-256 `09954af7c72fb805ce01bd4df288f49e8ab19ea2c8b65a02c168500b9587d40d`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `python-3.14.8/test/support/ast_helper.py` | `Lib/test/support/ast_helper.py`, byte for byte (SHA-256 `ef59a178bcb025e2f967e9028b8400ba108d42d5eb84f4508a22a7218a169c0c`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `../langs/lib_python/modules/test/support/ast_helper.py` | `Lib/test/support/ast_helper.py`, byte for byte (SHA-256 `ef59a178bcb025e2f967e9028b8400ba108d42d5eb84f4508a22a7218a169c0c`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
+| `../langs/lib_python/modules/test/support/refleak_helper.py` | `Lib/test/support/refleak_helper.py`, byte for byte (SHA-256 `e2ae780ff989e88949e699113ad359db7ccf31be069fc5c3b00828d78ce344bc`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `../langs/lib_python/modules/test/test_ast/__init__.py` | `Lib/test/test_ast/__init__.py`, byte for byte (SHA-256 `90b5cf9c1b53bb3ff98437b85ef11674697d994cf3573b0fd44712c114df2bdc`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `../langs/lib_python/modules/test/test_ast/snippets.py` | `Lib/test/test_ast/snippets.py`, byte for byte (SHA-256 `cc56f5c71d26cb580fa1ddcd7734fe64531e856d4f25acaa291bb0012620bc4c`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
 | `../langs/lib_python/modules/test/test_ast/utils.py` | `Lib/test/test_ast/utils.py`, byte for byte (SHA-256 `09954af7c72fb805ce01bd4df288f49e8ab19ea2c8b65a02c168500b9587d40d`) | 3.14.8 / `v3.14.8` | `8e6e75d9102e` / 2026-09-30 | [PSF](python-3.14.8/LICENSE) |
@@ -539,6 +544,13 @@ source exists. Full working measurements are in ignored `probe/`.
 | `xml/etree/ElementTree.py` | unchanged release copy | `850760098750fbce571ca4411ec444e70d73a0afe3efe74541d4eb99b3ab1b63` | `850760098750fbce571ca4411ec444e70d73a0afe3efe74541d4eb99b3ab1b63` |
 | `xml/etree/ElementPath.py` | unchanged release copy | `f9c2102cf56cf9859d34e69877ad4e8a04a0cdabb6390cf2189f04aa8101759f` | `f9c2102cf56cf9859d34e69877ad4e8a04a0cdabb6390cf2189f04aa8101759f` |
 
+| `http/cookiejar.py` | unchanged release copy | `7a9c2e4cf1eaf0dad693417a3807691503faacda8a5b6eac36cb5f9d0aa22a91` | `7a9c2e4cf1eaf0dad693417a3807691503faacda8a5b6eac36cb5f9d0aa22a91` |
+| `urllib/robotparser.py` | unchanged release copy | `621c586e66d917d99dad44ff698bf9492cf5afc82cf9b3794199a589d553c38f` | `621c586e66d917d99dad44ff698bf9492cf5afc82cf9b3794199a589d553c38f` |
+| `test/test_urllib.py` | unchanged release copy | `81ca4b125101d8462ada6c112cecb9e60e4bf3c8b745efaf57135d2466a6935b` | `81ca4b125101d8462ada6c112cecb9e60e4bf3c8b745efaf57135d2466a6935b` |
+| `test/test_http_cookiejar.py` | unchanged release copy | `704f268fa120c4852304340abbf087fb74518e7ee06a0fd15a6dfc9eda97e27c` | `704f268fa120c4852304340abbf087fb74518e7ee06a0fd15a6dfc9eda97e27c` |
+
+Four release copies added after that audit are recorded in the table above: `http/cookiejar.py`, `urllib/robotparser.py`, `test/test_urllib.py` and `test/test_http_cookiejar.py`, each byte for byte from `v3.14.8`.
+
 ### Reference measurements
 
 Lambda before/after runs used this worktree’s warning-clean debug builds.
@@ -908,7 +920,13 @@ The following hashes cover the complete adapter files, including their headers.
 
 | File beneath `langs/lib_python/modules/` | Full-file SHA-256 |
 |---|---|
-| `runtime_adapters/native_unittest_mock.py` | `d08d5a38dab36e0070d7fbf91467b614963d44df44d076903cfda4bdc175982a` |
+| `runtime_adapters/native_unittest_mock.py` | `eeb55c17923ed64cbd2c08de5c3fb644a5d09eec9b7a8f74d8b07f80d7393129` |
 | `runtime_adapters/inspect.py` | `1e1077d64c3b6f42655b5492c15588559e454b1ab66a037a2b28c147cff7880c` |
 | `runtime_adapters/native_inspect.py` | `493e39fd18a81c4fb5ef9b497ae3b0d88186815edb3a986ef2aa907f484f0b20` |
 | `runtime_adapters/native_test_support_os_helper.py` | `aacb2c1d8076e2de9c495405ea1a463336a8da1ea2710e2cc8e391e70e76d1df` |
+
+The urllib2 rebase includes accepted socket foundation 767b9454a. Socket
+module and decorator requirements use the same capability flag; DNS is not a
+socket probe. The unchanged HTTP server uses the native TCP server adapter.
+Native-thread requirements remain separate and use threading_helper's existing
+can_start_thread capability; unavailable threads raise SkipTest before starting.
