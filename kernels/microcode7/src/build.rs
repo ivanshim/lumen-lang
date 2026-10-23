@@ -7910,8 +7910,7 @@ impl<'a> Builder<'a> {
             while self.look().shape == Shape::ByteQuote {
                 octets.extend(self.advance().lexeme.chars().map(|c| c as u8));
             }
-            return Ok(CaseTest::Equal(Value::Octets { cell: Rc::new(std::cell::RefCell::new(octets)), changeable: false,
-                lead: Rc::from(table.strings("ext.system.bytes.repr")[0].as_str()) }));
+            return Ok(CaseTest::Equal(Value::quoted_octets(octets, Rc::from(table.strings("ext.system.bytes.repr")[0].as_str()))));
         }
         if matches!(self.look().shape, Shape::Quote | Shape::CharacterRow) {
             let mut numbers = Vec::new();
@@ -11281,8 +11280,7 @@ impl<'a> Builder<'a> {
     fn quotation(&mut self) -> Res<Form> {
         let start = self.advance();
         if start.shape == Shape::ByteQuote {
-            return Ok(constant(Value::Octets { cell: Rc::new(std::cell::RefCell::new(start.lexeme.chars().map(|c| c as u8).collect())), changeable: false,
-                lead: Rc::from(self.grammar.strings_ext_system_bytes_repr[0].as_str()) }));
+            return Ok(constant(Value::quoted_octets(start.lexeme.chars().map(|c| c as u8).collect(), Rc::from(self.grammar.strings_ext_system_bytes_repr[0].as_str()))));
         }
         if start.shape == Shape::CharacterRow {
             let numbers = start.lexeme.split_whitespace().map(|word| word.parse().unwrap()).collect();

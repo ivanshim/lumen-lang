@@ -4008,8 +4008,16 @@ impl<'a> Machine<'a> {
     }
     /// The kind primitive allocates a thing and constructs it.
     pub(super) fn construct_plainly(&mut self,class:Rc<Blueprint>,given:Vec<Value>)->Res {
-        // A one-shot spread is read before either construction hook is called.
-        let given = if self.table.flag("ext.op.arithmetic.python_numbers") && given.iter().any(|item| matches!(item, Value::Couple(pair) if matches!(pair.0, Value::Flag(_)))) {
+        // A one-shot spread is read before either construction hook is
+        // called. A class whose maker takes raw keys is left alone here, so
+        // that maker itself weighs a key that is no text against its fields.
+        let raw_keys = self.spreads_carry_foreign_keys(&given) && self.rules.words_ext_stmt_class_constructor.first()
+            .and_then(|key| self.inherited_entry(&class, key))
+            .is_some_and(|hook| match hook {
+                Value::Routine(code) | Value::Bound(code, _) | Value::Method(code, _, _) => self.routine_takes_raw_keys(&code),
+                _ => false,
+            });
+        let given = if !raw_keys && self.table.flag("ext.op.arithmetic.python_numbers") && given.iter().any(|item| matches!(item, Value::Couple(pair) if matches!(pair.0, Value::Flag(_)))) {
             let (mut positional, named) = self.open_arguments(given)?;
             positional.extend(named.into_iter().map(|(key, item)| Value::Couple(Rc::new((Value::text(&key), item)))));
             positional

@@ -5874,8 +5874,7 @@ impl<'a> Compiler<'a> {
             while self.look().shape == Shape::Bytes {
                 octets.extend(self.take().lexeme.chars().map(|c| c as u8));
             }
-            return Ok(Pattern::Literal(Value::Bytes(Rc::new(std::cell::RefCell::new(octets)), false,
-                Rc::from(lang.byte_words["ext.system.bytes.repr"][0].as_str()))));
+            return Ok(Pattern::Literal(Value::quoted_bytes(octets, Rc::from(lang.byte_words["ext.system.bytes.repr"][0].as_str()))));
         }
         if matches!(token.shape, Shape::Quote | Shape::Codepoints) {
             let mut points = Vec::new();
@@ -11515,8 +11514,7 @@ impl<'a> Compiler<'a> {
     fn string_piece(&mut self) -> Res<()> {
         let token = self.take();
         match token.shape {
-            Shape::Bytes => self.constant(Value::Bytes(Rc::new(std::cell::RefCell::new(token.lexeme.chars().map(|c| c as u8).collect())), false,
-                Rc::from(self.lang.byte_words["ext.system.bytes.repr"][0].as_str()))),
+            Shape::Bytes => self.constant(Value::quoted_bytes(token.lexeme.chars().map(|c| c as u8).collect(), Rc::from(self.lang.byte_words["ext.system.bytes.repr"][0].as_str()))),
             Shape::Codepoints => self.constant(Value::from_codes(token.lexeme.split(',').map(|n| n.parse::<u32>().unwrap()).collect())),
             Shape::Quote => self.constant(Value::text(&token.lexeme)),
             Shape::StringFault => {

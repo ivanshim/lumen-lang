@@ -4104,8 +4104,16 @@ impl<'a> Engine<'a> {
     /// The making itself, as the kind builtin does it: the class
     /// allocates a thing and constructs it.
     pub(super) fn class_construct(&mut self, c: Rc<Class>, args: Vec<Value>) -> Flow<Value> {
-        // Expand the call once: allocation and initialization share its arguments.
-        let args = if self.lang.python_numbers && args.iter().any(|item| matches!(item, Value::Tie(pair) if matches!(pair.0, Value::Flag(_)))) {
+        // Expand the call once: allocation and initialization share its
+        // arguments. A class whose maker takes raw keys is left alone here,
+        // so that maker itself weighs a key that is no text against its fields.
+        let native_keys = self.spreads_carry_foreign_keys(&args) && self.lang.constructor.as_deref()
+            .and_then(|word| self.class_value(&c, word))
+            .is_some_and(|maker| match maker.contents() {
+                Value::Routine(code) | Value::Method(_, code, _) => self.maker_takes_raw_keys(&code),
+                _ => false,
+            });
+        let args = if !native_keys && self.lang.python_numbers && args.iter().any(|item| matches!(item, Value::Tie(pair) if matches!(pair.0, Value::Flag(_)))) {
             let title = c.python_title().unwrap_or_else(|| c.name.clone());
             let expanded = self.call_items_named(&title, args)?;
             self.keyword_items(expanded)?.into_iter().map(|(name, value)| match name {
