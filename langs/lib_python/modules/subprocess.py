@@ -66,6 +66,7 @@ class _Readable:
         import io
         self._handle = handle
         self._which = which
+        self._text = text
         self.encoding = encoding if text else None
         self.errors = errors if text else None
         fd = _subprocess(8, handle, which)
@@ -73,9 +74,24 @@ class _Readable:
                                encoding=encoding if text else None,
                                errors=errors if text else None)
         self.closed = False
+        self._collected = False
+        self._pending = None
 
     # Honor the requested size instead of waiting for end-of-file.
     def read(self, size=-1):
+        if self.closed:
+            raise ValueError('I/O operation on closed file')
+        if self._collected:
+            if self._pending is None:
+                result = _subprocess(3, self._handle, self._which)
+                if result is None or result is False:
+                    result = b''
+                self._pending = _text_of(result, self.encoding, self.errors) if self._text else result
+            if size is None or size < 0:
+                result, self._pending = self._pending, self._pending[:0]
+                return result
+            result, self._pending = self._pending[:size], self._pending[size:]
+            return result
         return self._stream.read(size)
 
     # Read a single buffered line from the child's stream.
@@ -221,9 +237,12 @@ class Popen:
                 raise TimeoutExpired(self.args, timeout)
             _wait(10000)
 
-    # Drain merged stderr through the same interruptible file reader.
+    # Drain merged stderr from the capture communicate started.
     def _read_stream(self, which):
-        return _Readable(self._handle, which, self._text, self._encoding, self._errors).read()
+        result = _subprocess(3, self._handle, which)
+        if result is None or result is False:
+            result = b''
+        return _text_of(result, self._encoding, self._errors) if self._text else result
 
     # Drain open captures and tolerate streams already closed by the caller.
     def communicate(self, input=None, timeout=None):
@@ -231,6 +250,9 @@ class Popen:
             raise ValueError('stdin is not a pipe')
         # Read both output pipes while writing stdin and waiting for termination.
         _subprocess(8, self._handle)
+        for stream in (self.stdout, self.stderr):
+            if stream is not None and not stream.closed:
+                stream._collected = True
         if input is not None:
             if self.stdin.closed:
                 raise ValueError("I/O operation on closed file")
