@@ -7153,15 +7153,22 @@ impl<'a> Machine<'a> {
         frame.holds.borrow().iter().find(|(name, _)| name == "\0eval-locals").map(|(_, value)| value.clone())
     }
 
-    fn locals_live_pairs(&self, proxy: &Hold) -> Vec<(Value, Value)> {
+    fn locals_book_pairs(&mut self, book: &Value) -> Res<Vec<(Value, Value)>> {
+        match book.settled() {
+            Value::Dict(entries) => Ok(entries.iter().cloned().collect()),
+            other => {
+                let converted = self.prim(Prim::Dictionary, "dict", &[other]).map_err(Escape::from)?;
+                Ok(Self::locals_pairs_in_book(&converted))
+            }
+        }
+    }
+
+    fn locals_live_pairs(&mut self, proxy: &Hold) -> Res<Vec<(Value, Value)>> {
         let pairs = match Self::locals_frame(proxy) { Some(frame) => {
-            if let Some(Value::Shared(mapping)) = Self::locals_eval_book(&frame) {
-                let stored = mapping.borrow().clone();
-                if let Value::Dict(entries) = stored {
-                    let mut pairs = entries.iter().cloned().collect();
-                    self.locals_gathering_pairs(&frame, &mut pairs);
-                    return pairs;
-                }
+            if let Some(book) = Self::locals_eval_book(&frame) {
+                let mut pairs = self.locals_book_pairs(&book)?;
+                self.locals_gathering_pairs(&frame, &mut pairs);
+                return Ok(pairs);
             }
             let base = self.locals_frame_pairs(&frame);
             match Self::locals_env(&frame) { Some(environment) => {
@@ -7170,7 +7177,7 @@ impl<'a> Machine<'a> {
                 all
             }, None => base }
         }, None => Vec::new() };
-        pairs
+        Ok(pairs)
     }
 
     /// The book a class body is filling, where this frame is that body.
@@ -7258,7 +7265,11 @@ impl<'a> Machine<'a> {
         self.hash_key(key)?;
         let Some(frame) = Self::locals_frame(proxy) else { return Ok(()) };
         if let Some(book) = Self::locals_eval_book(&frame) {
-            self.dict_update(&book, vec![Value::tuple(vec![Value::tuple(vec![key.clone(), value])])], &[])?;
+            if matches!(book.settled(), Value::Dict(_)) {
+                self.dict_update(&book, vec![Value::tuple(vec![Value::tuple(vec![key.clone(), value])])], &[])?;
+            } else {
+                self.mapping_write_key(&book, key, Some(value))?;
+            }
             return Ok(());
         }
         if let Some(book) = self.locals_class_book(&frame) {
@@ -7278,7 +7289,11 @@ impl<'a> Machine<'a> {
         self.hash_key(key)?;
         let Some(frame) = Self::locals_frame(proxy) else { return Err(self.absent_key(key).into()) };
         if let Some(book) = Self::locals_eval_book(&frame) {
-            self.prim(Prim::Erase, "", &[book, key.clone()])?;
+            if matches!(book.settled(), Value::Dict(_)) {
+                self.prim(Prim::Erase, "", &[book, key.clone()])?;
+            } else {
+                self.mapping_write_key(&book, key, None)?;
+            }
             return Ok(());
         }
         if self.locals_slot_of(&frame, key)?.is_some() || self.locals_free_slot(&frame, key)?.is_some() { return Err(String::from("ValueError: cannot remove local variables from FrameLocalsProxy").into()); }
@@ -7292,7 +7307,7 @@ impl<'a> Machine<'a> {
 
     fn locals_look(&mut self, proxy: &Hold, key: &Value) -> Res<Option<(Value, Value)>> {
         self.hash_key(key)?;
-        let pairs = self.locals_live_pairs(proxy);
+        let pairs = self.locals_live_pairs(proxy)?;
         match self.locals_extra_locator(&pairs, key)? { Some(at) => Ok(Some(pairs[at].clone())), None => Ok(None) }
     }
 
@@ -7309,11 +7324,11 @@ impl<'a> Machine<'a> {
     }
 
     fn locals_equals(&mut self, proxy: &Hold, other: &Value) -> Res<bool> {
-        let mine = self.locals_live_pairs(proxy);
+        let mine = self.locals_live_pairs(proxy)?;
         let theirs: Vec<(Value, Value)> = match other.settled() {
             Value::Dict(entries) => entries.iter().cloned().collect(),
             Value::Thing(thing) => match self.locals_proxy(&Value::Thing(thing.clone())) {
-                Some(other_proxy) => self.locals_live_pairs(&other_proxy),
+                Some(other_proxy) => self.locals_live_pairs(&other_proxy)?,
                 None => return Ok(false),
             },
             _ => return Ok(false),
@@ -7343,7 +7358,7 @@ impl<'a> Machine<'a> {
     }
 
     fn locals_pair_only(&mut self, source: &Value) -> Res<Option<Vec<(Value, Value)>>> {
-        if let Some(proxy) = self.locals_proxy(source) { return Ok(Some(self.locals_live_pairs(&proxy))); }
+        if let Some(proxy) = self.locals_proxy(source) { return Ok(Some(self.locals_live_pairs(&proxy)?)); }
         let held = source.settled();
         let native = Self::underlying(&held).unwrap_or(held).settled();
         if let Value::Dict(entries) = native { Ok(Some(entries.iter().cloned().collect())) }
@@ -7356,15 +7371,15 @@ impl<'a> Machine<'a> {
         let anchor = match operands.iter().position(|value| self.locals_proxy(value).is_some()) { Some(at) => at, None => return Ok(None) };
         let proxy = self.locals_proxy(&operands[anchor]).expect("the proxy just found");
         match operation {
-            Prim::Length if operands.len() == 1 => Ok(Some(Value::Small(self.locals_live_pairs(&proxy).len() as i64))),
-            Prim::Truthful | Prim::AsTruth if operands.len() == 1 => Ok(Some(Value::Flag(!self.locals_live_pairs(&proxy).is_empty()))),
+            Prim::Length if operands.len() == 1 => Ok(Some(Value::Small(self.locals_live_pairs(&proxy)?.len() as i64))),
+            Prim::Truthful | Prim::AsTruth if operands.len() == 1 => Ok(Some(Value::Flag(!self.locals_live_pairs(&proxy)?.is_empty()))),
             Prim::Iterator | Prim::Iterated if operands.len() == 1 => {
-                let keys: Vec<Value> = self.locals_live_pairs(&proxy).into_iter().map(|(key, _)| key).collect();
+                let keys: Vec<Value> = self.locals_live_pairs(&proxy)?.into_iter().map(|(key, _)| key).collect();
                 let row = Value::Vector(crate::tuples::Sequence::plain(keys));
                 self.prim(Prim::Iterator, "iter", &[row]).map(Some).map_err(Escape::from)
             }
             Prim::Backwards if operands.len() == 1 => {
-                let mut keys: Vec<Value> = self.locals_live_pairs(&proxy).into_iter().map(|(key, _)| key).collect();
+                let mut keys: Vec<Value> = self.locals_live_pairs(&proxy)?.into_iter().map(|(key, _)| key).collect();
                 keys.reverse();
                 Ok(Some(Value::Vector(crate::tuples::Sequence::plain(keys))))
             }
@@ -7393,7 +7408,7 @@ impl<'a> Machine<'a> {
                 // A left dictionary subclass can supply its own forward operator.
                 if anchor == 1 && self.appointed(other, 65).is_some() { return Ok(None); }
                 let Some(other_pairs) = self.locals_pair_only(other)? else { return Ok(None) };
-                let proxy_pairs = self.locals_live_pairs(&proxy);
+                let proxy_pairs = self.locals_live_pairs(&proxy)?;
                 let (mut pairs, incoming) = if anchor == 0 { (proxy_pairs, other_pairs) } else { (other_pairs, proxy_pairs) };
                 for (key, value) in incoming {
                     match self.locals_extra_locator(&pairs, &key)? { Some(at) => pairs[at].1 = value, None => pairs.push((key, value)) }
@@ -7407,9 +7422,9 @@ impl<'a> Machine<'a> {
                 for (key, value) in more { self.locals_write(&proxy, &key, value)?; }
                 Ok(Some(operands[0].clone()))
             }
-            Prim::Dictionary if operands.len() == 1 => Ok(Some(Value::Dict(Rc::new(self.locals_live_pairs(&proxy).into())))),
+            Prim::Dictionary if operands.len() == 1 => Ok(Some(Value::Dict(Rc::new(self.locals_live_pairs(&proxy)?.into())))),
             Prim::Listed | Prim::Tupling | Prim::Uniques if operands.len() == 1 => {
-                let keys: Vec<Value> = self.locals_live_pairs(&proxy).into_iter().map(|(key, _)| key).collect();
+                let keys: Vec<Value> = self.locals_live_pairs(&proxy)?.into_iter().map(|(key, _)| key).collect();
                 match operation {
                     Prim::Listed => Ok(Some(Value::Vector(crate::tuples::Sequence::plain(keys)))),
                     Prim::Tupling => Ok(Some(Value::tuple(keys))),
@@ -7429,7 +7444,7 @@ impl<'a> Machine<'a> {
             let held = self.prim(Prim::At, "", &[source.clone(), key.clone()])?;
             self.map_enter(&mut entries, key, held)?;
         }
-        for (key, held) in self.locals_live_pairs(proxy) { self.map_enter(&mut entries, key, held)?; }
+        for (key, held) in self.locals_live_pairs(proxy)? { self.map_enter(&mut entries, key, held)?; }
         Ok(Value::Dict(Rc::new(entries.into())))
     }
 
@@ -7438,7 +7453,7 @@ impl<'a> Machine<'a> {
         match operation {
             "keys" | "__reversed__" | "__iter__" => {
                 if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
-                let mut keys: Vec<Value> = self.locals_live_pairs(proxy).into_iter().map(|(key, _)| key).collect();
+                let mut keys: Vec<Value> = self.locals_live_pairs(proxy)?.into_iter().map(|(key, _)| key).collect();
                 if operation == "__reversed__" { keys.reverse(); }
                 if operation == "__iter__" {
                     let row = Value::Vector(crate::tuples::Sequence::plain(keys));
@@ -7448,23 +7463,23 @@ impl<'a> Machine<'a> {
             }
             "values" => {
                 if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
-                Ok(Value::Vector(crate::tuples::Sequence::plain(self.locals_live_pairs(proxy).into_iter().map(|(_, value)| value).collect())))
+                Ok(Value::Vector(crate::tuples::Sequence::plain(self.locals_live_pairs(proxy)?.into_iter().map(|(_, value)| value).collect())))
             }
             "items" => {
                 if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
-                Ok(Value::Vector(crate::tuples::Sequence::plain(self.locals_live_pairs(proxy).into_iter().map(|(key, value)| Value::tuple(vec![key, value])).collect())))
+                Ok(Value::Vector(crate::tuples::Sequence::plain(self.locals_live_pairs(proxy)?.into_iter().map(|(key, value)| Value::tuple(vec![key, value])).collect())))
             }
             "copy" => {
                 if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
-                Ok(Value::Dict(Rc::new(self.locals_live_pairs(proxy).into())))
+                Ok(Value::Dict(Rc::new(self.locals_live_pairs(proxy)?.into())))
             }
             "__len__" => {
                 if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
-                Ok(Value::Small(self.locals_live_pairs(proxy).len() as i64))
+                Ok(Value::Small(self.locals_live_pairs(proxy)?.len() as i64))
             }
             "__repr__" => {
                 if !arguments.is_empty() { return Err(self.method_fault("arguments").into()); }
-                let map = Value::Dict(Rc::new(self.locals_live_pairs(proxy).into()));
+                let map = Value::Dict(Rc::new(self.locals_live_pairs(proxy)?.into()));
                 Ok(Value::text(&self.object_words(&map, true)?))
             }
             "__getitem__" | "__contains__" => {
@@ -7505,6 +7520,12 @@ impl<'a> Machine<'a> {
                 if arguments.is_empty() || arguments.len() > 2 { return Err(self.method_fault("arguments").into()); }
                 let key = arguments[0].clone();
                 if let Some(frame) = Self::locals_frame(proxy) {
+                    if Self::locals_eval_book(&frame).is_some() {
+                        return match self.locals_look(proxy, &key)? {
+                            Some((_, value)) => { self.locals_remove(proxy, &key)?; Ok(value) }
+                            None => match arguments.get(1) { Some(default) => Ok(default.clone()), None => Err(self.absent_key(&key).into()) },
+                        };
+                    }
                     if self.locals_slot_of(&frame, &key)?.is_some() { return Err(String::from("ValueError: cannot remove local variables from FrameLocalsProxy").into()); }
                 }
                 let extra = Self::locals_frame(proxy).and_then(|frame| Self::locals_env(&frame));
@@ -7539,7 +7560,7 @@ impl<'a> Machine<'a> {
                         Ok(Value::Thing(proxy.clone()))
                     }
                     Some(more) => {
-                        let mut entries = self.locals_live_pairs(proxy);
+                        let mut entries = self.locals_live_pairs(proxy)?;
                         for (key, held) in more {
                             if let Some(at) = self.locals_extra_locator(&entries, &key)? { entries[at].1 = held; }
                             else { entries.push((key, held)); }
@@ -20954,10 +20975,11 @@ impl<'a> Machine<'a> {
         // not only where the primitive road reaches it.
         if let Some(proxy) = self.locals_proxy(subject) {
             match index {
-                9 => return Ok(Some(Value::Flag(!self.locals_live_pairs(&proxy).is_empty()))),
-                10 => return Ok(Some(Value::Small(self.locals_live_pairs(&proxy).len() as i64))),
+                9 => { let found = self.locals_live_pairs(&proxy); let pairs = self.locals_do(found)?; return Ok(Some(Value::Flag(!pairs.is_empty()))); }
+                10 => { let found = self.locals_live_pairs(&proxy); let pairs = self.locals_do(found)?; return Ok(Some(Value::Small(pairs.len() as i64))); }
                 15 => {
-                    let keys: Vec<Value> = self.locals_live_pairs(&proxy).into_iter().map(|(key, _)| key).collect();
+                    let found = self.locals_live_pairs(&proxy);
+                    let keys: Vec<Value> = self.locals_do(found)?.into_iter().map(|(key, _)| key).collect();
                     let row = Value::Vector(crate::tuples::Sequence::plain(keys));
                     return self.prim(Prim::Iterator, "iter", &[row]).map(Some);
                 }
@@ -21275,7 +21297,8 @@ impl<'a> Machine<'a> {
         if let Some(proxy) = self.locals_proxy(subject) {
             let spot = crate::data::Hold::as_ptr(&proxy) as usize;
             if !self.locals_showing.borrow_mut().insert(spot) { return Ok(String::from("{...}")); }
-            let map = Value::Dict(Rc::new(self.locals_live_pairs(&proxy).into()));
+            let found = self.locals_live_pairs(&proxy);
+            let map = Value::Dict(Rc::new(self.locals_do(found)?.into()));
             let outcome = self.object_words(&map, quoted);
             self.locals_showing.borrow_mut().remove(&spot);
             return outcome;
@@ -37689,16 +37712,21 @@ impl<'a> Machine<'a> {
             if Self::write_into_book(held, name, given) { return Ok(()); }
             return Err(format!("KeyError: '{}'", name).into());
         }
+        self.mapping_write_key(held, &Value::text(name), given)
+    }
+
+    /// A mapping written through a key of any kind, the way any
+    /// subscript assignment or removal reaches a program's own value.
+    fn mapping_write_key(&mut self, held: &Value, key: &Value, given: Option<Value>) -> Result<(), Escape> {
         let resolved = held.settled();
         let held = if matches!(resolved, Value::Thing(_)) { &resolved } else { held };
-        let key = Value::text(name);
         let outcome = match given {
             Some(value) if self.appointed(held, 12).is_some() =>
-                self.ask_special(held, 12, &[key, value]).map(|_| Some(held.clone())),
-            Some(value) => self.user_operation(Prim::Placed, &[held.clone(), key, value]),
+                self.ask_special(held, 12, &[key.clone(), value]).map(|_| Some(held.clone())),
+            Some(value) => self.user_operation(Prim::Placed, &[held.clone(), key.clone(), value]),
             None if self.appointed(held, 13).is_some() =>
-                self.ask_special(held, 13, &[key]).map(|_| Some(held.clone())),
-            None => self.user_operation(Prim::Erase, &[held.clone(), key]),
+                self.ask_special(held, 13, &[key.clone()]).map(|_| Some(held.clone())),
+            None => self.user_operation(Prim::Erase, &[held.clone(), key.clone()]),
         };
         match outcome {
             Ok(Some(_)) => Ok(()),
