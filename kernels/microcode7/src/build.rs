@@ -9606,12 +9606,12 @@ impl<'a> Builder<'a> {
     /// depth ahead: an annotated assignment takes the one sign only, a
     /// second, as `x: int = y = 1` has, being invalid syntax.
     fn second_sign_ahead(&self) -> Option<usize> {
-        let mut depth = 0i32;
+        let mut depth = i32::from(self.tokens.get(self.pos).is_some_and(|token| token.shape == Shape::Sign && ["(", "[", "{"].contains(&token.lexeme.as_str())));
         let mut at = self.pos + 1;
         while let Some(token) = self.tokens.get(at) {
             if matches!(token.shape, Shape::LineEnd | Shape::Close | Shape::Finish | Shape::Open) { break; }
             if token.shape == Shape::Sign {
-                if self.table.separates(&token.lexeme) || self.table.spells("block.intro", &token.spelling()) { break; }
+                if depth == 0 && (self.table.separates(&token.lexeme) || self.table.spells("block.intro", &token.spelling())) { break; }
                 match token.lexeme.as_str() {
                     "(" | "[" | "{" => depth += 1,
                     ")" | "]" | "}" => depth -= 1,
