@@ -7131,6 +7131,11 @@ impl<'a> Machine<'a> {
                 if !matches!(value, Value::Unset) { entries.push((Value::text(&slot.ident), value)); }
             }
         }
+        self.locals_gathering_pairs(frame, &mut entries);
+        entries
+    }
+
+    fn locals_gathering_pairs(&self, frame: &Hold, entries: &mut Vec<(Value, Value)>) {
         if let Some((owner, names, scope)) = &self.gathering_locals {
             if *owner == crate::data::Hold::as_ptr(frame) as usize {
                 for (name, held) in names.iter().zip(scope.cells.borrow().iter()) {
@@ -7142,7 +7147,6 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        entries
     }
 
     fn locals_eval_book(frame: &Hold) -> Option<Value> {
@@ -7152,7 +7156,12 @@ impl<'a> Machine<'a> {
     fn locals_live_pairs(&self, proxy: &Hold) -> Vec<(Value, Value)> {
         let pairs = match Self::locals_frame(proxy) { Some(frame) => {
             if let Some(Value::Shared(mapping)) = Self::locals_eval_book(&frame) {
-                if let Value::Dict(entries) = &*mapping.borrow() { return entries.iter().cloned().collect(); }
+                let stored = mapping.borrow().clone();
+                if let Value::Dict(entries) = stored {
+                    let mut pairs = entries.iter().cloned().collect();
+                    self.locals_gathering_pairs(&frame, &mut pairs);
+                    return pairs;
+                }
             }
             let base = self.locals_frame_pairs(&frame);
             match Self::locals_env(&frame) { Some(environment) => {
