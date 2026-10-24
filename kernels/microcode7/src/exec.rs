@@ -3478,6 +3478,7 @@ impl<'a> Machine<'a> {
             }
         }
         if changed {
+            self.revised_book.borrow_mut().take();
             self.namespace_places.borrow_mut().take();
             self.revised_members.borrow_mut().clear();
         }
@@ -3561,6 +3562,8 @@ impl<'a> Machine<'a> {
     /// own holdings in, and that same switch asks the web to trace every edge.
     fn round_web(&self, retained: &[crate::ghost::Knot], whole: bool) -> crate::ghost::Web {
         use crate::ghost::{Knot, Web};
+        // Cached namespace owners must not look like outside roots to the collector.
+        self.revised_book.borrow_mut().take();
         let books = self.readings.iter().flat_map(|book| {
             std::iter::once(Knot::Held(Value::Shared(book.near.clone())))
                 .chain(book.outer.iter().cloned().map(|outer| Knot::Held(Value::Shared(outer))))
@@ -35867,6 +35870,7 @@ impl Machine<'_> {
                 let initialize = self.member_text(support, "load")?;
                 let namespace = self.apply_within(initialize, vec![specification])?;
                 self.imported.insert(path.into(), namespace.clone());
+                self.revised_book.borrow_mut().take();
                 self.namespace_places.borrow_mut().take();
                 return Ok(namespace);
             }
