@@ -209,8 +209,7 @@ def string_tables(current):
     for cp, mappings in sorted(casing.items()):
         sequences = [[int(hex, 16) for hex in mapping.split()] for mapping in mappings]
         if any(sequence != [cp] for sequence in sequences):
-            strings = ['"' + ''.join(f'\\u{{{n:x}}}' for n in sequence) + '"' for sequence in sequences]
-            changes.append((cp, strings))
+            changes.append((cp, sequences))
     runs = []
     start, last_mask = 0, masks[0]
     for cp in range(1, LIMIT + 1):
@@ -222,13 +221,31 @@ def string_tables(current):
     body = 'static RANGES: &[u64] = &[\n'
     packed = [f'0x{a << 37 | b << 16 | mask:x}' for a, b, mask in runs]
     body += ''.join('    ' + ', '.join(packed[i:i+6]) + ',\n' for i in range(0, len(packed), 6)) + '];\n\n'
-    body += 'static CASES: &[(u32, [&str; 4])] = &[\n'
-    body += ''.join(f'    (0x{cp:x}, [{", ".join(mapping)}]),\n' for cp, mapping in changes) + '];'
+    body += case_tables(changes)
     path = ROOT / 'native' / 'unicode' / 'lib.rs'
     text = path.read_text()
     begin = text.index('static RANGES:')
-    end = text.index('\n];', text.index('static CASES:')) + len('\n];')
+    end = text.index('\n];', text.index('static ODD:')) + len('\n];')
     path.write_text(text[:begin] + body + text[end:])
+
+# Encode single-character mappings as equal-offset runs; retain expansions literally.
+def case_tables(changes):
+    runs, odd = [], []
+    for cp, mappings in changes:
+        if any(len(mapping) != 1 for mapping in mappings):
+            strings = ['"' + ''.join(f'\\u{{{n:x}}}' for n in mapping) + '"' for mapping in mappings]
+            odd.append(f'    (0x{cp:x}, [{", ".join(strings)}]),\n')
+            continue
+        offsets = [mapping[0] - cp for mapping in mappings]
+        gap = cp - runs[-1][1] if runs else 0
+        if runs and offsets == runs[-1][3] and gap in (1, 2) and (runs[-1][0] == runs[-1][1] or gap == runs[-1][2]):
+            runs[-1][1], runs[-1][2] = cp, gap
+        else:
+            runs.append([cp, cp, 1, offsets])
+    body = 'static RUNS: &[(u32, u32, u8, [i32; 4])] = &[\n'
+    body += ''.join(f'    (0x{first:x}, 0x{last:x}, {step}, {offsets}),\n' for first, last, step, offsets in runs) + '];\n\n'
+    body += 'static ODD: &[(u32, [&str; 4])] = &[\n' + ''.join(odd) + '];'
+    return body
 
 # Produce deterministic files and verify structural invariants.
 def main():

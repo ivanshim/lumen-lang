@@ -8,7 +8,7 @@ pub fn property(c: char, mask: u16) -> bool {
 
 pub fn altered(c: char, which: usize) -> String {
     match lumen_unicode::case_of(c, which) {
-        Some(text) => text.to_owned(),
+        Some(text) => text,
         None => String::from(c),
     }
 }
