@@ -7145,10 +7145,13 @@ impl<'a> Machine<'a> {
         entries
     }
 
+    fn locals_eval_book(frame: &Hold) -> Option<Value> {
+        frame.holds.borrow().iter().find(|(name, _)| name == "\0eval-locals").map(|(_, value)| value.clone())
+    }
+
     fn locals_live_pairs(&self, proxy: &Hold) -> Vec<(Value, Value)> {
         let pairs = match Self::locals_frame(proxy) { Some(frame) => {
-            let shown = frame.holds.borrow().iter().find(|(name, _)| name == "\0eval-locals").map(|(_, value)| value.clone());
-            if let Some(Value::Shared(mapping)) = shown {
+            if let Some(Value::Shared(mapping)) = Self::locals_eval_book(&frame) {
                 if let Value::Dict(entries) = &*mapping.borrow() { return entries.iter().cloned().collect(); }
             }
             let base = self.locals_frame_pairs(&frame);
@@ -7245,6 +7248,10 @@ impl<'a> Machine<'a> {
     fn locals_write(&mut self, proxy: &Hold, key: &Value, value: Value) -> Res<()> {
         self.hash_key(key)?;
         let Some(frame) = Self::locals_frame(proxy) else { return Ok(()) };
+        if let Some(book) = Self::locals_eval_book(&frame) {
+            self.dict_update(&book, vec![Value::tuple(vec![Value::tuple(vec![key.clone(), value])])], &[])?;
+            return Ok(());
+        }
         if let Some(book) = self.locals_class_book(&frame) {
             return self.mapping_write(&book, &key.bare(), Some(value));
         }
@@ -7261,6 +7268,10 @@ impl<'a> Machine<'a> {
     fn locals_remove(&mut self, proxy: &Hold, key: &Value) -> Res<()> {
         self.hash_key(key)?;
         let Some(frame) = Self::locals_frame(proxy) else { return Err(self.absent_key(key).into()) };
+        if let Some(book) = Self::locals_eval_book(&frame) {
+            self.prim(Prim::Erase, "", &[book, key.clone()])?;
+            return Ok(());
+        }
         if self.locals_slot_of(&frame, key)?.is_some() || self.locals_free_slot(&frame, key)?.is_some() { return Err(String::from("ValueError: cannot remove local variables from FrameLocalsProxy").into()); }
         let Some(environment) = Self::locals_env(&frame) else { return Err(self.absent_key(key).into()) };
         let mut pairs: Vec<(Value, Value)> = environment.extra.borrow().clone();
