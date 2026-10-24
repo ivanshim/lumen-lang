@@ -124,6 +124,17 @@ class SourceLoader:
         self.get_filename(fullname)
         return _load_module(fullname, 'source')
 
+    # Expose filesystem resources through the source loader protocol.
+    def get_resource_reader(self, fullname):
+        self.get_filename(fullname)
+        # Native namespace locations encode all search roots after a NUL marker.
+        if self.path.startswith("\0"):
+            from importlib._bootstrap_external import NamespaceLoader, PathFinder
+            loader = NamespaceLoader(fullname, self.path[1:].split("\0"), PathFinder._get_spec)
+            return loader.get_resource_reader(fullname)
+        from importlib.readers import FileReader
+        return FileReader(self)
+
     def is_package(self, fullname):
         return self.get_filename(fullname).endswith('/__init__.py')
 

@@ -3256,6 +3256,10 @@ impl Lang {
         }
         symbols.sort_by_key(|s| std::cmp::Reverse(s.len()));
         self.symbols = symbols;
+        // Contextual statement words remain ordinary names outside their headers.
+        for word in self.match_words.iter().chain(&self.match_cases).chain(&self.type_alias_words) {
+            reserved.remove(word);
+        }
         self.keywords = reserved;
         let mut prefixes: HashSet<String, crate::value::FxBuildHasher> = self.monadic.keys().cloned().collect();
         prefixes.extend(self.dyadic.iter().filter(|(_, op)| matches!(op.action, Action::Mul)).map(|(word, _)| word.clone()));
