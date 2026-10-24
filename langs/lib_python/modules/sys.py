@@ -432,10 +432,17 @@ class _Input(_BinaryInput):
         return text
 
     def _pull(self, count=-1, line=False):
-        # A one-character line pull resolves CR without waiting for a later LF.
-        if line or count <= 0:
-            count = 1
-        raw = _host_stream_read(count, False)
+        # A line pull takes a whole chunk: reading a reply one character at a
+        # time made a long line cost its length in calls.  The stream stops
+        # the chunk at a newline, so a prompt still answers on Enter.
+        if line:
+            if count <= 0:
+                count = self._CHUNK
+            raw = _host_stream_read(count, True)
+        else:
+            if count <= 0:
+                count = 1
+            raw = _host_stream_read(count, False)
         if raw == '':
             self._drained = True
             self._ready += self._decoded('', True)
@@ -494,9 +501,12 @@ class _Input(_BinaryInput):
         while not self._drained:
             if self._line_ready():
                 break
-            if size is not None and size >= 0 and len(self._ready) >= size:
-                break
-            self._pull(line=True)
+            if size is not None and size >= 0:
+                if len(self._ready) >= size:
+                    break
+                self._pull(size - len(self._ready), line=True)
+            else:
+                self._pull(line=True)
         if not self._ready:
             return ''
         stop = self._line_stop()
