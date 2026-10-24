@@ -21103,7 +21103,7 @@ impl<'a> Engine<'a> {
                         // A module's opening step stands before its first
                         // line, on line nought, as the reference records
                         // it; a routine's stands on its declaring line.
-                        let (start, finish) = if body.ident == "<module>" { (0, 1) } else { (i64::from(body.declared_on), i64::from(body.declared_on)) };
+                        let (start, finish) = if matches!(body.ident.as_str(), "<program>" | "<module>") { (0, 1) } else { (i64::from(body.declared_on), i64::from(body.declared_on)) };
                         vec![Value::Small(start), Value::Small(finish), Value::Small(0), Value::Small(0)]
                     } else if let Some((end, column, stop)) = extent {
                         vec![Value::Small(i64::from(row)), Value::Small(i64::from(end)), Value::Small(i64::from(column)), Value::Small(i64::from(stop))]

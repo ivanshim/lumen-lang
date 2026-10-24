@@ -13109,7 +13109,7 @@ impl<'a> Machine<'a> {
             let beginning = (program.declared_on != 0).then_some(program.declared_on);
             // A module's opening step stands before its first line, on
             // line nought, as the reference records it.
-            let resume = if program.ident == "<module>" { [Some(0), Some(1), Some(0), Some(0)] }
+            let resume = if ["<program>", "<module>"].contains(&program.ident.as_str()) { [Some(0), Some(1), Some(0), Some(0)] }
                 else if beginning.is_some() && !program.generator { [beginning, beginning, Some(0), Some(0)] } else { [None; 4] };
             let mut rows = vec![resume];
             program.body.position_rows(&mut rows, [beginning, beginning, None, None]);
