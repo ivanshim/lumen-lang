@@ -77,26 +77,42 @@ class _Readable:
         self._collected = False
         self._pending = None
 
+    # Pull the kernel capture started by communicate() into the local buffer.
+    def _fill(self):
+        if self._pending is None:
+            result = _subprocess(3, self._handle, self._which)
+            if result is None or result is False:
+                result = b''
+            self._pending = _text_of(result, self.encoding, self.errors) if self._text else result
+
     # Honor the requested size instead of waiting for end-of-file.
     def read(self, size=-1):
         if self.closed:
             raise ValueError('I/O operation on closed file')
         if self._collected:
-            if self._pending is None:
-                result = _subprocess(3, self._handle, self._which)
-                if result is None or result is False:
-                    result = b''
-                self._pending = _text_of(result, self.encoding, self.errors) if self._text else result
-            if size is None or size < 0:
-                result, self._pending = self._pending, self._pending[:0]
-                return result
-            result, self._pending = self._pending[:size], self._pending[size:]
+            self._fill()
+        if self._pending is None:
+            return self._stream.read(size)
+        if size is None or size < 0:
+            result, self._pending = self._pending, self._pending[:0]
             return result
-        return self._stream.read(size)
+        result, self._pending = self._pending[:size], self._pending[size:]
+        return result
 
-    # Read a single buffered line from the child's stream.
+    # Read one line, from the capture when communicate() owns the pipe.
     def readline(self, size=-1):
-        return self._stream.readline(size)
+        if self.closed:
+            raise ValueError('I/O operation on closed file')
+        if self._collected:
+            self._fill()
+        if self._pending is None:
+            return self._stream.readline(size)
+        limit = len(self._pending) if size is None or size < 0 else min(size, len(self._pending))
+        newline = '\n' if self._text else b'\n'
+        at = self._pending.find(newline, 0, limit)
+        end = at + 1 if at >= 0 else limit
+        result, self._pending = self._pending[:end], self._pending[end:]
+        return result
 
     # Expose the real descriptor to readiness APIs.
     def fileno(self):
