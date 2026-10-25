@@ -9853,6 +9853,19 @@ impl<'a> Builder<'a> {
                 }
             }
         }
+        if self.grammar.has_any_ext_builtin_exceptions_syntax && self.on_any("syntax.group.open") {
+            if let Some(sign) = self.second_sign_ahead().filter(|&at| self.table.compound.contains_key(&self.tokens[at].lexeme)) {
+                let mut left = self.pos;
+                let mut right = sign;
+                while left + 1 < right && self.tokens[left].lexeme == "(" && self.pair_close(left, right) == Some(right - 1) {
+                    left += 1;
+                    right -= 1;
+                }
+                if left != self.pos && !self.divided_at(left, right, "ext.op.tuple").is_empty() && self.divided_at(left, right, "ext.op.comprehension.for").is_empty() {
+                    return Err(String::from("SyntaxError: 'tuple' is an illegal expression for augmented assignment"));
+                }
+            }
+        }
         if let Some(write) = self.chained_places()? { return Ok(write); }
         let commas = self.divided_at(self.pos, self.tokens.len(), "ext.op.tuple");
         let tuple_before_write = match (commas.first(), self.second_sign_ahead()) {
