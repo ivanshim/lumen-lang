@@ -4593,7 +4593,13 @@ impl<'a> Engine<'a> {
         // The raw-key making is the reference's own, so only the Python
         // definition may opt into it; every other language keeps words.
         if !self.lang.python_numbers { return false; }
+        use crate::faint::Hold;
         for (held, attributes) in &self.function_members {
+            match held {
+                Hold::Routine(code) | Hold::Method(_, code, _)
+                    if !std::ptr::eq(program, code.as_ptr()) => continue,
+                _ => {}
+            }
             let same = match held.revive() {
                 Some(Value::Routine(code)) | Some(Value::Method(_, code, _)) => std::ptr::eq(code.as_ref(), program),
                 _ => false,
