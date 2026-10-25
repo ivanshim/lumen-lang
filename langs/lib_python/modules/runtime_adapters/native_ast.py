@@ -2724,7 +2724,9 @@ class _Parser:
                 decorators.append(decorator)
                 if self.toks[self.at].kind != 'newline':
                     _syntax('invalid syntax')
-                self.pop()
+                # A comment between decorators is its own newline token.
+                while self.toks[self.at].kind == 'newline':
+                    self.pop()
             node = self.parse_stmt()
             if not isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef)):
                 _syntax('invalid syntax')
