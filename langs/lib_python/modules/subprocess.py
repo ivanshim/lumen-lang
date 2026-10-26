@@ -83,7 +83,22 @@ class _Readable:
             result = _subprocess(3, self._handle, self._which)
             if result is None or result is False:
                 result = b''
-            self._pending = _text_of(result, self.encoding, self.errors) if self._text else result
+            if self._text:
+                buffer = self._stream.buffer
+                buffered = buffer._read_buf[buffer._read_pos:]
+                buffer._reset_read_buf()
+                data = buffered + result
+                decoder = self._stream._decoder
+                if decoder is not None:
+                    self._pending = self._stream._get_decoded_chars() + decoder.decode(data, final=True)
+                    self._stream._set_decoded_chars('')
+                    self._stream._snapshot = None
+                else:
+                    self._pending = self._stream._get_decoded_chars() + _text_of(data, self.encoding, self.errors)
+            else:
+                buffered = self._stream._read_buf[self._stream._read_pos:]
+                self._stream._reset_read_buf()
+                self._pending = buffered + result
 
     # Honor the requested size instead of waiting for end-of-file.
     def read(self, size=-1):
