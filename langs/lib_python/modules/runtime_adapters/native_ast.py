@@ -2820,7 +2820,7 @@ class _Parser:
             comment = self.suite_comment()
             body = self.parse_suite(first)
             return self.located(With, first, body[-1], items=items, body=body, type_comment=comment)
-        if word == 'match' and self.toks[self.at + 1].text not in ('=', '(', '.', '[', ':', ';'):
+        if word == 'match' and self.toks[self.at + 1].text not in ('=', '(', '.', '[', ':', ';', ','):
             self.pop()
             subject, ss, se = self.parse_expr(True)
             self.expect_op(':')
