@@ -7990,7 +7990,10 @@ impl<'a> Machine<'a> {
         if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
         if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
             let mut values=self.value_list(args,frame)?;
-            if matches!(&stands,Value::Wrapped(..)) && !self.wrapper_takes_raw_keys(&stands) { values=self.opened_arguments(values)?; }
+            if matches!(&stands,Value::Wrapped(..)) {
+                let raw = self.spreads_carry_foreign_keys(&values) && self.wrapper_takes_raw_keys(&stands);
+                if !raw { values=self.opened_arguments(values)?; }
+            }
             return self.apply_class_member(stands,values);
         }
         if let Value::Method(body, object, _) = &stands {
@@ -12181,7 +12184,10 @@ impl<'a> Machine<'a> {
                 if let Some(answer) = self.text_called(&stands, args, frame) { return Ok(Next::Value(answer?)); }
                 if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
                     let mut given=self.value_list(args,frame)?;
-                    if matches!(&stands,Value::Wrapped(..)) && !self.wrapper_takes_raw_keys(&stands) { given=self.opened_arguments(given)?; }
+                    if matches!(&stands,Value::Wrapped(..)) {
+                        let raw = self.spreads_carry_foreign_keys(&given) && self.wrapper_takes_raw_keys(&stands);
+                        if !raw { given=self.opened_arguments(given)?; }
+                    }
                     return Ok(Next::Value(self.apply_class_member(stands,given)?));
                 }
                 if let Value::Method(body, object, _) = &stands {
