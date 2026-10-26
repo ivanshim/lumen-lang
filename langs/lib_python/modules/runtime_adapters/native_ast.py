@@ -2987,6 +2987,12 @@ class _Parser:
             if self.at_op('='):
                 self.pop()
                 value, vs, ve = self.parse_expr(False)
+            if type(node) == Tuple:
+                _syntax('only single target (not tuple) can be annotated')
+            if type(node) == List:
+                _syntax('only single target (not list) can be annotated')
+            if type(node) == Starred:
+                _syntax('invalid syntax')
             self.set_store(node)
             return self.located(AnnAssign, first, self.toks[self.at - 1], target=node, annotation=annotation, value=value, simple=int(isinstance(node, Name) and node.col_offset == first.scol))
         operator = self.toks[self.at].text
@@ -3243,6 +3249,12 @@ class _Parser:
     def set_store(self, node, context=Store):
         if type(node) == Name or type(node) == Attribute or type(node) == Subscript:
             node.ctx = context()
+            return
+        if type(node) == Starred:
+            if context is Del:
+                _syntax('cannot delete starred')
+            node.ctx = context()
+            self.set_store(node.value, context)
             return
         if type(node) == Tuple or type(node) == List:
             node.ctx = context()
