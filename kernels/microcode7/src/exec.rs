@@ -701,6 +701,9 @@ pub struct Machine<'a> {
     native_kind_names: RefCell<HashMap<String, std::collections::HashSet<String>>>,
     routine_members: Vec<(crate::ghost::Ghost, Rc<Thing>)>,
     routine_member_positions: HashMap<(u8, usize, usize), usize, crate::table::FxBuildHasher>,
+    // First live member row for a routine address, so a call reads that row
+    // instead of walking every routine that has ever been stored.
+    routine_code_at: HashMap<usize, usize, crate::table::FxBuildHasher>,
     reaping: bool,
     cycle_checkpoint_slots: usize,
     /// How many bytes were alive once the last reaping was done.
@@ -2283,7 +2286,7 @@ impl<'a> Machine<'a> {
             code_kind: None,
             cached_forms: None,
             member_inventories: RefCell::new(HashMap::new()),
-            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: HashMap::default(), reaping: false, cycle_checkpoint_slots: 0, reaped_at_bytes: 0, quiet_module_slots: Default::default(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
+            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: HashMap::default(), routine_code_at: HashMap::default(), reaping: false, cycle_checkpoint_slots: 0, reaped_at_bytes: 0, quiet_module_slots: Default::default(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
             stack_origin: &table as *const &Table as usize,
             descriptor_files: std::collections::BTreeMap::new(),
             table,
@@ -15609,32 +15612,45 @@ impl<'a> Machine<'a> {
     /// the way a native maker does, instead of having every key turned into
     /// a word first. The standard adapter marks such a routine with an
     /// attribute, read here off the routine's own book.
+    /// The attribute holder of the first live member whose code is `program`.
+    fn routine_member_holder(&self, program: &Routine) -> Option<&Rc<Thing>> {
+        let want = std::ptr::from_ref(program) as usize;
+        if let Some(&at) = self.routine_code_at.get(&want) {
+            if let Some((ghost, holder)) = self.routine_members.get(at) {
+                if Self::ghost_holds_code(ghost, want) { return Some(holder); }
+            }
+        }
+        self.routine_members.iter().find(|(ghost, _)| Self::ghost_holds_code(ghost, want)).map(|(_, holder)| holder)
+    }
+
+    fn ghost_holds_code(ghost: &crate::ghost::Ghost, want: usize) -> bool {
+        use crate::ghost::Ghost;
+        match ghost {
+            Ghost::Routine(code) => code.strong_count() > 0 && code.as_ptr() as usize == want,
+            Ghost::Bound(code, frame) => code.strong_count() > 0 && frame.strong_count() > 0 && code.as_ptr() as usize == want,
+            Ghost::Method(code, thing, mark) => code.strong_count() > 0 && thing.strong_count() > 0 && mark.strong_count() > 0 && code.as_ptr() as usize == want,
+            _ => false,
+        }
+    }
+
     pub(super) fn routine_takes_raw_keys(&self, program: &Routine) -> bool {
         // The raw-key making is the reference's own, so only the Python
         // definition may opt into it; every other language keeps words.
         if !self.table.flag("ext.op.arithmetic.python_numbers") { return false; }
-        for (callable, attributes) in &self.routine_members {
-            let Some(value) = callable.revive() else { continue; };
-            let code = match &value {
-                Value::Routine(code) | Value::Bound(code, _) | Value::Method(code, _, _) => code,
-                _ => continue,
-            };
-            if !std::ptr::eq(program, code.as_ref()) { continue; }
-            let entries = attributes.holds.borrow();
-            if entries.iter().any(|(word, held)| {
-                (word == "_lumen_raw_keywords" || word == "_lumen_raw_keywords\0" || word == "\0_lumen_raw_keywords\0")
-                    && matches!(held.settled(), Value::Flag(true))
-            }) { return true; }
-            // A namespace handed to the routine keeps later attributes there.
-            if let Some((_, book)) = entries.iter().find(|(word, _)| word == "\0handed") {
-                if let Value::Dict(pairs) = book.settled() {
-                    if pairs.iter().any(|(key, held)| {
-                        matches!(key, Value::Text(text) if text.as_ref() == "_lumen_raw_keywords")
-                            && matches!(held.settled(), Value::Flag(true))
-                    }) { return true; }
-                }
+        let Some(attributes) = self.routine_member_holder(program) else { return false; };
+        let entries = attributes.holds.borrow();
+        if entries.iter().any(|(word, held)| {
+            (word == "_lumen_raw_keywords" || word == "_lumen_raw_keywords\0" || word == "\0_lumen_raw_keywords\0")
+                && matches!(held.settled(), Value::Flag(true))
+        }) { return true; }
+        // A namespace handed to the routine keeps later attributes there.
+        if let Some((_, book)) = entries.iter().find(|(word, _)| word == "\0handed") {
+            if let Value::Dict(pairs) = book.settled() {
+                if pairs.iter().any(|(key, held)| {
+                    matches!(key, Value::Text(text) if text.as_ref() == "_lumen_raw_keywords")
+                        && matches!(held.settled(), Value::Flag(true))
+                }) { return true; }
             }
-            return false;
         }
         false
     }
