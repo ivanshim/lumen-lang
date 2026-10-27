@@ -3147,9 +3147,6 @@ def main():
     if args.test is not None:
         src = args.test
         if is_tarfile(src):
-            with open(src, 'r') as tar:
-                tar.getmembers()
-                print(tar.getmembers(), file=sys.stderr)
             if args.verbose:
                 print('{!r} is a tar archive.'.format(src))
         else:
