@@ -692,7 +692,15 @@ class TestSuite:
             return True
         entry = [name, _message(outcome[1], outcome[2]), _class_name(self.class_)]
         if isinstance(outcome[1], SkipTest):
-            result.skipped = [*result.skipped, entry]
+            reason = str(outcome[1])
+            # A network or thread refusal in setUpClass still reports every
+            # test. One class entry here shortens the progress line.
+            if (name == 'setUpClass' and self.class_ is not None
+                    and (type(outcome[1]).__name__ == 'ResourceDenied'
+                         or reason == 'requires threading support')):
+                self._setup_skip = reason or 'skipped'
+            else:
+                result.skipped = [*result.skipped, entry]
         else:
             result.errors = [*result.errors, entry]
         return False
@@ -1162,7 +1170,11 @@ class TextTestRunner:
             # empty child suite. Class fixtures belong to suites that hold
             # cases, matching the runner that skips setup when nothing runs.
             try:
-                if test.countTestCases() > 0 and test._fixture('setUpClass', result):
+                setup_ok = test.countTestCases() > 0 and test._fixture('setUpClass', result)
+                if setup_ok or getattr(test, '_setup_skip', None):
+                    if not setup_ok:
+                        test.class_.__unittest_skip__ = True
+                        test.class_.__unittest_skip_why__ = test._setup_skip
                     try:
                         members = test.tests
                         for at in range(len(members)):
@@ -1177,7 +1189,11 @@ class TextTestRunner:
                             members[at] = None
                             member = None
                     finally:
-                        test._fixture('tearDownClass', result)
+                        if setup_ok:
+                            test._fixture('tearDownClass', result)
+                        else:
+                            del test.class_.__unittest_skip__
+                            del test.class_.__unittest_skip_why__
             finally:
                 try:
                     test._fixture('doClassCleanups', result)
