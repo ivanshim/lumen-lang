@@ -3147,6 +3147,11 @@ def main():
     if args.test is not None:
         src = args.test
         if is_tarfile(src):
+            try:
+                with open(src, 'r') as tar:
+                    tar.getmembers()
+            except (TarError, EOFError, OSError):
+                parser.exit(1, '{!r} is not a tar archive.\n'.format(src))
             if args.verbose:
                 print('{!r} is a tar archive.'.format(src))
         else:
