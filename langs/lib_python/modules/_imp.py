@@ -1,3 +1,5 @@
+import _runtime_import as _frozen
+
 # The modules built into the interpreter.  Their source travels inside the
 # binary in this module; a frozen module is compiled the first time its code
 # object is asked for, and a name not yet compiled still answers with its
@@ -76,6 +78,7 @@ def _override_frozen_modules_for_tests(override):
     if override not in (-1, 0, 1):
         raise ValueError('invalid frozen module override')
     _frozen_override = override
+    _frozen.frozen_override = override
 
 
 def _frozen_entry(name):
@@ -146,6 +149,8 @@ def is_frozen_package(name):
 
 # This interpreter carries source modules; the frozen table above is its own.
 def find_frozen(name, withdata=False):
+    if not isinstance(name, str):
+        raise TypeError('find_frozen() argument 1 must be str, not ' + type(name).__name__)
     entry = _frozen_entry(name)
     if entry is None:
         return None
@@ -325,3 +330,18 @@ def get_frozen_object(name, data=None):
     if not isinstance(code, types.CodeType):
         raise ImportError(f"Frozen object named {name!r} is invalid", name=name)
     return code
+
+
+# List both frozen catalogs without redirecting bootstrap imports through the finder.
+def _frozen_module_names():
+    return list(dict.fromkeys(list(_frozen.FROZEN_MODULES) + list(_FROZEN_SOURCES)
+                             + list(_FROZEN_ALIASES)
+                             + [name + '.__init__' for name in _FROZEN_PACKAGES]))
+
+
+def init_frozen(name):
+    if find_frozen(name) is None:
+        raise ImportError('No such frozen object named ' + repr(name), name=name)
+    from importlib._bootstrap import FrozenImporter, _load_unlocked
+    return _load_unlocked(FrozenImporter.find_spec(name))
+

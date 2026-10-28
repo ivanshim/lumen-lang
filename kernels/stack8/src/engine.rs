@@ -24098,8 +24098,821 @@ impl<'a> Engine<'a> {
     }
 
     // Read or write bounded memory-stream storage without intermediate Python slices.
+
+    // Stock protocol-4/5 framing for a list of ints in 0..=0x7fffffff.
+    // Byte-identical to _Pickler.save_list / save_long / _Framer, so the
+    // frame-size checks keep seeing the same pickle the pure path writes.
+    // One read of a self-contained list: (int, str) pairs, bytes, then len.
+    // Anything else answers nothing and the ordinary loader runs.
+    fn recall_pickled_pairs(&self, args: &[Value]) -> Res<Value> {
+        let [Value::Bytes(storage, _, _), Value::Small(origin), Value::Flag(fix_imports), Value::Flag(closed), Value::Small(9)] = args else {
+            return Ok(Value::Null);
+        };
+        if *closed { return Ok(Value::Null); }
+        let Ok(start) = usize::try_from(*origin) else { return Ok(Value::Null); };
+        let data = storage.borrow();
+        match self.scan_pair_pickle(&data, start, *fix_imports) {
+            Some((items, end)) => match i64::try_from(end) {
+                Ok(at) => Ok(Value::tuple(vec![Value::array(items), Value::Small(at)])),
+                Err(_) => Ok(Value::Null),
+            },
+            None => Ok(Value::Null),
+        }
+    }
+
+    fn scan_pair_pickle(&self, data: &[u8], start: usize, fix_imports: bool) -> Option<(Vec<Value>, usize)> {
+        enum Piece { Num(i64), Txt(String), Raw(Vec<u8>), Tup(Vec<usize>), Lst(Vec<usize>), Len, Encode }
+        struct View<'a> { data: &'a [u8], pos: usize, limit: Option<usize> }
+        impl<'a> View<'a> {
+            fn open(&mut self) {
+                if let Some(end) = self.limit { if self.pos >= end { self.limit = None; } }
+            }
+            fn room(&self) -> usize {
+                let end = self.limit.unwrap_or(self.data.len()).min(self.data.len());
+                end.saturating_sub(self.pos)
+            }
+            fn take(&mut self, n: usize) -> Option<&'a [u8]> {
+                if n > self.room() { return None; }
+                let end = self.pos + n;
+                let part = &self.data[self.pos..end];
+                self.pos = end;
+                Some(part)
+            }
+            fn line(&mut self) -> Option<&'a [u8]> {
+                let start = self.pos;
+                let bound = self.limit.unwrap_or(self.data.len()).min(self.data.len());
+                let rest = self.data.get(start..bound)?;
+                let rel = rest.iter().position(|byte| *byte == b'\n')?;
+                self.pos = start + rel + 1;
+                Some(&rest[..rel])
+            }
+        }
+        let mut view = View { data, pos: start, limit: None };
+        if start > data.len() { return None; }
+        let mut slots: Vec<Piece> = Vec::new();
+        let mut pile: Vec<usize> = Vec::new();
+        let mut saved: Vec<usize> = Vec::new();
+        let mut kept: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+        let push = |slots: &mut Vec<Piece>, pile: &mut Vec<usize>, piece: Piece| {
+            pile.push(slots.len());
+            slots.push(piece);
+        };
+        let remember = |kept: &mut std::collections::HashMap<i64, usize>, idx: i64, top: usize| -> Option<()> {
+            if idx < 0 || idx > 5_000_000 { return None; }
+            kept.insert(idx, top);
+            Some(())
+        };
+        let classify = |module: &str, name: &str| -> Option<Piece> {
+            if name == "len" && (module == "builtins" || (fix_imports && module == "__builtin__")) { Some(Piece::Len) }
+            else if module == "_codecs" && name == "encode" { Some(Piece::Encode) }
+            else { None }
+        };
+        while view.pos < data.len() {
+            view.open();
+            let op = view.take(1)?[0];
+            match op {
+                b'.' => {
+                    if let Some(end) = view.limit { if view.pos != end { return None; } }
+                    if !saved.is_empty() || pile.len() != 1 { return None; }
+                    let root = pile[0];
+                    let items = match &slots[root] { Piece::Lst(items) => items.clone(), _ => return None };
+                    if items.is_empty() { return None; }
+                    let last = *items.last()?;
+                    if !matches!(slots[last], Piece::Len) { return None; }
+                    let mut out = Vec::with_capacity(items.len() - 1);
+                    for &item in &items[..items.len() - 1] {
+                        match &slots[item] {
+                            Piece::Raw(bytes) => out.push(self.byte_make(bytes.clone(), false)),
+                            Piece::Tup(pair) if pair.len() == 2 => {
+                                let Piece::Num(number) = slots[pair[0]] else { return None };
+                                let Piece::Txt(text) = &slots[pair[1]] else { return None };
+                                out.push(Value::tuple(vec![Value::Small(number), Value::text(text)]));
+                            }
+                            _ => return None,
+                        }
+                    }
+                    return Some((out, view.pos));
+                }
+                b'(' => saved.push(pile.len()),
+                b']' => push(&mut slots, &mut pile, Piece::Lst(Vec::new())),
+                b'l' => {
+                    let at = saved.pop()?;
+                    if at > pile.len() { return None; }
+                    let items = pile.split_off(at);
+                    push(&mut slots, &mut pile, Piece::Lst(items));
+                }
+                b'a' => {
+                    let value = pile.pop()?;
+                    let list = *pile.last()?;
+                    match &mut slots[list] { Piece::Lst(items) => items.push(value), _ => return None }
+                }
+                b'e' => {
+                    let at = saved.pop()?;
+                    if at > pile.len() { return None; }
+                    let batch = pile.split_off(at);
+                    let list = *pile.last()?;
+                    match &mut slots[list] { Piece::Lst(items) => items.extend(batch), _ => return None }
+                }
+                b't' => {
+                    let at = saved.pop()?;
+                    if at > pile.len() { return None; }
+                    let items = pile.split_off(at);
+                    push(&mut slots, &mut pile, Piece::Tup(items));
+                }
+                b'\x85' | b'\x86' | b'\x87' => {
+                    let width = (op - 0x84) as usize;
+                    if pile.len() < width { return None; }
+                    let items = pile.split_off(pile.len() - width);
+                    push(&mut slots, &mut pile, Piece::Tup(items));
+                }
+                b'K' => { let n = view.take(1)?[0] as i64; push(&mut slots, &mut pile, Piece::Num(n)); }
+                b'M' => {
+                    let raw = view.take(2)?;
+                    push(&mut slots, &mut pile, Piece::Num(u16::from_le_bytes([raw[0], raw[1]]) as i64));
+                }
+                b'J' => {
+                    let raw = view.take(4)?;
+                    push(&mut slots, &mut pile, Piece::Num(i32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as i64));
+                }
+                b'I' => {
+                    let line = view.line()?;
+                    if line == b"00" || line == b"01" { return None; }
+                    let text = std::str::from_utf8(line).ok()?;
+                    let number = text.parse::<i64>().ok()?;
+                    push(&mut slots, &mut pile, Piece::Num(number));
+                }
+                b'V' => {
+                    let line = view.line()?;
+                    if line.contains(&b'\\') { return None; }
+                    let text = std::str::from_utf8(line).ok()?.to_owned();
+                    push(&mut slots, &mut pile, Piece::Txt(text));
+                }
+                b'\x8c' => {
+                    let n = view.take(1)?[0] as usize;
+                    let text = std::str::from_utf8(view.take(n)?).ok()?.to_owned();
+                    push(&mut slots, &mut pile, Piece::Txt(text));
+                }
+                b'X' => {
+                    let raw = view.take(4)?;
+                    let n = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize;
+                    let text = std::str::from_utf8(view.take(n)?).ok()?.to_owned();
+                    push(&mut slots, &mut pile, Piece::Txt(text));
+                }
+                b'C' => {
+                    let n = view.take(1)?[0] as usize;
+                    push(&mut slots, &mut pile, Piece::Raw(view.take(n)?.to_vec()));
+                }
+                b'B' => {
+                    let raw = view.take(4)?;
+                    let n = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize;
+                    push(&mut slots, &mut pile, Piece::Raw(view.take(n)?.to_vec()));
+                }
+                b'\x94' => {
+                    let top = *pile.last()?;
+                    let fresh = kept.len() as i64;
+                    remember(&mut kept, fresh, top)?;
+                }
+                b'q' => {
+                    let idx = view.take(1)?[0] as i64;
+                    let top = *pile.last()?;
+                    remember(&mut kept, idx, top)?;
+                }
+                b'r' => {
+                    let raw = view.take(4)?;
+                    let idx = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as i64;
+                    let top = *pile.last()?;
+                    remember(&mut kept, idx, top)?;
+                }
+                b'p' => {
+                    let line = view.line()?;
+                    let idx = std::str::from_utf8(line).ok()?.parse::<i64>().ok()?;
+                    let top = *pile.last()?;
+                    remember(&mut kept, idx, top)?;
+                }
+                b'h' => {
+                    let idx = view.take(1)?[0] as i64;
+                    pile.push(*kept.get(&idx)?);
+                }
+                b'j' => {
+                    let raw = view.take(4)?;
+                    let idx = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as i64;
+                    pile.push(*kept.get(&idx)?);
+                }
+                b'g' => {
+                    let line = view.line()?;
+                    let idx = std::str::from_utf8(line).ok()?.parse::<i64>().ok()?;
+                    pile.push(*kept.get(&idx)?);
+                }
+                b'c' => {
+                    let module = std::str::from_utf8(view.line()?).ok()?;
+                    let name = std::str::from_utf8(view.line()?).ok()?;
+                    push(&mut slots, &mut pile, classify(module, name)?);
+                }
+                b'\x93' => {
+                    let name_i = pile.pop()?;
+                    let module_i = pile.pop()?;
+                    let name = match &slots[name_i] { Piece::Txt(text) => text.clone(), _ => return None };
+                    let module = match &slots[module_i] { Piece::Txt(text) => text.clone(), _ => return None };
+                    push(&mut slots, &mut pile, classify(&module, &name)?);
+                }
+                b'R' => {
+                    let args_i = pile.pop()?;
+                    let func_i = pile.pop()?;
+                    if !matches!(slots[func_i], Piece::Encode) { return None; }
+                    let (text, encoding) = match &slots[args_i] {
+                        Piece::Tup(pair) if pair.len() == 2 => {
+                            let Piece::Txt(text) = &slots[pair[0]] else { return None };
+                            let Piece::Txt(encoding) = &slots[pair[1]] else { return None };
+                            (text.clone(), encoding.clone())
+                        }
+                        _ => return None,
+                    };
+                    let raw = match encoding.as_str() {
+                        "latin1" => {
+                            let mut raw = Vec::with_capacity(text.len());
+                            for ch in text.chars() {
+                                let code = ch as u32;
+                                if code > 255 { return None; }
+                                raw.push(code as u8);
+                            }
+                            raw
+                        }
+                        "ascii" => { if !text.is_ascii() { return None; } text.into_bytes() }
+                        "utf-8" | "utf8" => text.into_bytes(),
+                        _ => return None,
+                    };
+                    push(&mut slots, &mut pile, Piece::Raw(raw));
+                }
+                b'\x80' => { let proto = view.take(1)?[0]; if proto > 5 { return None; } }
+                b'\x95' => {
+                    if view.limit.is_some() { return None; }
+                    let raw = view.take(8)?;
+                    let mut wide = [0u8; 8];
+                    wide.copy_from_slice(raw);
+                    let size = usize::try_from(u64::from_le_bytes(wide)).ok()?;
+                    if size > view.room() { return None; }
+                    view.limit = Some(view.pos + size);
+                }
+                _ => return None,
+            }
+        }
+        None
+    }
+
+    fn plain_pickle(&self, args: &[Value]) -> Res<Value> {
+        use std::collections::{HashMap, HashSet};
+        let [obj, Value::Small(proto), _, _, Value::Small(8)] = args else { return Ok(Value::Null); };
+        if !(4..=5).contains(proto) { return Ok(Value::Null); }
+        struct Pack {
+            out: Vec<u8>,
+            frame: Vec<u8>,
+            kept: HashMap<(u8, usize), i32>,
+            open: HashSet<(u8, usize)>,
+            depth: u32,
+        }
+        impl Pack {
+            fn seal(&mut self) {
+                if self.frame.len() >= 64 * 1024 {
+                    Engine::commit_pickle_frame(&mut self.frame, &mut self.out);
+                }
+            }
+            fn force_frame(&mut self) {
+                if !self.frame.is_empty() {
+                    Engine::commit_pickle_frame(&mut self.frame, &mut self.out);
+                }
+            }
+            fn put_int(&mut self, number: i64) -> bool {
+                if (0..=0xff).contains(&number) {
+                    self.frame.push(b'K');
+                    self.frame.push(number as u8);
+                    return true;
+                }
+                if (0..=0xffff).contains(&number) {
+                    self.frame.push(b'M');
+                    self.frame.extend_from_slice(&(number as u16).to_le_bytes());
+                    return true;
+                }
+                if (-0x8000_0000..=0x7fff_ffff).contains(&number) {
+                    self.frame.push(b'J');
+                    self.frame.extend_from_slice(&(number as i32).to_le_bytes());
+                    return true;
+                }
+                false
+            }
+            fn put_get(&mut self, index: i32) -> bool {
+                if (0..256).contains(&index) {
+                    self.frame.push(b'h');
+                    self.frame.push(index as u8);
+                } else {
+                    self.frame.push(b'j');
+                    self.frame.extend_from_slice(&(index as u32).to_le_bytes());
+                }
+                true
+            }
+            fn memoize(&mut self, id: (u8, usize)) -> bool {
+                let fresh = i32::try_from(self.kept.len()).unwrap_or(-1);
+                if fresh < 0 { return false; }
+                self.frame.push(0x94);
+                self.kept.insert(id, fresh);
+                true
+            }
+            fn write_large(&mut self, header: &[u8], payload: &[u8]) {
+                self.force_frame();
+                self.out.extend_from_slice(header);
+                self.out.extend_from_slice(payload);
+            }
+            fn tag(value: &Value) -> Option<(u8, usize)> {
+                match value {
+                    Value::Array(items) => Some((1, Rc::as_ptr(items) as usize)),
+                    Value::Tuple(items) => Some((2, Rc::as_ptr(items) as usize)),
+                    Value::Map(pairs) => Some((3, Rc::as_ptr(pairs) as usize)),
+                    Value::Text(text) => Some((4, text.as_ptr() as usize)),
+                    Value::Bytes(cell, false, _) => Some((5, Rc::as_ptr(cell) as usize)),
+                    _ => None,
+                }
+            }
+            fn save_text(&mut self, text: &str, id: (u8, usize)) -> bool {
+                let raw = text.as_bytes();
+                let width = raw.len();
+                if width >= 65536 {
+                    if width > u32::MAX as usize {
+                        let mut header = Vec::with_capacity(9);
+                        header.push(0x8d);
+                        header.extend_from_slice(&(width as u64).to_le_bytes());
+                        self.write_large(&header, raw);
+                    } else {
+                        let mut header = Vec::with_capacity(5);
+                        header.push(b'X');
+                        header.extend_from_slice(&(width as u32).to_le_bytes());
+                        self.write_large(&header, raw);
+                    }
+                } else if width <= 0xff {
+                    self.frame.push(0x8c);
+                    self.frame.push(width as u8);
+                    self.frame.extend_from_slice(raw);
+                } else {
+                    self.frame.push(b'X');
+                    self.frame.extend_from_slice(&(width as u32).to_le_bytes());
+                    self.frame.extend_from_slice(raw);
+                }
+                self.memoize(id)
+            }
+            fn save_bytes(&mut self, raw: &[u8], id: (u8, usize)) -> bool {
+                let width = raw.len();
+                if width >= 65536 {
+                    if width > u32::MAX as usize {
+                        let mut header = Vec::with_capacity(9);
+                        header.push(0x8e);
+                        header.extend_from_slice(&(width as u64).to_le_bytes());
+                        self.write_large(&header, raw);
+                    } else {
+                        let mut header = Vec::with_capacity(5);
+                        header.push(b'B');
+                        header.extend_from_slice(&(width as u32).to_le_bytes());
+                        self.write_large(&header, raw);
+                    }
+                } else if width <= 0xff {
+                    self.frame.push(b'C');
+                    self.frame.push(width as u8);
+                    self.frame.extend_from_slice(raw);
+                } else {
+                    self.frame.push(b'B');
+                    self.frame.extend_from_slice(&(width as u32).to_le_bytes());
+                    self.frame.extend_from_slice(raw);
+                }
+                self.memoize(id)
+            }
+            fn save_list(&mut self, items: &crate::tuples::Items, id: (u8, usize)) -> bool {
+                self.frame.push(b']');
+                if !self.memoize(id) { return false; }
+                let mut index = 0usize;
+                let total = items.len();
+                while index < total {
+                    let end = (index + 1000).min(total);
+                    if end - index == 1 {
+                        if !self.save(&items[index]) { return false; }
+                        self.frame.push(b'a');
+                    } else {
+                        self.frame.push(b'(');
+                        let mut cursor = index;
+                        while cursor < end {
+                            if !self.save(&items[cursor]) { return false; }
+                            cursor += 1;
+                        }
+                        self.frame.push(b'e');
+                    }
+                    index = end;
+                }
+                true
+            }
+            fn save_map(&mut self, pairs: &Rc<KeyedPairs>, id: (u8, usize)) -> bool {
+                self.frame.push(b'}');
+                if !self.memoize(id) { return false; }
+                let rows = pairs.rows();
+                let mut index = 0usize;
+                let total = rows.len();
+                while index < total {
+                    let end = (index + 1000).min(total);
+                    if end - index == 1 {
+                        if !self.save(&rows[index].0) || !self.save(&rows[index].1) { return false; }
+                        self.frame.push(b's');
+                    } else {
+                        self.frame.push(b'(');
+                        let mut cursor = index;
+                        while cursor < end {
+                            if !self.save(&rows[cursor].0) || !self.save(&rows[cursor].1) { return false; }
+                            cursor += 1;
+                        }
+                        self.frame.push(b'u');
+                    }
+                    index = end;
+                }
+                true
+            }
+            fn save_tuple(&mut self, items: &crate::tuples::Items, id: (u8, usize)) -> bool {
+                let total = items.len();
+                if total == 0 {
+                    self.frame.push(b')');
+                    return true;
+                }
+                if total <= 3 {
+                    let mut cursor = 0usize;
+                    while cursor < total {
+                        if !self.save(&items[cursor]) { return false; }
+                        cursor += 1;
+                    }
+                    if let Some(index) = self.kept.get(&id).copied() {
+                        let mut pop = 0usize;
+                        while pop < total {
+                            self.frame.push(b'0');
+                            pop += 1;
+                        }
+                        return self.put_get(index);
+                    }
+                    self.frame.push(0x84 + total as u8);
+                    return self.memoize(id);
+                }
+                self.frame.push(b'(');
+                let mut cursor = 0usize;
+                while cursor < total {
+                    if !self.save(&items[cursor]) { return false; }
+                    cursor += 1;
+                }
+                if let Some(index) = self.kept.get(&id).copied() {
+                    self.frame.push(b'1');
+                    return self.put_get(index);
+                }
+                self.frame.push(b't');
+                self.memoize(id)
+            }
+            fn save(&mut self, raw: &Value) -> bool {
+                if self.depth >= 400 { return false; }
+                self.seal();
+                let value = raw.contents();
+                match &value {
+                    Value::Small(number) => return self.put_int(*number),
+                    Value::Flag(bit) => {
+                        self.frame.push(if *bit { 0x88 } else { 0x89 });
+                        return true;
+                    }
+                    Value::Null => {
+                        self.frame.push(b'N');
+                        return true;
+                    }
+                    Value::Tuple(items) if items.is_empty() => {
+                        self.frame.push(b')');
+                        return true;
+                    }
+                    Value::Array(_) | Value::Tuple(_) | Value::Map(_) | Value::Text(_) | Value::Bytes(_, false, _) => {}
+                    _ => return false,
+                }
+                let Some(id) = Self::tag(&value) else { return false; };
+                if let Some(index) = self.kept.get(&id).copied() {
+                    return self.put_get(index);
+                }
+                if !self.open.insert(id) { return false; }
+                self.depth += 1;
+                let stored = match &value {
+                    Value::Array(items) => self.save_list(items, id),
+                    Value::Map(pairs) => self.save_map(pairs, id),
+                    Value::Tuple(items) => self.save_tuple(items, id),
+                    Value::Text(text) => self.save_text(text, id),
+                    Value::Bytes(cell, false, _) => {
+                        let owned = cell.borrow().clone();
+                        self.save_bytes(&owned, id)
+                    }
+                    _ => false,
+                };
+                self.depth -= 1;
+                self.open.remove(&id);
+                stored
+            }
+        }
+        let mut pack = Pack {
+            out: Vec::new(),
+            frame: Vec::with_capacity(64 * 1024 + 64),
+            kept: HashMap::new(),
+            open: HashSet::new(),
+            depth: 0,
+        };
+        pack.out.push(0x80);
+        pack.out.push(*proto as u8);
+        if !pack.save(obj) { return Ok(Value::Null); }
+        pack.frame.push(b'.');
+        if !pack.frame.is_empty() {
+            Engine::commit_pickle_frame(&mut pack.frame, &mut pack.out);
+        }
+        Ok(self.byte_make(pack.out, false))
+    }
+
+    fn plain_load(&self, args: &[Value]) -> Res<Value> {
+        let [Value::Bytes(storage, _, _), Value::Small(origin), _, Value::Flag(closed), Value::Small(10)] = args else {
+            return Ok(Value::Null);
+        };
+        if *closed { return Ok(Value::Null); }
+        let Ok(start) = usize::try_from(*origin) else { return Ok(Value::Null); };
+        enum Share { Num(i64), Chars(String), Blob(Vec<u8>), Yes, No, Empty, Vacant, Many(Vec<u32>), Pairs(Vec<(u32, u32)>), Fixed(Vec<u32>) }
+        struct Tape<'a> { data: &'a [u8], pos: usize, fence: Option<usize> }
+        impl<'a> Tape<'a> {
+            fn relax(&mut self) {
+                let Some(end) = self.fence else { return; };
+                if self.pos < end { return; }
+                self.fence = None;
+            }
+            fn ahead(&self) -> usize {
+                let end = match self.fence {
+                    Some(bound) => bound.min(self.data.len()),
+                    None => self.data.len(),
+                };
+                end.saturating_sub(self.pos)
+            }
+            fn bite(&mut self, count: usize) -> Option<&'a [u8]> {
+                if count > self.ahead() { return None; }
+                let end = self.pos + count;
+                let part = &self.data[self.pos..end];
+                self.pos = end;
+                Some(part)
+            }
+        }
+        fn push_share(nodes: &mut Vec<Share>, pile: &mut Vec<u32>, node: Share) -> Option<()> {
+            if nodes.len() >= 2_000_000 { return None; }
+            pile.push(u32::try_from(nodes.len()).ok()?);
+            nodes.push(node);
+            Some(())
+        }
+        let data = storage.borrow();
+        if start > data.len() { return Ok(Value::Null); }
+        let parsed = (|| {
+            let mut tape = Tape { data: &data, pos: start, fence: None };
+            let mut nodes: Vec<Share> = Vec::new();
+            let mut pile: Vec<u32> = Vec::new();
+            let mut marks: Vec<usize> = Vec::new();
+            let mut saved: Vec<u32> = Vec::new();
+            while tape.pos < tape.data.len() {
+                tape.relax();
+                let op = tape.bite(1)?[0];
+                match op {
+                    b'.' => {
+                        if let Some(end) = tape.fence { if tape.pos != end { return None; } }
+                        if !marks.is_empty() || pile.len() != 1 { return None; }
+                        return Some((nodes, pile[0], saved, tape.pos));
+                    }
+                    b'\x80' => { let proto = tape.bite(1)?[0]; if !(4..=5).contains(&proto) { return None; } }
+                    b'\x95' => {
+                        if tape.fence.is_some() { return None; }
+                        let raw = tape.bite(8)?;
+                        let mut wide = [0u8; 8];
+                        wide.copy_from_slice(raw);
+                        let size = usize::try_from(u64::from_le_bytes(wide)).ok()?;
+                        if size > tape.ahead() { return None; }
+                        tape.fence = Some(tape.pos + size);
+                    }
+                    b'(' => marks.push(pile.len()),
+                    b']' => push_share(&mut nodes, &mut pile, Share::Many(Vec::new()))?,
+                    b'}' => push_share(&mut nodes, &mut pile, Share::Pairs(Vec::new()))?,
+                    b')' => push_share(&mut nodes, &mut pile, Share::Vacant)?,
+                    b'N' => push_share(&mut nodes, &mut pile, Share::Empty)?,
+                    0x88 => push_share(&mut nodes, &mut pile, Share::Yes)?,
+                    0x89 => push_share(&mut nodes, &mut pile, Share::No)?,
+                    b'a' => {
+                        let child = pile.pop()?;
+                        let row = *pile.last()?;
+                        match &mut nodes[row as usize] { Share::Many(items) => items.push(child), _ => return None }
+                    }
+                    b'e' => {
+                        let at = marks.pop()?;
+                        if at > pile.len() { return None; }
+                        let batch = pile.split_off(at);
+                        let row = *pile.last()?;
+                        match &mut nodes[row as usize] { Share::Many(items) => items.extend(batch), _ => return None }
+                    }
+                    b's' => {
+                        let val = pile.pop()?;
+                        let key = pile.pop()?;
+                        let row = *pile.last()?;
+                        match &mut nodes[row as usize] { Share::Pairs(items) => items.push((key, val)), _ => return None }
+                    }
+                    b'u' => {
+                        let at = marks.pop()?;
+                        if at > pile.len() { return None; }
+                        let batch = pile.split_off(at);
+                        if batch.len() % 2 != 0 { return None; }
+                        let row = *pile.last()?;
+                        match &mut nodes[row as usize] {
+                            Share::Pairs(items) => {
+                                let mut pair = 0usize;
+                                while pair < batch.len() {
+                                    items.push((batch[pair], batch[pair + 1]));
+                                    pair += 2;
+                                }
+                            }
+                            _ => return None,
+                        }
+                    }
+                    b't' => {
+                        let at = marks.pop()?;
+                        if at > pile.len() { return None; }
+                        let items = pile.split_off(at);
+                        push_share(&mut nodes, &mut pile, Share::Fixed(items))?;
+                    }
+                    0x85 | 0x86 | 0x87 => {
+                        let width = (op - 0x84) as usize;
+                        if pile.len() < width { return None; }
+                        let items = pile.split_off(pile.len() - width);
+                        push_share(&mut nodes, &mut pile, Share::Fixed(items))?;
+                    }
+                    b'K' => { let number = tape.bite(1)?[0] as i64; push_share(&mut nodes, &mut pile, Share::Num(number))?; }
+                    b'M' => {
+                        let raw = tape.bite(2)?;
+                        let number = u16::from_le_bytes([raw[0], raw[1]]) as i64;
+                        push_share(&mut nodes, &mut pile, Share::Num(number))?;
+                    }
+                    b'J' => {
+                        let raw = tape.bite(4)?;
+                        let number = i32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as i64;
+                        push_share(&mut nodes, &mut pile, Share::Num(number))?;
+                    }
+                    0x8c => {
+                        let width = tape.bite(1)?[0] as usize;
+                        let text = std::str::from_utf8(tape.bite(width)?).ok()?.to_owned();
+                        push_share(&mut nodes, &mut pile, Share::Chars(text))?;
+                    }
+                    b'X' | 0x8d => {
+                        let raw = tape.bite(if op == b'X' { 4 } else { 8 })?;
+                        let mut wide = [0u8; 8];
+                        wide[..raw.len()].copy_from_slice(raw);
+                        let width = usize::try_from(u64::from_le_bytes(wide)).ok()?;
+                        let text = std::str::from_utf8(tape.bite(width)?).ok()?.to_owned();
+                        push_share(&mut nodes, &mut pile, Share::Chars(text))?;
+                    }
+                    b'C' => {
+                        let width = tape.bite(1)?[0] as usize;
+                        push_share(&mut nodes, &mut pile, Share::Blob(tape.bite(width)?.to_vec()))?;
+                    }
+                    b'B' | 0x8e => {
+                        let raw = tape.bite(if op == b'B' { 4 } else { 8 })?;
+                        let mut wide = [0u8; 8];
+                        wide[..raw.len()].copy_from_slice(raw);
+                        let width = usize::try_from(u64::from_le_bytes(wide)).ok()?;
+                        push_share(&mut nodes, &mut pile, Share::Blob(tape.bite(width)?.to_vec()))?;
+                    }
+                    0x94 => { saved.push(*pile.last()?); }
+                    b'h' => { let index = tape.bite(1)?[0] as usize; pile.push(*saved.get(index)?); }
+                    b'j' => {
+                        let raw = tape.bite(4)?;
+                        let index = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize;
+                        pile.push(*saved.get(index)?);
+                    }
+                    _ => return None,
+                }
+            }
+            None
+        })();
+        drop(data);
+        let Some((nodes, root, saved, end)) = parsed else { return Ok(Value::Null); };
+        fn build<'b>(engine: &Engine<'b>, nodes: &[Share], index: usize, cache: &mut Vec<Option<Value>>, depth: u32) -> Option<Value> {
+            if depth > 400 || index >= nodes.len() { return None; }
+            if let Some(done) = cache[index].clone() { return Some(done); }
+            let built = match &nodes[index] {
+                Share::Num(number) => Value::Small(*number),
+                Share::Yes => Value::Flag(true),
+                Share::No => Value::Flag(false),
+                Share::Empty => Value::Null,
+                Share::Vacant => Value::tuple(Vec::new()),
+                Share::Chars(text) => Value::text(text),
+                Share::Blob(bytes) => engine.byte_make(bytes.clone(), false),
+                Share::Many(children) => {
+                    let kids = children.clone();
+                    let mut row = Vec::with_capacity(kids.len());
+                    for child in kids {
+                        row.push(build(engine, nodes, child as usize, cache, depth + 1)?);
+                    }
+                    Value::array(row)
+                }
+                Share::Pairs(children) => {
+                    let kids = children.clone();
+                    let mut rows = Vec::with_capacity(kids.len());
+                    for (key, val) in kids {
+                        let left = build(engine, nodes, key as usize, cache, depth + 1)?;
+                        let right = build(engine, nodes, val as usize, cache, depth + 1)?;
+                        rows.push((left, right));
+                    }
+                    Value::Map(Rc::new(rows.into()))
+                }
+                Share::Fixed(children) => {
+                    let kids = children.clone();
+                    let mut row = Vec::with_capacity(kids.len());
+                    for child in kids {
+                        row.push(build(engine, nodes, child as usize, cache, depth + 1)?);
+                    }
+                    Value::tuple(row)
+                }
+            };
+            cache[index] = Some(built.clone());
+            Some(built)
+        }
+        let mut cache = vec![None; nodes.len()];
+        let mut memo = Vec::with_capacity(saved.len());
+        for node in &saved {
+            let Some(item) = build(self, &nodes, *node as usize, &mut cache, 0) else { return Ok(Value::Null); };
+            memo.push(item);
+        }
+        let Some(body) = build(self, &nodes, root as usize, &mut cache, 0) else { return Ok(Value::Null); };
+        let Ok(at) = i64::try_from(end) else { return Ok(Value::Null); };
+        Ok(Value::tuple(vec![body, Value::Small(at), Value::array(memo)]))
+    }
+    fn framed_int_list(values: &[i64], proto: u8) -> Vec<u8> {
+        let mut out = Vec::with_capacity(values.len().saturating_mul(4).saturating_add(64));
+        out.push(0x80);
+        out.push(proto);
+        let mut frame = Vec::with_capacity(64 * 1024 + 16);
+        frame.push(b']');
+        frame.push(0x94);
+        let mut index = 0;
+        while index < values.len() {
+            let end = (index + 1000).min(values.len());
+            let batch = &values[index..end];
+            if batch.len() == 1 {
+                if frame.len() >= 64 * 1024 { Self::commit_pickle_frame(&mut frame, &mut out); }
+                Self::push_pickle_int(&mut frame, batch[0]);
+                frame.push(b'a');
+            } else {
+                frame.push(b'(');
+                for &value in batch {
+                    if frame.len() >= 64 * 1024 { Self::commit_pickle_frame(&mut frame, &mut out); }
+                    Self::push_pickle_int(&mut frame, value);
+                }
+                frame.push(b'e');
+            }
+            index = end;
+        }
+        frame.push(b'.');
+        if !frame.is_empty() { Self::commit_pickle_frame(&mut frame, &mut out); }
+        out
+    }
+
+    fn commit_pickle_frame(frame: &mut Vec<u8>, out: &mut Vec<u8>) {
+        if frame.is_empty() { return; }
+        if frame.len() >= 4 {
+            out.push(0x95);
+            out.extend_from_slice(&(frame.len() as u64).to_le_bytes());
+        }
+        out.append(frame);
+    }
+
+    fn push_pickle_int(frame: &mut Vec<u8>, value: i64) {
+        if value <= 0xff {
+            frame.push(b'K');
+            frame.push(value as u8);
+        } else if value <= 0xffff {
+            frame.push(b'M');
+            frame.extend_from_slice(&(value as u16).to_le_bytes());
+        } else {
+            frame.push(b'J');
+            frame.extend_from_slice(&(value as i32).to_le_bytes());
+        }
+    }
+
+    fn pickle_framed_list(&self, args: &[Value]) -> Res<Value> {
+        let [obj, Value::Small(proto), _, _, Value::Small(7)] = args else { return Ok(Value::Null); };
+        if !(4..=5).contains(proto) { return Ok(Value::Null); }
+        let Value::Array(items) = obj.contents() else { return Ok(Value::Null); };
+        let mut values = Vec::with_capacity(items.len());
+        for item in items.iter() {
+            match item.contents() {
+                Value::Small(number) if (0..=0x7fff_ffff).contains(&number) => values.push(number),
+                _ => return Ok(Value::Null),
+            }
+        }
+        Ok(self.byte_make(Self::framed_int_list(&values, *proto as u8), false))
+    }
+
     fn byte_memory(&mut self, args: &[Value]) -> Res<Value> {
         match args.last() {
+            Some(Value::Small(7)) => return self.pickle_framed_list(args),
+            Some(Value::Small(8)) => return self.plain_pickle(args),
+            Some(Value::Small(9)) => return self.recall_pickled_pairs(args),
+            Some(Value::Small(10)) => return self.plain_load(args),
             Some(Value::Small(3)) => return self.byte_fields(args),
             Some(Value::Small(6)) => return self.watch_byte_reader_code(args),
             Some(Value::Small(5)) => {

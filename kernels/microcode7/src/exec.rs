@@ -602,7 +602,7 @@ pub struct Machine<'a> {
     coroutine_bodies: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<Routine>, Option<Weak<Thing>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>)>,
     delegated_answers: std::collections::HashSet<usize, crate::table::FxBuildHasher>,
-    code_observers: Vec<(Weak<RefCell<Value>>, bool)>,
+    code_observers: Vec<(Weak<RefCell<Value>>, bool, Vec<(usize, usize)>)>,
     pub(super) code_handles: HashMap<usize, (Weak<Routine>, Weak<Vec<Value>>)>,
     pub library_sources: HashMap<String, String>,
     pub library_directory: Option<std::path::PathBuf>,
@@ -7990,7 +7990,10 @@ impl<'a> Machine<'a> {
         if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
         if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
             let mut values=self.value_list(args,frame)?;
-            if matches!(&stands,Value::Wrapped(..)) && !self.wrapper_takes_raw_keys(&stands) { values=self.opened_arguments(values)?; }
+            if matches!(&stands,Value::Wrapped(..)) {
+                let raw = self.spreads_carry_foreign_keys(&values) && self.wrapper_takes_raw_keys(&stands);
+                if !raw { values=self.opened_arguments(values)?; }
+            }
             return self.apply_class_member(stands,values);
         }
         if let Value::Method(body, object, _) = &stands {
@@ -12181,7 +12184,10 @@ impl<'a> Machine<'a> {
                 if let Some(answer) = self.text_called(&stands, args, frame) { return Ok(Next::Value(answer?)); }
                 if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
                     let mut given=self.value_list(args,frame)?;
-                    if matches!(&stands,Value::Wrapped(..)) && !self.wrapper_takes_raw_keys(&stands) { given=self.opened_arguments(given)?; }
+                    if matches!(&stands,Value::Wrapped(..)) {
+                        let raw = self.spreads_carry_foreign_keys(&given) && self.wrapper_takes_raw_keys(&stands);
+                        if !raw { given=self.opened_arguments(given)?; }
+                    }
                     return Ok(Next::Value(self.apply_class_member(stands,given)?));
                 }
                 if let Value::Method(body, object, _) = &stands {
@@ -18474,12 +18480,31 @@ impl<'a> Machine<'a> {
         })
     }
 
-    pub(super) fn revised_code_seen(&mut self, code: bool) {
+    fn watched_function(value: &Value) -> Option<(usize, usize)> {
+        match value {
+            Value::Bound(program, env) => Some((Rc::as_ptr(program) as usize, Rc::as_ptr(env) as usize)),
+            Value::Routine(program) => Some((Rc::as_ptr(program) as usize, 0)),
+            _ => None,
+        }
+    }
+
+    // A code watch records the functions it was built from. Assigning
+    // __code__ on any other function, which importing a test does for every
+    // new definition, must not retire a watch over the pickle readers.
+    pub(super) fn revised_code_seen(&mut self, subject: &Value, code: bool) {
+        let identity = Self::watched_function(subject);
         let mut kept = Vec::new();
-        for (observer, defaults) in self.code_observers.drain(..) {
+        for (observer, defaults, watched) in self.code_observers.drain(..) {
             if let Some(state) = observer.upgrade() {
-                if code || defaults { state.replace(Value::Vector(crate::tuples::Sequence::plain(vec![Value::Flag(false)]))); }
-                kept.push((observer, defaults));
+                let applies = match (&identity, watched.as_slice()) {
+                    (_, []) => true,
+                    (Some(id), ids) => ids.contains(id),
+                    (None, _) => false,
+                };
+                if applies && (code || defaults) {
+                    state.replace(Value::Vector(crate::tuples::Sequence::plain(vec![Value::Flag(false)])));
+                }
+                kept.push((observer, defaults, watched));
             }
         }
         self.code_observers = kept;
@@ -18497,8 +18522,801 @@ impl<'a> Machine<'a> {
             valid &= self.octet_fingerprint_equal(&functions[position], &input[2], &snapshots[position])?;
         }
         let shared = Rc::new(RefCell::new(Value::Vector(crate::tuples::Sequence::plain(vec![Value::Flag(valid)]))));
-        self.code_observers.push((Rc::downgrade(&shared), defaults));
+        let mut watched = Vec::with_capacity(functions.len());
+        for function in functions.iter() {
+            match Self::watched_function(function) {
+                Some(identity) => watched.push(identity),
+                None => { watched.clear(); break; }
+            }
+        }
+        self.code_observers.push((Rc::downgrade(&shared), defaults, watched));
         Ok(Value::Mutable(shared, true))
+    }
+
+
+    // Stock protocol-4/5 framing for a list of ints in 0..=0x7fffffff.
+    // Byte-identical to _Pickler.save_list / save_long / _Framer, so the
+    // frame-size checks keep seeing the same pickle the pure path writes.
+    fn rebuild_len_list(&self, supplied: &[Value]) -> Result<Value, String> {
+        let (cell, origin, rewrite, closed) = match supplied {
+            [Value::Octets { cell, .. }, Value::Small(origin), Value::Flag(rewrite), Value::Flag(closed), Value::Small(9)] => (cell, *origin, *rewrite, *closed),
+            _ => return Ok(Value::Nil),
+        };
+        if closed { return Ok(Value::Nil); }
+        let Ok(start) = usize::try_from(origin) else { return Ok(Value::Nil); };
+        let bytes = cell.borrow();
+        match self.walk_len_list(&bytes, start, rewrite) {
+            Some((members, end)) => match i64::try_from(end) {
+                Ok(at) => Ok(Value::tuple(vec![Value::Vector(crate::tuples::Sequence::plain(members)), Value::Small(at)])),
+                Err(_) => Ok(Value::Nil),
+            },
+            None => Ok(Value::Nil),
+        }
+    }
+
+    fn walk_len_list(&self, buf: &[u8], start: usize, rewrite: bool) -> Option<(Vec<Value>, usize)> {
+        enum Atom { Int(i64), Word(String), Blob(Vec<u8>), Group(Vec<usize>), Chain(Vec<usize>), Tail, Coder }
+        struct Span<'a> { buf: &'a [u8], at: usize, cap: Option<usize> }
+        impl<'a> Span<'a> {
+            fn release(&mut self) {
+                if let Some(end) = self.cap { if self.at >= end { self.cap = None; } }
+            }
+            fn left(&self) -> usize {
+                let end = self.cap.unwrap_or(self.buf.len()).min(self.buf.len());
+                end.saturating_sub(self.at)
+            }
+            fn pull(&mut self, n: usize) -> Option<&'a [u8]> {
+                if n > self.left() { return None; }
+                let end = self.at + n;
+                let part = &self.buf[self.at..end];
+                self.at = end;
+                Some(part)
+            }
+            fn cut(&mut self) -> Option<&'a [u8]> {
+                let start = self.at;
+                let bound = self.cap.unwrap_or(self.buf.len()).min(self.buf.len());
+                let rest = self.buf.get(start..bound)?;
+                let rel = rest.iter().position(|byte| *byte == b'\n')?;
+                self.at = start + rel + 1;
+                Some(&rest[..rel])
+            }
+        }
+        let mut span = Span { buf, at: start, cap: None };
+        if start > buf.len() { return None; }
+        let mut cells: Vec<Atom> = Vec::new();
+        let mut nest: Vec<usize> = Vec::new();
+        let mut marks: Vec<usize> = Vec::new();
+        let mut memo: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
+        let push = |cells: &mut Vec<Atom>, nest: &mut Vec<usize>, piece: Atom| {
+            nest.push(cells.len());
+            cells.push(piece);
+        };
+        let note = |memo: &mut std::collections::HashMap<i64, usize>, key: i64, tip: usize| -> Option<()> {
+            if key < 0 || key > 5_000_000 { return None; }
+            memo.insert(key, tip);
+            Some(())
+        };
+        let kind_of = |module: &str, name: &str| -> Option<Atom> {
+            if name == "len" && (module == "builtins" || (rewrite && module == "__builtin__")) { Some(Atom::Tail) }
+            else if module == "_codecs" && name == "encode" { Some(Atom::Coder) }
+            else { None }
+        };
+        while span.at < buf.len() {
+            span.release();
+            let op = span.pull(1)?[0];
+            match op {
+                b'.' => {
+                    if let Some(end) = span.cap { if span.at != end { return None; } }
+                    if !marks.is_empty() || nest.len() != 1 { return None; }
+                    let head = nest[0];
+                    let members = match &cells[head] { Atom::Chain(members) => members.clone(), _ => return None };
+                    if members.is_empty() { return None; }
+                    let ending = *members.last()?;
+                    if !matches!(&cells[ending], Atom::Tail) { return None; }
+                    let mut built = Vec::with_capacity(members.len() - 1);
+                    for &member in &members[..members.len() - 1] {
+                        match &cells[member] {
+                            Atom::Blob(payload) => built.push(self.octets(payload.clone(), false)),
+                            Atom::Group(duo) if duo.len() == 2 => {
+                                let &Atom::Int(ordinal) = &cells[duo[0]] else { return None };
+                                let Atom::Word(letters) = &cells[duo[1]] else { return None };
+                                built.push(Value::tuple(vec![Value::Small(ordinal), Value::text(letters)]));
+                            }
+                            _ => return None,
+                        }
+                    }
+                    return Some((built, span.at));
+                }
+                b'(' => marks.push(nest.len()),
+                b']' => push(&mut cells, &mut nest, Atom::Chain(Vec::new())),
+                b'l' => {
+                    let at = marks.pop()?;
+                    if at > nest.len() { return None; }
+                    let members = nest.split_off(at);
+                    push(&mut cells, &mut nest, Atom::Chain(members));
+                }
+                b'a' => {
+                    let held = nest.pop()?;
+                    let row = *nest.last()?;
+                    match &mut cells[row] { Atom::Chain(members) => members.push(held), _ => return None }
+                }
+                b'e' => {
+                    let at = marks.pop()?;
+                    if at > nest.len() { return None; }
+                    let group = nest.split_off(at);
+                    let row = *nest.last()?;
+                    match &mut cells[row] { Atom::Chain(members) => members.extend(group), _ => return None }
+                }
+                b't' => {
+                    let at = marks.pop()?;
+                    if at > nest.len() { return None; }
+                    let members = nest.split_off(at);
+                    push(&mut cells, &mut nest, Atom::Group(members));
+                }
+                b'\x85' | b'\x86' | b'\x87' => {
+                    let count = (op - 0x84) as usize;
+                    if nest.len() < count { return None; }
+                    let members = nest.split_off(nest.len() - count);
+                    push(&mut cells, &mut nest, Atom::Group(members));
+                }
+                b'K' => { let n = span.pull(1)?[0] as i64; push(&mut cells, &mut nest, Atom::Int(n)); }
+                b'M' => {
+                    let raw = span.pull(2)?;
+                    push(&mut cells, &mut nest, Atom::Int(u16::from_le_bytes([raw[0], raw[1]]) as i64));
+                }
+                b'J' => {
+                    let raw = span.pull(4)?;
+                    push(&mut cells, &mut nest, Atom::Int(i32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as i64));
+                }
+                b'I' => {
+                    let cut = span.cut()?;
+                    if cut == b"00" || cut == b"01" { return None; }
+                    let letters = std::str::from_utf8(cut).ok()?;
+                    let ordinal = letters.parse::<i64>().ok()?;
+                    push(&mut cells, &mut nest, Atom::Int(ordinal));
+                }
+                b'V' => {
+                    let cut = span.cut()?;
+                    if cut.contains(&b'\\') { return None; }
+                    let letters = std::str::from_utf8(cut).ok()?.to_owned();
+                    push(&mut cells, &mut nest, Atom::Word(letters));
+                }
+                b'\x8c' => {
+                    let n = span.pull(1)?[0] as usize;
+                    let letters = std::str::from_utf8(span.pull(n)?).ok()?.to_owned();
+                    push(&mut cells, &mut nest, Atom::Word(letters));
+                }
+                b'X' => {
+                    let raw = span.pull(4)?;
+                    let n = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize;
+                    let letters = std::str::from_utf8(span.pull(n)?).ok()?.to_owned();
+                    push(&mut cells, &mut nest, Atom::Word(letters));
+                }
+                b'C' => {
+                    let n = span.pull(1)?[0] as usize;
+                    push(&mut cells, &mut nest, Atom::Blob(span.pull(n)?.to_vec()));
+                }
+                b'B' => {
+                    let raw = span.pull(4)?;
+                    let n = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize;
+                    push(&mut cells, &mut nest, Atom::Blob(span.pull(n)?.to_vec()));
+                }
+                b'\x94' => {
+                    let tip = *nest.last()?;
+                    let fresh = memo.len() as i64;
+                    note(&mut memo, fresh, tip)?;
+                }
+                b'q' => {
+                    let key = span.pull(1)?[0] as i64;
+                    let tip = *nest.last()?;
+                    note(&mut memo, key, tip)?;
+                }
+                b'r' => {
+                    let raw = span.pull(4)?;
+                    let key = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as i64;
+                    let tip = *nest.last()?;
+                    note(&mut memo, key, tip)?;
+                }
+                b'p' => {
+                    let cut = span.cut()?;
+                    let key = std::str::from_utf8(cut).ok()?.parse::<i64>().ok()?;
+                    let tip = *nest.last()?;
+                    note(&mut memo, key, tip)?;
+                }
+                b'h' => {
+                    let key = span.pull(1)?[0] as i64;
+                    nest.push(*memo.get(&key)?);
+                }
+                b'j' => {
+                    let raw = span.pull(4)?;
+                    let key = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as i64;
+                    nest.push(*memo.get(&key)?);
+                }
+                b'g' => {
+                    let cut = span.cut()?;
+                    let key = std::str::from_utf8(cut).ok()?.parse::<i64>().ok()?;
+                    nest.push(*memo.get(&key)?);
+                }
+                b'c' => {
+                    let module = std::str::from_utf8(span.cut()?).ok()?;
+                    let name = std::str::from_utf8(span.cut()?).ok()?;
+                    push(&mut cells, &mut nest, kind_of(module, name)?);
+                }
+                b'\x93' => {
+                    let name_at = nest.pop()?;
+                    let module_at = nest.pop()?;
+                    let name = match &cells[name_at] { Atom::Word(letters) => letters.clone(), _ => return None };
+                    let module = match &cells[module_at] { Atom::Word(letters) => letters.clone(), _ => return None };
+                    push(&mut cells, &mut nest, kind_of(&module, &name)?);
+                }
+                b'R' => {
+                    let args_at = nest.pop()?;
+                    let coder_at = nest.pop()?;
+                    if !matches!(&cells[coder_at], Atom::Coder) { return None; }
+                    let (letters, codec_name) = match &cells[args_at] {
+                        Atom::Group(duo) if duo.len() == 2 => {
+                            let Atom::Word(letters) = &cells[duo[0]] else { return None };
+                            let Atom::Word(codec_name) = &cells[duo[1]] else { return None };
+                            (letters.clone(), codec_name.clone())
+                        }
+                        _ => return None,
+                    };
+                    let raw = match codec_name.as_str() {
+                        "latin1" => {
+                            let mut raw = Vec::with_capacity(letters.len());
+                            for ch in letters.chars() {
+                                let code = ch as u32;
+                                if code > 255 { return None; }
+                                raw.push(code as u8);
+                            }
+                            raw
+                        }
+                        "ascii" => { if !letters.is_ascii() { return None; } letters.into_bytes() }
+                        "utf-8" | "utf8" => letters.into_bytes(),
+                        _ => return None,
+                    };
+                    push(&mut cells, &mut nest, Atom::Blob(raw));
+                }
+                b'\x80' => { let proto = span.pull(1)?[0]; if proto > 5 { return None; } }
+                b'\x95' => {
+                    if span.cap.is_some() { return None; }
+                    let raw = span.pull(8)?;
+                    let mut wide = [0u8; 8];
+                    wide.copy_from_slice(raw);
+                    let size = usize::try_from(u64::from_le_bytes(wide)).ok()?;
+                    if size > span.left() { return None; }
+                    span.cap = Some(span.at + size);
+                }
+                _ => return None,
+            }
+        }
+        None
+    }
+
+
+    fn scribe_plain(&self, supplied: &[Value]) -> Result<Value, String> {
+        use std::collections::HashSet;
+        let [obj, Value::Small(proto), _, _, Value::Small(8)] = supplied else { return Ok(Value::Nil); };
+        if *proto < 4 || *proto > 5 { return Ok(Value::Nil); }
+        struct Sheet {
+            written: Vec<u8>,
+            pending: Vec<u8>,
+            noted: HashMap<(u8, usize), i32>,
+            busy: HashSet<(u8, usize)>,
+            level: u32,
+        }
+        impl Sheet {
+            fn flush_ready(&mut self) {
+                if self.pending.len() < 65536 { return; }
+                Machine::spill_int_frame(&mut self.pending, &mut self.written);
+            }
+            fn flush_forced(&mut self) {
+                if self.pending.is_empty() { return; }
+                Machine::spill_int_frame(&mut self.pending, &mut self.written);
+            }
+            fn emit_whole(&mut self, number: i64) -> bool {
+                let class = if (0..256).contains(&number) {
+                    1
+                } else if (0..65536).contains(&number) {
+                    2
+                } else if (-2147483648..=2147483647).contains(&number) {
+                    3
+                } else {
+                    0
+                };
+                match class {
+                    1 => self.pending.extend_from_slice(&[b'K', number as u8]),
+                    2 => {
+                        self.pending.push(b'M');
+                        self.pending.extend_from_slice(&(number as u16).to_le_bytes());
+                    }
+                    3 => {
+                        self.pending.push(b'J');
+                        self.pending.extend_from_slice(&(number as i32).to_le_bytes());
+                    }
+                    _ => return false,
+                }
+                true
+            }
+            fn cite(&mut self, index: i32) {
+                if index < 256 {
+                    self.pending.extend_from_slice(&[b'h', index as u8]);
+                } else {
+                    self.pending.push(b'j');
+                    self.pending.extend_from_slice(&(index as u32).to_le_bytes());
+                }
+            }
+            fn remember(&mut self, id: (u8, usize)) -> bool {
+                let Ok(fresh) = i32::try_from(self.noted.len()) else { return false; };
+                self.pending.push(0x94);
+                self.noted.insert(id, fresh);
+                true
+            }
+            fn direct(&mut self, header: &[u8], payload: &[u8]) {
+                self.flush_forced();
+                self.written.extend_from_slice(header);
+                self.written.extend_from_slice(payload);
+            }
+            fn identify(value: &Value) -> Option<(u8, usize)> {
+                match value {
+                    Value::Text(text) => Some((4, text.as_ptr() as usize)),
+                    Value::Octets { cell, changeable: false, .. } => Some((5, Rc::as_ptr(cell) as usize)),
+                    Value::Vector(row) => Some((1, Rc::as_ptr(row) as usize)),
+                    Value::Dict(store) => Some((3, Rc::as_ptr(store) as usize)),
+                    Value::Tuple(row) => Some((2, Rc::as_ptr(row) as usize)),
+                    _ => None,
+                }
+            }
+            fn store_chars(&mut self, text: &str, id: (u8, usize)) -> bool {
+                let raw = text.as_bytes();
+                let width = raw.len();
+                if width >= 65536 {
+                    let mut header = Vec::new();
+                    if width > u32::MAX as usize {
+                        header.push(0x8d);
+                        header.extend_from_slice(&(width as u64).to_le_bytes());
+                    } else {
+                        header.push(b'X');
+                        header.extend_from_slice(&(width as u32).to_le_bytes());
+                    }
+                    self.direct(&header, raw);
+                } else if width < 256 {
+                    self.pending.push(0x8c);
+                    self.pending.push(width as u8);
+                    self.pending.extend_from_slice(raw);
+                } else {
+                    self.pending.push(b'X');
+                    self.pending.extend_from_slice(&(width as u32).to_le_bytes());
+                    self.pending.extend_from_slice(raw);
+                }
+                self.remember(id)
+            }
+            fn store_octets(&mut self, raw: &[u8], id: (u8, usize)) -> bool {
+                let width = raw.len();
+                if width >= 65536 {
+                    let mut header = Vec::new();
+                    if width > u32::MAX as usize {
+                        header.push(0x8e);
+                        header.extend_from_slice(&(width as u64).to_le_bytes());
+                    } else {
+                        header.push(b'B');
+                        header.extend_from_slice(&(width as u32).to_le_bytes());
+                    }
+                    self.direct(&header, raw);
+                } else if width < 256 {
+                    self.pending.push(b'C');
+                    self.pending.push(width as u8);
+                    self.pending.extend_from_slice(raw);
+                } else {
+                    self.pending.push(b'B');
+                    self.pending.extend_from_slice(&(width as u32).to_le_bytes());
+                    self.pending.extend_from_slice(raw);
+                }
+                self.remember(id)
+            }
+            fn store_vector(&mut self, row: &crate::tuples::Sequence, id: (u8, usize)) -> bool {
+                self.pending.push(b']');
+                if !self.remember(id) { return false; }
+                let total = row.len();
+                let mut origin = 0usize;
+                while origin < total {
+                    let stop = total.min(origin + 1000);
+                    if stop == origin + 1 {
+                        if !self.write_value(&row[origin]) { return false; }
+                        self.pending.push(b'a');
+                    } else {
+                        self.pending.push(b'(');
+                        for slot in origin..stop {
+                            if !self.write_value(&row[slot]) { return false; }
+                        }
+                        self.pending.push(b'e');
+                    }
+                    origin = stop;
+                }
+                true
+            }
+            fn store_dict(&mut self, store: &Rc<MapStore>, id: (u8, usize)) -> bool {
+                self.pending.push(b'}');
+                if !self.remember(id) { return false; }
+                let entries = store.pairs();
+                let total = entries.len();
+                let mut origin = 0usize;
+                while origin < total {
+                    let stop = total.min(origin + 1000);
+                    if stop == origin + 1 {
+                        if !self.write_value(&entries[origin].0) || !self.write_value(&entries[origin].1) {
+                            return false;
+                        }
+                        self.pending.push(b's');
+                    } else {
+                        self.pending.push(b'(');
+                        for slot in origin..stop {
+                            let pair = &entries[slot];
+                            if !self.write_value(&pair.0) || !self.write_value(&pair.1) { return false; }
+                        }
+                        self.pending.push(b'u');
+                    }
+                    origin = stop;
+                }
+                true
+            }
+            fn store_tuple(&mut self, row: &crate::tuples::Sequence, id: (u8, usize)) -> bool {
+                let total = row.len();
+                if total == 0 {
+                    self.pending.push(b')');
+                    return true;
+                }
+                let small = total <= 3;
+                if !small { self.pending.push(b'('); }
+                for slot in 0..total {
+                    if !self.write_value(&row[slot]) { return false; }
+                }
+                if let Some(index) = self.noted.get(&id).copied() {
+                    if small {
+                        self.pending.extend(std::iter::repeat(b'0').take(total));
+                    } else {
+                        self.pending.push(b'1');
+                    }
+                    self.cite(index);
+                    return true;
+                }
+                if small {
+                    self.pending.push(0x84 + total as u8);
+                } else {
+                    self.pending.push(b't');
+                }
+                self.remember(id)
+            }
+            fn write_value(&mut self, raw: &Value) -> bool {
+                if self.level >= 400 { return false; }
+                self.flush_ready();
+                let value = raw.settled();
+                match &value {
+                    Value::Small(number) => return self.emit_whole(*number),
+                    Value::Flag(bit) => {
+                        self.pending.push(if *bit { 0x88 } else { 0x89 });
+                        return true;
+                    }
+                    Value::Nil => {
+                        self.pending.push(b'N');
+                        return true;
+                    }
+                    Value::Tuple(row) if row.is_empty() => {
+                        self.pending.push(b')');
+                        return true;
+                    }
+                    Value::Text(_) | Value::Octets { changeable: false, .. } | Value::Vector(_) | Value::Dict(_) | Value::Tuple(_) => {}
+                    _ => return false,
+                }
+                let Some(id) = Self::identify(&value) else { return false; };
+                if let Some(index) = self.noted.get(&id).copied() {
+                    self.cite(index);
+                    return true;
+                }
+                if !self.busy.insert(id) { return false; }
+                self.level += 1;
+                let stored = match &value {
+                    Value::Text(text) => self.store_chars(text, id),
+                    Value::Octets { cell, changeable: false, .. } => {
+                        let owned = cell.borrow().clone();
+                        self.store_octets(&owned, id)
+                    }
+                    Value::Vector(row) => self.store_vector(row, id),
+                    Value::Dict(store) => self.store_dict(store, id),
+                    Value::Tuple(row) => self.store_tuple(row, id),
+                    _ => false,
+                };
+                self.level -= 1;
+                self.busy.remove(&id);
+                stored
+            }
+        }
+        let mut sheet = Sheet {
+            written: Vec::new(),
+            pending: Vec::with_capacity(65536 + 64),
+            noted: HashMap::new(),
+            busy: HashSet::new(),
+            level: 0,
+        };
+        sheet.written.extend_from_slice(&[0x80, *proto as u8]);
+        if !sheet.write_value(obj) { return Ok(Value::Nil); }
+        sheet.pending.push(b'.');
+        if !sheet.pending.is_empty() {
+            Machine::spill_int_frame(&mut sheet.pending, &mut sheet.written);
+        }
+        Ok(self.octets(sheet.written, false))
+    }
+
+    fn rebuild_plain(&self, supplied: &[Value]) -> Result<Value, String> {
+        let (cell, origin, closed) = match supplied {
+            [Value::Octets { cell, .. }, Value::Small(origin), _, Value::Flag(closed), Value::Small(10)] => (cell, *origin, *closed),
+            _ => return Ok(Value::Nil),
+        };
+        if closed { return Ok(Value::Nil); }
+        let Ok(start) = usize::try_from(origin) else { return Ok(Value::Nil); };
+        enum Piece { Int(i64), Word(String), Blob(Vec<u8>), On, Off, Zilch, Unit, Chain(Vec<u32>), Table(Vec<(u32, u32)>), Group(Vec<u32>) }
+        struct Window<'a> { buf: &'a [u8], at: usize, cap: Option<usize> }
+        impl<'a> Window<'a> {
+            fn clear_cap(&mut self) {
+                match self.cap {
+                    Some(end) if self.at >= end => self.cap = None,
+                    _ => {}
+                }
+            }
+            fn remain(&self) -> usize {
+                let end = self.cap.unwrap_or(self.buf.len()).min(self.buf.len());
+                end.saturating_sub(self.at)
+            }
+            fn pull(&mut self, count: usize) -> Option<&'a [u8]> {
+                if count > self.remain() { return None; }
+                let end = self.at + count;
+                let part = &self.buf[self.at..end];
+                self.at = end;
+                Some(part)
+            }
+        }
+        fn place_piece(cells: &mut Vec<Piece>, nest: &mut Vec<u32>, piece: Piece) -> Option<()> {
+            if cells.len() >= 2_000_000 { return None; }
+            nest.push(u32::try_from(cells.len()).ok()?);
+            cells.push(piece);
+            Some(())
+        }
+        let bytes = cell.borrow();
+        if start > bytes.len() { return Ok(Value::Nil); }
+        let parsed = (|| {
+            let mut window = Window { buf: &bytes, at: start, cap: None };
+            let mut cells: Vec<Piece> = Vec::new();
+            let mut nest: Vec<u32> = Vec::new();
+            let mut gaps: Vec<usize> = Vec::new();
+            let mut book: Vec<u32> = Vec::new();
+            while window.at < window.buf.len() {
+                window.clear_cap();
+                let op = window.pull(1)?[0];
+                match op {
+                    b'.' => {
+                        if let Some(end) = window.cap { if window.at != end { return None; } }
+                        if !gaps.is_empty() || nest.len() != 1 { return None; }
+                        return Some((cells, nest[0], book, window.at));
+                    }
+                    0x80 => {
+                        let proto = window.pull(1)?[0];
+                        if proto < 4 || proto > 5 { return None; }
+                    }
+                    0x95 => {
+                        if window.cap.is_some() { return None; }
+                        let raw = window.pull(8)?;
+                        let mut wide = [0u8; 8];
+                        wide.copy_from_slice(raw);
+                        let size = usize::try_from(u64::from_le_bytes(wide)).ok()?;
+                        if size > window.remain() { return None; }
+                        window.cap = Some(window.at + size);
+                    }
+                    b'(' => gaps.push(nest.len()),
+                    b']' => place_piece(&mut cells, &mut nest, Piece::Chain(Vec::new()))?,
+                    b'}' => place_piece(&mut cells, &mut nest, Piece::Table(Vec::new()))?,
+                    b')' => place_piece(&mut cells, &mut nest, Piece::Unit)?,
+                    b'N' => place_piece(&mut cells, &mut nest, Piece::Zilch)?,
+                    0x88 => place_piece(&mut cells, &mut nest, Piece::On)?,
+                    0x89 => place_piece(&mut cells, &mut nest, Piece::Off)?,
+                    b'a' => {
+                        let child = nest.pop()?;
+                        let row = *nest.last()?;
+                        if let Piece::Chain(items) = &mut cells[row as usize] { items.push(child); } else { return None; }
+                    }
+                    b'e' => {
+                        let at = gaps.pop()?;
+                        if at > nest.len() { return None; }
+                        let batch = nest.split_off(at);
+                        let row = *nest.last()?;
+                        if let Piece::Chain(items) = &mut cells[row as usize] { items.extend(batch); } else { return None; }
+                    }
+                    b's' => {
+                        let val = nest.pop()?;
+                        let key = nest.pop()?;
+                        let row = *nest.last()?;
+                        if let Piece::Table(items) = &mut cells[row as usize] { items.push((key, val)); } else { return None; }
+                    }
+                    b'u' => {
+                        let at = gaps.pop()?;
+                        if at > nest.len() { return None; }
+                        let batch = nest.split_off(at);
+                        if batch.len() % 2 != 0 { return None; }
+                        let row = *nest.last()?;
+                        let Piece::Table(items) = &mut cells[row as usize] else { return None; };
+                        let mut pair = 0usize;
+                        while pair < batch.len() {
+                            items.push((batch[pair], batch[pair + 1]));
+                            pair += 2;
+                        }
+                    }
+                    b't' => {
+                        let at = gaps.pop()?;
+                        if at > nest.len() { return None; }
+                        let grouped = nest.split_off(at);
+                        place_piece(&mut cells, &mut nest, Piece::Group(grouped))?;
+                    }
+                    0x85 | 0x86 | 0x87 => {
+                        let width = usize::from(op - 0x84);
+                        if nest.len() < width { return None; }
+                        let items = nest.split_off(nest.len() - width);
+                        place_piece(&mut cells, &mut nest, Piece::Group(items))?;
+                    }
+                    b'K' => {
+                        let number = i64::from(window.pull(1)?[0]);
+                        place_piece(&mut cells, &mut nest, Piece::Int(number))?;
+                    }
+                    b'M' => {
+                        let raw = window.pull(2)?;
+                        let number = i64::from(u16::from_le_bytes([raw[0], raw[1]]));
+                        place_piece(&mut cells, &mut nest, Piece::Int(number))?;
+                    }
+                    b'J' => {
+                        let raw = window.pull(4)?;
+                        let number = i64::from(i32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]));
+                        place_piece(&mut cells, &mut nest, Piece::Int(number))?;
+                    }
+                    0x8c => {
+                        let width = usize::from(window.pull(1)?[0]);
+                        let word = std::str::from_utf8(window.pull(width)?).ok()?.to_owned();
+                        place_piece(&mut cells, &mut nest, Piece::Word(word))?;
+                    }
+                    b'X' | 0x8d => {
+                        let wide_form = op != b'X';
+                        let raw = window.pull(if wide_form { 8 } else { 4 })?;
+                        let mut wide = [0u8; 8];
+                        wide[..raw.len()].copy_from_slice(raw);
+                        let width = usize::try_from(u64::from_le_bytes(wide)).ok()?;
+                        let word = std::str::from_utf8(window.pull(width)?).ok()?.to_owned();
+                        place_piece(&mut cells, &mut nest, Piece::Word(word))?;
+                    }
+                    b'C' => {
+                        let width = usize::from(window.pull(1)?[0]);
+                        place_piece(&mut cells, &mut nest, Piece::Blob(window.pull(width)?.to_vec()))?;
+                    }
+                    b'B' | 0x8e => {
+                        let wide_form = op != b'B';
+                        let raw = window.pull(if wide_form { 8 } else { 4 })?;
+                        let mut wide = [0u8; 8];
+                        wide[..raw.len()].copy_from_slice(raw);
+                        let width = usize::try_from(u64::from_le_bytes(wide)).ok()?;
+                        place_piece(&mut cells, &mut nest, Piece::Blob(window.pull(width)?.to_vec()))?;
+                    }
+                    0x94 => book.push(*nest.last()?),
+                    b'h' => {
+                        let index = usize::from(window.pull(1)?[0]);
+                        nest.push(*book.get(index)?);
+                    }
+                    b'j' => {
+                        let raw = window.pull(4)?;
+                        let index = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize;
+                        nest.push(*book.get(index)?);
+                    }
+                    _ => return None,
+                }
+            }
+            None
+        })();
+        drop(bytes);
+        let Some((cells, root, book, end)) = parsed else { return Ok(Value::Nil); };
+        fn compose<'b>(machine: &Machine<'b>, cells: &[Piece], index: usize, cache: &mut Vec<Option<Value>>, depth: u32) -> Option<Value> {
+            if depth > 400 || index >= cells.len() { return None; }
+            if let Some(done) = cache[index].clone() { return Some(done); }
+            let built = match &cells[index] {
+                Piece::Int(number) => Value::Small(*number),
+                Piece::On => Value::Flag(true),
+                Piece::Off => Value::Flag(false),
+                Piece::Zilch => Value::Nil,
+                Piece::Unit => Value::tuple(Vec::new()),
+                Piece::Word(text) => Value::text(text),
+                Piece::Blob(payload) => machine.octets(payload.clone(), false),
+                Piece::Chain(children) => {
+                    let kids = children.clone();
+                    let mut row = Vec::with_capacity(kids.len());
+                    for child in kids {
+                        row.push(compose(machine, cells, child as usize, cache, depth + 1)?);
+                    }
+                    Value::Vector(crate::tuples::Sequence::plain(row))
+                }
+                Piece::Table(children) => {
+                    let kids = children.clone();
+                    let mut rows = Vec::with_capacity(kids.len());
+                    for (key, val) in kids {
+                        let left = compose(machine, cells, key as usize, cache, depth + 1)?;
+                        let right = compose(machine, cells, val as usize, cache, depth + 1)?;
+                        rows.push((left, right));
+                    }
+                    Value::Dict(Rc::new(rows.into()))
+                }
+                Piece::Group(children) => {
+                    let kids = children.clone();
+                    let mut row = Vec::with_capacity(kids.len());
+                    for child in kids {
+                        row.push(compose(machine, cells, child as usize, cache, depth + 1)?);
+                    }
+                    Value::tuple(row)
+                }
+            };
+            cache[index] = Some(built.clone());
+            Some(built)
+        }
+        let mut cache = vec![None; cells.len()];
+        let mut memo = Vec::with_capacity(book.len());
+        for node in &book {
+            let Some(item) = compose(self, &cells, *node as usize, &mut cache, 0) else { return Ok(Value::Nil); };
+            memo.push(item);
+        }
+        let Some(body) = compose(self, &cells, root as usize, &mut cache, 0) else { return Ok(Value::Nil); };
+        let Ok(at) = i64::try_from(end) else { return Ok(Value::Nil); };
+        Ok(Value::tuple(vec![body, Value::Small(at), Value::Vector(crate::tuples::Sequence::plain(memo))]))
+    }
+    fn framed_int_rows(nums: &[i64], proto: u8) -> Vec<u8> {
+        let mut written = Vec::with_capacity(nums.len().saturating_mul(4).saturating_add(64));
+        written.extend_from_slice(&[0x80, proto]);
+        let mut pending = Vec::with_capacity(64 * 1024 + 16);
+        pending.extend_from_slice(&[b']', 0x94]);
+        let mut cursor = 0usize;
+        while cursor < nums.len() {
+            let stop = (cursor + 1000).min(nums.len());
+            let single = stop == cursor + 1;
+            if !single { pending.push(b'('); }
+            let mut j = cursor;
+            while j < stop {
+                if pending.len() >= 65536 { Self::spill_int_frame(&mut pending, &mut written); }
+                let n = nums[j];
+                if n <= 0xff { pending.push(b'K'); pending.push(n as u8); }
+                else if n <= 0xffff { pending.push(b'M'); pending.extend_from_slice(&(n as u16).to_le_bytes()); }
+                else { pending.push(b'J'); pending.extend_from_slice(&(n as i32).to_le_bytes()); }
+                j += 1;
+            }
+            pending.push(if single { b'a' } else { b'e' });
+            cursor = stop;
+        }
+        pending.push(b'.');
+        if !pending.is_empty() { Self::spill_int_frame(&mut pending, &mut written); }
+        written
+    }
+
+    fn spill_int_frame(pending: &mut Vec<u8>, written: &mut Vec<u8>) {
+        if pending.is_empty() { return; }
+        if pending.len() >= 4 {
+            written.push(0x95);
+            written.extend_from_slice(&(pending.len() as u64).to_le_bytes());
+        }
+        written.append(pending);
+    }
+
+    fn pickle_framed_list(&self, supplied: &[Value]) -> Result<Value, String> {
+        let [obj, Value::Small(proto), _, _, Value::Small(7)] = supplied else { return Ok(Value::Nil); };
+        if !(4..=5).contains(proto) { return Ok(Value::Nil); }
+        let Value::Vector(items) = obj.settled() else { return Ok(Value::Nil); };
+        let mut values = Vec::with_capacity(items.len());
+        for item in items.iter() {
+            match item.settled() {
+                Value::Small(number) if (0..=0x7fff_ffff).contains(&number) => values.push(number),
+                _ => return Ok(Value::Nil),
+            }
+        }
+        Ok(self.octets(Self::framed_int_rows(&values, *proto as u8), false))
     }
 
     // Keep memory-stream transfers proportional to the bytes requested or supplied.
@@ -18513,6 +19331,10 @@ impl<'a> Machine<'a> {
                 return Ok(Value::Flag(equal ^ inverted));
             }
             3 => return self.gather_octet_fields(supplied),
+            7 => return self.pickle_framed_list(supplied),
+            8 => return self.scribe_plain(supplied),
+            9 => return self.rebuild_len_list(supplied),
+            10 => return self.rebuild_plain(supplied),
             _ => {}
         }
         if supplied.len() != 5 { return Err("TypeError: invalid memory stream arguments".to_owned()); }

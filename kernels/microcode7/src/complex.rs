@@ -238,11 +238,7 @@ pub fn create(t: &Table, input: &[Value]) -> Result<Value,String> {
 }
 
 pub fn decimal_value(number: f64) -> Value {
-    let value = data::worth_of_binary(number,math::DEFAULT_PLACES);
-    if let Value::Frac(mut parts) = value {
-        Rc::make_mut(&mut parts).pointed = true;
-        Value::Frac(parts)
-    } else { value }
+    data::worth_of_binary(number,math::DEFAULT_PLACES).keeping_point(true)
 }
 
 /// How far the pair sits from the origin. Any error number the host still

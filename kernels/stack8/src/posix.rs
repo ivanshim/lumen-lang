@@ -71,8 +71,10 @@ fn integer(value: &Value) -> Result<i64, String> {
         _ => Err("TypeError: an integer is required".into()),
     }
 }
+// Read the current operating-system error, with the existing fallback.
+fn errno() -> i32 { std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO) }
 fn status(result: i64) -> Result<Value, i32> {
-    if result < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+    if result < 0 { Err(errno()) }
     else { Ok(Value::Small(result)) }
 }
 fn stat_fields(info: libc::stat) -> Value {
@@ -172,7 +174,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
 
         "socket_hostname" => {
             let mut buffer = vec![0u8; 256];
-            if libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) != 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            if libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) != 0 { Err(errno()) }
             else { let length = buffer.iter().position(|byte| *byte == 0).unwrap_or(buffer.len()); buffer.truncate(length); Ok(bytes(buffer)) }
         },
         "socket_hostbyaddr" => Ok(host_by_address(&a[0])?),
@@ -200,7 +202,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
         "times" => {
             let mut spent: libc::tms = std::mem::zeroed();
             let clock = libc::times(&mut spent);
-            if clock < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            if clock < 0 { Err(errno()) }
             else {
                 let rate = libc::sysconf(libc::_SC_CLK_TCK) as f64;
                 let rate = if rate > 0.0 { rate } else { 100.0 };
@@ -295,7 +297,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
                 if ready >= 0 {
                     break Ok(Value::tuple(vec![awake(&rfds, &reads), awake(&wfds, &writes), awake(&efds, &extras)]));
                 }
-                let fault = std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+                let fault = errno();
                 if fault != libc::EINTR { break Err(fault); }
                 check_signals()?;
                 if let Some(limit) = deadline {
@@ -384,7 +386,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
             let mut data = vec![0u8; 256];
             loop {
                 let size = libc::readlinkat(number(1)? as i32, p.as_ptr(), data.as_mut_ptr().cast(), data.len());
-                if size < 0 { break Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)); }
+                if size < 0 { break Err(errno()); }
                 if (size as usize) < data.len() { data.truncate(size as usize); break Ok(bytes(data)); }
                 data.resize(data.len()*2, 0);
             }
@@ -411,7 +413,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
                     dir
                 }
             } else {libc::opendir(pathname(0)?.as_ptr())};
-            if directory.is_null() {Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO))}
+            if directory.is_null() {Err(errno())}
             else {Ok(DIRECTORIES.with(|held| {let mut held = held.borrow_mut(); held.0 += 1; let key = held.0; held.1.insert(key, Directory(directory, from_fd)); Value::Small(key)}))}
         },
         "scandir_next" => {
@@ -482,7 +484,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
         "get_inheritable" | "set_inheritable" => {
             let fd = number(0)? as i32;
             let flags = libc::fcntl(fd, libc::F_GETFD);
-            if flags < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            if flags < 0 { Err(errno()) }
             else if op.as_ref() == "get_inheritable" { Ok(Value::Flag(flags & libc::FD_CLOEXEC == 0)) }
             else {
                 let next = if a[1].is_true() { flags & !libc::FD_CLOEXEC } else { flags | libc::FD_CLOEXEC };
@@ -492,7 +494,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
         "get_blocking" | "set_blocking" => {
             let fd = number(0)? as i32;
             let flags = libc::fcntl(fd, libc::F_GETFL);
-            if flags < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
+            if flags < 0 { Err(errno()) }
             else if op.as_ref() == "get_blocking" { Ok(Value::Flag(flags & libc::O_NONBLOCK == 0)) }
             else {
                 let next = if a[1].is_true() { flags & !libc::O_NONBLOCK } else { flags | libc::O_NONBLOCK };
@@ -575,7 +577,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
         "socketpair" => {
             let mut fds = [0; 2];
             if libc::socketpair(number(0)? as _, number(1)? as i32 | libc::SOCK_CLOEXEC, number(2)? as _, fds.as_mut_ptr()) < 0 {
-                Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO))
+                Err(errno())
             } else { Ok(Value::tuple(fds.into_iter().map(|fd| Value::Small(fd.into())).collect())) }
         },
         "socket_shutdown" => status(libc::shutdown(number(0)? as _, number(1)? as _) as i64),
@@ -591,6 +593,142 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
                 Ok(Value::tuple(fds.iter().filter(|fd| fd.revents != 0).map(|fd| Value::tuple(vec![Value::Small(fd.fd.into()), Value::Small(fd.revents.into())])).collect()))
             }
         },
+        // Socket calls carry every address as the raw bytes of its sockaddr;
+        // the Python module packs and unpacks each family itself.
+        "sock_bind" | "sock_connect" => {
+            let address = raw(&a[1])?;
+            let span = address.len() as libc::socklen_t;
+            let rc = if op.as_ref() == "sock_bind" { libc::bind(number(0)? as i32, address.as_ptr().cast(), span) }
+                else { libc::connect(number(0)? as i32, address.as_ptr().cast(), span) };
+            status(rc as i64)
+        },
+        "sock_listen" => status(libc::listen(number(0)? as i32, number(1)? as i32) as i64),
+        "sock_accept" => {
+            let mut home = [0u8; 128];
+            let mut span = home.len() as libc::socklen_t;
+            status(libc::accept4(number(0)? as i32, home.as_mut_ptr().cast(), &mut span, libc::SOCK_CLOEXEC) as i64)
+                .map(|fd| Value::tuple(vec![fd, bytes(home[..span as usize].to_vec())]))
+        },
+        "sock_name" => {
+            let mut home = [0u8; 128];
+            let mut span = home.len() as libc::socklen_t;
+            let rc = if number(1)? == 0 { libc::getsockname(number(0)? as i32, home.as_mut_ptr().cast(), &mut span) }
+                else { libc::getpeername(number(0)? as i32, home.as_mut_ptr().cast(), &mut span) };
+            status(rc as i64).map(|_| bytes(home[..span as usize].to_vec()))
+        },
+        "sock_recv" | "sock_recvfrom" => {
+            let mut buffer = vec![0u8; number(1)? as usize];
+            let mut home = [0u8; 128];
+            let mut span = home.len() as libc::socklen_t;
+            let got = libc::recvfrom(number(0)? as i32, buffer.as_mut_ptr().cast(), buffer.len(), number(2)? as i32, home.as_mut_ptr().cast(), &mut span);
+            status(got as i64).map(|count| {
+                // MSG_TRUNC reports the whole datagram's length, beyond the buffer:
+                // the bytes stay capped and the count travels beside them.
+                buffer.truncate(got as usize);
+                let mut parts = vec![bytes(buffer)];
+                if op.as_ref() == "sock_recvfrom" { parts.push(bytes(home[..span as usize].to_vec())); }
+                parts.push(count);
+                Value::tuple(parts)
+            })
+        },
+        // send takes an optional offset so a long sendall never re-slices its buffer.
+        "sock_send" | "sock_sendto" => {
+            let whole = raw(&a[1])?;
+            let data = if op.as_ref() == "sock_send" && a.len() > 3 { &whole[(number(3)? as usize).min(whole.len())..] } else { &whole[..] };
+            let sent = if op.as_ref() == "sock_send" { libc::send(number(0)? as i32, data.as_ptr().cast(), data.len(), number(2)? as i32) }
+                else { let to = raw(&a[3])?; libc::sendto(number(0)? as i32, data.as_ptr().cast(), data.len(), number(2)? as i32, to.as_ptr().cast(), to.len() as libc::socklen_t) };
+            status(sent as i64)
+        },
+        "sock_setopt" => {
+            let value = raw(&a[3])?;
+            status(libc::setsockopt(number(0)? as i32, number(1)? as i32, number(2)? as i32, value.as_ptr().cast(), value.len() as libc::socklen_t) as i64)
+        },
+        "sock_getopt" => {
+            let mut value = vec![0u8; number(3)? as usize];
+            let mut span = value.len() as libc::socklen_t;
+            status(libc::getsockopt(number(0)? as i32, number(1)? as i32, number(2)? as i32, value.as_mut_ptr().cast(), &mut span) as i64)
+                .map(|_| { value.truncate(span as usize); bytes(value) })
+        },
+        "getaddrinfo" => {
+            let node = if matches!(a[0].contents(), Value::Null) { None } else { Some(pathname(0)?) };
+            let service = if matches!(a[1].contents(), Value::Null) { None } else { Some(pathname(1)?) };
+            let mut hints: libc::addrinfo = std::mem::zeroed();
+            hints.ai_family = number(2)? as i32;
+            hints.ai_socktype = number(3)? as i32;
+            hints.ai_protocol = number(4)? as i32;
+            hints.ai_flags = number(5)? as i32;
+            let mut found = std::ptr::null_mut();
+            let code = libc::getaddrinfo(node.as_ref().map_or(std::ptr::null(), |n| n.as_ptr()),
+                service.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()), &hints, &mut found);
+            if code != 0 { Ok(resolver_words(code)) } else {
+                let mut rows = Vec::new();
+                let mut cursor = found;
+                while let Some(entry) = cursor.as_ref() {
+                    let address = std::slice::from_raw_parts(entry.ai_addr.cast::<u8>(), entry.ai_addrlen as usize).to_vec();
+                    let canonical = if entry.ai_canonname.is_null() { Vec::new() } else { CStr::from_ptr(entry.ai_canonname).to_bytes().to_vec() };
+                    rows.push(Value::tuple(vec![Value::Small(entry.ai_family as i64), Value::Small(entry.ai_socktype as i64),
+                        Value::Small(entry.ai_protocol as i64), bytes(canonical), bytes(address)]));
+                    cursor = entry.ai_next;
+                }
+                libc::freeaddrinfo(found);
+                Ok(Value::tuple(vec![Value::Small(0), Value::array(rows)]))
+            }
+        },
+        "getnameinfo" => {
+            let address = raw(&a[0])?;
+            let mut host = [0 as libc::c_char; 1025];
+            let mut service = [0 as libc::c_char; 32];
+            let code = libc::getnameinfo(address.as_ptr().cast(), address.len() as libc::socklen_t, host.as_mut_ptr(), host.len() as libc::socklen_t,
+                service.as_mut_ptr(), service.len() as libc::socklen_t, number(1)? as i32);
+            Ok(if code != 0 { resolver_words(code) } else {
+                Value::tuple(vec![Value::Small(0), bytes(CStr::from_ptr(host.as_ptr()).to_bytes().to_vec()), bytes(CStr::from_ptr(service.as_ptr()).to_bytes().to_vec())])
+            })
+        },
+        // Numeric address text: family 0 reads the lenient inet_aton forms,
+        // AF_INET and AF_INET6 the strict inet_pton ones; None means invalid.
+        "inet_packed" => {
+            let text = pathname(1)?;
+            let family = number(0)? as i32;
+            if family == 0 {
+                let mut quad: libc::in_addr = std::mem::zeroed();
+                Ok(if inet_aton(text.as_ptr(), &mut quad) == 0 { Value::Null } else { bytes(quad.s_addr.to_ne_bytes().to_vec()) })
+            } else {
+                let mut packed = [0u8; 16];
+                match inet_pton(family, text.as_ptr(), packed.as_mut_ptr().cast()) {
+                    1 => Ok(bytes(packed[..if family == libc::AF_INET { 4 } else { 16 }].to_vec())),
+                    0 => Ok(Value::Null),
+                    _ => Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)),
+                }
+            }
+        },
+        "inet_text" => {
+            let packed = raw(&a[1])?;
+            let mut shown = [0 as libc::c_char; 46];
+            if inet_ntop(number(0)? as i32, packed.as_ptr().cast(), shown.as_mut_ptr(), shown.len() as libc::socklen_t).is_null() {
+                Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO))
+            } else { Ok(Value::text(&CStr::from_ptr(shown.as_ptr()).to_string_lossy())) }
+        },
+        // The services and protocols databases: 0 name to port, 1 port to
+        // name, 2 protocol name to number; None when there is no entry.
+        "sock_db" => {
+            let protocol = if matches!(a[2].contents(), Value::Null) { None } else { Some(pathname(2)?) };
+            let protocol_name = protocol.as_ref().map_or(std::ptr::null(), |p| p.as_ptr());
+            match number(0)? {
+                0 => {
+                    let entry = libc::getservbyname(pathname(1)?.as_ptr(), protocol_name);
+                    Ok(if entry.is_null() { Value::Null } else { Value::Small(u16::from_be((*entry).s_port as u16) as i64) })
+                },
+                1 => {
+                    let entry = libc::getservbyport(i32::from((number(1)? as u16).to_be()), protocol_name);
+                    Ok(if entry.is_null() { Value::Null } else { bytes(CStr::from_ptr((*entry).s_name).to_bytes().to_vec()) })
+                },
+                _ => {
+                    let entry = libc::getprotobyname(pathname(1)?.as_ptr());
+                    Ok(if entry.is_null() { Value::Null } else { Value::Small((*entry).p_proto as i64) })
+                },
+            }
+        },
+        "socket_hostbyname" => Ok(host_by_name(&a[0])?),
         _ => return Err("NotImplementedError: unknown POSIX operation".into()),
     }};
     Ok(match output { Ok(value) => Value::tuple(vec![Value::Small(0), value]), Err(e) => Value::tuple(vec![Value::Small(e as i64), Value::Null]) })
@@ -604,30 +742,32 @@ unsafe extern "C" {
         result: *mut *mut libc::hostent, error: *mut libc::c_int) -> libc::c_int;
     #[link_name = "hstrerror"]
     fn host_error_words(code: libc::c_int) -> *const libc::c_char;
+    #[link_name = "gethostbyname_r"]
+    fn name_host(name: *const libc::c_char, entry: *mut libc::hostent, buffer: *mut libc::c_char, size: usize,
+        result: *mut *mut libc::hostent, error: *mut libc::c_int) -> libc::c_int;
+    fn inet_aton(text: *const libc::c_char, address: *mut libc::in_addr) -> libc::c_int;
+    fn inet_pton(family: libc::c_int, text: *const libc::c_char, packed: *mut libc::c_void) -> libc::c_int;
+    fn inet_ntop(family: libc::c_int, packed: *const libc::c_void, text: *mut libc::c_char, size: libc::socklen_t) -> *const libc::c_char;
 }
 
 // Return real host entries, or a categorized resolver error for the Python adapter.
 fn host_by_address(input: &Value) -> Result<Value, String> {
     let name = CString::new(raw(input)?).map_err(|_| "ValueError: embedded null byte")?;
-    let failure = |kind: i64, code: i32, message: *const libc::c_char| {
-        let words = unsafe { if message.is_null() { Vec::new() } else { CStr::from_ptr(message).to_bytes().to_vec() } };
-        Value::tuple(vec![Value::Small(kind), Value::Small(code as i64), bytes(words), Value::Null])
-    };
     unsafe {
         let mut hints: libc::addrinfo = std::mem::zeroed();
         hints.ai_family = libc::AF_UNSPEC;
         hints.ai_socktype = libc::SOCK_STREAM;
         let mut found = std::ptr::null_mut();
         let code = libc::getaddrinfo(name.as_ptr(), std::ptr::null(), &hints, &mut found);
-        if code != 0 { return Ok(failure(1, code, libc::gai_strerror(code))); }
-        if found.is_null() { return Ok(failure(1, libc::EAI_NONAME, libc::gai_strerror(libc::EAI_NONAME))); }
+        if code != 0 { return Ok(host_failure(1, code, libc::gai_strerror(code))); }
+        if found.is_null() { return Ok(host_failure(1, libc::EAI_NONAME, libc::gai_strerror(libc::EAI_NONAME))); }
         let family = (*found).ai_family;
         let address = if family == libc::AF_INET {
             let ip = &*((*found).ai_addr.cast::<libc::sockaddr_in>());
             std::slice::from_raw_parts((&ip.sin_addr as *const libc::in_addr).cast::<u8>(), 4).to_vec()
         } else if family == libc::AF_INET6 {
             (*(*found).ai_addr.cast::<libc::sockaddr_in6>()).sin6_addr.s6_addr.to_vec()
-        } else { libc::freeaddrinfo(found); return Ok(failure(1, libc::EAI_FAMILY, libc::gai_strerror(libc::EAI_FAMILY))); };
+        } else { libc::freeaddrinfo(found); return Ok(host_failure(1, libc::EAI_FAMILY, libc::gai_strerror(libc::EAI_FAMILY))); };
         libc::freeaddrinfo(found);
         let mut storage = vec![0u8; 8192];
         let mut entry: libc::hostent = std::mem::zeroed();
@@ -637,9 +777,20 @@ fn host_by_address(input: &Value) -> Result<Value, String> {
             let status = address_host(address.as_ptr().cast(), address.len() as libc::socklen_t, family,
                 &mut entry, storage.as_mut_ptr().cast(), storage.len(), &mut answer, &mut host_error);
             if status == libc::ERANGE { storage.resize(storage.len().checked_mul(2).ok_or("MemoryError: resolver buffer is too large")?, 0); continue; }
-            if answer.is_null() { return Ok(failure(2, host_error, host_error_words(host_error))); }
+            if answer.is_null() { return Ok(host_failure(2, host_error, host_error_words(host_error))); }
             break;
         }
+        host_entry(&entry)
+    }
+}
+
+// A failed lookup, or the canonical name, aliases and addresses of a found host.
+fn host_failure(kind: i64, code: i32, message: *const libc::c_char) -> Value {
+    let words = unsafe { if message.is_null() { Vec::new() } else { CStr::from_ptr(message).to_bytes().to_vec() } };
+    Value::tuple(vec![Value::Small(kind), Value::Small(code as i64), bytes(words), Value::Null])
+}
+fn host_entry(entry: &libc::hostent) -> Result<Value, String> {
+    unsafe {
         let canonical = bytes(CStr::from_ptr(entry.h_name).to_bytes().to_vec());
         let mut aliases = Vec::new();
         let mut cursor = entry.h_aliases;
@@ -658,5 +809,29 @@ fn host_by_address(input: &Value) -> Result<Value, String> {
             addresses.push(bytes(text.into_bytes())); cursor = cursor.add(1);
         }
         Ok(Value::tuple(vec![Value::Small(0),Value::Small(0),bytes(Vec::new()),Value::tuple(vec![canonical,Value::array(aliases),Value::array(addresses)])]))
+    }
+}
+
+// A failed name lookup as (code, words) for the Python side to raise.
+fn resolver_words(code: i32) -> Value {
+    let words = unsafe { CStr::from_ptr(libc::gai_strerror(code)) }.to_bytes().to_vec();
+    Value::tuple(vec![Value::Small(code as i64), bytes(words)])
+}
+
+// Resolve a host name forward, with the same shape of answer as the reverse lookup.
+fn host_by_name(input: &Value) -> Result<Value, String> {
+    let name = CString::new(raw(input)?).map_err(|_| "ValueError: embedded null byte")?;
+    unsafe {
+        let mut storage = vec![0u8; 8192];
+        let mut entry: libc::hostent = std::mem::zeroed();
+        let mut answer = std::ptr::null_mut();
+        let mut host_error = 0;
+        loop {
+            let status = name_host(name.as_ptr(), &mut entry, storage.as_mut_ptr().cast(), storage.len(), &mut answer, &mut host_error);
+            if status == libc::ERANGE { storage.resize(storage.len().checked_mul(2).ok_or("MemoryError: resolver buffer is too large")?, 0); continue; }
+            if answer.is_null() { return Ok(host_failure(2, host_error, host_error_words(host_error))); }
+            break;
+        }
+        host_entry(&entry)
     }
 }

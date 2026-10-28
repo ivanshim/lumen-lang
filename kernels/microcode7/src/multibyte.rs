@@ -160,7 +160,8 @@ impl Table {
             let Some(&point) = codes.get(at) else { break 0 };
             let trailing = at + 1 == codes.len();
             if trailing && !complete && self.opens_pair(point) { break 2 }
-            let paired = if trailing { None } else { self.bytes_for(point, codes[at + 1]) };
+            // A missing companion is stored as zero; leave a following NUL for its own step.
+            let paired = if trailing || codes[at + 1] == 0 { None } else { self.bytes_for(point, codes[at + 1]) };
             if let Some(part) = paired { wire.extend(part); at += 2; continue; }
             match self.bytes_for(point, 0) {
                 Some(part) => { wire.extend(part); at += 1; }
@@ -168,6 +169,86 @@ impl Table {
             }
         };
         (wire, at, reason)
+    }
+    // Trial a valid ISO feed on a private shift-state copy. Unsupported escapes
+    // and errors leave the Python rollback/error-handler path in charge.
+    fn read_iso(&self, raw: &[u8], mut shift: [u8; 8], complete: bool) -> Option<(Vec<u32>, usize, [u8; 8])> {
+        let mut out = Vec::new();
+        let mut at = 0;
+        while at < raw.len() {
+            let byte = raw[at];
+            if byte == 27 {
+                let rest = &raw[at..];
+                let (length, group, mark) = if rest.starts_with(b"\x1b(") && rest.len() >= 3 && b"BJI".contains(&rest[2]) {
+                    (3, 0, rest[2])
+                } else if rest.starts_with(b"\x1b$") && rest.len() >= 3 && b"@B".contains(&rest[2]) {
+                    (3, 0, rest[2] | 128)
+                } else if rest.starts_with(b"\x1b$(") && rest.len() >= 4 && b"DOPQ".contains(&rest[3]) {
+                    (4, 0, rest[3] | 128)
+                } else if rest.starts_with(b"\x1b$)C") && self.name == "iso2022_kr" {
+                    (4, 1, 195)
+                } else { return None; };
+                shift[group] = mark; at += length; continue;
+            }
+            if self.name == "iso2022_kr" && (byte == 14 || byte == 15) {
+                if byte == 14 { shift[4] |= 1; } else { shift[4] &= !1; }
+                at += 1; continue;
+            }
+            if byte < 32 {
+                if byte == 10 { shift[4] &= !1; }
+                out.push(u32::from(byte)); at += 1; continue;
+            }
+            let group = usize::from(self.name == "iso2022_kr" && shift[4] & 1 != 0);
+            let mark = shift[group];
+            let width = if mark & 128 != 0 { 2 } else { 1 };
+            let prefix = if mark == 66 { Vec::new() }
+                else if group == 1 { b"\x1b$)C\x0e".to_vec() }
+                else if mark & 128 != 0 {
+                    let mut p = if (192..=194).contains(&mark) { b"\x1b$".to_vec() } else { b"\x1b$(".to_vec() };
+                    p.push(mark & 127); p
+                } else { vec![27, 40, mark] };
+            let (points, end) = self.read_designated(raw, &prefix, width, at);
+            if end > at { out.extend(points); at = end; continue; }
+            let mut tail = prefix;
+            tail.extend_from_slice(&raw[at..]);
+            if !complete && raw.len() - at < width && self.continues(&tail) { break; }
+            return None;
+        }
+        Some((out, at, shift))
+    }
+    // Keep the current designation while consecutive encoded units use it.
+    fn write_designated(&self, codes: &[u32], prefix: &[u8], from: usize, complete: bool) -> (Vec<u8>, usize) {
+        let mut out = Vec::new();
+        let mut at = from;
+        while let Some(&point) = codes.get(at) {
+            let trailing = at + 1 == codes.len();
+            if trailing && !complete && self.opens_pair(point) { break; }
+            let pair = if trailing || codes[at + 1] == 0 { None } else { self.bytes_for(point, codes[at + 1]) };
+            let (unit, count) = match pair {
+                Some(unit) => (Some(unit), 2),
+                None => (self.bytes_for(point, 0), 1),
+            };
+            let Some(unit) = unit else { break; };
+            let Some(tail) = unit.strip_prefix(prefix) else { break; };
+            out.extend_from_slice(tail);
+            at += count;
+        }
+        (out, at)
+    }
+    // Read mapped units in one designation, leaving controls and errors to the adapter.
+    fn read_designated(&self, raw: &[u8], prefix: &[u8], width: usize, from: usize) -> (Vec<u32>, usize) {
+        let mut unit = prefix.to_vec();
+        unit.resize(prefix.len() + width, 0);
+        let mut points = Vec::new();
+        let mut at = from;
+        while let Some(part) = at.checked_add(width).and_then(|end| raw.get(at..end)) {
+            if part[0] < 32 { break; }
+            unit[prefix.len()..].copy_from_slice(part);
+            let Some(decoded) = self.text_for(&unit) else { break; };
+            points.extend(decoded);
+            at += width;
+        }
+        (points, at)
     }
     /// A stateless codec reading bytes from `from`: the text, the place it
     /// stopped, and a reason (0 done, 1 illegal unit, 2 unfinished unit
@@ -215,6 +296,42 @@ pub fn invoke(parameters: &[Value]) -> Result<Value, String> {
             let marker = integer(following)?;
             let (wire, at, reason) = table.write_run(&codes, (marker / 2) as usize, marker % 2 == 1);
             Ok(Value::tuple(vec![bytes(&wire), Value::Small(at as i64), Value::Small(reason)]))
+        }
+        11 => {
+            let Value::Octets { cell, .. } = input.settled() else { return Err("TypeError: mapping input must be bytes".into()); };
+            let Value::Tuple(options) = following.settled() else { return Err("TypeError: ISO feed needs state and final flag".into()); };
+            let [state, final_flag] = options.as_slice() else { return Err("TypeError: ISO feed needs state and final flag".into()); };
+            let Value::Vector(values) = state.settled() else { return Err("TypeError: ISO state must be a list".into()); };
+            if values.len() != 8 { return Err("ValueError: invalid ISO state size".into()); }
+            let mut shift = [0u8; 8];
+            for (slot, value) in shift.iter_mut().zip(values.iter()) { *slot = u8::try_from(integer(value)?).map_err(|_| "ValueError: invalid ISO state byte")?; }
+            let decoded = table.read_iso(&cell.borrow(), shift, integer(final_flag)? != 0);
+            Ok(match decoded {
+                Some((text, end, state)) => Value::tuple(vec![Value::characters(text), Value::Small(end as i64), Value::Vector(crate::tuples::Sequence::plain(state.into_iter().map(|v| Value::Small(i64::from(v))).collect()))]),
+                None => Value::Nil,
+            })
+        }
+        10 => {
+            let codes = input.settled().character_numbers().ok_or("TypeError: mapping input must be str")?;
+            let Value::Tuple(options) = following.settled() else { return Err("TypeError: encoding designation requires a pair".into()); };
+            let [prefix, marker] = options.as_slice() else { return Err("TypeError: encoding designation requires a pair".into()); };
+            let Value::Octets { cell: prefix, .. } = prefix.settled() else { return Err("TypeError: designation prefix must be bytes".into()); };
+            let prefix = prefix.borrow();
+            if prefix.is_empty() { return Err("ValueError: empty designation".into()); }
+            let marker = integer(marker)?;
+            let (wire, at) = table.write_designated(&codes, &prefix, (marker / 2) as usize, marker % 2 == 1);
+            Ok(Value::tuple(vec![bytes(&wire), Value::Small(at as i64)]))
+        }
+        9 => {
+            let Value::Octets { cell, .. } = input.settled() else { return Err("TypeError: mapping input must be bytes".into()); };
+            let Value::Tuple(options) = following.settled() else { return Err("TypeError: designation requires prefix, width and offset".into()); };
+            let [prefix, width, from] = options.as_slice() else { return Err("TypeError: designation requires prefix, width and offset".into()); };
+            let Value::Octets { cell: prefix, .. } = prefix.settled() else { return Err("TypeError: designation prefix must be bytes".into()); };
+            let width = integer(width)? as usize;
+            let prefix = prefix.borrow();
+            if !(1..=2).contains(&width) || prefix.len() + width > 8 { return Err("ValueError: invalid designation width".into()); }
+            let (text, at) = table.read_designated(&cell.borrow(), &prefix, width, integer(from)? as usize);
+            Ok(Value::tuple(vec![Value::characters(text), Value::Small(at as i64)]))
         }
         1 | 2 | 8 => {
             let Value::Octets {cell, ..} = input.settled() else { return Err(String::from("TypeError: mapping input must be bytes")); };
@@ -270,4 +387,33 @@ fn ucd_record(data: &[u8], action: u32, character: u32, companion: u32) -> Value
         }
     }
     Value::Nil
+}
+
+#[cfg(test)]
+mod designated_tests {
+    use super::*;
+
+    // Preserve complete units and stop before every scalar fallback boundary.
+    #[test]
+    fn designated_runs_leave_controls_invalid_and_partial_units() {
+        let table = Table::open("iso2022_jp").unwrap();
+        let prefix = b"\x1b$B";
+        let one = table.text_for(b"\x1b$B!!").unwrap();
+        let initial = [66,66,66,0,0,0,0,0];
+        let (text, end, state) = table.read_iso(b"\x1b$B!!\n\x1b(Bx", initial, true).unwrap();
+        assert_eq!(text, vec![one[0], 10, 120]);
+        assert_eq!(end, 10);
+        assert_eq!(state, initial);
+        assert!(table.read_iso(b"\x1b$B\xff\xff", initial, true).is_none());
+        let (text, end, state) = table.read_iso(b"\x1b$B!", initial, false).unwrap();
+        assert!(text.is_empty()); assert_eq!(end, 3); assert_eq!(state[0], 194);
+        assert!(table.read_iso(b"\x1b$B!", initial, true).is_none());
+        let points = [one[0], one[0], 0, one[0]];
+        assert_eq!(table.write_designated(&points, prefix, 0, true), (b"!!!!".to_vec(), 2));
+        assert_eq!(table.write_designated(&points, prefix, 2, true), (Vec::new(), 2));
+        for (raw, end, count) in [(&b"!!!!\x1b(B"[..], 4, 2), (&b"!!\0!!"[..], 2, 1), (&b"!!!"[..], 2, 1), (&b"\xff\xff"[..], 0, 0)] {
+            assert_eq!(table.read_designated(raw, prefix, 2, 0), (one.repeat(count), end));
+        }
+        assert!(invoke(&[Value::Small(9), Value::text("iso2022_jp"), bytes(b"!!"), Value::tuple(vec![bytes(prefix), Value::Small(0), Value::Small(0)])]).is_err());
+    }
 }

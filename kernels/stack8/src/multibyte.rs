@@ -128,6 +128,69 @@ fn longer_exists(data: &[u8], name: &str, decoding_start: usize, decoding_count:
     }
     false
 }
+// Decode consecutive fixed-width units under an already selected character set.
+fn decode_designated(data: &[u8], name: &str, input: &[u8], prefix: &[u8], width: usize, start: usize) -> (Vec<u32>, usize) {
+    let base = 8 + word(data, 0) as usize * 20;
+    let count = word(data, 4) as usize;
+    let mut assembled = [0u8; 8];
+    assembled[..prefix.len()].copy_from_slice(prefix);
+    let mut output = Vec::new();
+    let mut consumed = start;
+    for part in input.get(start..).unwrap_or_default().chunks_exact(width) {
+        if part[0] <= 31 { break; }
+        let length = prefix.len() + width;
+        assembled[prefix.len()..length].copy_from_slice(part);
+        match decode_unit(data, name, base, count, base + count * 20, &assembled[..length]) {
+            Some(characters) => output.extend(characters),
+            None => break,
+        }
+        consumed += width;
+    }
+    (output, consumed)
+}
+// Convert an ordinary ISO feed transactionally; complex escape/error cases fall back.
+fn iso_feed(data: &[u8], name: &str, input: &[u8], mut state: [u8; 8], final_input: bool) -> Option<(Vec<u32>, usize, [u8; 8])> {
+    let mut text = Vec::new();
+    let mut cursor = 0;
+    let rows = word(data, 4) as usize;
+    let start = 8 + word(data, 0) as usize * 20;
+    while let Some(&lead) = input.get(cursor) {
+        match lead {
+            27 => {
+                let escapes: &[(&[u8], usize, u8)] = &[(b"\x1b(B",0,66),(b"\x1b(J",0,74),(b"\x1b(I",0,73),
+                    (b"\x1b$@",0,192),(b"\x1b$B",0,194),(b"\x1b$(D",0,196),
+                    (b"\x1b$(O",0,207),(b"\x1b$(P",0,208),(b"\x1b$(Q",0,209)];
+                if let Some((wire, field, value)) = escapes.iter().find(|(wire, _, _)| input[cursor..].starts_with(wire)) {
+                    state[*field] = *value; cursor += wire.len(); continue;
+                }
+                if name == "iso2022_kr" && input[cursor..].starts_with(b"\x1b$)C") {
+                    state[1] = 195; cursor += 4; continue;
+                }
+                return None;
+            }
+            14 | 15 if name == "iso2022_kr" => { state[4] = (state[4] & !1) | u8::from(lead == 14); cursor += 1; continue; }
+            0..=31 => { if lead == 10 { state[4] &= !1; } text.push(lead.into()); cursor += 1; continue; }
+            _ => {}
+        }
+        let korean = name == "iso2022_kr" && state[4] & 1 == 1;
+        let designation = state[usize::from(korean)];
+        let width = 1 + usize::from(designation >= 128);
+        let prefix = match (designation, korean) {
+            (66, _) => Vec::new(),
+            (_, true) => vec![27,36,41,67,14],
+            (192..=194, false) => vec![27,36,designation & 127],
+            (128..=255, false) => vec![27,36,40,designation & 127],
+            (_, false) => vec![27,40,designation],
+        };
+        let (segment, next) = decode_designated(data, name, input, &prefix, width, cursor);
+        if next != cursor { text.extend(segment); cursor = next; continue; }
+        let mut unfinished = prefix;
+        unfinished.extend_from_slice(&input[cursor..]);
+        if !final_input && input.len() - cursor < width && longer_exists(data, name, start, rows, &unfinished) { break; }
+        return None;
+    }
+    Some((text, cursor, state))
+}
 pub fn call(args: &[Value]) -> Result<Value, String> {
     if args.len() != 4 { return Err("TypeError: multibyte mapping expects four arguments".into()); }
     let Some(Value::Text(name)) = args.get(1).map(Value::contents) else { return Err("TypeError: codec name must be str".into()); };
@@ -151,6 +214,34 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         let first = scalar(&args[2])?; let second = scalar(&args[3])?;
         return Ok(encode_point(data, &name, encoding_count, ranges, first, second).map_or(Value::Null, output));
     }
+    if op == 10 {
+        let codes = args[2].contents().text_codes().ok_or("TypeError: mapping input must be str")?;
+        let Value::Tuple(spec) = args[3].contents() else { return Err("TypeError: encoding designation requires two items".into()); };
+        if spec.len() != 2 { return Err("TypeError: encoding designation requires two items".into()); }
+        let Value::Bytes(prefix, ..) = spec[0].contents() else { return Err("TypeError: designation prefix must be bytes".into()); };
+        let prefix = prefix.borrow();
+        if prefix.is_empty() { return Err("ValueError: empty designation".into()); }
+        let packed = scalar(&spec[1])?;
+        let mut pos = (packed >> 1) as usize;
+        let mut output_bytes = Vec::new();
+        while pos < codes.len() {
+            let point = codes[pos];
+            if pos + 1 == codes.len() && packed & 1 == 0 && pair_lead(data, encoding_count, point) { break; }
+            let mut length = 1;
+            let paired = codes.get(pos + 1).filter(|&&next| next != 0)
+                .and_then(|&next| encode_point(data, &name, encoding_count, ranges, point, next));
+            let encoded = match paired {
+                Some(wire) => { length = 2; Some(wire) }
+                None => encode_point(data, &name, encoding_count, ranges, point, 0),
+            };
+            match encoded {
+                Some(wire) if wire.starts_with(&prefix) => output_bytes.extend_from_slice(&wire[prefix.len()..]),
+                _ => break,
+            }
+            pos += length;
+        }
+        return Ok(Value::tuple(vec![output(output_bytes), Value::Small(pos as i64)]));
+    }
     if op == 7 {
         // Whole text written by a stateless codec: the row of bytes, where
         // writing stopped, and why: 0 the end, 1 a character the codec has
@@ -163,7 +254,8 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
         while pos < codes.len() {
             let first = codes[pos];
             if pos + 1 == codes.len() && !last_input && pair_lead(data, encoding_count, first) { stop = 2; break; }
-            if pos + 1 < codes.len() {
+            // Zero denotes a single-point lookup, not a consumable companion.
+            if pos + 1 < codes.len() && codes[pos+1] != 0 {
                 if let Some(wire) = encode_point(data, &name, encoding_count, ranges, first, codes[pos+1]) { row.extend(wire); pos += 2; continue; }
             }
             match encode_point(data, &name, encoding_count, ranges, first, 0) {
@@ -175,6 +267,28 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
     }
     let Value::Bytes(raw, ..) = args[2].contents() else { return Err("TypeError: mapping input must be bytes".into()); };
     let raw = raw.borrow();
+    if op == 11 {
+        let Value::Tuple(spec) = args[3].contents() else { return Err("TypeError: expected ISO state and completion flag".into()); };
+        if spec.len() != 2 { return Err("TypeError: expected ISO state and completion flag".into()); }
+        let Value::Array(fields) = spec[0].contents() else { return Err("TypeError: ISO state must be a list".into()); };
+        if fields.len() != 8 { return Err("ValueError: ISO state requires eight bytes".into()); }
+        let mut state = [0u8; 8];
+        for (index, field) in fields.iter().enumerate() { state[index] = u8::try_from(scalar(field)?).map_err(|_| "ValueError: ISO state byte out of range")?; }
+        return Ok(match iso_feed(data, &name, &raw, state, scalar(&spec[1])? != 0) {
+            Some((text, end, shift)) => Value::tuple(vec![Value::from_codes(text), Value::Small(end as i64), Value::array(shift.iter().map(|&b| Value::Small(i64::from(b))).collect())]),
+            None => Value::Null,
+        });
+    }
+    if op == 9 {
+        let Value::Tuple(spec) = args[3].contents() else { return Err("TypeError: expected a designation triple".into()); };
+        if spec.len() != 3 { return Err("TypeError: expected a designation triple".into()); }
+        let Value::Bytes(prefix, ..) = spec[0].contents() else { return Err("TypeError: designation prefix must be bytes".into()); };
+        let prefix = prefix.borrow();
+        let width = scalar(&spec[1])? as usize;
+        if width == 0 || width > 2 || prefix.len() > 8 - width { return Err("ValueError: invalid designation width".into()); }
+        let (points, end) = decode_designated(data, &name, &raw, &prefix, width, scalar(&spec[2])? as usize);
+        return Ok(Value::tuple(vec![Value::from_codes(points), Value::Small(end as i64)]));
+    }
     if op == 8 {
         // Whole bytes read by a stateless codec: the text, where reading
         // stopped, and why: 0 the end, 1 an illegal unit, 2 an unfinished
@@ -255,4 +369,34 @@ fn unicode_lookup(database: &[u8], operation: u32, point: u32, other: u32) -> Va
         }
     }
     Value::Null
+}
+
+#[cfg(test)]
+mod designation_tests {
+    use super::*;
+
+    // Match scalar mappings without consuming controls, bad units or a trailing byte.
+    #[test]
+    fn designation_bulk_stops_at_scalar_boundaries() {
+        let data = mappings("iso2022_jp").unwrap();
+        let base = 8 + word(data, 0) as usize * 20;
+        let rows = word(data, 4) as usize;
+        let one = decode_unit(data, "iso2022_jp", base, rows, base + rows * 20, b"\x1b$B!!").unwrap();
+        let prefix = b"\x1b$B";
+        let initial = [66,66,66,0,0,0,0,0];
+        assert_eq!(iso_feed(data, "iso2022_jp", b"\x1b$B!!\n\x1b(Bx", initial, true), Some((vec![one[0],10,120],10,initial)));
+        assert!(iso_feed(data, "iso2022_jp", b"\x1b$B\xff\xff", initial, true).is_none());
+        let mut shifted = initial; shifted[0] = 194;
+        assert_eq!(iso_feed(data, "iso2022_jp", b"\x1b$B!", initial, false), Some((Vec::new(),3,shifted)));
+        assert!(iso_feed(data, "iso2022_jp", b"\x1b$B!", initial, true).is_none());
+        let encoded = call(&[Value::Small(10), Value::text("iso2022_jp"), Value::from_codes(vec![one[0], one[0], 0, one[0]]), Value::tuple(vec![output(prefix.to_vec()), Value::Small(1)])]).unwrap();
+        let Value::Tuple(parts) = encoded.contents() else { panic!("expected encoded run"); };
+        let Value::Bytes(wire, ..) = parts[0].contents() else { panic!("expected bytes"); };
+        assert_eq!(&*wire.borrow(), b"!!!!");
+        assert!(matches!(parts[1].contents(), Value::Small(2)));
+        for (raw, end, count) in [(&b"!!!!\x1b(B"[..], 4, 2), (&b"!!\0!!"[..], 2, 1), (&b"!!!"[..], 2, 1), (&b"\xff\xff"[..], 0, 0)] {
+            assert_eq!(decode_designated(data, "iso2022_jp", raw, prefix, 2, 0), (one.repeat(count), end));
+        }
+        assert!(call(&[Value::Small(9), Value::text("iso2022_jp"), output(b"!!".to_vec()), Value::tuple(vec![output(prefix.to_vec()), Value::Small(0), Value::Small(0)])]).is_err());
+    }
 }

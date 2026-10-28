@@ -69,8 +69,7 @@ pub fn gather(source: &Value, bad: &dyn Fn(&str)->String) -> Result<Vec<Value>,S
 }
 
 fn whole(v:&Value, bad:&dyn Fn(&str)->String)->Result<i64,String> {
-    let n=match v.settled(){Value::Small(i)=>return Ok(i),Value::Flag(b)=>return Ok(b as i64),Value::Huge(i)=>i,_=>return Err(bad("arguments"))};
-    Ok(n.to_i64().unwrap_or_else(||if n.is_negative(){i64::MIN}else{i64::MAX}))
+    tally(v).map_err(|_| bad("arguments"))
 }
 // A count or a maximum split handed where a whole number belongs:
 // anything else, a bare None among them, is refused with the wording
@@ -117,7 +116,7 @@ pub(crate) fn cut_units(units: &[u32], separator: Option<&[u32]>, quota: usize, 
         if from_end { pieces.push(units[..fence].to_vec()); pieces.reverse(); }
         else { pieces.push(units[fence..].to_vec()); }
     } else {
-        let gap = |n: u32| matches!(n, 0x1c..=0x1f) || char::from_u32(n).is_some_and(char::is_whitespace);
+        let gap = |n: u32| char::from_u32(n).is_some_and(crate::text::blank);
         if from_end {
             let mut fence = units.len();
             loop {
@@ -322,7 +321,7 @@ impl Request<'_> {
         if ["strip","lstrip","rstrip"].contains(&op){
             self.takes(0,1)?;
             let set=match self.given.first(){None|Some(Value::Nil)=>None,Some(v)=>Some(letters(v,self.complaint)?)};
-            let removes=|ch:char|match &set{Some(chars)=>chars.contains(ch),None=>ch.is_whitespace()||matches!(ch,'\u{1c}'..='\u{1f}')};
+            let removes=|ch:char|match &set{Some(chars)=>chars.contains(ch),None=>crate::text::blank(ch)};
             let trimmed=if op=="lstrip"{s.trim_start_matches(removes)}else if op=="rstrip"{s.trim_end_matches(removes)}else{s.trim_matches(removes)};
             // An exact text that lost nothing is handed back itself.
             if trimmed.len()==s.len(){return Ok(self.target.settled());}
@@ -368,7 +367,7 @@ impl Request<'_> {
             // table the case changes already draw upon, so a letter or
             // a digit outside ASCII answers exactly as CPython's own
             // tables say it should.
-            let space=|ch:char| ch.is_whitespace()||matches!(ch,'\u{1c}'..='\u{1f}');
+            let space=|ch:char| crate::text::blank(ch);
             let mut yes=!s.is_empty();let mut cased=false;
             for ch in s.chars(){
                 let is_cased=crate::unicode::property(ch,16);
@@ -415,7 +414,7 @@ impl Request<'_> {
                 if reverse{chunks.extend(s.rsplitn(maximum.saturating_add(1),&delimiter).map(str::to_owned));}else{chunks.extend(s.splitn(maximum.saturating_add(1),&delimiter).map(str::to_owned));}
             }
             None=>{
-                let blank=|ch:char|ch.is_whitespace()||matches!(ch,'\u{1c}'..='\u{1f}');let mut tail=s;
+                let blank=|ch:char|crate::text::blank(ch);let mut tail=s;
                 loop{
                     tail=if reverse{tail.trim_end_matches(blank)}else{tail.trim_start_matches(blank)};
                     if tail.is_empty(){break;}
@@ -519,7 +518,7 @@ impl Request<'_> {
         };
         let discard = |unit: &u32| match &custom {
             Some(chars) => chars.iter().any(|c| c == unit),
-            None => matches!(*unit, 0x1c..=0x1f) || char::from_u32(*unit).is_some_and(char::is_whitespace),
+            None => char::from_u32(*unit).is_some_and(crate::text::blank),
         };
         let low = if self.operation == "rstrip" { 0 } else { units.iter().position(|n| !discard(n)).unwrap_or(units.len()) };
         let high = if self.operation == "lstrip" { units.len() } else { units.iter().rposition(|n| !discard(n)).map_or(0, |p| p + 1) };

@@ -143,6 +143,12 @@ fn harvest(pid: i64, flags: i64, mut interrupted: impl FnMut() -> Result<(), Str
     }
 }
 
+// Build a descriptor set from the rows already range-checked by select.
+fn fd_set_of(fds: &[i32]) -> libc::fd_set {
+    let mut set = unsafe { std::mem::zeroed() };
+    for &fd in fds { unsafe { libc::FD_SET(fd, &mut set); } }
+    set
+}
 pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), String>) -> Result<Value, String> {
     let operation = match given.first().map(Value::settled) {
         Some(Value::Text(name)) => name,
@@ -513,24 +519,18 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                     Ok(Value::text(&String::from_utf8_lossy(&landing)))
                 }
             }
-            "get_inheritable" | "set_inheritable" => {
+            "get_inheritable" | "set_inheritable" | "get_blocking" | "set_blocking" => {
+            let (get, set, bit) = match operation.as_ref() {
+                "get_inheritable" | "set_inheritable" => (libc::F_GETFD, libc::F_SETFD, libc::FD_CLOEXEC),
+                _ => (libc::F_GETFL, libc::F_SETFL, libc::O_NONBLOCK),
+            };
             let fd = int(0)? as i32;
-            let flags = libc::fcntl(fd, libc::F_GETFD);
+            let flags = libc::fcntl(fd, get);
             if flags < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
-            else if operation.as_ref() == "get_inheritable" { Ok(Value::Flag(flags & libc::FD_CLOEXEC == 0)) }
+            else if matches!(operation.as_ref(), "get_inheritable" | "get_blocking") { Ok(Value::Flag(flags & bit == 0)) }
             else {
-                let next = if params[1].is_true() { flags & !libc::FD_CLOEXEC } else { flags | libc::FD_CLOEXEC };
-                checked(libc::fcntl(fd, libc::F_SETFD, next) as i64)
-            }
-        },
-        "get_blocking" | "set_blocking" => {
-            let fd = int(0)? as i32;
-            let flags = libc::fcntl(fd, libc::F_GETFL);
-            if flags < 0 { Err(std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO)) }
-            else if operation.as_ref() == "get_blocking" { Ok(Value::Flag(flags & libc::O_NONBLOCK == 0)) }
-            else {
-                let next = if params[1].is_true() { flags & !libc::O_NONBLOCK } else { flags | libc::O_NONBLOCK };
-                checked(libc::fcntl(fd, libc::F_SETFL, next) as i64)
+                let next = if params[1].is_true() { flags & !bit } else { flags | bit };
+                checked(libc::fcntl(fd, set, next) as i64)
             }
         },
         "pipe" => {
@@ -614,6 +614,157 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
             // Block until some descriptor in each row is ready, mirroring
             // selectmodule.c: object conversion and range checks are the
             // Python module's; here the sets are built and the call made.
+            // An address crosses this bridge as the bytes of its sockaddr: the
+            // Python module alone knows each family's layout.
+            "sock_bind" | "sock_connect" => {
+                let target = data_of(&params[1])?;
+                let (descriptor, width) = (int(0)? as i32, target.len() as libc::socklen_t);
+                match operation.as_ref() {
+                    "sock_bind" => checked(libc::bind(descriptor, target.as_ptr().cast(), width).into()),
+                    _ => checked(libc::connect(descriptor, target.as_ptr().cast(), width).into()),
+                }
+            }
+            "sock_listen" => checked(libc::listen(int(0)? as _, int(1)? as _).into()),
+            "sock_accept" => {
+                let mut room = [0u8; 128];
+                let mut filled: libc::socklen_t = 128;
+                match libc::accept4(int(0)? as _, room.as_mut_ptr().cast(), &mut filled, libc::SOCK_CLOEXEC) {
+                    -1 => Err(errno()),
+                    accepted => Ok(Value::tuple(vec![Value::Small(accepted.into()), octets(&room[..filled as usize])])),
+                }
+            }
+            "sock_name" => {
+                let mut room = [0u8; 128];
+                let mut filled: libc::socklen_t = 128;
+                let outcome = match int(1)? {
+                    0 => libc::getsockname(int(0)? as _, room.as_mut_ptr().cast(), &mut filled),
+                    _ => libc::getpeername(int(0)? as _, room.as_mut_ptr().cast(), &mut filled),
+                };
+                if outcome == -1 {Err(errno())} else {Ok(octets(&room[..filled as usize]))}
+            }
+            "sock_recv" | "sock_recvfrom" => {
+                let mut incoming = vec![0u8; int(1)? as usize];
+                let mut room = [0u8; 128];
+                let mut filled: libc::socklen_t = 128;
+                let count = libc::recvfrom(int(0)? as _, incoming.as_mut_ptr().cast(), incoming.len(), int(2)? as _, room.as_mut_ptr().cast(), &mut filled);
+                if count == -1 {Err(errno())} else {
+                    // Under MSG_TRUNC the count is the datagram's full length, which the
+                    // buffer may not hold; the answer carries that count after the bytes.
+                    incoming.truncate(count as usize);
+                    let length = Value::Small(count as i64);
+                    Ok(match operation.as_ref() {
+                        "sock_recv" => Value::tuple(vec![octets(incoming), length]),
+                        _ => Value::tuple(vec![octets(incoming), octets(&room[..filled as usize]), length]),
+                    })
+                }
+            }
+            // A fourth argument to send is how far into the buffer to begin.
+            "sock_send" | "sock_sendto" => {
+                let buffer = data_of(&params[1])?;
+                let outgoing = match (operation.as_ref(), params.get(3)) {("sock_send", Some(_)) => &buffer[(int(3)? as usize).min(buffer.len())..], _ => &buffer[..]};
+                let count = match operation.as_ref() {
+                    "sock_send" => libc::send(int(0)? as _, outgoing.as_ptr().cast(), outgoing.len(), int(2)? as _),
+                    _ => {
+                        let target = data_of(&params[3])?;
+                        libc::sendto(int(0)? as _, outgoing.as_ptr().cast(), outgoing.len(), int(2)? as _, target.as_ptr().cast(), target.len() as libc::socklen_t)
+                    }
+                };
+                checked(count as i64)
+            }
+            "sock_setopt" => {
+                let setting = data_of(&params[3])?;
+                checked(libc::setsockopt(int(0)? as _, int(1)? as _, int(2)? as _, setting.as_ptr().cast(), setting.len() as libc::socklen_t).into())
+            }
+            "sock_getopt" => {
+                let mut setting = vec![0u8; int(3)? as usize];
+                let mut filled = setting.len() as libc::socklen_t;
+                match libc::getsockopt(int(0)? as _, int(1)? as _, int(2)? as _, setting.as_mut_ptr().cast(), &mut filled) {
+                    -1 => Err(errno()),
+                    _ => {setting.truncate(filled as usize); Ok(octets(setting))}
+                }
+            }
+            "getaddrinfo" => {
+                let optional = |at: usize| -> Result<Option<CString>, String> {
+                    match params[at].settled() {Value::Nil => Ok(None), _ => path(at).map(Some)}
+                };
+                let (node, service) = (optional(0)?, optional(1)?);
+                let mut request: libc::addrinfo = std::mem::zeroed();
+                request.ai_family = int(2)? as _;
+                request.ai_socktype = int(3)? as _;
+                request.ai_protocol = int(4)? as _;
+                request.ai_flags = int(5)? as _;
+                let mut records: *mut libc::addrinfo = std::ptr::null_mut();
+                let text_or_null = |item: &Option<CString>| item.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
+                let status = libc::getaddrinfo(text_or_null(&node), text_or_null(&service), &request, &mut records);
+                if status != 0 {Ok(lookup_words(status))} else {
+                    let mut listing = Vec::new();
+                    let mut walker = records;
+                    while let Some(record) = walker.as_ref() {
+                        let sockaddr = std::slice::from_raw_parts(record.ai_addr.cast::<u8>(), record.ai_addrlen as usize);
+                        let official = match record.ai_canonname.as_ref() {None => octets(Vec::new()), Some(_) => octets(CStr::from_ptr(record.ai_canonname).to_bytes())};
+                        listing.push(Value::tuple(vec![Value::Small(record.ai_family.into()), Value::Small(record.ai_socktype.into()),
+                            Value::Small(record.ai_protocol.into()), official, octets(sockaddr)]));
+                        walker = record.ai_next;
+                    }
+                    libc::freeaddrinfo(records);
+                    Ok(Value::tuple(vec![Value::Small(0), Value::Vector(crate::tuples::Sequence::plain(listing))]))
+                }
+            }
+            "getnameinfo" => {
+                let sockaddr = data_of(&params[0])?;
+                let mut node = [0 as libc::c_char; 1025];
+                let mut service = [0 as libc::c_char; 32];
+                let status = libc::getnameinfo(sockaddr.as_ptr().cast(), sockaddr.len() as libc::socklen_t, node.as_mut_ptr(), 1025, service.as_mut_ptr(), 32, int(1)? as _);
+                match status {
+                    0 => Ok(Value::tuple(vec![Value::Small(0), octets(CStr::from_ptr(node.as_ptr()).to_bytes()), octets(CStr::from_ptr(service.as_ptr()).to_bytes())])),
+                    _ => Ok(lookup_words(status)),
+                }
+            }
+            // Address text to packed bytes: family 0 takes inet_aton's loose
+            // spellings, a real family inet_pton's strict ones; Nil when not an address.
+            "inet_packed" => {
+                let spelling = path(1)?;
+                match int(0)? as i32 {
+                    0 => {
+                        let mut quad: libc::in_addr = std::mem::zeroed();
+                        match parse_dotted(spelling.as_ptr(), &mut quad) {0 => Ok(Value::Nil), _ => Ok(octets(quad.s_addr.to_ne_bytes()))}
+                    }
+                    family => {
+                        let mut room = [0u8; 16];
+                        match pack_address(family, spelling.as_ptr(), room.as_mut_ptr().cast()) {
+                            1 => Ok(octets(&room[..match family {libc::AF_INET => 4, _ => 16}])),
+                            0 => Ok(Value::Nil),
+                            _ => Err(errno()),
+                        }
+                    }
+                }
+            }
+            "inet_text" => {
+                let packed = data_of(&params[1])?;
+                let mut spelling = [0 as libc::c_char; 46];
+                match spell_address(int(0)? as _, packed.as_ptr().cast(), spelling.as_mut_ptr(), 46).as_ref() {
+                    None => Err(errno()),
+                    Some(_) => Ok(Value::text(&CStr::from_ptr(spelling.as_ptr()).to_string_lossy())),
+                }
+            }
+            // Service and protocol databases: 0 service name to port, 1 port to
+            // service name, 2 protocol name to number; Nil for no such entry.
+            "sock_db" => {
+                let protocol = match params[2].settled() {Value::Nil => None, _ => Some(path(2)?)};
+                let protocol_text = protocol.as_ref().map(|c| c.as_ptr()).unwrap_or(std::ptr::null());
+                Ok(match int(0)? {
+                    0 => match libc::getservbyname(path(1)?.as_ptr(), protocol_text).as_ref() {
+                        None => Value::Nil, Some(service) => Value::Small(i64::from(u16::from_be(service.s_port as u16)))
+                    },
+                    1 => match libc::getservbyport(i32::from((int(1)? as u16).to_be()), protocol_text).as_ref() {
+                        None => Value::Nil, Some(service) => octets(CStr::from_ptr(service.s_name).to_bytes())
+                    },
+                    _ => match libc::getprotobyname(path(1)?.as_ptr()).as_ref() {
+                        None => Value::Nil, Some(protocol) => Value::Small(protocol.p_proto.into())
+                    },
+                })
+            }
+            "socket_hostbyname" => Ok(forward_record(&params[0])?),
             "select" => {
                 let descriptor_row = |at: usize| -> Result<Vec<i32>, String> {
                     match params[at].settled() {
@@ -629,16 +780,15 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                 let want_write = descriptor_row(1)?;
                 let want_error = descriptor_row(2)?;
                 let mut highest = -1i32;
-                let mut read_set: libc::fd_set = std::mem::zeroed();
-                let mut write_set: libc::fd_set = std::mem::zeroed();
-                let mut error_set: libc::fd_set = std::mem::zeroed();
-                for (set, row) in [(&mut read_set, &want_read), (&mut write_set, &want_write), (&mut error_set, &want_error)] {
+                for row in [&want_read, &want_write, &want_error] {
                     for &fd in row {
                         if fd < 0 || fd as usize >= libc::FD_SETSIZE { return Err(String::from("ValueError: filedescriptor out of range in select()")); }
-                        libc::FD_SET(fd, set);
                         if fd > highest { highest = fd; }
                     }
                 }
+                let mut read_set = fd_set_of(&want_read);
+                let mut write_set = fd_set_of(&want_write);
+                let mut error_set = fd_set_of(&want_error);
                 let micros = int(3)?;
                 let kept = |set: &libc::fd_set, row: &[i32]| Value::Vector(crate::tuples::Sequence::plain(
                     row.iter().copied().filter(|fd| libc::FD_ISSET(*fd, set)).map(|fd| Value::Small(fd as i64)).collect()));
@@ -676,10 +826,9 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                         if left.subsec_nanos() % 1000 != 0 { whole += 1; }
                         time_left = Some(whole);
                     }
-                    read_set = std::mem::zeroed(); write_set = std::mem::zeroed(); error_set = std::mem::zeroed();
-                    for (set, row) in [(&mut read_set, &want_read), (&mut write_set, &want_write), (&mut error_set, &want_error)] {
-                        for &fd in row { libc::FD_SET(fd, set); }
-                    }
+                    read_set = fd_set_of(&want_read);
+                    write_set = fd_set_of(&want_write);
+                    error_set = fd_set_of(&want_error);
                 }
             }
             "urandom" => {
@@ -702,6 +851,15 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
 unsafe extern "C" {
     #[link_name = "hstrerror"]
     fn resolver_message(number: libc::c_int) -> *const libc::c_char;
+    #[link_name = "gethostbyname_r"]
+    fn resolve_forward(name: *const libc::c_char, record: *mut libc::hostent, work: *mut libc::c_char, available: usize,
+        resolved: *mut *mut libc::hostent, diagnostic: *mut libc::c_int) -> libc::c_int;
+    #[link_name = "inet_aton"]
+    fn parse_dotted(spelling: *const libc::c_char, quad: *mut libc::in_addr) -> libc::c_int;
+    #[link_name = "inet_pton"]
+    fn pack_address(domain: libc::c_int, spelling: *const libc::c_char, room: *mut libc::c_void) -> libc::c_int;
+    #[link_name = "inet_ntop"]
+    fn spell_address(domain: libc::c_int, packed: *const libc::c_void, room: *mut libc::c_char, size: libc::socklen_t) -> *const libc::c_char;
     #[link_name = "gethostbyaddr_r"]
     fn resolve_reverse(ip: *const libc::c_void, count: libc::socklen_t, domain: libc::c_int,
         record: *mut libc::hostent, work: *mut libc::c_char, available: usize,
@@ -712,17 +870,13 @@ unsafe extern "C" {
 fn reverse_record(value: &Value) -> Result<Value, String> {
     let query = CString::new(data_of(value)?).map_err(|_| String::from("ValueError: embedded null byte"))?;
     unsafe {
-        let error_result = |category: i64, number: i32, message: *const libc::c_char| {
-            let diagnostic = if message.is_null() { Vec::new() } else { CStr::from_ptr(message).to_bytes().into() };
-            Value::tuple(vec![Value::Small(category),Value::Small(i64::from(number)),octets(diagnostic),Value::Nil])
-        };
         let mut request = std::mem::zeroed::<libc::addrinfo>();
         request.ai_socktype = libc::SOCK_STREAM;
         request.ai_family = libc::AF_UNSPEC;
         let mut records: *mut libc::addrinfo = std::ptr::null_mut();
         let status = libc::getaddrinfo(query.as_ptr(),std::ptr::null(),&request,&mut records);
-        if status != 0 { return Ok(error_result(1,status,libc::gai_strerror(status))); }
-        if records.is_null() { return Ok(error_result(1,libc::EAI_NONAME,libc::gai_strerror(libc::EAI_NONAME))); }
+        if status != 0 { return Ok(lookup_failure(1,status,libc::gai_strerror(status))); }
+        if records.is_null() { return Ok(lookup_failure(1,libc::EAI_NONAME,libc::gai_strerror(libc::EAI_NONAME))); }
         let domain = (*records).ai_family;
         let payload: Vec<u8> = match domain {
             libc::AF_INET6 => (*(*records).ai_addr.cast::<libc::sockaddr_in6>()).sin6_addr.s6_addr.into(),
@@ -730,7 +884,7 @@ fn reverse_record(value: &Value) -> Result<Value, String> {
                 let address = (*(*records).ai_addr.cast::<libc::sockaddr_in>()).sin_addr;
                 address.s_addr.to_ne_bytes().into()
             }
-            _ => {libc::freeaddrinfo(records);return Ok(error_result(1,libc::EAI_FAMILY,libc::gai_strerror(libc::EAI_FAMILY)));}
+            _ => {libc::freeaddrinfo(records);return Ok(lookup_failure(1,libc::EAI_FAMILY,libc::gai_strerror(libc::EAI_FAMILY)));}
         };
         libc::freeaddrinfo(records);
         let mut scratch = vec![0u8; 8192];
@@ -744,7 +898,18 @@ fn reverse_record(value: &Value) -> Result<Value, String> {
                 _ => break,
             }
         }
-        if returned.is_null() { return Ok(error_result(2,problem,resolver_message(problem))); }
+        if returned.is_null() { return Ok(lookup_failure(2,problem,resolver_message(problem))); }
+        host_record(&host)
+    }
+}
+
+// A failed lookup; and a found host's official name, nicknames and numbers.
+fn lookup_failure(category: i64, number: i32, message: *const libc::c_char) -> Value {
+    let diagnostic = unsafe {if message.is_null() { Vec::new() } else { CStr::from_ptr(message).to_bytes().into() }};
+    Value::tuple(vec![Value::Small(category),Value::Small(i64::from(number)),octets(diagnostic),Value::Nil])
+}
+fn host_record(host: &libc::hostent) -> Result<Value, String> {
+    unsafe {
         let mut nicknames = Vec::new();
         if !host.h_aliases.is_null() {
             let mut offset = 0;
@@ -769,5 +934,30 @@ fn reverse_record(value: &Value) -> Result<Value, String> {
         let official = octets(CStr::from_ptr(host.h_name).to_bytes());
         let resolved = Value::tuple(vec![official,Value::Vector(crate::tuples::Sequence::plain(nicknames)),Value::Vector(crate::tuples::Sequence::plain(numbers))]);
         Ok(Value::tuple(vec![Value::Small(0),Value::Small(0),octets(Vec::new()),resolved]))
+    }
+}
+
+// A resolver failure as (status, words), for the Python side to raise.
+fn lookup_words(status: i32) -> Value {
+    let words = unsafe {CStr::from_ptr(libc::gai_strerror(status))}.to_bytes();
+    Value::tuple(vec![Value::Small(status.into()), octets(words)])
+}
+
+// Look a host name up in the host database, answering like reverse_record.
+fn forward_record(value: &Value) -> Result<Value, String> {
+    let query = CString::new(data_of(value)?).map_err(|_| String::from("ValueError: embedded null byte"))?;
+    unsafe {
+        let mut scratch = vec![0u8; 8192];
+        let mut host = std::mem::zeroed::<libc::hostent>();
+        let mut returned: *mut libc::hostent = std::ptr::null_mut();
+        let mut problem = 0;
+        loop {
+            match resolve_forward(query.as_ptr(), &mut host, scratch.as_mut_ptr().cast(), scratch.len(), &mut returned, &mut problem) {
+                libc::ERANGE => {let next=scratch.len().checked_mul(2).ok_or("MemoryError: resolver buffer is too large")?;scratch.resize(next,0);}
+                _ => break,
+            }
+        }
+        if returned.is_null() { return Ok(lookup_failure(2,problem,resolver_message(problem))); }
+        host_record(&host)
     }
 }

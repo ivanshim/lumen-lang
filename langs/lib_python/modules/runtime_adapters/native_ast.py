@@ -4,6 +4,8 @@
 # Optimized trees, complete type-comment attachment, and compiler validation
 # beyond the checks below remain unsupported rather than returning invented trees.
 
+import warnings
+
 PyCF_ONLY_AST = 1024
 PyCF_TYPE_COMMENTS = 4096
 PyCF_ALLOW_TOP_LEVEL_AWAIT = 8192
@@ -31,20 +33,27 @@ class _Chars:
     text into a list once makes each visit a constant step; a slice is
     joined back into the same text the reader expects.
     """
-    __slots__ = ('text', 'items')
+    __slots__ = ('text', 'items', 'ascii')
 
     def __init__(self, text):
         if isinstance(text, _Chars):
             self.text = text.text
             self.items = text.items
+            self.ascii = text.ascii
         else:
             self.text = text
-            self.items = list(text)
+            self.ascii = text.isascii()
+            self.items = None if self.ascii else list(text)
 
     def __len__(self):
-        return len(self.items)
+        return len(self.text)
 
     def __getitem__(self, at):
+        # Text that is all ASCII indexes and slices by byte directly, so the
+        # character list is only needed when a non-ASCII character would make
+        # a position walk the stored bytes from the start.
+        if self.ascii:
+            return self.text[at]
         if isinstance(at, slice):
             return ''.join(self.items[at])
         return self.items[at]
@@ -495,26 +504,29 @@ class AST:
     # Apply ASDL defaults while preserving the deprecated incomplete constructors.
     @_native_keywords
     def __init__(self, *args, **kwargs):
-        import warnings
         cls = type(self)
         name = cls.__name__
         fields = self._fields
         if len(args) > len(fields):
             raise TypeError(name + ' constructor takes at most ' + str(len(fields)) + ' positional arguments')
+        given = len(args)
         for index, value in enumerate(args):
             field = fields[index]
             if field in kwargs:
                 # The reference names the keyword's own key, so a key that is
                 # no string is reported by its repr rather than by the field.
-                given = field
-                for key in kwargs:
-                    if key == field:
-                        given = key
+                key = field
+                for other in kwargs:
+                    if other == field:
+                        key = other
                         break
-                raise TypeError(name + " got multiple values for argument " + repr(given))
+                raise TypeError(name + " got multiple values for argument " + repr(key))
             setattr(self, field, value)
+        attributes = self._attributes
         for field, value in kwargs.items():
-            if field not in fields and field not in self._attributes:
+            if field in fields:
+                given += 1
+            elif field not in attributes:
                 warnings.warn(name + ".__init__ got an unexpected keyword argument " + repr(field) + ". Support for arbitrary keyword arguments is deprecated and will be removed in Python 3.15.", DeprecationWarning, stacklevel=2)
             # A key that is no string still names a field the maker knows, but
             # no attribute can be written under it, so the complaint is the
@@ -522,6 +534,10 @@ class AST:
             if not isinstance(field, str):
                 raise TypeError("attribute name must be string, not '" + type(field).__name__ + "'")
             setattr(self, field, value)
+        # Every field was supplied by position or keyword: no ASDL defaults
+        # are needed, which is how the reader builds nearly every node.
+        if given == len(fields):
+            return
         types = getattr(cls, '_field_types', None)
         if types is None:
             return
@@ -2030,7 +2046,12 @@ def _joined_values(source, seg_i, seg_end, row, col, raw, spec, multi, template=
                 parts.append(Constant(value=_ftext(source, text_start, i, raw, not spec),
                                       lineno=text_srow, col_offset=text_scol,
                                       end_lineno=row, end_col_offset=col))
-            fv, i, row, col = _formatted(source, i, row, col, raw, multi, template)
+            debug_text, fv, i, row, col = _formatted(source, i, row, col, raw, multi, template)
+            if debug_text is not None:
+                parts.append(Constant(value=debug_text[0], lineno=debug_text[1],
+                                      col_offset=debug_text[2],
+                                      end_lineno=debug_text[3],
+                                      end_col_offset=debug_text[4]))
             parts.append(fv)
             text_start = i
             text_srow, text_scol = row, col
@@ -2054,6 +2075,8 @@ def _formatted(source, i, row, col, raw, multi, template=False):
     esrow, escol = row, col
     expr_end = -1
     conv = -1
+    debug = None
+    debug_end = -1
     spec_start = -1
     spec_srow = 0
     spec_scol = 0
@@ -2083,15 +2106,23 @@ def _formatted(source, i, row, col, raw, multi, template=False):
             if depth == 0:
                 if expr_end < 0:
                     expr_end = i
+                if debug is not None and debug_end < 0:
+                    debug_end = i
                 break
             depth -= 1
             i, row, col = _adv(source, i, 1, row, col)
             continue
         if depth == 0 and c == '=' and source[i + 1:i + 2] != '=' and source[i - 1:i] not in ('=', '!', '<', '>', ':'):
-            _no_tree()
+            # The debug form 'expr=' repeats the expression text before it.
+            if template or expr_end >= 0:
+                _no_tree()
+            expr_end = i
+            debug = (srow, scol, row, col + 1)
         if depth == 0 and c == '!' and source[i + 1:i + 2] != '=':
             if expr_end < 0:
                 expr_end = i
+            if debug is not None and debug_end < 0:
+                debug_end = i
             conv = ord(source[i + 1])
             i, row, col = _adv(source, i, 2, row, col)
             continue
@@ -2100,6 +2131,8 @@ def _formatted(source, i, row, col, raw, multi, template=False):
                 _no_tree()
             if expr_end < 0:
                 expr_end = i
+            if debug is not None and debug_end < 0:
+                debug_end = i
             spec_srow, spec_scol = row, col
             i, row, col = _adv(source, i, 1, row, col)
             spec_start = i
@@ -2137,6 +2170,15 @@ def _formatted(source, i, row, col, raw, multi, template=False):
         values = _joined_values(source, spec_start, i, body_srow, body_scol, raw, True, multi)
         spec = JoinedStr(values=values, lineno=spec_srow, col_offset=spec_scol,
                          end_lineno=row, end_col_offset=col)
+    debug_text = None
+    if debug is not None:
+        if debug_end < 0:
+            debug_end = i
+        # A debug field reprs its value unless a format spec says otherwise.
+        if spec is None and conv == -1:
+            conv = 114
+        debug_text = (source[expr_start:debug_end], debug[0], debug[1],
+                      debug[2], debug[3])
     node = FormattedValue(value=value, conversion=conv, format_spec=spec,
                           lineno=srow, col_offset=scol,
                           end_lineno=row, end_col_offset=col + 1)
@@ -2145,7 +2187,7 @@ def _formatted(source, i, row, col, raw, multi, template=False):
                              conversion=conv, format_spec=spec, lineno=srow,
                              col_offset=scol, end_lineno=row, end_col_offset=col + 1)
     i, row, col = _adv(source, i, 1, row, col)
-    return (node, i, row, col)
+    return (debug_text, node, i, row, col)
 
 def _parse_field_expr(source, s, e, row, col):
     toks = _lex(source, s, e, row, col, True)
@@ -2319,7 +2361,7 @@ class _Parser:
     def at_clause(self, word, parent_col):
         # A clause keyword (else, except, ...) opening a line of its own
         # at the owning statement's indentation.
-        tok = self.peek()
+        tok = self.toks[self.at]
         return (tok.kind == 'name' and tok.text == word and
                 tok.scol == self.prefix_len(tok) and
                 self.indent_col(tok) == parent_col)
@@ -2367,9 +2409,9 @@ class _Parser:
         self.expect_op(')')
         self.expect_op('->')
         returns, rs, re = self.parse_expr(False)
-        while self.peek().kind == 'newline':
+        while self.toks[self.at].kind == 'newline':
             self.pop()
-        if self.peek().kind != 'end':
+        if self.toks[self.at].kind != 'end':
             _syntax('invalid syntax')
         return FunctionType(argtypes=argtypes, returns=returns)
 
@@ -2382,11 +2424,11 @@ class _Parser:
         return tok
 
     def at_op(self, text):
-        tok = self.peek()
+        tok = self.toks[self.at]
         return tok.kind == 'op' and tok.text == text
 
     def at_name(self, word):
-        tok = self.peek()
+        tok = self.toks[self.at]
         return tok.kind == 'name' and tok.text == word
 
     def expect_op(self, text):
@@ -2405,9 +2447,9 @@ class _Parser:
     def parse_block(self, indent, single=False):
         body = []
         while True:
-            while self.peek().kind == 'newline':
+            while self.toks[self.at].kind == 'newline':
                 self.pop()
-            tok = self.peek()
+            tok = self.toks[self.at]
             if tok.kind == 'end':
                 return body
             if tok.scol != self.prefix_len(tok):
@@ -2428,18 +2470,18 @@ class _Parser:
             body.append(node)
             while self.at_op(';'):
                 self.pop()
-                if self.peek().kind in ('end', 'newline'):
+                if self.toks[self.at].kind in ('end', 'newline'):
                     break
                 item = self.parse_stmt()
                 if _compound_statement(item):
                     raise SyntaxError('invalid syntax')
                 body.append(item)
-            if self.peek().kind not in ('end', 'newline') and self.peek().srow <= body[-1].end_lineno:
+            if self.toks[self.at].kind not in ('end', 'newline') and self.toks[self.at].srow <= body[-1].end_lineno:
                 _syntax('invalid syntax')
             if single:
-                while self.peek().kind == 'newline':
+                while self.toks[self.at].kind == 'newline':
                     self.pop()
-                if self.peek().kind != 'end':
+                if self.toks[self.at].kind != 'end':
                     if _compound_statement(body[0]):
                         raise SyntaxError('invalid syntax')
                     raise SyntaxError('multiple statements found while compiling a single statement')
@@ -2448,7 +2490,7 @@ class _Parser:
     # Read either a one-line suite or an indented suite after its colon.
     # Attach a loop/with header comment or a function's header/body-leading comment.
     def suite_comment(self, function=False):
-        colon = self.peek()
+        colon = self.toks[self.at]
         if self.toks[self.at + 1].kind != 'newline':
             return None
         found = []
@@ -2469,11 +2511,11 @@ class _Parser:
 
     def parse_suite(self, header):
         self.expect_op(':')
-        if self.peek().kind != 'newline':
+        if self.toks[self.at].kind != 'newline':
             body = [self.parse_simple_stmt()]
             while self.at_op(';'):
                 self.pop()
-                if self.peek().kind in ('end', 'newline'):
+                if self.toks[self.at].kind in ('end', 'newline'):
                     break
                 item = self.parse_stmt()
                 if _compound_statement(item):
@@ -2481,9 +2523,9 @@ class _Parser:
                 body.append(item)
             self._inline_tail = body[-1].end_lineno
             return body
-        while self.peek().kind == 'newline':
+        while self.toks[self.at].kind == 'newline':
             self.pop()
-        token = self.peek()
+        token = self.toks[self.at]
         if token.kind == 'end':
             _indent('expected an indented block')
         indent = self.indent_col(token)
@@ -2593,7 +2635,7 @@ class _Parser:
             return params
         self.pop()
         while not self.at_op(']'):
-            first = self.peek()
+            first = self.toks[self.at]
             kind = TypeVar
             if self.at_op('*') or self.at_op('**'):
                 kind = ParamSpec if self.pop().text == '**' else TypeVarTuple
@@ -2662,12 +2704,12 @@ class _Parser:
 
     # Parse statement grammar independently from the tree consumers.
     def parse_stmt(self, start=None):
-        token = self.peek()
+        token = self.toks[self.at]
         first = token if start is None else start
         word = token.text
         if word == 'async' and self.fv >= 5:
             self.pop()
-            if self.peek().text not in ('def', 'for', 'with'):
+            if self.toks[self.at].text not in ('def', 'for', 'with'):
                 _syntax('invalid syntax')
             node = self.parse_stmt(first)
             mapping = {FunctionDef: AsyncFunctionDef, For: AsyncFor, With: AsyncWith}
@@ -2680,9 +2722,11 @@ class _Parser:
                 self.pop()
                 decorator, ds, de = self.parse_expr(False)
                 decorators.append(decorator)
-                if self.peek().kind != 'newline':
+                if self.toks[self.at].kind != 'newline':
                     _syntax('invalid syntax')
-                self.pop()
+                # A comment between decorators is its own newline token.
+                while self.toks[self.at].kind == 'newline':
+                    self.pop()
             node = self.parse_stmt()
             if not isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef)):
                 _syntax('invalid syntax')
@@ -2728,7 +2772,7 @@ class _Parser:
             test, ts, te = self.parse_expr(False)
             body = self.parse_suite(first)
             other = []
-            while self.peek().kind == 'newline':
+            while self.toks[self.at].kind == 'newline':
                 self.pop()
             if self.at_clause('elif', self.indent_col(first)) and word != 'while':
                 other = [self.parse_stmt()]
@@ -2747,7 +2791,7 @@ class _Parser:
             comment = self.suite_comment()
             body = self.parse_suite(first)
             other = []
-            while self.peek().kind == 'newline':
+            while self.toks[self.at].kind == 'newline':
                 self.pop()
             if self.at_clause('else', self.indent_col(first)):
                 other = self.parse_suite(self.pop())
@@ -2776,22 +2820,22 @@ class _Parser:
             comment = self.suite_comment()
             body = self.parse_suite(first)
             return self.located(With, first, body[-1], items=items, body=body, type_comment=comment)
-        if word == 'match' and self.toks[self.at + 1].text not in ('=', '(', '.', '[', ':', ';'):
+        if word == 'match' and self.toks[self.at + 1].text not in ('=', '(', '.', '[', ':', ';', ','):
             self.pop()
             subject, ss, se = self.parse_expr(True)
             self.expect_op(':')
-            while self.peek().kind == 'newline':
+            while self.toks[self.at].kind == 'newline':
                 self.pop()
-            indent = self.peek().scol
+            indent = self.toks[self.at].scol
             if indent <= first.scol:
                 raise IndentationError('expected an indented block')
             # The case clauses sit at a level of their own between the
             # subject and each body; register it so that a body's dedent
             # back to the next case is a step the reader knows.
             self.indent_stack.append(indent)
-            self.alt_stack.append(self.alt_indent_col(self.peek()))
+            self.alt_stack.append(self.alt_indent_col(self.toks[self.at]))
             cases = []
-            while self.at_name('case') and self.peek().scol == indent:
+            while self.at_name('case') and self.toks[self.at].scol == indent:
                 header = self.pop()
                 pattern, vs, ve = self.parse_case_as()
                 if isinstance(pattern, MatchStar) and not self.at_op(','):
@@ -2814,7 +2858,7 @@ class _Parser:
                     guard, gs, ge = self.parse_expr(False)
                 body = self.parse_suite(header)
                 cases.append(match_case(pattern=pattern, guard=guard, body=body))
-                while self.peek().kind == 'newline':
+                while self.toks[self.at].kind == 'newline':
                     self.pop()
             self.indent_stack.pop()
             self.alt_stack.pop()
@@ -2829,9 +2873,9 @@ class _Parser:
             finalbody = []
             starred = False
             while True:
-                while self.peek().kind == 'newline':
+                while self.toks[self.at].kind == 'newline':
                     self.pop()
-                if self.indent_col(self.peek()) != self.indent_col(first):
+                if self.indent_col(self.toks[self.at]) != self.indent_col(first):
                     break
                 if self.at_name('except'):
                     header = self.pop()
@@ -2913,7 +2957,7 @@ class _Parser:
         if word in ('return', 'raise', 'assert', 'del'):
             self.pop()
             value = None
-            if self.peek().kind not in ('end', 'newline') and not self.at_op(';'):
+            if self.toks[self.at].kind not in ('end', 'newline') and not self.at_op(';'):
                 value, vs, ve = self.parse_expr(word not in ('assert', 'raise'))
             if word == 'return':
                 return self.located(Return, first, self.toks[self.at - 1], value=value)
@@ -2945,8 +2989,8 @@ class _Parser:
                 value, vs, ve = self.parse_expr(False)
             self.set_store(node)
             return self.located(AnnAssign, first, self.toks[self.at - 1], target=node, annotation=annotation, value=value, simple=int(isinstance(node, Name) and node.col_offset == first.scol))
-        operator = self.peek().text
-        if self.peek().kind == 'op' and operator.endswith('=') and operator[:-1] in _BINOPS:
+        operator = self.toks[self.at].text
+        if self.toks[self.at].kind == 'op' and operator.endswith('=') and operator[:-1] in _BINOPS:
             self.pop()
             if type(node) not in (Name, Attribute, Subscript):
                 _syntax("'" + _aug_target_name(node) + "' is an illegal expression for augmented assignment")
@@ -2966,7 +3010,7 @@ class _Parser:
         return self.located(Expr, first, self.toks[self.at - 1], value=node)
 
     def expect_name(self, word):
-        tok = self.peek()
+        tok = self.toks[self.at]
         if tok.kind != 'name' or tok.text != word:
             _syntax('invalid syntax')
         return self.pop()
@@ -2979,7 +3023,7 @@ class _Parser:
         return fallback
 
     def parse_simple_stmt(self):
-        token = self.peek()
+        token = self.toks[self.at]
         if token.kind == 'name' and token.text in ('def', 'class', 'if', 'for', 'while', 'try', 'with', 'async', 'match'):
             _syntax('invalid syntax')
         return self.parse_stmt()
@@ -2997,9 +3041,9 @@ class _Parser:
                   end_lineno=end[0], end_col_offset=end[1])
 
     def parse_else(self, parent_col):
-        while self.peek().kind == 'newline':
+        while self.toks[self.at].kind == 'newline':
             self.pop()
-        tok = self.peek()
+        tok = self.toks[self.at]
         if self.at_name('elif') and tok.scol == parent_col:
             start = self.pop()
             test, ts, te = self.parse_expr(False)
@@ -3024,22 +3068,22 @@ class _Parser:
         orelse = []
         finalbody = []
         while True:
-            while self.peek().kind == 'newline':
+            while self.toks[self.at].kind == 'newline':
                 self.pop()
-            head = self.peek()
+            head = self.toks[self.at]
             if self.at_name('except') and head.scol == tok.scol:
                 handlers.append(self.parse_except(tok.scol))
                 continue
             break
-        while self.peek().kind == 'newline':
+        while self.toks[self.at].kind == 'newline':
             self.pop()
-        if self.at_name('else') and self.peek().scol == tok.scol:
+        if self.at_name('else') and self.toks[self.at].scol == tok.scol:
             self.pop()
             self.expect_op(':')
             orelse = self.parse_suite(tok.scol)
-            while self.peek().kind == 'newline':
+            while self.toks[self.at].kind == 'newline':
                 self.pop()
-        if self.at_name('finally') and self.peek().scol == tok.scol:
+        if self.at_name('finally') and self.toks[self.at].scol == tok.scol:
             self.pop()
             self.expect_op(':')
             finalbody = self.parse_suite(tok.scol)
@@ -3084,7 +3128,7 @@ class _Parser:
         tok = self.expect_name('return')
         value = None
         le = (tok.erow, tok.ecol)
-        if self.peek().kind not in ('newline', 'end') and not self.at_op(';'):
+        if self.toks[self.at].kind not in ('newline', 'end') and not self.at_op(';'):
             value, vs, le = self.parse_expr(True)
         return Return(value=value, lineno=tok.srow, col_offset=tok.scol,
                       end_lineno=le[0], end_col_offset=le[1])
@@ -3145,7 +3189,7 @@ class _Parser:
                     break
                 seen_star = True
                 current = kwonlyargs
-                if self.peek().kind == 'name' and self.peek().text not in _STMT_WORDS:
+                if self.toks[self.at].kind == 'name' and self.toks[self.at].text not in _STMT_WORDS:
                     word = self.pop()
                     vararg = arg(arg=word.text, annotation=None,
                                  type_comment=None)
@@ -3236,8 +3280,8 @@ class _Parser:
             while self.at_op(','):
                 comma = self.pop()
                 le = (comma.erow, comma.ecol)
-                tok = self.peek()
-                if tok.kind in ('newline', 'end') or self.at_op(';') or self.at_op(')') or self.at_op(']') or self.at_op('}'):
+                tok = self.toks[self.at]
+                if tok.kind in ('newline', 'end') or self.at_op(';') or self.at_op('=') or self.at_op(')') or self.at_op(']') or self.at_op('}'):
                     break
                 elt, es, ee = self.parse_expr(False)
                 elts.append(elt)
@@ -3269,7 +3313,10 @@ class _Parser:
 
     def parse_or(self):
         node, ls, le = self.parse_and()
-        while self.at_name('or'):
+        while True:
+            tok = self.toks[self.at]
+            if tok.kind != 'name' or tok.text != 'or':
+                return (node, ls, le)
             self.pop()
             right, rs, re = self.parse_and()
             if type(node) == BoolOp and type(node.op) == Or:
@@ -3285,7 +3332,10 @@ class _Parser:
 
     def parse_and(self):
         node, ls, le = self.parse_not()
-        while self.at_name('and'):
+        while True:
+            tok = self.toks[self.at]
+            if tok.kind != 'name' or tok.text != 'and':
+                return (node, ls, le)
             self.pop()
             right, rs, re = self.parse_not()
             if type(node) == BoolOp and type(node.op) == And:
@@ -3300,8 +3350,9 @@ class _Parser:
         return (node, ls, le)
 
     def parse_not(self):
-        if self.at_name('not'):
-            tok = self.pop()
+        tok = self.toks[self.at]
+        if tok.kind == 'name' and tok.text == 'not':
+            self.pop()
             operand, os, oe = self.parse_not()
             node = UnaryOp(op=Not(), operand=operand, lineno=tok.srow,
                            col_offset=tok.scol, end_lineno=oe[0],
@@ -3314,7 +3365,7 @@ class _Parser:
         ops = []
         comparators = []
         while True:
-            tok = self.peek()
+            tok = self.toks[self.at]
             op = None
             if tok.kind == 'op' and tok.text in _CMPOPS:
                 self.pop()
@@ -3351,7 +3402,7 @@ class _Parser:
     def parse_bitor(self, minimum=1):
         node, ls, le = self.parse_unary()
         while True:
-            tok = self.peek()
+            tok = self.toks[self.at]
             priority = _BINOP_PRECEDENCE.get(tok.text, 0) if tok.kind == 'op' else 0
             if priority < minimum:
                 return node, ls, le
@@ -3365,7 +3416,7 @@ class _Parser:
             le = re
 
     def parse_unary(self):
-        tok = self.peek()
+        tok = self.toks[self.at]
         if tok.kind == 'op' and tok.text in _UNARY:
             self.pop()
             operand, os, oe = self.parse_unary()
@@ -3376,7 +3427,7 @@ class _Parser:
         return self.parse_power()
 
     def parse_power(self):
-        tok = self.peek()
+        tok = self.toks[self.at]
         if tok.kind == 'name' and tok.text == 'await' and self.fv >= 5:
             # await takes a primary alone: 'await f() ** 2' squares the
             # awaited value, and 'await -x' is no expression at all.
@@ -3403,7 +3454,7 @@ class _Parser:
         args = []
         keywords = []
         while not self.at_op(')'):
-            opening = self.peek()
+            opening = self.toks[self.at]
             if self.at_op('**'):
                 self.pop()
                 value, vs, ve = self.parse_expr(False)
@@ -3429,7 +3480,7 @@ class _Parser:
                 args.append(value)
             if self.at_name('for') or self.at_name('async'):
                 generators = self.parse_generators()
-                close = self.peek()
+                close = self.toks[self.at]
                 if close.text != ')' or len(args) != 1 or keywords:
                     _syntax('Generator expression must be parenthesized')
                 args[0] = self.located(GeneratorExp, call_open, close, elt=args[0], generators=generators)
@@ -3442,19 +3493,20 @@ class _Parser:
     def parse_postfix(self):
         node, ls, le = self.parse_atom()
         while True:
-            if self.at_op('('):
+            tok = self.toks[self.at]
+            if tok.kind == 'op' and tok.text == '(':
                 args, keywords, close_tok = self.parse_call()
                 node = Call(func=node, args=args, keywords=keywords, lineno=ls[0],
                             col_offset=ls[1], end_lineno=close_tok.erow,
                             end_col_offset=close_tok.ecol)
                 le = (close_tok.erow, close_tok.ecol)
                 continue
-            if self.at_op('['):
+            if tok.kind == 'op' and tok.text == '[':
                 self.pop()
                 indices = []
                 trailing = False
                 while not self.at_op(']'):
-                    opening = self.peek()
+                    opening = self.toks[self.at]
                     lower = None
                     if not self.at_op(':'):
                         lower, ss, se = self.parse_expr(False)
@@ -3496,16 +3548,16 @@ class _Parser:
                                  end_lineno=close_tok.erow, end_col_offset=close_tok.ecol)
                 le = (close_tok.erow, close_tok.ecol)
                 continue
-            if self.at_op('.'):
+            if tok.kind == 'op' and tok.text == '.':
                 self.pop()
-                tok = self.peek()
-                if tok.kind != 'name':
+                name_tok = self.toks[self.at]
+                if name_tok.kind != 'name':
                     _syntax('invalid syntax')
                 self.pop()
-                node = Attribute(value=node, attr=tok.text, ctx=Load(),
+                node = Attribute(value=node, attr=name_tok.text, ctx=Load(),
                                  lineno=ls[0], col_offset=ls[1],
-                                 end_lineno=tok.erow, end_col_offset=tok.ecol)
-                le = (tok.erow, tok.ecol)
+                                 end_lineno=name_tok.erow, end_col_offset=name_tok.ecol)
+                le = (name_tok.erow, name_tok.ecol)
                 continue
             return (node, ls, le)
 
@@ -3534,37 +3586,38 @@ class _Parser:
         return generators
 
     def parse_atom(self):
-        tok = self.peek()
-        if self.at_name('lambda'):
+        tok = self.toks[self.at]
+        kind = tok.kind
+        if kind == 'name' and tok.text == 'lambda':
             self.pop()
             params = self.parse_parameters(':')
             self.expect_op(':')
             body, bs, be = self.parse_expr(False)
             node = self.located(Lambda, tok, self.toks[self.at - 1], args=params, body=body)
             return node, (tok.srow, tok.scol), be
-        if self.at_name('yield'):
+        if kind == 'name' and tok.text == 'yield':
             self.pop()
             delegated = self.at_name('from')
             if delegated:
                 self.pop()
             value = None
-            if self.peek().kind not in ('end', 'newline') and not self.at_op(')') and not self.at_op(';'):
+            if self.toks[self.at].kind not in ('end', 'newline') and not self.at_op(')') and not self.at_op(';'):
                 value, vs, ve = self.parse_expr(True)
             node = self.located(YieldFrom if delegated else Yield, tok, self.toks[self.at - 1], value=value)
             return node, (tok.srow, tok.scol), (node.end_lineno, node.end_col_offset)
 
-        if self.at_op('*'):
+        if kind == 'op' and tok.text == '*':
             self.pop()
             value, vs, ve = self.parse_bitor()
             node = self.located(Starred, tok, self.toks[self.at - 1], value=value, ctx=Load())
             return node, (tok.srow, tok.scol), ve
-        if self.at_name('await'):
+        if kind == 'name' and tok.text == 'await':
             self.pop()
             value, vs, ve = self.parse_postfix()
             node = self.located(Await, tok, self.toks[self.at - 1], value=value)
             return node, (tok.srow, tok.scol), ve
 
-        if tok.kind == 'num':
+        if kind == 'num':
             self.pop()
             if '_' in tok.text and self.fv < 6:
                 _syntax('Underscores in numeric literals are only supported in Python 3.6 and greater')
@@ -3572,7 +3625,7 @@ class _Parser:
                             lineno=tok.srow, col_offset=tok.scol,
                             end_lineno=tok.erow, end_col_offset=tok.ecol)
             return (node, (tok.srow, tok.scol), (tok.erow, tok.ecol))
-        if tok.kind == 'name':
+        if kind == 'name':
             self.pop()
             word = tok.text
             if word == 'True':
@@ -3594,15 +3647,15 @@ class _Parser:
                         col_offset=tok.scol, end_lineno=tok.erow,
                         end_col_offset=tok.ecol)
             return (node, (tok.srow, tok.scol), (tok.erow, tok.ecol))
-        if tok.kind in ('str', 'fstr', 'tstr'):
+        if kind in ('str', 'fstr', 'tstr'):
             return self.parse_string()
-        if self.at_op('...'):
+        if kind == 'op' and tok.text == '...':
             self.pop()
             node = Constant(value=Ellipsis, lineno=tok.srow,
                             col_offset=tok.scol, end_lineno=tok.erow,
                             end_col_offset=tok.ecol)
             return (node, (tok.srow, tok.scol), (tok.erow, tok.ecol))
-        if self.at_op('('):
+        if kind == 'op' and tok.text == '(':
             open_tok = self.pop()
             if self.at_op(')'):
                 close_tok = self.pop()
@@ -3636,7 +3689,7 @@ class _Parser:
             close_tok = self.expect_op(')')
             return (node, (open_tok.srow, open_tok.scol),
                     (close_tok.erow, close_tok.ecol))
-        if self.at_op('['):
+        if kind == 'op' and tok.text == '[':
             open_tok = self.pop()
             elts = []
             if not self.at_op(']'):
@@ -3663,7 +3716,7 @@ class _Parser:
                         end_col_offset=close_tok.ecol)
             return (node, (open_tok.srow, open_tok.scol),
                     (close_tok.erow, close_tok.ecol))
-        if self.at_op('{'):
+        if kind == 'op' and tok.text == '{':
             open_tok = self.pop()
             if self.at_op('}'):
                 close_tok = self.pop()
@@ -3736,7 +3789,7 @@ class _Parser:
         # source, and two text pieces side by side after concatenation
         # merge, keeping the first's start and the last's end.
         toks = [self.pop()]
-        while self.peek().kind in ('str', 'fstr', 'tstr'):
+        while self.toks[self.at].kind in ('str', 'fstr', 'tstr'):
             toks.append(self.pop())
         first = toks[0]
         last = toks[-1]
@@ -3866,7 +3919,10 @@ def _parse_for_compile(source, filename, mode, type_comments, optimize):
 def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
           feature_version=None, optimize=-1, fold_debug=False):
     if isinstance(source, (bytes, bytearray)):
-        source = source.decode('utf-8')
+        # Source bytes name their own encoding: a byte-order mark or a coding comment.
+        import io, tokenize
+        source = bytes(source)
+        source = source.decode(tokenize.detect_encoding(io.BytesIO(source).readline)[0])
     if not isinstance(source, str):
         raise TypeError('compile() arg 1 must be a string, bytes or AST object')
     if '\x00' in source:

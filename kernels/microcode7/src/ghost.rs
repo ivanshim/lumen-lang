@@ -151,7 +151,26 @@ thread_local! {
     // A listener whose kind has no notification of its own forces the
     // broad check: every departure is then worth the lost flag.
     static UNHOOKED: Cell<bool> = const { Cell::new(false) };
-    static NOTABLE: RefCell<(Vec<Ghost>, usize)> = const { RefCell::new((Vec::new(), 8)) };
+    static NOTABLE: RefCell<Notable> = RefCell::new((Vec::new(), 8, HashSet::default()));
+}
+
+// Index weak routine/environment pairs without adding ownership to either.
+type Notable = (Vec<Ghost>, usize, HashSet<(usize, usize), crate::table::FxBuildHasher>);
+
+// Identify a closure by both allocations; its weak holds prevent address reuse.
+fn bound_key(ghost: &Ghost) -> Option<(usize, usize)> {
+    match ghost {
+        Ghost::Bound(body, frame) => Some((body.as_ptr() as usize, frame.as_ptr() as usize)),
+        _ => None,
+    }
+}
+
+// Release expired records and rebuild the duplicate index from the survivors.
+fn prune_notable(notable: &mut Notable) {
+    notable.0.retain(|ghost| !ghost.departed());
+    notable.1 = (notable.0.len() * 2).max(8);
+    notable.2.clear();
+    notable.2.extend(notable.0.iter().filter_map(bound_key));
 }
 
 /// Why a step must look at what is going.
@@ -530,10 +549,12 @@ pub fn note(ghost: Ghost) {
     if matches!(&ghost, Ghost::StaticKind(Value::Intrinsic(..))) { return; }
     let _ = NOTABLE.try_with(|n| {
         let mut n = n.borrow_mut();
-        if n.0.len() >= n.1 {
-            n.0.retain(|g| !g.departed());
-            n.1 = (n.0.len() * 2).max(8);
-        }
+        // Loop arms repeatedly bind the same code to a still-live frame.
+        // One weak record is sufficient for the collector's ownership graph.
+        let key = bound_key(&ghost);
+        if key.is_some_and(|key| n.2.contains(&key)) { return; }
+        if n.0.len() >= n.1 { prune_notable(&mut n); }
+        if let Some(key) = key { n.2.insert(key); }
         n.0.push(ghost);
     });
 }
@@ -890,8 +911,7 @@ impl Web {
         }
         let mut roots: Vec<Knot> = NOTABLE.try_with(|n| {
             let mut n = n.borrow_mut();
-            n.0.retain(|g| !g.departed());
-            n.1 = (n.0.len() * 2).max(8);
+            prune_notable(&mut n);
             n.0.iter().filter_map(|g| g.revive()).map(Knot::Held).collect()
         }).unwrap_or_default();
         roots.extend(extra);
@@ -1177,5 +1197,37 @@ fn blank_cell(knot: &Knot) -> bool {
     match knot {
         Knot::Held(Value::Shared(cell)) => cell.try_borrow().is_ok_and(|inner| matches!(*inner, Value::Nil)),
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Repeated loop bindings stay bounded, while distinct live frames survive.
+    #[test]
+    fn repeated_bound_records_keep_each_live_frame_once() {
+        let table = crate::table::Table::parse(include_str!("../../../langs/python.json")).unwrap();
+        let tokens = crate::scan::scan("1", &table).unwrap();
+        let tokens = crate::indent::indent(tokens, &table, 0).unwrap();
+        let body = crate::build::build(&tokens, &table, &[], HashMap::new(), true, 0).unwrap().program;
+        let first = Env::make(0, None);
+        let second = Env::make(0, None);
+        NOTABLE.with(|n| *n.borrow_mut() = (Vec::new(), 8, HashSet::default()));
+        for _ in 0..10_000 {
+            note(Ghost::Bound(Rc::downgrade(&body), Rc::downgrade(&first)));
+        }
+        note(Ghost::Bound(Rc::downgrade(&body), Rc::downgrade(&second)));
+        NOTABLE.with(|n| assert_eq!(n.borrow().0.len(), 2));
+        assert_eq!(Rc::strong_count(&first), 1);
+        drop(first);
+        NOTABLE.with(|n| prune_notable(&mut n.borrow_mut()));
+        note(Ghost::Bound(Rc::downgrade(&body), Rc::downgrade(&second)));
+        NOTABLE.with(|n| {
+            let mut n = n.borrow_mut();
+            assert_eq!(n.0.len(), 1);
+            assert_eq!(n.2.len(), 1);
+            *n = (Vec::new(), 8, HashSet::default());
+        });
     }
 }
