@@ -65,21 +65,27 @@ fn quoted_run(args: &[Value]) -> Option<Value> {
     Some(Value::tuple(vec![Value::Small(quotes), Value::Flag(escaped_quote)]))
 }
 
-// A complete ordinary literal needs only delimiter and escape tracking.
-// Refills and malformed or multiline strings retain the port's diagnostics.
+// Complete literals on this physical line can bypass the character port.
+// Leave refills and unterminated delimiters to its diagnostic path.
 fn quoted_end(bytes: &[u8], opening: usize) -> Option<usize> {
     let quote = *bytes.get(opening)?;
-    if bytes.get(opening + 1..opening + 3) == Some(&[quote, quote][..]) { return None; }
-    let mut cursor = opening + 1;
+    let width = if bytes.get(opening + 1..opening + 3) == Some(&[quote, quote][..]) { 3 } else { 1 };
+    let mut cursor = opening + width;
+    let mut consecutive = 0;
     loop {
         match *bytes.get(cursor)? {
-            c if c == quote => return Some(cursor + 1),
+            c if c == quote => {
+                consecutive += 1;
+                cursor += 1;
+                if consecutive == width { return Some(cursor); }
+            }
             b'\n' | b'\r' => return None,
             b'\\' => {
                 if matches!(bytes.get(cursor + 1), None | Some(b'\n' | b'\r')) { return None; }
+                consecutive = 0;
                 cursor += 2;
             }
-            _ => cursor += 1,
+            _ => { consecutive = 0; cursor += 1; }
         }
     }
 }

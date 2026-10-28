@@ -6209,7 +6209,8 @@ With a scanner state, quote, delimiter width and pending quote count, it
 advances a buffered ordinary string body and returns the new quote count
 and whether it passed an escaped quote. This form never reads another line.
 Forms the scanner does not recognise, and a buffer that still needs another
-line, stay with the Python tokenizer and its existing diagnostics.
+line, stay with the Python tokenizer and its existing diagnostics. Complete triple-quoted
+spellings on one physical line also use the buffered literal scan.
 
 `ext.builtin.re.shortcut` computes the existing regular-expression adapter's
 ASCII atom sets and capture endpoints/groups. Unsupported input shapes

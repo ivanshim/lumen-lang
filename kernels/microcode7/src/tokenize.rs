@@ -72,14 +72,17 @@ fn string_body(values: &[Value]) -> Option<Value> {
     Some(Value::tuple(vec![Value::Small(matched), Value::Flag(escaped)]))
 }
 
-// Locate a single-line literal's closing delimiter, stepping over escaped
-// characters. Anything needing another input line stays with the adapter.
+// Locate a complete quoted spelling in the current physical input line.
+// A multiline body or missing closing mark still needs the Python scanner.
 fn closing_quote(input: &[u8], first: usize) -> Option<usize> {
     let mark = input[first];
-    if input.get(first + 1) == Some(&mark) && input.get(first + 2) == Some(&mark) { return None; }
-    let mut at = first + 1;
+    let triple = input.get(first + 1) == Some(&mark) && input.get(first + 2) == Some(&mark);
+    let span = if triple { 3 } else { 1 };
+    let mut at = first + span;
     while let Some(&byte) = input.get(at) {
-        if byte == mark { return Some(at + 1); }
+        if byte == mark && (!triple || input.get(at..at + 3) == Some(&[mark; 3][..])) {
+            return Some(at + span);
+        }
         if byte == 10 || byte == 13 { break; }
         if byte == 92 {
             at += 1;
