@@ -27403,7 +27403,7 @@ impl<'a> Engine<'a> {
                         continue;
                     };
                     taken.push_str(spelled);
-                    let ended = by_line && spelled == "\n";
+                    let ended = by_line && matches!(spelled, "\n" | "\r");
                     pending.clear();
                     count += 1;
                     if ended { break; }

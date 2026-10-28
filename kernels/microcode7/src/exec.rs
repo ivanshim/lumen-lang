@@ -32163,7 +32163,7 @@ impl<'a> Machine<'a> {
                     drawn.push(lead[0]);
                     drawn.extend(rest);
                     characters += 1;
-                    if stop_at_line && lead[0] == b'\n' { break; }
+                    if stop_at_line && matches!(lead[0], b'\n' | b'\r') { break; }
                 }
                 Value::text(&String::from_utf8(drawn).map_err(|_| failed())?)
             },

@@ -436,9 +436,9 @@ class _Input(_BinaryInput):
         # time made a long line cost its length in calls.  The stream stops
         # the chunk at a newline, so a prompt still answers on Enter.
         if line:
-            # A fixed CR newline has to answer when the CR arrives; the host
-            # line reader waits for an LF it may never see.
-            if self._newline == '\r':
+            # A held CR only needs one more character to decide between CR
+            # and CRLF; a chunk pull would wait for another line ending.
+            if self._held:
                 raw = _host_stream_read(1, False)
             else:
                 if count <= 0:
