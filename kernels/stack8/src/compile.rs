@@ -14919,6 +14919,37 @@ fn digits_in(digits: &str, base: u32) -> Res<BigInt> {
     })
 }
 
+/// The import statements a compiled body carries and the names it
+/// writes at its own level, in the order they were written: what the
+/// reference records as IMPORT_NAME and STORE_NAME operations. A
+/// relative import's dots count into the level and stand outside the
+/// module name; the fromlist is nothing for a plain import, the star
+/// or the taken names otherwise.
+pub(crate) fn code_imports_stores(words: &[Instr], locals: &[String]) -> (Vec<(String, usize, Option<Vec<String>>)>, Vec<String>) {
+    let mut imports = Vec::new();
+    let mut stores = Vec::new();
+    for (at, word) in words.iter().enumerate() {
+        if at == 0 && matches!(word, Instr::Const(Value::Null)) && matches!(words.get(1), Some(Instr::Write(cell)) if cell.ident.as_ref() == RESULT_CELL) { continue; }
+        match word {
+            Instr::Act(Action::Import(module, style), _) => {
+                let level = module.chars().take_while(|mark| *mark == '.').count();
+                let fromlist = match style {
+                    ImportStyle::Plain => None,
+                    ImportStyle::Star => Some(vec!["*".to_string()]),
+                    ImportStyle::Names(taken) => Some(taken.clone()),
+                };
+                imports.push((module[level..].to_string(), level, fromlist));
+            }
+            Instr::Write(cell) if cell.near.is_empty() && !cell.free => {
+                let name = cell.ident.to_string();
+                if !name.starts_with('#') && !locals.contains(&name) && !stores.contains(&name) { stores.push(name); }
+            }
+            _ => {}
+        }
+    }
+    (imports, stores)
+}
+
 // CPython 3.14 removes indentation while retaining docstring line numbers.
 fn clean_python_documentation(text: &str) -> String {
     let mut expanded = String::new();

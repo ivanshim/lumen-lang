@@ -775,6 +775,26 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
     }
 }
 
+/// How many live holds the given roots reach onto a value, counting
+/// every occurrence in the whole reachable graph. An inline value has no
+/// allocation counter of its own, so this is the ownership a program may
+/// honestly ask after: the holds it actually has, nowhere invented.
+pub fn count_holds(roots: &[Value], target: &Value) -> usize {
+    let mut seen: HashSet<usize> = HashSet::new();
+    let mut open: Vec<Value> = roots.to_vec();
+    let mut count = 0usize;
+    while let Some(value) = open.pop() {
+        if value.same_place(target) { count += 1; }
+        if let Some(place) = place_of(&value) {
+            if !seen.insert(place) { continue; }
+        }
+        let mut children = Vec::new();
+        reaches(&value, &mut children);
+        open.extend(children);
+    }
+    count
+}
+
 /// Follow inline values held by the running engine until their shared
 /// owners can be included as live graph roots. Inline dictionaries have
 /// no reference count of their own, so they cannot be inferred by a

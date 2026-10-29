@@ -33,6 +33,22 @@ _REFUSAL = 'NotImplementedError: there is no CPython bytecode here to disassembl
 def _refuse():
     raise _REFUSAL
 
+# The operations the reference's own bytecode scanner would find, read
+# off the code value the active kernel built rather than off any byte
+# stream: each import as (module, level, fromlist) with the relative
+# dots counted into the level and out of the name, and each name the
+# code writes at its own level. A kernel that keeps neither answers
+# with nothing here.
+
+def _find_imports(co):
+    for record in co.co_imports:
+        name, level, fromlist = record
+        yield name, level, fromlist
+
+def _find_store_names(co):
+    for name in co.co_stores:
+        yield name
+
 def code_info(x):
     _refuse()
 

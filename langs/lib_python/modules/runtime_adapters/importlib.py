@@ -78,3 +78,7 @@ def _native_import(name):
     return module
 # The standard importlib package exposes its loader definitions.
 from . import machinery
+
+# Install the source-backed import hooks normally supplied by frozen bootstrap.
+_bootstrap._install(sys, _imp)
+_bootstrap_external._install(_bootstrap)
