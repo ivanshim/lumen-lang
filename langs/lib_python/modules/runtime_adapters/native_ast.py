@@ -1876,6 +1876,7 @@ def _lex(source, start, end, row, col, for_field, comments=None):
     # walk from the start; ASCII text indexes natively.
     if not isinstance(source, _Chars) and not source.isascii():
         source = _Chars(source)
+    chars = source.items if isinstance(source, _Chars) else source
     # Tokens over source[start:end], beginning at (row, col). Inside a
     # replacement field (for_field) newlines are plain whitespace; outside
     # one they end a statement unless brackets are open. When comments is
@@ -1885,7 +1886,7 @@ def _lex(source, start, end, row, col, for_field, comments=None):
     i = start
     depth = 0
     while i < end:
-        c = source[i]
+        c = chars[i]
         srow, scol = row, col
         if c == ' ' or c == '\t' or c == '\f':
             i += 1
@@ -1916,10 +1917,10 @@ def _lex(source, start, end, row, col, for_field, comments=None):
             continue
         if c.isdigit() or (c == '.' and source[i + 1:i + 2].isdigit()):
             j = i
-            while j < end and (source[j].isalnum() or source[j] in '_.'):
-                if source[j] in 'eE':
+            while j < end and (chars[j].isalnum() or chars[j] in '_.'):
+                if chars[j] in 'eE':
                     j += 1
-                    if j < end and (source[j] == '+' or source[j] == '-'):
+                    if j < end and (chars[j] == '+' or chars[j] == '-'):
                         j += 1
                     continue
                 j += 1
@@ -1929,11 +1930,11 @@ def _lex(source, start, end, row, col, for_field, comments=None):
             continue
         if c == '_' or c.isalpha():
             j = i
-            while j < end and (source[j] == '_' or source[j].isalnum()):
+            while j < end and (chars[j] == '_' or chars[j].isalnum()):
                 j += 1
             word = source[i:j]
             lowered = word.lower()
-            if j < end and source[j] in '\'"' and lowered in _STRING_PREFIXES:
+            if j < end and chars[j] in '\'"' and lowered in _STRING_PREFIXES:
                 if 'f' in lowered or 't' in lowered:
                     lit_end, quote, content_end = _fstring_end(source, j)
                     ci, crow, ccol = _adv(source, i, (j - i) + len(quote), row, col)
