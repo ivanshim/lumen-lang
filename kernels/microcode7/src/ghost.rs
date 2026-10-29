@@ -729,8 +729,13 @@ impl Knot {
     /// The knots this one holds directly. A cell being written to at
     /// this moment yields none, which leans towards keeping.
     fn onward(&self, out: &mut Vec<Knot>) {
+        self.onward_for(out, false);
+    }
+
+    // Count inline bindings too without adding them to the collector graph.
+    fn onward_for(&self, out: &mut Vec<Knot>, include_inline: bool) {
         let held = |out: &mut Vec<Knot>, v: &Value| {
-            if carries_links(v) { out.push(Knot::Held(v.clone())); }
+            if include_inline || carries_links(v) { out.push(Knot::Held(v.clone())); }
         };
         match self {
             Knot::Frame(env) => {
@@ -880,7 +885,7 @@ pub fn count_holds(roots: Vec<Knot>, target: &Value) -> usize {
             children.extend(code.globe.iter().chain(&code.born).cloned().map(Knot::Held));
             children.extend(code.annotator.iter().cloned().map(|body| Knot::Held(Value::Routine(body))));
         } else {
-            knot.onward(&mut children);
+            knot.onward_for(&mut children, true);
         }
         open.extend(children.into_iter().flat_map(Knot::parts));
     }
