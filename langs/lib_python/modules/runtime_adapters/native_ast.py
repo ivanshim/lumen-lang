@@ -2588,6 +2588,10 @@ class _Parser:
                             lineno=value.srow, col_offset=value.scol,
                             end_lineno=value.erow, end_col_offset=value.ecol)
             elif kind == 'num':
+                # 3.5 and earlier reject underscores. The general parser
+                # reports that; this shortcut must not accept them first.
+                if '_' in value.text and self.fv < 6:
+                    break
                 made = _new(Constant, value=_number(value.text, self.source),
                             lineno=value.srow, col_offset=value.scol,
                             end_lineno=value.erow, end_col_offset=value.ecol)
