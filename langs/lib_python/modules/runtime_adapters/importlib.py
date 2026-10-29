@@ -78,6 +78,3 @@ def _native_import(name):
     return module
 # The standard importlib package exposes its loader definitions.
 from . import machinery
-
-# Main already sets up the native builtin finder; add source path hooks only.
-_bootstrap_external._install(_bootstrap)
