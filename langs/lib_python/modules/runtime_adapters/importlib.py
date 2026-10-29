@@ -79,6 +79,5 @@ def _native_import(name):
 # The standard importlib package exposes its loader definitions.
 from . import machinery
 
-# Install the source-backed import hooks normally supplied by frozen bootstrap.
-_bootstrap._install(sys, _imp)
+# Main already sets up the native builtin finder; add source path hooks only.
 _bootstrap_external._install(_bootstrap)
