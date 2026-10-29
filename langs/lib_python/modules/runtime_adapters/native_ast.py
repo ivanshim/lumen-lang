@@ -497,6 +497,11 @@ def _native_keywords(method):
     method._lumen_raw_keywords = True
     return method
 
+# Attribute writes bump this. A parsed tree may be compiled from the source
+# that built it only while the counter still matches the stamp taken then.
+_pure_gen = 0
+_MISSING = object()
+
 class AST:
     _fields = ()
     _attributes = ()
@@ -504,6 +509,30 @@ class AST:
     # Apply ASDL defaults while preserving the deprecated incomplete constructors.
     @_native_keywords
     def __init__(self, *args, **kwargs):
+        # A complete call names every field and only known string keys.
+        # Incomplete and deprecated forms take the warning walk below.
+        # The direct store skips __setattr__, so building a node does not
+        # drop a previously parsed tree's source stamp.
+        if not args:
+            # Nothing to store: context markers such as Load() are empty.
+            # A node with fields and no arguments keeps the warning walk.
+            if not kwargs and not self._fields:
+                return
+            fields = self._fields
+            attrs = self._attributes
+            ready = True
+            for field in fields:
+                if field not in kwargs:
+                    ready = False
+                    break
+            if ready:
+                for key in kwargs:
+                    if type(key) is not str or (key not in fields and key not in attrs):
+                        ready = False
+                        break
+            if ready:
+                self.__dict__.update(kwargs)
+                return
         cls = type(self)
         name = cls.__name__
         fields = self._fields
@@ -583,6 +612,16 @@ class AST:
                 continue
             parts.append(field + '=' + repr(value))
         return type(self).__name__ + '(' + ', '.join(parts) + ')'
+
+    def __setattr__(self, name, value):
+        global _pure_gen
+        _pure_gen += 1
+        object.__setattr__(self, name, value)
+
+    def __delattr__(self, name):
+        global _pure_gen
+        _pure_gen += 1
+        object.__delattr__(self, name)
 
 
 class mod(AST):
@@ -1762,6 +1801,16 @@ _OPS2 = ('**', '//', '<<', '>>', '==', '!=', '<=', '>=', ':=', '->',
 _OPS1 = '()[]{},:;.+-*/%@=<>!~&|^'
 
 class _Tok:
+    # Fields only some tokens use. A class default keeps them off the
+    # instance so a plain name or operator does not store them.
+    value = None
+    prefix = ''
+    quote = ''
+    cs = 0
+    ce = 0
+    cs_row = 0
+    cs_col = 0
+
     def __init__(self, kind, text, srow, scol, erow, ecol):
         self.kind = kind
         self.text = text
@@ -1769,13 +1818,13 @@ class _Tok:
         self.scol = scol
         self.erow = erow
         self.ecol = ecol
-        self.value = None
-        self.prefix = ''
-        self.quote = ''
-        self.cs = 0
-        self.ce = 0
-        self.cs_row = 0
-        self.cs_col = 0
+
+def _cols(chunk):
+    # Byte width only when a character outside ASCII is present; an ASCII
+    # span's length is already that width.
+    if chunk.isascii():
+        return len(chunk)
+    return len(chunk.encode('utf-8'))
 
 def _adv(source, i, count, row, col):
     if count <= 0:
@@ -1785,9 +1834,9 @@ def _adv(source, i, count, row, col):
     breaks = chunk.count('\n')
     if breaks:
         row += breaks
-        col = len(chunk[chunk.rfind('\n') + 1:].encode('utf-8'))
+        col = _cols(chunk[chunk.rfind('\n') + 1:])
     else:
-        col += len(chunk.encode('utf-8'))
+        col += _cols(chunk)
     return (stop, row, col)
 
 def _string_skip(source, i):
@@ -1877,6 +1926,12 @@ def _lex(source, start, end, row, col, for_field, comments=None):
     if not isinstance(source, _Chars) and not source.isascii():
         source = _Chars(source)
     chars = source.items if isinstance(source, _Chars) else source
+    ascii_text = chars is source
+
+    def width(lo, hi):
+        if ascii_text:
+            return hi - lo
+        return len(source[lo:hi].encode('utf-8'))
     # Tokens over source[start:end], beginning at (row, col). Inside a
     # replacement field (for_field) newlines are plain whitespace; outside
     # one they end a statement unless brackets are open. When comments is
@@ -1912,7 +1967,7 @@ def _lex(source, start, end, row, col, for_field, comments=None):
                 j = end
             if comments is not None:
                 comments.append((srow, scol, source[i:j]))
-            col += len(source[i:j].encode('utf-8'))
+            col += width(i, j)
             i = j
             continue
         if c.isdigit() or (c == '.' and source[i + 1:i + 2].isdigit()):
@@ -1924,8 +1979,8 @@ def _lex(source, start, end, row, col, for_field, comments=None):
                         j += 1
                     continue
                 j += 1
-            toks.append(_Tok('num', source[i:j], srow, scol, srow, scol + len(source[i:j].encode('utf-8'))))
-            col += len(source[i:j].encode('utf-8'))
+            toks.append(_Tok('num', source[i:j], srow, scol, srow, scol + width(i, j)))
+            col += width(i, j)
             i = j
             continue
         if c == '_' or c.isalpha():
@@ -1958,8 +2013,8 @@ def _lex(source, start, end, row, col, for_field, comments=None):
                 toks.append(tok)
                 i, row, col = after, erow, ecol
                 continue
-            toks.append(_Tok('name', word, srow, scol, srow, scol + len(source[i:j].encode('utf-8'))))
-            col += len(source[i:j].encode('utf-8'))
+            toks.append(_Tok('name', word, srow, scol, srow, scol + width(i, j)))
+            col += width(i, j)
             i = j
             continue
         if c == '"' or c == "'":
@@ -2246,6 +2301,27 @@ _BINOP_PRECEDENCE = {'|': 1, '^': 2, '&': 3, '<<': 4, '>>': 4,
 _CMPOPS = {'==': Eq, '!=': NotEq, '<': Lt, '<=': LtE, '>': Gt, '>=': GtE}
 _UNARY = {'+': UAdd, '-': USub, '~': Invert}
 
+# Names that are never a plain Load/Store in a simple statement. True,
+# False and None become constants; the statement keywords are syntax
+# there, so both stay on the general parser.
+_PLAIN_SKIP = frozenset(_STMT_WORDS) | frozenset((
+    'True', 'False', 'None', '__debug__', 'and', 'or', 'not', 'is', 'in',
+    'if', 'else', 'elif', 'lambda', 'yield', 'await', 'match', 'case', 'type',
+))
+# Operators and names that continue an expression past a bare atom.
+_EXPR_CONT = frozenset((
+    '**', '*', '/', '//', '%', '@', '+', '-', '<<', '>>', '&', '^', '|',
+    '==', '!=', '<', '>', '<=', '>=', '(', '[', '.', ':=',
+))
+_EXPR_NAME = frozenset(('or', 'and', 'if', 'for', 'async', 'is', 'in', 'not'))
+
+
+def _new(cls, **kwargs):
+    node = object.__new__(cls)
+    if kwargs:
+        node.__dict__.update(kwargs)
+    return node
+
 def _indent(message):
     raise 'IndentationError: ' + message
 
@@ -2480,8 +2556,65 @@ class _Parser:
         return Module(body=body, type_ignores=[])
 
     # Read a block at one indentation level, stopping at its dedent.
-    def parse_block(self, indent, single=False):
+    def _plain_assigns(self, indent):
+        # A run of `name = name|number|string` at this block's column.
+        # The general statement parser reaches the same nodes through a
+        # chain of calls; this writes them directly.
+        toks = self.toks
+        at = self.at
+        limit = len(toks)
         body = []
+        skip = _PLAIN_SKIP
+        committed = at
+        while at + 3 < limit:
+            name = toks[at]
+            if name.kind != 'name' or name.scol != indent or name.text in skip:
+                break
+            op = toks[at + 1]
+            if op.kind != 'op' or op.text != '=':
+                break
+            value = toks[at + 2]
+            kind = value.kind
+            if kind == 'name':
+                if value.text in skip:
+                    break
+            elif kind != 'num' and kind != 'str':
+                break
+            end = toks[at + 3]
+            if end.kind != 'newline' and end.kind != 'end':
+                break
+            if kind == 'name':
+                made = _new(Name, id=value.text, ctx=_new(Load),
+                            lineno=value.srow, col_offset=value.scol,
+                            end_lineno=value.erow, end_col_offset=value.ecol)
+            elif kind == 'num':
+                made = _new(Constant, value=_number(value.text, self.source),
+                            lineno=value.srow, col_offset=value.scol,
+                            end_lineno=value.erow, end_col_offset=value.ecol)
+            else:
+                mark = 'u' if value.prefix and 'u' in value.prefix else None
+                made = _new(Constant, value=value.value, kind=mark,
+                            lineno=value.srow, col_offset=value.scol,
+                            end_lineno=value.erow, end_col_offset=value.ecol)
+            target = _new(Name, id=name.text, ctx=_new(Store),
+                          lineno=name.srow, col_offset=name.scol,
+                          end_lineno=name.erow, end_col_offset=name.ecol)
+            comment = self.take_comment(value.erow)
+            body.append(_new(Assign, targets=[target], value=made, type_comment=comment,
+                             lineno=name.srow, col_offset=name.scol,
+                             end_lineno=value.erow, end_col_offset=value.ecol))
+            if end.kind != 'newline':
+                committed = at + 3
+                break
+            at += 4
+            committed = at
+        self.at = committed
+        return body
+
+    def parse_block(self, indent, single=False):
+        body = [] if single else self._plain_assigns(indent)
+        if body and self.peek().kind == 'end':
+            return body
         while True:
             while self.toks[self.at].kind == 'newline':
                 self.pop()
@@ -3304,6 +3437,23 @@ class _Parser:
     # where statements and binary operations take their ends from.
 
     def parse_expr(self, bare_tuple):
+        if self.at + 1 < len(self.toks):
+            tok = self.toks[self.at]
+            nxt = self.toks[self.at + 1]
+            nt = nxt.text
+            if not ((nxt.kind == 'op' and nt in _EXPR_CONT) or nt in _EXPR_NAME or (bare_tuple and nt == ',')):
+                if tok.kind == 'name' and tok.text not in _PLAIN_SKIP:
+                    self.at += 1
+                    node = _new(Name, id=tok.text, ctx=_new(Load),
+                                lineno=tok.srow, col_offset=tok.scol,
+                                end_lineno=tok.erow, end_col_offset=tok.ecol)
+                    return node, (tok.srow, tok.scol), (tok.erow, tok.ecol)
+                if tok.kind == 'num' and not ('_' in tok.text and self.fv < 6):
+                    self.at += 1
+                    node = _new(Constant, value=_number(tok.text, self.source),
+                                lineno=tok.srow, col_offset=tok.scol,
+                                end_lineno=tok.erow, end_col_offset=tok.ecol)
+                    return node, (tok.srow, tok.scol), (tok.erow, tok.ecol)
         node, ls, le = self.parse_or()
         if self.at_op(':='):
             if not isinstance(node, Name):
@@ -3964,6 +4114,140 @@ def _parse_for_compile(source, filename, mode, type_comments, optimize):
     return parse(source, filename, mode, type_comments=bool(type_comments),
                  optimize=optimize)
 
+def _plain_ident(text):
+    if not text or text in _PLAIN_SKIP:
+        return False
+    c = text[0]
+    if not ('A' <= c <= 'Z' or 'a' <= c <= 'z' or c == '_'):
+        return False
+    for c in text:
+        if not ('A' <= c <= 'Z' or 'a' <= c <= 'z' or '0' <= c <= '9' or c == '_'):
+            return False
+    return True
+
+
+def _one_plain_assign(line, row):
+    # 'name = name' with one space on each side of '='. find(' = ') is the
+    # space before '=', so the value name starts three columns later.
+    eq = line.find(' = ')
+    if eq < 1 or line.find(' = ', eq + 3) != -1:
+        return None
+    left = line[:eq]
+    right = line[eq + 3:]
+    if not _plain_ident(left) or not _plain_ident(right):
+        return None
+    load_col = eq + 3
+    made = _new(Name, id=right, ctx=_new(Load),
+                lineno=row, col_offset=load_col,
+                end_lineno=row, end_col_offset=load_col + len(right))
+    target = _new(Name, id=left, ctx=_new(Store),
+                  lineno=row, col_offset=0,
+                  end_lineno=row, end_col_offset=eq)
+    return _new(Assign, targets=[target], value=made, type_comment=None,
+                lineno=row, col_offset=0,
+                end_lineno=row, end_col_offset=len(line))
+
+
+def _shift_lines(node, delta):
+    if not delta:
+        return
+    if isinstance(node, AST):
+        fields = node.__dict__
+        lineno = fields.get('lineno')
+        if type(lineno) is int:
+            fields['lineno'] = lineno + delta
+        end = fields.get('end_lineno')
+        if type(end) is int:
+            fields['end_lineno'] = end + delta
+        for field in node._fields:
+            _shift_lines(fields.get(field), delta)
+    elif isinstance(node, list):
+        for child in node:
+            _shift_lines(child, delta)
+
+
+def _remember(tree, source):
+    tree.__dict__['_lumen_tree_source'] = source
+    tree.__dict__['_lumen_gen'] = _pure_gen
+    return tree
+
+
+def _parse_plain_prefix(source, filename, feature_version):
+    # A leading run of plain assignments never needs the general lexer.
+    # Anything else, including the tail after the run, stays on parse().
+    n = len(source)
+    i = 0
+    row = 1
+    body = []
+    rest = None
+    rest_row = 1
+    while i <= n:
+        if i == n:
+            rest = ''
+            rest_row = row
+            break
+        j = source.find('\n', i)
+        if j < 0:
+            line = source[i:]
+            next_i = n
+            has_nl = False
+        else:
+            line = source[i:j]
+            next_i = j + 1
+            has_nl = True
+        if line == '':
+            i = next_i
+            row += 1
+            continue
+        node = _one_plain_assign(line, row)
+        if node is None:
+            if not body:
+                return None
+            rest = source[i:]
+            rest_row = row
+            break
+        body.append(node)
+        i = next_i
+        row += 1
+        if not has_nl:
+            rest = ''
+            rest_row = row
+            break
+    if not body:
+        return None
+    if rest:
+        tail = parse(rest, filename, 'exec', feature_version=feature_version)
+        _shift_lines(tail, rest_row - 1)
+        body.extend(tail.body)
+    tree = _new(Module, body=body, type_ignores=[])
+    return _remember(tree, source)
+
+
+def _identity_positions(node, positions):
+    if isinstance(node, AST):
+        if 'lineno' in node._attributes:
+            lineno = node.__dict__.get('lineno')
+            col = node.__dict__.get('col_offset')
+            if type(lineno) is not int:
+                lineno = 0
+            if type(col) is not int:
+                col = 0
+            end_lineno = node.__dict__.get('end_lineno')
+            end_col = node.__dict__.get('end_col_offset')
+            if type(end_lineno) is not int:
+                end_lineno = lineno
+            if type(end_col) is not int:
+                end_col = col
+            positions.append((lineno, col, end_lineno, end_col,
+                              lineno, col, end_lineno, end_col))
+        fields = node.__dict__
+        for field in node._fields:
+            _identity_positions(fields.get(field), positions)
+    elif isinstance(node, list):
+        for child in node:
+            _identity_positions(child, positions)
+
+
 def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
           feature_version=None, optimize=-1, fold_debug=False):
     if isinstance(source, (bytes, bytearray)):
@@ -3983,7 +4267,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         parser = _Parser(source, toks, optimize, fold_debug, fv=feature_version)
         tree = parser.parse_func_type()
         _check_features(tree, feature_version)
-        return tree
+        return _remember(tree, source)
     if mode == 'eval':
         toks = _lex(source, 0, len(source), 1, 0, False)
         parser = _Parser(source, toks, optimize, fold_debug, fv=feature_version)
@@ -3998,16 +4282,21 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
             _syntax('invalid syntax')
         tree = Expression(body=node)
         _check_features(tree, feature_version)
-        return tree
+        return _remember(tree, source)
     if mode not in ('exec', 'single'):
         raise ValueError("compile() mode must be 'exec', 'eval', 'single' or 'func_type'")
+    if (mode == 'exec' and not type_comments and optimize < 0 and not fold_debug
+            and source.isascii()):
+        prefixed = _parse_plain_prefix(source, filename, feature_version)
+        if prefixed is not None:
+            _check_features(prefixed, feature_version)
+            return prefixed
     comments = []
     toks = _lex(source, 0, len(source), 1, 0, False, comments)
     if type_comments:
         _check_type_comments(toks, comments)
     parser = _Parser(source, toks, optimize, fold_debug, comments=comments if type_comments else None, fv=feature_version)
     tree = parser.parse_module(single=mode == 'single')
-    tree._lumen_tree_source = source
     if type_comments:
         parser.check_comments()
         for row, column, text in comments:
@@ -4019,7 +4308,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
             raise SyntaxError('invalid syntax')
         tree = Interactive(body=tree.body)
     _check_features(tree, feature_version)
-    return tree
+    return _remember(tree, source)
 
 def _tree_for_compile(source, filename, mode, type_comments, optimize):
     # compile() reaches the reader with the flags already read: whether
@@ -4435,7 +4724,16 @@ class NodeVisitor(object):
 
     def generic_visit(self, node):
         """Called if no explicit visitor function exists for a node."""
-        for field, value in iter_fields(node):
+        # Parsed nodes keep their fields in __dict__. Fall back to getattr
+        # for a class default or a field that was never stored.
+        fields = node.__dict__
+        for field in node._fields:
+            value = fields.get(field, _MISSING)
+            if value is _MISSING:
+                try:
+                    value = getattr(node, field)
+                except AttributeError:
+                    continue
             if isinstance(value, list):
                 for item in value:
                     if isinstance(item, AST):
@@ -4700,6 +4998,14 @@ def _compile_source(tree, mode):
         raise ValueError('compile(): invalid mode')
     if not isinstance(tree, expected):
         raise TypeError('expected ' + expected.__name__ + ' node, got ' + type(tree).__name__)
+    # Unmodified ASCII trees already carry the text and the columns.
+    # Check the generation before this function builds any node.
+    cached = tree.__dict__.get('_lumen_tree_source')
+    if (type(cached) is str and cached.isascii()
+            and tree.__dict__.get('_lumen_gen') == _pure_gen):
+        positions = []
+        _identity_positions(tree, positions)
+        return cached, tuple(positions)
     _validate_node(tree)
     _validate_contexts(tree)
     source = unparse(tree)
