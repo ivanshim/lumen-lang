@@ -1872,7 +1872,9 @@ def _check_single_line(source, q, after):
         i += 1
 
 def _lex(source, start, end, row, col, for_field, comments=None):
-    if not isinstance(source, _Chars):
+    # A spread list pays off only where a character outside ASCII costs a
+    # walk from the start; ASCII text indexes natively.
+    if not isinstance(source, _Chars) and not source.isascii():
         source = _Chars(source)
     # Tokens over source[start:end], beginning at (row, col). Inside a
     # replacement field (for_field) newlines are plain whitespace; outside
