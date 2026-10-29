@@ -42450,6 +42450,7 @@ impl Machine<'_> {
             (keys[2].clone(), Value::Small(manner as i64)), ("co_flags".to_owned(), Value::Small(recovered.program.flags)),
             ("co_firstlineno".to_owned(), Value::Small(recovered.program.declared_on as i64)), ("co_consts".to_owned(), literals),
             ("co_filename".into(), Value::text(&filename))];
+        slots.push(("\0native_code".into(), self.code_handle(&recovered.program)));
         slots.push(("\0native_forms".into(), Value::Routine(recovered.program)));
         slots.push(("\0form_names".into(), Value::text(&metadata)));
         slots.push(("\0form_archive".into(), archive));

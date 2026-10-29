@@ -38307,6 +38307,7 @@ impl Engine<'_> {
             (words[2].clone(), Value::Small(mode as i64)), ("co_flags".into(), Value::Small(program.code_flags)),
             ("co_firstlineno".into(), Value::Small(program.declared_on as i64)), ("co_consts".into(), constants),
             ("co_filename".into(), Value::text(&file)),
+            ("\0native_code".into(), self.routine_code(&program)),
             ("\0compiled_program".into(), Value::Routine(program)),
             ("\0compiled_bindings".into(), Value::text(&bindings)),
             ("\0code_archive".into(), archive)];
