@@ -6103,8 +6103,9 @@ The Python program-namespace primitive accepts `refcount` and a value to read
 its actual shared-allocation owners, including interpreter temporaries. Inline
 values have no shared allocation counter; their live holdings are counted
 through the interpreter's reachable roots.
-`sys.getrefcount` uses the native tracing ownership interface, including its
-permanent-value accounting; numeric counts need not match CPython's representation.
+`sys.getrefcount` exposes these live holdings. The native tracing ownership
+interface separately retains permanent-value lifetime markers. Numeric counts
+need not match CPython's object representation.
 
 The `ext.builtin.host.info` helper also accepts the `build` query, exposing
 the Rust compiler flags for support-library sanitizer detection.
