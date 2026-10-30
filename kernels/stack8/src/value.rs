@@ -481,6 +481,7 @@ pub struct Members {
     /// sets would otherwise fold its members afresh at every level and
     /// cost what the whole nesting beneath it costs.
     pub folded: std::cell::Cell<Option<i64>>,
+    pub digest: std::cell::Cell<Option<u64>>,
     /// How many of the members are things kept beside their hashes:
     /// the count that tells a plain value, addressed by its worth
     /// alone, whether an equal thing could still stand among the
@@ -490,11 +491,12 @@ pub struct Members {
 
 impl Members {
     pub fn empty(word: String, fixed: bool) -> Self {
-        Self { row: Vec::new(), held: std::collections::HashMap::default(), word, fixed, folded: std::cell::Cell::new(None), protocol: 0 }
+        Self { row: Vec::new(), held: std::collections::HashMap::default(), word, fixed, folded: std::cell::Cell::new(None), digest: std::cell::Cell::new(None), protocol: 0 }
     }
 
     pub fn insert(&mut self, key: String, value: Value) {
         self.folded.set(None);
+        self.digest.set(None);
         if !self.held.contains_key(&key) {
             if matches!(value, Value::Hashed(_)) { self.protocol += 1; }
             self.row.push(key.clone());
@@ -504,6 +506,7 @@ impl Members {
 
     pub fn remove(&mut self, key: &str) -> Option<Value> {
         self.folded.set(None);
+        self.digest.set(None);
         let found = self.held.remove(key);
         if let Some(value) = &found {
             if matches!(value, Value::Hashed(_)) { self.protocol -= 1; }
@@ -561,11 +564,16 @@ impl Members {
     /// could hold, whilst the fold stays one number wide however deep
     /// the nesting goes.
     pub fn address(&self) -> String {
-        let mut places: Vec<&str> = self.row.iter().map(String::as_str).collect();
-        places.sort_unstable();
-        let mut state = std::collections::hash_map::DefaultHasher::new();
-        for place in places { std::hash::Hash::hash(place, &mut state); }
-        format!("frozen:{:x}", std::hash::Hasher::finish(&state))
+        let digest = self.digest.get().unwrap_or_else(|| {
+            let mut places: Vec<&str> = self.row.iter().map(String::as_str).collect();
+            places.sort_unstable();
+            let mut state = std::collections::hash_map::DefaultHasher::new();
+            for place in places { std::hash::Hash::hash(place, &mut state); }
+            let d = std::hash::Hasher::finish(&state);
+            self.digest.set(Some(d));
+            d
+        });
+        format!("frozen:{digest:x}")
     }
 }
 
@@ -705,7 +713,6 @@ impl KeyedPairs {
     /// effects while retaining the index of unchanged key spellings.
     pub fn overwrite_named_row(&mut self, at: usize, value: Value) {
         self.revision = next_map_revision();
-        *self.lookup.borrow_mut() = None;
         self.rows[at].1 = value;
     }
 
@@ -815,13 +822,32 @@ impl KeyedPairs {
         Some(pair)
     }
 
+    fn note_pushed_name(names: &mut Option<Box<NameLookup>>, key: &Value, at: usize) {
+        let Some(boxed) = names.as_mut() else { return };
+        let NameLookup::Fixed(positions) = &mut **boxed else { return };
+        let mut current = key;
+        while let Value::Hashed(pair) = current { current = &pair.0; }
+        match current {
+            Value::Text(word) => { positions.entry(word.clone()).or_insert(at); }
+            Value::Bond(_) => **boxed = NameLookup::Mutable,
+            _ => {}
+        }
+    }
+
     /// Write a key at the next open place, growing the entry array.
     pub fn push_row(&mut self, key: Value, value: Value) {
+        let at = self.rows.len();
         self.revision = next_map_revision();
-        *self.lookup.borrow_mut() = None;
-        *self.names.borrow_mut() = None;
         self.rows.push((key, value));
-        Self::append_entry(&mut self.slots, &mut self.span, &mut self.entry_budget, &self.rows.last().expect("added row").0);
+        let added = &self.rows[at].0;
+        Self::append_entry(&mut self.slots, &mut self.span, &mut self.entry_budget, added);
+        if let Some((by_text, untexted)) = self.lookup.get_mut().as_mut() {
+            match added.member_key() {
+                Ok(text) => { by_text.insert(text, at); }
+                Err(_) => *untexted += 1,
+            }
+        }
+        Self::note_pushed_name(self.names.get_mut(), added, at);
     }
 
     pub fn push(&mut self, pair: (Value, Value)) { self.push_row(pair.0, pair.1); }
@@ -890,10 +916,10 @@ impl KeyedPairs {
         self.settle_lookup();
         let at = self.rows.len();
         self.revision = next_map_revision();
-        *self.names.borrow_mut() = None;
-        self.compiled_names.get_mut().clear();
         self.rows.push((key, value));
-        Self::append_entry(&mut self.slots, &mut self.span, &mut self.entry_budget, &self.rows.last().expect("added row").0);
+        let added = &self.rows[at].0;
+        Self::note_pushed_name(self.names.get_mut(), added, at);
+        Self::append_entry(&mut self.slots, &mut self.span, &mut self.entry_budget, added);
         self.lookup.borrow_mut().as_mut().expect("just settled").0.insert(keytext, at);
     }
 }
@@ -1459,6 +1485,8 @@ impl Value {
             let near = |n: f64| if n == 0.0 { "0".to_string() } else { format!("{n:?}") };
             return Ok(format!("c{}/{}", near(z.real), near(z.imag)));
         }
+        if let Value::Small(n) = self { return Ok(format!("n{n}/1")); }
+        if let Value::Huge(n) = self { return Ok(format!("n{n}/1")); }
         if let Some((p, q)) = crate::arith::parts(self) {
             if q.is_zero() { return Err(""); }
             let common = p.gcd(&q);
@@ -2063,11 +2091,13 @@ impl Value {
     pub(super) fn type_text(&self) -> Value {
         let held = self.contents();
         if let Value::Object(object) = &held {
-            let class = object.class_now();
-            let string = std::iter::once(class.as_ref()).chain(class.lineage().iter().map(Rc::as_ref))
-                .any(|base| base.constants.iter().any(|(key, value)| key == "\0kind" && matches!(value, Value::Text(word) if word.as_ref() == "str")));
-            if string {
-                if let Some((_, text)) = object.fields.borrow().iter().find(|(key, _)| key == "\0worth") { return text.contents(); }
+            if object.fields.borrow().first().is_some_and(|entry| entry.0.starts_with('\0')) {
+                let class = object.class_now();
+                let string = std::iter::once(class.as_ref()).chain(class.lineage().iter().map(Rc::as_ref))
+                    .any(|base| base.constants.iter().any(|(key, value)| key == "\0kind" && matches!(value, Value::Text(word) if word.as_ref() == "str")));
+                if string {
+                    if let Some((_, text)) = object.fields.borrow().iter().find(|(key, _)| key == "\0worth") { return text.contents(); }
+                }
             }
         }
         held
@@ -2368,6 +2398,7 @@ thread_local! { static MEMBERS_REVISION: std::cell::Cell<u64> = const { std::cel
 /// How many times any class's members have been opened for writing: a
 /// stamp a reading made from them can be checked against later.
 pub fn members_revision() -> u64 { MEMBERS_REVISION.with(|revision| revision.get()) }
+pub fn bump_members_revision() { MEMBERS_REVISION.with(|revision| revision.set(revision.get().wrapping_add(1))); }
 
 /// Ordered class storage with a lazily built index of names, never values.
 /// Every mutable borrow discards the index, including writes through a view.
@@ -2376,12 +2407,13 @@ pub struct ClassMembers {
     rows: RefCell<Vec<(String, Value)>>,
     absent: RefCell<(u64, std::collections::HashSet<String, FxBuildHasher>)>,
     offsets: RefCell<Option<std::collections::HashMap<String, usize, FxBuildHasher>>>,
+    pub(crate) no_last_word: std::cell::Cell<u64>,
 }
 
 impl ClassMembers {
     pub(super) fn revision() -> u64 { MEMBERS_REVISION.with(|revision| revision.get()) }
     pub fn new(rows: Vec<(String, Value)>) -> Self {
-        Self { rows: RefCell::new(rows), offsets: RefCell::new(None), absent: RefCell::new((u64::MAX, std::collections::HashSet::with_hasher(FxBuildHasher::default()))) }
+        Self { rows: RefCell::new(rows), offsets: RefCell::new(None), absent: RefCell::new((u64::MAX, std::collections::HashSet::with_hasher(FxBuildHasher::default()))), no_last_word: std::cell::Cell::new(u64::MAX) }
     }
     pub fn borrow(&self) -> std::cell::Ref<'_, Vec<(String, Value)>> { self.rows.borrow() }
     pub fn borrow_mut(&self) -> std::cell::RefMut<'_, Vec<(String, Value)>> {

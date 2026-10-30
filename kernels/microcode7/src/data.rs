@@ -35,6 +35,7 @@ pub struct Env {
     pub capture_slots: RefCell<CaptureSlots>,
     pub outer: Option<Rc<Env>>,
     pub weak_callback_frame: Cell<bool>,
+    pub watched: Cell<bool>,
     /// Names a proxy over this frame has put aside: names the code
     /// reserved no slot for, kept here so every reading of the frame,
     /// `locals()` among them, sees them.
@@ -48,12 +49,18 @@ pub struct Env {
 }
 
 impl Drop for Env {
-    fn drop(&mut self) { crate::ghost::departing_at(self as *const Env as usize); }
+    fn drop(&mut self) {
+        if self.watched.get() {
+            crate::ghost::departing_at(self as *const Env as usize);
+        } else {
+            crate::ghost::departing_generic();
+        }
+    }
 }
 
 impl Env {
     pub fn make(size: usize, parent: Option<Rc<Env>>) -> Rc<Env> {
-        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(CaptureSlots::default()), outer: parent, weak_callback_frame: Cell::new(false), collector_skips: RefCell::new(Vec::new()), collector_skipping: Cell::new(false), extra: RefCell::new(Vec::new()) })
+        Rc::new(Env { cells: RefCell::new(vec![Value::Unset; size]), capture_slots: RefCell::new(CaptureSlots::default()), outer: parent, weak_callback_frame: Cell::new(false), watched: Cell::new(false), collector_skips: RefCell::new(Vec::new()), collector_skipping: Cell::new(false), extra: RefCell::new(Vec::new()) })
     }
 }
 
@@ -343,6 +350,7 @@ pub struct SetStore {
     /// out once however often it is wanted; a store of stores would
     /// otherwise fold every level beneath it over again each time.
     pub reckoned: std::cell::Cell<Option<i64>>,
+    pub digest: std::cell::Cell<Option<u64>>,
     /// How many of the entries are things kept beside their hashes:
     /// the count that tells a plain value, addressed by its worth
     /// alone, whether an agreeing thing could still stand among the
@@ -352,7 +360,7 @@ pub struct SetStore {
 
 impl SetStore {
     pub fn new(spelling: &str, sealed: bool) -> SetStore {
-        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into(), sealed, reckoned: std::cell::Cell::new(None), instances: 0 }
+        SetStore { entries: vec![], keys: Default::default(), spelling: spelling.into(), sealed, reckoned: std::cell::Cell::new(None), digest: std::cell::Cell::new(None), instances: 0 }
     }
 
     /// The address the whole store takes where a set holds it: the
@@ -364,15 +372,21 @@ impl SetStore {
     /// alone grow past any length a machine could hold, whereas one
     /// number stays one number however deep the nesting runs.
     pub fn whole_address(&self) -> String {
-        let mut places: Vec<&str> = self.entries.iter().map(|(address, _)| address.as_str()).collect();
-        places.sort_unstable();
-        let mut gathering = std::collections::hash_map::DefaultHasher::new();
-        for place in places { std::hash::Hash::hash(place, &mut gathering); }
-        format!("sealed:{:x}", std::hash::Hasher::finish(&gathering))
+        let digest = self.digest.get().unwrap_or_else(|| {
+            let mut places: Vec<&str> = self.entries.iter().map(|(address, _)| address.as_str()).collect();
+            places.sort_unstable();
+            let mut gathering = std::collections::hash_map::DefaultHasher::new();
+            for place in places { std::hash::Hash::hash(place, &mut gathering); }
+            let d = std::hash::Hasher::finish(&gathering);
+            self.digest.set(Some(d));
+            d
+        });
+        format!("sealed:{digest:x}")
     }
 
     pub fn put(&mut self, address: String, item: Value) {
         self.reckoned.set(None);
+        self.digest.set(None);
         if self.keys.insert(address.clone()) {
             if matches!(item, Value::Keyed(..)) { self.instances += 1; }
             self.entries.push((address, item));
@@ -381,6 +395,7 @@ impl SetStore {
 
     pub fn take(&mut self, address: &str) -> Option<Value> {
         self.reckoned.set(None);
+        self.digest.set(None);
         if !self.keys.remove(address) { return None; }
         let place = self.entries.iter().position(|(k, _)| k == address).unwrap();
         let held = self.entries.remove(place).1;
@@ -532,7 +547,6 @@ impl MapStore {
     /// Replace a value while retaining its unchanged namespace key positions.
     pub fn overwrite_namespace(&mut self, at: usize, value: Value) {
         self.serial = dictionary_turn();
-        self.place.get_mut().take();
         self.pairs[at].1 = value;
     }
 
@@ -647,14 +661,31 @@ impl MapStore {
         result
     }
 
+    fn note_pushed_spelling(spellings: &mut Option<Result<std::collections::HashMap<Rc<str>, usize>, ()>>, key: &Value, at: usize) {
+        let Some(Ok(words)) = spellings.as_mut() else { return };
+        let mut current = key;
+        while let Value::Keyed(inner, _) = current { current = inner; }
+        match current {
+            Value::Text(word) => { words.entry(word.clone()).or_insert(at); }
+            Value::Shared(_) => *spellings = Some(Err(())),
+            _ => {}
+        }
+    }
+
     /// Write a key at the next open place, growing the entry array.
     pub fn push_row(&mut self, key: Value, value: Value) {
+        let at = self.pairs.len();
         self.serial = dictionary_turn();
         self.pairs.push((key, value));
-        Self::extend_positions(&mut self.slots, &mut self.span, &mut self.entry_budget, &self.pairs.last().expect("new pair").0);
-        *self.place.borrow_mut() = None;
-        self.spellings.get_mut().take();
-        self.namespace_slots.get_mut().clear();
+        let added = &self.pairs[at].0;
+        Self::extend_positions(&mut self.slots, &mut self.span, &mut self.entry_budget, added);
+        if let Some((built, unaddressed)) = self.place.get_mut().as_mut() {
+            match added.hash_address() {
+                Ok(addr) => { built.insert(addr, at); }
+                Err(_) => *unaddressed += 1,
+            }
+        }
+        Self::note_pushed_spelling(self.spellings.get_mut(), added, at);
     }
 
     pub fn push(&mut self, incoming: (Value, Value)) {
@@ -736,8 +767,9 @@ impl MapStore {
         let at = self.pairs.len();
         self.serial = dictionary_turn();
         self.pairs.push((key, value));
-        self.spellings.get_mut().take();
-        Self::extend_positions(&mut self.slots, &mut self.span, &mut self.entry_budget, &self.pairs.last().expect("new pair").0);
+        let added = &self.pairs[at].0;
+        Self::note_pushed_spelling(self.spellings.get_mut(), added, at);
+        Self::extend_positions(&mut self.slots, &mut self.span, &mut self.entry_budget, added);
         self.place.borrow_mut().as_mut().expect("just built").0.insert(address, at);
     }
 }
@@ -1937,11 +1969,13 @@ impl Value {
     pub(super) fn type_text(&self) -> Value {
         let value = self.settled();
         if let Value::Thing(thing) = &value {
-            let class = thing.blueprint();
-            let string = std::iter::once(class.as_ref()).chain(class.ancestry().iter().map(Rc::as_ref))
-                .any(|base| base.constants.iter().any(|(key, held)| key == "\0native" && matches!(held, Value::Text(word) if word.as_ref() == "str")));
-            if string {
-                if let Some(entry) = thing.holds.borrow().iter().find(|entry| entry.0 == "\0underlying") { return entry.1.settled(); }
+            if thing.holds.borrow().first().is_some_and(|entry| entry.0.starts_with('\0')) {
+                let class = thing.blueprint();
+                let string = std::iter::once(class.as_ref()).chain(class.ancestry().iter().map(Rc::as_ref))
+                    .any(|base| base.constants.iter().any(|(key, held)| key == "\0native" && matches!(held, Value::Text(word) if word.as_ref() == "str")));
+                if string {
+                    if let Some(entry) = thing.holds.borrow().iter().find(|entry| entry.0 == "\0underlying") { return entry.1.settled(); }
+                }
             }
         }
         value
@@ -2257,6 +2291,7 @@ pub struct TypeNames {
 thread_local! { static NAMESPACE_CHANGE: Cell<u64> = const { Cell::new(1) }; }
 /// The current namespace stamp, for a reader keeping something derived from class entries.
 pub fn namespace_change() -> u64 { NAMESPACE_CHANGE.with(|stamp| stamp.get()) }
+pub fn note_namespace_change() { NAMESPACE_CHANGE.with(|stamp| stamp.set(stamp.get().wrapping_add(1))); }
 
 /// Namespace slots stay ordered; Python lookup may index their spellings.
 /// Mutation invalidates all slot positions before the caller can edit rows.
@@ -2265,12 +2300,13 @@ pub struct BlueprintEntries {
     values: RefCell<Vec<(String, Value)>>,
     missing: RefCell<std::collections::HashMap<String, u64, crate::table::FxBuildHasher>>,
     positions: RefCell<Option<std::collections::HashMap<String, usize, crate::table::FxBuildHasher>>>,
+    pub(crate) no_farewell: Cell<u64>,
 }
 
 impl BlueprintEntries {
     pub(super) fn epoch() -> u64 { NAMESPACE_CHANGE.with(Cell::get) }
     pub fn new(entries: Vec<(String, Value)>) -> Self {
-        Self { values: RefCell::new(entries), positions: RefCell::new(None), missing: RefCell::new(std::collections::HashMap::with_hasher(crate::table::FxBuildHasher::default())) }
+        Self { values: RefCell::new(entries), positions: RefCell::new(None), missing: RefCell::new(std::collections::HashMap::with_hasher(crate::table::FxBuildHasher::default())), no_farewell: Cell::new(0) }
     }
     pub fn borrow(&self) -> std::cell::Ref<'_, Vec<(String, Value)>> { self.values.borrow() }
     pub fn borrow_mut(&self) -> std::cell::RefMut<'_, Vec<(String, Value)>> {

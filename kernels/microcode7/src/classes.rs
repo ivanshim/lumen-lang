@@ -568,7 +568,12 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn underlying(value:&Value)->Option<Value> {
         let Value::Thing(t)=value else{return None};
-        t.holds.borrow().iter().find(|(k,_)|k=="\0underlying").map(|(_,v)|v.clone())
+        let holds = t.holds.borrow();
+        match holds.first() {
+            Some((k, v)) if k == "\0underlying" => Some(v.clone()),
+            Some((k, _)) if k.starts_with('\0') => holds.iter().find(|(k, _)| k == "\0underlying").map(|(_, v)| v.clone()),
+            _ => None,
+        }
     }
     /// That worth, where the thing's blueprint appoints nothing at any of
     /// the given places of the protocol: the worth answers for what the
@@ -2393,10 +2398,32 @@ impl<'a> Machine<'a> {
         let Some(Value::Thing(thing)) = values.first() else { return Err(self.class_unready()) };
         thing.holds.borrow().iter().find(|(key, _)| key == "\0callable").map(|(_, held)| held.clone()).ok_or_else(|| self.class_unready())
     }
-    pub(crate) fn apply_class_member(&mut self,f:Value,mut values:Vec<Value>)->Res {
-        if let Some(fault) = self.symbolic_access(&f) { return Err(fault.into()); }
-        if let Value::Blueprint(class)=&f { self.check_constructor_expansion(class, &values)?; }
-        let f = if matches!(f, Value::Shared(_)) { self.what_it_spells(f) } else { f };
+    pub(crate) fn apply_class_member(&mut self, mut f: Value, mut values: Vec<Value>) -> Res {
+        loop {
+            if let Some(fault) = self.symbolic_access(&f) { return Err(fault.into()); }
+            if matches!(f, Value::Shared(_)) { f = self.what_it_spells(f); }
+            match f {
+                Value::Wrapped(3 | 132, kept) => {
+                    values.insert(0, kept[1].clone());
+                    if !self.rules.words_ext_stmt_class_builder.is_empty()
+                        && matches!(kept[0].settled(), Value::Intrinsic(..) | Value::OctetKind { .. } | Value::Text(_))
+                    {
+                        return self.apply_held(kept[0].clone(), values);
+                    }
+                    f = kept[0].clone();
+                }
+                Value::Bound(code, environment) => return self.invoke(code, environment, values),
+                Value::Routine(code) => return self.invoke(code, self.outermost.clone(), values),
+                Value::Method(code, thing, _) => {
+                    values.insert(0, Value::Thing(thing));
+                    return self.invoke(code, self.outermost.clone(), values);
+                }
+                other => return self.apply_class_member_slow(other, values),
+            }
+        }
+    }
+    fn apply_class_member_slow(&mut self, f: Value, mut values: Vec<Value>) -> Res {
+        if let Value::Blueprint(class) = &f { self.check_constructor_expansion(class, &values)?; }
         match f {
             Value::Wrapped(186, payload) => {
                 let (arguments, options) = self.open_arguments(values)?;
@@ -3288,7 +3315,7 @@ impl<'a> Machine<'a> {
                             None => Err(self.core_complaint("core.exhausted", "").into()),
                         }
                     }
-                    3 | 132=>{values.insert(0,kept[1].clone());if !self.rules.words_ext_stmt_class_builder.is_empty(){self.apply_held(kept[0].clone(),values)}else{self.apply_class_member(kept[0].clone(),values)}},
+                    3 | 132=>{values.insert(0,kept[1].clone());if !self.rules.words_ext_stmt_class_builder.is_empty() && matches!(kept[0].settled(), Value::Intrinsic(..) | Value::OctetKind { .. } | Value::Text(_)){self.apply_held(kept[0].clone(),values)}else{self.apply_class_member(kept[0].clone(),values)}},
                     // An entry a native kind carries, standing loose:
                     // the first value handed to it is the one it works
                     // upon, the rest being what the entry itself takes.
@@ -4791,15 +4818,27 @@ impl<'a> Machine<'a> {
         if self.unmarked_classes.borrow().get(&identity).is_some_and(|known| known.as_ptr() == Rc::as_ptr(c) && known.strong_count() != 0) { return Ok(()); }
         let Some(held)=Self::own_entry(c,&words[0]) else {
             let mut known = self.unmarked_classes.borrow_mut();
-            if known.len() > 128 { known.retain(|_, class| class.strong_count() != 0); }
+            if known.len() >= 128 && known.len() == known.capacity() { known.retain(|_, class| class.strong_count() != 0); }
             known.insert(identity, Rc::downgrade(c));
             return Ok(());
         };
-        let mut names:Vec<String>=match held.settled() {
-            Value::Set(store)=>store.borrow().entries.iter().filter_map(|(_,v)|match v {Value::Text(t)=>Some(t.to_string()),_=>None}).collect(),
-            _=>Vec::new(),
+        let settled = held.settled();
+        let (mut names, cacheable): (Vec<String>, bool) = match &settled {
+            Value::Set(store) => {
+                let borrowed = store.borrow();
+                let list = borrowed.entries.iter().filter_map(|(_,v)|match v {Value::Text(t)=>Some(t.to_string()),_=>None}).collect();
+                (list, borrowed.sealed)
+            }
+            _ => (Vec::new(), false),
         };
-        if names.is_empty() { return Ok(()); }
+        if names.is_empty() {
+            if cacheable {
+                let mut known = self.unmarked_classes.borrow_mut();
+                if known.len() >= 128 && known.len() == known.capacity() { known.retain(|_, class| class.strong_count() != 0); }
+                known.insert(identity, Rc::downgrade(c));
+            }
+            return Ok(());
+        }
         names.sort();
         let listed=names.iter().map(|n|format!("'{n}'")).collect::<Vec<_>>().join(", ");
         let middle=if names.len()==1 {&words[2]} else {&words[3]};
@@ -5163,21 +5202,25 @@ impl<'a> Machine<'a> {
                 // Reuse a dead function's slot without moving live indices;
                 // a caller can keep an index while annotation code reenters.
                 let identity = Self::routine_member_weak_key(&entry.0);
-                let at = if let Some(vacant) = self.routine_members.iter().rposition(|(key, _)| key.departed()) {
+                if let Some(vacant) = self.routine_members.iter().rposition(|(key, _)| key.departed()) {
                     if let Some(old) = Self::routine_member_weak_key(&self.routine_members[vacant].0) {
                         if self.routine_member_positions.get(&old) == Some(&vacant) {
                             self.routine_member_positions.remove(&old);
                         }
                     }
                     self.routine_members[vacant] = entry;
+                    if let Some(identity) = identity { self.routine_member_positions.insert(identity, vacant); }
+                    self.reindex_routine_codes();
                     vacant
                 } else {
                     self.routine_members.push(entry);
-                    self.routine_members.len() - 1
-                };
-                if let Some(identity) = identity { self.routine_member_positions.insert(identity, at); }
-                self.reindex_routine_codes();
-                at
+                    let at = self.routine_members.len() - 1;
+                    if let Some(identity) = identity { self.routine_member_positions.insert(identity, at); }
+                    if let Some(ptr) = Self::routine_code_ptr(&self.routine_members[at].0) {
+                        self.routine_code_at.entry(ptr).or_insert(at);
+                    }
+                    at
+                }
             }
         }
     }
@@ -5451,8 +5494,17 @@ impl<'a> Machine<'a> {
         if self.names_in_calls && !key.starts_with("__") {
             if let Value::Thing(instance) = &value {
                 let entries = instance.holds.borrow();
-                let saved = entries.iter().all(|(word, _)| !word.starts_with('\0'))
-                    .then(|| entries.iter().find(|(word, _)| word == key).map(|(_, member)| member.clone())).flatten();
+                let saved = (entries.first().is_none_or(|(word, _)| word.as_bytes().first() != Some(&0))
+                    && entries.last().is_none_or(|(word, _)| word.as_bytes().first() != Some(&0)))
+                    .then(|| {
+                        let mut found = None;
+                        for (word, member) in entries.iter() {
+                            if word.as_bytes().first() == Some(&0) { return None; }
+                            if found.is_none() && word == key { found = Some(member); }
+                        }
+                        found.cloned()
+                    })
+                    .flatten();
                 drop(entries);
                 if let Some(saved) = saved {
                     let kind = instance.blueprint();
@@ -5466,6 +5518,9 @@ impl<'a> Machine<'a> {
                 }
             }
         }
+        self.read_class_member_slow(value, key, direct)
+    }
+    fn read_class_member_slow(&mut self, value: Value, key: &str, direct: bool) -> Res {
         if key.starts_with("co_") && key != "co_optimize" {
             if let Value::Thing(instance) = &value {
                 if self.code_kind.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &instance.blueprint())) {
@@ -5563,11 +5618,11 @@ impl<'a> Machine<'a> {
                 return Ok(member);
             }
         }
-        let source_module = matches!(value.settled(), Value::Thing(module)
-            if module.holds.borrow().iter().any(|entry| matches!(entry.0.as_str(), "\0loaded-module" | "\0dictionary"))
-                && module.holds.borrow().iter().all(|entry| entry.0 != key));
-        if source_module {
-            if let Some(directory) = self.directory_attribute(&value, key) { return Ok(directory); }
+        if let Some(directory) = self.directory_attribute(&value, key) {
+            let source_module = matches!(value.settled(), Value::Thing(module)
+                if module.holds.borrow().iter().any(|entry| matches!(entry.0.as_str(), "\0loaded-module" | "\0dictionary"))
+                    && self.thing_member_place(&module, &module.holds.borrow(), key).is_none());
+            if source_module { return Ok(directory); }
         }
         if let Some(proxy) = self.locals_proxy(&value) {
             if Self::locals_member(key) { return Ok(Value::Member(Rc::new(Value::Thing(proxy)), key.to_owned())); }
@@ -6754,11 +6809,17 @@ impl<'a> Machine<'a> {
         }else if let Value::Thing(t)=&value {
             if self.namespace_holding(&value).is_some() || Self::native_beneath(&t.blueprint()).as_deref() == Some("module") {
                 let title = self.rules.words_ext_stmt_class_detail_code_fields.get(10).cloned().unwrap_or_default();
-                let dictionary = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").map(|entry| entry.1.clone());
+                let is_annotations = self.rules.words_ext_stmt_class_annotations.first().map(String::as_str) == Some(key);
+                if (!title.is_empty() && key == title) || is_annotations {
+                let dictionary = t.holds.borrow().first().is_some_and(|e| e.0.starts_with('\0'))
+                    .then(|| t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").map(|entry| entry.1.clone())).flatten();
                 let lookup = |wanted: &str| {
                     dictionary.as_ref().and_then(|value| if let Value::Dict(entries) = value.settled() {
                         entries.iter().find(|entry| entry.0.bare() == wanted).map(|entry| entry.1.settled())
-                    } else { None }).or_else(|| t.holds.borrow().iter().find(|entry| entry.0 == wanted).map(|entry| entry.1.settled()))
+                    } else { None }).or_else(|| {
+                        let holds = t.holds.borrow();
+                        self.thing_member_place(t, &holds, wanted).map(|at| holds[at].1.settled())
+                    })
                 };
                 let own = lookup(key);
                 if key == title {
@@ -6780,6 +6841,7 @@ impl<'a> Machine<'a> {
                         Self::write_into_book(&book, key, Some(dictionary.clone()));
                     } else { Self::change_entry(&mut t.holds.borrow_mut(), key, Some(dictionary.clone())); }
                     return Ok(dictionary);
+                }
                 }
             }
 
@@ -6894,7 +6956,8 @@ impl<'a> Machine<'a> {
                     }
                 }
             }
-            let lazy = t.holds.borrow().iter().find(|entry| entry.0 == format!("\0deferred/{key}")).map(|entry| entry.1.clone());
+            let lazy = matches!(key, "__default__" | "__value__")
+                .then(|| t.holds.borrow().iter().find(|entry| entry.0 == format!("\0deferred/{key}")).map(|entry| entry.1.clone())).flatten();
             if let Some(thunk) = lazy {
                 if let Some(entry) = t.holds.borrow().iter().find(|entry| entry.0 == key) { return Ok(entry.1.clone()); }
                 let computed = self.apply_class_member(thunk, Vec::new())?;
@@ -6958,7 +7021,8 @@ impl<'a> Machine<'a> {
             if read_first {
                 return self.member_binding(from_class.unwrap(), Some(value.clone()), t.blueprint().clone());
             }
-            let dictionary = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").map(|entry| entry.1.clone());
+            let dictionary = t.holds.borrow().first().is_some_and(|entry| entry.0.starts_with('\0'))
+                .then(|| t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").map(|entry| entry.1.clone())).flatten();
             if let Some(mapping) = dictionary {
                 // The namespace may be another thing's own holds, shared
                 // by handing one `__dict__` to another; the name is read
@@ -6968,12 +7032,18 @@ impl<'a> Machine<'a> {
                 }
                 let native = Self::underlying(&mapping).unwrap_or(mapping);
                 if let Value::Dict(entries) = native.settled() {
+                    if let Ok(Some(at)) = entries.namespace_position(key) {
+                        return Ok(entries[at].1.clone());
+                    }
                     for (word, item) in entries.iter() {
                         if matches!(word, Value::Text(word) if word.as_ref() == key) { return Ok(item.clone()); }
                     }
                 }
             }
-            let extended = t.holds.borrow().iter().any(|entry| entry.0 == "\0keys");
+            let extended = {
+                let holds = t.holds.borrow();
+                self.thing_member_place(t, &holds, "\0keys").is_some()
+            };
             if extended {
                 let target = self.hash_key(&Value::text(key))?;
                 let contents = self.attribute_entries(t);
@@ -6981,7 +7051,10 @@ impl<'a> Machine<'a> {
                     if self.keys_agree(&entry.0, &target)? { return Ok(entry.1); }
                 }
             }
-            let own=t.holds.borrow().iter().find(|(k,_)|k==key).map(|(_,v)|v.clone());
+            let own = {
+                let holds = t.holds.borrow();
+                self.thing_member_place(t, &holds, key).map(|at| holds[at].1.clone())
+            };
             if let Some(v)=own.filter(|held| !matches!(held.settled(), Value::Unset)){return Ok(v);}
             if let Some(v)=from_class{return self.member_binding(v,Some(value.clone()),t.blueprint().clone());}
             if self.is_fault_kind(&t.blueprint()) && self.fault_method_word(key) { return Ok(Value::Member(Rc::new(value.clone()), key.to_owned())); }
@@ -7488,8 +7561,9 @@ impl<'a> Machine<'a> {
             Value::Shared(_) | Value::Mutable(_, _) if matches!(subject.settled(), Value::Blueprint(_) | Value::Thing(_)) => subject.settled(),
             _ => subject,
         };
-        if self.namespace_holding(&subject).is_some() { self.revised_members.borrow_mut().clear(); }
-        let replacement = if self.namespace_holding(&subject).is_some() {
+        let is_namespace = self.namespace_holding(&subject).is_some();
+        if is_namespace { self.revised_members.borrow_mut().clear(); }
+        let replacement = if is_namespace {
             replacement.map(|item| item.keep(false))
         } else { replacement };
         self.has_nonstring_class_keys |= key == "\0type-keys";
@@ -7520,10 +7594,12 @@ impl<'a> Machine<'a> {
         if self.names_in_calls && !key.starts_with("__") && !key.starts_with('\0') {
             if let Value::Thing(instance) = &subject {
                 let owner = instance.blueprint();
-                let ordinary = instance.holds.borrow().len() < 30
-                    && instance.holds.borrow().iter().all(|entry| !entry.0.starts_with('\0'));
+                let ordinary = !is_namespace && {
+                    let holds = instance.holds.borrow();
+                    holds.len() < 30 && holds.first().is_none_or(|entry| !entry.0.starts_with('\0')) && holds.iter().all(|entry| !entry.0.starts_with('\0'))
+                };
                 let action = if replacement.is_some() { self.detail("set") } else { self.detail("remove") };
-                if ordinary && Self::native_beneath(&owner).is_none() && self.namespace_holding(&subject).is_none()
+                if ordinary && Self::native_beneath(&owner).is_none()
                     && self.allowed_slot(&owner, key) && (direct || self.inherited_entry(&owner, action).is_none())
                     && !self.inherited_entry(&owner, key).is_some_and(|entry| self.writes_too(&entry)) {
                     if Self::change_entry(&mut instance.holds.borrow_mut(), key, replacement) { return Ok(Value::Nil); }
@@ -7749,6 +7825,7 @@ impl<'a> Machine<'a> {
                                 self.require_annotate_callable(value)?;
                                 if let Some(annotation) = self.rules.words_ext_stmt_class_annotations.first().map(String::as_str) {
                                     t.holds.borrow_mut().retain(|entry| entry.0 != annotation);
+                                    self.revised_members.borrow_mut().clear();
                                     let book = t.holds.borrow().iter().find(|entry| entry.0 == "\0dictionary").map(|entry| entry.1.clone());
                                     if let Some(book) = book { Self::write_into_book(&book, annotation, None); }
                                 }
