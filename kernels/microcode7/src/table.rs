@@ -1184,6 +1184,13 @@ impl Table {
                 self.signs.push(lex);
             }
         }
+        // These labels introduce statements contextually, without reserving names.
+        let contextual = ["ext.stmt.type_alias", "ext.stmt.match.case", "ext.stmt.match"];
+        for label in contextual {
+            for spelling in self.strings(label).to_vec() {
+                self.keywords.remove(&spelling);
+            }
+        }
         self.signs.sort_by(|a, b| b.len().cmp(&a.len()).then(a.cmp(b)));
         Ok(())
     }

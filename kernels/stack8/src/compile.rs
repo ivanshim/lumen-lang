@@ -4001,7 +4001,7 @@ impl<'a> Compiler<'a> {
                     else { "SyntaxError: 'continue' not properly in loop" }.into());
             }
         }
-        if self.on_keyword(&lang.type_alias_words) && self.look_ahead(1).lexeme.chars().next().is_some_and(|c| c == '_' || c.is_alphabetic()) {
+        if self.type_alias_head() {
             let old_rule = std::mem::replace(&mut self.forbids_await, true);
             self.pass_token();
             let alias = self.want_name("as the type alias")?;
@@ -5573,13 +5573,25 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    // Recognize the alias header before treating its contextual word as a name.
+    fn type_alias_head(&self) -> bool {
+        self.on_keyword(&self.lang.type_alias_words)
+            && self.look_ahead(1).shape == Shape::Instr
+            && !self.lang.keywords.contains(self.look_ahead(1).spelling())
+            && [&self.lang.assign_words, &self.lang.type_params_open].iter()
+                .any(|words| Lang::spells(words, self.look_ahead(2).spelling()))
+    }
+
     fn match_head(&self) -> bool {
         if !self.on_keyword(&self.lang.match_words) { return false; }
         let mut depth = 0usize;
-        for t in self.tokens.iter().skip(self.pos + 1) {
+        for (at, t) in self.tokens.iter().enumerate().skip(self.pos + 1) {
             if matches!(t.shape, Shape::LineEnd | Shape::Finish) { break; }
             if t.shape != Shape::Sign { continue; }
-            if depth == 0 && self.lang.block_intros.iter().any(|w| w == t.spelling()) { return true; }
+            if depth == 0 && self.lang.block_intros.iter().any(|w| w == t.spelling()) {
+                // A match suite needs a subject and a new line; a name may be annotated.
+                if at > self.pos + 1 && self.tokens.get(at + 1).is_some_and(|next| next.shape == Shape::LineEnd) { return true; }
+            }
             if depth == 0 && self.lang.assign_words.iter().any(|w| w == t.spelling()) { return false; }
             for brackets in [&self.lang.grouping, &self.lang.array_brackets, &self.lang.map_brackets].into_iter().flatten() {
                 if t.lexeme == brackets.open { depth += 1; break; }
@@ -7234,7 +7246,7 @@ impl<'a> Compiler<'a> {
             self.skip_seps();
             return Ok(true);
         }
-        if self.on_keyword(&lang.type_alias_words) && self.look_ahead(1).shape == Shape::Instr {
+        if self.type_alias_head() {
             let alias = self.look_ahead(1).lexeme.clone();
             let slot = self.member_place(&alias, "alias");
             self.member_kept(&alias, &slot);
