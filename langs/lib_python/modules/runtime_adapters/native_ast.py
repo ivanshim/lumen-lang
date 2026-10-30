@@ -497,9 +497,6 @@ def _native_keywords(method):
     method._lumen_raw_keywords = True
     return method
 
-# Attribute writes bump this. A parsed tree may be compiled from the source
-# that built it only while the counter still matches the stamp taken then.
-_pure_gen = 0
 _MISSING = object()
 
 class AST:
@@ -612,16 +609,6 @@ class AST:
                 continue
             parts.append(field + '=' + repr(value))
         return type(self).__name__ + '(' + ', '.join(parts) + ')'
-
-    def __setattr__(self, name, value):
-        global _pure_gen
-        _pure_gen += 1
-        object.__setattr__(self, name, value)
-
-    def __delattr__(self, name):
-        global _pure_gen
-        _pure_gen += 1
-        object.__delattr__(self, name)
 
 
 class mod(AST):
@@ -4170,12 +4157,6 @@ def _shift_lines(node, delta):
             _shift_lines(child, delta)
 
 
-def _remember(tree, source):
-    tree.__dict__['_lumen_tree_source'] = source
-    tree.__dict__['_lumen_gen'] = _pure_gen
-    return tree
-
-
 def _parse_plain_prefix(source, filename, feature_version):
     # A leading run of plain assignments never needs the general lexer.
     # Anything else, including the tail after the run, stays on parse().
@@ -4224,32 +4205,7 @@ def _parse_plain_prefix(source, filename, feature_version):
         _shift_lines(tail, rest_row - 1)
         body.extend(tail.body)
     tree = _new(Module, body=body, type_ignores=[])
-    return _remember(tree, source)
-
-
-def _identity_positions(node, positions):
-    if isinstance(node, AST):
-        if 'lineno' in node._attributes:
-            lineno = node.__dict__.get('lineno')
-            col = node.__dict__.get('col_offset')
-            if type(lineno) is not int:
-                lineno = 0
-            if type(col) is not int:
-                col = 0
-            end_lineno = node.__dict__.get('end_lineno')
-            end_col = node.__dict__.get('end_col_offset')
-            if type(end_lineno) is not int:
-                end_lineno = lineno
-            if type(end_col) is not int:
-                end_col = col
-            positions.append((lineno, col, end_lineno, end_col,
-                              lineno, col, end_lineno, end_col))
-        fields = node.__dict__
-        for field in node._fields:
-            _identity_positions(fields.get(field), positions)
-    elif isinstance(node, list):
-        for child in node:
-            _identity_positions(child, positions)
+    return tree
 
 
 def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
@@ -4271,7 +4227,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         parser = _Parser(source, toks, optimize, fold_debug, fv=feature_version)
         tree = parser.parse_func_type()
         _check_features(tree, feature_version)
-        return _remember(tree, source)
+        return tree
     if mode == 'eval':
         toks = _lex(source, 0, len(source), 1, 0, False)
         parser = _Parser(source, toks, optimize, fold_debug, fv=feature_version)
@@ -4286,7 +4242,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
             _syntax('invalid syntax')
         tree = Expression(body=node)
         _check_features(tree, feature_version)
-        return _remember(tree, source)
+        return tree
     if mode not in ('exec', 'single'):
         raise ValueError("compile() mode must be 'exec', 'eval', 'single' or 'func_type'")
     if (mode == 'exec' and not type_comments and optimize < 0 and not fold_debug
@@ -4312,7 +4268,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
             raise SyntaxError('invalid syntax')
         tree = Interactive(body=tree.body)
     _check_features(tree, feature_version)
-    return _remember(tree, source)
+    return tree
 
 def _tree_for_compile(source, filename, mode, type_comments, optimize):
     # compile() reaches the reader with the flags already read: whether
@@ -5002,14 +4958,6 @@ def _compile_source(tree, mode):
         raise ValueError('compile(): invalid mode')
     if not isinstance(tree, expected):
         raise TypeError('expected ' + expected.__name__ + ' node, got ' + type(tree).__name__)
-    # Unmodified ASCII trees already carry the text and the columns.
-    # Check the generation before this function builds any node.
-    cached = tree.__dict__.get('_lumen_tree_source')
-    if (type(cached) is str and cached.isascii()
-            and tree.__dict__.get('_lumen_gen') == _pure_gen):
-        positions = []
-        _identity_positions(tree, positions)
-        return cached, tuple(positions)
     _validate_node(tree)
     _validate_contexts(tree)
     source = unparse(tree)
