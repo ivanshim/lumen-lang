@@ -246,6 +246,14 @@ class _NativeLoader:
     def get_source(fullname):
         return __loader_source(fullname)
 
+    # Use the same resource protocol before bootstrap replaces native metadata.
+    @staticmethod
+    def get_resource_reader(fullname):
+        from _runtime_import import SourceLoader
+        origin = __load_module(fullname, True)
+        if origin is None:
+            return None
+        return SourceLoader(fullname, origin).get_resource_reader(fullname)
 
 # Cached code carries the source location through its nested definitions.
 def _fix_co_filename(code, path):

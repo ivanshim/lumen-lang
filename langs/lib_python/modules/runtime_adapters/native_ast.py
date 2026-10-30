@@ -2077,6 +2077,7 @@ def _formatted(source, i, row, col, raw, multi, template=False):
     conv = -1
     debug = None
     debug_end = -1
+    debug_shown = None
     spec_start = -1
     spec_srow = 0
     spec_scol = 0
@@ -2114,17 +2115,49 @@ def _formatted(source, i, row, col, raw, multi, template=False):
             continue
         if depth == 0 and c == '=' and source[i + 1:i + 2] != '=' and source[i - 1:i] not in ('=', '!', '<', '>', ':'):
             # The debug form 'expr=' repeats the expression text before it.
-            if template or expr_end >= 0:
+            # A comment after '=' is not part of that text.
+            if expr_end >= 0:
                 _no_tree()
             expr_end = i
             debug = (srow, scol, row, col + 1)
+            kind = 't-string' if template else 'f-string'
+            shown = source[expr_start:i + 1]
+            i, row, col = _adv(source, i, 1, row, col)
+            while i < n and (source[i] in ' \t\r\n\f' or source[i] == '#'):
+                if source[i] == '#':
+                    while i < n and source[i] not in '\r\n':
+                        i, row, col = _adv(source, i, 1, row, col)
+                else:
+                    shown += source[i]
+                    i, row, col = _adv(source, i, 1, row, col)
+            if i >= n:
+                _syntax(kind + ": expecting '}'")
+            elif source[i] not in '!:}':
+                _syntax(kind + ": expecting '!', or ':', or '}'")
+            debug_shown = shown
+            continue
         if depth == 0 and c == '!' and source[i + 1:i + 2] != '=':
             if expr_end < 0:
                 expr_end = i
             if debug is not None and debug_end < 0:
                 debug_end = i
+            mark = source[i + 1:i + 2]
+            if debug is not None:
+                kind = 't-string' if template else 'f-string'
+                if mark in ('', '}', ':'):
+                    _syntax(kind + ': missing conversion character')
+                if mark not in ('s', 'r', 'a'):
+                    if mark.isidentifier():
+                        _syntax(kind + ": invalid conversion character %r: expected 's', 'r', or 'a'" % mark)
+                    _syntax(kind + ': invalid conversion character')
             conv = ord(source[i + 1])
             i, row, col = _adv(source, i, 2, row, col)
+            if debug is not None:
+                kind = 't-string' if template else 'f-string'
+                while i < n and source[i] in ' \t\r\n\f':
+                    i, row, col = _adv(source, i, 1, row, col)
+                if i >= n or source[i] not in ':}':
+                    _syntax(kind + ": expecting ':' or '}'")
             continue
         if depth == 0 and c == ':':
             if source[i + 1:i + 2] == '=':
@@ -2177,8 +2210,8 @@ def _formatted(source, i, row, col, raw, multi, template=False):
         # A debug field reprs its value unless a format spec says otherwise.
         if spec is None and conv == -1:
             conv = 114
-        debug_text = (source[expr_start:debug_end], debug[0], debug[1],
-                      debug[2], debug[3])
+        shown = debug_shown if debug_shown is not None else source[expr_start:debug_end]
+        debug_text = (shown, debug[0], debug[1], debug[2], debug[3])
     node = FormattedValue(value=value, conversion=conv, format_spec=spec,
                           lineno=srow, col_offset=scol,
                           end_lineno=row, end_col_offset=col + 1)
@@ -2987,6 +3020,12 @@ class _Parser:
             if self.at_op('='):
                 self.pop()
                 value, vs, ve = self.parse_expr(False)
+            if type(node) == Tuple:
+                _syntax('only single target (not tuple) can be annotated')
+            if type(node) == List:
+                _syntax('only single target (not list) can be annotated')
+            if type(node) == Starred:
+                _syntax('invalid syntax')
             self.set_store(node)
             return self.located(AnnAssign, first, self.toks[self.at - 1], target=node, annotation=annotation, value=value, simple=int(isinstance(node, Name) and node.col_offset == first.scol))
         operator = self.toks[self.at].text
@@ -3243,6 +3282,12 @@ class _Parser:
     def set_store(self, node, context=Store):
         if type(node) == Name or type(node) == Attribute or type(node) == Subscript:
             node.ctx = context()
+            return
+        if type(node) == Starred:
+            if context is Del:
+                _syntax('cannot delete starred')
+            node.ctx = context()
+            self.set_store(node.value, context)
             return
         if type(node) == Tuple or type(node) == List:
             node.ctx = context()
