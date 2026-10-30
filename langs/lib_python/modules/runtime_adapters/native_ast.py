@@ -4163,35 +4163,6 @@ def _shift_lines(node, delta):
             _shift_lines(child, delta)
 
 
-_parsed_tree = None
-
-
-def _tree_snapshot(value):
-    if isinstance(value, AST):
-        names = tuple(value._fields) + tuple(value._attributes)
-        return (type(value), tuple(((type(name), name), _tree_snapshot(getattr(value, name, _MISSING)))
-                                  for name in names))
-    if isinstance(value, (list, tuple)):
-        return (type(value), tuple(_tree_snapshot(item) for item in value))
-    if isinstance(value, frozenset):
-        return (type(value), frozenset(_tree_snapshot(item) for item in value))
-    if type(value) in (float, complex):
-        # Numeric equality alone loses the sign of zero.
-        return (type(value), repr(value))
-    return (type(value), value)
-
-
-def _remember(tree, source):
-    global _parsed_tree
-    # Keep no node alive, and keep the snapshot outside its mutable __dict__.
-    if type(source) is str and source.isascii():
-        import weakref
-        _parsed_tree = (weakref.ref(tree), source, _tree_snapshot(tree))
-    else:
-        _parsed_tree = None
-    return tree
-
-
 def _parse_plain_prefix(source, filename, feature_version):
     # A leading run of plain assignments never needs the general lexer.
     # Anything else, including the tail after the run, stays on parse().
@@ -4907,10 +4878,9 @@ def _compile_ast(source, filename, mode, flags, optimize=-1, feature_version=Non
         _validate_contexts(source)
         source = _copy_ast(source)
         return _optimized_tree(source, max(optimize, 0), True) if flags & 32768 else source
-    tree = parse(source, filename, mode, type_comments=bool(flags & PyCF_TYPE_COMMENTS),
+    return parse(source, filename, mode, type_comments=bool(flags & PyCF_TYPE_COMMENTS),
                  optimize=optimize if flags & 32768 else -1, feature_version=feature_version,
                  fold_debug=bool(flags & 32768))
-    return tree if flags & 32768 else _remember(tree, source)
 
 # Validate required fields, locations and ASDL categories before generating code.
 def _validate_node(node, active=None):
@@ -4938,9 +4908,10 @@ def _validate_node(node, active=None):
     if getattr(node, 'end_col_offset', None) is not None and node.end_lineno == node.lineno and node.end_col_offset < node.col_offset:
         raise ValueError('line ' + str(node.lineno) + ', column ' + str(node.col_offset) + '-' + str(node.end_col_offset) + ' is not a valid range')
     for field in node._fields:
-        if not hasattr(node, field):
-            raise TypeError('required field "' + field + '" missing from ' + cls.__name__)
-        value = getattr(node, field)
+        try:
+            value = getattr(node, field)
+        except AttributeError:
+            raise TypeError('required field "' + field + '" missing from ' + cls.__name__) from None
         typ = cls._field_types.get(field, object)
         if getattr(typ, '__origin__', None) is list:
             if not isinstance(value, list):
@@ -4996,11 +4967,6 @@ def _compile_source(tree, mode):
         raise TypeError('expected ' + expected.__name__ + ' node, got ' + type(tree).__name__)
     _validate_node(tree)
     _validate_contexts(tree)
-    cached = _parsed_tree
-    if cached is not None and cached[0]() is tree and cached[2] == _tree_snapshot(tree):
-        positions = []
-        _compile_positions(tree, tree, positions, cached[1].split('\n'), True)
-        return cached[1], tuple(positions)
     source = unparse(tree)
     generated = parse(source, mode='exec' if mode == 'single' else mode)
     if mode == 'single':
