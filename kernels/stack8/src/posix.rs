@@ -471,6 +471,12 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
                 Ok(Value::text(&String::from_utf8_lossy(&storage)))
             }
         },
+        "pathconf" | "fpathconf" => {
+            // -1 with errno left clear means the file has no such limit.
+            let limit = if op.as_ref() == "fpathconf" { *libc::__errno_location() = 0; libc::fpathconf(number(0)? as i32, number(1)? as i32) }
+                else { let p = pathname(0)?; *libc::__errno_location() = 0; libc::pathconf(p.as_ptr(), number(1)? as i32) };
+            if limit >= 0 { Ok(Value::Small(limit as i64)) } else if errno() == 0 { Ok(Value::Null) } else { Err(errno()) }
+        },
         "putenv" => { let key = pathname(0)?; let val = pathname(1)?; status(libc::setenv(key.as_ptr(), val.as_ptr(), 1) as i64) },
         "unsetenv" => { let key = pathname(0)?; status(libc::unsetenv(key.as_ptr()) as i64) },
         "uname" => {

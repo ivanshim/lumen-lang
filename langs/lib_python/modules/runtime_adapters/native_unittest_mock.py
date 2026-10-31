@@ -528,17 +528,27 @@ class _Patch:
                     if callable(member):
                         setattr(function, name, self.copy()(member))
             return function
-        patcher = self
+        # Stacked decorators share one wrapper; the innermost patch starts
+        # first and hands over the first stand-in.
+        patchings = getattr(function, 'patchings', None)
+        if patchings is not None:
+            patchings.append(self)
+            return function
+        patchings = [self]
         def patched(*args, **kwargs):
-            fresh = patcher.start()
+            started = []
+            given = list(args)
             try:
-                if patcher.new is DEFAULT:
-                    given = list(args)
-                    given.append(fresh)
-                    return function(*given, **kwargs)
-                return function(*args, **kwargs)
+                for patcher in patchings:
+                    fresh = patcher.start()
+                    started.append(patcher)
+                    if patcher.new is DEFAULT:
+                        given.append(fresh)
+                return function(*given, **kwargs)
             finally:
-                patcher.stop()
+                for patcher in reversed(started):
+                    patcher.stop()
+        patched.patchings = patchings
         setattr(patched, '__name__', getattr(function, '__name__', 'patched'))
         return patched
 
