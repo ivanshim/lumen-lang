@@ -645,9 +645,9 @@ impl Layout<'_> {
                     let c = match item {
                         Value::Octets { cell, .. } if of_bytes && cell.borrow().len() == 1 => char::from(cell.borrow()[0]).to_string(),
                         Value::Text(text) if !of_bytes && text.chars().count() == 1 => text.to_string(),
-                        Value::Huge(_) | Value::Small(_) | Value::Flag(_) => self.character(item, of_bytes)
-                            .map_err(|_| self.complain("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
-                        _ => match asked.value_numbered(item, conversion)? {
+                        _ => match if matches!(item, Value::Huge(_) | Value::Small(_) | Value::Flag(_)) {
+                            NumberAnswer::Whole(item.clone())
+                        } else { asked.value_numbered(item, conversion)? } {
                             NumberAnswer::Whole(whole) => self.character(&whole, of_bytes)
                                 .map_err(|_| self.complain("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
                             NumberAnswer::CharacterType(name) => {
@@ -675,10 +675,11 @@ impl Layout<'_> {
                 }
                 'd' | 'i' | 'u' | 'o' | 'x' | 'X' => {
                     let accepts_real = matches!(conversion, 'd' | 'i' | 'u');
+                    let nonfinite = |nan: bool| self.complain(
+                        if nan { "ext.op.rem.format.nan" } else { "ext.op.rem.format.infinity" }, &[]);
                     if let Value::Frac(r) = item {
                         if accepts_real && r.past_numbers() {
-                            let fault = match r.answers_none() { true => "ext.op.rem.format.nan", false => "ext.op.rem.format.infinity" };
-                            return Err(self.complain(fault, &[]));
+                            return Err(nonfinite(r.answers_none()));
                         }
                     }
                     let mut held: Option<Value> = None;
@@ -702,8 +703,7 @@ impl Layout<'_> {
                     if accepts_real {
                         if let Some(Value::Frac(r)) = &held {
                             if r.past_numbers() {
-                                let fault = match r.answers_none() { true => "ext.op.rem.format.nan", false => "ext.op.rem.format.infinity" };
-                                return Err(self.complain(fault, &[]));
+                                return Err(nonfinite(r.answers_none()));
                             }
                         }
                     }

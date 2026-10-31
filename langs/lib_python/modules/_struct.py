@@ -257,6 +257,15 @@ def pack_into(format, buffer, offset, *values):
     return _get(format).pack_into(buffer, offset, *values)
 
 def unpack_from(format, buffer, offset=0):
+    # Native unpack already handles plain bytes layouts. The memoryview path
+    # boxes every field in Python, which dominates a tar header checksum.
+    if (type(format) is str and type(buffer) in (bytes, bytearray)
+            and type(offset) is int and offset >= 0
+            and format.isascii() and 'F' not in format and 'D' not in format):
+        size = _get(format).size
+        if offset + size <= len(buffer):
+            chunk = buffer if offset == 0 and len(buffer) == size else buffer[offset:offset + size]
+            return _call(2, format, chunk)
     return _get(format).unpack_from(buffer, offset)
 
 def iter_unpack(format, buffer):

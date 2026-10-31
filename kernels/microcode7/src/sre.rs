@@ -500,6 +500,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
     }
     if action == 11 {
         let form = input.get(2).map(integer).transpose()?.unwrap_or(2) as u8;
+        let form = if form < 2 { form } else { 2 + form % 2 };
         let supplied = input.get(1).ok_or_else(|| String::from("TypeError: normalize() argument 2 must be str"))?;
         let plain = supplied.type_text();
         if matches!(&plain, Value::Text(text) if text.is_ascii()) { return Ok(plain); }
@@ -507,17 +508,7 @@ pub fn invoke(input: &[Value]) -> Result<Value, String> {
             let kind = match supplied.settled() { Value::Nil => "None".to_string(), other => other.kind_word() };
             format!("TypeError: normalize() argument 2 must be str, not {kind}")
         })?;
-        // A stowed half is passed through as it stands; only the run
-        // of real characters around it is folded.
-        let mut folded: Vec<u32> = Vec::with_capacity(codes.len());
-        let mut plain = String::new();
-        for number in codes {
-            if let Some(letter) = char::from_u32(number) { plain.push(letter); continue; }
-            folded.extend(crate::unicode::collated(&plain, form).chars().map(|c| c as u32));
-            plain.clear();
-            folded.push(number);
-        }
-        folded.extend(crate::unicode::collated(&plain, form).chars().map(|c| c as u32));
+        let folded = lumen_unicode::normalize(["NFC", "NFD", "NFKC", "NFKD"][usize::from(form)], &codes, false)?;
         return Ok(Value::characters(folded));
     }
     if action == 12 {

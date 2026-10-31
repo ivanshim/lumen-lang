@@ -45,28 +45,186 @@ pub struct Compressor {
     run_byte: u8, run_len: usize, sink: BitSink, started: bool,
 }
 
-/// Rotations of `data` in sorted order, by prefix doubling on cyclic ranks.
+/// Cyclic rotation order. An induced suffix array of the doubled block: the
+/// comparison sort's many rounds took seconds per tar block in a debug build.
 fn sorted_rotations(data: &[u8]) -> Vec<u32> {
     let n = data.len();
-    let cyc = |i: usize| data[i % n] as u64;
-    let mut keyed: Vec<(u64, u32)> = (0..n).map(|i| ((cyc(i) << 24) | (cyc(i + 1) << 16) | (cyc(i + 2) << 8) | cyc(i + 3), i as u32)).collect();
-    let mut rank = vec![0u32; n];
-    let mut width = 4;
-    loop {
-        keyed.sort_unstable();
-        let mut r = 0u32;
-        for k in 0..n {
-            if k > 0 && keyed[k].0 != keyed[k - 1].0 { r += 1; }
-            rank[keyed[k].1 as usize] = r;
-        }
-        if r as usize + 1 == n || width >= n { break; }
-        for item in keyed.iter_mut() {
-            let i = item.1 as usize;
-            *item = (((rank[i] as u64) << 32) | rank[(i + width) % n] as u64, item.1);
-        }
-        width *= 2;
+    if n <= 1 {
+        return (0..n as u32).collect();
     }
-    keyed.into_iter().map(|(_, i)| i).collect()
+    let mut text = Vec::with_capacity(n * 2 + 1);
+    for _ in 0..2 {
+        text.extend(data.iter().map(|&byte| byte as u32 + 1));
+    }
+    text.push(0);
+    let mut ranks = vec![0i32; text.len()];
+    rotation_ranks(&text, &mut ranks, 257);
+    let mut order = Vec::with_capacity(n);
+    for rank in ranks {
+        if (rank as usize) < n {
+            order.push(rank as u32);
+        }
+    }
+    order
+}
+
+fn bucket_bounds(text: &[u32], alphabet: usize) -> (Vec<usize>, Vec<usize>) {
+    let mut count = vec![0usize; alphabet];
+    for &symbol in text {
+        count[symbol as usize] += 1;
+    }
+    let mut head = vec![0usize; alphabet];
+    let mut tail = vec![0usize; alphabet];
+    let mut sum = 0usize;
+    for symbol in 0..alphabet {
+        head[symbol] = sum;
+        sum += count[symbol];
+        tail[symbol] = sum;
+    }
+    (head, tail)
+}
+
+fn seed_lms(text: &[u32], ranks: &mut [i32], lms: &[usize], tail: &[usize]) {
+    ranks.fill(-1);
+    let mut cursor = tail.to_vec();
+    for &index in lms.iter().rev() {
+        let symbol = text[index] as usize;
+        cursor[symbol] -= 1;
+        ranks[cursor[symbol]] = index as i32;
+    }
+}
+
+fn induce_l(text: &[u32], ranks: &mut [i32], shorter: &[u8], head: &[usize]) {
+    let mut cursor = head.to_vec();
+    for slot in 0..ranks.len() {
+        let index = ranks[slot];
+        if index <= 0 {
+            continue;
+        }
+        let previous = (index as usize) - 1;
+        if shorter[previous] == 0 {
+            let symbol = text[previous] as usize;
+            ranks[cursor[symbol]] = previous as i32;
+            cursor[symbol] += 1;
+        }
+    }
+}
+
+fn induce_s(text: &[u32], ranks: &mut [i32], shorter: &[u8], tail: &[usize]) {
+    let mut cursor = tail.to_vec();
+    for slot in (0..ranks.len()).rev() {
+        let index = ranks[slot];
+        if index <= 0 {
+            continue;
+        }
+        let previous = (index as usize) - 1;
+        if shorter[previous] == 1 {
+            let symbol = text[previous] as usize;
+            cursor[symbol] -= 1;
+            ranks[cursor[symbol]] = previous as i32;
+        }
+    }
+}
+
+fn lms_index(shorter: &[u8], index: usize) -> bool {
+    index > 0 && shorter[index] == 1 && shorter[index - 1] == 0
+}
+
+fn same_lms(text: &[u32], shorter: &[u8], left: usize, right: usize) -> bool {
+    if text[left] != text[right] {
+        return false;
+    }
+    let mut step = 1usize;
+    loop {
+        let left_done = left + step >= text.len();
+        let right_done = right + step >= text.len();
+        if left_done || right_done {
+            return left_done && right_done;
+        }
+        if text[left + step] != text[right + step] {
+            return false;
+        }
+        let left_lms = lms_index(shorter, left + step);
+        let right_lms = lms_index(shorter, right + step);
+        if left_lms || right_lms {
+            return left_lms && right_lms;
+        }
+        step += 1;
+    }
+}
+
+fn rotation_ranks(text: &[u32], ranks: &mut [i32], alphabet: usize) {
+    let n = text.len();
+    if n == 1 {
+        ranks[0] = 0;
+        return;
+    }
+    let mut shorter = vec![0u8; n];
+    shorter[n - 1] = 1;
+    for index in (0..n - 1).rev() {
+        shorter[index] = u8::from(
+            text[index] < text[index + 1] || (text[index] == text[index + 1] && shorter[index + 1] == 1),
+        );
+    }
+    let mut lms = Vec::new();
+    for index in 1..n {
+        if lms_index(&shorter, index) {
+            lms.push(index);
+        }
+    }
+    let (head, tail) = bucket_bounds(text, alphabet);
+    seed_lms(text, ranks, &lms, &tail);
+    induce_l(text, ranks, &shorter, &head);
+    induce_s(text, ranks, &shorter, &tail);
+
+    let mut name_of = vec![-1i32; n];
+    let mut rank = 0i32;
+    let mut previous = -1i32;
+    let mut repeated = false;
+    for &index in ranks.iter() {
+        if index < 0 || !lms_index(&shorter, index as usize) {
+            continue;
+        }
+        if previous >= 0 {
+            if same_lms(text, &shorter, previous as usize, index as usize) {
+                repeated = true;
+            } else {
+                rank += 1;
+            }
+        }
+        name_of[index as usize] = rank;
+        previous = index;
+    }
+    let count = lms.len();
+    if repeated {
+        let mut reduced = vec![0u32; count];
+        let mut position = Vec::with_capacity(count);
+        let mut at = 0usize;
+        for index in 0..n {
+            if name_of[index] >= 0 {
+                reduced[at] = name_of[index] as u32;
+                position.push(index);
+                at += 1;
+            }
+        }
+        let mut reduced_ranks = vec![0i32; count];
+        rotation_ranks(&reduced, &mut reduced_ranks, rank as usize + 1);
+        for (slot, reduced_rank) in reduced_ranks.iter().enumerate() {
+            lms[slot] = position[*reduced_rank as usize];
+        }
+    } else {
+        let mut ordered = vec![0usize; count];
+        for index in 0..n {
+            let name = name_of[index];
+            if name >= 0 {
+                ordered[name as usize] = index;
+            }
+        }
+        lms = ordered;
+    }
+    seed_lms(text, ranks, &lms, &tail);
+    induce_l(text, ranks, &shorter, &head);
+    induce_s(text, ranks, &shorter, &tail);
 }
 
 fn code_lengths(freq: &[u32], limit: u32) -> Vec<u8> {

@@ -942,7 +942,7 @@ STDLIB_DIR = getattr(sys, '_stdlib_dir', None) or TEST_HOME_DIR
 TEST_SUPPORT_DIR = os.path.join(TEST_HOME_DIR, 'test', 'support')
 is_android = False
 is_apple = sys.platform in ("darwin", "ios", "tvos", "watchos")
-has_socket_support = False
+has_socket_support = True
 has_fork_support = False
 has_subprocess_support = True
 can_start_thread = False
@@ -1007,6 +1007,62 @@ def requires_subprocess():
     """Used for subprocess, os.spawn calls, fd inheritance"""
     return unittest.skipUnless(has_subprocess_support, "requires subprocess support")
 
+
+
+    # No graphical toolkit is embedded here, so no gui resource to probe.
+
+
+SOCK_MAX_SIZE = 16 * 1024 * 1024 + 1
+
+def _get_kernel_version(sysname="Linux"):
+    import platform
+    if platform.system() != sysname:
+        return None
+    version_txt = platform.release().split('-', 1)[0]
+    try:
+        return tuple(map(int, version_txt.split('.')))
+    except ValueError:
+        return None
+
+def _requires_unix_version(sysname, min_version):
+    """Decorator raising SkipTest if the OS is `sysname` and the version is less
+    than `min_version`.
+
+    For example, @_requires_unix_version('FreeBSD', (7, 2)) raises SkipTest if
+    the FreeBSD version is less than 7.2.
+    """
+    import platform
+    min_version_txt = '.'.join(map(str, min_version))
+    version_txt = platform.release().split('-', 1)[0]
+    if platform.system() == sysname:
+        try:
+            version = tuple(map(int, version_txt.split('.')))
+        except ValueError:
+            skip = False
+        else:
+            skip = version < min_version
+    else:
+        skip = False
+
+    return unittest.skipIf(
+        skip,
+        f"{sysname} version {min_version_txt} or higher required, not "
+        f"{version_txt}"
+    )
+
+
+def requires_linux_version(*min_version):
+    """Decorator raising SkipTest if the OS is Linux and the Linux version is
+    less than `min_version`.
+
+    For example, @requires_linux_version(2, 6, 32) raises SkipTest if the Linux
+    version is less than 2.6.32.
+    """
+    return _requires_unix_version('Linux', min_version)
+
+def skip_android_selinux(name):
+    return unittest.skipIf(sys.platform == "android",
+                           f"Android blocks {name} with SELinux")
 
 def requires_working_socket(*, module=False):
     """Skip tests or modules that require working sockets
@@ -1716,6 +1772,19 @@ def darwin_malloc_err_warning(test_name):
     print(detail)
     print('-' * padding)
 
+
+
+def is_libssl_fips_mode():
+    """Whether OpenSSL reports FIPS mode, as CPython asks _hashlib for it.
+
+    Without _hashlib nothing claims FIPS mode, so the answer is no and the
+    digest tests it guards run.
+    """
+    try:
+        from _hashlib import get_fips_mode
+    except ImportError:
+        return False
+    return get_fips_mode() != 0
 
 
 def open_urlresource(url, *args, **kwargs):

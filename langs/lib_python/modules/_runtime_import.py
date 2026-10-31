@@ -124,6 +124,17 @@ class SourceLoader:
         self.get_filename(fullname)
         return _load_module(fullname, 'source')
 
+    # Expose filesystem resources through the source loader protocol.
+    def get_resource_reader(self, fullname):
+        self.get_filename(fullname)
+        # Native namespace locations encode all search roots after a NUL marker.
+        if self.path.startswith("\0"):
+            from importlib._bootstrap_external import NamespaceLoader, PathFinder
+            loader = NamespaceLoader(fullname, self.path[1:].split("\0"), PathFinder._get_spec)
+            return loader.get_resource_reader(fullname)
+        from importlib.readers import FileReader
+        return FileReader(self)
+
     def is_package(self, fullname):
         return self.get_filename(fullname).endswith('/__init__.py')
 
@@ -137,6 +148,26 @@ class SourceFinder:
 
     def invalidate_caches(self):
         pass
+
+# Library modules reported as frozen: name -> (is a package, original name).
+FROZEN_MODULES = {
+    '__hello__': (False, '__hello__'),
+    '__phello__': (True, '__phello__'),
+    '__phello__.spam': (False, '__phello__.spam'),
+    '__phello__.ham': (True, '__phello__.ham'),
+    '__phello__.ham.eggs': (False, '__phello__.ham.eggs'),
+}
+# 0 follows the default (frozen modules in use), 1 forces them on, -1 off.
+frozen_override = 0
+
+class FrozenFinder:
+    """Meta path entry that hands frozen names to the frozen importer."""
+    @classmethod
+    def find_spec(cls, fullname, path=None, target=None):
+        if frozen_override < 0 or fullname not in FROZEN_MODULES:
+            return None
+        from importlib._bootstrap import FrozenImporter
+        return FrozenImporter.find_spec(fullname, path, target)
 
 def make_spec(name, filename):
     import sys as _system

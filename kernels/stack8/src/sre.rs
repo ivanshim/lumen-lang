@@ -512,6 +512,7 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
     }
     if op == 11 {
         let form = number(2).unwrap_or(2) as u8;
+        let form = if form < 2 { form } else { 2 + form % 2 };
         let supplied = args.get(1).ok_or_else(|| "TypeError: normalize() argument 2 must be str".to_string())?;
         let plain = supplied.type_text();
         if matches!(&plain, Value::Text(text) if text.is_ascii()) { return Ok(plain); }
@@ -519,21 +520,7 @@ pub fn call(args: &[Value]) -> Result<Value, String> {
             let kind = match supplied.contents() { Value::Null => "None".to_string(), other => other.core_kind() };
             format!("TypeError: normalize() argument 2 must be str, not {kind}")
         })?;
-        // A run between two stowed halves folds on its own; each half
-        // is carried across untouched, as CPython carries it.
-        let mut out: Vec<u32> = Vec::with_capacity(codes.len());
-        let mut run = String::new();
-        for n in codes {
-            match char::from_u32(n) {
-                Some(c) => run.push(c),
-                None => {
-                    out.extend(crate::unicode::normalized(&run, form).chars().map(u32::from));
-                    run.clear();
-                    out.push(n);
-                }
-            }
-        }
-        out.extend(crate::unicode::normalized(&run, form).chars().map(u32::from));
+        let out = lumen_unicode::normalize(["NFC", "NFD", "NFKC", "NFKD"][form as usize], &codes, false)?;
         return Ok(Value::from_codes(out));
     }
     if op == 12 {

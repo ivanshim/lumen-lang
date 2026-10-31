@@ -68,6 +68,7 @@ if not _safe_path:
         _startup_file = _absolute_search_entry(_startup_file, _path_host[0])
         path.insert(0, _startup_file.rsplit('/', 1)[0])
 _ignore_environment = int(_path_host[3].get('LUMEN_PYTHON_IGNORE_ENV') == '1')
+_isolated = int(_path_host[3].get('LUMEN_PYTHON_ISOLATED') == '1')
 _python_path = '' if _ignore_environment else _path_host[3].get('PYTHONPATH', '')
 if _python_path:
     _search_paths = []
@@ -131,8 +132,10 @@ implementation = _Implementation(name='lumen', version=(0, 2, 0, 'final', 0),
 # The cache is refreshed after imports; editing this view does not yet
 # alter the loader's stored namespaces.
 modules = {}
-from _runtime_import import SourceFinder as _SourceFinder, make_spec as _make_spec, find_custom as _find_custom
-meta_path = [_SourceFinder()]
+from _runtime_import import FrozenFinder as _FrozenFinder, SourceFinder as _SourceFinder, make_spec as _make_spec, find_custom as _find_custom, _load_module
+# Directory of the library modules (frozen modules report files beneath it).
+_stdlib_dir = _load_module('os', True).rpartition('/')[0]
+meta_path = [_FrozenFinder, _SourceFinder()]
 path_hooks = []
 path_importer_cache = {}
 pycache_prefix = None
@@ -165,7 +168,7 @@ class _Flags:
     bytes_warning = 0
     quiet = 0
     hash_randomization = 0
-    isolated = 0
+    isolated = _isolated
     # The options that PYTHONDEVMODE, PYTHONUTF8 and
     # PYTHONWARNDEFAULTENCODING (or -X dev, -X utf8, -X
     # warn_default_encoding, which the helpers that start a second
@@ -825,12 +828,11 @@ def getfilesystemencodeerrors():
 
 # Explicit module runs search the working directory before the embedded
 # library. File runs retain the isolated default search path.
-if __program_namespace().get('__spec__') is not None:
+if not _isolated and __program_namespace().get('__spec__') is not None:
     _cwd_error, _cwd_bytes = __posix('cwd')
     if _cwd_error:
         raise OSError(_cwd_error, 'cannot resolve the working directory')
     path.insert(0, _cwd_bytes.decode('utf-8', 'surrogateescape'))
-    flags.isolated = 0
     flags.safe_path = False
 
 def gettrace():
@@ -877,7 +879,7 @@ class _PathFinder:
 path_importer_cache = {}
 path_hooks = [_zip_path_hook, _file_path_hook]
 import _imp
-meta_path = [_PathFinder, _SourceFinder(), _imp._NativeFinder]
+meta_path = [_FrozenFinder, _PathFinder, _SourceFinder(), _imp._NativeFinder]
 
 stdlib_module_names = frozenset(__load_module('', 'names'))
 # Source and native modules participate in the same finder protocol.

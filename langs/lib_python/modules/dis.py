@@ -1,6 +1,18 @@
 # Native instruction inspection. Opcode spellings and offsets describe the
 # active kernel's compiled representation, rather than CPython bytecode.
 
+# The opcode tables below describe CPython's instruction set, which tools
+# still query by number; the instructions get_instructions() yields are the
+# kernel's own, named by the strings in the native hasjump set.
+import opcode as _opcode_tables
+from opcode import (cmp_op, opmap, opname, hasarg, hasconst, hasname, hasjrel,
+                    hasjabs, hasfree, haslocal, hasexc, hascompare,
+                    HAVE_ARGUMENT, EXTENDED_ARG, _specializations)
+from _opcode import stack_effect
+
+deoptmap = {specialized: base for base, family in _specializations.items()
+            for specialized in family}
+
 COMPILER_FLAG_NAMES = {
     1: 'OPTIMIZED',
     2: 'NEWLOCALS',
@@ -40,15 +52,15 @@ def distb(tb=None, *, file=None, show_caches=False, adaptive=False):
 def disco(co, lasti=-1, *, file=None):
     _refuse()
 
-# CPython opcode catalogue data, independent of native instruction inspection.
-from opcode import opmap, opname, hasarg, hasjrel, hasjabs, hasexc
-
-hasjump = {'Skip', 'SkipCmp', 'Depart', 'Cycle', 'Choose'}
-# The native inspection bridge exposes an argument only for jump targets.
-hasarg = sorted(hasjump)
-hasjrel = sorted(hasjump)
-hasjabs = []
-hasexc = []
+# CPython's numeric tables are imported above; tools query those numbers.
+# Native get_instructions() names jumps with these strings. Union them into
+# the numeric sets so both a CPython opcode number and a native jump name
+# match. Numbers and names cannot be sorted together, so this does not
+# replace the numeric tables with sorted(hasjump).
+_native_jumps = ['Skip', 'SkipCmp', 'Depart', 'Cycle', 'Choose']
+hasjump = list(_opcode_tables.hasjump) + _native_jumps
+hasarg = list(hasarg) + _native_jumps
+hasjrel = list(hasjrel) + _native_jumps
 
 class Positions:
     def __init__(self, values):
@@ -88,9 +100,6 @@ def findlinestarts(code):
     _refuse()
 
 def findlabels(code):
-    _refuse()
-
-def stack_effect(opcode, oparg=None, *, jump=None):
     _refuse()
 
 def pretty_flags(flags):

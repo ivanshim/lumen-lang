@@ -38,12 +38,15 @@ def join_thread(thread, timeout=None):
 
 @contextlib.contextmanager
 def start_threads(threads, unlock=None):
+    threads = list(threads)
+    # Require the same native-thread capability as the public decorator.
+    if threads:
+        requires_working_threading(module=True)
     try:
         import faulthandler
     except ImportError:
         # It isn't supported on subinterpreters yet.
         faulthandler = None
-    threads = list(threads)
     started = []
     try:
         try:

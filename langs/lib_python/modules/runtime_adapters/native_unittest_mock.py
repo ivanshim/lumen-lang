@@ -105,7 +105,8 @@ class Mock:
             return
         object.__setattr__(self, name, value)
 
-    def __init__(self, spec=None, side_effect=None, return_value=DEFAULT, wraps=None, name=None):
+    # Initialize defaults before applying configured attributes.
+    def __init__(self, spec=None, side_effect=None, return_value=DEFAULT, wraps=None, name=None, **kwargs):
         self._mock_name = name
         self._mock_wraps = wraps
         self._spec_class = None
@@ -120,6 +121,30 @@ class Mock:
         self.call_count = 0
         self.call_args = None
         self.call_args_list = []
+        self.configure_mock(**kwargs)
+
+    # Set parent attributes before dotted child attributes, following CPython.
+    def configure_mock(self, /, **kwargs):
+        for name, value in sorted(kwargs.items(), key=lambda item: item[0].count('.')):
+            parts = name.split('.')
+            final = parts.pop()
+            target = self
+            for part in parts:
+                target = getattr(target, part)
+            setattr(target, final, value)
+
+
+    @property
+    def return_value(self):
+        # As in the reference, the answer is made the first time it is
+        # asked for, so what is put on it before any call is kept.
+        if self._mock_return_value is DEFAULT:
+            self._mock_return_value = self._mock_fresh()
+        return self._mock_return_value
+
+    @return_value.setter
+    def return_value(self, value):
+        self._mock_return_value = value
 
     @property
     def side_effect(self):
@@ -175,10 +200,8 @@ class Mock:
                     raise answer
                 if answer is not DEFAULT:
                     return answer
-        if self.return_value is DEFAULT:
-            if self._mock_wraps is not None:
-                return self._mock_wraps(*args, **kwargs)
-            self.return_value = self._mock_fresh()
+        if self._mock_return_value is DEFAULT and self._mock_wraps is not None:
+            return self._mock_wraps(*args, **kwargs)
         return self.return_value
 
     def _mock_fresh(self):
@@ -290,7 +313,8 @@ class MagicMock(Mock):
     # The item, unary and arithmetic names are given to the class
     # below from one list; the asynchronous ones and the rest the
     # reference carries are not here.
-    def __init__(self, spec=None, side_effect=None, return_value=DEFAULT, wraps=None, name=None):
+    # Initialize defaults before applying configured attributes.
+    def __init__(self, spec=None, side_effect=None, return_value=DEFAULT, wraps=None, name=None, **kwargs):
         self._magic = {}
         Mock.__init__(self, spec, side_effect, return_value, wraps, name)
         for word in _MAGIC_ANSWERS:
@@ -306,6 +330,7 @@ class MagicMock(Mock):
             stepper = Mock(name='__next__')
             self._magic['__next__'] = stepper
             setattr(self, '__next__', stepper)
+        self.configure_mock(**kwargs)
 
     def __repr__(self):
         if self._mock_name is None:

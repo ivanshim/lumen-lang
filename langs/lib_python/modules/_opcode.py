@@ -1,79 +1,148 @@
-# CPython v3.14.8 opcode catalogue; native kernels do not run these bytecodes.
+"""Opcode queries for the CPython 3.14 instruction set.
+
+lumen's kernels do not execute CPython bytecode; this module answers the
+questions CPython's `_opcode` answers about that instruction set (which
+opcodes exist, which take operands, how they change the stack) from tables
+of its documented properties, for tools such as `opcode` and `dis`.
+"""
+
+
+# Whether CPython would specialize bytecode; the native kernels never do.
 ENABLE_SPECIALIZATION = False
 ENABLE_SPECIALIZATION_FT = False
-_has_arg = (44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 128, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 197, 200, 209, 210, 211, 237, 239, 241, 242, 243, 244, 245, 247, 248, 249, 250, 251, 253, 255)
-
-# Check catalogue membership without interpreting bytecode.
-def has_arg(opcode):
-    return opcode in _has_arg
-
-_has_const = (82, 190, 191)
-
-# Check catalogue membership without interpreting bytecode.
-def has_const(opcode):
-    return opcode in _has_const
-
-_has_name = (61, 64, 65, 72, 73, 80, 91, 92, 93, 96, 110, 115, 116, 179, 189, 194, 195, 200, 249)
-
-# Check catalogue membership without interpreting bytecode.
-def has_name(opcode):
-    return opcode in _has_name
-
-_has_jump = (68, 70, 75, 76, 77, 100, 101, 102, 103, 106, 172, 173, 174, 175, 176, 237, 248)
-
-# Check catalogue membership without interpreting bytecode.
-def has_jump(opcode):
-    return opcode in _has_jump
-
-_has_free = (62, 90, 97, 111)
-
-# Check catalogue membership without interpreting bytecode.
-def has_free(opcode):
-    return opcode in _has_free
-
-_has_local = (3, 63, 83, 84, 85, 86, 87, 88, 89, 112, 113, 114)
-
-# Check catalogue membership without interpreting bytecode.
-def has_local(opcode):
-    return opcode in _has_local
-
-_has_exc = ()
-
-# Check catalogue membership without interpreting bytecode.
-def has_exc(opcode):
-    return opcode in _has_exc
-
-_is_valid = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255)
-
-# Check catalogue membership without interpreting bytecode.
-def is_valid(opcode):
-    return opcode in _is_valid
 
 
-# Return the release opcode metadata.
+def _expand(*spans):
+    return frozenset(n for lo, hi in spans for n in range(lo, hi))
+
+
+_ARG = _expand((44, 121), (128, 129), (143, 154), (155, 196), (197, 198), (200, 201), (209,
+    212), (237, 238), (239, 240), (241, 246), (247, 252), (253, 254), (255, 256), (257, 262),
+    (263, 267))
+_CONST = _expand((82, 83), (190, 192))
+_NAME = _expand((61, 62), (64, 66), (72, 74), (80, 81), (91, 94), (96, 97), (110, 111), (115,
+    117), (179, 180), (189, 190), (194, 196), (200, 201), (249, 250))
+_JUMP = _expand((68, 69), (70, 71), (75, 78), (100, 104), (106, 107), (172, 177), (237, 238),
+    (248, 249), (257, 261))
+_FREE = _expand((62, 63), (90, 91), (97, 98), (111, 112))
+_LOCAL = _expand((3, 4), (63, 64), (83, 90), (112, 115), (261, 262), (266, 267))
+_EXC = _expand((263, 266))
+_VALID = _expand((0, 121), (128, 212), (234, 267))
+_FIXED = {0: 0, 1: -2, 2: -1, 4: -3, 5: 0, 6: 0, 7: -1, 8: -2, 9: -1, 10: -1, 11: -1, 12: 0, 13:
+    -1, 14: 0, 15: 1, 16: 0, 17: 0, 18: 1, 19: 0, 20: -1, 21: 1, 22: 1, 23: 0, 24: 1, 25: 1, 26:
+    1, 27: 0, 28: 0, 29: -1, 30: -1, 31: -1, 32: 1, 33: 1, 34: 1, 35: 0, 36: 0, 37: -4, 38: -3,
+    39: 0, 40: 0, 41: 0, 42: 0, 43: 1, 234: -1, 235: -1, 236: -1, 238: 0, 240: 0, 246: 0, 252:
+    -3, 254: 0, 256: 0, 262: 0}
+_LINEAR = {44: (-1, 0), 46: (1, -1), 47: (1, -2), 48: (1, -1), 49: (1, -1), 50: (1, -1), 51: (1,
+    -1), 52: (-1, -1), 53: (0, 0), 54: (-1, 0), 55: (-2, -1), 56: (-1, 0), 57: (-1, 0), 58: (0,
+    0), 59: (1, 0), 60: (0, 0), 61: (-1, 0), 62: (0, 0), 63: (0, 0), 64: (0, 0), 65: (0, 0), 66:
+    (-1, 0), 67: (-1, 0), 68: (-2, 0), 69: (0, 0), 70: (1, 0), 71: (0, 0), 72: (1, 0), 73: (-1,
+    0), 74: (-1, 0), 75: (0, 0), 76: (0, 0), 77: (0, 0), 78: (-1, 0), 79: (-1, 0), 81: (1, 0),
+    82: (1, 0), 83: (1, 0), 84: (1, 0), 85: (1, 0), 86: (1, 0), 87: (2, 0), 88: (1, 0), 89: (2,
+    0), 90: (0, 0), 91: (0, 0), 93: (1, 0), 94: (1, 0), 95: (1, 0), 97: (0, 0), 98: (-2, 0), 99:
+    (-2, 0), 100: (-1, 0), 101: (-1, 0), 102: (-1, 0), 103: (-1, 0), 104: (0, -1), 105: (-1, 0),
+    106: (0, 0), 107: (-1, 0), 108: (-1, 0), 109: (-1, 0), 110: (-2, 0), 111: (-1, 0), 112: (-1,
+    0), 113: (0, 0), 114: (-2, 0), 115: (-1, 0), 116: (-1, 0), 117: (0, 0), 119:
+    (-1, 1), 120: (0, 0), 128: (0, 0), 237: (1, 0), 239: (0, 0), 241: (-1, 0), 242: (-1, 0),
+    243: (-1, 0), 244: (-1, 0), 245: (0, 0), 247: (0, 0), 248: (-2, 0), 250: (-1, -1), 251: (-2,
+    -1), 253: (0, 0), 255: (0, 0), 257: (0, 0), 258: (0, 0), 259: (0, 0), 260: (0, 0), 261: (1,
+    0), 266: (-1, 0)}
+_PARITY = {45: (-1, -1), 80: (0, 1), 92: (1, 1), 96: (-2, 1), 249: (-2, 1)}
+
+_INTRINSIC_1 = ['INTRINSIC_1_INVALID', 'INTRINSIC_PRINT', 'INTRINSIC_IMPORT_STAR',
+                'INTRINSIC_STOPITERATION_ERROR', 'INTRINSIC_ASYNC_GEN_WRAP',
+                'INTRINSIC_UNARY_POSITIVE', 'INTRINSIC_LIST_TO_TUPLE', 'INTRINSIC_TYPEVAR',
+                'INTRINSIC_PARAMSPEC', 'INTRINSIC_TYPEVARTUPLE', 'INTRINSIC_SUBSCRIPT_GENERIC',
+                'INTRINSIC_TYPEALIAS']
+_INTRINSIC_2 = ['INTRINSIC_2_INVALID', 'INTRINSIC_PREP_RERAISE_STAR', 'INTRINSIC_TYPEVAR_WITH_BOUND',
+                'INTRINSIC_TYPEVAR_WITH_CONSTRAINTS', 'INTRINSIC_SET_FUNCTION_TYPE_PARAMS',
+                'INTRINSIC_SET_TYPEPARAM_DEFAULT']
+_NB_OPS = [('NB_ADD', '+'), ('NB_AND', '&'), ('NB_FLOOR_DIVIDE', '//'), ('NB_LSHIFT', '<<'),
+           ('NB_MATRIX_MULTIPLY', '@'), ('NB_MULTIPLY', '*'), ('NB_REMAINDER', '%'), ('NB_OR', '|'),
+           ('NB_POWER', '**'), ('NB_RSHIFT', '>>'), ('NB_SUBTRACT', '-'), ('NB_TRUE_DIVIDE', '/'),
+           ('NB_XOR', '^'), ('NB_INPLACE_ADD', '+='), ('NB_INPLACE_AND', '&='),
+           ('NB_INPLACE_FLOOR_DIVIDE', '//='), ('NB_INPLACE_LSHIFT', '<<='),
+           ('NB_INPLACE_MATRIX_MULTIPLY', '@='), ('NB_INPLACE_MULTIPLY', '*='),
+           ('NB_INPLACE_REMAINDER', '%='), ('NB_INPLACE_OR', '|='), ('NB_INPLACE_POWER', '**='),
+           ('NB_INPLACE_RSHIFT', '>>='), ('NB_INPLACE_SUBTRACT', '-='),
+           ('NB_INPLACE_TRUE_DIVIDE', '/='), ('NB_INPLACE_XOR', '^='), ('NB_SUBSCR', '[]')]
+
+# Opcodes whose effect depends on whether the branch is taken: (taken, not taken).
+_BRANCHED = {263: (2, 0), 264: (1, 0), 265: (1, 0)}
+
+_UNPACK_EX = 118
+_INT_MAX = 2 ** 31 - 1
+
+
+def _as_int(value):
+    n = value.__index__() if hasattr(value, '__index__') else None
+    if n is None:
+        raise TypeError("'%s' object cannot be interpreted as an integer" % type(value).__name__)
+    if n > _INT_MAX or n < -_INT_MAX - 1:
+        raise OverflowError('Python int too large to convert to C int')
+    return n
+
+
+def _query(table):
+    def test(opcode):
+        return _as_int(opcode) in table
+    return test
+
+
+is_valid = _query(_VALID)
+has_arg = _query(_ARG)
+has_const = _query(_CONST)
+has_name = _query(_NAME)
+has_jump = _query(_JUMP)
+has_free = _query(_FREE)
+has_local = _query(_LOCAL)
+has_exc = _query(_EXC)
+
+
+def stack_effect(opcode, oparg=None, /, *, jump=None):
+    """Compute the stack effect of the opcode."""
+    op = _as_int(opcode)
+    arg = 0 if oparg is None else _as_int(oparg)
+    if jump is not None and jump is not True and jump is not False:
+        raise ValueError('stack_effect: jump must be False, True or None')
+    if op in _BRANCHED:
+        taken, fallthrough = _BRANCHED[op]
+        return taken if jump is None else (taken if jump else fallthrough)
+    if op in _FIXED:
+        return _FIXED[op]
+    if op == _UNPACK_EX:
+        # The operand packs the counts before and after the starred target.
+        return (arg & 255) + (arg >> 8)
+    if op in _LINEAR:
+        base, step = _LINEAR[op]
+        return base + step * arg
+    if op in _PARITY:
+        base, step = _PARITY[op]
+        return base + step * (arg & 1)
+    raise ValueError('invalid opcode or oparg')
+
+
 def get_intrinsic1_descs():
-    return ['INTRINSIC_1_INVALID', 'INTRINSIC_PRINT', 'INTRINSIC_IMPORT_STAR', 'INTRINSIC_STOPITERATION_ERROR', 'INTRINSIC_ASYNC_GEN_WRAP', 'INTRINSIC_UNARY_POSITIVE', 'INTRINSIC_LIST_TO_TUPLE', 'INTRINSIC_TYPEVAR', 'INTRINSIC_PARAMSPEC', 'INTRINSIC_TYPEVARTUPLE', 'INTRINSIC_SUBSCRIPT_GENERIC', 'INTRINSIC_TYPEALIAS']
+    return list(_INTRINSIC_1)
 
 
-# Return the release opcode metadata.
 def get_intrinsic2_descs():
-    return ['INTRINSIC_2_INVALID', 'INTRINSIC_PREP_RERAISE_STAR', 'INTRINSIC_TYPEVAR_WITH_BOUND', 'INTRINSIC_TYPEVAR_WITH_CONSTRAINTS', 'INTRINSIC_SET_FUNCTION_TYPE_PARAMS', 'INTRINSIC_SET_TYPEPARAM_DEFAULT']
+    return list(_INTRINSIC_2)
 
 
-# Return the release opcode metadata.
 def get_special_method_names():
     return ['__enter__', '__exit__', '__aenter__', '__aexit__']
 
 
-# Return the release opcode metadata.
 def get_nb_ops():
-    return [('NB_ADD', '+'), ('NB_AND', '&'), ('NB_FLOOR_DIVIDE', '//'), ('NB_LSHIFT', '<<'), ('NB_MATRIX_MULTIPLY', '@'), ('NB_MULTIPLY', '*'), ('NB_REMAINDER', '%'), ('NB_OR', '|'), ('NB_POWER', '**'), ('NB_RSHIFT', '>>'), ('NB_SUBTRACT', '-'), ('NB_TRUE_DIVIDE', '/'), ('NB_XOR', '^'), ('NB_INPLACE_ADD', '+='), ('NB_INPLACE_AND', '&='), ('NB_INPLACE_FLOOR_DIVIDE', '//='), ('NB_INPLACE_LSHIFT', '<<='), ('NB_INPLACE_MATRIX_MULTIPLY', '@='), ('NB_INPLACE_MULTIPLY', '*='), ('NB_INPLACE_REMAINDER', '%='), ('NB_INPLACE_OR', '|='), ('NB_INPLACE_POWER', '**='), ('NB_INPLACE_RSHIFT', '>>='), ('NB_INPLACE_SUBTRACT', '-='), ('NB_INPLACE_TRUE_DIVIDE', '/='), ('NB_INPLACE_XOR', '^='), ('NB_SUBSCR', '[]')]
+    return list(_NB_OPS)
 
 
-# Refuse operations that require the CPython bytecode machine.
-def stack_effect(opcode, oparg=None, *, jump=None):
-    raise NotImplementedError("CPython bytecode stack effects are unavailable")
+def get_specialization_stats():
+    # No adaptive interpreter here, so there are no statistics to report.
+    return None
 
-# Refuse executor inspection on the native kernels.
+
 def get_executor(code, offset):
+    # Executors belong to CPython bytecode machine, which is not here.
     raise NotImplementedError("CPython bytecode executors are unavailable")

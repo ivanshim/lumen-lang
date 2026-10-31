@@ -4316,7 +4316,7 @@ impl<'a> Builder<'a> {
             if self.key("stmt.for") {
                 return self.for_stmt();
             }
-            if self.key("ext.stmt.type_alias") && self.glance(1).lexeme.chars().next().is_some_and(|letter| letter.is_alphabetic() || letter == '_') {
+            if self.begins_type_alias() {
                 let earlier = std::mem::replace(&mut self.forbids_await, true);
                 self.move_past();
                 let alias = self.need_word("as the type alias")?;
@@ -5835,7 +5835,7 @@ impl<'a> Builder<'a> {
             self.skip_line_ends();
             return Ok(true);
         }
-        if self.key("ext.stmt.type_alias") && self.glance(1).shape == Shape::Bare {
+        if self.begins_type_alias() {
             let alias = self.glance(1).lexeme.clone();
             let place = self.member_address(&alias, "alias");
             self.member_noted(&alias, place.clone());
@@ -7432,15 +7432,28 @@ impl<'a> Builder<'a> {
         Ok(sequence(vec![init, looped]))
     }
 
+    // Leave expressions beginning with the alias word on the ordinary name road.
+    fn begins_type_alias(&self) -> bool {
+        let name = self.glance(1);
+        if !self.key("ext.stmt.type_alias") || name.shape != Shape::Bare
+            || self.table.keywords.contains(name.spelling()) { return false; }
+        let following = self.glance(2).spelling();
+        self.table.spells("stmt.assign", following) || self.table.spells("ext.stmt.type_params.open", following)
+    }
+
     fn begins_match(&self) -> bool {
         let table = self.table;
         if !self.key("ext.stmt.match") { return false; }
         let mut closing = Vec::new();
-        for token in &self.tokens[self.pos + 1..] {
+        for (distance, token) in self.tokens[self.pos + 1..].iter().enumerate() {
             if matches!(token.shape, Shape::Finish | Shape::LineEnd) { return false; }
             if token.shape != Shape::Sign { continue; }
             if closing.is_empty() {
-                if table.spells("block.intro", &token.spelling()) { return true; }
+                if table.spells("block.intro", &token.spelling()) {
+                    // An annotation has no subject or has its value after the colon.
+                    let tail = self.tokens.get(self.pos + distance + 2);
+                    if distance != 0 && matches!(tail.map(|part| part.shape), Some(Shape::LineEnd)) { return true; }
+                }
                 if table.spells("stmt.assign", &token.spelling()) { return false; }
             }
             if closing.last().map_or(false, |end: &&str| *end == token.lexeme) {
