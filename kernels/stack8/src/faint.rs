@@ -92,6 +92,16 @@ impl Hold {
         })
     }
 
+    /// Address of an instance, class or routine, without upgrading the weak hold.
+    fn resident(&self) -> Option<usize> {
+        match self {
+            Hold::Object(weak) => Some(weak.as_ptr() as usize),
+            Hold::Class(weak) => Some(weak.as_ptr() as usize),
+            Hold::Routine(weak) => Some(weak.as_ptr() as usize),
+            _ => None,
+        }
+    }
+
     pub fn gone(&self) -> bool {
         match self {
             Hold::Native(..) | Hold::Octets(..) => false,
@@ -216,6 +226,37 @@ thread_local! {
     /// values and the objects with last words. Only rounds that hold one
     /// of these are worth looking for.
     static CANDIDATES: RefCell<(Vec<Hold>, usize)> = const { RefCell::new((Vec::new(), 8)) };
+    /// Instances, classes and routines a collection left reachable.
+    /// A young collection stops at them instead of walking them open again.
+    static ENDURED: RefCell<HashSet<usize, BuildHasherDefault<PlaceHasher>>> =
+        RefCell::new(HashSet::with_hasher(BuildHasherDefault::default()));
+}
+
+fn already_endured(address: usize) -> bool {
+    ENDURED.try_with(|known| known.borrow().contains(&address)).unwrap_or(false)
+}
+
+pub fn any_endured() -> bool {
+    ENDURED.try_with(|known| !known.borrow().is_empty()).unwrap_or(false)
+}
+
+pub fn release_endured(address: usize) {
+    let _ = ENDURED.try_with(|known| {
+        let mut known = known.borrow_mut();
+        if !known.is_empty() { known.remove(&address); }
+    });
+}
+
+/// `restart` replaces the set after a whole-heap walk. Otherwise the
+/// young survivors are added to what already endured.
+pub fn keep_endured(addresses: impl IntoIterator<Item = usize>, restart: bool) {
+    let _ = ENDURED.try_with(|known| {
+        let mut known = known.borrow_mut();
+        if restart {
+            known.clear();
+        }
+        known.extend(addresses);
+    });
 }
 
 /// Clear the old weak references of an entire unreachable group before
@@ -386,6 +427,7 @@ pub fn walk_departing(dying: &mut Generator) {
 
 /// A set, a class or a routine is going: only the watchers care.
 pub fn plain_departing(address: usize) {
+    release_endured(address);
     if WATCHING.try_with(Cell::get).unwrap_or(0) == 0 { return; }
     let interested = OBSERVED.try_with(|addresses| addresses.borrow().contains(&address)).unwrap_or(false);
     if interested { note_death(); }
@@ -811,7 +853,9 @@ impl Graph {
     }
 
     /// Everything reachable from the remembered candidates still alive.
-    pub fn from_candidates(extra: Vec<Value>, live: Vec<Value>, weak_keys: Vec<Value>, complete: bool) -> Graph {
+    /// A young walk leaves out candidates that already endured, and does
+    /// not follow the engine's live roots through the rest of the heap.
+    pub fn from_candidates(extra: Vec<Value>, live: Vec<Value>, weak_keys: Vec<Value>, complete: bool, young: bool) -> Graph {
         let mut bookkeeping = Places::default();
         for value in &extra {
             let parts = match value {
@@ -826,7 +870,9 @@ impl Graph {
             let mut c = c.borrow_mut();
             c.0.retain(|h| !h.gone());
             c.1 = (c.0.len() * 2).max(8);
-            c.0.iter().filter_map(|h| h.revive()).collect()
+            c.0.iter().filter(|hold| {
+                !young || hold.resident().map(|site| !already_endured(site)).unwrap_or(true)
+            }).filter_map(|h| h.revive()).collect()
         }).unwrap_or_default();
         roots.extend(extra);
         let mut outside: HashSet<usize, BuildHasherDefault<PlaceHasher>> = HashSet::default();
@@ -855,34 +901,45 @@ impl Graph {
             }
         }
         roots.extend(weak_keys);
-        Graph::build(roots, bookkeeping, outside)
+        Graph::build(roots, bookkeeping, outside, young)
     }
 
-    pub fn link_attributes(&mut self, function: &Value, holder: &Value) {
+    /// Attach metadata ownership, including an owner outside a young graph.
+    pub fn link_attributes(&mut self, function: &Value, holder: &Value, young: bool) {
         let function = match function { Value::Method(_, routine, _) => Value::Routine(routine.clone()), other => other.clone() };
         if let (Some(from), Some(to)) = (place_of(&function), place_of(holder)) {
-            if let (Some(&from), Some(&to)) = (self.rows.get(&from), self.rows.get(&to)) { self.nodes[from].reaches.push(to); }
+            if let Some(&target) = self.rows.get(&to) {
+                if let Some(&source) = self.rows.get(&from) {
+                    self.nodes[source].reaches.push(target);
+                } else if young && already_endured(from) {
+                    // The engine's holder reference stands for this excluded owner's edge.
+                    self.nodes[target].inward = self.nodes[target].inward.saturating_sub(1);
+                }
+            }
         }
     }
 
-    fn build(roots: Vec<Value>, bookkeeping: Places<usize>, outside: HashSet<usize, BuildHasherDefault<PlaceHasher>>) -> Graph {
+    fn build(roots: Vec<Value>, bookkeeping: Places<usize>, outside: HashSet<usize, BuildHasherDefault<PlaceHasher>>, young: bool) -> Graph {
         let mut nodes: Vec<Node> = Vec::with_capacity(roots.len());
         let mut rows: Places<usize> = Places::default();
         let mut open: Vec<usize> = Vec::new();
         // The row a value stands in, made where it has none yet, with
         // one more hold from inside the graph counted on it as asked.
-        fn row_of(nodes: &mut Vec<Node>, rows: &mut Places<usize>, open: &mut Vec<usize>, held: Value, place: usize, inward: usize, bookkeeping: &Places<usize>) -> usize {
-            if let Some(&at) = rows.get(&place) { nodes[at].inward += inward; return at; }
+        fn row_of(nodes: &mut Vec<Node>, rows: &mut Places<usize>, open: &mut Vec<usize>, held: Value, place: usize, inward: usize, bookkeeping: &Places<usize>, young: bool) -> Option<usize> {
+            // An endured instance, class or routine stays outside a young walk.
+            // The strong count still shows its hold, so what it reaches is kept.
+            if young && already_endured(place) { return None; }
+            if let Some(&at) = rows.get(&place) { nodes[at].inward += inward; return Some(at); }
             let at = nodes.len();
             rows.insert(place, at);
             nodes.push(Node { held, place, reaches: Vec::new(), inward: inward + bookkeeping.get(&place).copied().unwrap_or(0), marked: false });
             open.push(at);
-            at
+            Some(at)
         }
         for root in roots {
             let Some(place) = place_of(&root) else { continue };
             if unset_slot(&root) { continue; }
-            row_of(&mut nodes, &mut rows, &mut open, root, place, 0, &bookkeeping);
+            row_of(&mut nodes, &mut rows, &mut open, root, place, 0, &bookkeeping, young);
         }
         let mut children = Vec::new();
         while let Some(at) = open.pop() {
@@ -898,17 +955,36 @@ impl Graph {
                     other => (other, None),
                 };
                 if let Some(place) = place_of(&first) {
-                    if !unset_slot(&first) { reached.push(row_of(&mut nodes, &mut rows, &mut open, first, place, 1, &bookkeeping)); }
+                    if !unset_slot(&first) {
+                        if let Some(at) = row_of(&mut nodes, &mut rows, &mut open, first, place, 1, &bookkeeping, young) { reached.push(at); }
+                    }
                 }
                 if let Some(second) = second {
                     if let Some(place) = place_of(&second) {
-                        if !unset_slot(&second) { reached.push(row_of(&mut nodes, &mut rows, &mut open, second, place, 1, &bookkeeping)); }
+                        if !unset_slot(&second) {
+                            if let Some(at) = row_of(&mut nodes, &mut rows, &mut open, second, place, 1, &bookkeeping, young) { reached.push(at); }
+                        }
                     }
                 }
             }
             nodes[at].reaches = reached;
         }
         Graph { nodes, rows }
+    }
+
+    /// Instances, classes and routines this walk left reachable.
+    pub fn endured_identities(&self) -> Vec<usize> {
+        let mut identities = Vec::new();
+        for node in &self.nodes {
+            if !node.marked { continue; }
+            match &node.held {
+                Value::Object(object) | Value::Fields(object) => identities.push(Rc::as_ptr(object) as usize),
+                Value::Class(class) => identities.push(Rc::as_ptr(class) as usize),
+                Value::Routine(program) => identities.push(Rc::as_ptr(program) as usize),
+                _ => {}
+            }
+        }
+        identities
     }
 
     /// Whether this value is now unreachable once the engine's own
