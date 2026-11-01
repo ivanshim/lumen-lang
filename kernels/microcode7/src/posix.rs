@@ -961,3 +961,53 @@ fn forward_record(value: &Value) -> Result<Value, String> {
         host_record(&host)
     }
 }
+
+/// Read a directory in one go: each name's bytes, its inode and its file type.
+/// A descriptor is duplicated for the read and rewound before it is closed,
+/// so the caller's offset is the one it had.
+pub fn directory_snapshot(subject: &Value) -> Result<(i32, Vec<(Vec<u8>, u64, u8)>), String> {
+    let descriptor = match subject.settled() {
+        Value::Small(number) => Some(number),
+        Value::Huge(number) => Some(number.to_i64().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C long"))?),
+        _ => None,
+    };
+    let listing = unsafe {
+        match descriptor {
+            Some(number) => {
+                let Ok(number) = libc::c_int::try_from(number) else { return Err(String::from("OverflowError: Python int too large to convert to C int")) };
+                let duplicated = libc::fcntl(number, libc::F_DUPFD_CLOEXEC, 0);
+                if duplicated < 0 { return Ok((errno(), Vec::new())); }
+                let opened = libc::fdopendir(duplicated);
+                if opened.is_null() {
+                    let saved = errno();
+                    libc::close(duplicated);
+                    return Ok((saved, Vec::new()));
+                }
+                opened
+            }
+            None => {
+                let bytes = data_of(subject)?;
+                let owned = CString::new(bytes).map_err(|_| String::from("ValueError: embedded null byte"))?;
+                let opened = libc::opendir(owned.as_ptr());
+                if opened.is_null() { return Ok((errno(), Vec::new())); }
+                opened
+            }
+        }
+    };
+    let mut names = Vec::new();
+    let problem = unsafe {
+        loop {
+            *libc::__errno_location() = 0;
+            let item = libc::readdir(listing);
+            if item.is_null() { break errno(); }
+            let raw = CStr::from_ptr((*item).d_name.as_ptr()).to_bytes();
+            if raw == b"." || raw == b".." { continue; }
+            names.push((raw.to_vec(), (*item).d_ino as u64, (*item).d_type as u8));
+        }
+    };
+    unsafe {
+        if descriptor.is_some() { libc::rewinddir(listing); }
+        let _ = libc::closedir(listing);
+    }
+    if problem != 0 { Ok((problem, Vec::new())) } else { Ok((0, names)) }
+}

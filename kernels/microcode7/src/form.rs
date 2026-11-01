@@ -977,50 +977,6 @@ impl Drop for Routine {
 }
 
 impl Form {
-    /// The forms directly beneath this one, in the order the tree is
-    /// numbered; a clause's reraise cleanup only when asked for.
-    pub fn children_mut(&mut self, with_reraise: bool) -> Vec<&mut Form> {
-        match self {
-            Self::Located(_, _, inner) | Self::OnLine(_, _, inner)
-            | Self::Write(_, inner) | Self::Tie(_, inner)
-            | Self::ShareItem(_, inner) | Self::ShareField(inner, _) | Self::ShareOwn(inner, _)
-            | Self::ShareCalled(inner) | Self::ForgetCalled(inner) | Self::ReadyCalled(inner)
-            | Self::Muted(inner) | Self::Silenced(inner) | Self::Called(inner)
-            | Self::CellOrSaid(_, _, _, inner) | Self::HeldEither(_, _, _, inner) => vec![&mut **inner],
-            Self::Const(Value::Routine(body)) if body.frameless => vec![&mut Rc::make_mut(body).body],
-            Self::Apply(callee, args) => {
-                let mut found = Vec::new();
-                if let Callee::Code(target) = callee { found.push(&mut **target); }
-                found.extend(args.iter_mut());
-                found
-            }
-            Self::Dyad { a, b, .. } => [a, b].into_iter().filter_map(|input| match input { Input::Form(form) => Some(&mut **form), _ => None }).collect(),
-            Self::Cycle { test, body, step, otherwise, .. } => {
-                let mut found = vec![&mut **test, &mut **body];
-                found.extend([step, otherwise].into_iter().flatten().map(|child| &mut **child));
-                found
-            }
-            Self::Attempt { body, clauses, last, otherwise, .. } => {
-                let mut found = vec![&mut **body];
-                for clause in clauses {
-                    found.extend(clause.choices.iter_mut().flatten());
-                    found.push(&mut clause.body);
-                    if with_reraise { found.extend(clause.reraise_position.as_deref_mut()); }
-                }
-                found.extend([otherwise, last].into_iter().flatten().map(|child| &mut **child));
-                found
-            }
-            Self::Class { values, .. } | Self::SharePlace(_, values) => values.iter_mut().collect(),
-            Self::Assert { condition: left, message: right }
-            | Self::ForgetWithin(left, right) | Self::TieCalled(left, right) | Self::CallWrite(left, right) => vec![&mut **left, &mut **right],
-            Self::Fits { value, kinds, .. } | Self::ShareWithin(value, kinds) => {
-                let mut found = vec![&mut **value];
-                found.extend(kinds.iter_mut());
-                found
-            }
-            _ => Vec::new(),
-        }
-    }
 
     /// The same walk over a tree that stays as it is.
     pub fn children(&self, with_reraise: bool) -> Vec<&Form> {
@@ -1069,9 +1025,59 @@ impl Form {
     /// Number the actual compiled tree, independently of source coordinates.
     /// Frameless arms belong to this tree; functions start a new address space.
     pub fn number_instructions(&mut self, next: &mut usize) {
-        *next += 1;
-        if let Self::Located(_, at, _) | Self::OnLine(_, at, _) = self { *at = *next; }
-        for child in self.children_mut(true) { child.number_instructions(next); }
+        let mut stack = vec![self];
+        while let Some(node) = stack.pop() {
+            *next += 1;
+            if let Self::Located(_, at, _) | Self::OnLine(_, at, _) = node { *at = *next; }
+            match node {
+                Self::Located(_, _, inner) | Self::OnLine(_, _, inner)
+                | Self::Write(_, inner) | Self::Tie(_, inner)
+                | Self::ShareItem(_, inner) | Self::ShareField(inner, _) | Self::ShareOwn(inner, _)
+                | Self::ShareCalled(inner) | Self::ForgetCalled(inner) | Self::ReadyCalled(inner)
+                | Self::Muted(inner) | Self::Silenced(inner) | Self::Called(inner)
+                | Self::CellOrSaid(_, _, _, inner) | Self::HeldEither(_, _, _, inner) => stack.push(inner),
+                Self::Const(Value::Routine(body)) if body.frameless => stack.push(&mut Rc::make_mut(body).body),
+                Self::Apply(callee, args) => {
+                    for arg in args.iter_mut().rev() { stack.push(arg); }
+                    if let Callee::Code(target) = callee { stack.push(target); }
+                }
+                Self::Dyad { a, b, .. } => {
+                    if let Input::Form(form) = b { stack.push(form); }
+                    if let Input::Form(form) = a { stack.push(form); }
+                }
+                Self::Cycle { test, body, step, otherwise, .. } => {
+                    if let Some(child) = otherwise { stack.push(child); }
+                    if let Some(child) = step { stack.push(child); }
+                    stack.push(body);
+                    stack.push(test);
+                }
+                Self::Attempt { body, clauses, last, otherwise, .. } => {
+                    if let Some(child) = last { stack.push(child); }
+                    if let Some(child) = otherwise { stack.push(child); }
+                    for clause in clauses.iter_mut().rev() {
+                        if let Some(reraise) = &mut clause.reraise_position { stack.push(reraise); }
+                        stack.push(&mut clause.body);
+                        if let Some(choices) = &mut clause.choices {
+                            for choice in choices.iter_mut().rev() { stack.push(choice); }
+                        }
+                    }
+                    stack.push(body);
+                }
+                Self::Class { values, .. } | Self::SharePlace(_, values) => {
+                    for value in values.iter_mut().rev() { stack.push(value); }
+                }
+                Self::Assert { condition: left, message: right }
+                | Self::ForgetWithin(left, right) | Self::TieCalled(left, right) | Self::CallWrite(left, right) => {
+                    stack.push(right);
+                    stack.push(left);
+                }
+                Self::Fits { value, kinds, .. } | Self::ShareWithin(value, kinds) => {
+                    for kind in kinds.iter_mut().rev() { stack.push(kind); }
+                    stack.push(value);
+                }
+                _ => {}
+            }
+        }
     }
 
     pub fn instruction_listing(&self, next: &mut usize, mut coordinates: (u32, u32, u32, u32), output: &mut Vec<Value>) {

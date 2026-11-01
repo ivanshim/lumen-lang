@@ -2,26 +2,29 @@
 // run-length stage, Burrows-Wheeler sort, move-to-front, Huffman groups.
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::sync::OnceLock;
 
 const BLOCK_MAGIC: u64 = 0x3141_5926_5359;
 const END_MAGIC: u64 = 0x1772_4538_5090;
 const GROUP_SPAN: usize = 50;
 pub const INVALID: &str = "Invalid data stream";
 
-fn crc_table() -> &'static [u32; 256] {
-    static TABLE: OnceLock<[u32; 256]> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        let mut table = [0u32; 256];
-        for (i, slot) in table.iter_mut().enumerate() {
-            let mut c = (i as u32) << 24;
-            for _ in 0..8 { c = if c & 0x8000_0000 != 0 { (c << 1) ^ 0x04c1_1db7 } else { c << 1 }; }
-            *slot = c;
+const CRC_TABLE: [u32; 256] = {
+    let mut table = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+        let mut c = (i as u32) << 24;
+        let mut bit = 0;
+        while bit < 8 {
+            c = if c & 0x8000_0000 != 0 { (c << 1) ^ 0x04c1_1db7 } else { c << 1 };
+            bit += 1;
         }
-        table
-    })
-}
-fn crc_step(crc: u32, byte: u8) -> u32 { (crc << 8) ^ crc_table()[((crc >> 24) as u8 ^ byte) as usize] }
+        table[i] = c;
+        i += 1;
+    }
+    table
+};
+#[inline(always)]
+fn crc_step(crc: u32, byte: u8) -> u32 { (crc << 8) ^ CRC_TABLE[((crc >> 24) as u8 ^ byte) as usize] }
 
 // ---------------------------------------------------------------- writing
 
@@ -292,7 +295,7 @@ impl Compressor {
         if self.block.len() + 5 > 100_000 * self.level - 19 { self.close_block(); }
         for _ in 0..self.run_len { self.block_crc = crc_step(self.block_crc, self.run_byte); }
         let shown = self.run_len.min(4);
-        self.block.extend(std::iter::repeat(self.run_byte).take(shown));
+        self.block.resize(self.block.len() + shown, self.run_byte);
         if self.run_len >= 4 { self.block.push((self.run_len - 4) as u8); }
         self.run_len = 0;
     }
@@ -327,10 +330,12 @@ impl Compressor {
         };
         for &c in &last {
             let s = slot[c as usize];
-            let at = order_of.iter().position(|&x| x == s).unwrap();
+            let mut at = 0usize;
+            while order_of[at] != s { at += 1; }
             if at == 0 { zeros += 1; continue; }
             flush_zeros(&mut symbols, &mut zeros);
-            order_of.remove(at); order_of.insert(0, s);
+            order_of.copy_within(0..at, 1);
+            order_of[0] = s;
             symbols.push(at as u16 + 1);
         }
         flush_zeros(&mut symbols, &mut zeros);
@@ -354,7 +359,13 @@ impl Compressor {
             let mut tally = vec![vec![0u32; alpha]; groups];
             selectors.clear();
             for chunk in symbols.chunks(GROUP_SPAN) {
-                let best = (0..groups).min_by_key(|&t| chunk.iter().map(|&s| lengths[t][s as usize] as u32).sum::<u32>()).unwrap();
+                let mut best = 0;
+                let mut best_cost = u32::MAX;
+                for (t, table_len) in lengths.iter().enumerate() {
+                    let mut cost = 0u32;
+                    for &s in chunk { cost += table_len[s as usize] as u32; }
+                    if cost < best_cost { best_cost = cost; best = t; }
+                }
                 selectors.push(best as u8);
                 for &s in chunk { tally[best][s as usize] += 1; }
             }
@@ -604,12 +615,14 @@ impl Decompressor {
                 if block.column.len() + block.run > capacity { self.stage = Stage::Done; return Err(INVALID); }
                 block.tally[byte as usize] += block.run as u32;
                 let run = block.run;
-                block.column.extend(std::iter::repeat(byte as u32).take(run));
+                block.column.resize(block.column.len() + run, byte as u32);
                 block.run = 0; block.run_weight = 1;
             }
             if sym == end { break; }
-            let v = block.recency.remove(sym as usize - 1);
-            block.recency.insert(0, v);
+            let idx = sym as usize - 1;
+            let v = block.recency[idx];
+            block.recency.copy_within(0..idx, 1);
+            block.recency[0] = v;
             let byte = block.unseq[v as usize];
             if block.column.len() >= capacity { self.stage = Stage::Done; return Err(INVALID); }
             block.tally[byte as usize] += 1;

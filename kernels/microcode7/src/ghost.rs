@@ -137,17 +137,17 @@ thread_local! {
     static LOST: Cell<bool> = const { Cell::new(false) };
     static FAREWELLS: RefCell<Vec<(Rc<Thing>, Value)>> = const { RefCell::new(Vec::new()) };
     static HALF_WALKS: RefCell<Vec<Rc<RefCell<Suspension>>>> = const { RefCell::new(Vec::new()) };
-    static BIDDEN: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+    static BIDDEN: RefCell<HashSet<usize, crate::table::FxBuildHasher>> = RefCell::new(HashSet::default());
     static REFERENCES: RefCell<Vec<Weak<Dim>>> = const { RefCell::new(Vec::new()) };
     static REFERENCES_NEXT_SWEEP: Cell<usize> = const { Cell::new(64) };
     static REFERENCES_BY_TARGET: RefCell<(HashMap<ReferenceAddress, Vec<Weak<Dim>>>, usize)> = RefCell::new((HashMap::new(), 64));
     static ANCHORED: Rc<RefCell<Vec<Rc<Thing>>>> = Rc::new(RefCell::new(Vec::new()));
     // Addresses already anchored, so a repeat anchor does not walk the vector.
     // Membership, not a second owner.
-    static ANCHORED_ADDRS: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+    static ANCHORED_ADDRS: RefCell<HashSet<usize, crate::table::FxBuildHasher>> = RefCell::new(HashSet::default());
     // The addresses of the things a listener is on. A thing leaving
     // sets the lost flag only where its address is one of these.
-    static WATCHED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
+    static WATCHED: RefCell<HashSet<usize, crate::table::FxBuildHasher>> = RefCell::new(HashSet::default());
     // A listener whose kind has no notification of its own forces the
     // broad check: every departure is then worth the lost flag.
     static UNHOOKED: Cell<bool> = const { Cell::new(false) };
@@ -283,6 +283,7 @@ fn anchor_ready(anchored: &RefCell<Vec<Rc<Thing>>>) -> bool {
 /// The method a class bids farewell with, where the language has one.
 /// Until it is named, nothing that goes is looked at.
 pub fn set_farewell_name(word: Option<String>) {
+    crate::data::note_namespace_change();
     let _ = FAREWELL_NAME.try_with(|n| *n.borrow_mut() = word);
 }
 
@@ -374,7 +375,7 @@ fn watch_ghost(ghost: &Ghost) {
         Ghost::Thing(w) => note(w.as_ptr() as usize),
         Ghost::Blueprint(w) => note(w.as_ptr() as usize),
         Ghost::Routine(w) => note(w.as_ptr() as usize),
-        Ghost::Bound(p, e) => { note(p.as_ptr() as usize); note(e.as_ptr() as usize); }
+        Ghost::Bound(p, e) => { if let Some(env) = e.upgrade() { env.watched.set(true); } note(p.as_ptr() as usize); note(e.as_ptr() as usize); }
         Ghost::Method(p, t, i) => { note(p.as_ptr() as usize); note(t.as_ptr() as usize); note(i.as_ptr() as usize); }
         // A cell, a walk and a set sit behind a borrow flag whose
         // address the value itself does not carry, so their kinds
@@ -387,14 +388,25 @@ fn watch_ghost(ghost: &Ghost) {
 /// The farewell method of a class, looked for among its programs first
 /// and then among the values it keeps for itself.
 pub fn farewell_of(class: &Rc<Blueprint>) -> Option<Value> {
+    let now = crate::data::namespace_change();
+    let stable = class.base_epoch.get() == 0;
+    if stable && class.shared.no_farewell.get() == now {
+        return None;
+    }
     FAREWELL_NAME.try_with(|stored| {
         let borrowed = stored.borrow();
-        let word = borrowed.as_ref()?;
-        class.program(word).map(Value::Routine).or_else(|| {
+        let Some(word) = borrowed.as_ref() else {
+            if stable { class.shared.no_farewell.set(now); }
+            return None;
+        };
+        let found = class.program(word).map(Value::Routine).or_else(|| {
             let owner = class.keeper(word)?;
-            let entries = owner.shared.borrow();
-            entries.iter().find_map(|(key, item)| (key == word).then(|| item.clone()))
-        })
+            let python = owner.type_names.borrow().is_some(); owner.shared.named(word, python)
+        });
+        if found.is_none() && stable {
+            class.shared.no_farewell.set(now);
+        }
+        found
     }).unwrap_or(None)
 }
 
@@ -574,62 +586,66 @@ fn carries_links(value: &Value) -> bool {
 /// In particular, an exception arm may retain nested routine constants
 /// after a generator yields, and those routines may keep its globals.
 pub(crate) fn form_holds(form: &Form, out: &mut Vec<Knot>) {
-    match form {
-        Form::Const(value) => if carries_links(value) { out.push(Knot::Held(value.clone())); },
-        Form::Fits { value, test, kinds, .. } => {
-            form_holds(value, out);
-            case_holds(test, out);
-            for kind in kinds { form_holds(kind, out); }
-        }
-        Form::Write(_, body) | Form::OnLine(_, _, body) | Form::Located(_, _, body)
-        | Form::Tie(_, body) | Form::ShareItem(_, body) | Form::ShareField(body, _)
-        | Form::ShareOwn(body, _) | Form::ShareCalled(body) | Form::ForgetCalled(body)
-        | Form::ReadyCalled(body) | Form::Muted(body) | Form::Silenced(body)
-        | Form::Called(body) | Form::CellOrSaid(_, _, _, body)
-        | Form::HeldEither(_, _, _, body) => form_holds(body, out),
-        Form::Apply(callee, args) => {
-            if let Callee::Code(target) = callee { form_holds(target, out); }
-            for arg in args { form_holds(arg, out); }
-        }
-        Form::Cycle { test, body, step, otherwise, .. } => {
-            form_holds(test, out); form_holds(body, out);
-            if let Some(step) = step { form_holds(step, out); }
-            if let Some(otherwise) = otherwise { form_holds(otherwise, out); }
-        }
-        Form::Dyad { a, b, .. } => {
-            for input in [a, b] {
-                match input {
-                    Input::Form(form) => form_holds(form, out),
-                    Input::Const(value) => out.push(Knot::Held(value.clone())),
-                    Input::Address(_) => {}
+    let mut stack = vec![form];
+    while let Some(form) = stack.pop() {
+        match form {
+            Form::Const(value) => if carries_links(value) { out.push(Knot::Held(value.clone())); },
+            Form::Fits { value, test, kinds, .. } => {
+                case_holds(test, out);
+                for kind in kinds.iter().rev() { stack.push(kind); }
+                stack.push(value);
+            }
+            Form::Write(_, body) | Form::OnLine(_, _, body) | Form::Located(_, _, body)
+            | Form::Tie(_, body) | Form::ShareItem(_, body) | Form::ShareField(body, _)
+            | Form::ShareOwn(body, _) | Form::ShareCalled(body) | Form::ForgetCalled(body)
+            | Form::ReadyCalled(body) | Form::Muted(body) | Form::Silenced(body)
+            | Form::Called(body) | Form::CellOrSaid(_, _, _, body)
+            | Form::HeldEither(_, _, _, body) => stack.push(body),
+            Form::Apply(callee, args) => {
+                for arg in args.iter().rev() { stack.push(arg); }
+                if let Callee::Code(target) = callee { stack.push(target); }
+            }
+            Form::Cycle { test, body, step, otherwise, .. } => {
+                if let Some(otherwise) = otherwise { stack.push(otherwise); }
+                if let Some(step) = step { stack.push(step); }
+                stack.push(body);
+                stack.push(test);
+            }
+            Form::Dyad { a, b, .. } => {
+                for input in [b, a] {
+                    match input {
+                        Input::Form(form) => stack.push(form),
+                        Input::Const(value) => if carries_links(value) { out.push(Knot::Held(value.clone())); },
+                        Input::Address(_) => {}
+                    }
                 }
             }
-        }
-        Form::Class { plan, values } => {
-            for (_, body) in &plan.methods { out.push(Knot::Held(Value::Routine(body.clone()))); }
-            for value in values { form_holds(value, out); }
-        }
-        Form::Assert { condition, message } => { form_holds(condition, out); form_holds(message, out); }
-        Form::Attempt { body, clauses, last, otherwise, .. } => {
-            form_holds(body, out);
-            for clause in clauses {
-                if let Some(choices) = &clause.choices { for choice in choices { form_holds(choice, out); } }
-                form_holds(&clause.body, out);
+            Form::Class { plan, values } => {
+                for (_, body) in &plan.methods { out.push(Knot::Held(Value::Routine(body.clone()))); }
+                for value in values.iter().rev() { stack.push(value); }
             }
-            if let Some(last) = last { form_holds(last, out); }
-            if let Some(otherwise) = otherwise { form_holds(otherwise, out); }
+            Form::Assert { condition, message } => { stack.push(message); stack.push(condition); }
+            Form::Attempt { body, clauses, last, otherwise, .. } => {
+                if let Some(otherwise) = otherwise { stack.push(otherwise); }
+                if let Some(last) = last { stack.push(last); }
+                for clause in clauses.iter().rev() {
+                    stack.push(&clause.body);
+                    if let Some(choices) = &clause.choices { for choice in choices.iter().rev() { stack.push(choice); } }
+                }
+                stack.push(body);
+            }
+            Form::SharePlace(_, forms) => for form in forms.iter().rev() { stack.push(form); },
+            Form::ShareWithin(base, forms) => {
+                for form in forms.iter().rev() { stack.push(form); }
+                stack.push(base);
+            }
+            Form::ForgetWithin(a, b) | Form::TieCalled(a, b) | Form::CallWrite(a, b) => {
+                stack.push(b); stack.push(a);
+            }
+            Form::Read(_) | Form::Take(_) | Form::Release(_) | Form::Glance(_)
+            | Form::Bump { .. } | Form::Again | Form::Missing(_) | Form::Share(_)
+            | Form::Forget(_) | Form::RemoveName(_) | Form::Ready(_) | Form::Remark(..) => {}
         }
-        Form::SharePlace(_, forms) => for form in forms { form_holds(form, out); },
-        Form::ShareWithin(base, forms) => {
-            form_holds(base, out);
-            for form in forms { form_holds(form, out); }
-        }
-        Form::ForgetWithin(a, b) | Form::TieCalled(a, b) | Form::CallWrite(a, b) => {
-            form_holds(a, out); form_holds(b, out);
-        }
-        Form::Read(_) | Form::Take(_) | Form::Release(_) | Form::Glance(_)
-        | Form::Bump { .. } | Form::Again | Form::Missing(_) | Form::Share(_)
-        | Form::Forget(_) | Form::RemoveName(_) | Form::Ready(_) | Form::Remark(..) => {}
     }
 }
 

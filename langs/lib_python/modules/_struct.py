@@ -141,6 +141,9 @@ class Struct:
                 return _native(1, format, values)
             except ValueError as exc:
                 raise error(exc.args[0])
+        packed = _call(10, format, values)
+        if packed is not None:
+            return packed
         return _call(1, format, self._arguments(values))
 
     def unpack(self, buffer):
@@ -193,6 +196,11 @@ class Struct:
 
     def pack_into(self, buffer, offset, *values):
         self._ready()
+        if type(buffer) is bytearray and type(offset) is int:
+            at = self._offset(len(buffer), offset, True)
+            raw = self.pack(*values)
+            buffer[at:at + self._size] = raw
+            return
         view = memoryview(buffer)
         if view.readonly:
             raise TypeError('argument must be read-write bytes-like object, not ' + type(buffer).__name__)
@@ -206,6 +214,11 @@ class Struct:
 
     def unpack_from(self, buffer, offset=0):
         self._ready()
+        if self._plain and type(buffer) in (bytes, bytearray) and type(offset) is int:
+            at = self._offset(len(buffer), offset, False)
+            size = self._size
+            chunk = buffer if at == 0 and len(buffer) == size else buffer[at:at + size]
+            return _call(2, self._format, chunk)
         view = _read_view(buffer)
         at = self._offset(view.nbytes, offset, False)
         return self.unpack(view.cast('B')[at:at + self.size])

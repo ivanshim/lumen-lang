@@ -290,6 +290,7 @@ fn anchor_ready() -> bool {
 /// Tell the module the name a class gives its last words. Until this
 /// is called, nothing that dies is looked at.
 pub fn name_last_word(word: Option<String>) {
+    crate::value::bump_members_revision();
     let _ = LAST_WORD.try_with(|w| *w.borrow_mut() = word);
 }
 
@@ -317,15 +318,25 @@ fn note_death() {
 
 /// The routine a class says its last words with, where it has one.
 pub fn last_word_of(class: &Rc<Class>) -> Option<Value> {
+    let now = crate::value::members_revision();
+    let stable = class.base_epoch.get() == 0;
+    if stable && class.shared.no_last_word.get() == now {
+        return None;
+    }
     LAST_WORD.try_with(|w| {
         let name = w.borrow();
-        let name = name.as_deref()?;
-        if let Some(program) = class.method(name) {
-            return Some(Value::Routine(program.clone()));
+        let Some(name) = name.as_deref() else {
+            if stable { class.shared.no_last_word.set(now); }
+            return None;
+        };
+        let found = class.method(name).map(|program| Value::Routine(program.clone())).or_else(|| {
+            let holder = class.holder(name)?;
+            let indexed = holder.python_names.borrow().is_some(); holder.shared.read(name, indexed)
+        });
+        if found.is_none() && stable {
+            class.shared.no_last_word.set(now);
         }
-        let holder = class.holder(name)?;
-        let answer=holder.shared.borrow().iter().find(|(n, _)| n == name).map(|(_, v)| v.clone());
-        answer
+        found
     }).ok().flatten()
 }
 
@@ -342,7 +353,7 @@ pub fn departing(dying: &mut Instance) {
     let here = dying as *const Instance as usize;
     // Once the thread's own storage is gone, at the very end, nothing
     // is queued: there is no engine left to speak.
-    let spoken = SPOKEN.try_with(|s| s.borrow_mut().remove(&here)).unwrap_or(true);
+    let spoken = SPOKEN.try_with(|s| { let mut set = s.borrow_mut(); !set.is_empty() && set.remove(&here) }).unwrap_or(true);
     if !spoken {
         if let Some(words) = last_word_of(&dying.class) {
             let fields = std::mem::take(dying.fields.get_mut());

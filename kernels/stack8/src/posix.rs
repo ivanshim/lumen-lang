@@ -415,7 +415,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
             } else {libc::opendir(pathname(0)?.as_ptr())};
             if directory.is_null() {Err(errno())}
             else {Ok(DIRECTORIES.with(|held| {let mut held = held.borrow_mut(); held.0 += 1; let key = held.0; held.1.insert(key, Directory(directory, from_fd)); Value::Small(key)}))}
-        },
+        }
         "scandir_next" => {
             let handle = number(0)?;
             DIRECTORIES.with(|held| {
@@ -431,7 +431,7 @@ pub fn call(args: &[Value], mut check_signals: impl FnMut() -> Result<(), String
                     break Ok(Value::tuple(vec![bytes(name.to_vec()), Value::of_big(entry.d_ino.into()), Value::Small(entry.d_type.into())]));
                 }
             })
-        },
+        }
         "scandir_close" => {let handle = number(0)?; DIRECTORIES.with(|held| {held.borrow_mut().1.remove(&handle);}); Ok(Value::Null)},
         "futime" => {
             let times = [libc::timespec {tv_sec: number(1)?, tv_nsec: number(2)?}, libc::timespec {tv_sec: number(3)?, tv_nsec: number(4)?}];
@@ -834,4 +834,55 @@ fn host_by_name(input: &Value) -> Result<Value, String> {
         }
         host_entry(&entry)
     }
+}
+
+/// Names in one directory, taken together: bytes, inode, file type.
+/// Reading through a descriptor duplicates it and puts its offset back.
+pub fn taken_names(subject: &Value) -> Result<(i32, Vec<(Vec<u8>, u64, u8)>), String> {
+    fn describe(value: &Value) -> Result<Option<i64>, String> {
+        match value.contents() {
+            Value::Small(number) => Ok(Some(number)),
+            Value::Huge(number) => number.to_i64().map(Some).ok_or_else(|| "OverflowError: Python int too large to convert to C long".to_string()),
+            _ => Ok(None),
+        }
+    }
+    let chosen = describe(subject)?;
+    let host_error = || std::io::Error::last_os_error().raw_os_error().unwrap_or(libc::EIO);
+    let (stream, rewind) = unsafe {
+        if let Some(number) = chosen {
+            let Ok(number) = i32::try_from(number) else { return Err("OverflowError: Python int too large to convert to C int".to_string()) };
+            let copied = libc::fcntl(number, libc::F_DUPFD_CLOEXEC, 0);
+            if copied < 0 { return Ok((host_error(), Vec::new())); }
+            let stream = libc::fdopendir(copied);
+            if stream.is_null() {
+                let code = host_error();
+                libc::close(copied);
+                return Ok((code, Vec::new()));
+            }
+            (stream, true)
+        } else {
+            let bytes = raw(subject)?;
+            let owned = CString::new(bytes).map_err(|_| "ValueError: embedded null byte".to_string())?;
+            let stream = libc::opendir(owned.as_ptr());
+            if stream.is_null() { return Ok((host_error(), Vec::new())); }
+            (stream, false)
+        }
+    };
+    let mut found = Vec::new();
+    let fault = unsafe {
+        let code = loop {
+            *libc::__errno_location() = 0;
+            let next = libc::readdir(stream);
+            if next.is_null() { break *libc::__errno_location(); }
+            let next = &*next;
+            let label = CStr::from_ptr(next.d_name.as_ptr()).to_bytes();
+            if label == b"." || label == b".." { continue; }
+            found.push((label.to_vec(), next.d_ino as u64, next.d_type as u8));
+        };
+        if rewind { libc::rewinddir(stream); }
+        libc::closedir(stream);
+        code
+    };
+    if fault != 0 { found.clear(); }
+    Ok((fault, found))
 }

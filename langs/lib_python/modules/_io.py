@@ -221,6 +221,14 @@ class _BufferedIOBase(_IOBase):
     def detach(self):
         raise UnsupportedOperation('detach')
     def _readinto_with(self, b, name):
+        if type(b) is bytearray:
+            data = getattr(self, name)(len(b))
+            if not isinstance(data, bytes):
+                raise TypeError('read() should return bytes')
+            if len(data) > len(b):
+                raise ValueError('read() returned too much data: %d bytes requested, %d returned' % (len(b), len(data)))
+            b[:len(data)] = data
+            return len(data)
         with memoryview(b) as view:
             target = view.cast('B')
             if target.readonly:
@@ -1620,6 +1628,12 @@ class FileIO(_RawIOBase):
                 return b''.join(chunks)
             chunks.append(chunk)
     def readinto(self, buffer):
+        if type(buffer) is bytearray:
+            data = self.read(len(buffer))
+            if data is None:
+                return None
+            buffer[:len(data)] = data
+            return len(data)
         with _get_buffer(buffer) as view:
             if view.readonly:
                 raise TypeError('readinto() argument must be read-write bytes-like object, not ' + type(buffer).__name__)
