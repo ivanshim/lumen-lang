@@ -9725,8 +9725,8 @@ impl<'a> Compiler<'a> {
         if lang.annotation_marks.is_empty() { return None; }
         // The colon a lambda opens its body with is no annotation mark.
         if self.tokens.get(self.pos).map_or(false, |word| word.shape == Shape::Instr && Lang::spells(&lang.lambda_words, &word.spelling())) { return None; }
-        let pairs: Vec<&Brackets> = [&lang.grouping, &lang.calling, &lang.array_brackets,
-            &lang.map_brackets, &lang.index_brackets].into_iter().flatten().collect();
+        let pairs = [&lang.grouping, &lang.calling, &lang.array_brackets,
+            &lang.map_brackets, &lang.index_brackets];
         let mut depth = 0usize;
         for (at, word) in self.tokens.iter().enumerate().skip(self.pos) {
             if depth == 0 {
@@ -9737,8 +9737,8 @@ impl<'a> Compiler<'a> {
                 }
             }
             if word.shape == Shape::Sign {
-                if pairs.iter().any(|pair| pair.open == word.lexeme) { depth += 1; }
-                else if pairs.iter().any(|pair| pair.close == word.lexeme) { depth = depth.saturating_sub(1); }
+                if pairs.into_iter().flatten().any(|pair| pair.open == word.lexeme) { depth += 1; }
+                else if pairs.into_iter().flatten().any(|pair| pair.close == word.lexeme) { depth = depth.saturating_sub(1); }
             }
         }
         None
@@ -9748,15 +9748,21 @@ impl<'a> Compiler<'a> {
     fn assign_or_expr(&mut self) -> Res<()> {
         // Exporting a builtin under its own name keeps the direct call
         // valid. A later write of any other value cancels this fact.
-        let name = self.look().lexeme.clone();
-        let identity = self.lang.shadow_builtins && self.piece().outermost && !self.in_class_body()
-            && (self.lang.builtins.contains_key(&name) || Lang::spells(&self.lang.parent_words, &name))
-            && self.look_ahead(1).shape == Shape::Sign && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).spelling())
-            && self.look_ahead(2).shape == Shape::Instr && self.look_ahead(2).lexeme == name
+        let exported = if self.lang.shadow_builtins && self.piece().outermost && !self.in_class_body()
+            && self.look_ahead(1).shape == Shape::Sign && self.look_ahead(2).shape == Shape::Instr
             && matches!(self.look_ahead(3).shape, Shape::LineEnd | Shape::Finish)
-            && (!self.registry.program_bound.contains(&name) || self.registry.builtin_exports.contains(&name));
+        {
+            let name = &self.look().lexeme;
+            ((self.lang.builtins.contains_key(name) || Lang::spells(&self.lang.parent_words, name))
+                && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).spelling())
+                && &self.look_ahead(2).lexeme == name
+                && (!self.registry.program_bound.contains(name) || self.registry.builtin_exports.contains(name)))
+                .then(|| name.clone())
+        } else {
+            None
+        };
         let result = self.assignment_expression();
-        if identity && result.is_ok() { self.registry.builtin_exports.insert(name); }
+        if let (Some(name), Ok(())) = (exported, &result) { self.registry.builtin_exports.insert(name); }
         result
     }
 
@@ -9767,11 +9773,12 @@ impl<'a> Compiler<'a> {
             && Lang::spells(&self.lang.assign_words, &self.look_ahead(1).spelling()) {
             return Err("SyntaxError: invalid syntax".into());
         }
+        let (assign_marks, stmt_end) = self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words);
         if !self.lang.syntax_members.is_empty() {
-            if !self.outer_marks(self.pos, self.tokens.len(), &self.lang.expression_assign).0.is_empty() {
+            if !self.outer_marks(self.pos, stmt_end, &self.lang.expression_assign).0.is_empty() {
                 return Err("SyntaxError: invalid syntax".into());
             }
-            if let Some(equal) = self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.first().copied() {
+            if let Some(equal) = assign_marks.first().copied() {
                 let begins = self.look();
                 let kind = if begins.shape == Shape::StringBegin {
                     Some(if begins.lexeme.chars().next().map_or(false, |c| self.lang.template_prefixes.contains(&c)) { "t-string expression" } else { "f-string expression" })
@@ -9784,8 +9791,8 @@ impl<'a> Compiler<'a> {
                 if let Some(kind) = kind { return Err(format!("SyntaxError: cannot assign to {kind} here. Maybe you meant '==' instead of '='?")); }
             }
             if self.look().shape == Shape::Sign && Lang::spells(&self.lang.unpack_rest, &self.look().lexeme)
-                && self.outer_marks(self.pos, self.tokens.len(), &self.lang.tuple_marks).0.is_empty()
-                && self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.is_empty() {
+                && assign_marks.is_empty()
+                && self.outer_marks(self.pos, stmt_end, &self.lang.tuple_marks).0.is_empty() {
                 if self.second_assign_ahead().is_some_and(|at| self.lang.compound.contains_key(self.tokens[at].spelling())) {
                     return Err("SyntaxError: 'starred' is an illegal expression for augmented assignment".into());
                 }
@@ -9825,7 +9832,7 @@ impl<'a> Compiler<'a> {
                     return Err("SyntaxError: illegal target for annotation".into());
                 }
             }
-            if let Some(equal) = self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.first().copied() {
+            if let Some(equal) = assign_marks.first().copied() {
                 let mut start = self.pos;
                 let mut end = equal;
                 while start + 1 < end && self.tokens[start].is_lexeme(Shape::Sign, "(") && self.tokens[end - 1].is_lexeme(Shape::Sign, ")") { start += 1; end -= 1; }
@@ -9860,10 +9867,21 @@ impl<'a> Compiler<'a> {
                 }
             }
         }
-        if self.tuple_assignment()? { return Ok(()); }
-        if !self.lang.tuple_marks.is_empty() && self.outer_marks(self.pos, self.tokens.len(), &self.lang.assign_words).0.is_empty()
-            && !self.outer_marks(self.pos, self.tokens.len(), &self.lang.tuple_marks).0.is_empty()
-            && self.second_assign_ahead().map_or(true, |assign| self.outer_marks(self.pos, self.tokens.len(), &self.lang.tuple_marks).0[0] < assign) {
+        if !assign_marks.is_empty() && self.tuple_assignment()? { return Ok(()); }
+        if !self.lang.tuple_marks.is_empty() && assign_marks.is_empty() {
+            let tuple_marks = self.outer_marks(self.pos, stmt_end, &self.lang.tuple_marks).0;
+            if !tuple_marks.is_empty() && self.second_assign_ahead().map_or(true, |assign| tuple_marks[0] < assign) {
+                self.tuple_read(false)?;
+                if self.on_writing() { return Err("SyntaxError: 'tuple' is an illegal expression for augmented assignment".into()); }
+                self.piece().result_touched = true;
+                if self.interactive && self.pieces.len() == 1 && !self.in_class_body() {
+                    self.act(Action::Display, 1);
+                }
+                self.write(RESULT_CELL);
+                return Ok(());
+            }
+        }
+        if false {
             self.tuple_read(false)?;
             if self.on_writing() { return Err("SyntaxError: 'tuple' is an illegal expression for augmented assignment".into()); }
             self.piece().result_touched = true;
@@ -9890,8 +9908,12 @@ impl<'a> Compiler<'a> {
                 || (before.shape == Shape::Sign && (self.lang.ends_stmt(&before.lexeme)
                     || Lang::spells(&self.lang.block_intros, &before.spelling())))
         };
-        let writing_signs: Vec<String> = self.lang.assign_words.iter().cloned().chain(self.lang.compound.keys().cloned()).collect();
-        let assignments = self.outer_marks(self.pos, self.tokens.len(), &writing_signs).0;
+        let assignments = if self.tokens[self.pos..stmt_end].iter().any(|t| self.lang.compound.contains_key(t.spelling())) {
+            let writing_signs: Vec<String> = self.lang.assign_words.iter().cloned().chain(self.lang.compound.keys().cloned()).collect();
+            self.outer_marks(self.pos, stmt_end, &writing_signs).0
+        } else {
+            assign_marks
+        };
         let mut writing_target = !assignments.is_empty();
         if writing_target && !self.lang.class_builder.is_empty() && self.in_class_body() {
             let end = self.outer_marks(target_at, assignments[0], &self.lang.annotation_marks).0.first().copied().unwrap_or(assignments[0]);

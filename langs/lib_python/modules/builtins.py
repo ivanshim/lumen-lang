@@ -673,6 +673,20 @@ class memoryview:
             self._released = False
             self._export = _export(object) if kind is bytearray else None
             return
+        if kind is memoryview:
+            object._check()
+            self._object = object._object
+            self._source = source = object._source
+            self._owner = self._owner_view = None
+            self._offsets = object._offsets
+            self._format = object._format
+            self._itemsize = object._itemsize
+            self._stride = object._stride
+            self._readonly = object._readonly
+            self._shape = object._shape
+            self._released = False
+            self._export = _export(source) if type(source) is bytearray else (_export(source._buffer) if object._export is not None and hasattr(source, '_buffer') else None)
+            return
         from array import array
         self._object = object.obj if isinstance(object, memoryview) else object
         self._owner = None
@@ -871,6 +885,12 @@ class memoryview:
                 raise NotImplementedError('memoryview slice assignment requires a byte format')
             if isinstance(value, memoryview):
                 value = value.tobytes()
+            if format == 'B' and type(places) is range and (len(places) <= 1 or places.step == 1) and type(self._source) is bytearray and type(value) in (bytes, bytearray):
+                if len(places) != len(value):
+                    raise ValueError('memoryview assignment: lvalue and rvalue have different structures')
+                start = places.start if places else 0
+                self._source[start:start + len(value)] = value
+                return
             if format == 'B' and isinstance(places, range) and (len(places) <= 1 or places.step == 1) and isinstance(value, (bytes, bytearray)):
                 raw = bytes.__getitem__(value, slice(None)) if isinstance(value, bytes) else bytes(bytearray.__getitem__(value, slice(None)))
                 if len(places) != len(raw):
@@ -964,6 +984,10 @@ class memoryview:
         return self.tobytes().hex(sep, bytes_per_sep)
 
     def cast(self, format, shape=None):
+        if format == 'B' and shape is None and not self._released and self._format == 'B' and len(self._shape) == 1:
+            offsets = self._offsets
+            if type(offsets) is range and (len(offsets) <= 1 or offsets.step == 1):
+                return memoryview(self)
         if not isinstance(format, str):
             raise TypeError("cast() argument 'format' must be str, not " + ('None' if format is None else type(format).__name__))
         self._check()
