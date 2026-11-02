@@ -505,8 +505,10 @@ class AST:
     @_native_keywords
     def __init__(self, *args, **kwargs):
         cls = type(self)
-        name = cls.__name__
         fields = self._fields
+        if not args and not kwargs and not fields:
+            return
+        name = cls.__name__
         if len(args) > len(fields):
             raise TypeError(name + ' constructor takes at most ' + str(len(fields)) + ' positional arguments')
         given = len(args)
@@ -1785,9 +1787,10 @@ def _adv(source, i, count, row, col):
     breaks = chunk.count('\n')
     if breaks:
         row += breaks
-        col = len(chunk[chunk.rfind('\n') + 1:].encode('utf-8'))
+        tail = chunk[chunk.rfind('\n') + 1:]
+        col = len(tail) if tail.isascii() else len(tail.encode('utf-8'))
     else:
-        col += len(chunk.encode('utf-8'))
+        col += len(chunk) if chunk.isascii() else len(chunk.encode('utf-8'))
     return (stop, row, col)
 
 def _string_skip(source, i):
@@ -1872,7 +1875,10 @@ def _check_single_line(source, q, after):
         i += 1
 
 def _lex(source, start, end, row, col, for_field, comments=None):
-    if not isinstance(source, _Chars):
+    if isinstance(source, _Chars):
+        if source.ascii:
+            source = source.text
+    elif not source.isascii():
         source = _Chars(source)
     # Tokens over source[start:end], beginning at (row, col). Inside a
     # replacement field (for_field) newlines are plain whitespace; outside
@@ -1886,8 +1892,11 @@ def _lex(source, start, end, row, col, for_field, comments=None):
         c = source[i]
         srow, scol = row, col
         if c == ' ' or c == '\t' or c == '\f':
-            i += 1
-            col += 1
+            j = i + 1
+            while j < end and (source[j] == ' ' or source[j] == '\t' or source[j] == '\f'):
+                j += 1
+            col += j - i
+            i = j
             continue
         if c == '\r':
             i += 1
@@ -1907,9 +1916,10 @@ def _lex(source, start, end, row, col, for_field, comments=None):
             j = source.find('\n', i)
             if j < 0 or j > end:
                 j = end
+            comment = source[i:j]
             if comments is not None:
-                comments.append((srow, scol, source[i:j]))
-            col += len(source[i:j].encode('utf-8'))
+                comments.append((srow, scol, comment))
+            col += (j - i) if comment.isascii() else len(comment.encode('utf-8'))
             i = j
             continue
         if c.isdigit() or (c == '.' and source[i + 1:i + 2].isdigit()):
@@ -1921,8 +1931,10 @@ def _lex(source, start, end, row, col, for_field, comments=None):
                         j += 1
                     continue
                 j += 1
-            toks.append(_Tok('num', source[i:j], srow, scol, srow, scol + len(source[i:j].encode('utf-8'))))
-            col += len(source[i:j].encode('utf-8'))
+            num_text = source[i:j]
+            nlen = (j - i) if num_text.isascii() else len(num_text.encode('utf-8'))
+            toks.append(_Tok('num', num_text, srow, scol, srow, scol + nlen))
+            col += nlen
             i = j
             continue
         if c == '_' or c.isalpha():
@@ -1955,8 +1967,9 @@ def _lex(source, start, end, row, col, for_field, comments=None):
                 toks.append(tok)
                 i, row, col = after, erow, ecol
                 continue
-            toks.append(_Tok('name', word, srow, scol, srow, scol + len(source[i:j].encode('utf-8'))))
-            col += len(source[i:j].encode('utf-8'))
+            wlen = (j - i) if word.isascii() else len(word.encode('utf-8'))
+            toks.append(_Tok('name', word, srow, scol, srow, scol + wlen))
+            col += wlen
             i = j
             continue
         if c == '"' or c == "'":
@@ -3302,7 +3315,8 @@ class _Parser:
 
     def parse_expr(self, bare_tuple):
         node, ls, le = self.parse_or()
-        if self.at_op(':='):
+        tok = self.toks[self.at]
+        if tok.kind == 'op' and tok.text == ':=':
             if not isinstance(node, Name):
                 _syntax('cannot use assignment expressions with ' + type(node).__name__.lower())
             self.pop()
@@ -3310,7 +3324,8 @@ class _Parser:
             self.set_store(node)
             node = NamedExpr(target=node, value=value, lineno=ls[0], col_offset=ls[1], end_lineno=ve[0], end_col_offset=ve[1])
             le = ve
-        if self.at_name('if'):
+            tok = self.toks[self.at]
+        if tok.kind == 'name' and tok.text == 'if':
             self.pop()
             test, ts, te = self.parse_or()
             if not self.at_name('else'):
@@ -3320,7 +3335,8 @@ class _Parser:
             node = IfExp(test=test, body=node, orelse=other, lineno=ls[0],
                          col_offset=ls[1], end_lineno=oe[0], end_col_offset=oe[1])
             le = oe
-        if bare_tuple and self.at_op(','):
+            tok = self.toks[self.at]
+        if bare_tuple and tok.kind == 'op' and tok.text == ',':
             elts = [node]
             while self.at_op(','):
                 comma = self.pop()
@@ -3407,6 +3423,9 @@ class _Parser:
 
     def parse_comparison(self):
         node, ls, le = self.parse_bitor()
+        tok = self.toks[self.at]
+        if not ((tok.kind == 'op' and tok.text in _CMPOPS) or (tok.kind == 'name' and tok.text in ('is', 'in', 'not'))):
+            return (node, ls, le)
         ops = []
         comparators = []
         while True:
@@ -3484,7 +3503,8 @@ class _Parser:
             le = oe
         else:
             node, ls, le = self.parse_postfix()
-        if self.at_op('**'):
+        tok = self.toks[self.at]
+        if tok.kind == 'op' and tok.text == '**':
             self.pop()
             right, rs, re = self.parse_unary()
             node = BinOp(left=node, op=Pow(), right=right, lineno=ls[0],
@@ -4058,6 +4078,8 @@ def dump(
             sep = ', '
         if isinstance(node, AST):
             cls = type(node)
+            if not node._fields and not (include_attributes and node._attributes):
+                return cls.__name__ + '()', True
             args = []
             args_buffer = []
             allsimple = True

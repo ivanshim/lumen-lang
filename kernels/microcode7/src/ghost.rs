@@ -75,6 +75,16 @@ impl Ghost {
         }
     }
 
+    /// Pointer of a thing, blueprint or routine, without bringing it back.
+    fn pinned_address(&self) -> Option<usize> {
+        match self {
+            Ghost::Blueprint(weak) => Some(weak.as_ptr() as usize),
+            Ghost::Thing(weak) => Some(weak.as_ptr() as usize),
+            Ghost::Routine(weak) => Some(weak.as_ptr() as usize),
+            _ => None,
+        }
+    }
+
     pub fn departed(&self) -> bool {
         match self {
             Ghost::StaticKind(_) | Ghost::Lasting(_) => false,
@@ -152,6 +162,11 @@ thread_local! {
     // broad check: every departure is then worth the lost flag.
     static UNHOOKED: Cell<bool> = const { Cell::new(false) };
     static NOTABLE: RefCell<Notable> = RefCell::new((Vec::new(), 8, HashSet::default()));
+    // Survivors a fenced reaping will not open: things, blueprints,
+    // routines and frames. A later generation-0 reaping leaves their
+    // bodies alone until a whole-heap reaping replaces this set.
+    static LASTING: RefCell<HashSet<usize, crate::table::FxBuildHasher>> =
+        RefCell::new(HashSet::with_hasher(crate::table::FxBuildHasher::default()));
 }
 
 // Index weak routine/environment pairs without adding ownership to either.
@@ -171,6 +186,34 @@ fn prune_notable(notable: &mut Notable) {
     notable.1 = (notable.0.len() * 2).max(8);
     notable.2.clear();
     notable.2.extend(notable.0.iter().filter_map(bound_key));
+}
+
+fn place_is_settled(site: usize) -> bool {
+    LASTING.try_with(|known| known.borrow().contains(&site)).unwrap_or(false)
+}
+
+pub fn any_settled() -> bool {
+    LASTING.try_with(|known| !known.borrow().is_empty()).unwrap_or(false)
+}
+
+pub fn forget_settled(site: usize) {
+    let _ = LASTING.try_with(|known| {
+        let mut known = known.borrow_mut();
+        if !known.is_empty() { known.remove(&site); }
+    });
+}
+
+pub fn store_lasting(found: Vec<usize>, restart: bool) {
+    let _ = LASTING.try_with(|known| {
+        let mut known = known.borrow_mut();
+        if restart {
+            *known = found.into_iter().collect();
+        } else {
+            for site in found {
+                known.insert(site);
+            }
+        }
+    });
 }
 
 /// Why a step must look at what is going.
@@ -225,6 +268,7 @@ pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
             false
         });
         let _ = LISTENING.try_with(|number| number.set(listeners.len()));
+        let _ = UNHOOKED.try_with(|u| u.set(listeners.iter().any(|dim| matches!(dim.ghost, Ghost::Cell(_) | Ghost::Walk(_) | Ghost::Set(_)))));
         ghost_set(G_POLL, listeners.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_) | Ghost::Code(_))));
         notices.into_iter().rev().collect()
     }).unwrap_or_default()
@@ -350,6 +394,7 @@ pub fn anything_departing() {
 /// is worth the lost flag. Most departures are neither, so the work
 /// of walking the listeners is left undone for them.
 pub fn departing_at(here: usize) {
+    forget_settled(here);
     if UNHOOKED.try_with(|u| u.get()).unwrap_or(false) { anything_departing(); return; }
     let watched = WATCHED.try_with(|w| {
         let mut w = w.borrow_mut();
@@ -487,6 +532,7 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
                 }
             }
             let _ = LISTENING.try_with(|n| n.set(still.len()));
+            let _ = UNHOOKED.try_with(|u| u.set(still.iter().any(|dim| matches!(dim.ghost, Ghost::Cell(_) | Ghost::Walk(_) | Ghost::Set(_)))));
             ghost_set(G_POLL, still.iter().any(|dim| matches!(dim.ghost, Ghost::WrappedMethod(_) | Ghost::Code(_))));
             still.reverse();
             *all = still;
@@ -917,7 +963,7 @@ impl Web {
     }
 
     /// Woven from the notable things still about.
-    pub fn from_notable(extra: Vec<Knot>, live: Vec<Knot>, enumerate: bool) -> Web {
+    pub fn from_notable(extra: Vec<Knot>, live: Vec<Knot>, enumerate: bool, fenced: bool) -> Web {
         let mut bookkeeping = HashMap::default();
         for knot in &extra {
             let parts = knot.clone().parts();
@@ -928,7 +974,16 @@ impl Web {
         let mut roots: Vec<Knot> = NOTABLE.try_with(|n| {
             let mut n = n.borrow_mut();
             prune_notable(&mut n);
-            n.0.iter().filter_map(|g| g.revive()).map(Knot::Held).collect()
+            let mut chosen = Vec::new();
+            for ghost in n.0.iter() {
+                if fenced {
+                    if let Some(site) = ghost.pinned_address() {
+                        if place_is_settled(site) { continue; }
+                    }
+                }
+                if let Some(value) = ghost.revive() { chosen.push(Knot::Held(value)); }
+            }
+            chosen
         }).unwrap_or_default();
         roots.extend(extra);
         let mut anchored: HashSet<usize, crate::table::FxBuildHasher> = HashSet::default();
@@ -953,17 +1008,26 @@ impl Web {
             }
             roots.extend(owners);
         }
-        Web::weave(roots, bookkeeping, anchored)
+        Web::weave(roots, bookkeeping, anchored, fenced)
     }
 
-    pub fn link_attributes(&mut self, function: &Value, holder: &Value) {
+    /// Account for a function's attributes even when its settled body is fenced out.
+    pub fn link_attributes(&mut self, function: &Value, holder: &Value, fenced: bool) {
         let function = match function { Value::Bound(body, _) => Value::Routine(body.clone()), other => other.clone() };
         if let (Some(from), Some(to)) = (Knot::Held(function).place(), Knot::Held(holder.clone()).place()) {
-            if let (Some(&from), Some(&to)) = (self.placed.get(&from), self.placed.get(&to)) { self.strands[from].onward.push(to); }
+            let Some(&destination) = self.placed.get(&to) else { return };
+            match self.placed.get(&from).copied() {
+                Some(source) => self.strands[source].onward.push(destination),
+                None if fenced && place_is_settled(from) => {
+                    // Retain the metadata table's hold as ownership from the older routine.
+                    self.strands[destination].inward = self.strands[destination].inward.saturating_sub(1);
+                }
+                None => {}
+            }
         }
     }
 
-    fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>, anchored: HashSet<usize, crate::table::FxBuildHasher>) -> Web {
+    fn weave(roots: Vec<Knot>, bookkeeping: HashMap<usize, usize, crate::table::FxBuildHasher>, anchored: HashSet<usize, crate::table::FxBuildHasher>, fenced: bool) -> Web {
         let mut web = Web { strands: Vec::with_capacity(roots.len()), placed: HashMap::default() };
         let mut frontier: Vec<usize> = Vec::new();
         // Each part of a knot is placed once; a hold on a part already
@@ -974,6 +1038,9 @@ impl Web {
             for part in [Some(first), second] {
                 let Some(part) = part else { continue };
                 let Some(at) = part.place() else { continue };
+                // A settled survivor blocks a generation-0 reaping. The strong
+                // count of what it still owns is left unexplained, so it is kept.
+                if fenced && place_is_settled(at) { continue; }
                 let position = match web.placed.get(&at) {
                     Some(&position) => { web.strands[position].inward += inward; position }
                     None => {
@@ -999,6 +1066,25 @@ impl Web {
             web.strands[position].onward = onward;
         }
         web
+    }
+
+    /// Places this reaping left in reach and a generation-0 pass must not open.
+    pub fn kept_sites(&self) -> Vec<usize> {
+        let mut sites = Vec::new();
+        for strand in &self.strands {
+            if !strand.reached {
+                continue;
+            }
+            let site = match &strand.knot {
+                Knot::Held(Value::Thing(thing) | Value::Attributes(thing)) => Rc::as_ptr(thing) as usize,
+                Knot::Held(Value::Blueprint(kind)) => Rc::as_ptr(kind) as usize,
+                Knot::Held(Value::Routine(code)) => Rc::as_ptr(code) as *const () as usize,
+                Knot::Frame(room) => Rc::as_ptr(room) as *const () as usize,
+                _ => continue,
+            };
+            sites.push(site);
+        }
+        sites
     }
 
     /// Whether a value belongs only to an unreachable round, after

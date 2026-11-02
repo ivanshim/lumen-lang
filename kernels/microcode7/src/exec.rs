@@ -3385,7 +3385,7 @@ impl<'a> Machine<'a> {
         });
         if limit.is_some_and(|limit| large_source || growth >= limit) {
             let deferred = self.got_away.take();
-            self.reap_rounds();
+            self.reap_rounds(false);
             self.got_away = deferred;
         }
     }
@@ -3519,7 +3519,7 @@ impl<'a> Machine<'a> {
     /// held from outside the web, which counts everything under it as reached, as weaving
     /// it in would have. Only the listing of heap values (`whole`) takes the machine's
     /// own holdings in, and that same switch asks the web to trace every edge.
-    fn round_web(&self, retained: &[crate::ghost::Knot], whole: bool) -> crate::ghost::Web {
+    fn round_web(&self, retained: &[crate::ghost::Knot], whole: bool, fenced: bool) -> crate::ghost::Web {
         use crate::ghost::{Knot, Web};
         let books = self.readings.iter().flat_map(|book| {
             std::iter::once(Knot::Held(Value::Shared(book.near.clone())))
@@ -3539,8 +3539,8 @@ impl<'a> Machine<'a> {
             .chain(self.natives_book.iter().cloned().map(|book| Knot::Held(Value::Shared(book))))
             .collect() };
         {
-            let mut web = Web::from_notable(bookkeeping, live, whole);
-            for (function, holder) in &self.routine_members { if let Some(function) = function.revive() { web.link_attributes(&function, &Value::Thing(holder.clone())); } }
+            let mut web = Web::from_notable(bookkeeping, live, whole, fenced);
+            for (function, holder) in &self.routine_members { if let Some(function) = function.revive() { web.link_attributes(&function, &Value::Thing(holder.clone()), fenced); } }
             web
         }
     }
@@ -3549,8 +3549,11 @@ impl<'a> Machine<'a> {
     /// Keep the group intact while those run, then weave ownership again
     /// and cut only its still-lost knots. Reentrant requests do no work;
     /// knots first made during these calls wait for the next collection.
-    fn reap_rounds(&mut self) -> usize {
+    fn reap_rounds(&mut self, generation_zero: bool) -> usize {
         use crate::ghost::{Knot, Web};
+        // With nothing settled yet, a generation-0 request still reaps
+        // the whole heap and records what remains.
+        let generation_zero = generation_zero && crate::ghost::any_settled();
         if self.reaping { return 0; }
         self.reaping = true;
         self.cycle_checkpoint_slots = self.idents.len();
@@ -3561,7 +3564,7 @@ impl<'a> Machine<'a> {
         self.routine_members.retain(|(function, _)| function.revive().is_some());
         if self.routine_members.len() != members_before { self.reindex_routine_members(); }
         self.attend_to_gone();
-        let mut web = self.round_web(&pinned, false);
+        let mut web = self.round_web(&pinned, false, generation_zero);
         // The frame still holds these cells. Drop the counting clones before
         // deciding, or that second hold keeps a dropped module alive.
         drop(pinned);
@@ -3570,6 +3573,7 @@ impl<'a> Machine<'a> {
         // the web just woven still describes the machine: reuse it.
         if original.is_empty() {
             let kept_before = self.routine_members.len();
+            crate::ghost::store_lasting(web.kept_sites(), !generation_zero);
             self.routine_members.retain(|(function, _)| function.revive().is_some_and(|function| !web.unowned(&function)));
             if self.routine_members.len() != kept_before { self.reindex_routine_members(); }
             drop(web);
@@ -3637,7 +3641,7 @@ impl<'a> Machine<'a> {
             for value in &quiet_again {
                 books.push(Knot::Held(value.clone()));
             }
-            let mut checked = self.round_web(&books, false);
+            let mut checked = self.round_web(&books, false, generation_zero);
             drop(books);
             drop(quiet_again);
             let _marked = checked.unreachable();
@@ -3649,6 +3653,7 @@ impl<'a> Machine<'a> {
         } else {
             (web, original)
         };
+        crate::ghost::store_lasting(checked.kept_sites(), !generation_zero);
         let found = lost.len();
         self.routine_members.retain(|(function, _)| function.revive().is_some_and(|function| !checked.unowned(&function)));
         self.reindex_routine_members();
@@ -8025,7 +8030,7 @@ impl<'a> Machine<'a> {
         if let Some(answer) = self.text_called(&stands, args, frame) { return answer; }
         if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
             let mut values=self.value_list(args,frame)?;
-            if matches!(&stands,Value::Wrapped(..)) {
+            if matches!(&stands,Value::Wrapped(..)) && values.iter().any(|value| matches!(value, Value::Couple(_))) {
                 let raw = self.spreads_carry_foreign_keys(&values) && self.wrapper_takes_raw_keys(&stands);
                 if !raw { values=self.opened_arguments(values)?; }
             }
@@ -12262,7 +12267,7 @@ impl<'a> Machine<'a> {
                 if let Some(answer) = self.text_called(&stands, args, frame) { return Ok(Next::Value(answer?)); }
                 if self.has_class_order() && matches!(&stands,Value::Wrapped(..)|Value::Thing(_)|Value::Routine(_)) {
                     let mut given=self.value_list(args,frame)?;
-                    if matches!(&stands,Value::Wrapped(..)) {
+                    if matches!(&stands,Value::Wrapped(..)) && given.iter().any(|value| matches!(value, Value::Couple(_))) {
                         let raw = self.spreads_carry_foreign_keys(&given) && self.wrapper_takes_raw_keys(&stands);
                         if !raw { given=self.opened_arguments(given)?; }
                     }
@@ -26244,8 +26249,9 @@ impl<'a> Machine<'a> {
             Prim::WeakGet => return self.reference_reading(name, v),
             Prim::HeapObjects => { return self.dispatch_arm_44(op, name, v); }
             Prim::Collect => {
-                n(0)?;
-                Value::Small(self.reap_rounds() as i64)
+                if v.len() > 1 { n(0)?; }
+                let only_newest = v.first().map(|item| matches!(item.settled(), Value::Small(0))).unwrap_or(false);
+                Value::Small(self.reap_rounds(only_newest) as i64)
             }
             Prim::FaultWhole => {
                 n(0)?;
@@ -29016,7 +29022,7 @@ impl<'a> Machine<'a> {
             Prim::HeapObjects
             => {
                 n(0)?;
-                let snapshot=self.round_web(&[], true);
+                let snapshot=self.round_web(&[], true, false);
                 let mut identities=std::collections::HashSet::new();
                 let mut values=snapshot.heap_values();
                 let mut published=Vec::with_capacity(values.len());
