@@ -840,7 +840,7 @@ fn run_all(python_run: std::sync::mpsc::Sender<()>) {
         // A command string has no lines for a filename lookup: answer that before the
         // fallback that loads os and tokenize, while the compiled code below still
         // gives tracebacks their source lines and linecache.cache stays empty.
-        let registered = format!("import linecache\ndef _command_updatecache(filename, module_globals=None, _original=linecache.updatecache):\n    if filename == '<string>':\n        return []\n    return _original(filename, module_globals)\nlinecache.updatecache = _command_updatecache\ndel _command_updatecache\nlinecache._register_code(compile({literal}, '<string>', 'exec'), {literal}, '<string>')\n{source}");
+        let registered = format!("import linecache\ndef _command_updatecache(filename, module_globals=None, _original=linecache.updatecache):\n    if filename == '<string>':\n        linecache.cache.pop(filename, None)\n        return []\n    return _original(filename, module_globals)\nlinecache.updatecache = _command_updatecache\ndel _command_updatecache\nlinecache._register_code(compile({literal}, '<string>', 'exec'), {literal}, '<string>')\n{source}");
         with_library(&inv.kernel, inv.language.name(), registered)
     } else { with_library(&inv.kernel, inv.language.name(), source) };
     // How many lines the library put before the program's own text, so
