@@ -277,7 +277,13 @@ fn anchor_ready(anchored: &RefCell<Vec<Rc<Thing>>>) -> bool {
             || Rc::strong_count(c) == 1 || Rc::strong_count(d) == 1 { return true; }
         pending = rest;
     }
-    pending.iter().any(|item| Rc::strong_count(item) == 1)
+    match pending {
+        [] => false,
+        [a] => Rc::strong_count(a) == 1,
+        [a, b] => Rc::strong_count(a) == 1 || Rc::strong_count(b) == 1,
+        [a, b, c] => Rc::strong_count(a) == 1 || Rc::strong_count(b) == 1 || Rc::strong_count(c) == 1,
+        _ => unreachable!(),
+    }
 }
 
 /// The method a class bids farewell with, where the language has one.

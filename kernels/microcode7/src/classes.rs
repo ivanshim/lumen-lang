@@ -5182,8 +5182,6 @@ impl<'a> Machine<'a> {
         match self.routine_member_index(code) {
             Some(found) => found,
             None => {
-                // A new or reused slot shifts which address owns which row.
-                self.routine_code_slots.borrow_mut().clear();
                 let of = self.common_ancestor(); self.made += 1;
                 let holder = Rc::new(Thing {reclassified: RefCell::new(None),  of, turn: self.made, holds: RefCell::new(Vec::new()) });
                 let entry = (crate::ghost::ghost_of(code).expect("routine is weakly held"), holder);
@@ -5202,7 +5200,12 @@ impl<'a> Machine<'a> {
                     self.routine_members.push(entry);
                     self.routine_members.len() - 1
                 };
-                if let Some(identity) = identity { self.routine_member_positions.insert(identity, at); }
+                if let Some(identity) = identity {
+                    // Only this routine can acquire an earlier slot or lose a cached miss.
+                    // A displaced dead routine fails the live-slot check on its next read.
+                    self.routine_code_slots.get_mut().remove(&identity.1);
+                    self.routine_member_positions.insert(identity, at);
+                }
                 at
             }
         }

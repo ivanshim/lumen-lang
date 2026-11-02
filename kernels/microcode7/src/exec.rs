@@ -703,7 +703,7 @@ pub struct Machine<'a> {
     native_kind_names: RefCell<HashMap<String, std::collections::HashSet<String>>>,
     routine_members: Vec<(crate::ghost::Ghost, Rc<Thing>)>,
     routine_member_positions: HashMap<(u8, usize, usize), usize, crate::table::FxBuildHasher>,
-    /// Slot of a routine address after one walk, or `None` once a walk has shown it has no slot. Dropped when the member list changes shape.
+    /// First live member slot of a routine address, or a cached miss.
     routine_code_slots: std::cell::RefCell<HashMap<usize, Option<usize>, crate::table::FxBuildHasher>>,
     reaping: bool,
     cycle_checkpoint_slots: usize,
@@ -15749,7 +15749,7 @@ impl<'a> Machine<'a> {
     pub(super) fn routine_takes_raw_keys(&self, program: &Routine) -> bool {
         // The raw-key making is the reference's own, so only the Python
         // definition may opt into it; every other language keeps words.
-        if !self.table.flag("ext.op.arithmetic.python_numbers") { return false; }
+        if !self.python_numbers { return false; }
         let Some(at) = self.routine_member_slot(program) else { return false; };
         let entries = self.routine_members[at].1.holds.borrow();
         if entries.iter().any(|(word, held)| {
@@ -24992,7 +24992,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        if [Prim::Plus, Prim::Join].contains(&op) && v.len() == 2 && v.iter().any(|x| matches!(x, Value::Unpaired(_))) {
+        if matches!(op, Prim::Plus | Prim::Join) && v.len() == 2 && v.iter().any(|x| matches!(x, Value::Unpaired(_))) {
             if let (Some(first), Some(last)) = (v[0].character_numbers(), v[1].character_numbers()) {
                 if op == Prim::Plus && self.table.flag("ext.op.arithmetic.python_numbers") {
                     let original = if last.is_empty() { Some(&v[0]) } else if first.is_empty() { Some(&v[1]) } else { None };
