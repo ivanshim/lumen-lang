@@ -4026,16 +4026,17 @@ impl<'a> Builder<'a> {
     /// A star still joins list portions, because its length is not known here.
     fn displayed_tuple(&self, parts: Vec<(Form, bool)>) -> Form {
         if !parts.iter().any(|(_, star)| *star) && self.table.has_any("ext.builtin.tuple") {
-            let items: Vec<Form> = parts.into_iter().map(|(form, _)| form).collect();
             if self.table.has_any("ext.builtin.compile.modes") {
-                let mut values = Vec::with_capacity(items.len());
-                let folded = items.iter().all(|form| match Self::inert_literal(form) {
+                let mut values = Vec::with_capacity(parts.len());
+                let folded = parts.iter().all(|(form, _)| match Self::inert_literal(form) {
                     Some(value) => { values.push(value); true }
                     None => false,
                 });
                 if folded { return constant(Value::tuple(values)); }
             }
-            return prim_call(Prim::MakeTuple, items);
+            if !bind_list_long(parts.len(), false) {
+                return prim_call(Prim::MakeTuple, parts.into_iter().map(|(form, _)| form).collect());
+            }
         }
         let mut parts = parts.into_iter();
         let (first, first_star) = parts.next().expect("a tuple element");
