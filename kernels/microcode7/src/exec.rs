@@ -3828,7 +3828,7 @@ impl<'a> Machine<'a> {
         supplied.clone()
     }
 
-    fn text_remainder(&mut self, pattern: &str, rhs: &Value) -> Result<String, String> {
+    fn text_remainder(&mut self, pattern: &str, rhs: &Value) -> Result<Value, String> {
         let namespace = match rhs.settled() {
             Value::Attributes(owner) => Some(owner.entries_shown()),
             _ => None,
@@ -3842,7 +3842,7 @@ impl<'a> Machine<'a> {
         if self.rules.has_any_ext_builtin_format {
             let rhs = self.remainder_operand(rhs);
             let layout = crate::formatting::Layout { table: self.table, names: self.wording() };
-            return layout.remainder(pattern, &rhs, self, false);
+            return layout.remainder(pattern, &rhs, self, false).map(Value::characters);
         }
         let unsupported = self.table.strings("ext.op.rem.format.unsupported").first().map(String::as_str).unwrap_or_default();
         let mismatch = self.table.strings("ext.op.rem.format.arguments").first().map(String::as_str).unwrap_or_default();
@@ -3896,7 +3896,7 @@ impl<'a> Machine<'a> {
             }
         }
         if arguments.next().is_some() { return Err(mismatch.to_string()); }
-        Ok(result)
+        Ok(Value::text(&result))
     }
 
     fn wording(&self) -> Names<'a> {
@@ -13978,7 +13978,7 @@ impl<'a> Machine<'a> {
         if matches!(receiver.settled(), Value::Unpaired(_)) {
             let type_word = self.table.prim_words.iter().find(|(p, _)| *p == Prim::AsText).map(|(_, word)| word);
             let text_operation = type_word.and_then(|word| self.table.prims.get(&format!("{word}.{name}"))).copied();
-            if let Some(Prim::Textual(work @ (crate::text::Work::SPLITLINES | crate::text::Work::SPLIT | crate::text::Work::RSPLIT | crate::text::Work::PARTITION | crate::text::Work::RPARTITION | crate::text::Work::LOWER | crate::text::Work::UPPER | crate::text::Work::CASEFOLD | crate::text::Work::COUNT | crate::text::Work::REPLACE | crate::text::Work::FIND | crate::text::Work::RFIND | crate::text::Work::INDEX | crate::text::Work::RINDEX))) = text_operation {
+            if let Some(Prim::Textual(work @ (crate::text::Work::SPLITLINES | crate::text::Work::SPLIT | crate::text::Work::RSPLIT | crate::text::Work::PARTITION | crate::text::Work::RPARTITION | crate::text::Work::LOWER | crate::text::Work::UPPER | crate::text::Work::CASEFOLD | crate::text::Work::COUNT | crate::text::Work::REPLACE | crate::text::Work::REMOVEPREFIX | crate::text::Work::REMOVESUFFIX | crate::text::Work::FIND | crate::text::Work::RFIND | crate::text::Work::INDEX | crate::text::Work::RINDEX))) = text_operation {
                 let mut supplied = vec![receiver.settled()]; supplied.extend(arguments);
                 crate::text::fit_names(self.table, work, &mut supplied, keywords)?;
                 if work == crate::text::Work::SPLITLINES {
@@ -16834,7 +16834,7 @@ impl<'a> Machine<'a> {
             machine: self,
         };
         let filled = layout.remainder(pattern, &supplied, &mut marks, true)?;
-        filled.chars().map(|letter| u8::try_from(u32::from(letter)).map_err(|_| self.octet_error("unready"))).collect()
+        filled.into_iter().map(|letter| u8::try_from(letter).map_err(|_| self.octet_error("unready"))).collect()
     }
 
     /// A row of bytes read off a value for a bytes mark: the value
@@ -22878,7 +22878,7 @@ impl<'a> Machine<'a> {
             let over_text = matches!(Self::underlying(right).map(|worth| worth.settled()), Some(Value::Text(_)));
             if !(over_text && self.appointed(right, 31).is_some()) {
                 let (pattern, right) = (pattern.clone(), right.clone());
-                return self.text_remainder(&pattern, &right).map(|filled| Some(Value::text(&filled)));
+                return self.text_remainder(&pattern, &right).map(Some);
             }
         }
         // A row of bytes before the remainder sign lays its own marks
@@ -26493,7 +26493,7 @@ impl<'a> Machine<'a> {
             Prim::Contains | Prim::Absent => { return self.dispatch_arm_81(op, name, v); }
             Prim::Mod if self.rules.text_remainder && matches!(v[0], Value::Text(_)) => {
                 let Value::Text(pattern) = &v[0] else { unreachable!() };
-                Value::text(&self.text_remainder(pattern, &v[1])?)
+                self.text_remainder(pattern, &v[1])?
             }
             Prim::Selfsame | Prim::Unlike if self.rules.has_any_ext_op_identical_negated => { return self.dispatch_arm_82(op, name, v); }
             Prim::Selfsame => Value::Flag(v[0].selfsame(&v[1])),
@@ -39124,6 +39124,9 @@ impl<'a> Machine<'a> {
         if let Some(path) = home {
             if let Some(Value::Thing(space)) = self.imported.get(&path).cloned() {
                 for (name, _) in space.holds.borrow().iter() {
+                    // A spelling the routine about to read the text is
+                    // already holding is the routine's own; above it the
+                    // module's name of the same shape has no say.
                     if name.starts_with('\0') || names.iter().any(|local| local == name) { continue; }
                     let wanted = format!("\0import/{path}/{name}");
                     if self.idents.iter().any(|word| word == &wanted) {
