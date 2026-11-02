@@ -821,6 +821,18 @@ fn resolver_words(code: i32) -> Value {
 // Resolve a host name forward, with the same shape of answer as the reverse lookup.
 fn host_by_name(input: &Value) -> Result<Value, String> {
     let name = CString::new(raw(input)?).map_err(|_| "ValueError: embedded null byte")?;
+    // Check IPv4 address resolution via getaddrinfo before calling gethostbyname_r
+    // so unresolvable hostnames raise socket.gaierror like CPython's setipaddr path.
+    if !matches!(name.as_bytes(), b"" | b"<broadcast>") {
+        let mut hints: libc::addrinfo = unsafe { std::mem::zeroed() };
+        hints.ai_family = libc::AF_INET;
+        let mut found = std::ptr::null_mut();
+        unsafe {
+            let code = libc::getaddrinfo(name.as_ptr(), std::ptr::null(), &hints, &mut found);
+            if code != 0 { return Ok(host_failure(1, code, libc::gai_strerror(code))); }
+            libc::freeaddrinfo(found);
+        }
+    }
     unsafe {
         let mut storage = vec![0u8; 8192];
         let mut entry: libc::hostent = std::mem::zeroed();
