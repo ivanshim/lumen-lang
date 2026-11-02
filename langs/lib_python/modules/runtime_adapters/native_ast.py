@@ -65,7 +65,32 @@ class _Chars:
         return self.text
 
     def find(self, sub, start=0, end=None):
-        return self.text.find(sub, start) if end is None else self.text.find(sub, start, end)
+        if self.ascii:
+            return self.text.find(sub, start) if end is None else self.text.find(sub, start, end)
+        # A native search of text holding a character outside ASCII walks its
+        # bytes from the start for every call, however short the answer is;
+        # stepping the spread list costs only the span between the bounds.
+        items = self.items
+        n = len(items)
+        if start < 0:
+            start = max(n + start, 0)
+        stop = n if end is None else (max(n + end, 0) if end < 0 else min(end, n))
+        m = len(sub)
+        if m == 0:
+            return start if start <= stop else -1
+        if m == 1:
+            while start < stop:
+                if items[start] == sub:
+                    return start
+                start += 1
+            return -1
+        first = sub[0]
+        limit = stop - m
+        while start <= limit:
+            if items[start] == first and ''.join(items[start:start + m]) == sub:
+                return start
+            start += 1
+        return -1
 
     def rfind(self, sub, start=0, end=None):
         return self.text.rfind(sub, start) if end is None else self.text.rfind(sub, start, end)
@@ -162,14 +187,16 @@ def _read_string(source, i, prefix):
     raw = 'r' in prefix
     is_bytes = 'b' in prefix
     units = []
+    quote = -1
     while True:
         if i >= n:
             _incomplete()
-        quote = source.find(closer, i)
-        if quote < 0:
-            _incomplete()
-        escape = source.find('\\', i)
-        if escape >= 0 and escape < quote:
+        if quote < i:
+            quote = source.find(closer, i)
+            if quote < 0:
+                _incomplete()
+        escape = source.find('\\', i, quote)
+        if escape >= 0:
             if escape > i:
                 units.append(source[i:escape])
             if escape + 1 >= n:
@@ -1787,6 +1814,11 @@ _OPS2 = ('**', '//', '<<', '>>', '==', '!=', '<=', '>=', ':=', '->',
          '+=', '-=', '*=', '/=', '%=', '@=', '&=', '|=', '^=')
 _OPS1 = '()[]{},:;.+-*/%@=<>!~&|^'
 
+# The characters that can open a three- or two-character operator: only
+# these need a slice of the text, the rest settle on one character.
+_OPS3_HEAD = ''.join([op[0] for op in _OPS3])
+_OPS2_HEAD = ''.join([op[0] for op in _OPS2])
+
 class _Tok:
     # Fields only some tokens use. A class default keeps them off the
     # instance so a plain name or operator does not store them.
@@ -1828,7 +1860,6 @@ def _adv(source, i, count, row, col):
 
 def _string_skip(source, i):
     # i at a quote; answers the index just past the closing quote.
-    n = len(source)
     q = source[i]
     if source[i:i + 3] == q * 3:
         closer = q * 3
@@ -1836,12 +1867,14 @@ def _string_skip(source, i):
     else:
         closer = q
         i += 1
+    quote = -1
     while True:
-        quote = source.find(closer, i)
-        if quote < 0:
-            _syntax('unterminated string literal')
-        escape = source.find('\\', i)
-        if escape < 0 or quote < escape:
+        if quote < i:
+            quote = source.find(closer, i)
+            if quote < 0:
+                _syntax('unterminated string literal')
+        escape = source.find('\\', i, quote)
+        if escape < 0:
             return quote + len(closer)
         i = escape + 2
 
@@ -2013,14 +2046,12 @@ def _lex(source, start, end, row, col, for_field, comments=None):
             toks.append(tok)
             i, row, col = after, erow, ecol
             continue
-        matched = None
-        if source[i:i + 3] in _OPS3:
+        matched = c
+        if c in _OPS3_HEAD and source[i:i + 3] in _OPS3:
             matched = source[i:i + 3]
-        elif source[i:i + 2] in _OPS2:
+        elif c in _OPS2_HEAD and source[i:i + 2] in _OPS2:
             matched = source[i:i + 2]
-        elif c in _OPS1:
-            matched = c
-        if matched is None:
+        elif c not in _OPS1:
             _syntax('invalid syntax')
         if matched in '([{':
             depth += 1
@@ -4163,6 +4194,125 @@ def _shift_lines(node, delta):
             _shift_lines(child, delta)
 
 
+_parsed_tree = None
+_SCALAR_EXACT = frozenset((int, str, bytes, bool, type(None), type(Ellipsis)))
+_FLOAT_COMPLEX = frozenset((float, complex))
+_STD_ATTRS = ('lineno', 'col_offset', 'end_lineno', 'end_col_offset')
+
+
+def _scalar_digest(value):
+    t = type(value)
+    if t in _SCALAR_EXACT or value is _MISSING:
+        return (t, value)
+    if t in _FLOAT_COMPLEX:
+        return (t, repr(value))
+    if t is tuple:
+        return (tuple, tuple(_scalar_digest(item) for item in value))
+    if t is frozenset:
+        return (frozenset, frozenset(_scalar_digest(item) for item in value))
+    return (t, id(value))
+
+
+def _node_digest(value, out, positions=None):
+    if isinstance(value, AST):
+        d = value.__dict__
+        fields = value._fields
+        attrs = value._attributes
+        if attrs == _STD_ATTRS:
+            l0 = d.get('lineno', _MISSING)
+            c0 = d.get('col_offset', _MISSING)
+            l1 = d.get('end_lineno', _MISSING)
+            c1 = d.get('end_col_offset', _MISSING)
+            if (type(l0) is int and type(c0) is int
+                    and (type(l1) is int or l1 is None)
+                    and (type(c1) is int or c1 is None)):
+                out.append((type(value), fields, l0, c0, l1, c1))
+                if positions is not None:
+                    el = l0 if l1 is None else l1
+                    ec = c0 if c1 is None else c1
+                    positions.append((l0, c0, el, ec, l0, c0, el, ec))
+            else:
+                out.append((type(value), fields, attrs))
+                for name in attrs:
+                    attr = d.get(name, _MISSING)
+                    if attr is _MISSING:
+                        attr = getattr(value, name, _MISSING)
+                    out.append(_scalar_digest(attr))
+                if positions is not None:
+                    l0 = getattr(value, 'lineno') if l0 is _MISSING else l0
+                    c0 = getattr(value, 'col_offset') if c0 is _MISSING else c0
+                    l1 = getattr(value, 'end_lineno', None) if l1 is _MISSING else l1
+                    c1 = getattr(value, 'end_col_offset', None) if c1 is _MISSING else c1
+                    el = l0 if l1 is None else l1
+                    ec = c0 if c1 is None else c1
+                    positions.append((l0, c0, el, ec, l0, c0, el, ec))
+        else:
+            out.append((type(value), fields, attrs))
+            for name in attrs:
+                attr = d.get(name, _MISSING)
+                if attr is _MISSING:
+                    attr = getattr(value, name, _MISSING)
+                out.append(_scalar_digest(attr))
+            if positions is not None and 'lineno' in attrs:
+                l0 = d.get('lineno', _MISSING)
+                if l0 is _MISSING:
+                    l0 = getattr(value, 'lineno')
+                c0 = d.get('col_offset', _MISSING)
+                if c0 is _MISSING:
+                    c0 = getattr(value, 'col_offset')
+                l1 = d.get('end_lineno', _MISSING)
+                if l1 is _MISSING:
+                    l1 = getattr(value, 'end_lineno', None)
+                c1 = d.get('end_col_offset', _MISSING)
+                if c1 is _MISSING:
+                    c1 = getattr(value, 'end_col_offset', None)
+                el = l0 if l1 is None else l1
+                ec = c0 if c1 is None else c1
+                positions.append((l0, c0, el, ec, l0, c0, el, ec))
+        for name in fields:
+            child = d.get(name, _MISSING)
+            if child is _MISSING:
+                child = getattr(value, name, _MISSING)
+            if isinstance(child, AST):
+                _node_digest(child, out, positions)
+            elif type(child) is list:
+                out.append((list, len(child)))
+                for item in child:
+                    if isinstance(item, AST):
+                        _node_digest(item, out, positions)
+                    else:
+                        out.append(_scalar_digest(item))
+            else:
+                tc = type(child)
+                if tc is str or child is None or tc is int or tc is bytes:
+                    out.append((tc, child))
+                else:
+                    out.append(_scalar_digest(child))
+    elif type(value) is list:
+        out.append((list, len(value)))
+        for item in value:
+            _node_digest(item, out, positions)
+    else:
+        out.append(_scalar_digest(value))
+
+
+def _tree_digest(tree, positions=None):
+    out = []
+    _node_digest(tree, out, positions)
+    return out
+
+
+def _remember(tree, source, mode='exec', type_comments=False, optimize=-1, fold_debug=False):
+    global _parsed_tree
+    if (not type_comments and optimize < 0 and not fold_debug
+            and type(source) is str and source.isascii()):
+        import weakref
+        _parsed_tree = (weakref.ref(tree), mode, source, _tree_digest(tree))
+    else:
+        _parsed_tree = None
+    return tree
+
+
 def _parse_plain_prefix(source, filename, feature_version):
     # A leading run of plain assignments never needs the general lexer.
     # Anything else, including the tail after the run, stays on parse().
@@ -4233,7 +4383,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         parser = _Parser(source, toks, optimize, fold_debug, fv=feature_version)
         tree = parser.parse_func_type()
         _check_features(tree, feature_version)
-        return tree
+        return _remember(tree, source, mode, type_comments, optimize, fold_debug)
     if mode == 'eval':
         toks = _lex(source, 0, len(source), 1, 0, False)
         parser = _Parser(source, toks, optimize, fold_debug, fv=feature_version)
@@ -4248,7 +4398,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
             _syntax('invalid syntax')
         tree = Expression(body=node)
         _check_features(tree, feature_version)
-        return tree
+        return _remember(tree, source, mode, type_comments, optimize, fold_debug)
     if mode not in ('exec', 'single'):
         raise ValueError("compile() mode must be 'exec', 'eval', 'single' or 'func_type'")
     if (mode == 'exec' and not type_comments and optimize < 0 and not fold_debug
@@ -4256,7 +4406,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
         prefixed = _parse_plain_prefix(source, filename, feature_version)
         if prefixed is not None:
             _check_features(prefixed, feature_version)
-            return prefixed
+            return _remember(prefixed, source, mode, type_comments, optimize, fold_debug)
     comments = []
     toks = _lex(source, 0, len(source), 1, 0, False, comments)
     if type_comments:
@@ -4274,7 +4424,7 @@ def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
             raise SyntaxError('invalid syntax')
         tree = Interactive(body=tree.body)
     _check_features(tree, feature_version)
-    return tree
+    return _remember(tree, source, mode, type_comments, optimize, fold_debug)
 
 def _tree_for_compile(source, filename, mode, type_comments, optimize):
     # compile() reaches the reader with the flags already read: whether
@@ -4882,6 +5032,42 @@ def _compile_ast(source, filename, mode, flags, optimize=-1, feature_version=Non
                  optimize=optimize if flags & 32768 else -1, feature_version=feature_version,
                  fold_debug=bool(flags & 32768))
 
+_BODY_CLASSES = (FunctionDef, AsyncFunctionDef, ClassDef, For, AsyncFor, While, If, With, AsyncWith, ExceptHandler, Try, TryStar)
+_PLAIN_AST_CLASSES = frozenset((
+    Module, Expression, Interactive, FunctionType,
+    Name, Load, Store, Del, Call, Attribute, Subscript, Starred,
+    Tuple, List, Set, Slice, BinOp, UnaryOp, Lambda, IfExp,
+    ListComp, SetComp, DictComp, GeneratorExp, comprehension,
+    Await, Yield, YieldFrom, FormattedValue, JoinedStr,
+    Return, Raise, Assert, Import, ImportFrom, Global, Nonlocal,
+    Expr, Pass, Break, Continue, AugAssign, AnnAssign,
+    arg, arguments, keyword, alias, withitem, match_case,
+    Add, Sub, Mult, MatMult, Div, Mod, Pow, LShift, RShift, BitOr, BitXor, BitAnd, FloorDiv,
+    Invert, Not, UAdd, USub, And, Or, Eq, NotEq, Lt, LtE, Gt, GtE, Is, IsNot, In, NotIn,
+))
+_CLASS_FIELD_SPECS = {}
+
+
+def _get_field_specs(cls):
+    specs = _CLASS_FIELD_SPECS.get(cls)
+    if specs is not None:
+        return specs
+    ft = cls._field_types
+    out = []
+    for field in cls._fields:
+        typ = ft.get(field, object)
+        if getattr(typ, '__origin__', None) is list:
+            elem = typ.__args__[0]
+            allow_none = (issubclass(cls, arguments) and field == 'kw_defaults') or (issubclass(cls, Dict) and field == 'keys')
+            out.append((field, True, elem, allow_none))
+        else:
+            nullable = getattr(cls, field, ...) is None
+            out.append((field, False, typ, nullable))
+    specs = tuple(out)
+    _CLASS_FIELD_SPECS[cls] = specs
+    return specs
+
+
 # Validate required fields, locations and ASDL categories before generating code.
 def _validate_node(node, active=None):
     if active is None:
@@ -4893,67 +5079,131 @@ def _validate_node(node, active=None):
     if not isinstance(node, AST):
         raise TypeError('expected AST, got ' + repr(type(node).__name__))
     cls = type(node)
-    category = 'stmt' if isinstance(node, stmt) else 'expr' if isinstance(node, expr) else cls.__name__
-    for attr in ('lineno', 'col_offset'):
-        if attr in node._attributes:
-            if not hasattr(node, attr):
-                raise TypeError('required field "' + attr + '" missing from ' + category)
-            if not isinstance(getattr(node, attr), int):
-                raise ValueError('invalid integer value: ' + str(getattr(node, attr)))
-    for attr in ('end_lineno', 'end_col_offset'):
-        if attr in node._attributes and getattr(node, attr, None) is not None and not isinstance(getattr(node, attr), int):
-            raise ValueError('invalid integer value: ' + str(getattr(node, attr)))
-    if getattr(node, 'end_lineno', None) is not None and node.end_lineno < node.lineno:
-        raise ValueError('AST node line range (' + str(node.lineno) + ', ' + str(node.end_lineno) + ') is not valid')
-    if getattr(node, 'end_col_offset', None) is not None and node.end_lineno == node.lineno and node.end_col_offset < node.col_offset:
-        raise ValueError('line ' + str(node.lineno) + ', column ' + str(node.col_offset) + '-' + str(node.end_col_offset) + ' is not a valid range')
-    for field in node._fields:
-        try:
-            value = getattr(node, field)
-        except AttributeError:
-            raise TypeError('required field "' + field + '" missing from ' + cls.__name__) from None
-        typ = cls._field_types.get(field, object)
-        if getattr(typ, '__origin__', None) is list:
-            if not isinstance(value, list):
-                raise TypeError(cls.__name__ + ' field "' + field + '" must be a list, not a ' + type(value).__name__)
-            element_type = typ.__args__[0]
-            for item in value:
-                if item is None and ((isinstance(node, arguments) and field == 'kw_defaults') or (isinstance(node, Dict) and field == 'keys')):
-                    continue
-                if not isinstance(item, element_type):
-                    raise TypeError('expected some sort of ' + element_type.__name__ + ', but got ' + repr(item))
-                if isinstance(item, AST):
-                    _validate_node(item, active)
-        elif value is None and getattr(cls, field, ...) is None:
-            continue
-        elif not isinstance(value, typ):
-            raise TypeError('expected ' + str(typ) + ', but got ' + repr(value))
-        elif isinstance(value, AST):
-            _validate_node(value, active)
-    # Two shapes the reference refuses once every field is present and
-    # well formed: a named expression binds a name, a type alias is
-    # named by a name.
-    if isinstance(node, NamedExpr) and not isinstance(node.target, Name):
-        raise TypeError('NamedExpr target must be a Name')
-    if isinstance(node, TypeAlias) and not isinstance(node.name, Name):
-        raise TypeError('TypeAlias with non-Name name')
-    if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef, For, AsyncFor, While, If, With, AsyncWith, ExceptHandler, Try, TryStar)) and not node.body:
-        raise ValueError('empty body on ' + cls.__name__)
-    if isinstance(node, Assign) and not node.targets:
-        raise ValueError('empty targets on Assign')
-    if isinstance(node, Delete) and not node.targets:
-        raise ValueError('empty targets on Delete')
-    if isinstance(node, BoolOp) and len(node.values) < 2:
-        raise ValueError('BoolOp with less than 2 values')
-    if isinstance(node, Compare):
-        if not node.comparators:
-            raise ValueError('Compare with no comparators')
-        if len(node.ops) != len(node.comparators):
-            raise ValueError('Compare has a different number of comparators and operands')
-    if isinstance(node, Dict) and len(node.keys) != len(node.values):
-        raise ValueError("Dict doesn't have the same number of keys as values")
-    if isinstance(node, Constant):
-        _validate_constant(node.value)
+    d = node.__dict__
+    attrs = node._attributes
+    if attrs:
+        lineno = d.get('lineno', _MISSING)
+        col_offset = d.get('col_offset', _MISSING)
+        end_lineno = d.get('end_lineno', _MISSING)
+        end_col_offset = d.get('end_col_offset', _MISSING)
+        if (attrs == _STD_ATTRS and type(lineno) is int and type(col_offset) is int
+                and (end_lineno is None or (type(end_lineno) is int and end_lineno >= lineno))
+                and (end_col_offset is None or (type(end_col_offset) is int and (end_lineno != lineno or end_col_offset >= col_offset)))):
+            pass
+        else:
+            category = 'stmt' if isinstance(node, stmt) else 'expr' if isinstance(node, expr) else cls.__name__
+            if 'lineno' in attrs:
+                if lineno is _MISSING:
+                    if not hasattr(node, 'lineno'):
+                        raise TypeError('required field "lineno" missing from ' + category)
+                    lineno = getattr(node, 'lineno')
+                if not isinstance(lineno, int):
+                    raise ValueError('invalid integer value: ' + str(lineno))
+            else:
+                lineno = None
+            if 'col_offset' in attrs:
+                if col_offset is _MISSING:
+                    if not hasattr(node, 'col_offset'):
+                        raise TypeError('required field "col_offset" missing from ' + category)
+                    col_offset = getattr(node, 'col_offset')
+                if not isinstance(col_offset, int):
+                    raise ValueError('invalid integer value: ' + str(col_offset))
+            else:
+                col_offset = None
+            if 'end_lineno' in attrs:
+                if end_lineno is _MISSING:
+                    end_lineno = getattr(node, 'end_lineno', None)
+                if end_lineno is not None and not isinstance(end_lineno, int):
+                    raise ValueError('invalid integer value: ' + str(end_lineno))
+            else:
+                end_lineno = None
+            if 'end_col_offset' in attrs:
+                if end_col_offset is _MISSING:
+                    end_col_offset = getattr(node, 'end_col_offset', None)
+                if end_col_offset is not None and not isinstance(end_col_offset, int):
+                    raise ValueError('invalid integer value: ' + str(end_col_offset))
+            else:
+                end_col_offset = None
+            if end_lineno is not None and lineno is not None and end_lineno < lineno:
+                raise ValueError('AST node line range (' + str(lineno) + ', ' + str(end_lineno) + ') is not valid')
+            if end_col_offset is not None and end_lineno == lineno and col_offset is not None and end_col_offset < col_offset:
+                raise ValueError('line ' + str(lineno) + ', column ' + str(col_offset) + '-' + str(end_col_offset) + ' is not a valid range')
+    if node._fields is cls._fields:
+        for field, is_list, typ, nullable in _get_field_specs(cls):
+            value = d.get(field, _MISSING)
+            if value is _MISSING:
+                try:
+                    value = getattr(node, field)
+                except AttributeError:
+                    raise TypeError('required field "' + field + '" missing from ' + cls.__name__) from None
+            if is_list:
+                if type(value) is not list and not isinstance(value, list):
+                    raise TypeError(cls.__name__ + ' field "' + field + '" must be a list, not a ' + type(value).__name__)
+                for item in value:
+                    if item is None and nullable:
+                        continue
+                    if not isinstance(item, typ):
+                        raise TypeError('expected some sort of ' + typ.__name__ + ', but got ' + repr(item))
+                    if isinstance(item, AST):
+                        _validate_node(item, active)
+            elif value is None and nullable:
+                continue
+            elif not isinstance(value, typ):
+                raise TypeError('expected ' + str(typ) + ', but got ' + repr(value))
+            elif isinstance(value, AST):
+                _validate_node(value, active)
+    else:
+        for field in node._fields:
+            value = d.get(field, _MISSING)
+            if value is _MISSING:
+                try:
+                    value = getattr(node, field)
+                except AttributeError:
+                    raise TypeError('required field "' + field + '" missing from ' + cls.__name__) from None
+            typ = cls._field_types.get(field, object)
+            if getattr(typ, '__origin__', None) is list:
+                if not isinstance(value, list):
+                    raise TypeError(cls.__name__ + ' field "' + field + '" must be a list, not a ' + type(value).__name__)
+                element_type = typ.__args__[0]
+                for item in value:
+                    if item is None and ((isinstance(node, arguments) and field == 'kw_defaults') or (isinstance(node, Dict) and field == 'keys')):
+                        continue
+                    if not isinstance(item, element_type):
+                        raise TypeError('expected some sort of ' + element_type.__name__ + ', but got ' + repr(item))
+                    if isinstance(item, AST):
+                        _validate_node(item, active)
+            elif value is None and getattr(cls, field, ...) is None:
+                continue
+            elif not isinstance(value, typ):
+                raise TypeError('expected ' + str(typ) + ', but got ' + repr(value))
+            elif isinstance(value, AST):
+                _validate_node(value, active)
+    if cls is Constant:
+        val = node.value
+        if type(val) not in _SCALAR_EXACT and type(val) not in _FLOAT_COMPLEX:
+            _validate_constant(val)
+    elif cls not in _PLAIN_AST_CLASSES:
+        if isinstance(node, NamedExpr) and not isinstance(node.target, Name):
+            raise TypeError('NamedExpr target must be a Name')
+        if isinstance(node, TypeAlias) and not isinstance(node.name, Name):
+            raise TypeError('TypeAlias with non-Name name')
+        if isinstance(node, _BODY_CLASSES) and not node.body:
+            raise ValueError('empty body on ' + cls.__name__)
+        if isinstance(node, Assign) and not node.targets:
+            raise ValueError('empty targets on Assign')
+        if isinstance(node, Delete) and not node.targets:
+            raise ValueError('empty targets on Delete')
+        if isinstance(node, BoolOp) and len(node.values) < 2:
+            raise ValueError('BoolOp with less than 2 values')
+        if isinstance(node, Compare):
+            if not node.comparators:
+                raise ValueError('Compare with no comparators')
+            if len(node.ops) != len(node.comparators):
+                raise ValueError('Compare has a different number of comparators and operands')
+        if isinstance(node, Dict) and len(node.keys) != len(node.values):
+            raise ValueError("Dict doesn't have the same number of keys as values")
+        if isinstance(node, Constant):
+            _validate_constant(node.value)
     active.remove(identity)
 
 # Compile the current tree rather than replaying the text from which it was parsed.
@@ -4967,6 +5217,11 @@ def _compile_source(tree, mode):
         raise TypeError('expected ' + expected.__name__ + ' node, got ' + type(tree).__name__)
     _validate_node(tree)
     _validate_contexts(tree)
+    cached = _parsed_tree
+    if cached is not None and cached[0]() is tree and cached[1] == mode:
+        positions = []
+        if cached[3] == _tree_digest(tree, positions):
+            return cached[2], tuple(positions)
     source = unparse(tree)
     generated = parse(source, mode='exec' if mode == 'single' else mode)
     if mode == 'single':
@@ -4998,29 +5253,47 @@ def _compile_positions(original, generated, positions, lines, ascii_source=False
             _compile_positions(old, new, positions, lines, ascii_source)
 
 
+_ASSIGN_TARGETS = (Name, Attribute, Subscript, Tuple, List, Starred)
+_STORE_TARGET_NODES = (AugAssign, AnnAssign, For, AsyncFor, comprehension, NamedExpr)
+
+
 # Check target contexts separately so ordinary expression children remain loads.
 def _validate_contexts(node, context=Load):
-    if isinstance(node, expr) and context is not Load and not isinstance(node, (Name, Attribute, Subscript, Tuple, List, Starred)):
+    cls = type(node)
+    if context is not Load and cls not in _ASSIGN_TARGETS and isinstance(node, expr) and not isinstance(node, _ASSIGN_TARGETS):
         raise ValueError("expression which can't be assigned to in " + context.__name__ + ' context')
-    if hasattr(node, 'ctx') and not isinstance(node.ctx, context):
-        raise ValueError('expression must have ' + context.__name__ + ' context but has ' + type(node.ctx).__name__ + ' instead')
-    for field, value in iter_fields(node):
-        expected = Load
-        if field == 'targets' and isinstance(node, (Assign, Delete)):
-            expected = Del if isinstance(node, Delete) else Store
-        elif field == 'target' and isinstance(node, (AugAssign, AnnAssign, For, AsyncFor, comprehension, NamedExpr)):
-            expected = Store
-        elif field == 'optional_vars' and isinstance(node, withitem):
-            expected = Store
-        elif field == 'name' and isinstance(node, TypeAlias):
-            expected = Store
-        elif field == 'elts' and isinstance(node, (Tuple, List)):
-            expected = context
-        elif field == 'value' and isinstance(node, Starred):
-            expected = context
+    fields = node.__dict__
+    ctx = fields.get('ctx', _MISSING)
+    if ctx is _MISSING and hasattr(node, 'ctx'):
+        ctx = getattr(node, 'ctx')
+    if ctx is not _MISSING and type(ctx) is not context and not isinstance(ctx, context):
+        raise ValueError('expression must have ' + context.__name__ + ' context but has ' + type(ctx).__name__ + ' instead')
+    for field in node._fields:
+        value = fields.get(field, _MISSING)
+        if value is _MISSING:
+            try:
+                value = getattr(node, field)
+            except AttributeError:
+                continue
         if isinstance(value, AST):
+            expected = Load
+            if field == 'target' and isinstance(node, _STORE_TARGET_NODES):
+                expected = Store
+            elif field == 'optional_vars' and isinstance(node, withitem):
+                expected = Store
+            elif field == 'name' and isinstance(node, TypeAlias):
+                expected = Store
+            elif field == 'value' and isinstance(node, Starred):
+                expected = context
             _validate_contexts(value, expected)
         elif isinstance(value, list):
+            if not value:
+                continue
+            expected = Load
+            if field == 'targets' and isinstance(node, (Assign, Delete)):
+                expected = Del if isinstance(node, Delete) else Store
+            elif field == 'elts' and isinstance(node, (Tuple, List)):
+                expected = context
             for child in value:
                 if isinstance(child, AST):
                     _validate_contexts(child, expected)
