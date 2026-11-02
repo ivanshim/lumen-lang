@@ -7403,6 +7403,14 @@ impl<'a> Machine<'a> {
                         };
                         return Ok(result);
                     }
+                    if key == "co_imports" || key == "co_stores" {
+                        let (imports, stores) = crate::build::code_imports_stores(&p.body, &p.locals);
+                        if key == "co_stores" { return Ok(Value::tuple(stores.iter().map(|word| Value::text(word)).collect())); }
+                        return Ok(Value::tuple(imports.iter().map(|(word, level, fromlist)| Value::tuple(vec![
+                            Value::text(word), Value::Small(*level as i64),
+                            fromlist.as_ref().map_or(Value::Nil, |taken| Value::tuple(taken.iter().map(|member| Value::text(member)).collect())),
+                        ])).collect()));
+                    }
                     let words = self.rules.trace_words;
                     if words.get(6).map_or(false, |word| word == key) { return Ok(Value::text(if p.ident == "<program>" { &words[10] } else { &p.ident })); }
                     if words.get(7).map_or(false, |word| word == key) { return Ok(Value::Text(p.written_in.clone().unwrap_or_else(|| self.entry_file.clone()))); }
@@ -7601,6 +7609,8 @@ impl<'a> Machine<'a> {
                 let action = if replacement.is_some() { self.detail("set") } else { self.detail("remove") };
                 if ordinary && Self::native_beneath(&owner).is_none()
                     && self.allowed_slot(&owner, key) && (direct || self.inherited_entry(&owner, action).is_none())
+                    // Finalizer-bearing writes need the normal cycle registration.
+                    && !replacement.as_ref().is_some_and(|held| matches!(held, Value::Thing(child) if crate::ghost::farewell_of(&child.blueprint()).is_some()))
                     && !self.inherited_entry(&owner, key).is_some_and(|entry| self.writes_too(&entry)) {
                     if Self::change_entry(&mut instance.holds.borrow_mut(), key, replacement) { return Ok(Value::Nil); }
                     return Err(self.absent_attribute(&subject, key));
@@ -8037,7 +8047,13 @@ impl<'a> Machine<'a> {
                     (Some(kept), true) => Some(Value::Shared(Rc::new(RefCell::new(self.collection_cell(kept.clone()))))),
                     _ => replacement,
                 };
-                if replacement.is_some()&&!self.allowed_slot(&t.blueprint(),key){false}else{Self::change_entry(&mut t.holds.borrow_mut(),key,replacement)}
+                // A thing keeping a value with a farewell may be the
+                // incoming side of a finalisable round, so it is kept as a
+                // notable even where its own blueprint names no farewell.
+                let keeps_farewell = replacement.as_ref().is_some_and(|worth| matches!(worth, Value::Thing(kept) if crate::ghost::farewell_of(&kept.blueprint()).is_some()));
+                let outcome = if replacement.is_some()&&!self.allowed_slot(&t.blueprint(),key){false}else{Self::change_entry(&mut t.holds.borrow_mut(),key,replacement)};
+                if outcome && keeps_farewell { crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(t))); }
+                outcome
             }
             Value::Blueprint(b)=>{
                 if !direct {

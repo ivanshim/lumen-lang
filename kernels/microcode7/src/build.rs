@@ -14256,6 +14256,82 @@ fn constant_key_matches(a: &Value, b: &Value) -> bool {
     }
 }
 
+/// The path and fromlist a BringModule call carries, peeled of any
+/// line or location wrapper a constant may have been put inside.
+fn import_arguments(args: &[Form]) -> Option<(String, Option<Value>)> {
+    fn peel(form: &Form) -> &Form {
+        match form {
+            Form::OnLine(_, _, inner) | Form::Located(_, _, inner) | Form::Muted(inner) | Form::Silenced(inner) => peel(inner),
+            other => other,
+        }
+    }
+    let Form::Const(Value::Text(path)) = peel(args.first()?) else { return None; };
+    let fromlist = match peel(args.get(1)?) { Form::Const(value) => Some(value.clone()), _ => None };
+    Some((path.to_string(), fromlist))
+}
+
+/// The imports a compiled body carries and the names it writes at its
+/// own level, in the order they were written: the reference's
+/// IMPORT_NAME and STORE_NAME operations. A relative import's dots
+/// count into the level and stand outside the module name; the
+/// fromlist is nothing for a plain import, the star or the taken names
+/// otherwise.
+pub(crate) fn code_imports_stores(body: &Form, locals: &[String]) -> (Vec<(String, usize, Option<Vec<String>>)>, Vec<String>) {
+    let mut imports = Vec::new();
+    let mut stores = Vec::new();
+    scan_imports_stores(body, locals, &mut imports, &mut stores);
+    (imports, stores)
+}
+
+/// Walk a body for the imports it carries and the names it binds at its
+/// own level, touching neither the constant table nor any nested body:
+/// a nested body is a code value of its own and is walked when that
+/// value is built.
+fn scan_imports_stores(form: &Form, locals: &[String], imports: &mut Vec<(String, usize, Option<Vec<String>>)>, stores: &mut Vec<String>) {
+    let mut children: Vec<&Form> = Vec::new();
+    match form {
+        Form::Write(place, child) => {
+            let name = place.ident.to_string();
+            if !name.starts_with('#') && !locals.contains(&name) && !stores.contains(&name) { stores.push(name); }
+            children.push(child);
+        }
+        Form::OnLine(_, _, child) | Form::Located(_, _, child) | Form::Muted(child) | Form::Silenced(child) | Form::Tie(_, child) => children.push(child),
+        Form::Apply(callee, args) => {
+            if matches!(callee, Callee::Prim(Prim::BringModule, _)) {
+                if let Some((path, fromlist)) = import_arguments(args) {
+                    let level = path.chars().take_while(|mark| *mark == '.').count();
+                    let taken = match fromlist {
+                        Some(Value::Tuple(members)) => Some(members.iter().map(|member| match member { Value::Text(word) => word.to_string(), other => format!("{other:?}") }).collect()),
+                        _ => None,
+                    };
+                    imports.push((path[level..].to_string(), level, taken));
+                }
+            }
+            children.extend(args);
+        }
+        Form::Dyad { a, b, .. } => {
+            for input in [a, b] {
+                if let Input::Form(inner) = input { children.push(inner); }
+            }
+        }
+        Form::Cycle { test, body, step, otherwise, .. } => {
+            children.extend([test.as_ref(), body.as_ref()]);
+            children.extend(step.as_deref());
+            children.extend(otherwise.as_deref());
+        }
+        Form::Attempt { body, clauses, last, otherwise, .. } => {
+            children.push(body);
+            for clause in clauses { children.push(&clause.body); if let Some(choices) = &clause.choices { children.extend(choices); } }
+            children.extend(otherwise.as_deref());
+            children.extend(last.as_deref());
+        }
+        Form::Class { values, .. } => children.extend(values),
+        Form::Assert { condition, message } => children.extend([condition.as_ref(), message.as_ref()]),
+        _ => {}
+    }
+    for child in children { scan_imports_stores(child, locals, imports, stores); }
+}
+
 // Follow the same unconditional exits as sequential form evaluation.
 fn literal_boolean(mut form: &Form) -> Option<bool> {
     loop {
