@@ -7938,6 +7938,12 @@ impl<'a> Engine<'a> {
                                     let mut aliases = Vec::new();
                                     for (name, _) in space.fields.borrow().iter() {
                                         if name.starts_with('\0') { continue; }
+                                        // A name the running routine already
+                                        // keeps stands for itself before the
+                                        // module's own of that spelling: text
+                                        // read where the routine is must see
+                                        // the frame's binding, not the module's.
+                                        if program.idents.iter().any(|held| held == name) { continue; }
                                         if let Some(at) = self.registry.module_slot(&path, name) {
                                             aliases.push((name.clone(), self.registry.idents[at].clone()));
                                         }

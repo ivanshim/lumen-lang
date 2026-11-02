@@ -39124,6 +39124,9 @@ impl<'a> Machine<'a> {
         if let Some(path) = home {
             if let Some(Value::Thing(space)) = self.imported.get(&path).cloned() {
                 for (name, _) in space.holds.borrow().iter() {
+                    // A spelling the routine about to read the text is
+                    // already holding is the routine's own; above it the
+                    // module's name of the same shape has no say.
                     if name.starts_with('\0') || names.iter().any(|local| local == name) { continue; }
                     let wanted = format!("\0import/{path}/{name}");
                     if self.idents.iter().any(|word| word == &wanted) {
