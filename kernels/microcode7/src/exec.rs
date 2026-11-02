@@ -39067,14 +39067,27 @@ impl<'a> Machine<'a> {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
-        let seeded = self.idents.clone();
         let natives = if self.rules.builtin_namespace_words.is_empty() { None } else {
             Some(self.source_natives().map_err(|escape| self.carried_native_fault(escape))?)
         };
-        let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, natives, None, settling, sites)?;
+        // A reading with no saved forms is built over the names where
+        // they stand; only the saved forms need a copy of them.
+        let (mut built, shown) = if self.cached_forms.is_some() {
+            let seeded = self.idents.clone();
+            self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, natives, None, settling, sites)?
+        } else {
+            self.table.source.replace(Some(Rc::from(source)));
+            let written_in: Option<Rc<str>> = Some(Rc::from(file.as_str()));
+            crate::build::holding_figures(self.figure_limit());
+            let outcome = crate::build::using_tree_sites(sites, || crate::build::build_text(&tokens, self.table, &self.idents, 0, written_in, None, natives, None, mode == 1, &[], top_await, mode == 2, settling, self.text_future_bits.get()));
+            match outcome {
+                Ok(built) => (built, false),
+                Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), source)),
+            }
+        };
         // What the build noted about how the text is written is said
         // once the text stands, each warning through the warnings module.
-        self.idents = built.globals.clone();
+        self.idents = std::mem::take(&mut built.globals);
         self.newest_places.borrow_mut().0 = 0;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         if warn_source {
@@ -39123,10 +39136,11 @@ impl<'a> Machine<'a> {
         });
         if let Some(path) = home {
             if let Some(Value::Thing(space)) = self.imported.get(&path).cloned() {
+                let known = crate::build::spots_of(&self.idents);
                 for (name, _) in space.holds.borrow().iter() {
                     if name.starts_with('\0') || names.iter().any(|local| local == name) { continue; }
                     let wanted = format!("\0import/{path}/{name}");
-                    if self.idents.iter().any(|word| word == &wanted) {
+                    if known.contains_key(&wanted) {
                         aliasing.push((name.clone(), wanted));
                     }
                 }
@@ -39137,7 +39151,7 @@ impl<'a> Machine<'a> {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
-        self.idents = built.globals.clone();
+        self.idents = std::mem::take(&mut built.globals);
         self.newest_places.borrow_mut().0 = 0;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         if warn_source {
