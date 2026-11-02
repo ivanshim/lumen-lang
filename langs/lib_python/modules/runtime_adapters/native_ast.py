@@ -3279,20 +3279,29 @@ class _Parser:
             node = Tuple(elts=elts, ctx=Load(), lineno=ls[0], col_offset=ls[1], end_lineno=le[0], end_col_offset=le[1])
         return node, ls, le
 
-    def set_store(self, node, context=Store):
+    def set_store(self, node, context=Store, nested=False):
         if type(node) == Name or type(node) == Attribute or type(node) == Subscript:
             node.ctx = context()
             return
+        # A starred target is valid only as an element of a list or tuple.
         if type(node) == Starred:
             if context is Del:
                 _syntax('cannot delete starred')
+            if not nested or getattr(node, '_grouped', False):
+                _syntax('invalid syntax')
             node.ctx = context()
-            self.set_store(node.value, context)
+            self.set_store(node.value, context, True)
             return
         if type(node) == Tuple or type(node) == List:
+            stars = 0
+            for elt in node.elts:
+                if type(elt) == Starred:
+                    stars += 1
+            if stars > 1:
+                _syntax('invalid syntax')
             node.ctx = context()
             for elt in node.elts:
-                self.set_store(elt, context)
+                self.set_store(elt, context, True)
             return
         _syntax('invalid syntax')
 
@@ -3732,6 +3741,8 @@ class _Parser:
                 return (node, (open_tok.srow, open_tok.scol),
                         (close_tok.erow, close_tok.ecol))
             close_tok = self.expect_op(')')
+            if type(node) == Starred:
+                node._grouped = True
             return (node, (open_tok.srow, open_tok.scol),
                     (close_tok.erow, close_tok.ecol))
         if kind == 'op' and tok.text == '[':
