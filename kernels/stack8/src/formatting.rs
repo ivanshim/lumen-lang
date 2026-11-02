@@ -646,7 +646,7 @@ impl Writer<'_> {
             if !letters.replace(' ', "").contains(code) {
                 return Err(self.percent_unknown(code, mark_position, at - 1, of_bytes));
             }
-            let result: Vec<u32> = if matches!(code, 's' | 'r' | 'a') || of_bytes && code == 'b' {
+            if matches!(code, 's' | 'r' | 'a') || of_bytes && code == 'b' {
                 let shown = match asked(value, code, false)? {
                     Answer::Said(said) => said,
                     Answer::Unsaid if of_bytes && matches!(code, 'b' | 's') => {
@@ -658,7 +658,7 @@ impl Writer<'_> {
                 };
                 let shown: String = shown.chars().take(rule.precision.unwrap_or(usize::MAX)).collect();
                 rule.fill = ' '; if rule.align == '=' { rule.align = '>'; }
-                rule.pad("", &shown, '>').chars().map(u32::from).collect()
+                out.extend(rule.pad("", &shown, '>').chars().map(u32::from));
             } else if code == 'c' {
                 rule.fill = ' '; if rule.align == '=' { rule.align = '>'; }
                 let shown: Vec<u32> = match value {
@@ -701,7 +701,7 @@ impl Writer<'_> {
                 let mut row = vec![fill; before];
                 row.extend(shown);
                 row.extend(std::iter::repeat(fill).take(after));
-                row
+                out.extend(row);
             } else if matches!(code, 'd' | 'i' | 'u' | 'o' | 'x' | 'X') {
                 let integral = matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_));
                 let decimal = matches!(code, 'd' | 'i' | 'u');
@@ -738,7 +738,7 @@ impl Writer<'_> {
                 if let Some(p) = rule.precision { digits = "0".repeat(p.saturating_sub(digits.len())) + &digits; }
                 let mut head = rule.sign_for(n.is_negative());
                 if rule.alternate { head.push_str(match code { 'o' => "0o", 'x' => "0x", 'X' => "0X", _ => "" }); }
-                rule.pad(&head, &digits, '>').chars().map(u32::from).collect()
+                out.extend(rule.pad(&head, &digits, '>').chars().map(u32::from));
             } else {
                 let mut held: Option<Value> = None;
                 let ready = matches!(value, Value::Real(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_));
@@ -760,9 +760,8 @@ impl Writer<'_> {
                 };
                 let mut body = if n.is_nan() { "nan".into() } else if n.is_infinite() { "inf".into() } else { decimal(n.abs(), &rule) };
                 if code.is_ascii_uppercase() { body.make_ascii_uppercase(); }
-                rule.pad(&rule.sign_for(n.is_sign_negative() && !n.is_nan()), &body, '>').chars().map(u32::from).collect()
-            };
-            out.extend(result);
+                out.extend(rule.pad(&rule.sign_for(n.is_sign_negative() && !n.is_nan()), &body, '>').chars().map(u32::from));
+            }
         }
         if !mapped && used != args.len() && !matches!(argument, Value::Map(_)) { return Err(self.fault("ext.op.rem.format.many", &[if of_bytes { "bytes" } else { "string" }, &used.to_string(), &args.len().to_string()])); }
         Ok(out)

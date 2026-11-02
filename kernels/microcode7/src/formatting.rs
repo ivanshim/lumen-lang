@@ -636,7 +636,7 @@ impl Layout<'_> {
                 shape.padding = '0'; shape.justify = Some('=');
             }
             let shows = matches!(conversion, 'a' | 'r' | 's') || of_bytes && conversion == 'b';
-            let laid: Vec<u32> = match conversion {
+            match conversion {
                 'a' | 'r' | 's' | 'b' if shows => {
                     let text = match asked.value_worded(item, !matches!(conversion, 's' | 'b'))? {
                         Some(ready) => ready,
@@ -648,7 +648,7 @@ impl Layout<'_> {
                     };
                     shape.padding = ' ';
                     if shape.justify == Some('=') { shape.justify = Some('>'); }
-                    shape.padded(String::new(), text.chars().take(shape.digits.unwrap_or(usize::MAX)).collect(), '>').chars().map(u32::from).collect()
+                    output.extend(shape.padded(String::new(), text.chars().take(shape.digits.unwrap_or(usize::MAX)).collect(), '>').chars().map(u32::from));
                 }
                 'c' => {
                     shape.padding = ' ';
@@ -694,7 +694,7 @@ impl Layout<'_> {
                         '^' => { row.extend(std::iter::repeat(fill).take(extra / 2)); row.extend(c); row.extend(std::iter::repeat(fill).take(extra - extra / 2)); }
                         _ => { row.extend(std::iter::repeat(fill).take(extra)); row.extend(c); }
                     }
-                    row
+                    output.extend(row);
                 }
                 'd' | 'i' | 'u' | 'o' | 'x' | 'X' => {
                     let accepts_real = matches!(conversion, 'd' | 'i' | 'u');
@@ -742,7 +742,7 @@ impl Layout<'_> {
                     digits = "0".repeat(shape.digits.unwrap_or(0).saturating_sub(digits.len())) + &digits;
                     let mut lead = shape.front(number.is_negative());
                     if shape.alternative { lead += match conversion { 'x' => "0x", 'X' => "0X", 'o' => "0o", _ => "" }; }
-                    shape.padded(lead, digits, '>').chars().map(u32::from).collect()
+                    output.extend(shape.padded(lead, digits, '>').chars().map(u32::from));
                 }
                 'e' | 'E' | 'f' | 'F' | 'g' | 'G' => {
                     let mut held: Option<Value> = None;
@@ -759,13 +759,12 @@ impl Layout<'_> {
                     }
                     let chosen = held.as_ref().unwrap_or(item);
                     let number = self.binary(chosen).map_err(|_| self.complain("ext.op.rem.format.real", &[&location, &conversion.to_string(), &item.kind_word()]))?;
-                    shape.padded(shape.front(number.is_sign_negative() && !number.is_nan()), shape.real_digits(number.abs()), '>').chars().map(u32::from).collect()
+                    output.extend(shape.padded(shape.front(number.is_sign_negative() && !number.is_nan()), shape.real_digits(number.abs()), '>').chars().map(u32::from));
                 }
                 _ => {
                     return Err(self.unsupported(conversion, mark_position, pattern.chars().count() - input.clone().count() - 1, of_bytes));
                 }
-            };
-            output.extend(laid);
+            }
         }
         if !named_seen && used < positional.len() && !matches!(supplied, Value::Dict(_)) {
             return Err(self.complain("ext.op.rem.format.many", &[if of_bytes { "bytes" } else { "string" }, &used.to_string(), &positional.len().to_string()]));
