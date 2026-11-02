@@ -703,9 +703,8 @@ pub struct Machine<'a> {
     native_kind_names: RefCell<HashMap<String, std::collections::HashSet<String>>>,
     routine_members: Vec<(crate::ghost::Ghost, Rc<Thing>)>,
     routine_member_positions: HashMap<(u8, usize, usize), usize, crate::table::FxBuildHasher>,
-    // First live member row for a routine address, so a call reads that row
-    // instead of walking every routine that has ever been stored.
-    routine_code_at: HashMap<usize, usize, crate::table::FxBuildHasher>,
+    /// Slot of a routine address after one walk, or `None` once a walk has shown it has no slot. Dropped when the member list changes shape.
+    routine_code_slots: std::cell::RefCell<HashMap<usize, Option<usize>, crate::table::FxBuildHasher>>,
     reaping: bool,
     cycle_checkpoint_slots: usize,
     /// How many bytes were alive once the last reaping was done.
@@ -2290,7 +2289,7 @@ impl<'a> Machine<'a> {
             code_kind: None,
             cached_forms: None,
             member_inventories: RefCell::new(HashMap::new()),
-            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: HashMap::default(), routine_code_at: HashMap::default(), reaping: false, cycle_checkpoint_slots: 0, reaped_at_bytes: 0, quiet_module_slots: Default::default(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
+            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: HashMap::default(), routine_code_slots: std::cell::RefCell::new(HashMap::default()), reaping: false, cycle_checkpoint_slots: 0, reaped_at_bytes: 0, quiet_module_slots: Default::default(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
             stack_origin: &table as *const &Table as usize,
             descriptor_files: std::collections::BTreeMap::new(),
             table,
@@ -15598,9 +15597,9 @@ impl<'a> Machine<'a> {
     /// What a routine is called in the words about a call made to it.
     fn routine_called(&self, program: &Routine) -> String {
         if self.rules.has_any_ext_stmt_class_special {
-            if let Some(attributes) = self.routine_member_holder(program) {
+            if let Some(at) = self.routine_member_slot(program) {
                 let qualified_key = self.detail("qualified").to_owned() + "\0";
-                let entries = attributes.holds.borrow();
+                let entries = self.routine_members[at].1.holds.borrow();
                 if let Some(entry) = entries.iter().find(|entry| entry.0 == qualified_key) {
                     return entry.1.bare();
                 }
@@ -15718,32 +15717,41 @@ impl<'a> Machine<'a> {
     /// the way a native maker does, instead of having every key turned into
     /// a word first. The standard adapter marks such a routine with an
     /// attribute, read here off the routine's own book.
-    /// The attribute holder of the first live member whose code is `program`.
-    fn routine_member_holder(&self, program: &Routine) -> Option<&Rc<Thing>> {
-        let want = std::ptr::from_ref(program) as usize;
-        let &at = self.routine_code_at.get(&want)?;
-        if let Some((ghost, holder)) = self.routine_members.get(at) {
-            if Self::ghost_holds_code(ghost, want) { return Some(holder); }
+    /// First member slot whose routine is `program`, remembered so a wrapped
+    /// call does not revive every routine. `None` means a finished walk found
+    /// no slot. A stale `Some` is checked and walked again.
+    pub(super) fn routine_member_slot(&self, program: &Routine) -> Option<usize> {
+        let ptr = program as *const Routine as usize;
+        if let Some(known) = self.routine_code_slots.borrow().get(&ptr).copied() {
+            match known {
+                Some(at) if self.routine_slot_holds(at, program) => return Some(at),
+                None => return None,
+                Some(_) => {}
+            }
         }
-        self.routine_members.iter().find(|(ghost, _)| Self::ghost_holds_code(ghost, want)).map(|(_, holder)| holder)
+        let found = self.routine_members.iter().position(|(callable, _)| {
+            callable.revive().is_some_and(|value| match &value {
+                Value::Routine(code) | Value::Bound(code, _) | Value::Method(code, _, _) => std::ptr::eq(program, code.as_ref()),
+                _ => false,
+            })
+        });
+        self.routine_code_slots.borrow_mut().insert(ptr, found);
+        found
     }
 
-    fn ghost_holds_code(ghost: &crate::ghost::Ghost, want: usize) -> bool {
-        use crate::ghost::Ghost;
-        match ghost {
-            Ghost::Routine(code) => code.strong_count() > 0 && code.as_ptr() as usize == want,
-            Ghost::Bound(code, frame) => code.strong_count() > 0 && frame.strong_count() > 0 && code.as_ptr() as usize == want,
-            Ghost::Method(code, thing, mark) => code.strong_count() > 0 && thing.strong_count() > 0 && mark.strong_count() > 0 && code.as_ptr() as usize == want,
+    fn routine_slot_holds(&self, at: usize, program: &Routine) -> bool {
+        self.routine_members.get(at).and_then(|(callable, _)| callable.revive()).is_some_and(|value| match &value {
+            Value::Routine(code) | Value::Bound(code, _) | Value::Method(code, _, _) => std::ptr::eq(program, code.as_ref()),
             _ => false,
-        }
+        })
     }
 
     pub(super) fn routine_takes_raw_keys(&self, program: &Routine) -> bool {
         // The raw-key making is the reference's own, so only the Python
         // definition may opt into it; every other language keeps words.
         if !self.table.flag("ext.op.arithmetic.python_numbers") { return false; }
-        let Some(attributes) = self.routine_member_holder(program) else { return false; };
-        let entries = attributes.holds.borrow();
+        let Some(at) = self.routine_member_slot(program) else { return false; };
+        let entries = self.routine_members[at].1.holds.borrow();
         if entries.iter().any(|(word, held)| {
             (word == "_lumen_raw_keywords" || word == "_lumen_raw_keywords\0" || word == "\0_lumen_raw_keywords\0")
                 && matches!(held.settled(), Value::Flag(true))
