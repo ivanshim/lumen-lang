@@ -3981,7 +3981,7 @@ impl<'a> Builder<'a> {
             return if spreads { Err(self.grammar.single_ext_stmt_unpack_amiss.unwrap_or("Invalid tuple").to_string()) }
                 else { Ok(first) };
         }
-        let mut whole = if spreads { first } else { prim_call(Prim::MakeArray, vec![first]) };
+        let mut parts = vec![(first, spreads)];
         loop {
             self.move_past();
             let ended = self.on_stmt_end() || self.exhausted() || self.look().shape == Shape::Close
@@ -3993,12 +3993,10 @@ impl<'a> Builder<'a> {
             if self.grammar.has_any_ext_builtin_exceptions_syntax && self.key("ext.stmt.yield") {
                 return Err(String::from("SyntaxError: invalid syntax"));
             }
-            let (part, spread) = self.comma_part(writes)?;
-            let portion = if spread { part } else { prim_call(Prim::MakeArray, vec![part]) };
-            whole = prim_call(Prim::TupleJoined, vec![whole, portion]);
+            parts.push(self.comma_part(writes)?);
             if !self.on_any("ext.op.tuple") { break; }
         }
-        Ok(if self.table.has_any("ext.builtin.tuple") { self.literal_tuple(whole) } else { whole })
+        Ok(self.displayed_tuple(parts))
     }
 
     fn folded_pair(&self, action: Prim, left: Form, right: Form) -> Form {
@@ -4024,9 +4022,43 @@ impl<'a> Builder<'a> {
         prim_call(Prim::Tupling, vec![body])
     }
 
+    /// A display with no starred place is the tuple of those places.
+    /// A star still joins list portions, because its length is not known here.
+    fn displayed_tuple(&self, parts: Vec<(Form, bool)>) -> Form {
+        if !parts.iter().any(|(_, star)| *star) && self.table.has_any("ext.builtin.tuple") {
+            let items: Vec<Form> = parts.into_iter().map(|(form, _)| form).collect();
+            if self.table.has_any("ext.builtin.compile.modes") {
+                let mut values = Vec::with_capacity(items.len());
+                let folded = items.iter().all(|form| match Self::inert_literal(form) {
+                    Some(value) => { values.push(value); true }
+                    None => false,
+                });
+                if folded { return constant(Value::tuple(values)); }
+            }
+            return prim_call(Prim::MakeTuple, items);
+        }
+        let mut parts = parts.into_iter();
+        let (first, first_star) = parts.next().expect("a tuple element");
+        let mut whole = if first_star { first } else { prim_call(Prim::MakeArray, vec![first]) };
+        for (part, star) in parts {
+            let portion = if star { part } else { prim_call(Prim::MakeArray, vec![part]) };
+            whole = prim_call(Prim::TupleJoined, vec![whole, portion]);
+        }
+        if self.table.has_any("ext.builtin.tuple") { self.literal_tuple(whole) } else { whole }
+    }
+
+    fn inert_literal(form: &Form) -> Option<Value> {
+        let mut literal = form;
+        while let Form::Located(_, _, next) | Form::OnLine(_, _, next) = literal { literal = next; }
+        match literal {
+            Form::Const(value) if constant_inert(value) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
     fn comma_tail(&mut self, first: Form) -> Res<Form> {
         if !self.on_any("ext.op.tuple") { return Ok(first); }
-        let mut value = prim_call(Prim::MakeArray, vec![first]);
+        let mut parts = vec![(first, false)];
         loop {
             self.move_past();
             if self.on_stmt_end() || self.on_assign() || self.on_any("syntax.group.close")
@@ -4034,12 +4066,10 @@ impl<'a> Builder<'a> {
             if self.grammar.has_any_ext_builtin_exceptions_syntax && self.key("ext.stmt.yield") {
                 return Err(String::from("SyntaxError: invalid syntax"));
             }
-            let (part, expanded) = self.comma_part(true)?;
-            let segment = if expanded { part } else { prim_call(Prim::MakeArray, vec![part]) };
-            value = prim_call(Prim::TupleJoined, vec![value, segment]);
+            parts.push(self.comma_part(true)?);
             if !self.on_any("ext.op.tuple") { break; }
         }
-        Ok(if self.table.has_any("ext.builtin.tuple") { self.literal_tuple(value) } else { value })
+        Ok(self.displayed_tuple(parts))
     }
 
     // Mark the end of a token using its original spelling width.
