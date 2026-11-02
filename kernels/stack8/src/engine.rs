@@ -4177,7 +4177,10 @@ impl<'a> Engine<'a> {
 
     // Retain general mapping and generator expansion with caller diagnostics.
     fn expanded_call_items_for(&mut self, args: Vec<Value>, callee: Callee) -> Flow<Vec<(Option<Value>, Value)>> {
-        let lone = args.iter().filter(|given| !matches!(given, Value::Tie(pair) if matches!(pair.0, Value::Text(_)))).count() == 1;
+        let lone = args.iter().filter(|given| match given {
+            Value::Tie(pair) => Self::text_key(&pair.0).is_none(),
+            _ => true,
+        }).count() == 1;
         let mut items = Vec::new();
         let mut folded = Vec::new();
         for value in args {
@@ -4205,7 +4208,13 @@ impl<'a> Engine<'a> {
                         }
                     }
                     Value::Flag(true) => items.extend(self.mapping_pairs(&pair.1, callee, &mut folded)?),
-                    _ => return Err(self.lang.call_amiss[0].clone().into()),
+                    _ => match Self::text_key(&pair.0) {
+                        Some(_) => {
+                            self.note_keyword(&mut folded, &pair.0, callee)?;
+                            items.push((Some(pair.0.clone()), pair.1.clone()));
+                        }
+                        None => return Err(self.lang.call_amiss[0].clone().into()),
+                    },
                 },
                 other => items.push((None, other)),
             }
@@ -4284,6 +4293,20 @@ impl<'a> Engine<'a> {
         }
         Ok(pairs)
     }
+
+
+    /// The text a keyword name stands for, apart from the object the call
+    /// wrote: a string descendant is still a name, and the value itself is
+    /// kept for the callee's gathering place.
+    pub(super) fn text_key(key: &Value) -> Option<Value> {
+        let bare = match key.contents() { Value::Hashed(pair) => pair.0.contents(), other => other };
+        match bare.type_text() {
+            text @ (Value::Text(_) | Value::Codepoints(_)) => Some(text),
+            _ => None,
+        }
+    }
+
+
 
     /// The word a keyword is written under. Only text stands; anything
     /// else is the reference's own complaint, with no naming over it.
