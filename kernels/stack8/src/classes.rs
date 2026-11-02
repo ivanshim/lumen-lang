@@ -4125,8 +4125,13 @@ impl<'a> Engine<'a> {
         let args = if !native_keys && self.lang.python_numbers && args.iter().any(|item| matches!(item, Value::Tie(pair) if matches!(pair.0, Value::Flag(_)))) {
             let title = c.python_title().unwrap_or_else(|| c.name.clone());
             let expanded = self.call_items_named(&title, args)?;
-            self.keyword_items(expanded)?.into_iter().map(|(name, value)| match name {
-                Some(name) => Value::Tie(Rc::new((Value::text(&name), value))),
+            for (key, _) in &expanded {
+                if let Some(key) = key {
+                    if !matches!(key.type_text(), Value::Codepoints(_)) { self.word_of_key(key)?; }
+                }
+            }
+            expanded.into_iter().map(|(name, value)| match name {
+                Some(name) => Value::Tie(Rc::new((name, value))),
                 None => value,
             }).collect()
         } else { args };
@@ -4159,8 +4164,8 @@ impl<'a> Engine<'a> {
             self.class_from_parts(given)?
         } else if let Some(f) = allocation {
             let f=self.bind_class_value(f,None,c.clone())?;
-            let opened: Vec<Value> = self.call_items(args.clone())?.into_iter().map(|(key, value)| match key {
-                Some(word) => Value::Tie(Rc::new((Value::text(&word), value))),
+            let opened: Vec<Value> = self.expanded_call_items(args.clone())?.into_iter().map(|(key, value)| match key {
+                Some(word) => Value::Tie(Rc::new((word, value))),
                 None => value,
             }).collect();
             let mut given = vec![Value::Class(c.clone())]; given.extend(opened);
@@ -8715,7 +8720,7 @@ impl<'a> Engine<'a> {
         if which == 30 && !self.lang.partial_call_words.is_empty() {
             let mut supplied = Vec::new();
             let mut keywords = Vec::new();
-            for (key, value) in self.call_items(args)? {
+            for (key, value) in self.expanded_call_items(args)? {
                 if let Some(key) = key { keywords.push((key, value)); } else { supplied.push(value); }
             }
             if supplied.is_empty() { return Err("TypeError: descriptor '__call__' requires a 'functools.partial' object".into()); }
@@ -8739,22 +8744,25 @@ impl<'a> Engine<'a> {
             } else { positional.extend(supplied); }
             let defaults = self.class_get(partial, "keywords", false)?.contents();
             let Value::Map(defaults) = defaults else { return Err("TypeError: partial keywords must be a dictionary".into()); };
-            let mut options: Vec<(String, Value)> = Vec::new();
+            let mut options: Vec<(Vec<u32>, Value, Value)> = Vec::new();
             for (key, value) in defaults.iter() {
                 // A hand-written dictionary key may be a string descendant,
                 // kept beside its hash: unwrap it, insist on real string
                 // ancestry and take the underlying text, not a rendering.
-                let bare = match key.contents() { Value::Hashed(pair) => pair.0.clone(), other => other };
-                let Some(codes) = bare.type_text().text_codes() else {
+                let Some(codes) = Self::text_key(key).and_then(|text| text.text_codes()) else {
                     return Err("TypeError: keywords must be strings".into());
                 };
-                options.push((Value::predicate_text(&codes), value.clone()));
+                options.push((codes, key.clone(), value.clone()));
             }
             for (key, value) in keywords {
-                if let Some((_, held)) = options.iter_mut().find(|(word, _)| *word == key) { *held = value; }
-                else { options.push((key, value)); }
+                let Some(codes) = Self::text_key(&key).and_then(|text| text.text_codes()) else {
+                    return Err("TypeError: keywords must be strings".into());
+                };
+                if let Some(entry) = options.iter_mut().find(|entry| entry.0 == codes) { entry.2 = value; }
+                else { options.push((codes, key, value)); }
             }
-            positional.extend(options.into_iter().map(|(key, value)| Value::Tie(Rc::new((Value::text(&key), value)))));
+            let options = options.into_iter().map(|(_, key, value)| (key, value)).collect::<Vec<_>>();
+            positional.push(Value::Tie(Rc::new((Value::Flag(true), Value::Map(Rc::new(options.into()))))));
             return self.class_apply(function, positional);
         }
         if which == 27 && !self.lang.partial_repr.is_empty() {

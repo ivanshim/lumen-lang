@@ -4165,7 +4165,7 @@ impl<'a> Engine<'a> {
         Ok(self.keyword_items(items)?)
     }
     // Expand a native call while retaining keyword key values.
-    fn expanded_call_items(&mut self, args: Vec<Value>) -> Flow<Vec<(Option<Value>, Value)>> {
+    pub(super) fn expanded_call_items(&mut self, args: Vec<Value>) -> Flow<Vec<(Option<Value>, Value)>> {
         self.expanded_call_items_for(args, Callee::Unknown)
     }
     fn keyword_items(&self, items: Vec<(Option<Value>, Value)>) -> Res<Vec<(Option<String>, Value)>> {
@@ -4186,7 +4186,7 @@ impl<'a> Engine<'a> {
         for value in args {
             match value {
                 Value::Tie(pair) => match &pair.0 {
-                    Value::Text(_) => {
+                    Value::Text(_) | Value::Codepoints(_) => {
                         self.note_keyword(&mut folded, &pair.0, callee)?;
                         items.push((Some(pair.0.clone()), pair.1.clone()));
                     },
@@ -4308,11 +4308,13 @@ impl<'a> Engine<'a> {
 
 
 
+
+
     /// The word a keyword is written under. Only text stands; anything
     /// else is the reference's own complaint, with no naming over it.
-    fn word_of_key(&self, key: &Value) -> Res<String> {
-        // A key carried beside its hash is the thing itself: the hash is
-        // the map's own reckoning and no part of the word it stands under.
+    pub(super) fn word_of_key(&self, key: &Value) -> Res<String> {
+        // A key carried beside its hash is the thing itself: the hash is the
+        // map's own reckoning and no part of the word it stands under.
         let key = match key { Value::Hashed(pair) => &pair.0, other => other };
         let bare = match key.contents() {
             Value::Text(_) => key.contents(),
@@ -4651,17 +4653,10 @@ impl<'a> Engine<'a> {
             },
             _ => false,
         });
-        // A maker marked to take raw keys sees a non-text key whole. Every
-        // other call still narrows keys to words before they are placed.
         let raw_maker = self.spreads_carry_foreign_keys(&args) && self.maker_takes_raw_keys(program);
-        let items: Vec<(Option<Value>, Value)> = if raw_maker {
-            if has_spread { self.expanded_call_items_for(args, Callee::Code(program))? }
-            else { self.expanded_call_items(args)? }
-        } else {
-            let narrowed = if has_spread { self.call_items_for(args, Callee::Code(program))? }
-                else { self.call_items(args)? };
-            narrowed.into_iter().map(|(name, value)| (name.map(|word| Value::text(&word)), value)).collect()
-        };
+        let items: Vec<(Option<Value>, Value)> = if has_spread {
+            self.expanded_call_items_for(args, Callee::Code(program))?
+        } else { self.expanded_call_items(args)? };
         let mut frame = vec![Value::Blank; rules.len()];
         let slots: Vec<usize> = rules.iter().enumerate().filter_map(|(i, r)| (*r < 2).then_some(i)).collect();
         let rest = rules.iter().position(|r| *r == 3);
@@ -4685,23 +4680,27 @@ impl<'a> Engine<'a> {
         let mut seen = std::collections::HashSet::new();
         for (name, value) in items {
             let Some(key) = name else { continue };
-            let word = match self.word_of_key(&key) {
-                Ok(word) => word,
-                Err(_) if pairs.is_some() && raw_maker => {
-                    keywords.push((self.special_key(&key)?, value));
-                    continue;
-                }
-                Err(_) => return Err(self.lang.spread_pairs_keys.first().cloned().unwrap_or_default().into()),
+            let key = match key.type_text() {
+                text @ Value::Codepoints(_) => text,
+                _ => match self.word_of_key(&key) {
+                    Ok(word) => Value::text(&word),
+                    Err(_) if pairs.is_some() && raw_maker => {
+                        keywords.push((self.special_key(&key)?, value));
+                        continue;
+                    }
+                    Err(_) => return Err(self.lang.spread_pairs_keys.first().cloned().unwrap_or_default().into()),
+                },
             };
-            if !seen.insert(word.clone()) {
-                return Err(self.keyword_twice(program, &word).into());
+            let name = match &key { Value::Text(text) => text.to_string(), _ => key.plain() };
+            if !seen.insert(key.text_codes()) {
+                return Err(self.keyword_twice(program, &name).into());
             }
-            let slot = program.formals.iter().enumerate().position(|(i, n)| *n == word && matches!(rules[i], 0 | 2));
+            let slot = program.formals.iter().enumerate().position(|(i, n)| matches!(&key, Value::Text(text) if n == text.as_ref()) && matches!(rules[i], 0 | 2));
             match slot {
                 Some(i) if matches!(frame[i], Value::Blank) => frame[i] = value,
-                Some(_) => return Err(self.place_twice(program, &word).into()),
-                None if pairs.is_some() => keywords.push((Value::text(&word), value)),
-                None => return Err(self.keyword_stray(program, rules, &spoken, &word).into()),
+                Some(_) => return Err(self.place_twice(program, &name).into()),
+                None if pairs.is_some() => keywords.push((key, value)),
+                None => return Err(self.keyword_stray(program, rules, &spoken, &name).into()),
             }
         }
         if rest.is_none() && in_order > slots.len() {
@@ -13601,6 +13600,11 @@ impl<'a> Engine<'a> {
                     if *builtin == Builtin::SortOf {
                         let class = self.class_type(supplied)?; self.data.push(class); return Ok(());
                     }
+                    if *builtin == Builtin::ClassTool(30) && !self.lang.partial_call_words.is_empty() {
+                        let made = self.class_work(30, supplied);
+                        if let Some(fled) = self.carried.take() { return Err(fled); }
+                        self.data.push(made?); return Ok(());
+                    }
                     // The property builtin takes its accessors by name; the making of the property sorts them.
                     if *builtin == Builtin::ClassTool(13) { let made = self.class_work(13, supplied); if let Some(fled) = self.carried.take() { return Err(fled); } self.data.push(made?); return Ok(()); }
                     if *builtin==Builtin::ClassTool(11) && !self.class_word("descriptor.get").is_empty() { let made=self.class_work(11,supplied); if let Some(fled) = self.carried.take() { return Err(fled); } self.data.push(made?); return Ok(()); }
@@ -14675,8 +14679,8 @@ impl<'a> Engine<'a> {
                     // over the row's members and not the row.
                     Value::Adapter(w) => {
                         let args = self.drop_many(argc - 1)?;
-                        let opened = self.call_items(args)?.into_iter()
-                            .map(|(key, value)| match key { Some(word) => Value::Tie(Rc::new((Value::text(&word), value))), None => value }).collect();
+                        let opened = self.expanded_call_items(args)?.into_iter()
+                            .map(|(key, value)| match key { Some(word) => Value::Tie(Rc::new((word, value))), None => value }).collect();
                         let v = self.class_apply(Value::Adapter(w), opened)?;
                         self.data.push(v);
                         Ok(())
@@ -20815,7 +20819,19 @@ impl<'a> Engine<'a> {
         let report = self.call_site.replace(false) && self.profiler.borrow().is_some()
             && !self.profiling.get() && !self.native_open.get();
         // Expansion precedes c_call; keyword key types belong to the native invocation.
-        let work = |this: &mut Self| { let named = this.keyword_items(items)?; invoke(this, named) };
+        let partial_call = matches!(callable, Value::Native(Builtin::ClassTool(30), _)) && !self.lang.partial_call_words.is_empty();
+        let work = |this: &mut Self| {
+            if partial_call {
+                let supplied = items.into_iter().map(|(key, value)| match key {
+                    Some(key) => Value::Tie(Rc::new((key, value))), None => value,
+                }).collect();
+                return this.class_work(30, supplied).map_err(|fault| match this.carried.take().unwrap_or(fault) {
+                    Fault::Note(words) => words,
+                    raised => { this.carried = Some(raised); this.special_fault() }
+                });
+            }
+            let named = this.keyword_items(items)?; invoke(this, named)
+        };
         if report { self.around_native(callable, work) } else { work(self) }
     }
 
