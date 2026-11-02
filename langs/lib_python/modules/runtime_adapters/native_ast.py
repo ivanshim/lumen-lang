@@ -2919,6 +2919,10 @@ class _Parser:
                     name = None
                     if not self.at_op(':'):
                         typ, ts, te = self.parse_expr(True)
+                        # 'except a,:' closes the bare tuple on the colon. A type list
+                        # such as 'except A, B:' ends on a name, not on that comma.
+                        if type(typ) == Tuple and self.at_op(':') and self.toks[self.at - 1].text == ',':
+                            _syntax('invalid syntax')
                     if self.at_name('as'):
                         self.pop()
                         name = self.pop().text
@@ -3015,6 +3019,10 @@ class _Parser:
         node, ls, le = self.parse_expr(True)
         if self.at_op(':'):
             self.pop()
+            if type(node) == Tuple:
+                _syntax('only single target (not tuple) can be annotated')
+            if type(node) == List:
+                _syntax('only single target (not list) can be annotated')
             annotation, ns, ne = self.parse_expr(False)
             value = None
             if self.at_op('='):
@@ -3280,6 +3288,12 @@ class _Parser:
         return node, ls, le
 
     def set_store(self, node, context=Store):
+        if type(node) == Starred:
+            if context == Del:
+                _syntax('cannot delete starred')
+            node.ctx = context()
+            self.set_store(node.value, context)
+            return
         if type(node) == Name or type(node) == Attribute or type(node) == Subscript:
             node.ctx = context()
             return
@@ -3326,7 +3340,7 @@ class _Parser:
                 comma = self.pop()
                 le = (comma.erow, comma.ecol)
                 tok = self.toks[self.at]
-                if tok.kind in ('newline', 'end') or self.at_op(';') or self.at_op('=') or self.at_op(')') or self.at_op(']') or self.at_op('}'):
+                if tok.kind in ('newline', 'end') or self.at_op(';') or self.at_op('=') or self.at_op(':') or self.at_op(')') or self.at_op(']') or self.at_op('}'):
                     break
                 elt, es, ee = self.parse_expr(False)
                 elts.append(elt)
