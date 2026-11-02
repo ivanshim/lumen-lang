@@ -13978,7 +13978,7 @@ impl<'a> Machine<'a> {
         if matches!(receiver.settled(), Value::Unpaired(_)) {
             let type_word = self.table.prim_words.iter().find(|(p, _)| *p == Prim::AsText).map(|(_, word)| word);
             let text_operation = type_word.and_then(|word| self.table.prims.get(&format!("{word}.{name}"))).copied();
-            if let Some(Prim::Textual(work @ (crate::text::Work::SPLITLINES | crate::text::Work::SPLIT | crate::text::Work::RSPLIT | crate::text::Work::PARTITION | crate::text::Work::RPARTITION | crate::text::Work::LOWER | crate::text::Work::UPPER | crate::text::Work::CASEFOLD | crate::text::Work::COUNT | crate::text::Work::REPLACE | crate::text::Work::FIND | crate::text::Work::RFIND | crate::text::Work::INDEX | crate::text::Work::RINDEX))) = text_operation {
+            if let Some(Prim::Textual(work @ (crate::text::Work::SPLITLINES | crate::text::Work::SPLIT | crate::text::Work::RSPLIT | crate::text::Work::PARTITION | crate::text::Work::RPARTITION | crate::text::Work::LOWER | crate::text::Work::UPPER | crate::text::Work::CASEFOLD | crate::text::Work::COUNT | crate::text::Work::REPLACE | crate::text::Work::REMOVEPREFIX | crate::text::Work::REMOVESUFFIX | crate::text::Work::FIND | crate::text::Work::RFIND | crate::text::Work::INDEX | crate::text::Work::RINDEX))) = text_operation {
                 let mut supplied = vec![receiver.settled()]; supplied.extend(arguments);
                 crate::text::fit_names(self.table, work, &mut supplied, keywords)?;
                 if work == crate::text::Work::SPLITLINES {
