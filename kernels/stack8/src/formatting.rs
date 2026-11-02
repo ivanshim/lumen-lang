@@ -553,7 +553,7 @@ impl Writer<'_> {
     /// of bytes says so: it knows the mark that shows a row of bytes,
     /// it seeks a keyed mark's name among keys that are rows of bytes,
     /// and a character mark holds one byte alone.
-    pub fn percent(&self, text: &str, argument: &Value, asked: &mut Ask<'_>, of_bytes: bool) -> Result<String> {
+    pub fn percent(&self, text: &str, argument: &Value, asked: &mut Ask<'_>, of_bytes: bool) -> Result<Vec<u32>> {
         let proxy_argument = Self::proxied(argument).map(|_| argument.clone());
         let settled = argument.contents();
         let tuple_worth = match &settled {
@@ -567,12 +567,12 @@ impl Writer<'_> {
         let mut used = 0;
         let mut at = 0;
         let chars: Vec<char> = text.chars().collect();
-        let mut out = String::new();
+        let mut out: Vec<u32> = Vec::new();
         let mut mapped = false;
         while let Some(&c) = chars.get(at) {
             at += 1;
-            if c != '%' { out.push(c); continue; }
-            if chars.get(at) == Some(&'%') { out.push('%'); at += 1; continue; }
+            if c != '%' { out.push(u32::from(c)); continue; }
+            if chars.get(at) == Some(&'%') { out.push(u32::from('%')); at += 1; continue; }
             let mark_position = at - 1;
             let mut keyed = None;
             let mut named_key = None;
@@ -646,7 +646,7 @@ impl Writer<'_> {
             if !letters.replace(' ', "").contains(code) {
                 return Err(self.percent_unknown(code, mark_position, at - 1, of_bytes));
             }
-            let result = if matches!(code, 's' | 'r' | 'a') || of_bytes && code == 'b' {
+            let result: Vec<u32> = if matches!(code, 's' | 'r' | 'a') || of_bytes && code == 'b' {
                 let shown = match asked(value, code, false)? {
                     Answer::Said(said) => said,
                     Answer::Unsaid if of_bytes && matches!(code, 'b' | 's') => {
@@ -658,15 +658,18 @@ impl Writer<'_> {
                 };
                 let shown: String = shown.chars().take(rule.precision.unwrap_or(usize::MAX)).collect();
                 rule.fill = ' '; if rule.align == '=' { rule.align = '>'; }
-                rule.pad("", &shown, '>')
+                rule.pad("", &shown, '>').chars().map(u32::from).collect()
             } else if code == 'c' {
-                let shown = match value {
-                    Value::Bytes(row, ..) if of_bytes && row.borrow().len() == 1 => char::from(row.borrow()[0]).to_string(),
-                    Value::Text(s) if !of_bytes && s.chars().count() == 1 => s.to_string(),
-                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => self.character(value, of_bytes)
+                rule.fill = ' '; if rule.align == '=' { rule.align = '>'; }
+                let shown: Vec<u32> = match value {
+                    Value::Bytes(row, ..) if of_bytes && row.borrow().len() == 1 => vec![u32::from(row.borrow()[0])],
+                    Value::Codepoints(row) if !of_bytes && row.len() == 1 => row.as_ref().clone(),
+                    Value::Codepoints(row) if of_bytes && row.len() == 1 && row[0] < 0x100 => vec![row[0]],
+                    Value::Text(s) if !of_bytes && s.chars().count() == 1 => s.chars().map(u32::from).collect(),
+                    Value::Small(_) | Value::Huge(_) | Value::Flag(_) => self.character_row(value, of_bytes)
                         .map_err(|_| self.fault("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
                     _ => match asked(value, code, true)? {
-                        Answer::Whole(whole) => self.character(&whole, of_bytes)
+                        Answer::Whole(whole) => self.character_row(&whole, of_bytes)
                             .map_err(|_| self.fault("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
                         Answer::CharacterType(name) => {
                             let required = if of_bytes { "an integer in range(256) or a single byte" }
@@ -681,6 +684,7 @@ impl Writer<'_> {
                             } else {
                                 match value {
                                     Value::Text(s) if !of_bytes => format!("a string of length {}", s.chars().count()),
+                                    Value::Codepoints(row) if !of_bytes => format!("a string of length {}", row.len()),
                                     Value::Bytes(row, mutable, _) if of_bytes => format!("a {} object of length {}", if *mutable { "bytearray" } else { "bytes" }, row.borrow().len()),
                                     _ => value.core_kind(),
                                 }
@@ -690,8 +694,14 @@ impl Writer<'_> {
                         _ => unreachable!(),
                     },
                 };
-                rule.fill = ' '; if rule.align == '=' { rule.align = '>'; }
-                rule.pad("", &shown, '>')
+                let extra = rule.width.saturating_sub(shown.len());
+                let align = if rule.align == '\0' { '>' } else { rule.align };
+                let (before, after) = match align { '<' => (0, extra), '^' => (extra / 2, extra - extra / 2), _ => (extra, 0) };
+                let fill = u32::from(rule.fill);
+                let mut row = vec![fill; before];
+                row.extend(shown);
+                row.extend(std::iter::repeat(fill).take(after));
+                row
             } else if matches!(code, 'd' | 'i' | 'u' | 'o' | 'x' | 'X') {
                 let integral = matches!(value, Value::Small(_) | Value::Huge(_) | Value::Flag(_));
                 let decimal = matches!(code, 'd' | 'i' | 'u');
@@ -728,7 +738,7 @@ impl Writer<'_> {
                 if let Some(p) = rule.precision { digits = "0".repeat(p.saturating_sub(digits.len())) + &digits; }
                 let mut head = rule.sign_for(n.is_negative());
                 if rule.alternate { head.push_str(match code { 'o' => "0o", 'x' => "0x", 'X' => "0X", _ => "" }); }
-                rule.pad(&head, &digits, '>')
+                rule.pad(&head, &digits, '>').chars().map(u32::from).collect()
             } else {
                 let mut held: Option<Value> = None;
                 let ready = matches!(value, Value::Real(_) | Value::Small(_) | Value::Huge(_) | Value::Flag(_));
@@ -750,12 +760,22 @@ impl Writer<'_> {
                 };
                 let mut body = if n.is_nan() { "nan".into() } else if n.is_infinite() { "inf".into() } else { decimal(n.abs(), &rule) };
                 if code.is_ascii_uppercase() { body.make_ascii_uppercase(); }
-                rule.pad(&rule.sign_for(n.is_sign_negative() && !n.is_nan()), &body, '>')
+                rule.pad(&rule.sign_for(n.is_sign_negative() && !n.is_nan()), &body, '>').chars().map(u32::from).collect()
             };
-            out.push_str(&result);
+            out.extend(result);
         }
         if !mapped && used != args.len() && !matches!(argument, Value::Map(_)) { return Err(self.fault("ext.op.rem.format.many", &[if of_bytes { "bytes" } else { "string" }, &used.to_string(), &args.len().to_string()])); }
         Ok(out)
+    }
+
+    /// The one code point a numeric mark stands for, surrogates
+    /// included: a mark may name any number under the most, and a
+    /// lone half is a code point as much as any other.
+    fn character_row(&self, value: &Value, of_bytes: bool) -> Result<Vec<u32>> {
+        let most = if of_bytes { 0xff } else { 0x10ffff };
+        let n = value.as_big()?.to_u32().filter(|n| *n <= most)
+            .ok_or_else(|| self.fault("ext.text.format.character", &[]))?;
+        Ok(vec![n])
     }
 
     fn character(&self, value: &Value, of_bytes: bool) -> Result<String> {
