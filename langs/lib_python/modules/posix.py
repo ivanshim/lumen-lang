@@ -123,7 +123,12 @@ pathconf_names = {name: number for number, name in enumerate((
 
 
 def fpathconf(fd, name, /):
-    return pathconf(fd, name)
+    if isinstance(name, str):
+        try:
+            name = pathconf_names[name]
+        except KeyError:
+            raise ValueError('unrecognized configuration name') from None
+    return _call('fpathconf', _descriptor(fd), _cint(name))
 
 
 def pathconf(path, name):
