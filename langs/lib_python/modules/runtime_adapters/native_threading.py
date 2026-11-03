@@ -226,3 +226,10 @@ class Timer(Thread):
 
     def cancel(self):
         self.finished.set()
+
+# CPython internal: register func to be called before joining threads.
+# This is used by concurrent.futures.thread for interpreter shutdown.
+def _register_atexit(func, *arg, **kwargs):
+    """Register *func* to be called before joining threads."""
+    import atexit
+    atexit.register(func, *arg, **kwargs)

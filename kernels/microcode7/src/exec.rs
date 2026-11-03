@@ -22900,7 +22900,7 @@ impl<'a> Machine<'a> {
             if let [owner, parameter] = operands {
                 if let Value::Blueprint(class) = owner.settled() {
                     let family = Self::native_word(&class).or_else(|| Self::native_beneath(&class));
-                    let container = family.as_deref().is_some_and(|word| ["list", "dict", "set", "tuple", "frozenset"].contains(&word));
+                    let container = family.as_deref().is_some_and(|word| ["list", "dict", "set", "tuple", "frozenset", "type", "enumerate", "memoryview", "staticmethod", "classmethod", "generator", "coroutine", "async_generator"].contains(&word));
                     if container && self.inherited_entry(&class, "__class_getitem__").is_none() {
                         let method = self.read_class_member(owner.clone(), "__class_getitem__", false).map_err(|escape| self.suspension_fault(escape))?;
                         let result = self.apply_class_member(method, vec![parameter.clone()]);
@@ -22911,8 +22911,8 @@ impl<'a> Machine<'a> {
         }
         if operation == Prim::At && self.rules.has_any_ext_stmt_class_builtin {
             if let [Value::Intrinsic(kind, label), parameter] = operands {
-                let eligible = matches!(kind, Prim::Listed | Prim::Tupling | Prim::Dictionary | Prim::Uniques | Prim::Unchanging)
-                    && matches!(label.as_ref(), "list" | "tuple" | "dict" | "set" | "frozenset");
+                let eligible = matches!(kind, Prim::Listed | Prim::Tupling | Prim::Dictionary | Prim::Uniques | Prim::Unchanging | Prim::SortOf | Prim::Numbered | Prim::ClassWork(9) | Prim::ClassWork(10))
+                    && matches!(label.as_ref(), "list" | "tuple" | "dict" | "set" | "frozenset" | "type" | "enumerate" | "staticmethod" | "classmethod");
                 if eligible {
                     let alias_class = Value::Blueprint(self.native_kind("GenericAlias"));
                     let made = self.apply_class_member(alias_class, vec![operands[0].clone(), parameter.clone()]);

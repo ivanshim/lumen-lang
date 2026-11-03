@@ -11578,7 +11578,7 @@ impl<'a> Engine<'a> {
         if matches!(op, Action::At) && Lang::spells(&self.lang.builtin_bases, "tuple") {
             if let Value::Class(class) = a.contents() {
                 let base = Self::own_kind(&class).or_else(|| Self::kind_beneath(&class));
-                if matches!(base.as_deref(), Some("tuple" | "list" | "dict" | "set" | "frozenset")) && self.class_value(&class, "__class_getitem__").is_none() {
+                if matches!(base.as_deref(), Some("tuple" | "list" | "dict" | "set" | "frozenset" | "type" | "enumerate" | "memoryview" | "staticmethod" | "classmethod" | "generator" | "coroutine" | "async_generator")) && self.class_value(&class, "__class_getitem__").is_none() {
                     let member = self.class_get(a.clone(), "__class_getitem__", false).map_err(|fault| fault.told(&self.wording()))?;
                     return self.class_apply(member, vec![b.clone()]).map_err(|fault| fault.told(&self.wording()));
                 }
@@ -11586,8 +11586,8 @@ impl<'a> Engine<'a> {
         }
         if matches!(op, Action::At) && Lang::spells(&self.lang.builtin_bases, "list") {
             if let Value::Native(kind, name) = a {
-                if matches!(kind, Builtin::List | Builtin::Tuple | Builtin::Dict | Builtin::Set | Builtin::Frozen)
-                    && matches!(name.as_ref(), "list" | "tuple" | "dict" | "set" | "frozenset") {
+                if matches!(kind, Builtin::List | Builtin::Tuple | Builtin::Dict | Builtin::Set | Builtin::Frozen | Builtin::SortOf | Builtin::Enumerate | Builtin::ClassTool(9) | Builtin::ClassTool(10))
+                    && matches!(name.as_ref(), "list" | "tuple" | "dict" | "set" | "frozenset" | "type" | "enumerate" | "staticmethod" | "classmethod") {
                     let maker = Value::Class(self.kind_class("GenericAlias"));
                     return match self.class_apply(maker.contents(), vec![a.clone(), b.clone()]) {
                         Ok(alias) => Ok(alias),
