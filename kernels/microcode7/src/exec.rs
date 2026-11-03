@@ -7095,6 +7095,8 @@ impl<'a> Machine<'a> {
         let kept = frame.holds.borrow();
         let Value::Bound(body, environment) = &kept[5].1 else { return Vec::new() };
         let (body, environment) = (body.clone(), environment.clone());
+        let handed = kept.iter().any(|(word, held)| word == "\0supplied-locals" && matches!(held, Value::Flag(true)));
+        let origin = kept.iter().find(|(word, _)| word == "\0locals-origin").map(|(_, held)| held.clone());
         drop(kept);
         // A class body shows the book it fills, and still shows the
         // frame's own names beside it: an inlined comprehension's
@@ -7102,20 +7104,26 @@ impl<'a> Machine<'a> {
         let mut entries = Vec::new();
         if let Some((owner, Some(book))) = &self.body_namespace {
             if Rc::ptr_eq(owner, &body) { entries = Self::locals_pairs_in_book(book); }
+        } else if handed {
+            // A reading handed its own dictionaries shows those names:
+            // its slots hold the reading's own bookkeeping, not names.
+            if let Some(origin) = origin { entries = Self::locals_pairs_in_book(&origin); }
         }
-        for (word, held) in body.idents.iter().zip(environment.cells.borrow().iter()) {
-            let value = held.settled();
-            let shown = if body.ident == "<genexpr>" && body.formals.first() == Some(word) { ".0" } else { word.as_str() };
-            if Self::visible_name(shown) && !matches!(value, Value::Unset)
-                && !entries.iter().any(|(key, _)| key.bare() == shown) {
-                entries.push((Value::text(shown), value));
+        if !handed {
+            for (word, held) in body.idents.iter().zip(environment.cells.borrow().iter()) {
+                let value = held.settled();
+                let shown = if body.ident == "<genexpr>" && body.formals.first() == Some(word) { ".0" } else { word.as_str() };
+                if Self::visible_name(shown) && !matches!(value, Value::Unset)
+                    && !entries.iter().any(|(key, _)| key.bare() == shown) {
+                    entries.push((Value::text(shown), value));
+                }
             }
-        }
-        for slot in &body.reaching {
-            if !Self::visible_name(&slot.ident) || entries.iter().any(|(word, _)| word.bare() == slot.ident.as_ref()) { continue; }
-            let held = ascend(&environment, slot.up).cells.borrow().get(slot.at).cloned();
-            let value = match held { Some(held) => held.settled(), None => continue };
-            if !matches!(value, Value::Unset) { entries.push((Value::text(&slot.ident), value)); }
+            for slot in &body.reaching {
+                if !Self::visible_name(&slot.ident) || entries.iter().any(|(word, _)| word.bare() == slot.ident.as_ref()) { continue; }
+                let held = ascend(&environment, slot.up).cells.borrow().get(slot.at).cloned();
+                let value = match held { Some(held) => held.settled(), None => continue };
+                if !matches!(value, Value::Unset) { entries.push((Value::text(&slot.ident), value)); }
+            }
         }
         if let Some((owner, names, scope)) = &self.gathering_locals {
             if *owner == Rc::as_ptr(frame) as usize {
