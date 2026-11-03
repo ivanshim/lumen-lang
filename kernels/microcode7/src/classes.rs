@@ -4504,25 +4504,10 @@ impl<'a> Machine<'a> {
             _ => None,
         }
     }
-    fn routine_code_ptr(value: &crate::ghost::Ghost) -> Option<usize> {
-        use crate::ghost::Ghost;
-        match value {
-            Ghost::Routine(code) | Ghost::Bound(code, _) | Ghost::Method(code, _, _) => Some(code.as_ptr() as usize),
-            _ => None,
-        }
-    }
     pub(super) fn reindex_routine_members(&mut self) {
         self.routine_member_positions = self.routine_members.iter().enumerate()
             .filter_map(|(at, (key, _))| Self::routine_member_weak_key(key).map(|key| (key, at))).collect();
-        self.reindex_routine_codes();
-    }
-    fn reindex_routine_codes(&mut self) {
-        self.routine_code_at.clear();
-        for (at, (key, _)) in self.routine_members.iter().enumerate() {
-            if key.departed() { continue; }
-            let Some(ptr) = Self::routine_code_ptr(key) else { continue; };
-            self.routine_code_at.entry(ptr).or_insert(at);
-        }
+        self.routine_code_slots.borrow_mut().clear();
     }
     fn routine_member_index(&self, value: &Value) -> Option<usize> {
         if let Some(identity) = Self::routine_member_key(value) {
@@ -5154,7 +5139,8 @@ impl<'a> Machine<'a> {
     /// none), or the module the file it came of was read as.
     pub(super) fn routine_module(&self, code: &Rc<Routine>) -> Value {
         let apart = format!("{}\0", self.detail("module"));
-        if let Some(members) = self.routine_member_holder(code) {
+        if let Some(at) = self.routine_member_slot(code) {
+            let members = &self.routine_members[at].1;
             if let Some((_, v)) = members.holds.borrow().iter().find(|(k, _)| **k == apart) { return v.clone(); }
         }
         if code.globe.is_some() || code.definition.is_some() {
@@ -5202,25 +5188,25 @@ impl<'a> Machine<'a> {
                 // Reuse a dead function's slot without moving live indices;
                 // a caller can keep an index while annotation code reenters.
                 let identity = Self::routine_member_weak_key(&entry.0);
-                if let Some(vacant) = self.routine_members.iter().rposition(|(key, _)| key.departed()) {
+                let at = if let Some(vacant) = self.routine_members.iter().rposition(|(key, _)| key.departed()) {
                     if let Some(old) = Self::routine_member_weak_key(&self.routine_members[vacant].0) {
                         if self.routine_member_positions.get(&old) == Some(&vacant) {
                             self.routine_member_positions.remove(&old);
                         }
                     }
                     self.routine_members[vacant] = entry;
-                    if let Some(identity) = identity { self.routine_member_positions.insert(identity, vacant); }
-                    self.reindex_routine_codes();
                     vacant
                 } else {
                     self.routine_members.push(entry);
-                    let at = self.routine_members.len() - 1;
-                    if let Some(identity) = identity { self.routine_member_positions.insert(identity, at); }
-                    if let Some(ptr) = Self::routine_code_ptr(&self.routine_members[at].0) {
-                        self.routine_code_at.entry(ptr).or_insert(at);
-                    }
-                    at
+                    self.routine_members.len() - 1
+                };
+                if let Some(identity) = identity {
+                    // Only this routine can acquire an earlier slot or lose a cached miss.
+                    // A displaced dead routine fails the live-slot check on its next read.
+                    self.routine_code_slots.get_mut().remove(&identity.1);
+                    self.routine_member_positions.insert(identity, at);
                 }
+                at
             }
         }
     }

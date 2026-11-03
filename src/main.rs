@@ -143,7 +143,7 @@ fn with_library(kernel: &str, language: &str, source: String) -> String {
                 // would load the whole os chain, and the import bootstrap is left to the first
                 // import that asks for it, as it is for a program run from a file.
                 match env::var("LUMEN_COMMAND_SOURCE") {
-                    Ok(text) => format!("\nimport linecache\nlinecache._register_code(sys._getframe().f_code, {}, '<string>')\n__spec__ = None\ndel __file__", serde_json::to_string(&text).expect("a source string can be quoted")),
+                    Ok(text) => format!("\nimport linecache\nlinecache._register_code(sys._getframe().f_code, {}, '<string>')\ndel linecache\n__spec__ = None\ndel __file__", serde_json::to_string(&text).expect("a source string can be quoted")),
                     Err(_) => String::new(),
                 },
                 if env::var("LUMEN_WARNOPTIONS").is_ok_and(|options| !options.is_empty()) { "\nimport warnings" } else { "" }))
@@ -837,7 +837,12 @@ fn run_all(python_run: std::sync::mpsc::Sender<()>) {
     // Command strings have no filesystem source and share the interactive cache.
     let source = if let Some(text) = command_source {
         let literal = serde_json::to_string(&text).expect("a source string can be quoted");
-        let registered = format!("__import__('linecache')._register_code(compile({literal}, '<string>', 'exec'), {literal}, '<string>')\n{source}");
+        // A command string has no lines for a filename lookup: answer that before the
+        // fallback that loads os and tokenize, while the compiled code below still
+        // gives tracebacks their source lines and linecache.cache stays empty.
+        // Hold the module on the function: this def runs in the command's globals,
+        // and the command may rebind or delete the name linecache afterwards.
+        let registered = format!("import linecache\ndef _command_updatecache(filename, module_globals=None, _linecache=linecache, _original=linecache.updatecache):\n    if filename == '<string>':\n        _linecache.cache.pop(filename, None)\n        return []\n    return _original(filename, module_globals)\nlinecache.updatecache = _command_updatecache\ndel _command_updatecache\nlinecache._register_code(compile({literal}, '<string>', 'exec'), {literal}, '<string>')\ndel linecache\n{source}");
         with_library(&inv.kernel, inv.language.name(), registered)
     } else { with_library(&inv.kernel, inv.language.name(), source) };
     // How many lines the library put before the program's own text, so

@@ -703,9 +703,8 @@ pub struct Machine<'a> {
     native_kind_names: RefCell<HashMap<String, std::collections::HashSet<String>>>,
     routine_members: Vec<(crate::ghost::Ghost, Rc<Thing>)>,
     routine_member_positions: HashMap<(u8, usize, usize), usize, crate::table::FxBuildHasher>,
-    // First live member row for a routine address, so a call reads that row
-    // instead of walking every routine that has ever been stored.
-    routine_code_at: HashMap<usize, usize, crate::table::FxBuildHasher>,
+    /// First live member slot of a routine address, or a cached miss.
+    routine_code_slots: std::cell::RefCell<HashMap<usize, Option<usize>, crate::table::FxBuildHasher>>,
     reaping: bool,
     cycle_checkpoint_slots: usize,
     /// How many bytes were alive once the last reaping was done.
@@ -2290,7 +2289,7 @@ impl<'a> Machine<'a> {
             code_kind: None,
             cached_forms: None,
             member_inventories: RefCell::new(HashMap::new()),
-            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: HashMap::default(), routine_code_at: HashMap::default(), reaping: false, cycle_checkpoint_slots: 0, reaped_at_bytes: 0, quiet_module_slots: Default::default(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
+            ancestor: if table.strings("ext.builtin.exceptions").is_empty() { None } else { Some(ancestor) }, property_kind: None, trace_kind: None, classmethod_kind: None, staticmethod_kind: None, builder_kind: None, native_kinds: Vec::new(), native_kind_names: RefCell::new(HashMap::new()), routine_members: Vec::new(), routine_member_positions: HashMap::default(), routine_code_slots: std::cell::RefCell::new(HashMap::default()), reaping: false, cycle_checkpoint_slots: 0, reaped_at_bytes: 0, quiet_module_slots: Default::default(), loose_entries: RefCell::new(HashMap::new()), written_over: HashMap::new(),
             stack_origin: &table as *const &Table as usize,
             descriptor_files: std::collections::BTreeMap::new(),
             table,
@@ -15598,9 +15597,9 @@ impl<'a> Machine<'a> {
     /// What a routine is called in the words about a call made to it.
     fn routine_called(&self, program: &Routine) -> String {
         if self.rules.has_any_ext_stmt_class_special {
-            if let Some(attributes) = self.routine_member_holder(program) {
+            if let Some(at) = self.routine_member_slot(program) {
                 let qualified_key = self.detail("qualified").to_owned() + "\0";
-                let entries = attributes.holds.borrow();
+                let entries = self.routine_members[at].1.holds.borrow();
                 if let Some(entry) = entries.iter().find(|entry| entry.0 == qualified_key) {
                     return entry.1.bare();
                 }
@@ -15718,32 +15717,41 @@ impl<'a> Machine<'a> {
     /// the way a native maker does, instead of having every key turned into
     /// a word first. The standard adapter marks such a routine with an
     /// attribute, read here off the routine's own book.
-    /// The attribute holder of the first live member whose code is `program`.
-    fn routine_member_holder(&self, program: &Routine) -> Option<&Rc<Thing>> {
-        let want = std::ptr::from_ref(program) as usize;
-        let &at = self.routine_code_at.get(&want)?;
-        if let Some((ghost, holder)) = self.routine_members.get(at) {
-            if Self::ghost_holds_code(ghost, want) { return Some(holder); }
+    /// First member slot whose routine is `program`, remembered so a wrapped
+    /// call does not revive every routine. `None` means a finished walk found
+    /// no slot. A stale `Some` is checked and walked again.
+    pub(super) fn routine_member_slot(&self, program: &Routine) -> Option<usize> {
+        let ptr = program as *const Routine as usize;
+        if let Some(known) = self.routine_code_slots.borrow().get(&ptr).copied() {
+            match known {
+                Some(at) if self.routine_slot_holds(at, program) => return Some(at),
+                None => return None,
+                Some(_) => {}
+            }
         }
-        self.routine_members.iter().find(|(ghost, _)| Self::ghost_holds_code(ghost, want)).map(|(_, holder)| holder)
+        let found = self.routine_members.iter().position(|(callable, _)| {
+            callable.revive().is_some_and(|value| match &value {
+                Value::Routine(code) | Value::Bound(code, _) | Value::Method(code, _, _) => std::ptr::eq(program, code.as_ref()),
+                _ => false,
+            })
+        });
+        self.routine_code_slots.borrow_mut().insert(ptr, found);
+        found
     }
 
-    fn ghost_holds_code(ghost: &crate::ghost::Ghost, want: usize) -> bool {
-        use crate::ghost::Ghost;
-        match ghost {
-            Ghost::Routine(code) => code.strong_count() > 0 && code.as_ptr() as usize == want,
-            Ghost::Bound(code, frame) => code.strong_count() > 0 && frame.strong_count() > 0 && code.as_ptr() as usize == want,
-            Ghost::Method(code, thing, mark) => code.strong_count() > 0 && thing.strong_count() > 0 && mark.strong_count() > 0 && code.as_ptr() as usize == want,
+    fn routine_slot_holds(&self, at: usize, program: &Routine) -> bool {
+        self.routine_members.get(at).and_then(|(callable, _)| callable.revive()).is_some_and(|value| match &value {
+            Value::Routine(code) | Value::Bound(code, _) | Value::Method(code, _, _) => std::ptr::eq(program, code.as_ref()),
             _ => false,
-        }
+        })
     }
 
     pub(super) fn routine_takes_raw_keys(&self, program: &Routine) -> bool {
         // The raw-key making is the reference's own, so only the Python
         // definition may opt into it; every other language keeps words.
-        if !self.table.flag("ext.op.arithmetic.python_numbers") { return false; }
-        let Some(attributes) = self.routine_member_holder(program) else { return false; };
-        let entries = attributes.holds.borrow();
+        if !self.python_numbers { return false; }
+        let Some(at) = self.routine_member_slot(program) else { return false; };
+        let entries = self.routine_members[at].1.holds.borrow();
         if entries.iter().any(|(word, held)| {
             (word == "_lumen_raw_keywords" || word == "_lumen_raw_keywords\0" || word == "\0_lumen_raw_keywords\0")
                 && matches!(held.settled(), Value::Flag(true))
@@ -24984,7 +24992,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        if [Prim::Plus, Prim::Join].contains(&op) && v.len() == 2 && v.iter().any(|x| matches!(x, Value::Unpaired(_))) {
+        if matches!(op, Prim::Plus | Prim::Join) && v.len() == 2 && v.iter().any(|x| matches!(x, Value::Unpaired(_))) {
             if let (Some(first), Some(last)) = (v[0].character_numbers(), v[1].character_numbers()) {
                 if op == Prim::Plus && self.table.flag("ext.op.arithmetic.python_numbers") {
                     let original = if last.is_empty() { Some(&v[0]) } else if first.is_empty() { Some(&v[1]) } else { None };
@@ -39067,14 +39075,27 @@ impl<'a> Machine<'a> {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
-        let seeded = self.idents.clone();
         let natives = if self.rules.builtin_namespace_words.is_empty() { None } else {
             Some(self.source_natives().map_err(|escape| self.carried_native_fault(escape))?)
         };
-        let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, natives, None, settling, sites)?;
+        // A reading with no saved forms is built over the names where
+        // they stand; only the saved forms need a copy of them.
+        let (mut built, shown) = if self.cached_forms.is_some() {
+            let seeded = self.idents.clone();
+            self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, natives, None, settling, sites)?
+        } else {
+            self.table.source.replace(Some(Rc::from(source)));
+            let written_in: Option<Rc<str>> = Some(Rc::from(file.as_str()));
+            crate::build::holding_figures(self.figure_limit());
+            let outcome = crate::build::using_tree_sites(sites, || crate::build::build_text(&tokens, self.table, &self.idents, 0, written_in, None, natives, None, mode == 1, &[], top_await, mode == 2, settling, self.text_future_bits.get()));
+            match outcome {
+                Ok(built) => (built, false),
+                Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), source)),
+            }
+        };
         // What the build noted about how the text is written is said
         // once the text stands, each warning through the warnings module.
-        self.idents = built.globals.clone();
+        self.idents = std::mem::take(&mut built.globals);
         self.newest_places.borrow_mut().0 = 0;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         if warn_source {
@@ -39123,10 +39144,11 @@ impl<'a> Machine<'a> {
         });
         if let Some(path) = home {
             if let Some(Value::Thing(space)) = self.imported.get(&path).cloned() {
+                let known = crate::build::spots_of(&self.idents);
                 for (name, _) in space.holds.borrow().iter() {
                     if name.starts_with('\0') || names.iter().any(|local| local == name) { continue; }
                     let wanted = format!("\0import/{path}/{name}");
-                    if self.idents.iter().any(|word| word == &wanted) {
+                    if known.contains_key(&wanted) {
                         aliasing.push((name.clone(), wanted));
                     }
                 }
@@ -39137,7 +39159,7 @@ impl<'a> Machine<'a> {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
-        self.idents = built.globals.clone();
+        self.idents = std::mem::take(&mut built.globals);
         self.newest_places.borrow_mut().0 = 0;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         if warn_source {
