@@ -386,6 +386,17 @@ impl Layout<'_> {
         Ok(shape.padded(prefix, body, '>'))
     }
 
+    /// The one code point a numeric mark names, halves included: a
+    /// mark may give any number under the most, and a lone half is a
+    /// code point like any other though no letter can hold it.
+    fn character_row(&self, item: &Value, of_bytes: bool) -> Result<Vec<u32>, String> {
+        let most = if of_bytes { 0xff } else { 0x10ffff };
+        match item.as_big()?.to_u32() {
+            Some(n) if n <= most => Ok(vec![n]),
+            _ => Err(self.complain("ext.text.format.character", &[])),
+        }
+    }
+
     fn character(&self, item: &Value, of_bytes: bool) -> Answer {
         let most = if of_bytes { 0xff } else { 0x10ffff };
         match item.as_big()?.to_u32() {
@@ -522,7 +533,7 @@ impl Layout<'_> {
     /// says so: it knows the mark that shows a row of bytes, it seeks a
     /// keyed mark's name among keys that are rows of bytes, and a
     /// character mark holds one byte alone.
-    pub fn remainder(&self, pattern: &str, supplied: &Value, asked: &mut dyn Elsewhere, of_bytes: bool) -> Answer {
+    pub fn remainder(&self, pattern: &str, supplied: &Value, asked: &mut dyn Elsewhere, of_bytes: bool) -> Result<Vec<u32>, String> {
         if let Value::Shared(cell) | Value::Mutable(cell, _) = supplied {
             let held = cell.borrow().clone();
             return self.remainder(pattern, &held, asked, of_bytes);
@@ -542,10 +553,10 @@ impl Layout<'_> {
         let mut used = 0usize;
         let mut named_seen = false;
         let mut input = pattern.chars().peekable();
-        let mut output = String::new();
+        let mut output: Vec<u32> = Vec::new();
         while let Some(mark) = input.next() {
-            if mark != '%' { output.push(mark); continue; }
-            if input.peek() == Some(&'%') { input.next(); output.push('%'); continue; }
+            if mark != '%' { output.push(u32::from(mark)); continue; }
+            if input.peek() == Some(&'%') { input.next(); output.push(u32::from('%')); continue; }
             let mark_position = pattern.chars().count() - input.clone().count() - 1;
             let mut named_key = None;
             let named = if input.peek() == Some(&'(') {
@@ -625,7 +636,7 @@ impl Layout<'_> {
                 shape.padding = '0'; shape.justify = Some('=');
             }
             let shows = matches!(conversion, 'a' | 'r' | 's') || of_bytes && conversion == 'b';
-            let (head, body) = match conversion {
+            match conversion {
                 'a' | 'r' | 's' | 'b' if shows => {
                     let text = match asked.value_worded(item, !matches!(conversion, 's' | 'b'))? {
                         Some(ready) => ready,
@@ -637,18 +648,20 @@ impl Layout<'_> {
                     };
                     shape.padding = ' ';
                     if shape.justify == Some('=') { shape.justify = Some('>'); }
-                    (String::new(), text.chars().take(shape.digits.unwrap_or(usize::MAX)).collect())
+                    output.extend(shape.padded(String::new(), text.chars().take(shape.digits.unwrap_or(usize::MAX)).collect(), '>').chars().map(u32::from));
                 }
                 'c' => {
                     shape.padding = ' ';
                     if shape.justify == Some('=') { shape.justify = Some('>'); }
-                    let c = match item {
-                        Value::Octets { cell, .. } if of_bytes && cell.borrow().len() == 1 => char::from(cell.borrow()[0]).to_string(),
-                        Value::Text(text) if !of_bytes && text.chars().count() == 1 => text.to_string(),
+                    let c: Vec<u32> = match item {
+                        Value::Octets { cell, .. } if of_bytes && cell.borrow().len() == 1 => vec![u32::from(cell.borrow()[0])],
+                        Value::Unpaired(row) if !of_bytes && row.len() == 1 => row.to_vec(),
+                        Value::Unpaired(row) if of_bytes && row.len() == 1 && row[0] < 0x100 => vec![row[0]],
+                        Value::Text(text) if !of_bytes && text.chars().count() == 1 => text.chars().map(u32::from).collect(),
                         _ => match if matches!(item, Value::Huge(_) | Value::Small(_) | Value::Flag(_)) {
                             NumberAnswer::Whole(item.clone())
                         } else { asked.value_numbered(item, conversion)? } {
-                            NumberAnswer::Whole(whole) => self.character(&whole, of_bytes)
+                            NumberAnswer::Whole(whole) => self.character_row(&whole, of_bytes)
                                 .map_err(|_| self.complain("ext.op.rem.format.character.range", &[&location, if of_bytes { "256" } else { "0x110000" }]))?,
                             NumberAnswer::CharacterType(name) => {
                                 let required = if of_bytes { "an integer in range(256) or a single byte" }
@@ -663,6 +676,7 @@ impl Layout<'_> {
                                 } else {
                                     match item {
                                         Value::Text(text) if !of_bytes => format!("a string of length {}", text.chars().count()),
+                                        Value::Unpaired(row) if !of_bytes => format!("a string of length {}", row.len()),
                                         Value::Octets { cell, changeable, .. } if of_bytes => format!("a {} object of length {}", if *changeable { "bytearray" } else { "bytes" }, cell.borrow().len()),
                                         _ => item.kind_word(),
                                     }
@@ -671,7 +685,16 @@ impl Layout<'_> {
                             },
                         },
                     };
-                    (String::new(), c)
+                    let extra = shape.extent.saturating_sub(c.len());
+                    let direction = shape.justify.unwrap_or('>');
+                    let fill = shape.padding as u32;
+                    let mut row = Vec::new();
+                    match direction {
+                        '<' => { row.extend(c); row.extend(std::iter::repeat(fill).take(extra)); }
+                        '^' => { row.extend(std::iter::repeat(fill).take(extra / 2)); row.extend(c); row.extend(std::iter::repeat(fill).take(extra - extra / 2)); }
+                        _ => { row.extend(std::iter::repeat(fill).take(extra)); row.extend(c); }
+                    }
+                    output.extend(row);
                 }
                 'd' | 'i' | 'u' | 'o' | 'x' | 'X' => {
                     let accepts_real = matches!(conversion, 'd' | 'i' | 'u');
@@ -719,7 +742,7 @@ impl Layout<'_> {
                     digits = "0".repeat(shape.digits.unwrap_or(0).saturating_sub(digits.len())) + &digits;
                     let mut lead = shape.front(number.is_negative());
                     if shape.alternative { lead += match conversion { 'x' => "0x", 'X' => "0X", 'o' => "0o", _ => "" }; }
-                    (lead, digits)
+                    output.extend(shape.padded(lead, digits, '>').chars().map(u32::from));
                 }
                 'e' | 'E' | 'f' | 'F' | 'g' | 'G' => {
                     let mut held: Option<Value> = None;
@@ -736,13 +759,12 @@ impl Layout<'_> {
                     }
                     let chosen = held.as_ref().unwrap_or(item);
                     let number = self.binary(chosen).map_err(|_| self.complain("ext.op.rem.format.real", &[&location, &conversion.to_string(), &item.kind_word()]))?;
-                    (shape.front(number.is_sign_negative() && !number.is_nan()), shape.real_digits(number.abs()))
+                    output.extend(shape.padded(shape.front(number.is_sign_negative() && !number.is_nan()), shape.real_digits(number.abs()), '>').chars().map(u32::from));
                 }
                 _ => {
                     return Err(self.unsupported(conversion, mark_position, pattern.chars().count() - input.clone().count() - 1, of_bytes));
                 }
-            };
-            output.push_str(&shape.padded(head, body, '>'));
+            }
         }
         if !named_seen && used < positional.len() && !matches!(supplied, Value::Dict(_)) {
             return Err(self.complain("ext.op.rem.format.many", &[if of_bytes { "bytes" } else { "string" }, &used.to_string(), &positional.len().to_string()]));

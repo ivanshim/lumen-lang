@@ -574,6 +574,15 @@ pub fn run(op: TextOp, _name: &str, args: &[Value], lang: &Lang, words: &Wording
             if args.len() != 1 { return Err(format!("TypeError: str.__getnewargs__() takes no arguments ({} given)", args.len() - 1)); }
             return Ok(Value::tuple(vec![Value::from_codes(codes.to_vec())]));
         }
+        if matches!(op, Removeprefix | Removesuffix) {
+            if args.len() != 2 { return Err(fault(lang, "arguments")); }
+            let affix = code_row(&args[1]).map_err(|_| format!("TypeError: {}() argument must be str, not {}", checked_name(op), args[1].core_kind()))?;
+            let row = codes.as_ref();
+            let kept = if op == Removeprefix && row.starts_with(&affix) { &row[affix.len()..] }
+                else if op == Removesuffix && row.ends_with(&affix) { &row[..row.len() - affix.len()] }
+                else { row };
+            return Ok(Value::from_codes(kept.to_vec()));
+        }
         if matches!(op, Isascii | Isdecimal | Isnumeric | Istitle | Isidentifier | Isprintable) {
             let clean: String = codes.iter().map(|n| char::from_u32(*n).unwrap_or('\0')).collect();
             let mut supplied = args.to_vec(); supplied[0] = Value::text(&clean);

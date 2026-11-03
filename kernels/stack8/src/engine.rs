@@ -7938,6 +7938,12 @@ impl<'a> Engine<'a> {
                                     let mut aliases = Vec::new();
                                     for (name, _) in space.fields.borrow().iter() {
                                         if name.starts_with('\0') { continue; }
+                                        // A name the running routine already
+                                        // keeps stands for itself before the
+                                        // module's own of that spelling: text
+                                        // read where the routine is must see
+                                        // the frame's binding, not the module's.
+                                        if program.idents.iter().any(|held| held == name) { continue; }
                                         if let Some(at) = self.registry.module_slot(&path, name) {
                                             aliases.push((name.clone(), self.registry.idents[at].clone()));
                                         }
@@ -11557,7 +11563,7 @@ impl<'a> Engine<'a> {
             let below = matches!(Self::worth_of(b).map(|worth| worth.contents()), Some(Value::Text(_)));
             if !(below && self.special_method(b, 31).is_some()) {
                 let pattern = pattern.clone();
-                return Ok(Value::text(&self.rem_filled(&pattern, b)?));
+                return Ok(Value::from_codes(self.rem_filled(&pattern, b)?));
             }
         }
         // A row of bytes on the left of the remainder sign fills its
@@ -17465,7 +17471,7 @@ impl<'a> Engine<'a> {
         } else { Answer::Missing(self.format_kind(value, code)) })
     }
 
-    fn rem_filled(&mut self, template: &str, arguments: &Value) -> Res<String> {
+    fn rem_filled(&mut self, template: &str, arguments: &Value) -> Res<Vec<u32>> {
         // PyTuple_Check accepts subclasses: their stored tuple supplies the
         // positional fields, rather than formatting the instance as one field.
         let tuple = Self::worth_of(arguments).map(|v| v.contents()).filter(|v| matches!(v, Value::Tuple(_)));
@@ -17489,7 +17495,7 @@ impl<'a> Engine<'a> {
 
     /// Remainder over text fills one mark at a time. A list supplies
     /// the marks in order; every other value supplies just one.
-    fn rem_text(&self, template: &str, arguments: &Value) -> Res<String> {
+    fn rem_text(&self, template: &str, arguments: &Value) -> Res<Vec<u32>> {
         if !self.lang.format_builtin.is_empty() {
             let arguments = self.rem_argument(arguments);
             return crate::formatting::Writer { lang: self.lang, words: self.wording() }.percent(template, &arguments, &mut |_, _, numbering| Ok(if numbering { crate::formatting::Answer::Missing(String::new()) } else { crate::formatting::Answer::Unsaid }), false);
@@ -17501,11 +17507,11 @@ impl<'a> Engine<'a> {
             one => vec![one],
         };
         let mut used = 0;
-        let mut out = String::new();
+        let mut out: Vec<u32> = Vec::new();
         let mut chars = template.chars().peekable();
         while let Some(c) = chars.next() {
-            if c != '%' { out.push(c); continue; }
-            if chars.peek() == Some(&'%') { chars.next(); out.push('%'); continue; }
+            if c != '%' { out.push(u32::from(c)); continue; }
+            if chars.peek() == Some(&'%') { chars.next(); out.push(u32::from('%')); continue; }
             let mut precision = None;
             if chars.peek() == Some(&'.') {
                 chars.next();
@@ -17540,7 +17546,7 @@ impl<'a> Engine<'a> {
                 }
                 _ => return Err(bad()),
             };
-            out.push_str(&filled);
+            out.extend(filled.chars().map(u32::from));
         }
         if used != values.len() { return Err(wrong()); }
         Ok(out)
@@ -18448,7 +18454,7 @@ impl<'a> Engine<'a> {
             }
             Action::Mod if self.lang.rem_formats_text && matches!(a, Value::Text(_)) => {
                 let Value::Text(template) = a else { unreachable!() };
-                Value::text(&self.rem_text(template, b)?)
+                Value::from_codes(self.rem_text(template, b)?)
             }
             Action::Same | Action::Unsame if !self.lang.identity_not.is_empty() => {
                 let same = match (a, b) {
@@ -21893,7 +21899,7 @@ impl<'a> Engine<'a> {
         if let Value::Codepoints(codes) = &contents {
             let qualified = self.lang.builtin_words.iter().find(|(op, _)| *op == Builtin::ToText)
                 .map(|(_, word)| format!("{word}.{operation}"));
-            if let Some(Builtin::Text(work)) = qualified.as_ref().and_then(|word| self.lang.builtins.get(word)).copied().filter(|op| matches!(op, Builtin::Text(crate::strings::TextOp::Splitlines | crate::strings::TextOp::Split | crate::strings::TextOp::Rsplit | crate::strings::TextOp::Partition | crate::strings::TextOp::Rpartition | crate::strings::TextOp::Lower | crate::strings::TextOp::Upper | crate::strings::TextOp::Casefold | crate::strings::TextOp::Swapcase | crate::strings::TextOp::Count | crate::strings::TextOp::Replace | crate::strings::TextOp::Find | crate::strings::TextOp::Rfind | crate::strings::TextOp::Index | crate::strings::TextOp::Rindex))) {
+            if let Some(Builtin::Text(work)) = qualified.as_ref().and_then(|word| self.lang.builtins.get(word)).copied().filter(|op| matches!(op, Builtin::Text(crate::strings::TextOp::Splitlines | crate::strings::TextOp::Split | crate::strings::TextOp::Rsplit | crate::strings::TextOp::Partition | crate::strings::TextOp::Rpartition | crate::strings::TextOp::Lower | crate::strings::TextOp::Upper | crate::strings::TextOp::Casefold | crate::strings::TextOp::Swapcase | crate::strings::TextOp::Count | crate::strings::TextOp::Replace | crate::strings::TextOp::Removeprefix | crate::strings::TextOp::Removesuffix | crate::strings::TextOp::Find | crate::strings::TextOp::Rfind | crate::strings::TextOp::Index | crate::strings::TextOp::Rindex))) {
                 let mut supplied = vec![contents.clone()]; supplied.extend(args);
                 crate::strings::keywords(work, &mut supplied, named, self.lang)?;
                 if work == crate::strings::TextOp::Count {
@@ -23028,7 +23034,7 @@ impl<'a> Engine<'a> {
             }
         };
         let filled = writer.percent(template, arguments, &mut asked, true)?;
-        filled.chars().map(|letter| u8::try_from(u32::from(letter)).map_err(|_| self.byte_fault("unready"))).collect()
+        filled.into_iter().map(|letter| u8::try_from(letter).map_err(|_| self.byte_fault("unready"))).collect()
     }
 
     /// A row of bytes shortened at a place, or over a run of places.

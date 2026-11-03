@@ -445,6 +445,14 @@ pub fn apply(table: &Table, work: Work, _name: &str, input: &[Value], names: Nam
             return Ok(Value::Small(total));
         }
 
+        if matches!(work, REMOVEPREFIX | REMOVESUFFIX) {
+            if input.len() != 2 { return Err(complaint(table, "arguments")); }
+            let affix = unpack(&input[1]).map_err(|_| format!("TypeError: {}() argument must be str, not {}", checked_word(work), input[1].kind_word()))?;
+            let kept = if work == REMOVEPREFIX && numbers.starts_with(&affix) { &numbers[affix.len()..] }
+                else if work == REMOVESUFFIX && numbers.ends_with(&affix) { &numbers[..numbers.len() - affix.len()] }
+                else { numbers.as_ref() };
+            return Ok(Value::characters(kept.to_vec()));
+        }
         let count=|item:&Value|item.as_big()?.to_i64().ok_or_else(||String::from("OverflowError: Python int too large to convert to C ssize_t"));
         if matches!(work, STRIP | LSTRIP | RSTRIP) {
             let method = if work == STRIP { "strip" } else if work == LSTRIP { "lstrip" } else { "rstrip" };
