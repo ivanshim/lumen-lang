@@ -68,6 +68,10 @@ class TestResult:
     def wasSuccessful(self):
         return len(self.failures) == 0 and len(self.errors) == 0 and len(self.unexpectedSuccesses) == 0
 
+    def __repr__(self):
+        return '<unittest.result.TestResult run=%d errors=%d failures=%d>' % (
+            self.testsRun, len(self.errors), len(self.failures))
+
 class TextTestResult(TestResult):
     def __repr__(self):
         return '<unittest.runner.TextTestResult run=%d errors=%d failures=%d>' % (self.testsRun, len(self.errors), len(self.failures))
@@ -514,7 +518,9 @@ class TestCase:
         if outcome[0]:
             return result
         error = outcome[1]
-        entry = [self._method, getattr(error, 'message', outcome[2]), self.id()]
+        # (test, reason), the pair a suite's caller unpacks. The text runner
+        # still prints the method and the id from the test itself.
+        entry = (self, getattr(error, 'message', outcome[2]))
         if isinstance(error, self.failureException):
             result.failures = [*result.failures, entry]
         elif isinstance(error, SkipTest):
@@ -1280,11 +1286,18 @@ class TextTestRunner:
         return result
 
     def _failure(self, label, entry, prefix):
+        if len(entry) >= 3:
+            head = entry[0] + ' (' + entry[2] + ')'
+            detail = entry[1]
+        else:
+            case = entry[0]
+            head = case._method + ' (' + case.id() + ')'
+            detail = entry[1]
         self._write('======================================================================' + '\n')
-        self._write(label + ': ' + entry[0] + ' (' + entry[2] + ')\n')
+        self._write(label + ': ' + head + '\n')
         self._write('----------------------------------------------------------------------' + '\n')
         self._write('Traceback (most recent call last):\n')
-        self._write(prefix + entry[1] + '\n\n')
+        self._write(prefix + detail + '\n\n')
 
 
 # Whether a name is one a program could have written, as against one

@@ -29160,6 +29160,14 @@ impl<'a> Machine<'a> {
             => {
                 n(1)?;
                 let name = match v[0].settled() { Value::Text(word) => word.to_string(), _ => return Err(String::from("TypeError: module name must be a string")) };
+                if name == "__main__" && self.entry_file.contains(".zip/") && std::fs::read(self.entry_file.as_ref()).is_err() {
+                    // The program names an archive entry. The host cannot read that path.
+                    let adapter = self.load_namespace("_tokenize")?;
+                    let Some(archived) = self.attribute(&adapter, "_archived_source") else {
+                        return Err(String::from("ImportError: source decoder is unavailable"));
+                    };
+                    return self.core_run(&archived, vec![Value::text(self.entry_file.as_ref())]);
+                }
                 let content = match name.as_str() {
                     "__main__" => std::fs::read(self.entry_file.as_ref()).ok(),
                     _ => self.sys_path_source(&name).map(|pair| pair.1)
@@ -39083,7 +39091,12 @@ impl<'a> Machine<'a> {
                 }
             }
             if let Some(Value::Thing(local)) = v.get(2).map(Value::settled) {
-                let maps = self.inherited_entry(&local.blueprint(), "__getitem__").is_some() || Self::underlying(&Value::Thing(local.clone())).map_or(false, |inner| matches!(inner.settled(), Value::Dict(_)));
+                // The frame-locals proxy answers subscripts on the primitive
+                // road. Its blueprint lists no __getitem__, and it keeps no
+                // separate dictionary, so the two checks below miss it.
+                let maps = self.locals_proxy(&Value::Thing(local.clone())).is_some()
+                    || self.inherited_entry(&local.blueprint(), "__getitem__").is_some()
+                    || Self::underlying(&Value::Thing(local.clone())).map_or(false, |inner| matches!(inner.settled(), Value::Dict(_)));
                 if !maps {
                     return Err(if weighing { "TypeError: locals must be a mapping".to_owned() } else { format!("TypeError: locals must be a mapping or None, not {}", local.blueprint().name) });
                 }
@@ -39105,6 +39118,18 @@ impl<'a> Machine<'a> {
         }
         let (outer, near) = match (books.remove(0), books.remove(0)) {
             (None, None) if mode != 2 && within.is_some() && self.frames_named.last().is_some_and(|code| code.globe.is_some()) => {
+                // Module text already runs in the dictionary it was handed.
+                // exec() with no dictionaries of its own writes into that
+                // same dictionary. A copy of the frame slots would drop the
+                // name once the inner text returned.
+                let module_globals = self.frames_named.last().and_then(|code| {
+                    (code.ident == "<program>" && code.class_namespace.is_none())
+                        .then(|| Self::explicit_globals(code))
+                        .flatten()
+                });
+                if let Some(book) = module_globals {
+                    return self.perform_booked(&source, file, mode, book, None, top_await, literals, settling, &sites);
+                }
                 let (names, frame) = within.as_ref().expect("the active frame");
                 let local_names = if self.frames_named.last().is_some_and(|code| code.class_namespace.is_some()) {
                     self.names_here(frame, Prim::HereBook)?
@@ -39408,7 +39433,25 @@ impl<'a> Machine<'a> {
         self.active_trace = self.activation(&built.program, &top, prior.clone());
         self.wake_cursor();
         self.frames_named.push(built.program.clone());
-        let ran = if built.program.generator { self.invoke(built.program.clone(), top.clone(), Vec::new()) } else { self.value_of(&built.program.body, &top) };
+        // exec/eval runs the body in place, but a tracer still sees the
+        // call and the return the way a called frame does. Without the
+        // call, the frame's f_trace stays empty and its lines are silent.
+        let ran = if built.program.generator {
+            self.invoke(built.program.clone(), top.clone(), Vec::new())
+        } else if matches!(self.tracing_function, Value::Nil) {
+            self.value_of(&built.program.body, &top)
+        } else {
+            match self.emit_trace("call", Value::Nil) {
+                Err(error) => Err(error),
+                Ok(()) => match self.value_of(&built.program.body, &top) {
+                    Ok(value) => self.emit_trace("return", value.clone()).map(|()| value),
+                    Err(error) => match self.emit_trace("return", Value::Nil) {
+                        Ok(()) => Err(error),
+                        Err(callback) => { self.exclude_trace_origin(&callback); Err(callback) }
+                    },
+                },
+            }
+        };
         let ran = self.traced_result(ran);
         self.frames_named.pop();
         self.park_cursor();
