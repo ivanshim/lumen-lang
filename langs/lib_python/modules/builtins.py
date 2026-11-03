@@ -230,7 +230,17 @@ class _HostFile:
         self.name = name
         self.mode = mode
         self._binary = 'b' in mode
-        self.encoding = None if self._binary else (encoding if encoding is not None else 'utf-8')
+        if self._binary:
+            self.encoding = None
+        elif encoding is not None:
+            self.encoding = encoding
+        else:
+            import sys as _sys
+            if _sys.flags.utf8_mode:
+                self.encoding = 'utf-8'
+            else:
+                import locale as _locale
+                self.encoding = _locale.getencoding()
         self.errors = errors if errors is not None else 'strict'
         self.closed = False
         self._descriptor = None
@@ -248,15 +258,23 @@ class _HostFile:
         self._lines = None
         self._lines_at = 0
         self._lines_pos = 0
+        # Which of the three endings a text read has met so far, as the
+        # reference's own decoder counts them: bit 0 \n, bit 1 \r, bit 2
+        # \r\n.  A binary read meets none of them.
+        self._seennl = 0
         reading = 'r' in mode or '+' in mode and 'w' not in mode and 'a' not in mode
         writing = 'w' in mode or 'x' in mode
         appending = 'a' in mode
         if not (reading or writing or appending):
             reading = True
-        if writing:
+        # Create append targets at open time without truncating existing data.
+        if writing or appending:
             import posix
             flags = posix.O_WRONLY | posix.O_CREAT
-            flags |= posix.O_EXCL if 'x' in mode else posix.O_TRUNC
+            if appending:
+                flags |= posix.O_APPEND
+            else:
+                flags |= posix.O_EXCL if 'x' in mode else posix.O_TRUNC
             fd = posix.open(name, flags, 0o666)
             posix.close(fd)
         if writing:
@@ -283,23 +301,6 @@ class _HostFile:
             if brought is False:
                 raise OSError(5, 'Input/output error', name)
             self._buffer = brought
-        # Keep an owned descriptor until close or finalization, including when
-        # the text buffer itself was filled through a separate read primitive.
-        import posix
-        flags = posix.O_RDWR if '+' in mode else posix.O_WRONLY if self.writable() else posix.O_RDONLY
-        if appending:
-            flags |= posix.O_CREAT | posix.O_APPEND
-        self._descriptor = posix.open(name, flags, 0o666)
-
-    def __del__(self):
-        if getattr(self, '_descriptor', None) is None or getattr(self, 'closed', True):
-            return
-        try:
-            import warnings
-            warnings.warn('unclosed file %r' % self, ResourceWarning,
-                          stacklevel=2, source=self, skip_file_prefixes=(__file__,))
-        finally:
-            self.close()
 
     def _open(self):
         if self.closed:
@@ -330,15 +331,81 @@ class _HostFile:
         return text if not self._binary or isinstance(text, bytes) else text.encode('utf-8')
 
     def read(self, size=-1):
+        import _io
+        size = _io._size(size)
         self._open()
         if not self.readable():
             raise OSError('File not open for reading')
         if size is None or size < 0:
-            size = len(self._buffer) - self._pos
-        value = self._buffer[self._pos:self._pos + size]
-        self._pos += len(value)
+            value = self._buffer[self._pos:]
+            self._pos += len(value)
+            self._lines = None
+            if self._binary:
+                return self._carried(value)
+            self._note_newlines(value)
+            return value.replace('\r\n', '\n').replace('\r', '\n')
+        if self._binary:
+            value = self._buffer[self._pos:self._pos + size]
+            self._pos += len(value)
+            self._lines = None
+            return self._carried(value)
+        # A size counts what the reader sees, so a \r\n inside the
+        # window stands for a single character.
+        start = self._pos
+        at = start
+        end = len(self._buffer)
+        seen = []
+        while at < end and len(seen) < size:
+            char = self._buffer[at]
+            if char == '\r':
+                at += 2 if at + 1 < end and self._buffer[at + 1] == '\n' else 1
+                seen.append('\n')
+            else:
+                seen.append(char)
+                at += 1
+        self._note_newlines(self._buffer[start:at])
+        self._pos = at
         self._lines = None
-        return self._carried(value)
+        return ''.join(seen)
+
+    _NEWLINE_NAMES = (None, '\n', '\r', ('\r', '\n'), '\r\n',
+                      ('\n', '\r\n'), ('\r', '\r\n'),
+                      ('\r', '\n', '\r\n'))
+
+    @property
+    def newlines(self):
+        # The endings a text read has met, in the reference's fixed
+        # order, not the order they were met; None before the first.
+        return self._NEWLINE_NAMES[self._seennl]
+
+    def _note_newlines(self, text):
+        crlf = text.count('\r\n')
+        cr = text.count('\r') - crlf
+        lf = text.count('\n') - crlf
+        self._seennl |= (1 if lf else 0) | (2 if cr else 0) | (4 if crlf else 0)
+
+    def _split_newlines(self, text):
+        # Universal newlines cut after \r\n, \r or \n and after no
+        # other character, so the extra breaks str.splitlines knows
+        # stay inside their line.
+        lines = []
+        start = 0
+        at = 0
+        end = len(text)
+        while at < end:
+            char = text[at]
+            if char == '\n':
+                at += 1
+            elif char == '\r':
+                at += 2 if at + 1 < end and text[at + 1] == '\n' else 1
+            else:
+                at += 1
+                continue
+            lines.append(text[start:at])
+            start = at
+        if start < end:
+            lines.append(text[start:])
+        return lines
 
     def _ensure_lines(self):
         if self._lines is None or self._lines_pos != self._pos:
@@ -348,20 +415,42 @@ class _HostFile:
                 if parts[-1]:
                     self._lines.append(parts[-1])
             else:
-                self._lines = self._buffer[self._pos:].splitlines(True)
+                self._lines = self._split_newlines(self._buffer[self._pos:])
             self._lines_at = 0
             self._lines_pos = self._pos
 
     def readline(self, size=-1):
+        import _io
+        size = _io._size(_io._index(size))
         self._open()
         if size is not None and size >= 0:
             start = self._pos
-            limit = min(len(self._buffer), start + size)
-            found = self._buffer.find(b'\n' if self._binary else '\n', start, limit)
-            stop = limit if found < 0 else found + 1
-            self._pos = stop
+            if self._binary:
+                limit = min(len(self._buffer), start + size)
+                found = self._buffer.find(b'\n', start, limit)
+                stop = limit if found < 0 else found + 1
+                self._pos = stop
+                self._lines = None
+                return self._carried(self._buffer[start:stop])
+            at = start
+            end = len(self._buffer)
+            seen = []
+            while at < end and len(seen) < size:
+                char = self._buffer[at]
+                if char == '\n':
+                    seen.append('\n')
+                    at += 1
+                    break
+                if char == '\r':
+                    at += 2 if at + 1 < end and self._buffer[at + 1] == '\n' else 1
+                    seen.append('\n')
+                    break
+                seen.append(char)
+                at += 1
+            self._note_newlines(self._buffer[start:at])
+            self._pos = at
             self._lines = None
-            return self._carried(self._buffer[start:stop])
+            return ''.join(seen)
         self._ensure_lines()
         if self._lines_at >= len(self._lines):
             return self._carried('')
@@ -369,7 +458,10 @@ class _HostFile:
         self._lines_at += 1
         self._pos += len(line)
         self._lines_pos = self._pos
-        return self._carried(line)
+        if self._binary:
+            return self._carried(line)
+        self._note_newlines(line)
+        return line.replace('\r\n', '\n').replace('\r', '\n')
 
     def readlines(self, hint=-1):
         self._open()
@@ -381,7 +473,11 @@ class _HostFile:
             self._lines_pos = self._pos
             if self._binary:
                 return [self._carried(line) for line in remaining]
-            return remaining
+            lines = []
+            for line in remaining:
+                self._note_newlines(line)
+                lines.append(line.replace('\r\n', '\n').replace('\r', '\n'))
+            return lines
         lines = []
         total = 0
         while True:
@@ -541,11 +637,21 @@ def open(*args, **kwargs):
 
 # One-dimensional views use byte offsets into the original storage. A slice
 # keeps those offsets, and a cast groups them without copying the storage.
+def _buffer_hook(owner, name):
+    kind = type(owner)
+    for base in kind.__mro__:
+        namespace = vars(base)
+        if name in namespace:
+            member = namespace[name]
+            bind = getattr(type(member), '__get__', None)
+            return bind(member, owner, kind) if bind is not None else member
+    return None
+
+
 class memoryview:
     def __class_getitem__(cls, item):
         import types
         return types.GenericAlias(cls, item)
-
     def __buffer__(self, flags, /):
         from _buffer import getbuffer
         return getbuffer(self, flags)
@@ -557,13 +663,48 @@ class memoryview:
     def __init__(self, object):
         self._init_buffer(object, 284)
     def _init_buffer(self, object, flags, error_prefix="memoryview: "):
+        kind = type(object)
+        if kind is bytes or kind is bytearray:
+            # The usual exporters, settled without the general checks below.
+            self._object = self._source = object
+            self._owner = self._owner_view = None
+            self._offsets = range(len(object))
+            self._format = 'B'
+            self._itemsize = self._stride = 1
+            self._readonly = kind is bytes
+            self._shape = (len(object),)
+            self._released = False
+            self._export = _export(object) if kind is bytearray else None
+            return
+        if kind is memoryview:
+            object._check()
+            self._object = object._object
+            self._source = source = object._source
+            self._owner = self._owner_view = None
+            self._offsets = object._offsets
+            self._format = object._format
+            self._itemsize = object._itemsize
+            self._stride = object._stride
+            self._readonly = object._readonly
+            self._shape = object._shape
+            self._released = False
+            self._export = _export(source) if type(source) is bytearray else (_export(source._buffer) if object._export is not None and hasattr(source, '_buffer') else None)
+            return
         from array import array
         self._object = object.obj if isinstance(object, memoryview) else object
         self._owner = None
         self._owner_view = None
-        if not isinstance(object, (memoryview, bytes, bytearray, array)) and hasattr(type(object), '__buffer__'):
+        kind = type(object)
+        native = (memoryview, bytes, bytearray, array)
+        custom = not isinstance(object, native)
+        if not custom and kind is not memoryview and kind is not bytes and kind is not bytearray and kind is not array:
+            for base in kind.__mro__:
+                if '__buffer__' in vars(base):
+                    custom = base is not memoryview and base is not bytes and base is not bytearray and base is not array
+                    break
+        if custom and hasattr(kind, '__buffer__'):
             self._owner = object
-            object = type(object).__buffer__(object, flags)
+            object = _buffer_hook(object, '__buffer__')(flags)
             if not isinstance(object, memoryview):
                 raise TypeError('__buffer__ returned non-memoryview')
             self._owner_view = object
@@ -747,6 +888,12 @@ class memoryview:
                 raise NotImplementedError('memoryview slice assignment requires a byte format')
             if isinstance(value, memoryview):
                 value = value.tobytes()
+            if format == 'B' and type(places) is range and (len(places) <= 1 or places.step == 1) and type(self._source) is bytearray and type(value) in (bytes, bytearray):
+                if len(places) != len(value):
+                    raise ValueError('memoryview assignment: lvalue and rvalue have different structures')
+                start = places.start if places else 0
+                self._source[start:start + len(value)] = value
+                return
             if format == 'B' and isinstance(places, range) and (len(places) <= 1 or places.step == 1) and isinstance(value, (bytes, bytearray)):
                 raw = bytes.__getitem__(value, slice(None)) if isinstance(value, bytes) else bytes(bytearray.__getitem__(value, slice(None)))
                 if len(places) != len(raw):
@@ -840,6 +987,10 @@ class memoryview:
         return self.tobytes().hex(sep, bytes_per_sep)
 
     def cast(self, format, shape=None):
+        if format == 'B' and shape is None and not self._released and self._format == 'B' and len(self._shape) == 1:
+            offsets = self._offsets
+            if type(offsets) is range and (len(offsets) <= 1 or offsets.step == 1):
+                return memoryview(self)
         if not isinstance(format, str):
             raise TypeError("cast() argument 'format' must be str, not " + ('None' if format is None else type(format).__name__))
         self._check()
@@ -892,9 +1043,9 @@ class memoryview:
         self._export = None
         self._object = None
         if self._owner is not None:
-            callback = getattr(type(self._owner), '__release_buffer__', None)
+            callback = _buffer_hook(self._owner, '__release_buffer__')
             if callback is not None:
-                callback(self._owner, self._owner_view)
+                callback(self._owner_view)
             self._owner = None
             self._owner_view = None
 
@@ -941,6 +1092,13 @@ class memoryview:
 
 
 def _buffer_bytes(source):
+    if type(source) is bytes:
+        return source
+    # An existing view already keeps its exporter alive for this copy.
+    if type(source) is memoryview:
+        if not source.c_contiguous:
+            raise BufferError('memoryview: underlying buffer is not C-contiguous')
+        return source.tobytes()
     with memoryview(source) as view:
         if not view.c_contiguous:
             raise BufferError('memoryview: underlying buffer is not C-contiguous')
@@ -967,76 +1125,3 @@ NotADirectoryError = NotADirectoryError
 PermissionError = PermissionError
 ProcessLookupError = ProcessLookupError
 TimeoutError = TimeoutError
-
-# Async iteration uses type-level special methods, like the other protocols.
-_async_next_missing = object()
-
-class _AsyncNextAwaitable:
-    def __init__(self, awaitable, default):
-        self._awaitable = awaitable
-        self._default = default
-        self._iterator = None
-
-    def __await__(self):
-        return self
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        return self.send(None)
-
-    async def _result(self):
-        try:
-            return await self._awaitable
-        except StopAsyncIteration:
-            return self._default
-
-    def _walk(self):
-        if self._iterator is None:
-            self._iterator = self._result().__await__()
-        return self._iterator
-
-    def send(self, value):
-        return self._walk().send(value)
-
-    def throw(self, *args):
-        return self._walk().throw(*args)
-
-    def close(self):
-        if self._iterator is not None:
-            return self._iterator.close()
-        close = getattr(self._awaitable, 'close', None)
-        if close is not None:
-            return close()
-
-
-def _async_special(subject, name):
-    cls = type(subject)
-    for base in cls.__mro__:
-        namespace = vars(base)
-        if name in namespace:
-            descriptor = namespace[name]
-            bind = getattr(type(descriptor), '__get__', None)
-            return bind(descriptor, subject, cls) if bind is not None else descriptor
-    return None
-
-
-def anext(iterator, default=_async_next_missing, /):
-    method = _async_special(iterator, '__anext__')
-    if method is None:
-        raise TypeError("'" + type(iterator).__name__ + "' object is not an async iterator")
-    awaitable = method()
-    if default is _async_next_missing:
-        return awaitable
-    return _AsyncNextAwaitable(awaitable, default)
-
-
-def aiter(iterable, /):
-    method = _async_special(iterable, '__aiter__')
-    if method is None:
-        raise TypeError("'" + type(iterable).__name__ + "' object is not an async iterable")
-    iterator = method()
-    if getattr(type(iterator), '__anext__', None) is None:
-        raise TypeError("aiter() returned not an async iterator of type '" + type(iterator).__name__ + "'")
-    return iterator
