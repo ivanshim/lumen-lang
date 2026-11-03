@@ -621,19 +621,24 @@ fn cycle_edge(value: &Value) -> bool {
 /// being written to just now yields nothing: what it holds then counts
 /// as held from outside, which errs on the side of keeping.
 fn reaches(value: &Value, out: &mut Vec<Value>) {
+    reaches_for(value, out, false);
+}
+
+// Include inline holdings for ownership queries while GC follows cycle edges only.
+fn reaches_for(value: &Value, out: &mut Vec<Value>, include_inline: bool) {
     match value {
         Value::Faint(r) => out.extend(r.told.borrow().iter().filter(|value| cycle_edge(value)).cloned()),
         Value::Object(o) | Value::Fields(o) => {
             out.push(Value::Class(o.class.clone()));
             if let Ok(fields) = o.fields.try_borrow() {
-                out.extend(fields.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
+                out.extend(fields.iter().filter(|(_, value)| include_inline || cycle_edge(value)).map(|(_, v)| v.clone()));
             }
         }
         Value::Class(c) => {
-            out.extend(c.fields.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
-            out.extend(c.constants.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
+            out.extend(c.fields.iter().filter(|(_, value)| include_inline || cycle_edge(value)).map(|(_, v)| v.clone()));
+            out.extend(c.constants.iter().filter(|(_, value)| include_inline || cycle_edge(value)).map(|(_, v)| v.clone()));
             if let Ok(shared) = c.shared.try_borrow() {
-                out.extend(shared.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
+                out.extend(shared.iter().filter(|(_, value)| include_inline || cycle_edge(value)).map(|(_, v)| v.clone()));
             }
             if let Ok(bases) = c.python_bases.try_borrow() { out.extend(bases.iter().cloned()); }
             out.extend(c.methods.iter().map(|(_, p)| Value::Routine(p.clone())));
@@ -646,14 +651,14 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                 out.push(g.async_finalizer.clone());
                 out.extend(g.trace_frame.iter().map(|f| Value::Object(f.clone())));
                 out.extend(g.program.iter().map(|p| Value::Routine(p.clone())));
-                out.extend(g.frame.iter().filter(|value| cycle_edge(value)).cloned());
-                out.extend(g.stack.iter().filter(|value| cycle_edge(value)).cloned());
-                out.extend(g.items.iter().filter(|value| cycle_edge(value)).cloned());
-                out.extend(g.handed.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.frame.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+                out.extend(g.stack.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+                out.extend(g.items.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+                out.extend(g.handed.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
                 out.push(g.returned.clone());
-                out.extend(g.delegate.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.delegate.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
                 out.push(g.sent.clone());
-                out.extend(g.current.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.current.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
                 out.extend(g.watched.iter().map(|(cell, _)| Value::Bond(cell.clone())));
                 out.extend(g.reversed_walk.iter().map(|(cell, _, _)| Value::Bond(cell.clone())));
                 for step in &g.resume {
@@ -667,8 +672,8 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                         _ => {}
                     }
                 }
-                out.extend(g.held.iter().filter(|value| cycle_edge(value)).cloned());
-                out.extend(g.hurled.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(g.held.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+                out.extend(g.hurled.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
             }
         }
         Value::Set(s) | Value::SetWalk(s, _) => {
@@ -679,26 +684,28 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         Value::Routine(r) => {
             out.extend(r.code_snapshot.get().map(|image| Value::Routine(image.clone())));
             out.extend(r.annotation.iter().map(|p| Value::Routine(p.clone())));
-            out.extend(r.code_constants.iter().filter(|value| cycle_edge(value)).cloned());
-            out.extend(r.globe.iter().filter(|value| cycle_edge(value)).cloned());
-            out.extend(r.born.iter().filter(|value| cycle_edge(value)).cloned());
-            out.extend(r.held.iter().filter(|value| cycle_edge(value)).cloned());
-            out.extend(r.enclosed.iter().filter(|(_, value)| cycle_edge(value)).map(|(_, v)| v.clone()));
-            // co_consts is a second copy. The stream still owns the
-            // originals, and a nested routine's globals point at its
-            // module, so those copies have to count or the module stays.
-            for word in r.instrs.iter() {
-                let carried = match word {
-                    crate::code::Instr::Const(value) => Some(value),
-                    crate::code::Instr::Bump { by, .. } => Some(&**by),
-                    crate::code::Instr::Dyad { a, b, .. } | crate::code::Instr::SkipCmp { a, b, .. } => {
-                        if let crate::code::Operand::Const(value) = a { if cycle_edge(value) { out.push((**value).clone()); } }
-                        if let crate::code::Operand::Const(value) = b { if cycle_edge(value) { out.push((**value).clone()); } }
-                        None
-                    }
-                    _ => None,
-                };
-                if let Some(value) = carried { if cycle_edge(value) { out.push(value.clone()); } }
+            out.extend(r.code_constants.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+            out.extend(r.globe.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+            out.extend(r.born.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+            out.extend(r.held.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+            out.extend(r.enclosed.iter().filter(|(_, value)| include_inline || cycle_edge(value)).map(|(_, v)| v.clone()));
+            if !include_inline {
+                // co_consts is a second copy. The stream still owns the
+                // originals, and a nested routine's globals point at its
+                // module, so those copies have to count or the module stays.
+                for word in r.instrs.iter() {
+                    let carried = match word {
+                        crate::code::Instr::Const(value) => Some(value),
+                        crate::code::Instr::Bump { by, .. } => Some(&**by),
+                        crate::code::Instr::Dyad { a, b, .. } | crate::code::Instr::SkipCmp { a, b, .. } => {
+                            if let crate::code::Operand::Const(value) = a { if cycle_edge(value) { out.push((**value).clone()); } }
+                            if let crate::code::Operand::Const(value) = b { if cycle_edge(value) { out.push((**value).clone()); } }
+                            None
+                        }
+                        _ => None,
+                    };
+                    if let Some(value) = carried { if cycle_edge(value) { out.push(value.clone()); } }
+                }
             }
             if let Ok(revised) = r.revised.try_borrow() {
                 out.extend(revised.iter().map(|p| Value::Routine(p.clone())));
@@ -709,12 +716,12 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                 out.push(inner.clone());
             }
         }
-        Value::Array(a) | Value::Tuple(a) => out.extend(a.iter().filter(|value| cycle_edge(value)).cloned()),
-        Value::Slice(parts) => out.extend(parts.iter().filter(|value| cycle_edge(value)).cloned()),
+        Value::Array(a) | Value::Tuple(a) => out.extend(a.iter().filter(|value| include_inline || cycle_edge(value)).cloned()),
+        Value::Slice(parts) => out.extend(parts.iter().filter(|value| include_inline || cycle_edge(value)).cloned()),
         Value::Map(m) => {
             for (k, v) in m.iter() {
-                if cycle_edge(k) { out.push(k.clone()); }
-                if cycle_edge(v) { out.push(v.clone()); }
+                if include_inline || cycle_edge(k) { out.push(k.clone()); }
+                if include_inline || cycle_edge(v) { out.push(v.clone()); }
             }
         }
         Value::Hashed(p) | Value::Tie(p) => {
@@ -722,12 +729,12 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
             out.push(p.1.clone());
         }
         Value::ValueMethod(p) | Value::View(p) => out.push(p.0.clone()),
-        Value::Adapter(a) => out.extend(a.1.iter().filter(|value| cycle_edge(value)).cloned()),
+        Value::Adapter(a) => out.extend(a.1.iter().filter(|value| include_inline || cycle_edge(value)).cloned()),
         Value::Descriptor(d) => match &**d {
             Descriptor::Static(v) | Descriptor::Class(v) => out.push(v.clone()),
             Descriptor::Property(a, b) => {
                 out.push(a.clone());
-                out.extend(b.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(b.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
             }
             Descriptor::Bound(a, b) => {
                 out.push(a.clone());
@@ -737,18 +744,18 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         Value::Walking(w) => {
             if let Ok(w) = w.try_borrow() {
                 out.push(w.0.clone());
-                out.extend(w.1.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(w.1.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
             }
         }
         Value::Walk(w) => {
             if let Ok(w) = w.try_borrow() {
-                out.extend(w.0.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(w.0.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
             }
         }
         Value::Cursor(c) => {
             if let Ok(c) = c.try_borrow() {
-                out.extend(c.pending.iter().filter(|value| cycle_edge(value)).cloned());
-                out.extend(c.origin.iter().filter(|value| cycle_edge(value)).cloned());
+                out.extend(c.pending.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+                out.extend(c.origin.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
                 match &c.source {
                     CursorSource::Items(items, _) => out.push(Value::Tuple(items.clone())),
                     CursorSource::Living(cell, _) => out.push(Value::Bond(cell.clone())),
@@ -760,8 +767,8 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
                         if let CursorSource::Called(_, _, Some(v)) = &c.source { out.push(v.clone()); }
                     }
                     CursorSource::Combined(rows, work, _) => {
-                        out.extend(rows.iter().filter(|value| cycle_edge(value)).cloned());
-                        out.extend(work.iter().filter(|value| cycle_edge(value)).cloned());
+                        out.extend(rows.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
+                        out.extend(work.iter().filter(|value| include_inline || cycle_edge(value)).cloned());
                     }
                     CursorSource::Counted(..) => {}
                 }
@@ -773,6 +780,26 @@ fn reaches(value: &Value, out: &mut Vec<Value>) {
         }
         _ => {}
     }
+}
+
+/// How many live holds the given roots reach onto a value, counting
+/// every occurrence in the whole reachable graph. An inline value has no
+/// allocation counter of its own, so this is the ownership a program may
+/// honestly ask after: the holds it actually has, nowhere invented.
+pub fn count_holds(roots: &[Value], target: &Value) -> usize {
+    let mut seen: HashSet<usize> = HashSet::new();
+    let mut open: Vec<Value> = roots.to_vec();
+    let mut count = 0usize;
+    while let Some(value) = open.pop() {
+        if value.same_place(target) { count += 1; }
+        if let Some(place) = place_of(&value) {
+            if !seen.insert(place) { continue; }
+        }
+        let mut children = Vec::new();
+        reaches_for(&value, &mut children, true);
+        open.extend(children);
+    }
+    count
 }
 
 /// Follow inline values held by the running engine until their shared

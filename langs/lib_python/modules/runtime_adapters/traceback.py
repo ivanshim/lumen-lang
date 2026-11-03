@@ -7,12 +7,16 @@ def clear_frames(tb):
 
 _should_show_carets_python = StackSummary._should_show_carets
 
-# Keep precise runtime spans when the optional statement AST is unavailable.
+# The statement reader has no tree for every text. Without one, the
+# reference decides by the spans alone (its parse found no tree), so keep
+# the carets only where they mark part of the lines.
 def _should_show_carets_native(self, start_offset, end_offset, all_lines, anchors):
     try:
         return _should_show_carets_python(self, start_offset, end_offset, all_lines, anchors)
     except NotImplementedError:
-        return True
+        if anchors:
+            return True
+        return bool(all_lines[0][:start_offset].lstrip() or all_lines[-1][end_offset:].rstrip())
 
 StackSummary._should_show_carets = _should_show_carets_native
 

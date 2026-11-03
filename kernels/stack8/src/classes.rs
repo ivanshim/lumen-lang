@@ -6653,6 +6653,14 @@ impl<'a> Engine<'a> {
                     if self.lang.class_details.get("code.replace").and_then(|words| words.get(2)).is_some_and(|word| word == name) {
                         return Ok(Value::ValueMethod(Rc::new((subject.clone(), "code_positions".to_owned()))));
                     }
+                    if name == "co_imports" || name == "co_stores" {
+                        let (imports, stores) = crate::compile::code_imports_stores(&f.instrs, &f.local_names);
+                        if name == "co_stores" { return Ok(Value::tuple(stores.iter().map(|word| Value::text(word)).collect())); }
+                        return Ok(Value::tuple(imports.iter().map(|(word, level, fromlist)| Value::tuple(vec![
+                            Value::text(word), Value::Small(*level as i64),
+                            fromlist.as_ref().map_or(Value::Null, |taken| Value::tuple(taken.iter().map(|member| Value::text(member)).collect())),
+                        ])).collect()));
+                    }
                     if name == "__replace__" || self.lang.class_details.get("code.replace").and_then(|words| words.first()).map_or(false, |word| word == name) {
                         return Ok(Value::ValueMethod(Rc::new((subject.clone(), "code_replace".to_string()))));
                     }

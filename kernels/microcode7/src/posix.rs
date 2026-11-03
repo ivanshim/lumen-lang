@@ -946,6 +946,18 @@ fn lookup_words(status: i32) -> Value {
 // Look a host name up in the host database, answering like reverse_record.
 fn forward_record(value: &Value) -> Result<Value, String> {
     let query = CString::new(data_of(value)?).map_err(|_| String::from("ValueError: embedded null byte"))?;
+    // Check IPv4 address resolution via getaddrinfo before calling gethostbyname_r
+    // so unresolvable hostnames raise socket.gaierror like CPython's setipaddr path.
+    if !matches!(query.as_bytes(), b"" | b"<broadcast>") {
+        let mut hints: libc::addrinfo = unsafe { std::mem::zeroed() };
+        hints.ai_family = libc::AF_INET;
+        let mut found = std::ptr::null_mut();
+        unsafe {
+            let code = libc::getaddrinfo(query.as_ptr(), std::ptr::null(), &hints, &mut found);
+            if code != 0 { return Ok(lookup_failure(1, code, libc::gai_strerror(code))); }
+            libc::freeaddrinfo(found);
+        }
+    }
     unsafe {
         let mut scratch = vec![0u8; 8192];
         let mut host = std::mem::zeroed::<libc::hostent>();

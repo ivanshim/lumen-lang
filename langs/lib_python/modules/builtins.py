@@ -647,6 +647,7 @@ def _buffer_hook(owner, name):
             return bind(member, owner, kind) if bind is not None else member
     return None
 
+_unhashed = object()
 
 class memoryview:
     def __buffer__(self, flags, /):
@@ -733,6 +734,8 @@ class memoryview:
             raise TypeError(error_prefix + "a bytes-like object is required, not '" + type(object).__name__ + "'")
         self._stride = object._stride if isinstance(object, memoryview) else self._itemsize
         self._released = False
+        self._holds = 0
+        self._hash_value = _unhashed
         self._export = _export(self._source._buffer) if isinstance(self._source, array) else _export(self._source) if isinstance(self._source, bytearray) else None
 
     @property
@@ -850,26 +853,47 @@ class memoryview:
         return self._shape[0]
 
     def __getitem__(self, key):
-        self._check()
-        if self.ndim != 1:
-            raise NotImplementedError('multi-dimensional sub-views are not implemented')
+        if self._released:
+            raise ValueError('operation forbidden on released memoryview object')
         if isinstance(key, slice):
+            if len(self._shape) != 1:
+                raise NotImplementedError('multi-dimensional sub-views are not implemented')
             child = memoryview(self)
             child._offsets = self._offsets[key]
             child._stride = self._stride * (key.step or 1)
             child._shape = (len(child._offsets),)
             return child
+        if isinstance(key, tuple):
+            for part in key:
+                self._offsets[part]
+            if self._released:
+                raise ValueError('operation forbidden on released memoryview object')
+            if all(isinstance(part, slice) for part in key) or len(self._shape) != 1:
+                raise NotImplementedError('multi-dimensional sub-views are not implemented')
+            raise TypeError('memoryview: invalid slice key')
+        if len(self._shape) != 1:
+            raise NotImplementedError('multi-dimensional sub-views are not implemented')
         try:
             first = self._offsets[key]
         except IndexError:
             raise IndexError('index out of bounds on dimension 1')
         except TypeError:
             raise TypeError('memoryview: invalid slice key')
-        raw = bytes([self._byte(first + i) for i in range(self._itemsize)])
-        import struct
-        if self._format == 'w':
-            raise NotImplementedError('memoryview: format w not supported')
+        if self._released:
+            raise ValueError('operation forbidden on released memoryview object')
         format = self._format[1:] if self._format.startswith('@') else self._format
+        if format == 'w':
+            raise NotImplementedError('memoryview: format w not supported')
+        size = self._itemsize
+        from array import array
+        source = self._source
+        if isinstance(source, bytes):
+            raw = bytes.__getitem__(source, slice(first, first + size))
+        elif isinstance(source, array):
+            raw = bytes(bytearray.__getitem__(source._buffer, slice(first, first + size)))
+        else:
+            raw = bytes(bytearray.__getitem__(source, slice(first, first + size)))
+        import struct
         return struct.unpack('@' + format, raw[:struct.calcsize('@' + format)])[0]
 
     def __setitem__(self, key, value):
@@ -879,43 +903,75 @@ class memoryview:
             raise TypeError('cannot modify read-only memory')
         if isinstance(key, slice):
             places = self._offsets[key]
-            if not isinstance(value, (bytes, bytearray, memoryview)):
-                raise TypeError('a bytes-like object is required, not ' + type(value).__name__)
-            if format not in ('B', 'b'):
-                raise NotImplementedError('memoryview slice assignment requires a byte format')
-            if isinstance(value, memoryview):
-                value = value.tobytes()
+            if self._released:
+                raise ValueError('operation forbidden on released memoryview object')
+            from array import array
+            if isinstance(value, array):
+                value = memoryview(value)
+            elif not isinstance(value, (bytes, bytearray, memoryview)):
+                if hasattr(type(value), '__buffer__'):
+                    value = memoryview(value)
+                else:
+                    raise TypeError('a bytes-like object is required, not ' + type(value).__name__)
             if format == 'B' and type(places) is range and (len(places) <= 1 or places.step == 1) and type(self._source) is bytearray and type(value) in (bytes, bytearray):
                 if len(places) != len(value):
                     raise ValueError('memoryview assignment: lvalue and rvalue have different structures')
                 start = places.start if places else 0
                 self._source[start:start + len(value)] = value
                 return
-            if format == 'B' and isinstance(places, range) and (len(places) <= 1 or places.step == 1) and isinstance(value, (bytes, bytearray)):
-                raw = bytes.__getitem__(value, slice(None)) if isinstance(value, bytes) else bytes(bytearray.__getitem__(value, slice(None)))
-                if len(places) != len(raw):
-                    raise ValueError('memoryview assignment: lvalue and rvalue have different structures')
-                from array import array
-                storage = self._source._buffer if isinstance(self._source, array) else self._source
-                start = places[0] if places else 0
-                bytearray.__setitem__(storage, slice(start, start + len(raw)), raw)
-                return
-            raw = bytes(value)
-            if len(places) != len(raw):
+            if isinstance(value, memoryview):
+                source_format = value._format
+                source_itemsize = value._itemsize
+                source_count = len(value._offsets)
+                raw = value.tobytes()
+            else:
+                source_format = 'B'
+                source_itemsize = 1
+                if isinstance(value, bytes):
+                    raw = bytes.__getitem__(value, slice(None))
+                elif isinstance(value, bytearray):
+                    raw = bytes(bytearray.__getitem__(value, slice(None)))
+                else:
+                    raw = bytes(value)
+                source_count = len(raw)
+            # Acquiring the source, or reading it out, may run a
+            # __buffer__ hook that releases this view: nothing lands on
+            # a view that let go while its source was being taken.
+            if self._released:
+                raise ValueError('operation forbidden on released memoryview object')
+            other = source_format[1:] if source_format.startswith('@') else source_format
+            if other != format or source_itemsize != self._itemsize or source_count != len(places):
                 raise ValueError('memoryview assignment: lvalue and rvalue have different structures')
-            if isinstance(self._source, bytearray) and isinstance(places, range) and (len(places) < 2 or places.step == 1):
+            storage = self._source._buffer if isinstance(self._source, array) else self._source
+            if self._itemsize == 1 and isinstance(places, range) and (len(places) <= 1 or places.step == 1):
                 start = places[0] if places else 0
-                bytearray.__setitem__(self._source, slice(start, start + len(raw)), raw)
+                if isinstance(storage, bytearray):
+                    bytearray.__setitem__(storage, slice(start, start + len(raw)), raw)
+                else:
+                    for i, item in enumerate(raw):
+                        self._put_byte(start + i, item)
                 return
-            for at, item in zip(places, raw):
-                self._put_byte(at, item % 256)
+            for at, i in zip(places, range(len(places))):
+                base = i * self._itemsize
+                for b in range(self._itemsize):
+                    self._put_byte(at + b, raw[base + b])
         else:
+            if isinstance(key, tuple):
+                for part in key:
+                    self._offsets[part]
+                if self._released:
+                    raise ValueError('operation forbidden on released memoryview object')
+                if all(isinstance(part, slice) for part in key) or len(self._shape) != 1:
+                    raise NotImplementedError('multi-dimensional sub-views are not implemented')
+                raise TypeError('memoryview: invalid slice key')
             try:
                 first = self._offsets[key]
             except IndexError:
                 raise IndexError('index out of bounds on dimension 1')
             except TypeError:
                 raise TypeError('memoryview: invalid slice key')
+            if self._released:
+                raise ValueError('operation forbidden on released memoryview object')
             if format == 'w':
                 raise NotImplementedError('memoryview: format w not supported')
             if format == 'c':
@@ -932,6 +988,8 @@ class memoryview:
                     raise TypeError("memoryview: invalid type for format '" + format + "'")
                 import operator
                 value = operator.index(value)
+            if self._released:
+                raise ValueError('operation forbidden on released memoryview object')
             import struct
             try:
                 raw = struct.pack('@' + format, value)
@@ -946,7 +1004,27 @@ class memoryview:
 
     def tolist(self):
         self._check()
-        return [self[i] for i in range(len(self))]
+        if len(self._shape) != 1:
+            raise NotImplementedError('tolist() only supports 1-D memoryviews')
+        count = self._shape[0]
+        if count == 0:
+            return []
+        format = self._format[1:] if self._format.startswith('@') else self._format
+        if format == 'w':
+            raise NotImplementedError('memoryview: tolist() only supports byte views')
+        import struct
+        return list(struct.unpack('@' + str(count) + format, self.tobytes()))
+
+    def count(self, value):
+        self._check()
+        return self.tolist().count(value)
+
+    def index(self, value, start=0, stop=None):
+        self._check()
+        items = self.tolist()
+        if stop is None:
+            return items.index(value, start)
+        return items.index(value, start, stop)
 
     def toreadonly(self):
         self._check()
@@ -979,8 +1057,19 @@ class memoryview:
             raise ValueError('could not convert string to float: ' + repr(self))
 
     def hex(self, sep=None, bytes_per_sep=1):
+        self._check()
         if sep is None:
             return self.tobytes().hex()
+        from array import array
+        guard = None
+        if isinstance(self._source, array):
+            guard = _export(self._source._buffer)
+        elif isinstance(self._source, bytearray):
+            guard = _export(self._source)
+        try:
+            len(sep)
+        finally:
+            guard = None
         return self.tobytes().hex(sep, bytes_per_sep)
 
     def cast(self, format, shape=None):
@@ -1034,6 +1123,9 @@ class memoryview:
             self.release()
 
     def release(self):
+        if getattr(self, '_holds', 0) > 0:
+            count = self._holds
+            raise BufferError('memoryview has %d exported buffer%s' % (count, '' if count == 1 else 's'))
         if self._released:
             return
         self._released = True
@@ -1055,23 +1147,55 @@ class memoryview:
 
     def __eq__(self, other):
         from array import array
+        if self._released:
+            return self is other
         self._check()
         if isinstance(other, array):
             other = memoryview(other)
-        if isinstance(other, (memoryview, bytes, bytearray)):
+        if isinstance(other, memoryview):
+            if other._released:
+                return self is other
+            return self.tolist() == other.tolist()
+        if isinstance(other, (bytes, bytearray)):
             return self.tolist() == list(other)
         return NotImplemented
 
     def __hash__(self):
+        cached = getattr(self, '_hash_value', _unhashed)
+        if cached is not _unhashed:
+            return cached
         self._check()
         if not self._readonly:
             raise ValueError('cannot hash writable memoryview object')
-        if self._format not in ('B', 'b'):
+        if self._format not in ('B', 'b', 'c'):
             raise ValueError("memoryview: hashing is restricted to formats 'B', 'b' or 'c'")
-        return hash(self.tobytes())
+        from array import array
+        owner = self._object
+        guard = None
+        if isinstance(owner, array):
+            guard = _export(owner._buffer)
+        elif isinstance(owner, bytearray):
+            guard = _export(owner)
+        self._holds = getattr(self, '_holds', 0) + 1
+        try:
+            hash(owner)
+        finally:
+            self._holds -= 1
+            guard = None
+        value = hash(self.tobytes())
+        self._hash_value = value
+        return value
 
     def __repr__(self):
+        if self._released:
+            return '<released memory at 0x%x>' % id(self)
         return '<memory at 0x%x>' % id(self)
+
+    def __reduce__(self):
+        raise TypeError('cannot pickle memoryview objects')
+
+    def __reduce_ex__(self, protocol):
+        raise TypeError('cannot pickle memoryview objects')
 
 # What CPython's builtins holds and this one does not, so that a reader
 # looking for a missing name learns it is missing rather than broken.

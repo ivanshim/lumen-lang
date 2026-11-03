@@ -885,8 +885,9 @@ stdlib_module_names = frozenset(__load_module('', 'names'))
 # Source and native modules participate in the same finder protocol.
 
 
+# Count live Python holdings; the native tracing API retains lifetime markers.
 def getrefcount(object, /):
-    return __trace_native__(5, object)
+    return __program_namespace('refcount', object)
 
 
 def get_coroutine_origin_tracking_depth():

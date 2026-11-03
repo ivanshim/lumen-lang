@@ -673,6 +673,7 @@ def _host_entry(answer):
 
 
 def gethostbyname_ex(hostname):
+    _resolve_host(hostname, AF_INET)
     return _host_entry(_call('socket_hostbyname', _host_bytes(hostname)))
 
 
