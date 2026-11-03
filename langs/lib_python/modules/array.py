@@ -39,6 +39,10 @@ def _integer_overflow(code, value):
 
 class array:
     __slots__ = ('_typecode', '_itemsize', '_buffer', '__weakref__')
+    def __class_getitem__(cls, item):
+        import types
+        return types.GenericAlias(cls, item)
+
     def __new__(cls, typecode, initializer=_missing, /, **kwargs):
         if cls is array and kwargs:
             raise TypeError('array.array() takes no keyword arguments')

@@ -4,43 +4,29 @@ _host = __posix
 import operator as _operator
 
 
-_ERROR_KINDS = {2: FileNotFoundError, 17: FileExistsError, 20: NotADirectoryError,
+def _call(op, *args, filename=None, filename2=None):
+    error, result = _host(op, *args)
+    if error:
+        message = strerror(error)
+        kind = {2: FileNotFoundError, 17: FileExistsError, 20: NotADirectoryError,
                 21: IsADirectoryError, 13: PermissionError, 1: PermissionError,
                 4: InterruptedError, 32: BrokenPipeError, 11: BlockingIOError,
                 10: ChildProcessError, 3: ProcessLookupError, 110: TimeoutError,
                 103: ConnectionAbortedError, 111: ConnectionRefusedError,
-                104: ConnectionResetError}
-
-
-def _raise(error, filename=None, filename2=None):
-    message = strerror(error)
-    kind = _ERROR_KINDS.get(error, OSError)
-    if filename2 is not None:
-        raise kind(error, message, filename, None, filename2)
-    if filename is not None:
-        raise kind(error, message, filename)
-    raise kind(error, message)
-
-
-def _call(op, *args, filename=None, filename2=None):
-    error, result = _host(op, *args)
-    if error:
-        _raise(error, filename, filename2)
+                104: ConnectionResetError}.get(error, OSError)
+        if filename2 is not None:
+            raise kind(error, message, filename, None, filename2)
+        if filename is not None:
+            raise kind(error, message, filename)
+        raise kind(error, message)
     return result
 
 
 def fspath(path):
-    if type(path) is str or type(path) is bytes:
-        return path
     return _host('fspath', path)
 
 
 def _path(path):
-    if type(path) is str:
-        path.encode('utf-8', 'surrogateescape')
-        if '\0' in path:
-            raise ValueError('embedded null character')
-        return path
     path = fspath(path)
     if isinstance(path, str):
         path.encode('utf-8', 'surrogateescape')
@@ -52,13 +38,11 @@ def _path(path):
 
 
 def _fd(value):
-    if type(value) is int:
-        return value
     return _operator.index(value)
 
 
 def _cint(value):
-    number = value if type(value) is int else _operator.index(value)
+    number = _operator.index(value)
     if number < -2147483648 or number > 2147483647:
         raise OverflowError('Python int too large to convert to C int')
     return number
@@ -92,38 +76,16 @@ def strerror(code, /):
     return _call('strerror', _cint(code))
 
 
-# The configuration strings the host library answers for. The list
-# follows the names glibc gives them; an integer is passed through.
-_confstr_names = {
-    'CS_PATH': 0,
-    'CS_V6_WIDTH_RESTRICTED_ENVS': 1,
-    'CS_GNU_LIBC_VERSION': 2,
-    'CS_GNU_LIBPTHREAD_VERSION': 3,
-    'CS_V5_WIDTH_RESTRICTED_ENVS': 4,
-    'CS_V7_WIDTH_RESTRICTED_ENVS': 5,
-}
-
-
-def confstr(name, /):
-    if isinstance(name, str):
-        try:
-            name = _confstr_names[name]
-        except KeyError:
-            raise ValueError('unrecognized configuration name') from None
-    return _call('confstr', _cint(name))
-
-
 (O_RDONLY, O_WRONLY, O_RDWR, O_APPEND, O_CREAT, O_EXCL, O_TRUNC,
  O_NONBLOCK, O_CLOEXEC, O_DIRECTORY, O_NOFOLLOW, SEEK_SET, SEEK_CUR,
- SEEK_END, F_OK, R_OK, W_OK, X_OK, O_TMPFILE, O_NOCTTY) = _call('constants')
+ SEEK_END, F_OK, R_OK, W_OK, X_OK) = _call('constants')
 
 # These feature names describe implemented host entry points, not test expectations.
 _have_functions = ['HAVE_FACCESSAT', 'HAVE_FCHMODAT', 'HAVE_FSTATAT', 'HAVE_LSTAT',
                    'HAVE_MKDIRAT', 'HAVE_MKFIFOAT', 'HAVE_OPENAT', 'HAVE_READLINKAT',
                    'HAVE_RENAMEAT', 'HAVE_SYMLINKAT', 'HAVE_UNLINKAT', 'HAVE_UTIMENSAT',
                    'HAVE_FCHDIR', 'HAVE_FCHMOD', 'HAVE_FTRUNCATE', 'HAVE_LINKAT',
-                   'HAVE_FDOPENDIR', 'HAVE_FUTIMENS', 'HAVE_FCHOWNAT', 'HAVE_FCHOWN',
-                   'HAVE_LCHOWN', 'HAVE_FSTATVFS']
+                   'HAVE_FDOPENDIR', 'HAVE_FUTIMENS']
 environ = _call('environ')
 
 
@@ -244,55 +206,29 @@ def times():
 
 
 def _stat(data):
-    # The host hands over all nineteen fields in their final shape, so
-    # the sequence checks of stat_result.__new__ have nothing left to decide.
-    return _host('structseq_new', stat_result, data[:10], data[10:])
+    nanos = tuple(data[i] * 1000000000 + data[i + 3] for i in (7, 8, 9))
+    times = tuple(data[i] + data[i + 3] / 1000000000 for i in (7, 8, 9))
+    return stat_result(data[:10] + times + nanos + data[13:16])
 
 
 def stat(path, *, dir_fd=None, follow_symlinks=True):
-    if type(path) is str:
-        # The checks _path makes, without the call.
-        path.encode('utf-8', 'surrogateescape')
-        if '\0' in path:
-            raise ValueError('embedded null character')
-        original = path
-        if dir_fd is None and type(follow_symlinks) is bool:
-            return _host('stat_native', stat_result, path, follow_symlinks)
-    elif type(path) is bytes and dir_fd is None and type(follow_symlinks) is bool:
-        return _host('stat_native', stat_result, _path(path), follow_symlinks)
-    elif _is_fd_path(path):
+    if _is_fd_path(path):
         if dir_fd is not None:
             raise ValueError("stat: can't specify dir_fd without matching path")
         if not follow_symlinks:
             raise ValueError('stat: cannot use fd and follow_symlinks together')
         return fstat(_descriptor(path))
-    else:
-        original = _path(path)
-    error, data = _host('stat', original, -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd), int(bool(follow_symlinks)))
-    if error:
-        _raise(error, original)
-    return _host('structseq_new', stat_result, data[:10], data[10:])
+    original = _path(path)
+    return _stat(_call('stat', original, _dir(dir_fd), int(bool(follow_symlinks)), filename=original))
 
 
 def lstat(path, *, dir_fd=None):
-    if type(path) is str:
-        path.encode('utf-8', 'surrogateescape')
-        if '\0' in path:
-            raise ValueError('embedded null character')
-        original = path
-    else:
-        original = _path(path)
-    error, data = _host('lstat', original, -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd), 0)
-    if error:
-        _raise(error, original)
-    return _host('structseq_new', stat_result, data[:10], data[10:])
+    original = _path(path)
+    return _stat(_call('lstat', original, _dir(dir_fd), 0, filename=original))
 
 
 def fstat(fd):
-    error, data = _host('fstat', fd if type(fd) is int and -2147483648 <= fd <= 2147483647 else _cint(fd))
-    if error:
-        _raise(error)
-    return _host('structseq_new', stat_result, data[:10], data[10:])
+    return _stat(_call('fstat', _cint(fd)))
 
 
 def getcwdb():
@@ -318,53 +254,27 @@ def fchdir(fd):
 def listdir(path=None):
     if path is None:
         path = '.'
-    # The names straight off the directory stream: the same stream
-    # scandir reads, without an entry object made for each name.
-    if _is_fd_path(path):
-        original = _descriptor(path)
-        error, handle = _host('scandir', original)
-        if error:
-            _raise(error)
-    else:
-        original = _path(path)
-        error, handle = _host('scandir', original)
-        if error:
-            _raise(error, original)
-    text = not isinstance(original, bytes)
+    original = _descriptor(path) if _is_fd_path(path) else _path(path)
     result = []
-    try:
-        while True:
-            error, record = _host('scandir_next', handle)
-            if error:
-                _raise(error)
-            if record is None:
-                break
-            name = record[0]
-            result.append(name.decode('utf-8', 'surrogateescape') if text else name)
-    finally:
-        _host('scandir_close', handle)
+    with scandir(original) as entries:
+        for entry in entries:
+            result.append(entry.name)
     return result
 
 
 def mkdir(path, mode=0o777, *, dir_fd=None):
     original = _path(path)
-    error, _ = _host('mkdir', original, mode if type(mode) is int and -2147483648 <= mode <= 2147483647 else _cint(mode), -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd))
-    if error:
-        _raise(error, original)
+    _call('mkdir', original, _cint(mode), _dir(dir_fd), filename=original)
 
 
 def rmdir(path, *, dir_fd=None):
     original = _path(path)
-    error, _ = _host('rmdir', original, -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd))
-    if error:
-        _raise(error, original)
+    _call('rmdir', original, _dir(dir_fd), filename=original)
 
 
 def unlink(path, *, dir_fd=None):
     original = _path(path)
-    error, _ = _host('unlink', original, -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd))
-    if error:
-        _raise(error, original)
+    _call('unlink', original, _dir(dir_fd), filename=original)
 
 
 def remove(path, *, dir_fd=None):
@@ -382,16 +292,11 @@ def replace(src, dst, *, src_dir_fd=None, dst_dir_fd=None):
 
 def open(path, flags, mode=0o777, *, dir_fd=None):
     original = _path(path)
-    error, fd = _host('open', original, flags if type(flags) is int and -2147483648 <= flags <= 2147483647 else _cint(flags), mode if type(mode) is int and -2147483648 <= mode <= 2147483647 else _cint(mode), -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd))
-    if error:
-        _raise(error, original)
-    return fd
+    return _call('open', original, _cint(flags), _cint(mode), _dir(dir_fd), filename=original)
 
 
 def close(fd):
-    error, _ = _host('close', fd if type(fd) is int and -2147483648 <= fd <= 2147483647 else _cint(fd))
-    if error:
-        _raise(error)
+    _call('close', _cint(fd))
 
 
 def dup(fd):
@@ -399,10 +304,7 @@ def dup(fd):
 
 
 def read(fd, length, /):
-    error, data = _host('read', fd if type(fd) is int and -2147483648 <= fd <= 2147483647 else _cint(fd), length if type(length) is int else _fd(length))
-    if error:
-        _raise(error)
-    return data
+    return _call('read', _cint(fd), _fd(length))
 
 
 def readinto(fd, buffer, /):
@@ -419,93 +321,35 @@ def readinto(fd, buffer, /):
 
 
 def write(fd, data, /):
-    descriptor = fd if type(fd) is int and -2147483648 <= fd <= 2147483647 else _cint(fd)
-    if type(data) is not bytes:
-        if not isinstance(data, (bytes, bytearray)):
-            try:
-                view = memoryview(data)
-            except TypeError:
-                raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'")
-            if hasattr(view, 'c_contiguous') and not view.c_contiguous:
-                raise BufferError('memoryview: underlying buffer is not C-contiguous')
-            data = bytes(view)
-        data = bytes(data)
-    error, count = _host('write', descriptor, data)
-    if error:
-        _raise(error)
-    return count
+    descriptor = _cint(fd)
+    if not isinstance(data, (bytes, bytearray)):
+        try:
+            view = memoryview(data)
+        except TypeError:
+            raise TypeError("a bytes-like object is required, not '" + type(data).__name__ + "'")
+        if hasattr(view, 'c_contiguous') and not view.c_contiguous:
+            raise BufferError('memoryview: underlying buffer is not C-contiguous')
+        data = bytes(view)
+    return _call('write', descriptor, bytes(data))
 
 
 def lseek(fd, position, whence, /):
-    error, result = _host('lseek', fd if type(fd) is int and -2147483648 <= fd <= 2147483647 else _cint(fd), position if type(position) is int else _fd(position), whence if type(whence) is int and -2147483648 <= whence <= 2147483647 else _cint(whence))
-    if error:
-        _raise(error)
-    return result
+    return _call('lseek', _cint(fd), _fd(position), _cint(whence))
 
 
 def ftruncate(fd, length, /):
     _call('ftruncate', _cint(fd), _fd(length))
 
 
-def sendfile(out_fd, in_fd, offset, count):
-    out, source = _cint(out_fd), _cint(in_fd)
-    if offset is None:
-        return _call('sendfile', out, source, 0, 0, _fd(count))
-    return _call('sendfile', out, source, 1, _fd(offset), _fd(count))
-
-
-def copy_file_range(src, dst, count, offset_src=None, offset_dst=None):
-    return _call('copy_file_range', _cint(src), _cint(dst), _fd(count),
-                 int(offset_src is not None), 0 if offset_src is None else _fd(offset_src),
-                 int(offset_dst is not None), 0 if offset_dst is None else _fd(offset_dst))
-
-
-XATTR_CREATE = 1
-XATTR_REPLACE = 2
-XATTR_SIZE_MAX = 65536
-
-
-def _xattr(verb, name, path, attribute, value, flags, follow_symlinks):
-    if _is_fd_path(path):
-        if not follow_symlinks:
-            raise ValueError(name + ': cannot use fd and follow_symlinks together')
-        target, kind = _cint(path), 2
-    else:
-        target, kind = _path(path), 0 if follow_symlinks else 1
-    label = b'' if attribute is None else _path(attribute)
-    return _call('xattr', verb, target, label, value, kind, flags, filename=None if kind == 2 else target)
-
-
-def getxattr(path, attribute, *, follow_symlinks=True):
-    return _xattr(0, 'getxattr', path, attribute, b'', 0, follow_symlinks)
-
-
-def setxattr(path, attribute, value, flags=0, *, follow_symlinks=True):
-    _xattr(1, 'setxattr', path, attribute, bytes(value), _cint(flags), follow_symlinks)
-
-
-def listxattr(path=None, *, follow_symlinks=True):
-    names = _xattr(2, 'listxattr', '.' if path is None else path, None, b'', 0, follow_symlinks)
-    return [_decode(name) for name in names.split(b'\0') if name]
-
-
-def removexattr(path, attribute, *, follow_symlinks=True):
-    _xattr(3, 'removexattr', path, attribute, b'', 0, follow_symlinks)
-
-
 def readlink(path, *, dir_fd=None):
     original = _path(path)
-    error, result = _host('readlink', original, -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd))
-    if error:
-        _raise(error, original)
+    result = _call('readlink', original, _dir(dir_fd), filename=original)
     return result if isinstance(original, bytes) else _decode(result)
 
 
 def symlink(src, dst, target_is_directory=False, *, dir_fd=None):
     src, dst = _path(src), _path(dst)
-    error, _ = _host('symlink', src, dst, -100 if dir_fd is None else dir_fd if type(dir_fd) is int and -2147483648 <= dir_fd <= 2147483647 else _descriptor(dir_fd))
-    if error:
-        _raise(error, src, dst)
+    _call('symlink', src, dst, _dir(dir_fd), filename=src, filename2=dst)
 
 
 def link(src, dst, *, src_dir_fd=None, dst_dir_fd=None, follow_symlinks=True):
@@ -571,28 +415,10 @@ def putenv(name, value, /):
     if (b'=' if isinstance(name, bytes) else '=') in name:
         raise ValueError('illegal environment variable name')
     _call('putenv', name, value)
-    _forget_environment()
 
 
 def unsetenv(name, /):
     _call('unsetenv', name)
-    _forget_environment()
-
-
-def _forget_environment():
-    # sys.flags answers from the environment as last read.
-    import sys
-    held = getattr(sys, '_environment_values', None)
-    if held is not None:
-        held.clear()
-
-
-def kill(pid, signal, /):
-    target = _cint(pid)
-    number = _fd(signal)
-    if number < -9223372036854775808 or number > 9223372036854775807:
-        raise OverflowError('Python int too large to convert to C ssize_t')
-    _call('kill', target, number)
 
 
 def getpid():
@@ -656,31 +482,12 @@ def uname():
 
 
 class terminal_size(tuple):
-    __slots__ = ()
-    n_sequence_fields = 2
-    n_fields = 2
-    n_unnamed_fields = 0
-
-    # Construct the native terminal record with its fixed sequence size.
-    def __new__(cls, sequence, dict=_stat_dict_missing):
-        if dict is not _stat_dict_missing and not isinstance(dict, type({})):
-            raise TypeError('os.terminal_size() takes a dict as second arg, if any')
-        values = tuple(sequence)
-        if len(values) != 2:
-            raise TypeError('os.terminal_size() takes a 2-sequence (' + str(len(values)) + '-sequence given)')
-        return tuple.__new__(cls, values)
+    def __new__(cls, sequence):
+        if len(sequence) != 2:
+            raise TypeError('os.terminal_size() takes a 2-sequence')
+        return tuple.__new__(cls, sequence)
     columns = property(lambda self: self[0])
     lines = property(lambda self: self[1])
-
-    # Render the public dimensions as CPython's native record does.
-    def __repr__(self):
-        return 'os.terminal_size(columns=' + repr(self.columns) + ', lines=' + repr(self.lines) + ')'
-
-    # Refuse subclassing of the native result type.
-    def __init_subclass__(cls, **kwargs):
-        raise TypeError("type 'os.terminal_size' is not an acceptable base type")
-
-terminal_size.__module__ = 'os'
 
 
 def get_terminal_size(fd=1):
@@ -701,6 +508,10 @@ def waitstatus_to_exitcode(status):
 
 class DirEntry:
     __slots__ = ('_name', '_path', '_inode', '_type', '_dir_fd', '_stat', '_lstat')
+    def __class_getitem__(cls, item):
+        import types
+        return types.GenericAlias(cls, item)
+
     def __init__(self, directory, name, inode, kind):
         import posixpath
         self._name = name
@@ -746,10 +557,6 @@ class DirEntry:
             return stat.S_ISREG(self.stat(follow_symlinks=follow_symlinks).st_mode)
         except FileNotFoundError:
             return False
-    # Report the absence of Windows junctions on the POSIX filesystem.
-    def is_junction(self):
-        return False
-
     def is_dir(self, *, follow_symlinks=True):
         if self._type and (self._type != 10 or not follow_symlinks):
             return self._type == 4
@@ -761,72 +568,29 @@ class DirEntry:
     def __repr__(self):
         return '<DirEntry ' + repr(self.name) + '>'
 
-_new_entry = object.__new__
-
-# What the host copies to make an entry, giving each of its places a new
-# value; the places are set here in the order it fills them.
-_entry_sample = _new_entry(DirEntry)
-_entry_sample._name = _entry_sample._path = ''
-_entry_sample._inode = _entry_sample._type = 0
-_entry_sample._dir_fd = _entry_sample._stat = _entry_sample._lstat = None
-
 class _ScandirIterator:
     def __init__(self, path):
         self._closed = True
         self._path = path
-        error, handle = _host('scandir', path)
-        if type(path) is int:
-            if error:
-                _raise(error)
-            self._dir_fd = path
-            self._prefix = None
-            self._text = True
-        else:
-            if error:
-                _raise(error, path)
-            self._dir_fd = None
-            # What posixpath.join puts before each name: the directory,
-            # with a separator unless it already ends in one.
-            if isinstance(path, bytes):
-                self._text = False
-                self._prefix = path if path.endswith(b'/') else path + b'/'
-            else:
-                self._text = True
-                self._prefix = path if path.endswith('/') else path + '/'
-        # The host makes the entry itself where the names are text.
-        self._kind = _entry_sample if self._text else None
-        self._handle = handle
+        self._handle = _call('scandir', path, filename=None if _is_fd_path(path) else path)
         self._closed = False
     def __iter__(self):
         return self
     def __next__(self):
         if self._closed:
             raise StopIteration
-        error, entry = _host('scandir_entry', self._handle, self._kind, self._prefix, self._dir_fd)
-        if error:
+        try:
+            record = _call('scandir_next', self._handle)
+        except OSError:
             self.close()
-            _raise(error)
-        if entry is None:
-            self._closed = True
-            error = _host('scandir_close', self._handle)[0]
-            if error:
-                _raise(error)
+            raise
+        if record is None:
+            self.close()
             raise StopIteration
-        if type(entry) is not tuple:
-            return entry
-        # A name to be decoded here: a bytes path, or text that is not UTF-8.
-        name, inode, kind = entry
-        if self._text:
-            name = name.decode('utf-8', 'surrogateescape')
-        entry = _new_entry(DirEntry)
-        entry._name = name
-        entry._path = name if self._prefix is None else self._prefix + name
-        entry._inode = inode
-        entry._type = kind
-        entry._dir_fd = self._dir_fd
-        entry._stat = None
-        entry._lstat = None
-        return entry
+        name, inode, kind = record
+        if not isinstance(self._path, bytes):
+            name = _decode(name)
+        return DirEntry(self._path, name, inode, kind)
     def close(self):
         if not self._closed:
             self._closed = True
@@ -834,195 +598,23 @@ class _ScandirIterator:
     def __enter__(self):
         return self
     def __exit__(self, *args):
-        if not self._closed:
-            self.close()
+        self.close()
     def __del__(self):
-        if not self._closed:
-            self.close()
-
-_no_filename = object()
-
-
-def _walk_ready(path, prefix, mark, filename=_no_filename):
-    error, walk = _host('scandir_iter', path, _entry_sample, prefix, mark)
-    if error:
-        if filename is _no_filename:
-            _raise(error)
-        _raise(error, filename)
-    return walk
-
+        self.close()
 
 def scandir(path=None):
     if path is None:
         path = '.'
-    # A plain string is the walk's path. Building a Python iterator
-    # around the snapshot cost more than reading the directory.
-    if type(path) is str:
-        if '\0' in path:
-            raise ValueError('embedded null character')
-        prefix = path if not path or path.endswith('/') else path + '/'
-        return _walk_ready(path, prefix, -1, path)
-    if _is_fd_path(path):
-        fd = _descriptor(path)
-        return _walk_ready(fd, '', fd)
-    original = _path(path)
-    if type(original) is str:
-        prefix = original if not original or original.endswith('/') else original + '/'
-        return _walk_ready(original, prefix, -1, original)
-    return _ScandirIterator(original)
+    return _ScandirIterator(_descriptor(path) if _is_fd_path(path) else _path(path))
 
 
 def get_inheritable(fd, /):
-    error, result = _host('get_inheritable', fd if type(fd) is int and -2147483648 <= fd <= 2147483647 else _cint(fd))
-    if error:
-        _raise(error)
-    return result
+    return _call('get_inheritable', _cint(fd))
 
 
 def set_inheritable(fd, inheritable, /):
-    error, _ = _host('set_inheritable', fd if type(fd) is int and -2147483648 <= fd <= 2147483647 else _cint(fd), bool(_cint(inheritable)))
-    if error:
-        _raise(error)
-
-
-def get_blocking(fd, /):
-    return _call('get_blocking', _cint(fd))
-
-
-def set_blocking(fd, blocking, /):
-    _call('set_blocking', _cint(fd), bool(_cint(blocking)))
+    _call('set_inheritable', _cint(fd), bool(_cint(inheritable)))
 
 
 def pipe():
     return _call('pipe')
-
-
-# Convert the Linux uid_t/gid_t argument using CPython's signed-long rules.
-def _owner_id(value, kind):
-    try:
-        number = _operator.index(value)
-    except BaseException:
-        raise TypeError(kind + ' should be integer, not ' + type(value).__name__) from None
-    if number < -1 or 4294967295 < number <= 9223372036854775807:
-        raise OverflowError(kind + ' is less than minimum')
-    if number > 4294967295:
-        raise OverflowError(kind + ' is greater than maximum')
-    return number
-
-
-# Change ownership relative to a directory, optionally preserving the final link.
-def chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True):
-    if _is_fd_path(path):
-        if dir_fd is not None:
-            raise ValueError("chown: can't specify both dir_fd and fd")
-        if not follow_symlinks:
-            raise ValueError('chown: cannot use fd and follow_symlinks together')
-        return fchown(path, uid, gid)
-    original = _path(path)
-    _call('chown', original, _owner_id(uid, 'uid'), _owner_id(gid, 'gid'),
-          _dir(dir_fd), int(bool(follow_symlinks)), filename=original)
-
-
-# Change the ownership of an open descriptor.
-def fchown(fd, uid, gid):
-    _call('fchown', _cint(fd), _owner_id(uid, 'uid'), _owner_id(gid, 'gid'))
-
-
-# Change a symbolic link's ownership without following it.
-def lchown(path, uid, gid):
-    return chown(path, uid, gid, follow_symlinks=False)
-
-
-class statvfs_result(tuple):
-    __slots__ = ()
-    n_sequence_fields = 10
-    n_fields = 11
-    n_unnamed_fields = 0
-
-    # Preserve the ten sequence fields and the attribute-only filesystem id.
-    def __new__(cls, sequence, dict=_stat_dict_missing):
-        if dict is not _stat_dict_missing and not isinstance(dict, type({})):
-            raise TypeError('os.statvfs_result() takes a dict as second arg, if any')
-        values = tuple(sequence)
-        if len(values) < 10:
-            raise TypeError('os.statvfs_result() takes an at least 10-sequence (' + str(len(values)) + '-sequence given)')
-        if len(values) > 11:
-            raise TypeError('os.statvfs_result() takes an at most 11-sequence (' + str(len(values)) + '-sequence given)')
-        fsid = values[10] if len(values) > 10 else (None if dict is _stat_dict_missing else dict.get('f_fsid'))
-        return _host('structseq_new', cls, values[:10], (fsid,))
-
-    f_bsize = property(lambda self: self[0])
-    f_frsize = property(lambda self: self[1])
-    f_blocks = property(lambda self: self[2])
-    f_bfree = property(lambda self: self[3])
-    f_bavail = property(lambda self: self[4])
-    f_files = property(lambda self: self[5])
-    f_ffree = property(lambda self: self[6])
-    f_favail = property(lambda self: self[7])
-    f_flag = property(lambda self: self[8])
-    f_namemax = property(lambda self: self[9])
-    f_fsid = property(lambda self: _host('structseq_get', self, 0))
-
-    # Render the public fields in the struct-sequence representation.
-    def __repr__(self):
-        names = ('f_bsize', 'f_frsize', 'f_blocks', 'f_bfree', 'f_bavail', 'f_files', 'f_ffree', 'f_favail', 'f_flag', 'f_namemax')
-        return 'os.statvfs_result(' + ', '.join(name + '=' + repr(value) for name, value in zip(names, self)) + ')'
-
-    # Retain the attribute-only field when reducing the result.
-    def __reduce__(self):
-        return (type(self), (tuple(self), {'f_fsid': self.f_fsid}))
-
-    # Refuse subclassing as CPython's native result does.
-    def __init_subclass__(cls, **kwargs):
-        raise TypeError("type 'os.statvfs_result' is not an acceptable base type")
-
-statvfs_result.__module__ = 'os'
-
-
-# Read filesystem capacity from a path or an open descriptor.
-def statvfs(path):
-    if _is_fd_path(path):
-        return fstatvfs(_descriptor(path))
-    original = _path(path)
-    return statvfs_result(_call('statvfs', original, filename=original))
-
-
-# Read filesystem capacity from an open descriptor.
-def fstatvfs(fd):
-    return statvfs_result(_call('fstatvfs', _cint(fd)))
-
-# Linux waitpid option: return at once when the child is still running.
-WNOHANG = 1
-
-
-def forkpty():
-    """Fork a session leader whose standard streams are a new terminal.
-
-    Returns (pid, master_fd). The child sees pid 0.
-    """
-    return _call('forkpty')
-
-
-def _exit(status):
-    _call('_exit', _cint(status))
-
-
-def waitpid(pid, options, /):
-    return _call('waitpid', _cint(pid), _cint(options))
-
-
-# Keep native module functions callable without Python function binding.
-class _BuiltinFunction(staticmethod):
-    __hash__ = object.__hash__
-    # Native forwarding avoids another Python call frame; class access keeps identity.
-    def __get__(self, instance, owner=None):
-        return self
-
-    def __repr__(self):
-        return '<built-in function ' + self.__name__ + '>'
-
-
-for _name, _entry in list(globals().items()):
-    if not _name.startswith('_') and callable(_entry) and not isinstance(_entry, type):
-        globals()[_name] = _BuiltinFunction(_entry)
-del _name, _entry
