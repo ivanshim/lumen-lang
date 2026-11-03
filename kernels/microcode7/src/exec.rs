@@ -22920,6 +22920,14 @@ impl<'a> Machine<'a> {
                 }
             }
         }
+        // A builtin kind with no class-getitem of its own is not subscriptable.
+        if operation == Prim::At && self.rules.has_any_ext_stmt_class_builtin {
+            if let [Value::Intrinsic(kind, label), _] = operands {
+                if kind.names_a_kind() {
+                    return Err(format!("TypeError: type '{}' is not subscriptable", label).into());
+                }
+            }
+        }
         let pair = match operation {
             Prim::Plus => Some((18, 26)), Prim::Minus => Some((19, 27)), Prim::Times => Some((20, 28)),
             Prim::Over | Prim::OverReal => Some((21, 29)), Prim::IntDiv => Some((22, 30)),

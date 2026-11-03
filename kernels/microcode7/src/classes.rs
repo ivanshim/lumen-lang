@@ -166,6 +166,16 @@ impl<'a> Machine<'a> {
             }
             protocols.push(("__or__".to_owned(), Self::wrap(125, vec![Value::Small(6)])));
             protocols.push(("__ror__".to_owned(), Self::wrap(125, vec![Value::Small(7)])));
+            // Unknown names are the origin's. Directory, copy and state are the alias's own.
+            if let Some(reader) = self.table.strings("ext.stmt.class.reader").first().cloned() {
+                protocols.push((reader, Self::wrap(125, vec![Value::Small(16)])));
+            }
+            if let Some(dir_word) = self.rules.specials.get(75).cloned() {
+                protocols.push((dir_word, Self::wrap(125, vec![Value::Small(17)])));
+            }
+            for (name, mode) in [("__copy__", 9), ("__deepcopy__", 10), ("__setstate__", 14)] {
+                protocols.push((name.to_owned(), Self::wrap(125, vec![Value::Small(mode)])));
+            }
         }
         if word == "super" {
             let init = self.table.single("ext.stmt.class.constructor").unwrap_or_default();
@@ -6857,7 +6867,7 @@ impl<'a> Machine<'a> {
                 }
                 let fields = t.holds.borrow();
                 let parent = fields.iter().find(|entry| entry.0 == "__origin__").unwrap().1.clone();
-                if ["__module__", "__name__", "__qualname__", "__doc__"].iter().any(|word| *word == key) {
+                if ["__module__", "__name__", "__qualname__", "__doc__", "__getitem__"].iter().any(|word| *word == key) {
                     drop(fields);
                     return self.read_class_member(parent, key, true);
                 }
@@ -8539,6 +8549,8 @@ impl<'a> Machine<'a> {
     /// for without being a class itself. An entry that is absent, or is
     /// no tuple, ends the walk with nothing.
     fn value_bases(&mut self,value:&Value)->Result<Option<Vec<Value>>,Escape>{
+        // Forwarded origin bases do not make a parameterized alias a class.
+        if matches!(value, Value::Thing(alias) if Self::native_beneath(&alias.blueprint()).as_deref() == Some("GenericAlias")) { return Ok(None); }
         let key=self.detail("bases").to_owned();
         Ok(match self.member_if_any(value,&key)?{
             Some(Value::Tuple(parts))=>Some(parts.to_vec()),
@@ -8724,7 +8736,8 @@ impl<'a> Machine<'a> {
             let kinds = self.read_class_member(choice.clone(), "__args__", true)?;
             return self.is_beneath(subject, &kinds, class_only);
         }
-        if matches!(choice, Value::Thing(alias) if alias.blueprint().name == "GenericAlias") {
+        if matches!(choice, Value::Thing(alias) if Self::native_beneath(&alias.blueprint()).as_deref() == Some("GenericAlias")) {
+            if let Some(answer) = self.member_answers(choice, subject, class_only)? { return Ok(answer); }
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".to_owned().into());
         }
         if let Some(told)=self.builder_answers(choice,subject,class_only)?{return Ok(told);}
@@ -9502,6 +9515,44 @@ impl<'a> Machine<'a> {
         }
         let parent = self.read_class_member(subject.clone(), "__origin__", true)?;
         match action {
+            16 if rest.len() == 1 => {
+                let name = match rest[0].settled() { Value::Text(name) => name.to_string(), _ => return Err(self.class_unready()) };
+                self.read_class_member(parent, &name, false)
+            }
+            17 if rest.is_empty() => {
+                let listed = self.work_on_class(8, vec![parent.clone()])?;
+                let mut names = self.object_members(&listed)?;
+                names.retain(|held| !matches!(held, Value::Text(text) if matches!(text.as_ref(), "__bases__" | "__copy__" | "__deepcopy__")));
+                for prop in ["__origin__", "__args__", "__parameters__", "__unpacked__", "__mro_entries__"] {
+                    if !names.iter().any(|held| matches!(held, Value::Text(text) if text.as_ref() == prop)) {
+                        names.push(Value::text(prop));
+                    }
+                }
+                Ok(Value::tuple(names))
+            }
+            9 | 10 => {
+                let parameters = self.read_class_member(subject.clone(), "__args__", true)?;
+                let held = if action == 10 {
+                    let namespace = self.load_namespace("copy")?;
+                    let deep = self.read_class_member(namespace, "deepcopy", false)?;
+                    let memo = rest.first().cloned().ok_or_else(|| self.class_unready())?;
+                    self.apply_class_member(deep, vec![parameters, memo])?
+                } else { parameters };
+                let star = self.read_class_member(subject.clone(), "__unpacked__", true)?;
+                let Value::Thing(owner) = subject.settled() else { return Err(self.class_unready()); };
+                let made = self.construct_ordered(owner.blueprint(), vec![parent, held])?;
+                if let Value::Thing(alias) = &made {
+                    for (name, flag) in alias.holds.borrow_mut().iter_mut() { if name == "__unpacked__" { *flag = star.clone(); } }
+                }
+                Ok(made)
+            }
+            14 => {
+                let unpacked = matches!(rest.first().map(Value::settled), Some(Value::Flag(true)));
+                if let Value::Thing(object) = &subject {
+                    for (name, value) in object.holds.borrow_mut().iter_mut() { if name == "__unpacked__" { *value = Value::Flag(unpacked); } }
+                }
+                Ok(Value::Nil)
+            }
             5 if rest.is_empty() => {
                 let parameters = self.read_class_member(subject, "__args__", true)?;
                 let kind = self.native_kind("GenericAlias");

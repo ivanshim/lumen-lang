@@ -86,9 +86,8 @@ def alias_hash(alias):
 
 # Reduce an ordinary alias to its public constructor and its actual arguments.
 def alias_reduce(alias, protocol=None):
-    from types import GenericAlias
     if alias.__unpacked__:
-        return next, (iter(GenericAlias(alias.__origin__, alias.__args__)),)
+        return type(alias), (alias.__origin__, alias.__args__), True
     return type(alias), (alias.__origin__, alias.__args__)
 
 # Protocol-specific reduction still dispatches the subclass reduction hook.
@@ -166,7 +165,14 @@ def alias_repr(alias):
         return repr(value)
     def argument(value):
         if type(value) is list:
-            return '[' + ', '.join(display(item) for item in value) + ']'
+            index = 0
+            size = len(value)
+            parts = []
+            while index < size:
+                item = value[index]
+                parts.append(display(item))
+                index += 1
+            return '[' + ', '.join(parts) + ']'
         return display(value)
     entries = ', '.join(argument(value) for value in alias.__args__) if alias.__args__ else '()'
     return ('*' if alias.__unpacked__ else '') + display(alias.__origin__) + '[' + entries + ']'

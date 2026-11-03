@@ -11597,6 +11597,14 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        // A builtin kind with no class-getitem of its own is not subscriptable.
+        if matches!(op, Action::At) && Lang::spells(&self.lang.builtin_bases, "list") {
+            if let Value::Native(kind, name) = a {
+                if Self::kind_builtin(kind) {
+                    return Err(format!("TypeError: type '{}' is not subscriptable", name).into());
+                }
+            }
+        }
         let places = match op {
             Action::Eq => Some((2, 2)), Action::Ne => Some((3, 3)),
             Action::Lt => Some((4, 6)), Action::Le => Some((5, 7)),
