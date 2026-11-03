@@ -519,6 +519,21 @@ pub fn perform(given: &[Value], mut interrupted: impl FnMut() -> Result<(), Stri
                     Ok(Value::text(&String::from_utf8_lossy(&landing)))
                 }
             }
+            "pathconf" | "fpathconf" => {
+                // A failed call that leaves errno clear means the file has no such limit.
+                let which = int(1)? as libc::c_int;
+                let named = if operation.as_ref() == "pathconf" { Some(path(0)?) } else { None };
+                *libc::__errno_location() = 0;
+                let limit = match &named {
+                    Some(name) => libc::pathconf(name.as_ptr(), which),
+                    None => libc::fpathconf(int(0)? as libc::c_int, which),
+                };
+                match (limit, errno()) {
+                    (-1, 0) => Ok(Value::Nil),
+                    (-1, code) => Err(code),
+                    (found, _) => Ok(Value::Small(found as i64)),
+                }
+            }
             "get_inheritable" | "set_inheritable" | "get_blocking" | "set_blocking" => {
             let (get, set, bit) = match operation.as_ref() {
                 "get_inheritable" | "set_inheritable" => (libc::F_GETFD, libc::F_SETFD, libc::FD_CLOEXEC),
