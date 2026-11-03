@@ -915,6 +915,52 @@ impl Value {
         Some(ReferenceState::Counted(count))
     }
 
+    /// Read ownership from the allocation itself, without cloning its value.
+    pub(super) fn allocation_holds(&self) -> Option<usize> {
+        let count = match self {
+            Self::Unpaired(cell) => Rc::strong_count(cell),
+            Self::Member(cell, _) => Rc::strong_count(cell),
+            Self::Window(cell, _) => Rc::strong_count(cell),
+            Self::Row(cell) => Rc::strong_count(cell),
+            Self::Intrinsic(_, cell) => Rc::strong_count(cell),
+            Self::Iterator(cell) => Rc::strong_count(cell),
+            Self::Backtrace(cell) => Rc::strong_count(cell),
+            Self::Attributes(cell) => Rc::strong_count(cell),
+            Self::Refusal(cell) => Rc::strong_count(cell),
+            Self::Cursor(cell) => Rc::strong_count(cell),
+            Self::Arguments(cell) => Rc::strong_count(cell),
+            Self::Octets { cell, .. } => Rc::strong_count(cell),
+            Self::Export(cell) => Rc::strong_count(cell),
+            Self::OctetKind { shown: cell, .. } => Rc::strong_count(cell),
+            Self::Wrapped(_, cell) => Rc::strong_count(cell),
+            Self::Progression(cell) => Rc::strong_count(cell),
+            Self::Huge(cell) => Rc::strong_count(cell),
+            Self::Frac(cell) => Rc::strong_count(cell),
+            Self::Complex(cell) => Rc::strong_count(cell),
+            Self::Text(cell) => Rc::strong_count(cell),
+            Self::TextRow(cell, _) => Rc::strong_count(cell),
+            Self::Vector(cell) => Rc::strong_count(cell),
+            Self::Tuple(cell) => Rc::strong_count(cell),
+            Self::Generator(cell) => Rc::strong_count(cell),
+            Self::Set(cell) => Rc::strong_count(cell),
+            Self::SetCursor { source: cell, .. } => Rc::strong_count(cell),
+            Self::Span(cell) => Rc::strong_count(cell),
+            Self::Dict(cell) => Rc::strong_count(cell),
+            Self::Couple(cell) => Rc::strong_count(cell),
+            Self::Blueprint(cell) => Rc::strong_count(cell),
+            Self::Thing(cell) => Rc::strong_count(cell),
+            Self::Routine(cell) => Rc::strong_count(cell),
+            Self::Bound(cell, _) => Rc::strong_count(cell),
+            Self::Adorned(cell) => Rc::strong_count(cell),
+            Self::Dim(cell) => Rc::strong_count(cell),
+            Self::Mutable(binding, _) => Rc::strong_count(binding),
+            Self::Shared(binding) => return binding.borrow().allocation_holds(),
+            Self::Method(_, _, mark) => Rc::strong_count(mark),
+            _ => return None,
+        };
+        Some(count)
+    }
+
     pub fn method(code: Rc<Routine>, receiver: Rc<Thing>) -> Value { Value::Method(code, receiver, Rc::new(MethodMark)) }
 
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Sequence::tuple(parts)) }

@@ -729,8 +729,13 @@ impl Knot {
     /// The knots this one holds directly. A cell being written to at
     /// this moment yields none, which leans towards keeping.
     fn onward(&self, out: &mut Vec<Knot>) {
+        self.onward_for(out, false);
+    }
+
+    // Count inline bindings too without adding them to the collector graph.
+    fn onward_for(&self, out: &mut Vec<Knot>, include_inline: bool) {
         let held = |out: &mut Vec<Knot>, v: &Value| {
-            if carries_links(v) { out.push(Knot::Held(v.clone())); }
+            if include_inline || carries_links(v) { out.push(Knot::Held(v.clone())); }
         };
         match self {
             Knot::Frame(env) => {
@@ -856,6 +861,35 @@ impl Knot {
             other => (other, None),
         }
     }
+}
+
+/// How many live holds the given roots reach onto a value, counting
+/// every occurrence in the whole reachable web. An inline value has no
+/// allocation counter of its own, so this is the ownership a program may
+/// honestly ask after: the holds it actually has, nowhere invented.
+pub fn count_holds(roots: Vec<Knot>, target: &Value) -> usize {
+    let mut seen: HashSet<usize> = HashSet::new();
+    let mut open: Vec<Knot> = roots.into_iter().flat_map(Knot::parts).collect();
+    let mut count = 0usize;
+    while let Some(knot) = open.pop() {
+        if let Knot::Held(value) = &knot {
+            if value.selfsame(target) { count += 1; }
+        }
+        if let Some(place) = knot.place() {
+            if !seen.insert(place) { continue; }
+        }
+        let mut children = Vec::new();
+        if let Knot::Held(Value::Routine(code)) = &knot {
+            // Count the public constant table, not its copies in native forms.
+            children.extend(code.literals.iter().cloned().map(Knot::Held));
+            children.extend(code.globe.iter().chain(&code.born).cloned().map(Knot::Held));
+            children.extend(code.annotator.iter().cloned().map(|body| Knot::Held(Value::Routine(body))));
+        } else {
+            knot.onward_for(&mut children, true);
+        }
+        open.extend(children.into_iter().flat_map(Knot::parts));
+    }
+    count
 }
 
 struct Strand {

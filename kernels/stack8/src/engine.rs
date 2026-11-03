@@ -13576,7 +13576,18 @@ impl<'a> Engine<'a> {
                     }
                 },
                 Action::Grab(name) if self.data.last().map_or(false, |v| matches!(v, Value::ByteKind(..)) || matches!(v, Value::Class(c) if c.outline.is_some()) || matches!(v, Value::Object(o) if o.class_now().outline.is_some()) || matches!(v, Value::Routine(_) | Value::Method(..) | Value::Adapter(_) | Value::ValueMethod(_) | Value::TextMethod(..)) || matches!(v, Value::Native(..)) || matches!(v, Value::Native(_, word) if Lang::spells(&self.lang.builtin_bases, word))) => { let v=self.drop_top()?; Some(self.class_get(v,name,false)?) },
-                Action::Plant(name) => { let v=self.drop_top()?; let o=self.drop_top()?; self.cause_written(&o, name); Some(self.class_write(o,name,Some(v),false)?) },
+                Action::Plant(name) => {
+                    let v = self.drop_top()?;
+                    let o = self.drop_top()?;
+                    self.cause_written(&o, name);
+                    // An instance keeping a value with last words may be the
+                    // incoming side of a finalisable round, so it is kept as
+                    // a candidate even without last words of its own.
+                    let keeps_last_words = matches!(&v, Value::Object(held) if crate::faint::last_word_of(&held.class_now()).is_some());
+                    let outcome = self.class_write(o.clone(), name, Some(v), false)?;
+                    if keeps_last_words { if let Value::Object(object) = &o { crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(object))); } }
+                    Some(outcome)
+                },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
                 Action::HasMember(_) if self.data.last().map_or(false, |v| matches!(self.what_it_spells(v.clone()), Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_) | Value::Native(Builtin::ClassTool(9..=11),_))) => {self.drop_top()?; Some(Value::Flag(true))},
                 Action::Builtin(builtin @ (Builtin::ClassTool(_) | Builtin::SortOf), name) if !matches!(builtin, Builtin::SortOf) || argc != 1 || self.data.last().map_or(false, |v| matches!(v.contents(), Value::Object(_) | Value::Class(_) | Value::Routine(_) | Value::Method(..) | Value::Adapter(_))) => {
@@ -28899,6 +28910,30 @@ impl<'a> Engine<'a> {
                     return Ok(Value::Small((self.calls.len() + self.reaching) as i64));
                 }
 
+                if let [Value::Text(command), value] = args.as_slice() {
+                    if command.as_ref() == "refcount" {
+                        if let Some(owners) = value.shared_owners() { return Ok(Value::Small(owners as i64)); }
+                        // An inline value keeps no allocation counter, so
+                        // its ownership is the holds the run actually has
+                        // on it, counted over the reachable roots.
+                        let mut roots: Vec<Value> = args.to_vec();
+                        roots.extend(self.world.iter().chain(&self.data).chain(&self.caught).chain(&self.buffer)
+                            .chain(self.given.iter().flatten()).chain(self.modules.values()).chain(self.memo.values())
+                            .chain(self.native_exceptions.values()).chain(std::iter::once(&self.trace_hook)).cloned()
+                            .chain(self.function_members.iter().filter_map(|(function, _)| function.revive()))
+                            .chain(self.outer_book.iter().cloned().map(Value::Bond))
+                            .chain(self.function_books.iter().flatten().cloned().map(Value::Bond))
+                            .chain(self.natives.iter().cloned().map(Value::Bond)));
+                        // Only the frame's Python slots own these values, not its debug metadata.
+                        let mut frame = self.trace_frame.clone();
+                        while let Some(current) = frame {
+                            let fields = current.fields.borrow();
+                            if let Value::Tuple(slots) = &fields[5].1 { roots.extend(slots.iter().cloned()); }
+                            frame = if let Value::Object(parent) = &fields[2].1 { Some(parent.clone()) } else { None };
+                        }
+                        return Ok(Value::Small(crate::faint::count_holds(&roots, value) as i64));
+                    }
+                }
                 if let [value] = args.as_slice() {
                     if let Value::Object(module) = value.contents() {
                         return Ok(Value::Map(Rc::new(module.fields.borrow().iter().filter_map(|(key, held)| {
@@ -32165,34 +32200,35 @@ impl Engine<'_> {
         Ok(Value::Null)
     }
 
-    fn native_reduce(&self, value: &Value) -> Value {
-        // A code value reduces to its own parts -- the source it was
-        // read from, the name it was read under, and the mode and flags
-        // that ride with it -- so a compiled module written out is read
-        // back as the very code it was and run again.
-        if let Value::Object(object) = value {
-            if self.lang.compile_kind.as_deref() == Some(object.class_now().name.as_str()) {
-                let fields = object.fields.borrow();
-                let held = |key: &str| fields.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()).unwrap_or(Value::Null);
-                let words = &self.lang.compile_parameters;
-                let source = words.get(0).map(|w| held(w.as_str())).unwrap_or(Value::Null);
-                let filename = words.get(1).map(|w| held(w.as_str())).unwrap_or(Value::Null);
-                let mode = words.get(2).map(|w| held(w.as_str())).unwrap_or(Value::Null);
-                return Value::tuple(vec![Value::text("code"), source, filename, mode, held("co_flags"), held("co_firstlineno"), held("co_consts")]);
+    fn native_reduce(&mut self, value: &Value) -> Res<Value> {
+        if matches!(value, Value::Adapter(parts) if parts.0 == 7) || matches!(value, Value::Object(_)) {
+            if let Ok(body) = Self::native_code_subject(value) {
+                let code = self.routine_code(&body);
+                let names = ["co_argcount", "co_posonlyargcount", "co_kwonlyargcount", "co_nlocals", "co_stacksize", "co_flags", "co_consts", "co_names", "co_varnames", "co_filename", "co_name", "co_qualname", "co_firstlineno", "co_linetable", "co_exceptiontable", "co_freevars", "co_cellvars"];
+                let mut fields = Vec::new();
+                for name in names {
+                    let held = match self.class_get(code.clone(), name, false) {
+                        Ok(held) => held,
+                        Err(Fault::Note(message)) => return Err(message),
+                        Err(fault) => { self.carried = Some(fault); return Err(String::new()); }
+                    };
+                    fields.push((Value::text(name), held));
+                }
+                return Ok(Value::tuple(vec![Value::text("native-code"), self.byte_make(body.native_image(), false), Value::Map(Rc::new(fields.into()))]));
             }
         }
         if let Value::Class(c) = value {
-            return Value::tuple(vec![Value::text("class"), Value::text(&c.name)]);
+            return Ok(Value::tuple(vec![Value::text("class"), Value::text(&c.name)]));
         }
         if let Value::Object(o) = value {
-            let Some(Value::Cursor(cell)) = Self::worth_of(value) else { return Value::Null };
-            let CursorSource::Numbered(walk, n) = &cell.borrow().source else { return Value::Null };
-            return Value::tuple(vec![Value::text("numbered"), Value::Class(o.class_now().clone()), walk.clone(), Value::of_big(n.clone())]);
+            let Some(Value::Cursor(cell)) = Self::worth_of(value) else { return Ok(Value::Null) };
+            let CursorSource::Numbered(walk, n) = &cell.borrow().source else { return Ok(Value::Null) };
+            return Ok(Value::tuple(vec![Value::text("numbered"), Value::Class(o.class_now().clone()), walk.clone(), Value::of_big(n.clone())]));
         }
-        let Value::Cursor(cell) = value else { return Value::Null };
+        let Value::Cursor(cell) = value else { return Ok(Value::Null) };
         let held = cell.borrow();
         let walked = held.walked.clone().map_or(Value::Null, |w| Value::text(&w));
-        match &held.source {
+        Ok(match &held.source {
             CursorSource::Items(items, at) => {
                 let remaining: Vec<Value> = items.get(*at..).map(<[Value]>::to_vec).unwrap_or_default();
                 Value::tuple(vec![Value::text("items"), walked, Value::tuple(remaining)])
@@ -32206,7 +32242,7 @@ impl Engine<'_> {
             CursorSource::Numbered(walk, n) => Value::tuple(vec![Value::text("numbered"), Value::Null, walk.clone(), Value::of_big(n.clone())]),
             CursorSource::Handed(thing) => Value::tuple(vec![Value::text("handed"), thing.clone()]),
             _ => Value::Null,
-        }
+        })
     }
 
     /// The value a reduction written out by `native_reduce` reads back
@@ -32218,6 +32254,17 @@ impl Engine<'_> {
         let text_at = |i: usize| -> Option<Rc<str>> { match parts.get(i) { Some(Value::Text(t)) => Some(t.clone()), _ => None } };
         let big_at = |i: usize| -> Res<BigInt> { match parts.get(i) { Some(v @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => v.as_big(), _ => Err(malformed()) } };
         match tag.as_ref() {
+            "native-code" => {
+                let Some(image) = parts.get(1) else { return Err(malformed()); };
+                let Some(Value::Map(fields)) = parts.get(2).map(Value::contents) else { return Err(malformed()); };
+                let code = self.native_code_load(image)?;
+                let mut changes = Vec::new();
+                for (key, value) in fields.iter() {
+                    let Value::Text(name) = key else { return Err(malformed()); };
+                    changes.push((name.to_string(), value.clone()));
+                }
+                self.value_method(&code, "code_replace", Vec::new(), changes)
+            }
             "instance" => {
                 let (Some(Value::Class(class)), Some(base)) = (parts.get(1), parts.get(2)) else { return Err(malformed()); };
                 self.made += 1;
@@ -33174,7 +33221,7 @@ impl Engine<'_> {
                     }
                 } else {
                     self.check_native_reduction(&args[0])?;
-                    self.native_reduce(&args[0])
+                    self.native_reduce(&args[0])?
                 }
             }
             Builtin::LzmaEncode => {
@@ -36687,6 +36734,91 @@ impl Engine<'_> {
 
     /// Text checked ahead of time and kept as a code value, with the
     /// file and the manner it is to be read in.
+    /// UTF-7 as the reference decoder reads it (RFC 2152): ASCII stands
+    /// as itself, a plus opens a run of modified base-64 carrying UTF-16
+    /// code units, and a plus followed by a dash is one literal plus.
+    fn utf7_source(bytes: &[u8]) -> Result<Vec<u32>, (usize, String)> {
+        fn weight(byte: u8) -> Option<u32> {
+            match byte {
+                b'A'..=b'Z' => Some((byte - b'A') as u32),
+                b'a'..=b'z' => Some((byte - b'a') as u32 + 26),
+                b'0'..=b'9' => Some((byte - b'0') as u32 + 52),
+                b'+' => Some(62),
+                b'/' => Some(63),
+                _ => None,
+            }
+        }
+        let mut letters: Vec<u32> = Vec::new();
+        let mut at = 0usize;
+        let mut shifted = false;
+        let mut heaped = 0u32;
+        let mut heaped_bits = 0u32;
+        let mut awaiting = 0u32;
+        while at < bytes.len() {
+            let byte = bytes[at];
+            if shifted {
+                if let Some(six) = weight(byte) {
+                    heaped = (heaped << 6) | six;
+                    heaped_bits += 6;
+                    at += 1;
+                    while heaped_bits >= 16 {
+                        let unit = (heaped >> (heaped_bits - 16)) & 0xFFFF;
+                        heaped_bits -= 16;
+                        heaped &= if heaped_bits == 0 { 0 } else { (1u32 << heaped_bits) - 1 };
+                        Self::utf7_take(&mut letters, &mut awaiting, unit);
+                    }
+                    continue;
+                }
+                shifted = false;
+                if heaped_bits >= 6 { at += 1; return Err((at, "partial character in shift sequence".to_string())); }
+                if heaped != 0 { at += 1; return Err((at, "non-zero padding bits in shift sequence".to_string())); }
+                if awaiting != 0 && byte <= 127 && byte != b'+' { letters.push(awaiting); }
+                awaiting = 0;
+                if byte == b'-' { at += 1; }
+                continue;
+            }
+            if byte == b'+' {
+                at += 1;
+                if at < bytes.len() && bytes[at] == b'-' {
+                    at += 1;
+                    letters.push(u32::from(b'+'));
+                } else if at < bytes.len() && weight(bytes[at]).is_none() {
+                    at += 1;
+                    return Err((at, "ill-formed sequence".to_string()));
+                } else {
+                    shifted = true;
+                    awaiting = 0;
+                    heaped = 0;
+                    heaped_bits = 0;
+                }
+                continue;
+            }
+            if byte <= 127 { letters.push(u32::from(byte)); at += 1; }
+            else { at += 1; return Err((at, "unexpected special character".to_string())); }
+        }
+        if shifted && (awaiting != 0 || heaped_bits >= 6 || (heaped_bits > 0 && heaped != 0)) {
+            return Err((bytes.len(), "unterminated shift sequence".to_string()));
+        }
+        Ok(letters)
+    }
+
+    /// One UTF-16 unit out of a shift run: a low half completes the
+    /// high half held before it, and a high half is held for its own.
+    fn utf7_take(letters: &mut Vec<u32>, awaiting: &mut u32, unit: u32) {
+        if *awaiting != 0 {
+            if (0xDC00..=0xDFFF).contains(&unit) {
+                let joined = 0x10000 + ((*awaiting - 0xD800) << 10) + (unit - 0xDC00);
+                letters.push(joined);
+                *awaiting = 0;
+                return;
+            }
+            letters.push(*awaiting);
+            *awaiting = 0;
+        }
+        if (0xD800..=0xDBFF).contains(&unit) { *awaiting = unit; }
+        else { letters.push(unit); }
+    }
+
     fn source_bytes(&mut self, bytes: &[u8], filename: &str) -> Res<Rc<str>> {
         if bytes.contains(&0) {
             return Err(self.text_syntax(0, "SyntaxError: source code string cannot contain null bytes".into(), filename, 0, 0, None, ""));
@@ -36724,6 +36856,26 @@ impl Engine<'_> {
             return Err(self.text_syntax(0, format!("SyntaxError: encoding problem: {declared} with BOM"), filename, cookie_row, 0, None, &shown));
         }
         let decoded = match encoding.as_str() {
+            "utf7" | "u7" => match Self::utf7_source(bytes) {
+                Ok(points) => {
+                    // Decoding accepts lone halves; source conversion to UTF-8 rejects them.
+                    if let Some(at) = points.iter().position(|point| (0xD800..=0xDFFF).contains(point)) {
+                        let count = points[at..].iter().take_while(|point| (0xD800..=0xDFFF).contains(*point)).count();
+                        let detail = if count == 1 {
+                            format!("character '\\u{:04x}' in position {at}", points[at])
+                        } else {
+                            format!("characters in position {at}-{}", at + count - 1)
+                        };
+                        let message = format!("SyntaxError: 'utf-8' codec can't encode {detail}: surrogates not allowed");
+                        return Err(self.text_syntax(0, message, filename, 0, 0, None, ""));
+                    }
+                    points.into_iter().filter_map(char::from_u32).collect()
+                },
+                Err((at, why)) => {
+                    let words = format!("SyntaxError: (unicode error) 'utf-7' codec can't decode bytes in position {at}: {why}");
+                    return Err(self.text_syntax(0, words, filename, 0, 0, None, ""));
+                }
+            },
             "ascii" | "usascii" => {
                 if let Some((index, byte)) = bytes.iter().enumerate().find(|(_, b)| **b > 127) {
                     let words = format!("SyntaxError: 'ascii' codec can't decode byte 0x{byte:02x} in position {index}: ordinal not in range(128)");
@@ -37405,6 +37557,7 @@ impl Engine<'_> {
         metadata.qualified = "<module>".into();
         metadata.declared_on = 1;
         metadata.code_flags = bits;
+        let (imports, stores) = crate::compile::code_imports_stores(&checked.instrs, &checked.local_names);
         let fields = vec![("co_consts".to_string(), constants), ("\0native_code".to_string(), self.routine_code(&Rc::new(metadata))), ("co_name".into(), Value::text(module_name)), ("co_qualname".into(), Value::text(module_name)),
             ("co_filename".into(), Value::Text(file.clone())),
             ("\0optimization".into(), Value::Small(optimization as i64)),
@@ -37414,6 +37567,11 @@ impl Engine<'_> {
         let source_fields = vec![(words[0].clone(), Value::Text(source)), (words[1].clone(), Value::Text(file.clone())), (words[2].clone(), Value::Small(mode as i64)), ("co_filename".to_string(), Value::Text(file)), ("co_flags".to_string(), Value::Small(bits)), ("co_firstlineno".to_string(), Value::Small(1)), ("co_optimize".to_string(), Value::Small(optimization))];
         fields.splice(0..0, source_fields);
         if !positions.is_empty() { fields.push(("\0ast_positions".to_owned(), supplied_positions)); }
+        fields.push(("co_imports".to_string(), Value::tuple(imports.iter().map(|(name, level, fromlist)| Value::tuple(vec![
+            Value::text(name), Value::Small(*level as i64),
+            fromlist.as_ref().map_or(Value::Null, |taken| Value::tuple(taken.iter().map(|member| Value::text(member)).collect())),
+        ])).collect())));
+        fields.push(("co_stores".to_string(), Value::tuple(stores.iter().map(|name| Value::text(name)).collect())));
         self.made += 1;
         Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(fields), mark: self.made })))
     }
@@ -38155,6 +38313,7 @@ impl Engine<'_> {
             (words[2].clone(), Value::Small(mode as i64)), ("co_flags".into(), Value::Small(program.code_flags)),
             ("co_firstlineno".into(), Value::Small(program.declared_on as i64)), ("co_consts".into(), constants),
             ("co_filename".into(), Value::text(&file)),
+            ("\0native_code".into(), self.routine_code(&program)),
             ("\0compiled_program".into(), Value::Routine(program)),
             ("\0compiled_bindings".into(), Value::text(&bindings)),
             ("\0code_archive".into(), archive)];
