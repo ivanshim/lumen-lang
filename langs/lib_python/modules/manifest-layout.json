@@ -12,6 +12,7 @@
     "importlib.util": "util"
   },
   "adapters": {
+    "_pydatetime": "runtime_adapters/_pydatetime.py",
     "copy": "runtime_adapters/copy.py",
     "functools": "runtime_adapters/functools.py",
     "heapq": "runtime_adapters/heapq.py",

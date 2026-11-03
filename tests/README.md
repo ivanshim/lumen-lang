@@ -683,6 +683,7 @@ source exists. Full working measurements are in ignored `probe/`.
 | `pwd.py` | native runtime adapter; no Lib counterpart | `2debbc5e3885729d8155bb782bbdc92c8188bedaccdb16db1865b3e2a1400a28` | `—` |
 | `re.py` | runtime adapter / implementation | `a803e6a068b211d46f3188662b366dc69984ac61bda074c502e82fbadf8824af` | `741a9de729ed8207bfa19db990f8826f1bf3661f33d0970a80c08cd1338ebc35` |
 | `reprlib.py` | unchanged release copy | `b04872e10d76252e44eae50cc785eb0fe478491afc4d7f0825a93f82b2eaba5f` | `b04872e10d76252e44eae50cc785eb0fe478491afc4d7f0825a93f82b2eaba5f` |
+| `runtime_adapters/_pydatetime.py` | runtime adapter / implementation | `cea1c849bf20624d7febc0f153ec28259b9878d1b58ba53306bcffef5e043429` | `53dc54351ddbce3bc03ec1668ca00663baa3f99a8c9b0e5ae7a03fe8573e78cc` |
 | `runtime_adapters/codecs.py` | runtime adapter / implementation | `602c576d2ba5cad87c8ba59c13eebde71e3e49b77bb3083a395c67c9a35e7009` | `718f39b3ea68fe934214d789c5bce3005fa828040b03a72d2f715fc5e2647b7e` |
 | `runtime_adapters/copy.py` | runtime adapter / implementation | `c0a733b4c73e2c77f4b8b769717b771a44758ee169d27a99c755ebf2d16eacc4` | `15154fde290d6e65b5007905689a47a9a5a724822c5e06eec35d9ffbb2a3aa69` |
 | `runtime_adapters/copyreg.py` | runtime adapter / implementation | `bc1e513213cb47877a24e1aa3f8b34c43e85332804558618fa8680739b511ce1` | `6376eb5722806396f5842997ac18add369ea9ac3ff4fcfe1460c41a088cac425` |
