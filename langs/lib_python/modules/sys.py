@@ -194,6 +194,12 @@ class _Flags:
     context_aware_warnings = 0
 
 flags = _Flags()
+# Development mode implies the 'default' warning option, as CPython's -X dev does.
+# Read startup state without importing posix through the dynamic flag accessor.
+if ('default' not in warnoptions
+        and (_path_host[3].get('LUMEN_PYTHON_DEV_MODE') == '1'
+             or (not _ignore_environment and _path_host[3].get('PYTHONDEVMODE')))):
+    warnoptions.insert(0, 'default')
 
 # Stub: compatibility records advertise binary64 and 32-bit limbs;
 # they are not a probe of every arithmetic operation in the kernel.

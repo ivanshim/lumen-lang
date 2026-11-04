@@ -15605,18 +15605,14 @@ impl<'a> Engine<'a> {
                         Some(names) => {
                             let mut kept = Vec::new();
                             for name in names {
-                                match fields.iter().find(|(word, _)| word == name) {
-                                    Some((word, held)) => kept.push((word.clone(), held.clone())),
-                                    // A name the wildcard asks for that the
-                                    // module's own text never bound is a
-                                    // submodule the reference imports on
-                                    // demand, as a plain from-import does.
-                                    None => {
-                                        let parent = Value::Object(object.clone());
-                                        let child = self.import_member(&parent, &object.class.name.clone(), name)?;
-                                        kept.push((name.clone(), child));
-                                    }
-                                }
+                                // Each named entry is reached the way a
+                                // from-import reaches it: a row holding a
+                                // value, else the reading the module names
+                                // through __getattr__, else the submodule of
+                                // that name. A row a global declaration left
+                                // standing empty is no row.
+                                let reached = self.import_member(&Value::Object(object.clone()), &object.class.name, name)?;
+                                kept.push((name.clone(), reached));
                             }
                             kept
                         }
@@ -15626,6 +15622,12 @@ impl<'a> Engine<'a> {
                         if (!explicit && name.starts_with('_')) || !self.lang.begins_name(name.chars().next().unwrap_or('\0')) { continue; }
                         let value = match held { Value::Bond(cell) => cell.borrow().clone(), other => other };
                         if matches!(value, Value::Blank) { continue; }
+                        // A wildcard in exec writes only its supplied dictionary;
+                        // ordinary imports retain their module slots and bindings.
+                        if let Some(reading) = self.reading_in {
+                            self.write_booked(Kept::Text(reading), &name, Some(value), None);
+                            continue;
+                        }
                         let destination = self.module_slots.get(&self.source).and_then(|(base, path)| self.modules.get(path).cloned().map(|module| (*base, module)));
                         let at = if let Some((base, Value::Object(target))) = &destination {
                             let prefix = format!("\0module:{base}:");
@@ -15638,12 +15640,6 @@ impl<'a> Engine<'a> {
                         }
                         self.world.resize(self.registry.idents.len(), Value::Blank);
                         if let Some(book) = self.book_of(at) { self.write_booked(book, &name, Some(value.clone()), Some(at)); }
-                        // Text run in a dictionary of its own is handed
-                        // the names there too, the way the reference's
-                        // wildcard import writes the given globals.
-                        if let Some(reading) = self.reading_in {
-                            self.write_booked(Kept::Text(reading), &name, Some(value.clone()), None);
-                        }
                         match &self.world[at] {
                             Value::Bond(cell) => *cell.borrow_mut() = value,
                             _ if destination.is_some() => self.world[at] = Value::Bond(Rc::new(RefCell::new(value))),
@@ -30006,8 +30002,8 @@ impl<'a> Engine<'a> {
                     return Err(format!("{}() wants the name of a working first of all", name));
                 };
                 match working.as_str() {
-                    "method" if args.len() == 3 => {
-                        Self::adapter(63, vec![args[1].clone(), args[2].clone()])
+                    "method" if args.len() == 3 || (args.len() == 4 && args[1].plain() == "range") => {
+                        Self::adapter(63, args[1..].to_vec())
                     }
                     "pid" => {
                         if args.len() != 1 { return Err(self.lang.module_helper_amiss.clone()); }
@@ -34437,7 +34433,8 @@ impl Engine<'_> {
         let library_initializing = self.importing.iter().any(|name| self.embedded_names.contains(name));
         // Path hooks may supply archive or namespace loaders before a disk file.
         if self.lang.module_path.is_some() && self.modules.contains_key("sys")
-            && (!self.module_sources.contains_key(path) || archive_path) && !self.importing.contains("\0path-hooks") && !self.importing.contains("sys") && (bridge_ready || !library_initializing) {
+            && (!self.module_sources.contains_key(path) || archive_path) && !self.importing.contains("\0path-hooks") && !self.importing.contains("sys") && (bridge_ready || !library_initializing)
+            && (archive_path || !self.stock_path_hooks()) {
             self.importing.insert("\0path-hooks".to_owned());
             let hooked: Flow<(Value, Value)> = (|| {
                 let bridge = self.bootstrap_import("_zipimport_path")?;
@@ -34642,7 +34639,13 @@ impl Engine<'_> {
         self.source_loader_metadata(path, &module)?;
         let spec_initialized = self.initialize_source_file_spec(path, &module, own_file.as_deref())?;
         let saved_depth = self.data.len();
+        // A module's own top level is not the text that called the
+        // import: a wildcard import inside it writes into the module's
+        // own namespace, never into a dictionary an exec left standing
+        // outside, so the reading in force there is laid aside.
+        let outside_reading = self.reading_in.take();
         let result = self.invoke(&program, Vec::new());
+        self.reading_in = outside_reading;
         self.data.truncate(saved_depth);
         if let Err(fault) = result {
             self.importing.remove(path); self.embedded_names.remove(path);
@@ -34726,6 +34729,34 @@ impl Engine<'_> {
         self.importing.remove(path);
         self.refresh_module_cache(path);
         Ok(module)
+    }
+
+    fn stock_path_hooks(&mut self) -> bool {
+        let Some(system) = self.modules.get("sys").cloned() else { return false };
+        let Ok(Some(mut hooks)) = self.member_of(system, "path_hooks") else { return false };
+        while let Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) = hooks {
+            hooks = cell.borrow().clone();
+        }
+        let items = match hooks {
+            Value::Array(items) | Value::Tuple(items) => items,
+            _ => return false,
+        };
+        if items.len() != 2 { return false; }
+        let name_of = |item: &Value| -> Option<String> {
+            let mut current = item.clone();
+            while let Value::Bond(cell) | Value::Binding(cell) = current {
+                current = cell.borrow().clone();
+            }
+            match current {
+                Value::Routine(body) => Some(body.ident.clone()),
+                Value::Method(_, body, _) => Some(body.ident.clone()),
+                _ => None,
+            }
+        };
+        matches!(
+            (name_of(&items[0]), name_of(&items[1])),
+            (Some(zip), Some(file)) if zip == "_zip_path_hook" && file == "_file_path_hook"
+        )
     }
 
     /// Recognize archive paths, including directories below a file entry.
@@ -36465,10 +36496,19 @@ impl Engine<'_> {
     /// has, since nothing but a map was ever kept in such a cell before
     /// a program's own value could stand in for one too.
     fn book_put(&mut self, book: &Rc<RefCell<Value>>, name: &str, value: Option<Value>) -> Flow<()> {
-        let held = book.borrow().clone();
-        match &held {
-            Value::Map(_) => { book_write(book, name, value); Ok(()) }
-            Value::Object(_) | Value::Fields(_) | Value::Array(_) => self.dyn_write(&held, name, value),
+        // Cloning a map keeps a second Rc alive across the write, and
+        // make_mut then copies every pair before the name is stored.
+        let shape = match &*book.borrow() {
+            Value::Map(_) => 0u8,
+            Value::Object(_) | Value::Fields(_) | Value::Array(_) => 1,
+            _ => 2,
+        };
+        match shape {
+            0 => { book_write(book, name, value); Ok(()) }
+            1 => {
+                let held = book.borrow().clone();
+                self.dyn_write(&held, name, value)
+            }
             _ => Ok(()),
         }
     }
