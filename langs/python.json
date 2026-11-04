@@ -1677,6 +1677,9 @@
   "ext.builtin.range.zero_step": [
     "ValueError: range step must not be zero"
   ],
+  "ext.builtin.readonly_member": [
+    "__readonly_member__"
+  ],
   "ext.builtin.repr": [
     "repr"
   ],
