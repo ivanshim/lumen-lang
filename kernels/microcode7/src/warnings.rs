@@ -47,7 +47,7 @@ impl Machine<'_> {
             if let Some(old) = previous.iter().find(|old| old.0 == entry.0) { entry.1 = old.1.clone(); }
         }
         let kind = self.native_kind("module"); self.made += 1;
-        let result = Value::Thing(Rc::new(Thing { of: kind, reclassified: RefCell::new(None), holds: RefCell::new(namespace), turn: self.made }));
+        let result = Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false),  of: kind, reclassified: RefCell::new(None), holds: RefCell::new(namespace), turn: self.made }));
         self.warning_fallback = Some(result.clone());
         self.imported.insert(words[0].clone(), result.clone());
         self.namespace_places.borrow_mut().take();
@@ -453,9 +453,9 @@ impl Machine<'_> {
                 if let Value::Thing(previous) = &fields[2].1 { activation = Some(previous.clone()); }
             }
             positions.reverse();
-            let address = Rc::as_ptr(instance) as usize;
+            let address = crate::data::Hold::as_ptr(instance) as usize;
             if self.made & 63 == 0 { self.allocations.retain(|_, record| record.0.strong_count() > 0); }
-            self.allocations.insert(address, (Rc::downgrade(instance), positions));
+            self.allocations.insert(address, (crate::data::Hold::downgrade(instance), positions));
         }
     }
     fn allocation_operation(&mut self, values: &[Value]) -> Result<Value, String> {
@@ -463,7 +463,7 @@ impl Machine<'_> {
         let answer = match task {
             Some(Value::Small(0)) if values.len() == 2 => {
                 if let Value::Thing(object) = values[1].settled() {
-                    self.allocations.get(&(Rc::as_ptr(&object) as usize)).filter(|(weak, _)| weak.strong_count() != 0)
+                    self.allocations.get(&(crate::data::Hold::as_ptr(&object) as usize)).filter(|(weak, _)| weak.strong_count() != 0)
                         .map(|(_, entries)| Value::tuple(entries.iter().map(|entry| Value::tuple(vec![Value::text(&entry.0), Value::Small(entry.1)])).collect())).unwrap_or(Value::Nil)
                 } else { Value::Nil }
             }

@@ -246,7 +246,7 @@ pub struct TraceLink {
     pub instruction: i64,
     pub extent: Option<(u32, u32, u32, u32)>,
     pub location: i64,
-    pub activation: Rc<Thing>,
+    pub activation: Hold,
     pub following: RefCell<Value>,
 }
 
@@ -268,7 +268,7 @@ pub enum Value {
     Iterator(Rc<RefCell<IteratorState>>),
     Backtrace(Rc<TraceLink>),
     Keyed(Rc<Value>, Rc<Value>),
-    Attributes(Rc<Thing>),
+    Attributes(Hold),
     Traversal(Rc<Value>, Rc<RefCell<Option<Value>>>),
     Refusal(Rc<str>),
     Cursor(Rc<RefCell<std::collections::VecDeque<Value>>>),
@@ -308,10 +308,10 @@ pub enum Value {
     /// cell for the collection, without fastening its names together.
     Shared(Rc<RefCell<Value>>),
     Blueprint(Rc<Blueprint>),
-    Thing(Rc<Thing>),
+    Thing(Hold),
     /// A program not yet bound to a frame: only inside the tree.
     Routine(Rc<Routine>),
-    Method(Rc<Routine>, Rc<Thing>, Rc<MethodMark>),
+    Method(Rc<Routine>, Hold, Rc<MethodMark>),
     Adorned(Rc<Adornment>),
     /// A weak hold on a thing behind a pointer: it keeps nothing about
     /// and gives the thing back only while it is still there.
@@ -885,7 +885,7 @@ impl Value {
             };
         }
         let count = match self {
-            Value::Thing(t) | Value::Attributes(t) => Rc::strong_count(t),
+            Value::Thing(t) | Value::Attributes(t) => crate::data::Hold::strong_count(t),
             Value::Tuple(t) | Value::Vector(t) | Value::Row(t) | Value::Arguments(t) | Value::Span(t) => Rc::strong_count(t),
             Value::Generator(t) => Rc::strong_count(t),
             Value::Text(t) | Value::Refusal(t) => Rc::strong_count(t),
@@ -925,7 +925,7 @@ impl Value {
             Self::Intrinsic(_, cell) => Rc::strong_count(cell),
             Self::Iterator(cell) => Rc::strong_count(cell),
             Self::Backtrace(cell) => Rc::strong_count(cell),
-            Self::Attributes(cell) => Rc::strong_count(cell),
+            Self::Attributes(cell) => crate::data::Hold::strong_count(cell),
             Self::Refusal(cell) => Rc::strong_count(cell),
             Self::Cursor(cell) => Rc::strong_count(cell),
             Self::Arguments(cell) => Rc::strong_count(cell),
@@ -948,7 +948,7 @@ impl Value {
             Self::Dict(cell) => Rc::strong_count(cell),
             Self::Couple(cell) => Rc::strong_count(cell),
             Self::Blueprint(cell) => Rc::strong_count(cell),
-            Self::Thing(cell) => Rc::strong_count(cell),
+            Self::Thing(cell) => crate::data::Hold::strong_count(cell),
             Self::Routine(cell) => Rc::strong_count(cell),
             Self::Bound(cell, _) => Rc::strong_count(cell),
             Self::Adorned(cell) => Rc::strong_count(cell),
@@ -961,7 +961,7 @@ impl Value {
         Some(count)
     }
 
-    pub fn method(code: Rc<Routine>, receiver: Rc<Thing>) -> Value { Value::Method(code, receiver, Rc::new(MethodMark)) }
+    pub fn method(code: Rc<Routine>, receiver: Hold) -> Value { Value::Method(code, receiver, Rc::new(MethodMark)) }
 
     pub fn tuple(parts: Vec<Value>) -> Self { Self::Tuple(Sequence::tuple(parts)) }
 
@@ -1146,14 +1146,14 @@ impl Value {
             // Bound callables keep a key by function and receiver identity.
             Value::Wrapped(3, parts) if parts.len() == 2 => {
                 let receiver = match &parts[1] {
-                    Value::Thing(object) => format!("receiver/{:p}", Rc::as_ptr(object)),
+                    Value::Thing(object) => format!("receiver/{:p}", crate::data::Hold::as_ptr(object)),
                     other => other.hash_address()?,
                 };
                 Ok(format!("method/{:?}/{receiver:?}", parts[0].hash_address()?))
             }
             Value::Wrapped(4..=7, items) => Ok(format!("wrapper/{:p}", Rc::as_ptr(items))),
             Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
-            Value::Method(program, receiver, _) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(receiver))),
+            Value::Method(program, receiver, _) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), crate::data::Hold::as_ptr(receiver))),
 
             // A progression is addressed by the places it names: their
             // count, where they begin and how far apart they stand, so
@@ -1250,7 +1250,7 @@ impl Value {
         }
     }
 
-    fn gathered_representation(thing: &Rc<Thing>, words: Names) -> Option<String> {
+    fn gathered_representation(thing: &Hold, words: Names) -> Option<String> {
         let holds = thing.holds.borrow();
         let style = match holds.iter().find(|(k, _)| k == "\0source-kind") { Some((_, Value::Small(style))) => *style, _ => return None };
         let named = thing.blueprint().name.clone();
@@ -1301,7 +1301,7 @@ impl Value {
     /// Nothing here is a language's own word: these three kinds and
     /// their wording belong to Python alone, and are reached only
     /// through the markers Python's own roster puts on its kinds.
-    fn unicode_fault_text(thing: &Rc<Thing>, words: Names) -> Option<String> {
+    fn unicode_fault_text(thing: &Hold, words: Names) -> Option<String> {
         let marker = thing.blueprint().every_field().iter().find_map(|(k, _)| match k.as_str() {
             "\0unicode-encode" => Some(0u8), "\0unicode-decode" => Some(1u8),
             "\0unicode-translate" => Some(2u8), _ => None,
@@ -1707,7 +1707,7 @@ impl Value {
             // One object is itself and nothing else; two classes are one
             // when they carry the same name.
             (Value::Adorned(x), Value::Adorned(y)) => Rc::ptr_eq(x, y),
-            (Value::Method(p, a, _), Value::Method(q, b, _)) => Rc::ptr_eq(p, q) && Rc::ptr_eq(a, b),
+            (Value::Method(p, a, _), Value::Method(q, b, _)) => Rc::ptr_eq(p, q) && crate::data::Hold::ptr_eq(a, b),
             (Value::Backtrace(a), Value::Backtrace(b)) => Rc::ptr_eq(a, b),
             (Value::Thing(a), Value::Thing(b)) => {
                 let is_union = |thing: &Thing| thing.blueprint().constants.iter().any(|(word, held)| word == "\0native" && matches!(held, Value::Text(text) if text.as_ref() == "Union"));
@@ -1741,7 +1741,7 @@ impl Value {
                     let (left, right) = (held(a), held(b));
                     return left.len() == right.len() && left.iter().zip(right.iter()).all(|(x, y)| Self::code_worth_eq(x, y));
                 }
-                Rc::ptr_eq(a, b)
+                crate::data::Hold::ptr_eq(a, b)
             },
             (Value::Blueprint(a), Value::Blueprint(b)) => if a.presentation.is_none() { a.name == b.name } else { Rc::ptr_eq(a,b) },
             (Value::Generator(x), Value::Generator(y)) => Rc::ptr_eq(x, y),
@@ -1770,7 +1770,7 @@ impl Value {
                     _ => false,
                 };
                 match (one.first(), two.first(), one.last(), two.last()) {
-                    (Some(Value::Blueprint(a)), Some(Value::Blueprint(b)), Some(Value::Thing(x)), Some(Value::Thing(y))) => same_call && Rc::ptr_eq(a, b) && Rc::ptr_eq(x, y),
+                    (Some(Value::Blueprint(a)), Some(Value::Blueprint(b)), Some(Value::Thing(x)), Some(Value::Thing(y))) => same_call && Rc::ptr_eq(a, b) && crate::data::Hold::ptr_eq(x, y),
                     _ => Rc::ptr_eq(one, two),
                 }
             },
@@ -1804,7 +1804,7 @@ impl Value {
             (Value::Vector(x), Value::Vector(y)) | (Value::Tuple(x), Value::Tuple(y)) => Rc::ptr_eq(x, y),
             (Value::Dict(x), Value::Dict(y)) => Rc::ptr_eq(x, y),
             (Value::Backtrace(x), Value::Backtrace(y)) => Rc::ptr_eq(x, y),
-            (Value::Thing(x), Value::Thing(y)) => Rc::ptr_eq(x, y),
+            (Value::Thing(x), Value::Thing(y)) => crate::data::Hold::ptr_eq(x, y),
             // A truth is held by worth alone, not by an allocation,
             // so one worth is the one place.
             (Value::Flag(a), Value::Flag(b)) => a == b,
@@ -2190,9 +2190,9 @@ impl Value {
                 out.push(')');
             }
             Value::Adorned(a) => out.push_str(&format!("d{:p}", Rc::as_ptr(a))),
-            Value::Method(p, t, _) => out.push_str(&format!("m{:p}/{:p}", Rc::as_ptr(p), Rc::as_ptr(t))),
+            Value::Method(p, t, _) => out.push_str(&format!("m{:p}/{:p}", Rc::as_ptr(p), crate::data::Hold::as_ptr(t))),
             Value::Bound(p, _) => out.push_str(&format!("f{:p}", Rc::as_ptr(p))),
-            Value::Thing(t) => out.push_str(&format!("t{:p}", Rc::as_ptr(t))),
+            Value::Thing(t) => out.push_str(&format!("t{:p}", crate::data::Hold::as_ptr(t))),
             Value::Shared(cell) => cell.borrow().memo_key(out),
             Value::Blueprint(b) => out.push_str(&format!("b{}", b.name)),
             other => out.push_str(&other.bare()),
@@ -2272,7 +2272,7 @@ impl Value {
             Value::Set(members) => Rc::as_ptr(members) as *const u8 as usize,
             Value::Octets { cell, .. } => Rc::as_ptr(cell) as *const u8 as usize,
             Value::Text(letters) => letters.as_ptr() as usize,
-            Value::Thing(thing) => Rc::as_ptr(thing) as *const u8 as usize,
+            Value::Thing(thing) => crate::data::Hold::as_ptr(thing) as *const u8 as usize,
             Value::Iterator(state) => Rc::as_ptr(state) as *const u8 as usize,
             _ => return None,
         })
@@ -2574,6 +2574,7 @@ impl Thing {
 
 #[derive(Debug)]
 pub struct Thing {
+    pub tethered: std::cell::Cell<bool>,
     pub reclassified: RefCell<Option<Rc<Blueprint>>>,
     pub of: Rc<Blueprint>,
     pub holds: RefCell<Vec<(String, Value)>>,
@@ -2581,6 +2582,86 @@ pub struct Thing {
     /// one, for a language that names them when showing them.
     pub turn: usize,
 }
+
+/// One thing's owning handle. The anchor book remembers a thing only
+/// while its farewell can still run; this handle updates that book's
+/// "held by the anchor alone" tally when a copy appears or disappears,
+/// so a step does not walk the whole book to learn the same fact.
+#[derive(Debug)]
+pub struct Hold(Rc<Thing>);
+
+impl Hold {
+    pub fn new(thing: Thing) -> Hold {
+        Hold(Rc::new(thing))
+    }
+
+    pub fn ptr_eq(left: &Hold, right: &Hold) -> bool {
+        Rc::ptr_eq(&left.0, &right.0)
+    }
+
+    pub fn strong_count(handle: &Hold) -> usize {
+        Rc::strong_count(&handle.0)
+    }
+
+    pub fn as_ptr(handle: &Hold) -> *const Thing {
+        Rc::as_ptr(&handle.0)
+    }
+
+    pub fn downgrade(handle: &Hold) -> std::rc::Weak<Thing> {
+        Rc::downgrade(&handle.0)
+    }
+
+    pub fn upgrade(weak: &std::rc::Weak<Thing>) -> Option<Hold> {
+        match weak.upgrade() {
+            None => None,
+            Some(inner) => {
+                let shares = Rc::strong_count(&inner);
+                if shares == 2 && inner.tethered.get() {
+                    crate::ghost::tether_shared();
+                }
+                Some(Hold(inner))
+            }
+        }
+    }
+}
+
+impl Clone for Hold {
+    #[inline(always)]
+    fn clone(&self) -> Hold {
+        let tethered = self.0.tethered.get();
+        let previous = match tethered {
+            true => Rc::strong_count(&self.0),
+            false => 0,
+        };
+        let copy = Hold(Rc::clone(&self.0));
+        if tethered && previous == 1 {
+            crate::ghost::tether_shared();
+        }
+        copy
+    }
+}
+
+impl Drop for Hold {
+    #[inline(always)]
+    fn drop(&mut self) {
+        if self.0.tethered.get() {
+            let shares = Rc::strong_count(&self.0);
+            if shares == 2 {
+                crate::ghost::tether_alone();
+            } else if shares == 1 {
+                crate::ghost::tether_shared();
+            }
+        }
+    }
+}
+
+impl std::ops::Deref for Hold {
+    type Target = Thing;
+    fn deref(&self) -> &Thing {
+        &self.0
+    }
+}
+
 
 impl Thing {
     /// The entries a program can see, as the dictionary of them: none

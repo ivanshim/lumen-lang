@@ -16,7 +16,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::{Rc, Weak};
 
-use crate::data::{Adornment, Blueprint, Env, IteratorKind, SetStore, Thing, Value};
+use crate::data::{Adornment, Blueprint, Env, Hold, IteratorKind, SetStore, Thing, Value};
 use crate::exec::Suspension;
 use crate::form::{Callee, CaseTest, Form, Input, Routine};
 
@@ -61,14 +61,14 @@ impl Ghost {
     pub fn revive(&self) -> Option<Value> {
         match self {
             Ghost::StaticKind(kind) => Some(kind.clone()),
-            Ghost::Thing(w) => w.upgrade().map(Value::Thing),
+            Ghost::Thing(w) => crate::data::Hold::upgrade(&w).map(Value::Thing),
             Ghost::Cell(w) => w.upgrade().map(Value::Shared),
             Ghost::Blueprint(w) => w.upgrade().map(Value::Blueprint),
             Ghost::Walk(w) => w.upgrade().map(Value::Generator),
             Ghost::Set(w) => w.upgrade().map(Value::Set),
             Ghost::Bound(p, e) => Some(Value::Bound(p.upgrade()?, e.upgrade()?)),
             Ghost::Routine(w) => w.upgrade().map(Value::Routine),
-            Ghost::Method(p, t, identity) => Some(Value::Method(p.upgrade()?, t.upgrade()?, identity.upgrade()?)),
+            Ghost::Method(p, t, identity) => Some(Value::Method(p.upgrade()?, crate::data::Hold::upgrade(&t)?, identity.upgrade()?)),
             Ghost::WrappedMethod(parts) => Some(Value::Wrapped(3, parts.upgrade()?.into())),
             Ghost::Code(parts) => Some(Value::Wrapped(7, parts.upgrade()?.into())),
             Ghost::Lasting(value) => Some(value.clone()),
@@ -118,7 +118,7 @@ enum ReferenceAddress { Instance(usize), Class(usize), Native(Rc<str>) }
 
 fn reference_address(value: &Value) -> Option<ReferenceAddress> {
     match value {
-        Value::Thing(thing) => Some(ReferenceAddress::Instance(Rc::as_ptr(thing) as usize)),
+        Value::Thing(thing) => Some(ReferenceAddress::Instance(crate::data::Hold::as_ptr(thing) as usize)),
         Value::Blueprint(class) => Some(ReferenceAddress::Class(Rc::as_ptr(class) as usize)),
         Value::Intrinsic(_, spelling) => Some(ReferenceAddress::Native(spelling.clone())),
         _ => None,
@@ -135,13 +135,16 @@ thread_local! {
     // a step asks once and stands down where none is set.
     static GHOST_STATE: Rc<Cell<u8>> = Rc::new(Cell::new(0));
     static LOST: Cell<bool> = const { Cell::new(false) };
-    static FAREWELLS: RefCell<Vec<(Rc<Thing>, Value)>> = const { RefCell::new(Vec::new()) };
+    static FAREWELLS: RefCell<Vec<(Hold, Value)>> = const { RefCell::new(Vec::new()) };
     static HALF_WALKS: RefCell<Vec<Rc<RefCell<Suspension>>>> = const { RefCell::new(Vec::new()) };
     static BIDDEN: RefCell<HashSet<usize, crate::table::FxBuildHasher>> = RefCell::new(HashSet::default());
     static REFERENCES: RefCell<Vec<Weak<Dim>>> = const { RefCell::new(Vec::new()) };
     static REFERENCES_NEXT_SWEEP: Cell<usize> = const { Cell::new(64) };
     static REFERENCES_BY_TARGET: RefCell<(HashMap<ReferenceAddress, Vec<Weak<Dim>>>, usize)> = RefCell::new((HashMap::new(), 64));
-    static ANCHORED: Rc<RefCell<Vec<Rc<Thing>>>> = Rc::new(RefCell::new(Vec::new()));
+    static ANCHORED: Rc<RefCell<Vec<Hold>>> = Rc::new(RefCell::new(Vec::new()));
+    /// How many tethered things are held by the anchor list alone.
+    static LONE_TETHERS: Cell<i32> = const { Cell::new(0) };
+    static TETHER_TICK: Cell<u32> = const { Cell::new(0) };
     // Addresses already anchored, so a repeat anchor does not walk the vector.
     // Membership, not a second owner.
     static ANCHORED_ADDRS: RefCell<HashSet<usize, crate::table::FxBuildHasher>> = RefCell::new(HashSet::default());
@@ -218,7 +221,7 @@ pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
             // A listener in the same lost group has no live owner to
             // receive a notice, even though the web still holds it.
             if !lost.contains(&(dim.bearer.as_ptr() as usize)) {
-                if let (Some(bearer), Some(notify)) = (dim.bearer.upgrade(), &*dim.notify.borrow()) {
+                if let (Some(bearer), Some(notify)) = (crate::data::Hold::upgrade(&dim.bearer), &*dim.notify.borrow()) {
                     notices.push((notify.clone(), Value::Thing(bearer)));
                 }
             }
@@ -230,8 +233,8 @@ pub fn silence_group(knots: &[Knot]) -> Vec<(Value, Value)> {
     }).unwrap_or_default()
 }
 
-pub fn anchor(thing: &Rc<Thing>) {
-    let addr = Rc::as_ptr(thing) as usize;
+pub fn anchor(thing: &Hold) {
+    let addr = Hold::as_ptr(thing) as usize;
     let added = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
         let known = ANCHORED_ADDRS.try_with(|book| book.borrow().contains(&addr)).unwrap_or(false);
@@ -239,6 +242,7 @@ pub fn anchor(thing: &Rc<Thing>) {
             return false;
         }
         all.push(thing.clone());
+        thing.tethered.set(true);
         true
     }).unwrap_or(false);
     if added {
@@ -247,37 +251,66 @@ pub fn anchor(thing: &Rc<Thing>) {
     }
 }
 
+pub fn tether_alone() {
+    let _ = LONE_TETHERS.try_with(|count| {
+        count.set(count.get().wrapping_add(1));
+    });
+}
+
+pub fn tether_shared() {
+    let _ = LONE_TETHERS.try_with(|count| {
+        let now = count.get();
+        count.set(if now == 0 { 0 } else { now - 1 });
+    });
+}
+
 pub fn anchored_values() -> Vec<Knot> {
     ANCHORED.try_with(|all| all.borrow().iter().cloned().map(|item| Knot::Held(Value::Thing(item))).collect()).unwrap_or_default()
 }
 
-pub fn release_anchor(thing: &Rc<Thing>) {
-    let addr = Rc::as_ptr(thing) as usize;
+pub fn release_anchor(thing: &Hold) {
+    let addr = Hold::as_ptr(thing) as usize;
     let _ = ANCHORED_ADDRS.try_with(|book| { book.borrow_mut().remove(&addr); });
     let _ = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
-        all.retain(|item| !Rc::ptr_eq(item, thing));
+        let present = all.iter().any(|item| Hold::ptr_eq(item, thing));
+        if present {
+            let lone = Hold::strong_count(thing) == 1;
+            thing.tethered.set(false);
+            if lone {
+                tether_shared();
+            }
+            all.retain(|item| !Hold::ptr_eq(item, thing));
+        }
         ghost_set(G_ANCHOR, !all.is_empty());
     });
 }
 
 pub fn release_all_anchors() {
-    let _ = ANCHORED.try_with(|all| all.borrow_mut().clear());
+    let _ = ANCHORED.try_with(|all| {
+        let mut all = all.borrow_mut();
+        for item in all.iter() {
+            item.tethered.set(false);
+        }
+        all.clear();
+    });
+    let _ = LONE_TETHERS.try_with(|count| count.set(0));
     let _ = ANCHORED_ADDRS.try_with(|book| book.borrow_mut().clear());
     ghost_drop(G_ANCHOR);
 }
 
-fn anchor_ready(anchored: &RefCell<Vec<Rc<Thing>>>) -> bool {
-    let all = anchored.borrow();
-    // Avoid an iterator callback per retained owner at every interpreter step.
-    // Every anchored object is checked here, not only the newest tail.
-    let mut pending = all.as_slice();
-    while let [a, b, c, d, rest @ ..] = pending {
-        if Rc::strong_count(a) == 1 || Rc::strong_count(b) == 1
-            || Rc::strong_count(c) == 1 || Rc::strong_count(d) == 1 { return true; }
-        pending = rest;
+fn anchor_ready(anchored: &RefCell<Vec<Hold>>) -> bool {
+    let turn = TETHER_TICK.try_with(|tick| {
+        let next = tick.get().wrapping_add(1);
+        tick.set(next);
+        next
+    }).unwrap_or(0);
+    if turn % 2048 == 0 {
+        let found = anchored.borrow().iter().filter(|item| Hold::strong_count(item) == 1).count();
+        let _ = LONE_TETHERS.try_with(|count| count.set(found as i32));
+        return found != 0;
     }
-    pending.iter().any(|item| Rc::strong_count(item) == 1)
+    LONE_TETHERS.try_with(|count| count.get() > 0).unwrap_or(false)
 }
 
 /// The method a class bids farewell with, where the language has one.
@@ -297,7 +330,7 @@ pub fn bidding() -> bool {
 /// statics each time. They are the very cells the rest of this file sets.
 pub struct Tap {
     state: Rc<Cell<u8>>,
-    anchored: Rc<RefCell<Vec<Rc<Thing>>>>,
+    anchored: Rc<RefCell<Vec<Hold>>>,
 }
 
 pub fn tap() -> Tap {
@@ -412,8 +445,8 @@ pub fn farewell_of(class: &Rc<Blueprint>) -> Option<Value> {
 
 /// Marks a thing's farewell as bidden, answering whether it was not
 /// already: a farewell is bidden once.
-pub fn first_farewell(thing: &Rc<Thing>) -> bool {
-    let where_it_lives = Rc::as_ptr(thing) as usize;
+pub fn first_farewell(thing: &Hold) -> bool {
+    let where_it_lives = crate::data::Hold::as_ptr(thing) as usize;
     BIDDEN.try_with(|b| b.borrow_mut().insert(where_it_lives)).unwrap_or(false)
 }
 
@@ -430,8 +463,8 @@ pub fn thing_departing(going: &mut Thing) {
     if !bidden {
         if let Some(farewell) = farewell_of(&going.of) {
             let members = std::mem::take(going.holds.get_mut());
-            let again = Rc::new(Thing { reclassified: RefCell::new(going.reclassified.borrow().clone()), of: going.of.clone(), holds: RefCell::new(members), turn: going.turn });
-            let _ = BIDDEN.try_with(|b| b.borrow_mut().insert(Rc::as_ptr(&again) as usize));
+            let again = Hold::new(Thing {tethered: std::cell::Cell::new(false),  reclassified: RefCell::new(going.reclassified.borrow().clone()), of: going.of.clone(), holds: RefCell::new(members), turn: going.turn });
+            let _ = BIDDEN.try_with(|b| b.borrow_mut().insert(crate::data::Hold::as_ptr(&again) as usize));
             let _ = FAREWELLS.try_with(|f| f.borrow_mut().push((again, farewell)));
             stir();
         }
@@ -450,20 +483,30 @@ pub fn walk_departing(again: Rc<RefCell<Suspension>>) {
 /// and listeners whose thing has gone, each with its bearer. The flag
 /// is cleared; more may gather while the machine works, so it asks
 /// again until nothing comes back.
-pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(Value, Value)>) {
+pub fn gather() -> (Vec<(Hold, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(Value, Value)>) {
     ghost_drop(G_STIRRED);
     let mut farewells = FAREWELLS.try_with(|f| std::mem::take(&mut *f.borrow_mut())).unwrap_or_default();
     let ready = ANCHORED.try_with(|all| {
         let mut all = all.borrow_mut();
-        let (ready, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|item| Rc::strong_count(item) == 1);
-        *all = kept;
+        let mut staying = Vec::new();
+        let mut ready = Vec::new();
+        for item in all.drain(..) {
+            if Hold::strong_count(&item) == 1 {
+                item.tethered.set(false);
+                ready.push(item);
+            } else {
+                staying.push(item);
+            }
+        }
+        let _ = LONE_TETHERS.try_with(|count| count.set(0));
+        *all = staying;
         ghost_set(G_ANCHOR, !all.is_empty());
         ready
     }).unwrap_or_default();
     let _ = ANCHORED_ADDRS.try_with(|book| {
         let mut book = book.borrow_mut();
         for thing in &ready {
-            book.remove(&(Rc::as_ptr(thing) as usize));
+            book.remove(&(Hold::as_ptr(thing) as usize));
         }
     });
     for thing in ready {
@@ -482,7 +525,7 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
                 if dim.bearer.strong_count() == 0 { continue; }
                 if !dim.departed() {
                     still.push(dim);
-                } else if let (Some(bearer), Some(notify)) = (dim.bearer.upgrade(), dim.notify.borrow_mut().take()) {
+                } else if let (Some(bearer), Some(notify)) = (crate::data::Hold::upgrade(&dim.bearer), dim.notify.borrow_mut().take()) {
                     notices.push((notify, Value::Thing(bearer)));
                 }
             }
@@ -502,7 +545,7 @@ pub fn gather() -> (Vec<(Rc<Thing>, Value)>, Vec<Rc<RefCell<Suspension>>>, Vec<(
 pub fn ghost_of(value: &Value) -> Option<Ghost> {
     Some(match value {
         Value::Shared(cell) | Value::Mutable(cell, _) => return ghost_of(&cell.borrow()),
-        Value::Thing(t) => Ghost::Thing(Rc::downgrade(t)),
+        Value::Thing(t) => Ghost::Thing(crate::data::Hold::downgrade(t)),
         Value::Intrinsic(code, _) if code.names_a_kind() => Ghost::StaticKind(value.clone()),
         Value::OctetKind { .. } => Ghost::StaticKind(value.clone()),
         Value::Blueprint(b) => Ghost::Blueprint(Rc::downgrade(b)),
@@ -510,7 +553,7 @@ pub fn ghost_of(value: &Value) -> Option<Ghost> {
         Value::Set(s) => Ghost::Set(Rc::downgrade(s)),
         Value::Bound(p, e) => Ghost::Bound(Rc::downgrade(p), Rc::downgrade(e)),
         Value::Routine(p) => Ghost::Routine(Rc::downgrade(p)),
-        Value::Method(p, t, identity) => Ghost::Method(Rc::downgrade(p), Rc::downgrade(t), Rc::downgrade(identity)),
+        Value::Method(p, t, identity) => Ghost::Method(Rc::downgrade(p), crate::data::Hold::downgrade(t), Rc::downgrade(identity)),
         Value::Wrapped(3, parts) => Ghost::WrappedMethod(Rc::downgrade(parts)),
         Value::Wrapped(7, parts) => Ghost::Code(Rc::downgrade(parts)),
         _ => return None,
@@ -682,7 +725,6 @@ macro_rules! knot_rc {
     ($v:expr, |$p:ident| $e:expr) => {
         match $v {
             Value::Dim($p) => Some($e),
-            Value::Thing($p) | Value::Attributes($p) => Some($e),
             Value::Blueprint($p) => Some($e),
             Value::Generator($p) => Some($e),
             Value::Set($p) | Value::SetCursor { source: $p, .. } => Some($e),
@@ -707,6 +749,7 @@ impl Knot {
     fn place(&self) -> Option<usize> {
         match self {
             Knot::Frame(env) => Some(Rc::as_ptr(env) as *const () as usize),
+            Knot::Held(Value::Thing(t) | Value::Attributes(t)) => Some(Hold::as_ptr(t) as usize),
             Knot::Held(value) => knot_rc!(value, |p| Rc::as_ptr(p) as *const () as usize),
         }
     }
@@ -715,6 +758,7 @@ impl Knot {
     fn holds(&self) -> usize {
         match self {
             Knot::Frame(env) => Rc::strong_count(env),
+            Knot::Held(Value::Thing(t) | Value::Attributes(t)) => Hold::strong_count(t),
             Knot::Held(value) => {
                 let count = knot_rc!(value, |p| Rc::strong_count(p)).unwrap_or(0);
                 if let Value::Dim(d) = value {
@@ -1185,7 +1229,7 @@ pub fn reuse(subject: &Value, wanted: &Rc<Blueprint>) -> Option<Value> {
                 let Some(dim) = entry.upgrade() else { continue; };
                 if dim.detached.get() || dim.notify.borrow().is_some() { continue; }
                 if !dim.revive().is_some_and(|target| identical_target(&subject, &target)) { continue; }
-                if let Some(owner) = dim.bearer.upgrade() {
+                if let Some(owner) = crate::data::Hold::upgrade(&dim.bearer) {
                     if Rc::ptr_eq(wanted, &owner.blueprint()) { return Some(Value::Thing(owner)); }
                 }
             }
@@ -1199,13 +1243,13 @@ pub fn reuse(subject: &Value, wanted: &Rc<Blueprint>) -> Option<Value> {
             if dim.detached.get() || dim.notify.borrow().is_some() { continue; }
             let same = match (&dim.ghost, &subject) {
                 (Ghost::Blueprint(weak), Value::Blueprint(kind)) => std::ptr::eq(weak.as_ptr(), Rc::as_ptr(kind)),
-                (Ghost::Thing(weak), Value::Thing(thing)) => std::ptr::eq(weak.as_ptr(), Rc::as_ptr(thing)),
+                (Ghost::Thing(weak), Value::Thing(thing)) => std::ptr::eq(weak.as_ptr(), crate::data::Hold::as_ptr(thing)),
                 (Ghost::Blueprint(_) | Ghost::Thing(_), _) => false,
                 (Ghost::StaticKind(held), _) => identical_target(&subject, held),
                 _ => dim.revive().is_some_and(|live| identical_target(&subject, &live)),
             };
             if !same { continue; }
-            let Some(owner) = dim.bearer.upgrade() else { continue; };
+            let Some(owner) = crate::data::Hold::upgrade(&dim.bearer) else { continue; };
             if Rc::ptr_eq(wanted, &owner.blueprint()) { return Some(Value::Thing(owner)); }
         }
         // Compact misses so temporary references do not lengthen later searches.
@@ -1220,7 +1264,7 @@ pub fn refs_for(subject: &Value) -> Vec<Value> {
         let dim = entry.upgrade()?;
         let target = dim.revive()?;
         if !identical_target(&subject.settled(), &target) { return None; }
-        dim.bearer.upgrade().map(Value::Thing)
+        crate::data::Hold::upgrade(&dim.bearer).map(Value::Thing)
     }).collect::<Vec<_>>());
     found.sort_by_key(|item| {
         let Value::Thing(thing) = item else { return 2; };

@@ -166,7 +166,7 @@ impl Engine<'_> {
     }
 
     // Refresh owned iterator slot keys only when class storage or ancestry changes.
-    fn deque_iterator_values(&mut self, object: &Rc<super::Instance>, layout: &crate::tuples::Items) -> Option<Vec<(String, Value)>> {
+    fn deque_iterator_values(&mut self, object: &crate::value::Keep, layout: &crate::tuples::Items) -> Option<Vec<(String, Value)>> {
         let class = object.class_now();
         let identity = Rc::as_ptr(layout) as usize;
         let revision = crate::value::ClassMembers::revision();
