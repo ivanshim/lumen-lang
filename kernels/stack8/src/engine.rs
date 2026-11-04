@@ -7055,12 +7055,16 @@ impl<'a> Engine<'a> {
         class
     }
 
+    /// Recognize the frame locals proxy through identity-preserving cells.
     fn locals_proxy(&self, value: &Value) -> Option<Keep> {
-        let Value::Object(proxy) = value.contents() else { return None };
-        // The proxy is found by the very class it was made from, not by
-        // its name: an ordinary class a program calls FrameLocalsProxy
-        // is no proxy of ours and keeps its own members.
         let known = self.locals_class.as_ref()?;
+        // Inspect identity without expanding dictionary views into their entries.
+        let proxy = match value {
+            Value::Object(proxy) => proxy,
+            Value::Bond(cell) | Value::Collection(cell, _) => return self.locals_proxy(&cell.borrow()),
+            _ => return None,
+        };
+        // A program's class named FrameLocalsProxy keeps its own members.
         Rc::ptr_eq(known, &proxy.class_now()).then(|| proxy.clone())
     }
 
@@ -11359,6 +11363,13 @@ impl<'a> Engine<'a> {
         }
         if matches!(op, Action::Contains | Action::Lacks) {
             if let Some(mapping) = Self::proxy_reading(b) { return self.special_dyad(op, a, &mapping); }
+        }
+
+        if matches!(op, Action::At) {
+            if let Some(found) = a.proxy_text_value(b) { return found.ok_or_else(|| self.key_absent(b)); }
+        }
+        if matches!(op, Action::Contains | Action::Lacks) {
+            if let Some(found) = b.proxy_text_value(a) { return Ok(Value::Flag(found.is_some() == matches!(op, Action::Contains))); }
         }
 
         if matches!(op, Action::Contains | Action::Lacks) {
@@ -21316,6 +21327,11 @@ impl<'a> Engine<'a> {
                     "__ror__" => self.special_dyad(&Action::BitEither, &other, &backing),
                     _ => Err(self.lang.method_errors["arguments"].clone()),
                 };
+            }
+        }
+        if operation == "get" && named.is_empty() && (1..=2).contains(&args.len()) {
+            if let Some(found) = receiver.proxy_text_value(&args[0]) {
+                return Ok(found.unwrap_or_else(|| args.get(1).cloned().unwrap_or(Value::Null)));
             }
         }
         if let Value::View(view) = receiver {
