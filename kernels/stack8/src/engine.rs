@@ -824,7 +824,7 @@ impl<'a> Engine<'a> {
     }
 
     fn stands_on(&self, class: &Rc<Class>, at: usize) -> bool {
-        self.furnished(at).map_or(false, |wanted| Self::exception_beneath(class, &wanted))
+        self.exception_roster.get(at).and_then(Option::as_ref).is_some_and(|wanted| Self::exception_beneath(class, wanted))
     }
 
     /// The class an operating-system number names, where the language's
@@ -917,15 +917,16 @@ impl<'a> Engine<'a> {
         // stood on, rather than an args tuple alone, and a decoding
         // fault holds it as bytes even where a bytearray was given, so
         // that a copy taken after cannot change what the fault shows.
-        let decode = self.stands_on(&class, 44);
-        if (self.stands_on(&class, 43) || decode) && args.len() == 5 {
+        let decode = args.len() == 5 && self.stands_on(&class, 44);
+        if args.len() == 5 && (self.stands_on(&class, 43) || decode) {
             let object = match &args[1] {
                 Value::Bytes(cell, ..) if decode => self.byte_make(cell.borrow().clone(), false),
                 other => other.clone(),
             };
             let values = [args[0].clone(), object, args[2].clone(), args[3].clone(), args[4].clone()];
             for (name, value) in self.lang.unicode_members.iter().zip(values) { fields.push((name.clone(), value)); }
-        } else if self.stands_on(&class, 45) && args.len() == 4 {
+        } else if args.len() == 4 && self.stands_on(&class, 45) {
+            if let Some(name) = self.lang.unicode_members.first() { fields.push((name.clone(), Value::Null)); }
             let values = [args[0].clone(), args[1].clone(), args[2].clone(), args[3].clone()];
             for (name, value) in self.lang.unicode_members.iter().skip(1).zip(values) { fields.push((name.clone(), value)); }
         }
@@ -9127,13 +9128,13 @@ impl<'a> Engine<'a> {
             return Some(path.clone());
         }
         let own = o.class_now();
-        if !own.direct().is_empty() && !Self::kind_beneath_is(&own, "module") { return None; }
+        if !own.direct.borrow().is_empty() && !Self::kind_beneath_is(&own, "module") { return None; }
         let fields = o.fields.try_borrow().ok()?;
         if let Some((_, owner)) = fields.iter().find(|(name, _)| name == "\0module-owner") {
             if let Value::Text(path) = owner.contents() { return Some(path.to_string()); }
         }
         let class = o.class_now();
-        if class.direct().is_empty() && class.base().is_none() && class.python_names.borrow().is_none() {
+        if class.direct.borrow().is_empty() && class.base().is_none() && class.python_names.borrow().is_none() {
             for (key, held) in fields.iter() {
                 if self.lang.module_names.contains(key) {
                     if let Value::Text(name) = held.contents() { return Some(name.to_string()); }
@@ -21190,6 +21191,19 @@ impl<'a> Engine<'a> {
     }
 
     fn value_method_inner(&mut self, receiver: &Value, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+        // A search on plain text with plain arguments is the commonest
+        // method call there is; it is answered before the long run of
+        // special receivers and words below is walked.
+        if named.is_empty() && self.lang.bind_names && (1..=3).contains(&args.len()) && matches!(receiver, Value::Text(_))
+            && matches!(args[0], Value::Text(_)) && args[1..].iter().all(|bound| matches!(bound, Value::Small(_) | Value::Flag(_) | Value::Null)) {
+            if let Some(work @ (crate::strings::TextOp::Count | crate::strings::TextOp::Find | crate::strings::TextOp::Rfind | crate::strings::TextOp::Index
+                | crate::strings::TextOp::Rindex | crate::strings::TextOp::Startswith | crate::strings::TextOp::Endswith)) = crate::strings::operation(operation) {
+                let mut given = Vec::with_capacity(args.len() + 1);
+                given.push(receiver.clone());
+                given.extend(args);
+                return self.builtin(Builtin::Text(work), operation, &mut given);
+            }
+        }
         if !self.lang.class_builder.is_empty() && [24,32].iter().any(|at|self.lang.class_special.get(*at).is_some_and(|word|word==operation)) && matches!(receiver.contents(),Value::Small(_)|Value::Huge(_)|Value::Flag(_)) && !(1..=2).contains(&args.len()) {
             return Err(format!("TypeError: expected 1 or 2 arguments, got {}",args.len()));
         }
@@ -27412,7 +27426,7 @@ impl<'a> Engine<'a> {
                         continue;
                     };
                     taken.push_str(spelled);
-                    let ended = by_line && spelled == "\n";
+                    let ended = by_line && matches!(spelled, "\n" | "\r");
                     pending.clear();
                     count += 1;
                     if ended { break; }
