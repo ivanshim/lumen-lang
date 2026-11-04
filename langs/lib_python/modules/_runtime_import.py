@@ -138,9 +138,24 @@ class SourceLoader:
     def is_package(self, fullname):
         return self.get_filename(fullname).endswith('/__init__.py')
 
+def _module_name_ok(fullname):
+    # An empty name, a leading or trailing dot, or a doubled dot is not a
+    # module: the path lookup collapses those, so a relative import pyclbr
+    # builds would resolve and walk forever. A non-identifier such as
+    # "@test" (CPython's test.support.TESTFN) is still a module name.
+    if not isinstance(fullname, str) or not fullname:
+        return False
+    for part in fullname.split('.'):
+        if not part:
+            return False
+    return True
+
+
 class SourceFinder:
     _native_source_finder = True
     def find_spec(self, fullname, path=None, target=None):
+        if not _module_name_ok(fullname):
+            return None
         filename = _load_module(fullname, True)
         if filename is None:
             return None
