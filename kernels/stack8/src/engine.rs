@@ -3715,7 +3715,7 @@ impl<'a> Engine<'a> {
         }
         let explicit = Self::public_name(&slot.ident) && self.outer_book.is_some()
             && self.running_routine.as_ref().is_some_and(|body| (body.code_flags & 1 != 0 || body.class_namespace.is_some()) && body.globe.as_ref().is_some_and(|globals| matches!(globals.contents(), Value::Map(_))));
-        let location = if explicit { Some(Kept::Outer) } else { self.book_of(slot.far) };
+        let location = if explicit { Some(Kept::Outer) } else { self.book_of(slot.far, &slot.ident) };
         if let Some(kept) = location {
             if let Some(found) = self.read_booked(kept, slot.far, &slot.ident) {
                 if matches!(&found, Err(message) if message.starts_with("Undefined variable:")) {
@@ -3834,7 +3834,7 @@ impl<'a> Engine<'a> {
             frame[s] = Value::Bond(shared.clone());
             return Ok(shared);
         }
-        if let Some(book) = self.book_of(slot.far) {
+        if let Some(book) = self.book_of(slot.far, &slot.ident) {
             if let Some(found) = self.read_booked(book, slot.far, &slot.ident) {
                 let held = found?;
                 let shared = match held {
@@ -3862,10 +3862,14 @@ impl<'a> Engine<'a> {
     /// Put a value straight into a binding's own place, past any shared
     /// cell it holds: how a name is fastened to another's cell.
     fn put_cell(&mut self, slot: &Cell, frame: &mut [Value], v: Value) {
+        if slot.near.is_empty() && self.supplied_globals(&slot.ident) {
+            self.write_booked(Kept::Outer, &slot.ident, Some(v), None);
+            return;
+        }
         match slot.near.first() {
             Some(&s) => frame[s] = v,
             None => {
-                if let Some(kept) = self.book_of(slot.far) { self.write_booked(kept, &slot.ident, Some(v.clone()), Some(slot.far)); }
+                if let Some(kept) = self.book_of(slot.far, &slot.ident) { self.write_booked(kept, &slot.ident, Some(v.clone()), Some(slot.far)); }
                 self.world[slot.far] = v;
             }
         }
@@ -3876,7 +3880,7 @@ impl<'a> Engine<'a> {
     fn forget_cell(&mut self, slot: &Cell, frame: &mut [Value]) -> Flow<()> {
         if slot.near.is_empty() && Self::public_name(&slot.ident)
             && self.running_routine.as_ref().is_some_and(|routine| routine.code_flags & 1 != 0 && Self::function_book(routine).is_some()) {
-            if let Some(book) = &self.outer_book { compiled_book_write(book, &slot.ident, None, Some(slot.far)); }
+            if let Some(book) = &self.outer_book { compiled_book_write(book, &slot.ident, None, None); }
             return Ok(());
         }
         if slot.near.is_empty() && slot.ident.as_bytes().first() != Some(&b'#') && self.annotation_scope().is_some()
@@ -3893,7 +3897,7 @@ impl<'a> Engine<'a> {
             frame[s] = Value::Blank;
         }
         if slot.near.is_empty() {
-            if let Some(kept) = self.book_of(slot.far) {
+            if let Some(kept) = self.book_of(slot.far, &slot.ident) {
                 self.write_booked(kept, &slot.ident, None, Some(slot.far));
                 if let Some(fled) = self.carried.take() { return Err(fled); }
             }
@@ -3911,7 +3915,7 @@ impl<'a> Engine<'a> {
     /// Delete a user name without reading through a mapping's lookup hooks.
     fn delete_name(&mut self, slot: &Cell, frame: &mut [Value]) -> Flow<()> {
         if slot.near.is_empty() {
-            if let Some(kept) = self.book_of(slot.far) {
+            if let Some(kept) = self.book_of(slot.far, &slot.ident) {
                 let book = match kept {
                     Kept::Module(at) => self.module_books[at].1.clone(),
                     Kept::Outer => self.outer_book.clone().ok_or_else(|| format!("Undefined variable: {}", slot.ident))?,
@@ -3952,7 +3956,7 @@ impl<'a> Engine<'a> {
         // way too, since what it holds is kept there and not here, and
         // so is a name nothing has bound where the language keeps its
         // unbound names in a module.
-        matches!(self.world[slot.far], Value::Bond(_)) || self.book_of(slot.far).is_some()
+        self.book_of(slot.far, &slot.ident).is_some() || matches!(self.world[slot.far], Value::Bond(_))
             || (!self.lang.names_module.is_empty() && matches!(self.world[slot.far], Value::Blank))
     }
 
@@ -4044,7 +4048,7 @@ impl<'a> Engine<'a> {
         if slot.near.is_empty() && Self::public_name(&slot.ident)
             && self.running_routine.as_ref().is_some_and(|routine| routine.code_flags & 1 != 0 && Self::function_book(routine).is_some()) {
             let value = self.keep_collection(v);
-            if let Some(book) = &self.outer_book { compiled_book_write(book, &slot.ident, Some(value), Some(slot.far)); }
+            if let Some(book) = &self.outer_book { compiled_book_write(book, &slot.ident, Some(value), None); }
             return Ok(());
         }
         if self.lang.bind_names {
@@ -7418,6 +7422,20 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// A whole number given an allocation of its own: the small numbers
+    /// the run keeps one copy of come back as themselves, any other gets
+    /// an allocation of its own, so that two readings are two numbers,
+    /// the way the reference's unmarshalling makes them.
+    fn fresh_whole(&self, value: &Value) -> Res<Value> {
+        match value.contents() {
+            Value::Small(number) if (-5..=256).contains(&number) => Ok(Value::Small(number)),
+            Value::Small(number) => Ok(Value::Huge(Rc::new(num_bigint::BigInt::from(number)))),
+            Value::Huge(number) => Ok(Value::Huge(Rc::new((*number).clone()))),
+            Value::Flag(flag) => Ok(Value::Small(i64::from(flag))),
+            _ => Err("TypeError: expected an integer".into()),
+        }
+    }
+
     fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Keep>) -> Option<Keep> {
         if self.lang.trace_fields.len() < 16 { return None; }
         let lang = self.lang;
@@ -7845,7 +7863,7 @@ impl<'a> Engine<'a> {
                         Value::Routine(body) if self.fresh_routines => {
                             let mut made = (**body).clone();
                             self.capture_definition_builtins(&mut made)?;
-                            if let Some(title) = self.creation_title(&made) { made.home = Some(title); }
+                            if let Some(title) = self.creation_title(&program) { made.home = Some(title); }
                             Value::Routine(Rc::new(made))
                         }
                         other => other.clone(),
@@ -15698,7 +15716,7 @@ impl<'a> Engine<'a> {
                             self.registry.program_bound.insert(name.clone());
                         }
                         self.world.resize(self.registry.idents.len(), Value::Blank);
-                        if let Some(book) = self.book_of(at) { self.write_booked(book, &name, Some(value.clone()), Some(at)); }
+                        if let Some(book) = self.book_of(at, &name) { self.write_booked(book, &name, Some(value.clone()), Some(at)); }
                         match &self.world[at] {
                             Value::Bond(cell) => *cell.borrow_mut() = value,
                             _ if destination.is_some() => self.world[at] = Value::Bond(Rc::new(RefCell::new(value))),
@@ -16656,7 +16674,8 @@ impl<'a> Engine<'a> {
                 };
                 let carried = self.drop_many(argc - 1)?;
                 let mut made = (*program).clone();
-                if let Some(title) = self.creation_title(&program) { made.home = Some(title); }
+                self.capture_definition_builtins(&mut made)?;
+                if let Some(title) = self.creation_title(&made) { made.home = Some(title); }
                 made.held = carried;
                 Value::Routine(Rc::new(made))
             },
@@ -21479,7 +21498,7 @@ impl<'a> Engine<'a> {
                     if !args.is_empty() { return Err("TypeError: code.replace() takes no positional arguments".into()); }
                     let mut fields = object.fields.borrow().clone();
                     let cached = fields.iter().find(|(name, _)| name == "\0native_code").map(|(_, value)| value.clone());
-                    if named.iter().any(|(key, _)| key != "co_consts") {
+                    if named.iter().any(|(key, _)| key != "co_consts" && key != "co_flags") {
                         if let Some(cached) = cached.as_ref() { return self.value_method(cached, operation, args, named); }
                     }
                     if let Some(cached) = cached {
@@ -21487,6 +21506,16 @@ impl<'a> Engine<'a> {
                         fields.iter_mut().find(|(name, _)| name == "\0native_code").expect("cached code").1 = revised;
                     }
                     for (key, value) in named {
+                        if key == "co_flags" {
+                            let integer = value.contents();
+                            if !matches!(integer, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) { return Err("TypeError: co_flags must be int".into()); }
+                            let bits = integer.as_big()?.to_i64().ok_or("OverflowError: Python int too large to convert to C long")?;
+                            fields.iter_mut().find(|(name, _)| name == "co_flags").unwrap().1 = Value::Small(bits);
+                            if !fields.iter().any(|(name, _)| name == "\0replace_constants") {
+                                fields.push(("\0replace_constants".to_owned(), Value::Flag(true)));
+                            }
+                            continue;
+                        }
                         if key != "co_consts" { return Err(format!("NotImplementedError: compiled source replacement of {key} is unavailable")); }
                         let Value::Tuple(constants) = value.contents() else { return Err("TypeError: co_consts must be tuple".into()); };
                         fields.iter_mut().find(|(name, _)| name == "co_consts").unwrap().1 = Value::tuple(constants.as_ref().clone());
@@ -21501,6 +21530,7 @@ impl<'a> Engine<'a> {
             let Value::Adapter(handle) = receiver.contents() else { return Err(self.special_fault()) };
             let Some(Value::Routine(original)) = handle.1.first() else { return Err(self.special_fault()) };
             if !args.is_empty() { return Err("TypeError: code.replace() takes no positional arguments".into()); }
+            let supplied_constants = named.iter().find(|(key, _)| key == "co_consts").map(|(_, value)| value.clone());
             let dictionary = Value::Map(Rc::new(named.into_iter().map(|(key, value)| (Value::text(&key), value)).collect()));
             let checked = match self.code_metadata_call("validate_replace", vec![receiver.clone(), dictionary]) {
                 Ok(value) => match value.contents() { Value::Map(values) => values, _ => return Err(self.special_fault()) },
@@ -21514,13 +21544,20 @@ impl<'a> Engine<'a> {
             let layout_changed = checked.iter().any(|(key, _)| matches!(key.plain().as_str(), "co_argcount" | "co_posonlyargcount" | "co_kwonlyargcount" | "co_flags" | "co_varnames"));
             for (key, value) in checked.iter() {
                 let key = key.plain();
-                match (key.as_str(), value.contents()) {
+                let checked_value = match value.contents() {
+                    integer @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => Value::Small(integer.as_big()?.to_i64().ok_or("OverflowError: Python int too large to convert to C long")?),
+                    other => other,
+                };
+                match (key.as_str(), checked_value) {
                     ("co_argcount", Value::Small(count)) => positional = count as usize,
                     ("co_posonlyargcount", Value::Small(count)) => posonly = count as usize,
                     ("co_kwonlyargcount", Value::Small(count)) => keywords = count as usize,
                     ("co_nlocals", _) => {},
                     ("co_stacksize", Value::Small(size)) => changed.declared_stack = Some(size),
-                    ("co_consts", Value::Tuple(values)) => changed = changed.replacing_constants(&values)?,
+                    ("co_consts", Value::Tuple(values)) => {
+                        let values = match &supplied_constants { Some(Value::Tuple(row)) => row.clone(), _ => values.clone() };
+                        changed = changed.replacing_constants(&values)?;
+                    }
                     ("co_name", Value::Text(text)) => changed.ident = text.to_string(),
                     ("co_qualname", Value::Text(text)) => changed.qualified = text.to_string(),
                     ("co_filename", Value::Text(text)) => changed.written_in = Some(text),
@@ -21531,16 +21568,21 @@ impl<'a> Engine<'a> {
                             Err(Fault::Note(message)) => return Err(message),
                             Err(fault) => { self.carried = Some(fault); return Err(String::new()); }
                         };
-                        if !current.equals(&table) { changed.location_bytes = Some(table); }
+                        if !current.equals(&table) {
+                            if changed.location_baseline.is_none() { changed.location_baseline = Some(current); }
+                            changed.location_bytes = Some(table);
+                        }
                     }
                     ("co_firstlineno", Value::Small(line)) => {
                         if line as u32 == changed.declared_on { continue; }
                         if changed.location_bytes.is_none() {
-                            changed.location_bytes = Some(match self.class_get(receiver.clone(), "co_linetable", false) {
+                            let retained = match self.class_get(receiver.clone(), "co_linetable", false) {
                                 Ok(value) => value,
                                 Err(Fault::Note(message)) => return Err(message),
                                 Err(fault) => { self.carried = Some(fault); return Err(String::new()); }
-                            });
+                            };
+                            if changed.location_baseline.is_none() { changed.location_baseline = Some(retained.clone()); }
+                            changed.location_bytes = Some(retained);
                         }
                         changed.declared_on = line as u32;
                     }
@@ -21585,6 +21627,10 @@ impl<'a> Engine<'a> {
                         let body = Self::native_code_subject(&loaded)?;
                         let adopted = body.replacing_constants(&changed.code_constants)?;
                         changed.instrs = adopted.instrs.clone();
+                        changed.live_source = body.live_source.clone();
+                        changed.body_spelling = body.body_spelling.clone();
+                        changed.compiled_optimize = body.compiled_optimize;
+                        changed.source_content = body.source_content.clone();
                         changed.source_tokens = body.source_tokens.clone();
                         changed.source_end = body.source_end;
                         changed.image_origin = body.image_origin.clone();
@@ -32335,6 +32381,29 @@ impl Engine<'_> {
         Ok(Value::Null)
     }
 
+    /// Return the immutable compilation input, body boundary and compiler class slots.
+    fn code_record_origin(&self, value: &Value) -> Res<Value> {
+        let held = value.contents();
+        let (source, boundary, constants, originals, features, optimize, lineless) = match &held {
+            Value::Adapter(parts) if parts.0 == 7 => match parts.1.first() {
+                Some(Value::Routine(body)) => (body.live_source.clone(), Value::tuple(vec![Value::Small(body.source_end as i64), Value::Text(body.body_spelling.clone())]),
+                    body.code_constants.clone(), body.initial_constants.as_ref().map_or_else(|| body.code_constants.clone(), |v| v.as_ref().clone()), (body.image_origin.2 & !0x307) | if body.image_origin.2 & 4 != 0 { 8192 } else { 0 }, body.compiled_optimize, body.lineless),
+                _ => return Err("TypeError: expected code".into()),
+            },
+            Value::Object(object) if object.class_now().constants.iter().any(|(key, v)| key == "\0kind" && matches!(v, Value::Text(k) if k.as_ref() == "code")) => {
+                let fields = object.fields.borrow();
+                let source = fields.iter().find_map(|(key, v)| if key == "source" { if let Value::Text(text) = v { Some(text.clone()) } else { None } } else { None }).ok_or("ValueError: code has no retained input")?;
+                let row = |key: &str| fields.iter().find_map(|(name, v)| if name == key { if let Value::Tuple(row) = v { Some(row.as_ref().clone()) } else { None } } else { None }).unwrap_or_default();
+                let number = |key: &str| fields.iter().find_map(|(name, v)| if name == key { if let Value::Small(n) = v { Some(*n) } else { None } } else { None }).unwrap_or(0);
+                (source, Value::Small(-1), row("co_consts"), row("\0initial_constants"), number("\0compile_features"), number("co_optimize"), false)
+            }
+            _ => return Err("TypeError: expected code".into()),
+        };
+        let slots = constants.iter().enumerate().filter_map(|(at, value)|
+            if self.stands_for_kind(value) && originals.get(at).is_some_and(|old| old.same_value(value) || old.same_place(value) || matches!((old, value), (Value::SortOf(a), Value::SortOf(b)) if a == b)) { Some(Value::Small(at as i64)) } else { None }).collect();
+        Ok(Value::tuple(vec![Value::Text(source), boundary, Value::tuple(slots), Value::Small(features), Value::Small(optimize), Value::Flag(lineless)]))
+    }
+
     fn native_reduce(&mut self, value: &Value) -> Res<Value> {
         if matches!(value, Value::Adapter(parts) if parts.0 == 7) || matches!(value, Value::Object(_)) {
             if let Ok(body) = Self::native_code_subject(value) {
@@ -32349,8 +32418,7 @@ impl Engine<'_> {
                     };
                     fields.push((Value::text(name), held));
                 }
-                return Ok(Value::tuple(vec![Value::text("native-code"), self.byte_make(body.native_image(), false), Value::Map(Rc::new(fields.into()))]));
-            }
+                return Ok(Value::tuple(vec![Value::text("native-code"), self.byte_make(body.native_image(), false), Value::Map(Rc::new(fields.into()))]));            }
         }
         if let Value::Class(c) = value {
             return Ok(Value::tuple(vec![Value::text("class"), Value::text(&c.name)]));
@@ -33467,6 +33535,8 @@ impl Engine<'_> {
                     Value::Small(5) if args.len() == 2 => Value::Small(args[1].retained_count().ok_or("NotImplementedError: this value has no ownership identity")?.python_count()),
                     Value::Small(11) if args.len() == 2 => self.native_code_analysis(&args[1])?,
                     Value::Small(12) if args.len() == 2 => self.native_code_load(&args[1])?,
+                    Value::Small(13) if args.len() == 2 => self.fresh_whole(&args[1])?,
+                    Value::Small(14) if args.len() == 2 => self.code_record_origin(&args[1])?,
                     _ => return Err("TypeError: invalid tracing operation".into()),
                 }
             }
@@ -35250,7 +35320,13 @@ impl Engine<'_> {
     /// The dictionary a global slot's value is kept in, if it is kept
     /// in one: a slot text was given, or any the program may name once
     /// the outermost dictionary has been handed out.
-    fn book_of(&self, far: usize) -> Option<Kept> {
+    fn supplied_globals(&self, name: &str) -> bool {
+        self.lang.compile_kind.is_some() && Self::public_name(name) && self.outer_book.is_some()
+            && self.running_routine.as_ref().is_some_and(|body| !body.reads_annotation && body.code_flags & 1 != 0 && Self::function_book(body).is_some())
+    }
+
+    fn book_of(&self, far: usize, name: &str) -> Option<Kept> {
+        if self.supplied_globals(name) { return Some(Kept::Outer); }
         if self.annotation_scope().is_some() && self.outer_book.is_some() {
             if self.running_routine.as_ref().is_some_and(|routine| routine.globe.is_some()) {
                 return Some(Kept::Outer);
@@ -35432,6 +35508,7 @@ impl Engine<'_> {
 
     /// Write a name into the dictionary it is kept in, or take it out.
     fn write_booked(&mut self, kept: Kept, name: &str, value: Option<Value>, binding: Option<usize>) {
+        let binding = if self.supplied_globals(name) { None } else { binding };
         match kept {
             Kept::Module(at) => if Self::public_name(name) { compiled_book_write(&self.module_books[at].1, name, value, binding) },
             Kept::Outer => if let Some(book) = self.outer_book.clone() {
@@ -37737,7 +37814,7 @@ impl Engine<'_> {
         metadata.declared_on = 1;
         metadata.code_flags = bits;
         let (imports, stores) = crate::compile::code_imports_stores(&checked.instrs, &checked.local_names);
-        let fields = vec![("co_consts".to_string(), constants), ("\0native_code".to_string(), self.routine_code(&Rc::new(metadata))), ("co_name".into(), Value::text(module_name)), ("co_qualname".into(), Value::text(module_name)),
+        let fields = vec![("\0initial_constants".to_string(), constants.clone()), ("\0compile_features".to_string(), Value::Small(trial.future_bits | if allow_top_await { 8192 } else { 0 })), ("co_consts".to_string(), constants), ("\0native_code".to_string(), self.routine_code(&Rc::new(metadata))), ("co_name".into(), Value::text(module_name)), ("co_qualname".into(), Value::text(module_name)),
             ("co_filename".into(), Value::Text(file.clone())),
             ("\0optimization".into(), Value::Small(optimization as i64)),
             ("\0compiled_program".into(), Value::Routine(checked)),
@@ -37939,7 +38016,7 @@ impl Engine<'_> {
         // reference reads them from the calling frame's code.
         let caller_future = self.running_routine.as_ref().map_or(0, |body| body.future_bits);
         let held_future = match &first {
-            Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str()) => code.fields.borrow().iter().find_map(|(name, value)| if name == "co_flags" { match value.contents() { Value::Small(bits) => Some(bits & 0x1FE0010), _ => None } } else { None }).unwrap_or(0),
+            Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str()) => code.fields.borrow().iter().find_map(|(name, value)| if name == "\0compile_features" { match value.contents() { Value::Small(bits) => Some(bits & 0x1FE0010), _ => None } } else { None }).unwrap_or(0),
             _ => caller_future,
         };
         let optimization = match &first {
@@ -37955,7 +38032,7 @@ impl Engine<'_> {
             Value::Object(code) if self.lang.compile_kind.as_deref() == Some(code.class_now().name.as_str()) => {
                 let fields = code.fields.borrow();
                 let mode = match fields.get(2).map(|(_, held)| held) { Some(Value::Small(n)) => *n as usize, _ => 0 };
-                let asynchronous = fields.iter().any(|(name, value)| name == "co_flags" && matches!(value, Value::Small(bits) if bits & 128 != 0));
+                let asynchronous = fields.iter().any(|(name, value)| name == "\0compile_features" && matches!(value, Value::Small(bits) if bits & 8192 != 0));
                 let level = fields.iter().find(|(name, _)| name == "co_optimize").and_then(|(_, value)| match value { Value::Small(n) => Some(*n), _ => None }).unwrap_or(0);
                 (fields[0].1.plain(), Some(fields[1].1.plain()), mode, asynchronous, level)
             }
@@ -38433,10 +38510,14 @@ impl Engine<'_> {
             if let Value::Adapter(parts) = given[0].contents() {
                 if parts.0 != 7 { return Err("TypeError: expected a code object".into()); }
                 let Some(Value::Routine(body)) = parts.1.first() else { return Err("TypeError: expected a code object".into()); };
-                let (graph, origins, routines) = crate::cache::encoded(body)?;
-                let packet = serde_json::json!({"abi": crate::PYTHON_CACHE_ABI, "file": body.written_in.as_deref().unwrap_or("<string>"),
-                    "mode": 0, "function": true, "program": graph, "bindings": self.registry, "origins": origins, "routines": routines});
-                let bytes = crate::cache::pack_json(&packet)?;
+                if let Some(initial) = &body.initial_constants {
+                    if body.code_constants.iter().enumerate().any(|(at, value)| matches!(value, Value::Class(_) | Value::Native(..) | Value::ByteKind(..) | Value::SortOf(_))
+                        && !initial.get(at).is_some_and(|old| old.same_value(value))) {
+                        return Err("ValueError: code cache cannot store a replaced type constant".into());
+                    }
+                }
+                let (graph, origins, routines, sources) = crate::cache::encoded(body)?;
+                let bytes = crate::cache::pack_packet(body.written_in.as_deref().unwrap_or("<string>"), 0, true, &graph, &self.registry, &origins, &routines, &sources)?;
                 return Ok(Value::Bytes(Rc::new(RefCell::new(bytes)), false, Rc::from("b")));
             }
             let Value::Object(code) = given[0].contents() else { return Err("TypeError: expected a code object".into()); };
@@ -38467,11 +38548,9 @@ impl Engine<'_> {
                 Rc::new(program.replacing_constants(&relocated)?)
             } else { program.clone() };
             let bindings = serde_json::to_value(scope).map_err(|e| format!("ValueError: {e}"))?;
-            let (graph, origins, routines) = crate::cache::encoded(&program)?;
+            let (graph, origins, routines, sources) = crate::cache::encoded(&program)?;
             let mode = match fields[2].1 { Value::Small(n) => n, _ => return Err("ValueError: invalid code mode".into()) };
-            let packet = serde_json::json!({"abi": crate::PYTHON_CACHE_ABI, "file": fields[1].1.plain(),
-                "mode": mode, "program": graph, "bindings": bindings, "origins": origins, "routines": routines});
-            let bytes = crate::cache::pack_json(&packet)?;
+            let bytes = crate::cache::pack_packet(&fields[1].1.plain(), mode, false, &graph, &bindings, &origins, &routines, &sources)?;
             return Ok(Value::Bytes(Rc::new(RefCell::new(bytes)), false, Rc::from("b")));
         }
         let Value::Bytes(bytes, ..) = given[0].contents() else { return Err("TypeError: expected cache bytes".into()); };
@@ -38488,14 +38567,22 @@ impl Engine<'_> {
             Value::Routine(body) => self.routine_code(body), other => other.clone(),
         }).collect());
         let words = self.lang.compile_parameters.clone();
-        let fields = vec![(words[0].clone(), Value::text("")), (words[1].clone(), Value::text(&file)),
-            (words[2].clone(), Value::Small(mode as i64)), ("co_flags".into(), Value::Small(program.code_flags)),
-            ("co_firstlineno".into(), Value::Small(program.declared_on as i64)), ("co_consts".into(), constants),
+        let fields = vec![
+            (words[0].clone(), Value::Text(program.live_source.clone())),
+            (words[1].clone(), Value::text(&file)),
+            (words[2].clone(), Value::Small(mode as i64)),
+            ("co_flags".into(), Value::Small(program.code_flags)),
+            ("co_firstlineno".into(), Value::Small(program.declared_on.max(1) as i64)),
+            ("co_optimize".into(), Value::Small(program.compiled_optimize)),
+            ("\0initial_constants".into(), constants.clone()),
+            ("\0compile_features".into(), Value::Small(program.future_bits | if program.image_origin.2 & 4 != 0 { 8192 } else { 0 })),
+            ("co_consts".into(), constants),
             ("co_filename".into(), Value::text(&file)),
             ("\0native_code".into(), self.routine_code(&program)),
             ("\0compiled_program".into(), Value::Routine(program)),
             ("\0compiled_bindings".into(), Value::text(&bindings)),
-            ("\0code_archive".into(), archive)];
+            ("\0code_archive".into(), archive),
+        ];
         self.made += 1;
         let class = self.code_class();
         Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made })))

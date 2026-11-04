@@ -863,12 +863,25 @@ pub enum Traps {
 #[derive(Debug, Clone)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Routine {
+    /// Cache content only for this immutable code description, never its replacements.
+    #[serde(skip)]
+    pub(crate) code_content: crate::data::CodeContent,
     /// Share immutable code metadata across short-lived traceback code handles.
     #[serde(skip)]
     pub globals_rebound: bool,
     #[serde(skip)]
     pub code_description: std::cell::OnceCell<Rc<Routine>>,
     pub display_names: std::cell::RefCell<Option<(Rc<str>, Rc<str>)>>,
+    /// Full source. The cache stores one shared copy; nested routines point at it.
+    #[serde(serialize_with = "crate::cache::write_source", deserialize_with = "crate::cache::read_source", default)]
+    pub live_source: Rc<str>,
+    #[serde(default)]
+    pub compiled_optimize: i64,
+    #[serde(default)]
+    pub body_spelling: Rc<str>,
+    /// Compiler constants before the first replacement, for internal class slots.
+    #[serde(default)]
+    pub initial_constants: Option<Rc<Vec<Value>>>,
     /// The compiled definition shared by independently created functions.
     #[serde(serialize_with = "crate::cache::write_maybe", deserialize_with = "crate::cache::read_maybe")]
     pub definition: Option<Rc<Routine>>,
@@ -897,6 +910,8 @@ pub struct Routine {
     /// reference's code objects carry them in co_flags.
     pub future_bits: i64,
     pub lineless: bool,
+    #[serde(default)]
+    pub location_baseline: Option<Value>,
     pub locations: Option<Value>,
     pub stack_bound: Option<i64>,
     pub encoded_body: Option<Value>,
@@ -1151,12 +1166,10 @@ impl Form {
                 if inline[index] { return Ok(()); }
                 *value = match (&*value, wanted) {
                     (Value::Routine(current), Value::Routine(template)) => {
-                        if current.lexical_origin != template.lexical_origin || current.body_boundary != template.body_boundary || current.declared_on != template.declared_on || current.formals != template.formals {
-                            return Err(String::from("NotImplementedError: replacing a nested instruction body is unavailable"));
-                        }
                         let mut adjusted = template.as_ref().clone();
                         (adjusted.globe, adjusted.born, adjusted.framed_in) =
                             (current.globe.clone(), current.born.clone(), current.framed_in.clone());
+                        adjusted.annotator = current.annotator.clone();
                         adjusted.carried = current.carried.clone();
                         adjusted.ident = template.ident.clone();
                         adjusted.qualification = template.qualification.clone();
@@ -1223,6 +1236,68 @@ impl Form {
     }
 }
 
+impl Form {
+    /// Record the compiled tree's operations, leaving line and allocation indices out.
+    pub(crate) fn operation_shape(&self) -> String {
+        fn visit(node: &Form, text: &mut String) {
+            if let Form::OnLine(_, _, inner) | Form::Located(_, _, inner) = node {
+                visit(inner, text); return;
+            }
+            text.push_str(&format!("{:?}(", std::mem::discriminant(node)));
+            let mut children: Vec<&Form> = Vec::new();
+            match node {
+                Form::Apply(callee, args) => {
+                    match callee {
+                        Callee::Prim(op, _) => text.push_str(&format!("{:?}/{}", std::mem::discriminant(op), args.len())),
+                        Callee::Code(value) => children.push(value),
+                    }
+                    children.extend(args);
+                }
+                Form::Dyad { op, a, b, .. } => {
+                    text.push_str(&format!("{:?}", std::mem::discriminant(op)));
+                    for input in [a, b] {
+                        text.push_str(&format!("/{:?}", std::mem::discriminant(input)));
+                        if let Input::Form(value) = input { children.push(value); }
+                    }
+                }
+                Form::Read(address) | Form::Take(address) | Form::Release(address)
+                | Form::Glance(address) | Form::Missing(address) | Form::Share(address)
+                | Form::Forget(address) | Form::Ready(address) => text.push_str(&format!("depth={}", address.up)),
+                Form::Write(_, value) | Form::Tie(_, value) | Form::ShareItem(_, value)
+                | Form::ShareField(value, _) | Form::ShareOwn(value, _) | Form::ShareCalled(value)
+                | Form::ForgetCalled(value) | Form::ReadyCalled(value) | Form::Muted(value)
+                | Form::Silenced(value) | Form::Called(value) | Form::CellOrSaid(_, _, _, value)
+                | Form::HeldEither(_, _, _, value) => children.push(value),
+                Form::Cycle { test, body, step, after, otherwise } => {
+                    text.push_str(if *after { "after" } else { "before" });
+                    children.extend([test.as_ref(), body.as_ref()]);
+                    children.extend(step.as_deref()); children.extend(otherwise.as_deref());
+                }
+                Form::Attempt { body, clauses, last, otherwise, async_context, .. } => {
+                    text.push_str(&format!("async={async_context}")); children.push(body);
+                    for clause in clauses {
+                        children.push(&clause.body);
+                        if let Some(choices) = &clause.choices { children.extend(choices); }
+                    }
+                    children.extend(last.as_deref()); children.extend(otherwise.as_deref());
+                }
+                Form::Class { values, .. } => children.extend(values),
+                Form::Assert { condition, message } => children.extend([condition.as_ref(), message.as_ref()]),
+                Form::Fits { value, kinds, .. } => { children.push(value); children.extend(kinds); }
+                Form::SharePlace(_, values) => children.extend(values),
+                Form::ShareWithin(value, keys) => { children.push(value); children.extend(keys); }
+                Form::ForgetWithin(a, b) | Form::TieCalled(a, b) | Form::CallWrite(a, b) => children.extend([a.as_ref(), b.as_ref()]),
+                _ => {}
+            }
+            for child in children { visit(child, text); }
+            text.push(')');
+        }
+        let mut result = String::new();
+        visit(self, &mut result);
+        result
+    }
+}
+
 impl Routine {
     pub fn display_name(&self, qualified: bool) -> Value {
         let mut names = self.display_names.borrow_mut();
@@ -1235,10 +1310,10 @@ impl Routine {
     pub fn with_literals(&self, values: &[Value]) -> Result<Self, String> {
         let mut literals = Vec::new();
         for (index, value) in values.iter().enumerate() {
-            let replacement = value.settled();
-            literals.push(if matches!(self.literals[index], Value::Routine(_)) {
-                match replacement { Value::Wrapped(7, parts) => parts[0].clone(), other => other }
-            } else { replacement });
+            literals.push(match value {
+                Value::Wrapped(7, parts) if matches!(self.literals.get(index), Some(Value::Routine(_))) => parts[0].clone(),
+                _ => value.clone(),
+            });
         }
         let mut inline = self.immediate_slots.clone().unwrap_or_else(|| self.literals.iter()
             .map(|value| matches!(value, Value::Small(0..=255))).collect());
@@ -1253,6 +1328,7 @@ impl Routine {
             }
         }
         let mut adjusted = self.clone();
+        adjusted.initial_constants = Some(self.initial_constants.clone().unwrap_or_else(|| Rc::new(self.literals.clone())));
         adjusted.body.change_literals(&self.literals, &literals, &inline)?;
         adjusted.immediate_slots = Some(inline);
         adjusted.doc = if adjusted.flags & (1 << 26) != 0 {

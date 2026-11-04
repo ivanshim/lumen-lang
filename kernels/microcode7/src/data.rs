@@ -13,6 +13,19 @@ use num_traits::{One, Signed, ToPrimitive, Zero};
 
 use crate::form::{Prim, Routine};
 
+/// Retain immutable code content and its dictionary key and hash for one routine.
+#[derive(Debug, Default)]
+pub(crate) struct CodeContent {
+    content: std::cell::OnceCell<Value>,
+    address: std::cell::OnceCell<Result<String, &'static str>>,
+    hash: std::cell::OnceCell<Option<i64>>,
+}
+
+impl Clone for CodeContent {
+    /// Start fresh because a routine clone may replace any code metadata.
+    fn clone(&self) -> Self { Self::default() }
+}
+
 /// Capture membership is indexed by the frame's existing slot numbers.
 #[derive(Default)]
 pub struct CaptureSlots(Vec<u64>);
@@ -1163,6 +1176,12 @@ impl Value {
                 };
                 Ok(format!("method/{:?}/{receiver:?}", parts[0].hash_address()?))
             }
+            Value::Wrapped(7, items) => {
+                if let Some(Value::Routine(program) | Value::Bound(program, _)) = items.first() {
+                    return Self::routine_address(program);
+                }
+                Ok(format!("wrapper/{:p}", Rc::as_ptr(items)))
+            }
             Value::Wrapped(4..=7, items) => Ok(format!("wrapper/{:p}", Rc::as_ptr(items))),
             Value::Bound(program, frame) => Ok(format!("closure/{:p}/{:p}", Rc::as_ptr(program), Rc::as_ptr(frame))),
             Value::Method(program, receiver, _) => Ok(format!("bound/{:p}/{:p}", Rc::as_ptr(program), crate::data::Hold::as_ptr(receiver))),
@@ -1543,47 +1562,44 @@ impl Value {
     /// Keep only the semantic attributes of a source code object.
     /// Its origin file and constant-replacement markers are operational data.
     pub(crate) fn source_code_attribute(name: &str) -> bool {
-        ["source", "mode", "co_flags", "co_firstlineno", "co_consts"].contains(&name)
+        ["source", "mode", "co_flags", "co_firstlineno", "co_consts", "\0compile_features", "co_optimize"].contains(&name)
     }
 
-    fn source_worth(thing: &Thing) -> Vec<Value> {
-        let held = thing.holds.borrow();
-        let mut native = held.iter().find_map(|(name, value)| (name == "\0native_forms").then(|| value.clone()));
-        if held.iter().any(|(name, _)| name == "\0literal_overrides") {
-            if let Some(Value::Routine(body)) = &native {
-                let literals = held.iter().find_map(|(name, value)| match (name.as_str(), value) { ("co_consts", Value::Tuple(row)) => Some(row), _ => None });
-                if let Some(literals) = literals {
-                    native = body.with_literals(literals).ok().map(|body| Value::Routine(Rc::new(body)));
+    /// Compare emitted operations, calling layout and recursive constants.
+    /// The compiler's initial row and temporary slot names are not code identity.
+    fn program_worth(program: &crate::form::Routine) -> &Value {
+        program.code_content.content.get_or_init(|| {
+            let names = |words: &[String]| Value::tuple(words.iter().map(|word| Value::text(word)).collect());
+            let kinds = program.taking.clone().unwrap_or_else(|| vec!['b'; program.formals.len()]).iter().map(|kind| Value::Small(*kind as i64)).collect();
+            let identity = if program.body_spelling.is_empty() {
+                Value::tuple(vec![Value::Text(program.origin_content.get_or_init(|| Rc::from(crate::scan::save_tokens(&program.lexical_origin))).clone()), Value::Small(program.body_boundary as i64)])
+            } else { Value::Text(program.body_spelling.clone()) };
+            let spelling = program.lexical_origin.get(program.compilation_entry.0..program.body_boundary).unwrap_or(&[]);
+            let beginning = spelling.first().map_or(0, |token| token.row);
+            let mut coordinates = Vec::with_capacity(spelling.len() * 32);
+            for token in spelling {
+                for number in [u64::from(token.row.saturating_sub(beginning)), token.utf8_column as u64,
+                    u64::from(token.end_row.saturating_sub(beginning)), token.utf8_end as u64] {
+                    coordinates.extend_from_slice(&number.to_le_bytes());
                 }
             }
-        }
-        held.iter().filter(|(name, _)| Self::source_code_attribute(name)).map(|(name, value)| match name.as_str() {
-            "source" => native.clone().unwrap_or_else(|| value.settled()),
-            _ => value.settled(),
-        }).collect()
-    }
-
-    /// Build a routine's comparison key from its compiled body address,
-    /// calling layout, names and recursively replaceable literals. The token
-    /// origin plus body boundary describes the original instruction tree.
-    fn program_worth(program: &crate::form::Routine) -> Value {
-        let names = |words: &[String]| Value::tuple(words.iter().map(|word| Value::text(word)).collect());
-        let kinds = program.taking.as_deref().unwrap_or(&[]).iter().map(|kind| Value::Small(*kind as i64)).collect();
-        let mut attributes = vec![Value::Text(program.origin_content.get_or_init(|| Rc::from(crate::scan::save_tokens(&program.lexical_origin))).clone()), Value::Small(program.body_boundary as i64)];
-        attributes.extend([
-            Value::text(&program.ident), Value::Small(program.declared_on.into()),
-            Value::Small(program.flags | program.future_bits), Value::Flag(program.lineless),
-            program.locations.clone().unwrap_or(Value::Nil),
-            Value::Octets { cell: Rc::new(RefCell::new(program.body_image())), changeable: false, lead: Rc::from("bytes") },
-            program.encoded_handlers.clone().unwrap_or(Value::Nil),
-            names(&program.formals), Value::tuple(kinds),
-            program.gather_from.map_or(Value::Nil, |index| Value::Small(index as i64)),
-            names(&program.referenced), names(&program.locals), names(&program.idents),
-            names(&program.cells.iter().filter(|word| !program.locals.contains(word)).cloned().collect::<Vec<_>>()),
-            names(&program.reaching.iter().map(|place| place.ident.to_string()).collect::<Vec<_>>()),
-            Value::tuple(program.literals.clone()),
-        ]);
-        Value::tuple(attributes)
+            let positions = Value::Octets { cell: Rc::new(RefCell::new(coordinates)), changeable: false, lead: Rc::from("b") };
+            let mut attributes = vec![identity, positions];
+            attributes.extend([
+                Value::text(&program.ident), Value::Small(program.declared_on.max(1).into()),
+                Value::Small(program.flags | program.future_bits), Value::Flag(program.lineless),
+                program.locations.as_ref().filter(|table| program.location_baseline.as_ref().map_or(true, |base| !base.equals(table))).cloned().unwrap_or(Value::Nil),
+                program.encoded_body.as_ref().filter(|image| matches!(image, Value::Octets { cell, .. } if cell.borrow().first() != Some(&1))).cloned().unwrap_or(Value::Nil),
+                program.encoded_handlers.clone().unwrap_or(Value::Nil),
+                names(&program.formals), Value::tuple(kinds),
+                program.gather_from.map_or(Value::Nil, |index| Value::Small(index as i64)),
+                names(&program.referenced), names(&program.locals),
+                names(&program.cells.iter().filter(|word| !program.locals.contains(word)).cloned().collect::<Vec<_>>()),
+                names(&program.reaching.iter().map(|place| place.ident.to_string()).collect::<Vec<_>>()),
+                Self::literal_content(&program.literals, program.initial_constants.as_ref().map_or(program.literals.as_slice(), |row| row.as_slice())),
+            ]);
+            Value::tuple(attributes)
+        })
     }
 
     /// Weigh nested code by its own body and current constants at every level.
@@ -1592,10 +1608,10 @@ impl Value {
         match (one, two) {
             (Value::Wrapped(7, p), Value::Wrapped(7, q)) => match (p.first(), q.first()) {
                 (Some(Value::Routine(a) | Value::Bound(a, _)), Some(Value::Routine(b) | Value::Bound(b, _))) =>
-                    Self::code_worth_eq(&Self::program_worth(a), &Self::program_worth(b)),
+                    Self::code_worth_eq(Self::program_worth(a), Self::program_worth(b)),
                 _ => Rc::ptr_eq(p, q),
             },
-            (Value::Routine(a), Value::Routine(b)) => Self::code_worth_eq(&Self::program_worth(a), &Self::program_worth(b)),
+            (Value::Routine(a), Value::Routine(b)) => Self::code_worth_eq(Self::program_worth(a), Self::program_worth(b)),
             (Value::Tuple(p), Value::Tuple(q)) => p.len() == q.len() && p.iter().zip(q.iter()).all(|(x, y)| Self::code_worth_eq(x, y)),
             (Value::Small(_) | Value::Huge(_), Value::Small(_) | Value::Huge(_)) => one.equals(two),
             (Value::Frac(p), Value::Frac(q)) => p.places.is_some() == q.places.is_some()
@@ -1605,16 +1621,90 @@ impl Value {
         }
     }
 
+    /// Preserve user class identity, expanding only the compiler's original private entries.
+    fn literal_content(literals: &[Value], initial: &[Value]) -> Value {
+        let mut parts = Vec::with_capacity(literals.len());
+        for (index, literal) in literals.iter().enumerate() {
+            let untouched = matches!((literal, initial.get(index)), (Value::Blueprint(a), Some(Value::Blueprint(b))) if Rc::ptr_eq(a, b));
+            parts.push(if untouched {
+                let Value::Blueprint(class) = literal else { unreachable!() };
+                Value::tuple(vec![Value::text("private class plan"), Self::compiler_class_content(class)])
+            } else { literal.clone() });
+        }
+        Value::tuple(parts)
+    }
+
+    /// Collect source code attributes with canonical private compilation constants.
+    fn compiled_source_parts(thing: &Thing) -> Vec<Value> {
+        let attributes = thing.holds.borrow();
+        let initial = attributes.iter().find(|(word, _)| word == "\0initial_constants").and_then(|(_, item)|
+            match item { Value::Tuple(row) => Some(row.as_slice()), _ => None }).unwrap_or(&[]);
+        let mut native = attributes.iter().find_map(|(word, item)| (word == "\0native_forms").then(|| item.clone()));
+        if attributes.iter().any(|(word, _)| word == "\0literal_overrides") {
+            if let Some(Value::Routine(body)) = &native {
+                let literals = attributes.iter().find_map(|(word, item)| match (word.as_str(), item) { ("co_consts", Value::Tuple(row)) => Some(row), _ => None });
+                if let Some(literals) = literals {
+                    native = body.with_literals(literals).ok().map(|body| Value::Routine(Rc::new(body)));
+                }
+            }
+        }
+        let mut parts = Vec::new();
+        for (word, item) in attributes.iter() {
+            if !Self::source_code_attribute(word) { continue; }
+            let value = match (word.as_str(), item) {
+                ("source", _) => native.clone().unwrap_or_else(|| item.settled()),
+                ("co_consts", Value::Tuple(row)) => Self::literal_content(row, initial),
+                _ => item.settled(),
+            };
+            parts.push(value);
+        }
+        parts
+    }
+
+    /// Describe compiler class constants by their methods, independent of allocation.
+    fn compiler_class_content(kind: &crate::data::Blueprint) -> Value {
+        Value::tuple(vec![Value::text(&kind.name), Value::tuple(kind.methods.iter().map(|(name, body)|
+            Value::tuple(vec![Value::text(name), Value::Routine(body.clone())])).collect())])
+    }
+
+    /// Reuse the collision-free content key for every dictionary lookup.
+    fn routine_address(body: &crate::form::Routine) -> Result<String, &'static str> {
+        body.code_content.address.get_or_init(|| Self::code_worth_address(Self::program_worth(body))).clone()
+    }
+
+    /// Reuse the numeric hash without walking the source or constants again.
+    fn routine_hash(body: &crate::form::Routine) -> Option<i64> {
+        *body.code_content.hash.get_or_init(|| Self::code_worth_hash(Self::program_worth(body)))
+    }
+
+    /// Encode recursive code content without treating a hash collision as identity.
+    fn code_worth_address(value: &Value) -> Result<String, &'static str> {
+        match value {
+            Value::Wrapped(7, parts) => match parts.first() {
+                Some(Value::Routine(body) | Value::Bound(body, _)) => Self::routine_address(body),
+            _ => Ok(format!("opaque/{:p}", Rc::as_ptr(parts))),
+            },
+            Value::Routine(body) => Self::routine_address(body),
+            Value::Tuple(items) => {
+                let parts = items.iter().map(Self::code_worth_address).collect::<Result<Vec<_>, _>>()?;
+                Ok(format!("code-row:{parts:?}"))
+            }
+            Value::Small(_) | Value::Huge(_) => Ok(format!("integer/{}", value.as_big().map_err(|_| "")?)),
+            Value::Frac(number) => Ok(format!("real/{}/{}", value.hash_address()?, number.under)),
+            _ => Ok(format!("{:?}:{}", std::mem::discriminant(value), value.hash_address()?)),
+        }
+    }
+
     /// Fold exactly the attributes that recursive code equality weighs.
     pub(crate) fn code_worth_hash(value: &Value) -> Option<i64> {
         match value {
             Value::Wrapped(7, parts) => match parts.first() {
-                Some(Value::Routine(body) | Value::Bound(body, _)) => Self::code_worth_hash(&Self::program_worth(body)),
+                Some(Value::Routine(body) | Value::Bound(body, _)) => Self::routine_hash(body),
                 _ => Some((Rc::as_ptr(parts) as usize / 16) as i64),
             },
-            Value::Routine(program) => Self::code_worth_hash(&Self::program_worth(program)),
+            Value::Routine(program) => Self::routine_hash(program),
             Value::Thing(item) if item.blueprint().constants.iter().any(|(name, value)| name == "\0native" && matches!(value, Value::Text(kind) if kind.as_ref() == "code")) => {
-                let attributes = Self::source_worth(item);
+                let attributes = Self::compiled_source_parts(item);
                 Self::code_worth_hash(&Value::tuple(attributes))
             }
             Value::Tuple(parts) => {
@@ -1749,7 +1839,7 @@ impl Value {
                 // part of it.
                 let is_code = |thing: &Thing| thing.blueprint().constants.iter().any(|(word, held)| word == "\0native" && matches!(held, Value::Text(text) if text.as_ref() == "code"));
                 if is_code(a) && is_code(b) {
-                    let held = |thing: &Thing| Self::source_worth(thing);
+                    let held = Self::compiled_source_parts;
                     let (left, right) = (held(a), held(b));
                     return left.len() == right.len() && left.iter().zip(right.iter()).all(|(x, y)| Self::code_worth_eq(x, y));
                 }

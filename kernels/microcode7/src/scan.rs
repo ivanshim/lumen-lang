@@ -28,6 +28,9 @@ pub enum Shape {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Token {
+    /// Immutable input retained by the end marker for compiled-code records.
+    #[serde(default)]
+    pub source_text: Option<std::rc::Rc<str>>,
     pub shape: Shape,
     pub lexeme: String,
     /// The spelling as written, kept only when NFKC folding changed it.
@@ -458,6 +461,7 @@ fn code_gives_out(after: &str, closing: &str, table: &Table) -> Option<usize> {
 pub fn scan_at(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)> {
     let mut read = scan_notices(source, table)?;
     read.retain(|item| item.shape != Shape::EscapeNotice);
+    if let Some(last) = read.last_mut() { last.source_text = Some(std::rc::Rc::from(source)); }
     Ok(read)
 }
 
@@ -647,9 +651,9 @@ fn scan_notices(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)
         if text.is_empty() {
             return;
         }
-        out.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Bare, lexeme: telling.clone(), raw: None, span: 0, row });
-        out.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Quote, lexeme: text.to_string(), raw: None, span: 0, row });
-        out.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Sign, lexeme: ending.clone(), raw: None, span: 0, row });
+        out.push(Token { source_text: None, utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Bare, lexeme: telling.clone(), raw: None, span: 0, row });
+        out.push(Token { source_text: None, utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Quote, lexeme: text.to_string(), raw: None, span: 0, row });
+        out.push(Token { source_text: None, utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Sign, lexeme: ending.clone(), raw: None, span: 0, row });
     };
     let mut rest = source;
     // The rows of the page are counted through the weave, so that what
@@ -690,11 +694,11 @@ fn scan_notices(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)
         inside.pop();
         let ended = inside.last().map_or(row, |t| t.row);
         if writes {
-            out.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Bare, lexeme: telling.clone(), raw: None, span: 0, row });
+            out.push(Token { source_text: None, utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Bare, lexeme: telling.clone(), raw: None, span: 0, row });
         }
         out.append(&mut inside);
         // Each run of code stands as a statement, however it ended.
-        out.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Sign, lexeme: ending.clone(), raw: None, span: 0, row: ended });
+        out.push(Token { source_text: None, utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Sign, lexeme: ending.clone(), raw: None, span: 0, row: ended });
         row += code.matches('\n').count() as u32;
         // One line end straight after the closing marker belongs to it.
         let shorter = tail.strip_prefix('\n').unwrap_or_else(|| tail.strip_prefix("\r\n").unwrap_or(tail));
@@ -704,7 +708,8 @@ fn scan_notices(source: &str, table: &Table) -> Result<Vec<Token>, (String, u32)
         rest = shorter;
     }
     says(rest, row, &mut out);
-    out.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Finish, lexeme: "EOF".into(), raw: None, span: 0, row });
+    out.push(Token { source_text: None, utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Finish, lexeme: "EOF".into(), raw: None, span: 0, row });
+    if let Some(last) = out.last_mut() { last.source_text = Some(std::rc::Rc::from(source)); }
     Ok(out)
 }
 
@@ -818,7 +823,7 @@ impl Quotation<'_, '_> {
         self.table.scanner.single_ext_lexical_string_amiss.as_deref().unwrap_or("Invalid string literal").to_owned()
     }
     fn token(&mut self, kind: Shape, text: String) {
-        self.made.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, row: self.row, shape: kind, lexeme: text, raw: None, span: 0 });
+        self.made.push(Token { source_text: None, utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, row: self.row, shape: kind, lexeme: text, raw: None, span: 0 });
     }
     fn flush(&mut self, text: &mut String, missing: &mut bool) {
         let kind = if *missing { Shape::Unheld } else if self.substitutes.is_empty() { Shape::Quote } else { Shape::CharacterRow };
@@ -1351,8 +1356,8 @@ fn scan_code_from<'a>(source: &str, table: &'a Table, first: u32, ended: &mut (u
         index - line_beginnings[line] + 1
     };
     let column = std::cell::Cell::new(1usize);
-    let tok = |kind: Shape, text: String, row: u32| Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: column.get(), shape: kind, lexeme: text, raw: None, span: 0, row: row };
-    let tok_spelled = |kind: Shape, text: String, raw: Option<String>, row: u32| Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: column.get(), shape: kind, lexeme: text, raw, span: 0, row: row };
+    let tok = |kind: Shape, text: String, row: u32| Token { source_text: None, utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: column.get(), shape: kind, lexeme: text, raw: None, span: 0, row: row };
+    let tok_spelled = |kind: Shape, text: String, raw: Option<String>, row: u32| Token { source_text: None, utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: column.get(), shape: kind, lexeme: text, raw, span: 0, row: row };
     let (mut pos, mut row, mut at_bol) = (0usize, first, true);
     // Preserve configured lexical prefixes while batching ordinary spaces and tabs.
     let ordinary_blanks = table.ascii_quotation[9] == 0 && table.ascii_quotation[32] == 0
@@ -1384,7 +1389,7 @@ fn scan_code_from<'a>(source: &str, table: &'a Table, first: u32, ended: &mut (u
                 at_bol = true;
                 continue;
             }
-            tokens.push(Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Lead, lexeme: src[pos..k].iter().collect(), raw: None, span: width, row: row });
+            tokens.push(Token { source_text: None, utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Lead, lexeme: src[pos..k].iter().collect(), raw: None, span: width, row: row });
             pos = k;
         }
         column.set(at_column(pos));
@@ -1745,6 +1750,7 @@ fn scan_code_from<'a>(source: &str, table: &'a Table, first: u32, ended: &mut (u
             }
         }
     }
+    if let Some(last) = tokens.last_mut() { last.source_text = Some(std::rc::Rc::from(source)); }
     Ok(tokens)
 }
 
@@ -1892,8 +1898,8 @@ fn told_of_character(table: &Table, c: char, row: u32) -> String {
 /// from the empty string, so the result is text whatever is woven in.
 fn weave(s: &str, plain: &[usize], table: &Table, row: u32, tokens: &mut Vec<Token>) -> Result<(), String> {
     let cut = pieces(s, plain, table)?;
-    let sign = |text: &str| Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Sign, lexeme: text.to_string(), raw: None, span: 0, row };
-    let quote = |text: String| Token { utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Quote, lexeme: text, raw: None, span: 0, row };
+    let sign = |text: &str| Token { source_text: None, utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Sign, lexeme: text.to_string(), raw: None, span: 0, row };
+    let quote = |text: String| Token { source_text: None, utf8_column: 0, utf8_end: 0, end_row: 0, end_column: 0, column: 1, shape: Shape::Quote, lexeme: text, raw: None, span: 0, row };
     if !cut.iter().any(|p| matches!(p, Piece::Code(_))) {
         tokens.push(quote(s.to_string()));
         return Ok(());
@@ -2012,6 +2018,7 @@ pub fn scan_with_gate<'a>(source: &str, table: &'a Table, gate: Option<NameGate<
     let mut cursor = (1, 1);
     let mut read = scan_code_from(source, table, 1, &mut cursor, gate, &mut false).map_err(|message| (message, cursor.0, cursor.1))?;
     read.retain(|item| item.shape != Shape::EscapeNotice);
+    if let Some(last) = read.last_mut() { last.source_text = Some(std::rc::Rc::from(source)); }
     Ok(read)
 }
 
@@ -2122,7 +2129,7 @@ pub(crate) fn restore_tokens(serialized: &str) -> Result<Vec<Token>, String> {
             serde_json::Value::Null => None,
             other => Some(other.as_str().ok_or_else(malformed)?.to_owned()),
         };
-        words.push(Token { shape: *tags.get(tag).ok_or_else(malformed)?, lexeme: spelling, raw: original,
+        words.push(Token { source_text: None, shape: *tags.get(tag).ok_or_else(malformed)?, lexeme: spelling, raw: original,
             span: integer(3)?, row: integer(4)?.try_into().map_err(|_| malformed())?,
             utf8_column: integer(8)?, utf8_end: integer(9)?, column: integer(5)?, end_column: integer(6)?, end_row: integer(7)?.try_into().map_err(|_| malformed())? });
     }

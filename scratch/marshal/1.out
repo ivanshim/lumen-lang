@@ -1,0 +1,36 @@
+bodies False 2
+state True True True
+keys 2 base changed base
+nested True
+nested call 5
+file lifetime 9 9
+stream 1234 next
+stream 1234 next
+allow_code write rejected
+allow_code read rejected
+optimize 0 True True (1000, True) doc
+optimize 1 True True (1000, False) doc
+optimize 2 True True (1000, False) None
+future True 7
+boxed metadata True True
+changed literal 2000
+user type rejected
+root flags True 7 {'x': 'Missing'}
+class body True 1 2
+line state True True 1000
+nested globals True 12
+nested namespace 8 4 True
+captured namespace 15 True
+namespace write 12 12
+namespace deletion missing False
+class module builtins
+isolated missing
+isolated missing
+annotation namespace True
+closure code True 7
+generator code True [1000, 1001, 1002]
+assert body False 2
+binding body False 2
+unchanged body True True 1
+copied tuple (4, 7)
+tuple newargs (4, 7)

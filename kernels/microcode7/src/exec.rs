@@ -4862,7 +4862,7 @@ impl<'a> Machine<'a> {
         if Rc::ptr_eq(ascend(frame, slot.up), &self.outermost) && Self::visible_name(&slot.ident)
             && self.frames_named.last().is_some_and(|body| body.flags & 1 != 0 && Self::explicit_globals(body).is_some()) {
             let held = self.collection_cell(value);
-            if let Some(book) = &self.world_book { set_down_slot(book, &slot.ident, Some(held), Some(slot.at)); }
+            if let Some(book) = &self.world_book { set_down_slot(book, &slot.ident, Some(held), None); }
             return Ok(());
         }
         if self.names_in_calls {
@@ -8360,7 +8360,7 @@ impl<'a> Machine<'a> {
             Form::RemoveName(slot) => {
                 let global = Rc::ptr_eq(ascend(frame, slot.up), &self.outermost);
                 if global {
-                    let namespace = match self.book_holding(slot.at) {
+                    let namespace = match self.book_holding(slot.at, &slot.ident) {
                         Some(Held::Namespace(index)) => self.namespace_book(index).cloned(),
                         Some(Held::World) => self.world_book.clone(),
                         Some(Held::Reading(index)) => {
@@ -8642,7 +8642,7 @@ impl<'a> Machine<'a> {
                 let f = ascend(frame, slot.up);
                 if Rc::ptr_eq(f, &self.outermost) && Self::visible_name(&slot.ident)
                     && self.frames_named.last().is_some_and(|body| body.flags & 1 != 0 && Self::explicit_globals(body).is_some()) {
-                    if let Some(book) = &self.world_book { set_down_slot(book, &slot.ident, None, Some(slot.at)); }
+                    if let Some(book) = &self.world_book { set_down_slot(book, &slot.ident, None, None); }
                     return Ok(Value::Nil);
                 }
                 if Rc::ptr_eq(f, &self.outermost) && self.annotation_scope(frame).is_some()
@@ -8697,7 +8697,7 @@ impl<'a> Machine<'a> {
                 // A name in exec's globals is stored in its supplied mapping,
                 // not necessarily in the compiler's corresponding frame cell.
                 let holder = if let Form::Share(slot) = under.as_ref() {
-                    if self.book_holding(slot.at).is_some() {
+                    if self.book_holding(slot.at, &slot.ident).is_some() {
                         match self.fetch(slot, frame)? {
                             Value::Mutable(cell, _) | Value::Shared(cell) => Value::Shared(cell),
                             value @ (Value::Thing(_) | Value::Attributes(_)) => value,
@@ -12358,7 +12358,22 @@ impl<'a> Machine<'a> {
     /// Python closures own the cells they capture, rather than all the
     /// unrelated locals in each defining call.
     fn bind_program(&mut self, program: &Rc<Routine>, defining: &Rc<Env>) -> Res<Value> {
-        let environment = self.closure_environment(program, defining);
+        let inherited = if program.globe.is_none() && self.table.single("ext.builtin.compile.kind").is_some() {
+            self.frames_named.last().and_then(|parent| Self::explicit_globals(parent)).map(|namespace| {
+                let mut copy = (**program).clone();
+                copy.definition = Some(program.definition.as_ref().unwrap_or(program).clone());
+                copy.globe = Some(Value::Shared(namespace));
+                copy.born = self.frames_named.last().and_then(|parent| parent.born.clone());
+                copy.globals_rebound = self.frames_named.last().is_some_and(|parent| parent.globals_rebound);
+                Rc::new(copy)
+            })
+        } else { None };
+        let program = inherited.as_ref().unwrap_or(program);
+        // No captured cells means the supplied globals are the only outer scope.
+        let environment = if !program.frameless && program.reaching.is_empty()
+            && self.table.single("ext.builtin.compile.kind").is_some() && Self::explicit_globals(program).is_some() {
+            self.outermost.clone()
+        } else { self.closure_environment(program, defining) };
         let lambda = self.rules.words_ext_stmt_function_anonymous.iter().any(|word| word == &program.ident);
         let function = program.ident.as_bytes().first() != Some(&b'#') && (program.ident.as_bytes().first() != Some(&b'<') || lambda);
         // Python makes a new function each time a definition is reached,
@@ -13265,7 +13280,7 @@ impl<'a> Machine<'a> {
                     if !arguments.is_empty() { return Err(String::from("TypeError: code.replace() takes no positional arguments").into()); }
                     let mut holds = item.holds.borrow().clone();
                     let snapshot = holds.iter().find_map(|(word, item)| (word == "\0native_code").then(|| item.clone()));
-                    if keywords.iter().any(|(word, _)| word != "co_consts") {
+                    if keywords.iter().any(|(word, _)| word != "co_consts" && word != "co_flags") {
                         if let Some(view) = &snapshot { return self.value_member(view, name, arguments, keywords); }
                     }
                     if let Some(view) = snapshot {
@@ -13274,6 +13289,13 @@ impl<'a> Machine<'a> {
                     }
                     for (keyword, value) in keywords {
                         match (keyword.as_str(), value.settled()) {
+                            ("co_flags", integer @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_))) => {
+                                let bits = integer.as_big()?.to_i64().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C long"))?;
+                                holds.iter_mut().find(|(word, _)| word == "co_flags").unwrap().1 = Value::Small(bits);
+                                if holds.iter().all(|(word, _)| word != "\0literal_overrides") {
+                                    holds.push(("\0literal_overrides".to_owned(), Value::Flag(true)));
+                                }
+                            }
                             ("co_consts", replacement @ Value::Tuple(_)) => {
                                 holds.iter_mut().find(|(word, _)| word == "co_consts").unwrap().1 = replacement;
                                 if holds.iter().all(|(word, _)| word != "\0literal_overrides") {
@@ -13291,6 +13313,7 @@ impl<'a> Machine<'a> {
             let Value::Wrapped(7, parts) = receiver.settled() else { return Err(self.class_unready()) };
             let Some(Value::Routine(body) | Value::Bound(body, _)) = parts.first() else { return Err(self.class_unready()) };
             if !arguments.is_empty() { return Err(Escape::Error(String::from("TypeError: code.replace() takes no positional arguments"))); }
+            let supplied_constants = keywords.iter().find(|(word, _)| word == "co_consts").map(|(_, item)| item.clone());
             let edits = Value::Dict(Rc::new(keywords.into_iter().map(|(word, item)| (Value::text(&word), item)).collect::<Vec<_>>().into()));
             let checked = self.code_metadata_call("validate_replace", vec![receiver.clone(), edits])?;
             let Value::Dict(edits) = checked.settled() else { return Err(self.class_unready()) };
@@ -13302,12 +13325,19 @@ impl<'a> Machine<'a> {
             let reshapes = edits.iter().any(|(key, _)| ["co_argcount", "co_posonlyargcount", "co_kwonlyargcount", "co_flags", "co_varnames"].contains(&key.bare().as_str()));
             for (keyword, item) in edits.iter() {
                 let word = keyword.bare();
-                match (word.as_str(), item.settled()) {
+                let checked_value = match item.settled() {
+                    integer @ (Value::Small(_) | Value::Huge(_) | Value::Flag(_)) => Value::Small(integer.as_big()?.to_i64().ok_or_else(|| String::from("OverflowError: Python int too large to convert to C long"))?),
+                    other => other,
+                };
+                match (word.as_str(), checked_value) {
                     ("co_argcount", Value::Small(n)) => counts[0] = n as usize,
                     ("co_posonlyargcount", Value::Small(n)) => counts[1] = n as usize,
                     ("co_kwonlyargcount", Value::Small(n)) => counts[2] = n as usize,
                     ("co_nlocals", _) => {},
-                    ("co_consts", Value::Tuple(values)) => copy = copy.with_literals(&values)?,
+                    ("co_consts", Value::Tuple(values)) => {
+                        let values = match &supplied_constants { Some(Value::Tuple(row)) => row.clone(), _ => values.clone() };
+                        copy = copy.with_literals(&values)?;
+                    }
                     ("co_stacksize", Value::Small(n)) => copy.stack_bound = Some(n),
                     ("co_name", Value::Text(text)) => copy.ident = text.to_string(),
                     ("co_qualname", Value::Text(text)) => copy.qualification = text.to_string(),
@@ -13315,11 +13345,18 @@ impl<'a> Machine<'a> {
                     ("co_linetable", bytes @ Value::Octets { .. }) => {
                         copy.lineless = matches!(&bytes, Value::Octets { cell, .. } if cell.borrow().is_empty());
                         let previous = self.read_class_member(receiver.clone(), "co_linetable", false)?;
-                        if !previous.equals(&bytes) { copy.locations = Some(bytes); }
+                        if !previous.equals(&bytes) {
+                            if copy.location_baseline.is_none() { copy.location_baseline = Some(previous); }
+                            copy.locations = Some(bytes);
+                        }
                     }
                     ("co_firstlineno", Value::Small(line)) => {
                         if copy.declared_on == line as u32 { continue; }
-                        if copy.locations.is_none() { copy.locations = Some(self.read_class_member(receiver.clone(), "co_linetable", false)?); }
+                        if copy.locations.is_none() {
+                            let retained = self.read_class_member(receiver.clone(), "co_linetable", false)?;
+                            if copy.location_baseline.is_none() { copy.location_baseline = Some(retained.clone()); }
+                            copy.locations = Some(retained);
+                        }
                         copy.declared_on = line as u32;
                     }
                     ("co_flags", Value::Small(flags)) => { copy.flags = flags; copy.future_bits = 0; copy.generator = flags & 0x2a0 != 0; }
@@ -13355,6 +13392,10 @@ impl<'a> Machine<'a> {
                         let loaded = self.load_code_image(&encoded)?;
                         let selected = image_body(&loaded)?;
                         copy.body = selected.with_literals(&copy.literals)?.body.clone();
+                        copy.live_source = selected.live_source.clone();
+                        copy.body_spelling = selected.body_spelling.clone();
+                        copy.compiled_optimize = selected.compiled_optimize;
+                        copy.origin_content = selected.origin_content.clone();
                         copy.lexical_origin = selected.lexical_origin.clone();
                         copy.body_boundary = selected.body_boundary;
                         copy.compilation_entry = selected.compilation_entry.clone();
@@ -13645,6 +13686,7 @@ impl<'a> Machine<'a> {
             };
             if let Some(cell) = storage {
                 if matches!(&*cell.borrow(), Value::Vector(_)) {
+
                     if let Value::Vector(members) = &mut *cell.borrow_mut() { Rc::make_mut(members).push(arguments[0].clone()); }
                     return Ok(Value::Nil);
                 }
@@ -20353,6 +20395,19 @@ impl<'a> Machine<'a> {
     /// Whether two cell wrappers look into one room: each is a shared
     /// cell standing alone or a frame and a place in it, and the two are
     /// one where the shared cell is one or the frame and place are.
+    /// A whole number given an allocation of its own: the small numbers
+    /// the run keeps one copy of come back as themselves, any other gets
+    /// an allocation of its own, so that two readings are two numbers.
+    fn fresh_whole(&self, value: &Value) -> Result<Value, String> {
+        match value.settled() {
+            Value::Small(number) if (-5..=256).contains(&number) => Ok(Value::Small(number)),
+            Value::Small(number) => Ok(Value::Huge(Rc::new(BigInt::from(number)))),
+            Value::Huge(number) => Ok(Value::Huge(Rc::new(number.as_ref().clone()))),
+            Value::Flag(flag) => Ok(Value::Small(i64::from(flag))),
+            _ => Err("TypeError: expected an integer".into()),
+        }
+    }
+
     fn one_cell_room(&self, one: &[Value], two: &[Value]) -> bool {
         enum Room { Cell(usize), Slot(usize, usize) }
         let room = |items: &[Value]| -> Option<Room> {
@@ -36350,7 +36405,13 @@ impl<'a> Machine<'a> {
 
     /// The dictionary an outermost slot lives in, if any: that of the
     /// reading it belongs to, else the world's once that has been asked for.
-    fn book_holding(&self, at: usize) -> Option<Held> {
+    fn supplied_namespace(&self, name: &str) -> bool {
+        self.table.single("ext.builtin.compile.kind").is_some() && Self::visible_name(name) && self.world_book.is_some()
+            && self.frames_named.last().is_some_and(|body| !body.reads_annotation && body.flags & 1 != 0 && Self::explicit_globals(body).is_some())
+    }
+
+    fn book_holding(&self, at: usize, name: &str) -> Option<Held> {
+        if self.supplied_namespace(name) { return Some(Held::World); }
         let scoped = self.annotation_scopes.last().is_some_and(|(_, _, _, body)| {
             self.frames_named.last().is_some_and(|running| replaced_globe(running) && Rc::as_ptr(running) as usize == *body)
         });
@@ -36420,7 +36481,7 @@ impl<'a> Machine<'a> {
     }
 
     fn booked_read(&mut self, at: usize, name: &str) -> Option<Result<Value, String>> {
-        let owner = self.book_holding(at)?;
+        let owner = self.book_holding(at, name)?;
         self.read_held(owner, at, name)
     }
 
@@ -36549,7 +36610,11 @@ impl<'a> Machine<'a> {
         let worth = if self.names_in_calls && self.rules.closes_over {
             worth.filter(|value| !matches!(value.settled(), Value::Unset))
         } else { worth };
-        match self.book_holding(at) {
+        if self.supplied_namespace(name) {
+            if let Some(book) = &self.world_book { set_down_slot(book, name, worth, None); }
+            return;
+        }
+        match self.book_holding(at, name) {
             Some(Held::Namespace(index)) => set_down_slot(self.namespace_book(index).expect("a namespace slot"), name, worth, Some(at)),
             Some(Held::World) => if let Some(book) = self.world_book.clone() {
                 let module_dictionary = matches!(&*book.borrow(), Value::Attributes(_));
@@ -38695,6 +38760,8 @@ impl<'a> Machine<'a> {
         root.declared_on = 1;
         root.flags = bits;
         let mut holds = holds;
+        holds.push(("\0compile_features".to_owned(), Value::Small(built.future_bits | i64::from(top_await) * 8192)));
+        holds.push(("\0initial_constants".to_owned(), constants.clone()));
         holds.push(("co_consts".to_owned(), constants));
         let title = self.rules.trace_words.get(10).map(String::as_str).unwrap_or("<module>");
         holds.extend([("co_name".to_owned(), Value::text(title)), ("co_qualname".to_owned(), Value::text(title))]);
@@ -38921,7 +38988,7 @@ impl<'a> Machine<'a> {
         // reference reads them from the calling frame's code.
         let caller_future = self.frames_named.last().map_or(self.top_future_bits.get(), |body| body.future_bits);
         let held_future = match &first {
-            Value::Thing(code) if self.table.strings("ext.builtin.compile.kind").first().map(String::as_str) == Some(code.blueprint().name.as_str()) => code.holds.borrow().iter().find_map(|(word, worth)| if word == "co_flags" { match worth.settled() { Value::Small(bits) => Some(bits & 0x1FE0010), _ => None } } else { None }).unwrap_or(0),
+            Value::Thing(code) if self.table.strings("ext.builtin.compile.kind").first().map(String::as_str) == Some(code.blueprint().name.as_str()) => code.holds.borrow().iter().find_map(|(word, worth)| if word == "\0compile_features" { match worth.settled() { Value::Small(bits) => Some(bits & 0x1FE0010), _ => None } } else { None }).unwrap_or(0),
             _ => caller_future,
         };
         let optimization = match &first {
@@ -38937,7 +39004,7 @@ impl<'a> Machine<'a> {
             Value::Thing(code) if self.table.strings("ext.builtin.compile.kind").first().map(String::as_str) == Some(code.blueprint().name.as_str()) => {
                 let holds = code.holds.borrow();
                 let mode = match holds.get(2).map(|(_, worth)| worth) { Some(Value::Small(n)) => *n as usize, _ => 0 };
-                let async_code = holds.iter().any(|(name, worth)| name == "co_flags" && matches!(worth, Value::Small(flags) if flags & 128 != 0));
+                let async_code = holds.iter().any(|(name, worth)| name == "\0compile_features" && matches!(worth, Value::Small(flags) if flags & 8192 != 0));
                 let level = holds.iter().find(|(name, _)| name == "co_optimize").and_then(|(_, worth)| match worth { Value::Small(n) => Some(*n), _ => None }).unwrap_or(0);
                 (holds[0].1.bare(), Some(holds[1].1.bare()), mode, async_code, level)
             }
@@ -39668,6 +39735,48 @@ impl Machine<'_> {
         Ok(Value::Nil)
     }
 
+    /// Capture the compiled input and identify unchanged private class constants.
+    fn code_origin_record(&self, target: &Value) -> Result<Value, String> {
+        let (input, ending, current, original, future, optimized, without_lines) = match target.settled() {
+            Value::Wrapped(7, parts) => match parts.first() {
+                Some(Value::Routine(program) | Value::Bound(program, _)) => {
+                    let before = program.initial_constants.as_ref().map(|row| row.as_ref().clone()).unwrap_or_else(|| program.literals.clone());
+                    (program.live_source.clone(), Value::tuple(vec![Value::Small(program.body_boundary as i64), Value::Text(program.body_spelling.clone())]), program.literals.clone(), before, (program.compilation_entry.2 & !0x307) | if program.compilation_entry.2 & 4 != 0 { 8192 } else { 0 }, program.compiled_optimize, program.lineless)
+                }
+                _ => return Err(String::from("TypeError: expected code")),
+            },
+            Value::Thing(code) if code.blueprint().constants.iter().any(|(name, item)| name == "\0native" && matches!(item, Value::Text(word) if word.as_ref() == "code")) => {
+                let fields = code.holds.borrow();
+                let mut text = None;
+                let mut values = Vec::new();
+                let mut initial = Vec::new();
+                let (mut features, mut optimize) = (0, 0);
+                for (name, item) in fields.iter() {
+                    match (name.as_str(), item) {
+                        ("source", Value::Text(word)) => text = Some(word.clone()),
+                        ("co_consts", Value::Tuple(row)) => values = row.as_ref().clone(),
+                        ("\0initial_constants", Value::Tuple(row)) => initial = row.as_ref().clone(),
+                        ("\0compile_features", Value::Small(n)) => features = *n,
+                        ("co_optimize", Value::Small(n)) => optimize = *n,
+                        _ => {}
+                    }
+                }
+                (text.ok_or_else(|| String::from("ValueError: code has no retained input"))?, Value::Small(-1), values, initial, features, optimize, false)
+            }
+            _ => return Err(String::from("TypeError: expected code")),
+        };
+        let mut private = Vec::new();
+        for (index, item) in current.iter().enumerate() {
+            if self.stands_for_a_kind(item) && original.get(index).is_some_and(|prior| match (prior, item) {
+                (Value::Blueprint(a), Value::Blueprint(b)) => Rc::ptr_eq(a, b),
+                _ => prior.one_and_same(item),
+            }) {
+                private.push(Value::Small(index as i64));
+            }
+        }
+        Ok(Value::tuple(vec![Value::Text(input), ending, Value::tuple(private), Value::Small(future), Value::Small(optimized), Value::Flag(without_lines)]))
+    }
+
     fn native_reduce(&mut self, value: &Value) -> Result<Value, String> {
         if matches!(value, Value::Wrapped(7, _) | Value::Thing(_)) {
             if let Ok(program) = image_body(value) {
@@ -39681,8 +39790,7 @@ impl Machine<'_> {
                     }
                 }
                 let image = self.octets(program.body_image(), false);
-                return Ok(Value::tuple(vec![Value::text("native-code"), image, Value::Dict(Rc::new(state.into()))]));
-            }
+                return Ok(Value::tuple(vec![Value::text("native-code"), image, Value::Dict(Rc::new(state.into()))]));            }
         }
         if let Value::Blueprint(b) = value {
             return Ok(Value::tuple(vec![Value::text("class"), Value::text(&b.name)]));
@@ -40852,6 +40960,8 @@ impl Machine<'_> {
                 match input.as_slice() {
                     [Value::Small(0)] => Ok(self.tracing_function.clone()),
                     [Value::Small(1), callback] => { self.tracing_function = callback.clone(); Ok(Value::Nil) }
+                    [Value::Small(13), target] => self.fresh_whole(target),
+                    [Value::Small(14), target] => self.code_origin_record(target),
                     [Value::Small(2), target] => {
                         let program = match target.settled() {
                             Value::Bound(body, _) | Value::Routine(body) => body,
@@ -42289,12 +42399,16 @@ impl Machine<'_> {
         if action == 0 {
             if let Value::Wrapped(7, parts) = input[0].settled() {
                 let Some(Value::Routine(body) | Value::Bound(body, _)) = parts.first() else { return Err("TypeError: expected compiled code".into()); };
-                let (forms, spellings, bodies) = crate::cache::serialize_forms(body.clone())?;
+                if let Some(initial) = &body.initial_constants {
+                    if body.literals.iter().enumerate().any(|(at, value)| matches!(value, Value::Intrinsic(..) | Value::Blueprint(_) | Value::OctetKind { .. } | Value::KindOf(_))
+                        && !initial.get(at).is_some_and(|old| old.one_and_same(value))) {
+                        return Err("ValueError: code cache cannot store a replaced type constant".into());
+                    }
+                }
+                let (forms, spellings, bodies, sources) = crate::cache::serialize_forms(body.clone())?;
                 let metadata = serde_json::json!({"globals": self.idents, "future_bits": body.future_bits,
                     "outer_aliases": [], "seen": {}, "shared_args": {}, "arg_names": {}, "gives_back": [], "bound_globally": [], "native_exports": []});
-                let record = serde_json::json!({"format": crate::PYTHON_CACHE_ABI, "filename": body.written_in.as_deref().unwrap_or("<string>"),
-                    "manner": 0, "function": true, "forms": forms, "metadata": metadata, "spellings": spellings, "bodies": bodies});
-                let bytes = crate::cache::pack_forms(&record)?;
+                let bytes = crate::cache::pack_record(body.written_in.as_deref().unwrap_or("<string>"), 0, true, &forms, &metadata, &spellings, &bodies, &sources)?;
                 return Ok(self.octets(bytes, false));
             }
             let Value::Thing(object) = input[0].settled() else { return Err("TypeError: expected compiled code".into()); };
@@ -42330,11 +42444,12 @@ impl Machine<'_> {
                 metadata["globals"] = serde_json::json!(identifiers);
                 Rc::new(routine.with_literals(&adjusted)?)
             } else { routine };
-            let (body, spellings, bodies) = crate::cache::serialize_forms(routine)?;
+            let mut current = (*routine).clone();
+            if let Some((_, flags)) = attributes.iter().find(|(name, _)| name == "co_flags") { current.flags = flags.as_big()?.to_i64().ok_or("OverflowError: code flags out of range")?; }
+            if let Some((_, line)) = attributes.iter().find(|(name, _)| name == "co_firstlineno") { current.declared_on = line.as_big()?.to_u32().ok_or("OverflowError: code line out of range")?; }
+            let (body, spellings, bodies, sources) = crate::cache::serialize_forms(Rc::new(current))?;
             let manner = match attributes[2].1 { Value::Small(n) => n, _ => return Err("ValueError: invalid compiled mode".into()) };
-            let envelope = serde_json::json!({ "format": crate::PYTHON_CACHE_ABI, "filename": attributes[1].1.bare(),
-                "manner": manner, "forms": body, "metadata": metadata, "spellings": spellings, "bodies": bodies });
-            let encoded = crate::cache::pack_forms(&envelope)?;
+            let encoded = crate::cache::pack_record(&attributes[1].1.bare(), manner, false, &body, &metadata, &spellings, &bodies, &sources)?;
             return Ok(Value::Octets { cell: Rc::new(RefCell::new(encoded)), changeable: false, lead: Rc::from("b") });
         }
         let Value::Octets { cell, .. } = input[0].settled() else { return Err("TypeError: compiled cache requires bytes".to_owned()); };
@@ -42350,10 +42465,18 @@ impl Machine<'_> {
             Value::Routine(body) => self.code_handle(body), value => value.clone(),
         }).collect());
         let keys = self.table.strings("ext.builtin.compile.parameters");
-        let mut slots = vec![(keys[0].clone(), Value::text("")), (keys[1].clone(), Value::text(&filename)),
-            (keys[2].clone(), Value::Small(manner as i64)), ("co_flags".to_owned(), Value::Small(recovered.program.flags)),
-            ("co_firstlineno".to_owned(), Value::Small(recovered.program.declared_on as i64)), ("co_consts".to_owned(), literals),
-            ("co_filename".into(), Value::text(&filename))];
+        let mut slots = vec![
+            (keys[0].clone(), Value::Text(recovered.program.live_source.clone())),
+            (keys[1].clone(), Value::text(&filename)),
+            (keys[2].clone(), Value::Small(manner as i64)),
+            ("co_flags".to_owned(), Value::Small(recovered.program.flags)),
+            ("co_firstlineno".to_owned(), Value::Small(recovered.program.declared_on.max(1) as i64)),
+            ("co_optimize".into(), Value::Small(recovered.program.compiled_optimize)),
+            ("\0compile_features".into(), Value::Small(recovered.program.future_bits | if recovered.program.compilation_entry.2 & 4 != 0 { 8192 } else { 0 })),
+            ("\0initial_constants".into(), literals.clone()),
+            ("co_consts".to_owned(), literals),
+            ("co_filename".into(), Value::text(&filename)),
+        ];
         slots.push(("\0native_code".into(), self.code_handle(&recovered.program)));
         slots.push(("\0native_forms".into(), Value::Routine(recovered.program)));
         slots.push(("\0form_names".into(), Value::text(&metadata)));
