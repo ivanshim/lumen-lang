@@ -73,6 +73,10 @@ class repeat(_Iterator):
         return (type(self), (self.value,) if self.remaining is None else (self.value, self.remaining))
 
 class chain(_Iterator):
+    def __class_getitem__(cls, item):
+        import types
+        return types.GenericAlias(cls, item)
+
     def _initialize(self, *iterables):
         self.sources = iter(iterables)
         self.current = None
