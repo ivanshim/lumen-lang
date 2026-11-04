@@ -432,3 +432,15 @@ def _plain_load(self):
 _plain_load.__qualname__ = '_Unpickler.load'
 _accepted_load = _plain_load
 _Unpickler.load = _plain_load
+
+# A code object is not picklable in the reference; the reducer that would
+# otherwise rebuild the class standing for it must say so.
+import types as _code_types
+
+def save_code(self, obj):
+    raise TypeError("cannot pickle code objects")
+
+save_code.__qualname__ = "_Pickler.save_code"
+_Pickler.save_code = save_code
+_Pickler.dispatch[_code_types.CodeType] = save_code
+del save_code, _code_types

@@ -11630,6 +11630,11 @@ impl<'a> Engine<'a> {
                         Err(Fault::Note(words)) => Err(words),
                         Err(escape) => { self.carried = Some(escape); Err(self.special_fault()) }
                     };
+                } else if kind.names_kind() && !matches!(kind, Builtin::SortOf) {
+                    // A builtin kind with no generic alias is not subscriptable.
+                    // Naming the kind keeps the reference's message; the generic
+                    // operand fault would replace it.
+                    return Err(format!("TypeError: type '{name}' is not subscriptable").into());
                 }
             }
         }

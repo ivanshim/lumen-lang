@@ -22954,6 +22954,9 @@ impl<'a> Machine<'a> {
                     let alias_class = Value::Blueprint(self.native_kind("GenericAlias"));
                     let made = self.apply_class_member(alias_class, vec![operands[0].clone(), parameter.clone()]);
                     return made.map(Some).map_err(|escape| self.carried_native_fault(escape));
+                } else if kind.names_a_kind() && !matches!(kind, Prim::SortOf) {
+                    // A builtin kind with no generic alias is not subscriptable.
+                    return Err(format!("TypeError: type '{label}' is not subscriptable"));
                 }
             }
         }
