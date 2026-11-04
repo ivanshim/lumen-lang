@@ -700,7 +700,7 @@ impl<'a> Machine<'a> {
     fn thing_over_native(&mut self,class:Rc<Blueprint>,word:&str,given:Vec<Value>)->Res {
         if self.table.strings("ext.stmt.class.parent").iter().any(|name|name==word) {
             self.made+=1;
-            let object=Rc::new(Thing {reclassified:RefCell::new(None),of:class,holds:RefCell::new(vec![("\0underlying".to_owned(),Self::wrap(9,vec![Value::Nil,Value::Nil]))]),turn:self.made});
+            let object=Hold::new(Thing {tethered: std::cell::Cell::new(false), reclassified:RefCell::new(None),of:class,holds:RefCell::new(vec![("\0underlying".to_owned(),Self::wrap(9,vec![Value::Nil,Value::Nil]))]),turn:self.made});
             return Ok(Value::Thing(object));
         }
         if word == "Union" { return Err(String::from("TypeError: cannot create 'typing.Union' instances").into()); }
@@ -758,7 +758,7 @@ impl<'a> Machine<'a> {
                     self.made+=1;
                     let entries=vec![(String::from("__name__"),name),(String::from("__doc__"),doc),
                         (String::from("__loader__"),Value::Nil),(String::from("__spec__"),Value::Nil),(String::from("__package__"),Value::Nil)];
-                    return Ok(Value::Thing(Rc::new(Thing{reclassified:RefCell::new(None),of:class,holds:RefCell::new(entries),turn:self.made})));
+                    return Ok(Value::Thing(Hold::new(Thing{tethered: std::cell::Cell::new(false),reclassified:RefCell::new(None),of:class,holds:RefCell::new(entries),turn:self.made})));
                 }
                 _=>return Err(String::from("TypeError: module name must be str").into()),
             }
@@ -793,7 +793,7 @@ impl<'a> Machine<'a> {
             // namespace after allocation rather than here.
             let holds = Vec::new();
             self.made+=1;
-            return Ok(Value::Thing(Rc::new(Thing{reclassified:RefCell::new(None), of:class, holds:RefCell::new(holds), turn:self.made})));
+            return Ok(Value::Thing(Hold::new(Thing{tethered: std::cell::Cell::new(false),reclassified:RefCell::new(None), of:class, holds:RefCell::new(holds), turn:self.made})));
         }
         let Some(op)=self.table.prims.get(word).copied()else{return Err(self.class_unready());};
         let (positional,named)=self.open_arguments(given)?;
@@ -808,7 +808,7 @@ impl<'a> Machine<'a> {
             other=>other,
         };
         self.made+=1;
-        Ok(Value::Thing(Rc::new(Thing{reclassified: RefCell::new(None), of:class,holds:RefCell::new({let mut members=vec![("\0underlying".to_owned(),kept.clone())];if let Value::Wrapped(tag,parts)=&kept {if *tag==4 || *tag==5 {members.extend([("\0callable".to_owned(),parts[0].clone()),("\0dictionary".to_owned(),parts[1].clone())]);}}members}),turn:self.made})))
+        Ok(Value::Thing(Hold::new(Thing{tethered: std::cell::Cell::new(false),reclassified: RefCell::new(None), of:class,holds:RefCell::new({let mut members=vec![("\0underlying".to_owned(),kept.clone())];if let Value::Wrapped(tag,parts)=&kept {if *tag==4 || *tag==5 {members.extend([("\0callable".to_owned(),parts[0].clone()),("\0dictionary".to_owned(),parts[1].clone())]);}}members}),turn:self.made})))
     }
     pub(super) fn resolution_order(owner: &Rc<Blueprint>) -> Vec<Rc<Blueprint>> {
         if owner.order_supplied.get() { return owner.supplied_order.borrow().iter().flat_map(|entry| entry.upgrade()).collect(); }
@@ -1785,9 +1785,9 @@ impl<'a> Machine<'a> {
         });
         Ok(text)
     }
-    fn replace_instance_book(&self,t:&Rc<Thing>,replacement:Option<Value>)->Res {
+    fn replace_instance_book(&self,t:&Hold,replacement:Option<Value>)->Res {
         if Self::native_beneath(&t.blueprint()).as_deref()==Some("module"){return Err("AttributeError: readonly attribute".to_owned().into());}
-        if let Some(Value::Attributes(original))=&replacement {if Rc::ptr_eq(original,t){return Ok(Value::Nil);}}
+        if let Some(Value::Attributes(original))=&replacement {if crate::data::Hold::ptr_eq(original,t){return Ok(Value::Nil);}}
                     let fresh:Vec<(String,Value)>=match replacement.as_ref().map(|item| Self::underlying(item).unwrap_or_else(|| item.clone()).settled()) {
                         None=>Vec::new(),
                         Some(Value::Dict(entries))=>entries.iter().filter_map(|(k,v)|if let Value::Text(k)=k{Some((k.to_string(),v.clone()))}else{None}).collect(),
@@ -3064,7 +3064,7 @@ impl<'a> Machine<'a> {
                         if self.is_fault_kind(c) { return Ok(self.make_fault(c.clone(), values[1..].to_vec(), Value::Nil)); }
                         self.abstract_turned_away(c)?;
                         if values.len()>1{self.root_turns_away(c,'n')?;}
-                        self.made+=1;Ok(Value::Thing(Rc::new(Thing{reclassified: RefCell::new(None), of:c.clone(),holds:RefCell::new(vec![]),turn:self.made})))
+                        self.made+=1;Ok(Value::Thing(Hold::new(Thing{tethered: std::cell::Cell::new(false),reclassified: RefCell::new(None), of:c.clone(),holds:RefCell::new(vec![]),turn:self.made})))
                     }
                     2 if kept.first().map_or(false, |item| item.bare() == "module") => {
                         let mut handed = values.into_iter();
@@ -3245,7 +3245,7 @@ impl<'a> Machine<'a> {
                             let Value::Blueprint(of) = &target else { return Err(self.class_unready()); };
                             if !Self::parent_kind_descended(of) { return Err(self.class_unready()); }
                             self.made += 1;
-                            return Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: of.clone(), holds: RefCell::new(Vec::new()), turn: self.made })));
+                            return Ok(Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false),  reclassified: RefCell::new(None), of: of.clone(), holds: RefCell::new(Vec::new()), turn: self.made })));
                         }
                         if let Value::Intrinsic(op, spelling) = &target {
                             if matches!(op, Prim::Uniques | Prim::Unchanging) && spelling.as_ref() == word {
@@ -3282,8 +3282,8 @@ impl<'a> Machine<'a> {
                         if word.as_str()=="module" {
                             self.made+=1;
                             let holds=RefCell::new(vec![]);
-                            let module=Thing{reclassified:RefCell::new(None),of:c,holds,turn:self.made};
-                            return Ok(Value::Thing(Rc::new(module)));
+                            let module=Thing{tethered: std::cell::Cell::new(false),reclassified:RefCell::new(None),of:c,holds,turn:self.made};
+                            return Ok(Value::Thing(crate::data::Hold::new(module)));
                         }
                         if matches!(self.table.prims.get(&word), Some(Prim::Uniques | Prim::Listed | Prim::Dictionary)) { values.clear(); }
                         self.thing_over_native(c,&word,values)
@@ -3635,12 +3635,12 @@ impl<'a> Machine<'a> {
             entries.push((title.to_owned(), Value::Blueprint(kind)));
         }
         self.made += 1;
-        let nothing = Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: self.native_kind("NoDefaultType"),
+        let nothing = Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false),  reclassified: RefCell::new(None), of: self.native_kind("NoDefaultType"),
             holds: RefCell::new(vec![(String::from("\0type-display"), Value::text("typing.NoDefault"))]), turn: self.made }));
         entries.push((String::from("NoDefault"), nothing));
         entries.push((String::from("_idfunc"), Value::Intrinsic(Prim::ClassWork(23), Rc::from("_idfunc"))));
         self.made += 1;
-        let space = Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: self.native_kind("module"),
+        let space = Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false),  reclassified: RefCell::new(None), of: self.native_kind("module"),
             holds: RefCell::new(entries), turn: self.made }));
         self.imported.insert(String::from("_typing"), space.clone()); self.namespace_places.borrow_mut().take(); self.revised_members.borrow_mut().clear();
         self.refresh_import_table("_typing");
@@ -3721,7 +3721,7 @@ impl<'a> Machine<'a> {
             attributes.iter_mut().find(|entry| entry.0 == "\0type-display").unwrap().1 = Value::text(&shown);
         }
         self.made += 1;
-        Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: kind, holds: RefCell::new(attributes), turn: self.made })))
+        Ok(Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false),  reclassified: RefCell::new(None), of: kind, holds: RefCell::new(attributes), turn: self.made })))
     }
     /// A hinting alias made by hand: name and value may be written in
     /// place or named, and the parameters, where given, are kept after
@@ -3745,7 +3745,7 @@ impl<'a> Machine<'a> {
             (String::from("\0type-display"), Value::Text(title)), (String::from("__value__"), value),
             (String::from("__type_params__"), parameters)];
         self.made += 1;
-        Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: kind, holds: RefCell::new(attributes), turn: self.made })))
+        Ok(Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false),  reclassified: RefCell::new(None), of: kind, holds: RefCell::new(attributes), turn: self.made })))
     }
     /// The row a hinting alias keeps: each entry a hinting parameter,
     /// and no parameter without a default after one with a default.
@@ -3797,7 +3797,7 @@ impl<'a> Machine<'a> {
         self.made += 1;
         let of = self.native_kind("_ConstEvaluator");
         let holds = RefCell::new(vec![(String::from("\0constant"), stored)]);
-        Value::Thing(Rc::new(Thing { of, holds, turn: self.made, reclassified: RefCell::new(None) }))
+        Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false),  of, holds, turn: self.made, reclassified: RefCell::new(None) }))
     }
     /// The name a globals mapping gives itself, read through whatever
     /// cell or module face it is kept behind.
@@ -3831,7 +3831,7 @@ impl<'a> Machine<'a> {
             let rendered = self.apply_class_member(formatter, vec![source.clone(), Value::text(&class.name)])?;
             let holds = vec![(String::from("__origin__"), source), (String::from("\0type-display"), rendered)];
             self.made += 1;
-            return Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: class, holds: RefCell::new(holds), turn: self.made })));
+            return Ok(Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false),  reclassified: RefCell::new(None), of: class, holds: RefCell::new(holds), turn: self.made })));
         }
         if Self::native_word(&class).as_deref() == Some("_ConstEvaluator") { return Err(String::from("TypeError: cannot create '_typing._ConstEvaluator' instances").into()); }
         if self.has_class_order() && Self::parent_kind_descended(&class) { return self.parent_constructed(class, given); }
@@ -4105,7 +4105,7 @@ impl<'a> Machine<'a> {
                 };
                 self.thing_over_native(class.clone(),word,initial)?
             },
-            (None,None)=>{self.made+=1;Value::Thing(Rc::new(Thing {reclassified: RefCell::new(None), of:class.clone(),holds:RefCell::new(Vec::new()),turn:self.made}))},
+            (None,None)=>{self.made+=1;Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false), reclassified: RefCell::new(None), of:class.clone(),holds:RefCell::new(Vec::new()),turn:self.made}))},
         };
         self.trace_allocation(&created);
         if metaclass {self.finish_class_construction(&created,&class,given.clone())?;}
@@ -4113,7 +4113,7 @@ impl<'a> Machine<'a> {
             // A thing whose class bids farewell is noted, so that a round
             // holding it can be found when the program asks.
             if crate::ghost::bidding()&&crate::ghost::farewell_of(&thing.of).is_some() {
-                crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(thing)));
+                crate::ghost::note(crate::ghost::Ghost::Thing(crate::data::Hold::downgrade(thing)));
                 if self.rules.trace_words.first().map(String::as_str).is_some() { crate::ghost::anchor(thing); }
             }
             if self.table.strings("ext.stmt.class.destructor").first().map(String::as_str).is_some()
@@ -4494,7 +4494,7 @@ impl<'a> Machine<'a> {
         match value {
             Value::Routine(code) => Some((0, Rc::as_ptr(code) as usize, 0)),
             Value::Bound(code, frame) => Some((1, Rc::as_ptr(code) as usize, Rc::as_ptr(frame) as usize)),
-            Value::Method(code, receiver, _) => Some((2, Rc::as_ptr(code) as usize, Rc::as_ptr(receiver) as usize)),
+            Value::Method(code, receiver, _) => Some((2, Rc::as_ptr(code) as usize, crate::data::Hold::as_ptr(receiver) as usize)),
             _ => None,
         }
     }
@@ -5200,7 +5200,7 @@ impl<'a> Machine<'a> {
             Some(found) => found,
             None => {
                 let of = self.common_ancestor(); self.made += 1;
-                let holder = Rc::new(Thing {reclassified: RefCell::new(None),  of, turn: self.made, holds: RefCell::new(Vec::new()) });
+                let holder = Hold::new(Thing {tethered: std::cell::Cell::new(false), reclassified: RefCell::new(None),  of, turn: self.made, holds: RefCell::new(Vec::new()) });
                 let entry = (crate::ghost::ghost_of(code).expect("routine is weakly held"), holder);
                 // Reuse a dead function's slot without moving live indices;
                 // a caller can keep an index while annotation code reenters.
@@ -5260,7 +5260,7 @@ impl<'a> Machine<'a> {
         };
         let symbol = self.forward_ref(key, active).map_err(|escape| self.carried_native_fault(escape))?;
         if let Value::Thing(thing) = symbol.settled() {
-            if let Some((_, _, entries)) = self.symbolic_annotation.as_mut() { entries.push((Rc::downgrade(&thing), key.to_owned())); }
+            if let Some((_, _, entries)) = self.symbolic_annotation.as_mut() { entries.push((crate::data::Hold::downgrade(&thing), key.to_owned())); }
         }
         Ok(Some(symbol))
     }
@@ -5274,7 +5274,7 @@ impl<'a> Machine<'a> {
         if !self.frames_named.last().is_some_and(|caller| Rc::ptr_eq(caller, &scope.0)) { return None; }
         if let Value::Thing(receiver) = value.settled() {
             for (saved, word) in &scope.2 {
-                if saved.upgrade().is_some_and(|held| Rc::ptr_eq(&held, &receiver)) {
+                if crate::data::Hold::upgrade(saved).is_some_and(|held| crate::data::Hold::ptr_eq(&held, &receiver)) {
                     return Some(format!("NameError: name '{}' is not defined", word));
                 }
             }
@@ -5401,7 +5401,7 @@ impl<'a> Machine<'a> {
         for name in &words[row.len()..] {row.push(attributes.iter().find_map(|(key,value)|matches!(key,Value::Text(text) if text.as_ref()==*name).then(||value.clone())).unwrap_or(Value::Nil));}
         let mut holds=vec![("\0underlying".to_owned(),Value::tuple(row[..9].to_vec()))];
         holds.extend(words.into_iter().zip(row).map(|(name,held)|(name.into(),held)));
-        self.made+=1;Ok(Value::Thing(Rc::new(Thing {of:class,reclassified:RefCell::new(None),holds:RefCell::new(holds),turn:self.made})))
+        self.made+=1;Ok(Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false), of:class,reclassified:RefCell::new(None),holds:RefCell::new(holds),turn:self.made})))
     }
     fn display_clock_record(&mut self, instance:&Value) -> Res {
         let keys = &TM_FIELDS[..9];
@@ -6904,7 +6904,7 @@ impl<'a> Machine<'a> {
                 let name = t.holds.borrow().iter().find(|entry| entry.0 == "__name__").map_or(String::new(), |entry| entry.1.bare());
                 self.made += 1;
                 let attributes = vec![(String::from("__origin__"), value.clone()), (String::from("\0type-display"), Value::text(&format!("{name}.{key}")))];
-                return Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: kind, holds: RefCell::new(attributes), turn: self.made })));
+                return Ok(Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false),  reclassified: RefCell::new(None), of: kind, holds: RefCell::new(attributes), turn: self.made })));
             }
             if key == "__parameters__" && t.blueprint().name == "TypeAliasType" {
                 let params = t.holds.borrow().iter().find(|entry| entry.0 == "__type_params__").map_or_else(|| Value::tuple(Vec::new()), |entry| entry.1.clone());
@@ -7928,7 +7928,7 @@ impl<'a> Machine<'a> {
                 // The thing's own namespace handed back to it, an entry
                 // having been put in through it, is already in place.
                 if key==self.detail("namespace") && t.blueprint().type_names.borrow().is_none() {
-                    if let Some(Value::Attributes(view))=&replacement {if Rc::ptr_eq(view,t){return Ok(Value::Nil);}}
+                    if let Some(Value::Attributes(view))=&replacement {if crate::data::Hold::ptr_eq(view,t){return Ok(Value::Nil);}}
                     return self.replace_instance_book(t,replacement);
                 }
                 if key == self.detail("kind") {
@@ -8035,7 +8035,7 @@ impl<'a> Machine<'a> {
                 // the cell its routines read it from, as the reference's
                 // module.__dict__ write is a global write.
                 if replacement.is_some() && !t.holds.borrow().iter().any(|(k,_)| k==key)
-                    && self.imported.values().any(|held| matches!(held, Value::Thing(space) if Rc::ptr_eq(space, t))) {
+                    && self.imported.values().any(|held| matches!(held, Value::Thing(space) if crate::data::Hold::ptr_eq(space, t))) {
                     let wanted = format!("\0import/{}/{key}", t.blueprint().name);
                     // A module read in again owns fresh cells at the
                     // end of the roster; the newest of the name answers.
@@ -8055,7 +8055,7 @@ impl<'a> Machine<'a> {
                 // notable even where its own blueprint names no farewell.
                 let keeps_farewell = replacement.as_ref().is_some_and(|worth| matches!(worth, Value::Thing(kept) if crate::ghost::farewell_of(&kept.blueprint()).is_some()));
                 let outcome = if replacement.is_some()&&!self.allowed_slot(&t.blueprint(),key){false}else{Self::change_entry(&mut t.holds.borrow_mut(),key,replacement)};
-                if outcome && keeps_farewell { crate::ghost::note(crate::ghost::Ghost::Thing(Rc::downgrade(t))); }
+                if outcome && keeps_farewell { crate::ghost::note(crate::ghost::Ghost::Thing(crate::data::Hold::downgrade(t))); }
                 outcome
             }
             Value::Blueprint(b)=>{
@@ -8156,7 +8156,7 @@ impl<'a> Machine<'a> {
                 if key == self.detail("namespace") {
                     let at = self.routine_storage(&subject);
                     if let Some(Value::Attributes(storage)) = &replacement {
-                        if Rc::ptr_eq(storage, &self.routine_members[at].1) { return Ok(Value::Nil); }
+                        if crate::data::Hold::ptr_eq(storage, &self.routine_members[at].1) { return Ok(Value::Nil); }
                     }
                     let Some(handed)=replacement else{return Err(self.detail("namespace.kept").to_owned().into())};
                     if !matches!(handed.settled(),Value::Dict(_)){return Err(self.namespace_refused(&handed.settled()));}
@@ -8585,7 +8585,7 @@ impl<'a> Machine<'a> {
     fn same_thing(&self,a:&Value,b:&Value)->bool{
         match (a,b){
             (Value::Blueprint(x),Value::Blueprint(y))=>Rc::ptr_eq(x,y),
-            (Value::Thing(x),Value::Thing(y))=>Rc::ptr_eq(x,y),
+            (Value::Thing(x),Value::Thing(y))=>crate::data::Hold::ptr_eq(x,y),
             (Value::Intrinsic(x,xw),Value::Intrinsic(y,yw))=>x==y&&xw==yw,
             (Value::Nil,Value::Nil)=>true,
             _=>match (self.kind_name(a),self.kind_name(b)){
@@ -9407,7 +9407,7 @@ impl<'a> Machine<'a> {
             if let Value::Blueprint(of) = receiver {
                 if Self::native_beneath(&of).as_deref() == Some("SimpleNamespace") {
                     self.made += 1;
-                    return Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of,
+                    return Ok(Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false),  reclassified: RefCell::new(None), of,
                         holds: RefCell::new(Vec::new()), turn: self.made })));
                 }
             }
@@ -9530,7 +9530,7 @@ impl<'a> Machine<'a> {
             self.made += 1;
             let holds = vec![("__origin__".to_owned(), rest.remove(0)), ("__args__".to_owned(), parameters),
                 ("__unpacked__".to_owned(), Value::Flag(false))];
-            return Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of, holds: RefCell::new(holds), turn: self.made })));
+            return Ok(Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false),  reclassified: RefCell::new(None), of, holds: RefCell::new(holds), turn: self.made })));
         }
         let parent = self.read_class_member(subject.clone(), "__origin__", true)?;
         match action {
@@ -9635,7 +9635,7 @@ impl<'a> Machine<'a> {
             (String::from("\0union-unhashable"), state.next().unwrap())];
         self.made += 1;
         let of = self.native_kind("Union");
-        Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of, turn: self.made, holds: RefCell::new(holds) })))
+        Ok(Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false),  reclassified: RefCell::new(None), of, turn: self.made, holds: RefCell::new(holds) })))
     }
     fn super_dynamic_type(&mut self, declaring:&Rc<Blueprint>, object:&Value)->Res<Rc<Blueprint>> {
         let native=object.settled();
@@ -9804,7 +9804,7 @@ impl<'a> Machine<'a> {
     /// the thing it stands on, the reference's own checks worded as it
     /// words them: too many arguments, a first that is no type, and a
     /// second the type has no hold on.
-    fn run_parent_init(&mut self, made: &Value, t: &Rc<Thing>, given: Vec<Value>) -> Res {
+    fn run_parent_init(&mut self, made: &Value, t: &Hold, given: Vec<Value>) -> Res {
         let constructor = self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned();
         if let Some(init) = self.inherited_entry(&t.blueprint(), &constructor) {
             if matches!(&init, Value::Routine(_) | Value::Bound(..)) {
@@ -9850,7 +9850,7 @@ impl<'a> Machine<'a> {
             return self.apply_class_member(bound, fresh);
         }
         self.made += 1;
-        Ok(Value::Thing(Rc::new(Thing { reclassified: RefCell::new(None), of: class.clone(), holds: RefCell::new(Vec::new()), turn: self.made })))
+        Ok(Value::Thing(Hold::new(Thing {tethered: std::cell::Cell::new(false),  reclassified: RefCell::new(None), of: class.clone(), holds: RefCell::new(Vec::new()), turn: self.made })))
     }
 
     /// A parent call with no argument written: the frame gave the class
@@ -9876,7 +9876,7 @@ impl<'a> Machine<'a> {
     /// The three names a parent thing keeps, filled from the class it
     /// looks past and the thing it stands on, each class kept in the
     /// form the program reads it.
-    fn parent_fill(&mut self,t:&Rc<Thing>,owner:Rc<Blueprint>,receiver:Value)->Res {
+    fn parent_fill(&mut self,t:&Hold,owner:Rc<Blueprint>,receiver:Value)->Res {
         let mut answers_as = Value::Nil;
         if !matches!(receiver, Value::Nil) {
             let checked = self.parent_check(&owner, &receiver)?;

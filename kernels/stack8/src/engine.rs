@@ -49,7 +49,7 @@ use num_traits::{ToPrimitive, Signed, Zero, One};
 
 use crate::lang::{Complaint, Lang};
 use crate::arith::{self, Operation};
-use crate::value::{Descriptor, Class, Ending, Instance, KeyedPairs, Phase, Placement, Reach, Sort, Step, Value, Wording, Generator, CursorState, CursorSource, MAKER_MEMBER};
+use crate::value::{Descriptor, Class, Ending, Instance, Keep, KeyedPairs, Phase, Placement, Reach, Sort, Step, Value, Wording, Generator, CursorState, CursorSource, MAKER_MEMBER};
 use crate::code::{Operand, Builtin, Action, ImportStyle, Routine, Cell, Instr};
 
 /// An arm may end where it stands, or leave for a routine's end or a
@@ -134,7 +134,7 @@ pub struct Engine<'a> {
     warning_bound: Option<Value>,
     finder_active: std::collections::HashSet<String>,
     has_nonstring_class_keys: bool,
-    trace_frame: Option<Rc<Instance>>,
+    trace_frame: Option<Keep>,
     /// Index of the instruction the running frame is on. The frame
     /// object stores a copy of it only while some other frame is running.
     step_at: i64,
@@ -182,7 +182,7 @@ pub struct Engine<'a> {
     /// The classes standing for builtin kinds, one for each word asked for.
     kind_classes: Vec<(String, Rc<Class>)>,
     kind_descriptors: RefCell<Vec<(String, String, Value)>>,
-    function_members: Vec<(crate::faint::Hold, Rc<Instance>)>,
+    function_members: Vec<(crate::faint::Hold, Keep)>,
     /// Where each function of `function_members` stands, by the
     /// addresses it answers to, so a reading finds its row at once.
     function_rows: RefCell<HashMap<(usize, usize), usize>>,
@@ -962,8 +962,8 @@ impl<'a> Engine<'a> {
         if let Some(name) = &self.lang.exception_context { fields.push((name.clone(), Value::Null)); }
         if let Some(name) = &self.lang.exception_suppress { fields.push((name.clone(), Value::Flag(false))); }
         self.made += 1;
-        let raised = Rc::new(Instance {replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made });
-        crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(&raised)));
+        let raised = Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made });
+        crate::faint::remember(crate::faint::Hold::Object(crate::value::Keep::downgrade(&raised)));
         Value::Object(raised)
     }
 
@@ -980,7 +980,7 @@ impl<'a> Engine<'a> {
     /// chaining at all.
     /// Records that some exception now stands behind this one as its context. A value no
     /// context points at cannot lie in any chain, which lets a raise skip the walk along one.
-    pub(super) fn mark_context_target(target: &Rc<Instance>) {
+    pub(super) fn mark_context_target(target: &Keep) {
         let mut fields = target.fields.borrow_mut();
         if !fields.iter().any(|(n, _)| n == "\0context-target") { fields.push(("\0context-target".into(), Value::Flag(true))); }
     }
@@ -988,7 +988,7 @@ impl<'a> Engine<'a> {
     /// The exception standing behind another, read at the slot where the last one was
     /// found: the members of one family of values sit alike, so a long chain is walked
     /// without a search at each link.
-    fn context_behind(link: &Rc<Instance>, name: &str, slot: &StateCell<usize>) -> Option<Rc<Instance>> {
+    fn context_behind(link: &Keep, name: &str, slot: &StateCell<usize>) -> Option<Keep> {
         let fields = link.fields.borrow();
         let at = match fields.get(slot.get()) {
             Some((n, _)) if n == name => slot.get(),
@@ -1004,21 +1004,21 @@ impl<'a> Engine<'a> {
         let Some(name) = &self.lang.exception_context else { return };
         let Some(Value::Object(handling)) = self.caught.get(base..).and_then(|tail| tail.last()).map(Value::contents) else { return };
         let Value::Object(object) = raised.contents() else { return };
-        if Rc::ptr_eq(&handling, &object) { return; }
+        if Keep::ptr_eq(&handling, &object) { return; }
         let slot = StateCell::new(0);
-        let behind = |link: &Rc<Instance>| Self::context_behind(link, name, &slot);
+        let behind = |link: &Keep| Self::context_behind(link, name, &slot);
         let pointed_at = object.fields.borrow().iter().any(|(n, _)| n == "\0context-target");
         Self::mark_context_target(&handling);
         let mut link = handling.clone();
         let mut hare = handling.clone();
         let mut alternate = false;
         while let Some(further) = if pointed_at { behind(&link) } else { None } {
-            if Rc::ptr_eq(&further, &object) {
+            if Keep::ptr_eq(&further, &object) {
                 if let Some((_, held)) = link.fields.borrow_mut().iter_mut().find(|(n, _)| n == name) { *held = Value::Null; }
                 break;
             }
             link = further;
-            if Rc::ptr_eq(&link, &hare) { break; }
+            if crate::value::Keep::ptr_eq(&link, &hare) { break; }
             if alternate {
                 if let Some(ahead) = behind(&hare) { hare = ahead; }
             }
@@ -1034,9 +1034,9 @@ impl<'a> Engine<'a> {
         let Some(name) = &self.lang.exception_context else { return };
         let Value::Object(object) = raised.contents() else { return };
         let Some(Value::Object(handling)) = self.caught.last().map(Value::contents) else { return };
-        if Rc::ptr_eq(&handling, &object) { return; }
+        if Keep::ptr_eq(&handling, &object) { return; }
         let slot = StateCell::new(0);
-        let behind = |link: &Rc<Instance>| Self::context_behind(link, name, &slot);
+        let behind = |link: &Keep| Self::context_behind(link, name, &slot);
         let pointed_at = object.fields.borrow().iter().any(|(n, _)| n == "\0context-target");
         Self::mark_context_target(&handling);
         let mut link = handling.clone();
@@ -1048,12 +1048,12 @@ impl<'a> Engine<'a> {
         let mut hare = handling.clone();
         let mut alternate = false;
         while let Some(further) = if pointed_at { behind(&link) } else { None } {
-            if Rc::ptr_eq(&further, &object) {
+            if Keep::ptr_eq(&further, &object) {
                 if let Some((_, held)) = link.fields.borrow_mut().iter_mut().find(|(n, _)| n == name) { *held = Value::Null; }
                 break;
             }
             link = further;
-            if Rc::ptr_eq(&link, &hare) { break; }
+            if crate::value::Keep::ptr_eq(&link, &hare) { break; }
             if alternate {
                 if let Some(ahead) = behind(&hare) { hare = ahead; }
             }
@@ -1391,7 +1391,7 @@ impl<'a> Engine<'a> {
 
     /// The methods an exception answers itself: adding a note, setting
     /// a traceback, and parting a group three ways.
-    fn exception_method(&mut self, object: Rc<Instance>, name: &str, args: &[Value]) -> Flow<Value> {
+    fn exception_method(&mut self, object: Keep, name: &str, args: &[Value]) -> Flow<Value> {
         if self.lang.class_special.get(81).is_some_and(|word| word == name) {
             let [protocol] = args else { return Err(self.lang.method_errors["arguments"].clone().into()) };
             self.reduction_protocol(protocol)?;
@@ -2238,14 +2238,14 @@ impl<'a> Engine<'a> {
         }
     }
 
-    pub(super) fn track_live_object(&self, object: &Rc<Instance>) {
+    pub(super) fn track_live_object(&self, object: &Keep) {
         let mut made = self.things_made.borrow_mut();
         if self.lang.python_numbers && self.lang.destructor.is_none()
             && made.len() >= self.objects_prune_at.get() {
             made.retain(|entry| entry.strong_count() != 0);
             self.objects_prune_at.set(made.len().saturating_mul(2).max(64));
         }
-        made.push(Rc::downgrade(object));
+        made.push(crate::value::Keep::downgrade(object));
     }
 
     /// Every object still standing when the run ends is let go, in the
@@ -2279,7 +2279,7 @@ impl<'a> Engine<'a> {
                 let standing = {
                     let made = self.things_made.borrow();
                     match made.get(at) {
-                        Some(loosely) => loosely.upgrade(),
+                        Some(loosely) => crate::value::Keep::upgrade(&loosely),
                         None => break,
                     }
                 };
@@ -2297,7 +2297,7 @@ impl<'a> Engine<'a> {
         // stood when the run ended: an object a finaliser makes is not
         // swept up in its own turn, so the shutdown cannot grow without
         // end while a finaliser holds on to new allocations.
-        let standing: Vec<_> = self.things_made.borrow().iter().filter_map(|weak| weak.upgrade()).collect();
+        let standing: Vec<_> = self.things_made.borrow().iter().filter_map(|weak| crate::value::Keep::upgrade(weak)).collect();
         self.things_made.borrow_mut().clear();
         for thing in standing {
             let Some(words) = crate::faint::last_word_of(&thing.class_now()) else { continue };
@@ -2418,7 +2418,7 @@ impl<'a> Engine<'a> {
         let (name, code, origin, frame, identity) = {
             let state = walk.borrow();
             (state.qualified.clone(), state.program.clone().expect("unstarted coroutine code"),
-                state.coroutine_origin.clone(), state.trace_frame.as_ref().map(Rc::downgrade), state.coroutine_identity)
+                state.coroutine_origin.clone(), state.trace_frame.as_ref().map(crate::value::Keep::downgrade), state.coroutine_identity)
         };
         self.coroutines.insert(Rc::as_ptr(walk) as usize, (Rc::downgrade(walk), code.clone(), frame, origin, identity));
         let words = self.lang.coroutine_warning.clone();
@@ -2541,7 +2541,7 @@ impl<'a> Engine<'a> {
             None => Some(None),
             Some(at) => {
                 let address = match entries[at].1.contents() {
-                    Value::Object(object) => Rc::as_ptr(&object) as usize,
+                    Value::Object(object) => Keep::as_ptr(&object) as usize,
                     _ => 0,
                 };
                 Some(Some(address))
@@ -2592,7 +2592,7 @@ impl<'a> Engine<'a> {
             if path == owner || self.importing.contains(&path) { continue; }
             let Some(held) = self.modules.get(&path).cloned() else { continue; };
             let Value::Object(object) = held.contents() else { continue; };
-            let mine = Rc::as_ptr(&object) as usize;
+            let mine = Keep::as_ptr(&object) as usize;
             let listed = match self.cached_module_address(&path) {
                 None => continue,
                 Some(found) => found,
@@ -2623,7 +2623,7 @@ impl<'a> Engine<'a> {
         // still keep their namespace alive through the ordinary graph.
         let inventory: Vec<(String, usize)> = self.modules.iter().filter_map(|(path, module)| {
             let Value::Object(object) = module.contents() else { return None };
-            Some((path.clone(), Rc::as_ptr(&object) as usize))
+            Some((path.clone(), Keep::as_ptr(&object) as usize))
         }).collect();
         // Slots and their owning inventory are unchanged between ordinary
         // collections. Reuse the classification instead of scanning every
@@ -3116,7 +3116,7 @@ impl<'a> Engine<'a> {
             }
             let class = Class { direct: std::cell::RefCell::new(Vec::new()), lineage: RefCell::new(Vec::new()), outline: None, name: self.lang.special_stop[0].clone(), base: std::cell::RefCell::new(None), answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![], shared: crate::value::ClassMembers::new(vec![]), slot_layout: std::cell::RefCell::new(None), dictionary_layout: std::cell::Cell::new(None), python_bases: std::cell::RefCell::new(None), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)};
             self.made += 1;
-            return Some(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class: Rc::new(class), fields: RefCell::new(vec![]), mark: self.made })));
+            return Some(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None),  class: Rc::new(class), fields: RefCell::new(vec![]), mark: self.made })));
         }
         if let Some(key) = told.strip_prefix("\0key-text:") {
             let name = self.lang.fault_key.as_ref()?;
@@ -3210,7 +3210,7 @@ impl<'a> Engine<'a> {
                 None => fields.push((named.to_string(), held)),
             }
         }
-        Some(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(fields), mark: self.made })))
+        Some(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None),  class, fields: RefCell::new(fields), mark: self.made })))
     }
 
     fn hold_exception(&mut self, value: Value) {
@@ -3269,7 +3269,7 @@ impl<'a> Engine<'a> {
         let Some(method) = o.class_now().method(&gives) else { return Ok(None) };
         self.invoke(&method, vec![held.clone()])?;
         let handed = self.drop_top()?;
-        let itself = matches!((&handed, held), (Value::Object(a), Value::Object(b)) if Rc::ptr_eq(a, b));
+        let itself = matches!((&handed, held), (Value::Object(a), Value::Object(b)) if crate::value::Keep::ptr_eq(a, b));
         Ok(match itself {
             true => None,
             false => Some((o.class_now().name.clone(), handed)),
@@ -3364,24 +3364,24 @@ impl<'a> Engine<'a> {
         held.iter().position(|(n, v)| n == name && standing(v) && !matches!(v.contents(), Value::Blank))
     }
 
-    pub(super) fn is_loaded_module(&self, o: &Rc<Instance>) -> bool {
+    pub(super) fn is_loaded_module(&self, o: &Keep) -> bool {
         if !self.module_addresses_ready.get() {
             let mut addresses = self.module_by_address.borrow_mut();
             addresses.clear();
             for (path, value) in &self.modules {
                 let Value::Object(module) = value else { continue };
-                let address = Rc::as_ptr(module) as usize;
+                let address = Keep::as_ptr(module) as usize;
                 if !addresses.contains_key(&address) { addresses.insert(address, path.clone()); }
             }
             self.module_addresses_ready.set(true);
         }
-        self.module_by_address.borrow().contains_key(&(Rc::as_ptr(o) as usize))
+        self.module_by_address.borrow().contains_key(&(Keep::as_ptr(o) as usize))
     }
 
-    pub(super) fn object_member_at(&self, o: &Rc<Instance>, held: &[(String, Value)], name: &str) -> Option<usize> {
+    pub(super) fn object_member_at(&self, o: &Keep, held: &[(String, Value)], name: &str) -> Option<usize> {
         if held.len() >= 16 && self.lang.hidden_words.is_empty() && self.is_loaded_module(o) {
             let mut positions = self.changed_module_positions.borrow_mut();
-            let cached = positions.entry(Rc::as_ptr(o) as usize).or_insert_with(|| (usize::MAX, HashMap::default()));
+            let cached = positions.entry(Keep::as_ptr(o) as usize).or_insert_with(|| (usize::MAX, HashMap::default()));
             if cached.0 != held.len() {
                 cached.1.clear();
                 for (position, (key, _)) in held.iter().enumerate() { cached.1.entry(key.clone()).or_insert(position); }
@@ -3461,7 +3461,7 @@ impl<'a> Engine<'a> {
     }
 
     /// The thing that is its own walk, where this value is one.
-    fn walker(&self, held: &Value) -> Option<Rc<Instance>> {
+    fn walker(&self, held: &Value) -> Option<Keep> {
         let class = self.lang.walker_class.as_deref()?;
         match held {
             Value::Object(o) if o.class_now().named(class, self.lang.classes_folded) => Some(o.clone()),
@@ -4773,18 +4773,18 @@ impl<'a> Engine<'a> {
 
     /// A call whose arguments are the top `n` of the data stack: they move
     /// straight into the frame, one allocation instead of two.
-    fn iterator_state_field(object: &Rc<Instance>, key: &str) -> Res<Value> {
+    fn iterator_state_field(object: &Keep, key: &str) -> Res<Value> {
         object.fields.borrow().iter().find(|(name, _)| name == key).map(|(_, value)| value.clone())
             .ok_or_else(|| "TypeError: invalid iterator state".into())
     }
 
-    fn iterator_state_store(object: &Rc<Instance>, key: &str, value: Value) {
+    fn iterator_state_store(object: &Keep, key: &str, value: Value) {
         let mut fields = object.fields.borrow_mut();
         if let Some((_, old)) = fields.iter_mut().find(|(name, _)| name == key) { *old = value; }
         else { fields.push((key.into(), value)); }
     }
 
-    fn tee_state_of(object: &Rc<Instance>) -> Res<Value> {
+    fn tee_state_of(object: &Keep) -> Res<Value> {
         let data = Self::iterator_state_field(object, "data")?;
         if let Value::Object(holder) = data { Self::iterator_state_field(&holder, "state") } else { Ok(data) }
     }
@@ -4820,7 +4820,7 @@ impl<'a> Engine<'a> {
                 let Value::Bond(peers) = &state.1[3] else { return Err("TypeError: invalid tee peers".into()); };
                 let Value::Array(old) = peers.borrow().contents() else { return Err("TypeError: invalid tee peers".into()); };
                 let mut live = old.to_vec();
-                live.push(crate::faint::make(crate::faint::Hold::Object(Rc::downgrade(object)), std::rc::Weak::new(), None));
+                live.push(crate::faint::make(crate::faint::Hold::Object(crate::value::Keep::downgrade(object)), std::rc::Weak::new(), None));
                 *peers.borrow_mut() = Value::array(live);
                 return Ok(Value::Null);
             }
@@ -4828,7 +4828,7 @@ impl<'a> Engine<'a> {
         self.product_step(args)
     }
 
-    fn group_peek(&mut self, owner: &Rc<Instance>) -> Res<bool> {
+    fn group_peek(&mut self, owner: &Keep) -> Res<bool> {
         if self.truth(&Self::iterator_state_field(owner, "done")?) { return Ok(false); }
         if !self.truth(&Self::iterator_state_field(owner, "ready")?) {
             let source = Self::iterator_state_field(owner, "source")?;
@@ -4845,7 +4845,7 @@ impl<'a> Engine<'a> {
         Ok(true)
     }
 
-    fn group_recipe_next(&mut self, mode: i64, object: &Rc<Instance>) -> Res<Option<Value>> {
+    fn group_recipe_next(&mut self, mode: i64, object: &Keep) -> Res<Option<Value>> {
         if mode == 10 { return self.group_peek(object).map(|ready| Some(Value::Flag(ready))); }
         if mode == 8 {
             let Value::Object(owner) = Self::iterator_state_field(object, "owner")?.contents() else { return Err("TypeError: invalid group owner".into()); };
@@ -4949,13 +4949,13 @@ impl<'a> Engine<'a> {
         Ok(Some(answer))
     }
 
-    fn slice_source_step(&mut self, object: &Rc<Instance>, source: &Value) -> Res<Option<Value>> {
+    fn slice_source_step(&mut self, object: &Keep, source: &Value) -> Res<Option<Value>> {
         let answer=self.special_step(source);
         if answer.is_err() { Self::iterator_state_store(object,"source",Value::Null); }
         answer
     }
 
-    fn slice_recipe_next(&mut self, object: &Rc<Instance>) -> Res<Option<Value>> {
+    fn slice_recipe_next(&mut self, object: &Keep) -> Res<Option<Value>> {
         let source = Self::iterator_state_field(object, "source")?;
         if matches!(source.contents(), Value::Null) { return Ok(None); }
         let small_state = match (Self::iterator_state_field(object,"target")?.contents(),Self::iterator_state_field(object,"position")?.contents(),Self::iterator_state_field(object,"stop")?.contents()) {
@@ -5009,7 +5009,7 @@ impl<'a> Engine<'a> {
         Ok(answer)
     }
 
-    fn zip_recipe_next(&mut self, object: &Rc<Instance>) -> Res<Option<Value>> {
+    fn zip_recipe_next(&mut self, object: &Keep) -> Res<Option<Value>> {
         let mut active = Self::iterator_state_field(object, "active")?.contents();
         if match &active {Value::Small(n)=>*n==0,other=>other.as_big()?.is_zero()} { return Ok(None); }
         let storage = Self::iterator_state_field(object, "sources")?;
@@ -5039,7 +5039,7 @@ impl<'a> Engine<'a> {
         Ok(Some(Value::tuple(row)))
     }
 
-    fn product_next(&mut self, object: &Rc<Instance>) -> Res<Option<Value>> {
+    fn product_next(&mut self, object: &Keep) -> Res<Option<Value>> {
         let bad = || String::from("TypeError: invalid product state");
         if self.truth(&Self::iterator_state_field(object, "done")?) { return Ok(None); }
         let Value::Array(domains) = Self::iterator_state_field(object, "pools")?.contents() else { return Err(bad()); };
@@ -5079,7 +5079,7 @@ impl<'a> Engine<'a> {
         Ok(Some(Value::tuple(answer)))
     }
 
-    fn combination_next(&mut self, object: &Rc<Instance>) -> Res<Option<Value>> {
+    fn combination_next(&mut self, object: &Keep) -> Res<Option<Value>> {
         let invalid = || String::from("TypeError: invalid combinations state");
         if self.truth(&Self::iterator_state_field(object, "done")?) { return Ok(None); }
         let Value::Tuple(pool) = Self::iterator_state_field(object, "pool")?.contents() else { return Err(invalid()); };
@@ -5365,7 +5365,7 @@ impl<'a> Engine<'a> {
                 let origin = self.capture_coroutine_origin();
                 walk.borrow_mut().coroutine_origin = origin.clone();
                 walk.borrow_mut().coroutine_identity = Rc::as_ptr(&walk) as usize;
-                let observed = walk.borrow().trace_frame.as_ref().map(Rc::downgrade);
+                let observed = walk.borrow().trace_frame.as_ref().map(crate::value::Keep::downgrade);
                 self.coroutines.insert(Rc::as_ptr(&walk) as usize, (Rc::downgrade(&walk), program.clone(), observed, origin, Rc::as_ptr(&walk) as usize));
             }
             if !self.lang.async_generator_methods.is_empty() && program.code_flags & 512 != 0 {
@@ -5375,7 +5375,7 @@ impl<'a> Engine<'a> {
                 crate::faint::remember(crate::faint::Hold::Generator(Rc::downgrade(&walk)));
             }
             if let Some(frame) = &walk.borrow().trace_frame {
-                self.generator_frames.insert(Rc::as_ptr(frame) as usize, Rc::downgrade(&walk));
+                self.generator_frames.insert(crate::value::Keep::as_ptr(frame) as usize, Rc::downgrade(&walk));
             }
             self.data.push(Value::Generator(walk));
             return Ok(());
@@ -5395,7 +5395,7 @@ impl<'a> Engine<'a> {
         self.lift_step();
         let surrounding_comp = self.inline_comp.clone();
         let previous_comp = std::mem::replace(&mut self.inline_comp, if program.ident == "<comprehension>" {
-            caller_frame.as_ref().map(|owner| (Rc::as_ptr(owner) as usize, program.idents.clone(), frame.clone()))
+            caller_frame.as_ref().map(|owner| (crate::value::Keep::as_ptr(owner) as usize, program.idents.clone(), frame.clone()))
         } else { surrounding_comp });
         let caller_line = self.line;
         let caller_location = self.location.take();
@@ -5505,7 +5505,7 @@ impl<'a> Engine<'a> {
     /// to the call whose frame is given. Nothing is told while it is
     /// being told already, so its own calls go unseen; a routine that
     /// fails is let go and the failure passes on to the call it saw.
-    fn tell_profiler(&mut self, event: &str, frame: &Option<Rc<Instance>>, result: Value) -> Flow<()> {
+    fn tell_profiler(&mut self, event: &str, frame: &Option<Keep>, result: Value) -> Flow<()> {
         if self.profiling.get() { return Ok(()); }
         let Some(frame) = frame else { return Ok(()) };
         let Some(put) = self.profiler.borrow().clone() else { return Ok(()) };
@@ -6923,7 +6923,7 @@ impl<'a> Engine<'a> {
 
     fn trace_outside_body(&mut self, fault: &Fault) {
         if let (Some(frame), Fault::Thrown(Value::Object(error))) = (&self.trace_frame, fault) {
-            self.trace_fault_outside = Some((Rc::downgrade(frame), Rc::downgrade(error)));
+            self.trace_fault_outside = Some((crate::value::Keep::downgrade(frame), crate::value::Keep::downgrade(error)));
         }
     }
 
@@ -7005,11 +7005,11 @@ impl<'a> Engine<'a> {
     /// Whether a frame is one of the calls now standing: it is reached
     /// from the frame at work by following each call's own back link,
     /// the same walk `sys._getframe` makes.
-    fn frame_on_walk(&self, object: &Rc<Instance>) -> bool {
-        let target = Rc::as_ptr(object) as usize;
+    fn frame_on_walk(&self, object: &Keep) -> bool {
+        let target = crate::value::Keep::as_ptr(object) as usize;
         let mut current = self.trace_frame.clone();
         while let Some(frame) = current {
-            if Rc::as_ptr(&frame) as usize == target { return true; }
+            if crate::value::Keep::as_ptr(&frame) as usize == target { return true; }
             current = match frame.fields.borrow().get(2).map(|(_, value)| value.contents()) {
                 Some(Value::Object(back)) => Some(back),
                 _ => None,
@@ -7022,7 +7022,7 @@ impl<'a> Engine<'a> {
     /// and the name of the routine running there. A frame is not a thing
     /// the program's classes can describe, so the reading is made here
     /// rather than by a class member.
-    fn frame_repr(&self, object: &Rc<Instance>) -> Option<String> {
+    fn frame_repr(&self, object: &Keep) -> Option<String> {
         if !self.frame_class.as_ref().map_or(false, |kind| Rc::ptr_eq(kind, &object.class_now())) { return None; }
         let fields = object.fields.borrow();
         let line = match fields.first().map(|(_, value)| value.contents()) {
@@ -7037,7 +7037,7 @@ impl<'a> Engine<'a> {
             }
             _ => (String::from("<module>"), String::from("''")),
         };
-        Some(format!("<frame at 0x{:x}, file {}, line {}, code {}>", Rc::as_ptr(object) as usize, file, line, name))
+        Some(format!("<frame at 0x{:x}, file {}, line {}, code {}>", crate::value::Keep::as_ptr(object) as usize, file, line, name))
     }
 
     /// A proxy over a frame's locals: a small thing that stands for the
@@ -7055,7 +7055,7 @@ impl<'a> Engine<'a> {
         class
     }
 
-    fn locals_proxy(&self, value: &Value) -> Option<Rc<Instance>> {
+    fn locals_proxy(&self, value: &Value) -> Option<Keep> {
         let Value::Object(proxy) = value.contents() else { return None };
         // The proxy is found by the very class it was made from, not by
         // its name: an ordinary class a program calls FrameLocalsProxy
@@ -7064,23 +7064,23 @@ impl<'a> Engine<'a> {
         Rc::ptr_eq(known, &proxy.class_now()).then(|| proxy.clone())
     }
 
-    fn locals_proxy_frame(proxy: &Rc<Instance>) -> Option<Rc<Instance>> {
+    fn locals_proxy_frame(proxy: &Keep) -> Option<Keep> {
         let held = proxy.fields.borrow().iter().find(|(name, _)| name == "\0frame").map(|(_, value)| value.clone())?;
         match held.contents() { Value::Object(frame) => Some(frame), _ => None }
     }
 
-    fn locals_extra_cell(proxy: &Rc<Instance>) -> Option<Rc<RefCell<Value>>> {
+    fn locals_extra_cell(proxy: &Keep) -> Option<Rc<RefCell<Value>>> {
         let held = proxy.fields.borrow().iter().find(|(name, _)| name == "\0extra").map(|(_, value)| value.clone())?;
         match held { Value::Bond(cell) => Some(cell), _ => None }
     }
 
-    fn locals_worth_cell(proxy: &Rc<Instance>) -> Option<Rc<RefCell<Value>>> {
+    fn locals_worth_cell(proxy: &Keep) -> Option<Rc<RefCell<Value>>> {
         let held = proxy.fields.borrow().iter().find(|(name, _)| name == "\0worth").map(|(_, value)| value.clone())?;
         match held { Value::Bond(cell) => Some(cell), _ => None }
     }
 
     /// The names a frame keeps right now, as pairs, in slot order.
-    fn locals_local_pairs(&mut self, frame: &Rc<Instance>) -> Vec<(Value, Value)> {
+    fn locals_local_pairs(&mut self, frame: &Keep) -> Vec<(Value, Value)> {
         self.refresh_frame(frame);
         let held = frame.fields.borrow().get(3).map(|(_, value)| value.clone());
         if let Some(Value::Bond(cell)) = held {
@@ -7091,7 +7091,7 @@ impl<'a> Engine<'a> {
 
     /// Rebuild a proxy's own reading of the frame: the names it keeps plus
     /// whatever else was written into it and kept aside.
-    fn locals_rebuild(&mut self, proxy: &Rc<Instance>) {
+    fn locals_rebuild(&mut self, proxy: &Keep) {
         let Some(frame) = Self::locals_proxy_frame(proxy) else { return };
         let mut pairs = self.locals_local_pairs(&frame);
         if let Some(cell) = Self::locals_extra_cell(proxy) {
@@ -7104,7 +7104,7 @@ impl<'a> Engine<'a> {
 
     /// Make a proxy over a frame, kept on the frame so the same one comes
     /// back for every read.
-    fn locals_make(&mut self, frame: &Rc<Instance>) -> Value {
+    fn locals_make(&mut self, frame: &Keep) -> Value {
         let class = self.locals_class();
         self.made += 1;
         let worth = Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())))));
@@ -7120,7 +7120,7 @@ impl<'a> Engine<'a> {
                 cell
             }
         };
-        let proxy = Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made, fields: RefCell::new(vec![
+        let proxy = Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, mark: self.made, fields: RefCell::new(vec![
             ("\0frame".to_string(), Value::Object(frame.clone())),
             ("\0worth".to_string(), worth),
             ("\0extra".to_string(), extra),
@@ -7130,7 +7130,7 @@ impl<'a> Engine<'a> {
         value
     }
 
-    fn locals_live_pairs(&mut self, proxy: &Rc<Instance>) -> Vec<(Value, Value)> {
+    fn locals_live_pairs(&mut self, proxy: &Keep) -> Vec<(Value, Value)> {
         let Some(frame) = Self::locals_proxy_frame(proxy) else { return Vec::new() };
         let mut pairs = self.locals_local_pairs(&frame);
         if let Some(cell) = Self::locals_extra_cell(proxy) {
@@ -7149,7 +7149,7 @@ impl<'a> Engine<'a> {
         Ok(None)
     }
 
-    fn locals_slot_of(&mut self, frame: &Rc<Instance>, key: &Value) -> Res<Option<usize>> {
+    fn locals_slot_of(&mut self, frame: &Keep, key: &Value) -> Res<Option<usize>> {
         if let Some(told) = self.unkeyable(key) { return Err(told); }
         let wanted = self.special_key(key)?;
         let routine = match frame.fields.borrow().get(6).map(|(_, value)| value.clone()) {
@@ -7163,7 +7163,7 @@ impl<'a> Engine<'a> {
         Ok(None)
     }
 
-    fn locals_store_slot(frame: &Rc<Instance>, at: usize, value: Value) {
+    fn locals_store_slot(frame: &Keep, at: usize, value: Value) {
         let held = frame.fields.borrow()[5].1.clone();
         let Value::Tuple(mut row) = held else { return };
         if let Some(Value::Binding(cell)) = row.get(at) { *cell.borrow_mut() = value; return; }
@@ -7171,7 +7171,7 @@ impl<'a> Engine<'a> {
         frame.fields.borrow_mut()[5].1 = Value::Tuple(row);
     }
 
-    fn locals_extra_put(&mut self, proxy: &Rc<Instance>, key: &Value, value: Value) -> Res<()> {
+    fn locals_extra_put(&mut self, proxy: &Keep, key: &Value, value: Value) -> Res<()> {
         let wanted = self.special_key(key)?;
         let Some(cell) = Self::locals_extra_cell(proxy) else { return Ok(()) };
         let mut pairs = match cell.borrow().clone() { Value::Map(map) => map.to_vec(), _ => Vec::new() };
@@ -7185,7 +7185,7 @@ impl<'a> Engine<'a> {
 
     /// The living namespace a class body builds, where the frame is such
     /// a body: its own name slot holds the book the class is filled from.
-    fn locals_class_book(&self, frame: &Rc<Instance>) -> Option<Rc<RefCell<Value>>> {
+    fn locals_class_book(&self, frame: &Keep) -> Option<Rc<RefCell<Value>>> {
         let body = match frame.fields.borrow().get(6).map(|(_, value)| value.clone()) { Some(Value::Routine(body)) => body, _ => return None };
         // Where this frame is the class body now running, the book it
         // fills is already in hand and is the one every name of the
@@ -7201,7 +7201,7 @@ impl<'a> Engine<'a> {
         Some(match held { Value::Bond(cell) | Value::Binding(cell) | Value::Collection(cell, _) => cell, other => Rc::new(RefCell::new(other)) })
     }
 
-    fn locals_assign(&mut self, proxy: &Rc<Instance>, key: &Value, value: Value) -> Res<()> {
+    fn locals_assign(&mut self, proxy: &Keep, key: &Value, value: Value) -> Res<()> {
         if let Some(told) = self.unkeyable(key) { return Err(told); }
         let Some(frame) = Self::locals_proxy_frame(proxy) else { return Ok(()) };
         if let Some(book) = self.locals_class_book(&frame) {
@@ -7219,7 +7219,7 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
-    fn locals_delete(&mut self, proxy: &Rc<Instance>, key: &Value) -> Res<()> {
+    fn locals_delete(&mut self, proxy: &Keep, key: &Value) -> Res<()> {
         if let Some(told) = self.unkeyable(key) { return Err(told); }
         let Some(frame) = Self::locals_proxy_frame(proxy) else { return Err(self.key_absent(key)) };
         if self.locals_slot_of(&frame, key)?.is_some() { return Err("ValueError: cannot remove local variables from FrameLocalsProxy".to_string()); }
@@ -7231,13 +7231,13 @@ impl<'a> Engine<'a> {
         }
     }
 
-    fn locals_find(&mut self, proxy: &Rc<Instance>, key: &Value) -> Res<Option<(Value, Value)>> {
+    fn locals_find(&mut self, proxy: &Keep, key: &Value) -> Res<Option<(Value, Value)>> {
         if let Some(told) = self.unkeyable(key) { return Err(told); }
         let pairs = self.locals_live_pairs(proxy);
         match self.locals_locate(&pairs, key)? { Some(at) => Ok(Some(pairs[at].clone())), None => Ok(None) }
     }
 
-    fn locals_reverse_union(&mut self, proxy: &Rc<Instance>, source: &Value) -> Res<Value> {
+    fn locals_reverse_union(&mut self, proxy: &Keep, source: &Value) -> Res<Value> {
         let keys = self.class_get(source.clone(), "keys", false).map_err(|fault| { self.carried = Some(fault); String::new() })?;
         let supplied = self.call_held(keys, Vec::new())?;
         let walk = self.core_iterator(&supplied)?;
@@ -7250,7 +7250,7 @@ impl<'a> Engine<'a> {
         Ok(Value::Map(Rc::new(merged.into())))
     }
 
-    fn locals_method(&mut self, proxy: &Rc<Instance>, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
+    fn locals_method(&mut self, proxy: &Keep, operation: &str, args: Vec<Value>, named: Vec<(String, Value)>) -> Res<Value> {
         if !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
         match operation {
             "keys" | "__reversed__" | "__iter__" => {
@@ -7377,7 +7377,7 @@ impl<'a> Engine<'a> {
         }
     }
 
-    fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Rc<Instance>>) -> Option<Rc<Instance>> {
+    fn make_frame(&mut self, program: &Rc<Routine>, locals: &[Value], back: Option<Keep>) -> Option<Keep> {
         if self.lang.trace_fields.len() < 16 { return None; }
         let lang = self.lang;
         let keys = &lang.trace_fields;
@@ -7435,10 +7435,10 @@ impl<'a> Engine<'a> {
             fields.push(("f_trace".into(), Value::Null));
             fields.push(("f_trace_lines".into(), Value::Flag(true)));
         }
-        Some(Rc::new(Instance { replacement_class: RefCell::new(None), class, mark: self.made, fields: RefCell::new(fields) }))
+        Some(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, mark: self.made, fields: RefCell::new(fields) }))
     }
 
-    pub(super) fn frame_member(&mut self, object: &Rc<Instance>, name: &str) -> Option<Value> {
+    pub(super) fn frame_member(&mut self, object: &Keep, name: &str) -> Option<Value> {
         if !self.frame_class.as_ref().map_or(false, |class| Rc::ptr_eq(class, &object.class_now())) { return None; }
         if name == "clear" {
             return Some(Value::ValueMethod(Rc::new((Value::Object(object.clone()), name.to_string()))));
@@ -7457,7 +7457,7 @@ impl<'a> Engine<'a> {
             return Some(Value::Small(at));
         }
         if name == "f_generator" {
-            let walking = self.generator_frames.get(&(Rc::as_ptr(object) as usize)).and_then(Weak::upgrade);
+            let walking = self.generator_frames.get(&(crate::value::Keep::as_ptr(object) as usize)).and_then(Weak::upgrade);
             return Some(walking.map_or(Value::Null, Value::Generator));
         }
         let index = self.lang.trace_fields.iter().position(|key| key == name)?;
@@ -7493,7 +7493,7 @@ impl<'a> Engine<'a> {
         Some(self.locals_make(object))
     }
 
-    fn refresh_frame(&mut self, object: &Rc<Instance>) {
+    fn refresh_frame(&mut self, object: &Keep) {
         let fields = object.fields.borrow();
         if fields.iter().any(|(key, value)| key == "\0mapping-locals" && matches!(value, Value::Flag(true))) {
             let Some(Value::Bond(source)) = fields.iter().find(|(key, _)| key == "\0mapping-source").map(|(_, value)| value.clone()) else { return };
@@ -7508,7 +7508,7 @@ impl<'a> Engine<'a> {
             let mut names_seen = Vec::new();
             let mut locals = Value::Bond(source.clone());
             if let Some((owner, names, values)) = self.inline_comp.clone() {
-                if owner == Rc::as_ptr(object) as usize {
+                if owner == crate::value::Keep::as_ptr(object) as usize {
                     let copied = match self.builtin_call(Builtin::Dict, "dict", vec![(None, Value::Bond(source.clone()))]) {
                         Ok(value) => value.contents(), Err(message) => { self.carried = Some(Fault::Note(message)); return; }
                     };
@@ -7538,7 +7538,7 @@ impl<'a> Engine<'a> {
             (Self::public_name(visible) && !matches!(value, Value::Blank | Value::Gap)).then(|| (Value::text(visible), value))
         }).collect();
         if let Some((owner, names, values)) = &self.inline_comp {
-            if *owner == Rc::as_ptr(object) as usize {
+            if *owner == crate::value::Keep::as_ptr(object) as usize {
                 for (name, value) in names.iter().zip(values) {
                     let held = match value { Value::Binding(cell) => cell.borrow().clone(), other => other.clone() };
                     if Self::public_name(name) && !matches!(held, Value::Blank | Value::Gap) {
@@ -7586,7 +7586,7 @@ impl<'a> Engine<'a> {
         self.step_at = self.trace_frame.as_ref().map(Self::frame_instruction).unwrap_or(-1);
     }
 
-    fn frame_instruction(frame: &Rc<Instance>) -> i64 {
+    fn frame_instruction(frame: &Keep) -> i64 {
         // The private position is fixed by make_frame; no namespace search is needed.
         match frame.fields.borrow().get(8) {
             Some((_, Value::Small(position))) => *position,
@@ -7599,16 +7599,16 @@ impl<'a> Engine<'a> {
         if !self.exception_class(&object.class_now()) || self.lang.trace_fields.len() < 11 { return; }
         let Some(frame) = self.trace_frame.clone() else { return };
         if self.trace_fault_outside.as_ref().is_some_and(|(omitted, error)| {
-            omitted.upgrade().is_some_and(|held| Rc::ptr_eq(&held, &frame)) && error.upgrade().is_some_and(|held| Rc::ptr_eq(&held, object))
+            crate::value::Keep::upgrade(omitted).is_some_and(|held| crate::value::Keep::ptr_eq(&held, &frame)) && crate::value::Keep::upgrade(error).is_some_and(|held| crate::value::Keep::ptr_eq(&held, object))
         }) { return; }
         let prior = self.trace_of(raised);
-        if matches!(&prior, Value::Trace(trace) if Rc::ptr_eq(&trace.frame, &frame)) { return; }
+        if matches!(&prior, Value::Trace(trace) if crate::value::Keep::ptr_eq(&trace.frame, &frame)) { return; }
         let Some(key) = &self.lang.traceback_member else { return };
         // A caught exception can close a cycle through its frame's locals.
         // That cycle may hold a finalisable object without being reachable
         // from it, so the first traceback makes the exception a candidate.
         if matches!(prior, Value::Null) {
-            crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(object)));
+            crate::faint::remember(crate::faint::Hold::Object(crate::value::Keep::downgrade(object)));
         }
         let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: self.step_at.saturating_mul(2), location: self.location, line: self.line as i64, frame, next: RefCell::new(prior) }));
         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
@@ -7646,7 +7646,7 @@ impl<'a> Engine<'a> {
         };
         if let Err(Fault::Thrown(value)) = &result {
             let arriving = match self.trace_of(value) {
-                Value::Trace(trace) => self.trace_frame.as_ref().is_some_and(|frame| !Rc::ptr_eq(frame, &trace.frame)),
+                Value::Trace(trace) => self.trace_frame.as_ref().is_some_and(|frame| !crate::value::Keep::ptr_eq(frame, &trace.frame)),
                 _ => false,
             };
             let already = !arriving && self.trace_frame.as_ref().is_some_and(|frame| frame.fields.borrow().iter().any(|(key, held)| key == "\0traced_exception" && held.same_place(value)));
@@ -8454,7 +8454,7 @@ impl<'a> Engine<'a> {
             }
             _ => return Ok(self.keys_alike(a, b)),
         };
-        if matches!((left, right), (Value::Object(x), Value::Object(y)) if Rc::ptr_eq(x, y)) { return Ok(true); }
+        if matches!((left, right), (Value::Object(x), Value::Object(y)) if crate::value::Keep::ptr_eq(x, y)) { return Ok(true); }
         let equal = self.special_dyad(&Action::Eq, left, right)?;
         self.special_truth(&equal)
     }
@@ -9102,12 +9102,12 @@ impl<'a> Engine<'a> {
             addresses.clear();
             for (path, value) in &self.modules {
                 let Value::Object(module) = value else { continue };
-                let address = Rc::as_ptr(module) as usize;
+                let address = crate::value::Keep::as_ptr(module) as usize;
                 if !addresses.contains_key(&address) { addresses.insert(address, path.clone()); }
             }
             self.module_addresses_ready.set(true);
         }
-        if let Some(path) = self.module_by_address.borrow().get(&(Rc::as_ptr(o) as usize)) {
+        if let Some(path) = self.module_by_address.borrow().get(&(Keep::as_ptr(o) as usize)) {
             let actual = o.class_now();
             if actual.python_names.borrow().is_some() && !Self::kind_beneath_is(&actual, "module") { return None; }
             return Some(path.clone());
@@ -10605,7 +10605,7 @@ impl<'a> Engine<'a> {
                     for (key, text) in rendered {
                         if let Some(entry) = fields.iter_mut().find(|(n, _)| n == key) { entry.1 = text; }
                     }
-                    let snapshot = Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class: object.class_now().clone(), fields: RefCell::new(fields), mark: object.mark }));
+                    let snapshot = Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None),  class: object.class_now().clone(), fields: RefCell::new(fields), mark: object.mark }));
                     return Ok(snapshot.display(&self.wording()));
                 }
                 if !representation && !self.stands_on(&object.class_now(), 36) {
@@ -12673,7 +12673,7 @@ impl<'a> Engine<'a> {
             return Ok(Some(self.routine_code(&program)));
         }
         if index == 1 && body.try_borrow().is_err() {
-            let frame = self.coroutines[&(Rc::as_ptr(body) as usize)].2.as_ref().and_then(Weak::upgrade);
+            let frame = self.coroutines[&(Rc::as_ptr(body) as usize)].2.as_ref().and_then(crate::value::Keep::upgrade);
             return Ok(Some(frame.map_or(Value::Null, Value::Object)));
         }
         if index == 4 { return Ok(Some(self.coroutines[&(Rc::as_ptr(body) as usize)].3.clone())); }
@@ -13306,7 +13306,7 @@ impl<'a> Engine<'a> {
         })
     }
 
-    pub(super) fn fields_entries(&self, o: &Rc<Instance>) -> Vec<(Value, Value)> {
+    pub(super) fn fields_entries(&self, o: &Keep) -> Vec<(Value, Value)> {
         let module = self.module_holding(&Value::Object(o.clone())).is_some();
         let fields = o.fields.borrow();
         // A name read out of a thing's dictionary stands in the very
@@ -13346,7 +13346,7 @@ impl<'a> Engine<'a> {
     /// Write entries back into a thing's dictionary: names written as
     /// text go in among the thing's own fields, keys of any other kind
     /// are kept beside them under `\0keys`.
-    pub(super) fn fields_restore(&mut self, o: &Rc<Instance>, entries: Vec<(Value, Value)>) {
+    pub(super) fn fields_restore(&mut self, o: &Keep, entries: Vec<(Value, Value)>) {
         self.changed_module_positions.borrow_mut().clear();
         let entries = entries.into_iter().map(|(key, value)| {
             let value = match value { Value::Array(_) | Value::Map(_) => value.held(false), other => other };
@@ -13607,7 +13607,7 @@ impl<'a> Engine<'a> {
                     // a candidate even without last words of its own.
                     let keeps_last_words = matches!(&v, Value::Object(held) if crate::faint::last_word_of(&held.class_now()).is_some());
                     let outcome = self.class_write(o.clone(), name, Some(v), false)?;
-                    if keeps_last_words { if let Value::Object(object) = &o { crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(object))); } }
+                    if keeps_last_words { if let Value::Object(object) = &o { crate::faint::remember(crate::faint::Hold::Object(crate::value::Keep::downgrade(object))); } }
                     Some(outcome)
                 },
                 Action::Uproot(name) => { let v=self.drop_top()?; Some(self.class_write(v,name,None,false)?) },
@@ -15414,9 +15414,9 @@ impl<'a> Engine<'a> {
                 }
                 if self.fuller_classes() {let made=self.class_make(class,args)?;self.data.push(made);return Ok(());}
                 self.made += 1;
-                let object = Rc::new(Instance {replacement_class: RefCell::new(None), class: class.clone(), fields: RefCell::new(class.all_fields()), mark: self.made });
+                let object = Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None), class: class.clone(), fields: RefCell::new(class.all_fields()), mark: self.made });
                 if self.lang.finaliser.is_some() && crate::faint::last_word_of(&class).is_some() {
-                    crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(&object)));
+                    crate::faint::remember(crate::faint::Hold::Object(crate::value::Keep::downgrade(&object)));
                     if !self.lang.trace_fields.is_empty() { crate::faint::anchor(&object); }
                 }
                 if self.lang.destructor.is_some() || self.lang.finaliser.is_some() {
@@ -16668,7 +16668,7 @@ impl<'a> Engine<'a> {
                             methods: Vec::new(), constants: Vec::new(), shared: crate::value::ClassMembers::new(Vec::new()), slot_layout: std::cell::RefCell::new(None), dictionary_layout: std::cell::Cell::new(None), python_bases: std::cell::RefCell::new(None), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
                         self.made += 1;
                         let fields = if bare { Vec::new() } else { vec![("message".to_string(), message)] };
-                        Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(fields), mark: self.made }))
+                        Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None),  class, fields: RefCell::new(fields), mark: self.made }))
                     }
                 };
                 self.chain_context(&raised);
@@ -16698,7 +16698,7 @@ impl<'a> Engine<'a> {
                         self.data.push(raised); self.perform(&Action::Make, 1)?; raised = self.drop_top()?;
                     } else if let Value::Class(class) = raised {
                         self.made += 1;
-                        raised = Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(Vec::new()), mark: self.made }));
+                        raised = Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None),  class, fields: RefCell::new(Vec::new()), mark: self.made }));
                     }
                 }
                     raised
@@ -16732,7 +16732,7 @@ impl<'a> Engine<'a> {
                     }
                 }
                 if let (Value::Trace(prior), Some(frame), Value::Object(object), Some(key)) = (self.trace_of(&value), &self.trace_frame, &value, &self.lang.traceback_member) {
-                    if Rc::ptr_eq(&prior.frame, frame) {
+                    if crate::value::Keep::ptr_eq(&prior.frame, frame) {
                         let trace = Value::Trace(Rc::new(crate::value::Traceback { instruction: self.step_at.saturating_mul(2), location: self.location, line: self.line as i64, frame: frame.clone(), next: RefCell::new(Value::Trace(prior)) }));
                         if let Some((_, slot)) = object.fields.borrow_mut().iter_mut().find(|(name, _)| name == key) { *slot = trace; }
                     }
@@ -17982,7 +17982,7 @@ impl<'a> Engine<'a> {
              Value::Bond(y) | Value::Binding(y) | Value::Collection(y, _)) => Rc::ptr_eq(x, y),
             // The very object already standing at the place is no
             // change to what holds it: writing it back is no write.
-            (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+            (Value::Object(x), Value::Object(y)) => crate::value::Keep::ptr_eq(x, y),
             _ => false,
         }
     }
@@ -18524,7 +18524,7 @@ impl<'a> Engine<'a> {
                     (Value::Bytes(x, ..), Value::Bytes(y, ..)) => Rc::ptr_eq(x, y),
                     (Value::Array(x), Value::Array(y)) => Rc::ptr_eq(x, y),
                     (Value::Map(x), Value::Map(y)) => Rc::ptr_eq(x, y),
-                    (Value::Fields(x), Value::Fields(y)) => Rc::ptr_eq(x, y),
+                    (Value::Fields(x), Value::Fields(y)) => crate::value::Keep::ptr_eq(x, y),
                     (Value::Null, Value::Null) | (Value::Ellipsis, Value::Ellipsis) => true,
                     (Value::Flag(x), Value::Flag(y)) => x == y,
                     (Value::Routine(x), Value::Routine(y)) => Rc::ptr_eq(x,y),
@@ -18540,7 +18540,7 @@ impl<'a> Engine<'a> {
                     // A method is bound afresh at every read; no two reads are one.
                     (Value::Method(_, _, x), Value::Method(_, _, y)) => Rc::ptr_eq(x, y),
                     (Value::Trace(x), Value::Trace(y)) => Rc::ptr_eq(x, y),
-                    (Value::Object(x), Value::Object(y)) => Rc::ptr_eq(x, y),
+                    (Value::Object(x), Value::Object(y)) => crate::value::Keep::ptr_eq(x, y),
                     (Value::Object(_), _) | (_, Value::Object(_)) => false,
                     (Value::Class(x), Value::Class(y)) => Rc::ptr_eq(x, y),
                     (Value::Array(_), Value::Map(_)) | (Value::Map(_), Value::Array(_)) if self.lang.python_numbers => false,
@@ -20102,7 +20102,7 @@ impl<'a> Engine<'a> {
             if !cell.borrow().held.contains_key(&key) { continue; }
             if self.special_keys_equal(&held, &wanted)? { return Ok(key); }
         }
-        let identity = match &wanted { Value::Hashed(pair) => match &pair.0 { Value::Class(class) => Rc::as_ptr(class) as usize, Value::Object(o) => Rc::as_ptr(o) as usize, Value::Tuple(row) => Rc::as_ptr(row) as usize, Value::Adapter(parts) if parts.0 == 7 => Rc::as_ptr(parts) as usize, _ => 0 }, _ => 0 };
+        let identity = match &wanted { Value::Hashed(pair) => match &pair.0 { Value::Class(class) => Rc::as_ptr(class) as usize, Value::Object(o) => Keep::as_ptr(o) as usize, Value::Tuple(row) => Rc::as_ptr(row) as usize, Value::Adapter(parts) if parts.0 == 7 => Rc::as_ptr(parts) as usize, _ => 0 }, _ => 0 };
         Ok(format!("{opening}{identity:x}"))
     }
 
@@ -21406,7 +21406,7 @@ impl<'a> Engine<'a> {
                         }
                     }
                     self.made += 1;
-                    return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: object.class_now(), fields: RefCell::new(fields), mark: self.made })));
+                    return Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class: object.class_now(), fields: RefCell::new(fields), mark: self.made })));
                 }
             }
             let Value::Adapter(handle) = receiver.contents() else { return Err(self.special_fault()) };
@@ -21539,7 +21539,7 @@ impl<'a> Engine<'a> {
                 if self.frame_class.as_ref().is_some_and(|kind| Rc::ptr_eq(kind, &frame.class_now())) {
                     if !args.is_empty() || !named.is_empty() { return Err(self.lang.method_errors["arguments"].clone()); }
                     if self.frame_on_walk(&frame) { return Err("RuntimeError: cannot clear an executing frame".into()); }
-                    if let Some(walk) = self.generator_frames.get(&(Rc::as_ptr(&frame) as usize)).and_then(Weak::upgrade) {
+                    if let Some(walk) = self.generator_frames.get(&(crate::value::Keep::as_ptr(&frame) as usize)).and_then(Weak::upgrade) {
                         // A walk asleep in the middle of its own step may
                         // not be emptied: the reference refuses it. A
                         // coroutine never stepped into is warned about and
@@ -23199,7 +23199,8 @@ impl<'a> Engine<'a> {
                 Self::put_field(&mut fields, slot, value)?;
             }
             self.made += 1;
-            entries.push(Value::Object(Rc::new(Instance {
+            entries.push(Value::Object(Keep::new(Instance {
+                anchored: std::cell::Cell::new(false),
                 replacement_class: RefCell::new(sample.replacement_class.borrow().clone()),
                 class: sample.class.clone(),
                 fields: RefCell::new(fields),
@@ -24209,7 +24210,7 @@ impl<'a> Engine<'a> {
     }
 
     /// Validate the embedded stream class and its complete slot descriptors.
-    fn stream_object(&mut self, object: &Rc<Instance>) -> bool {
+    fn stream_object(&mut self, object: &Keep) -> bool {
         let class = object.class_now();
         // Reparented classes retain ordinary lookup, including new inherited hooks.
         if class.base_epoch.get() != 0 { return false; }
@@ -24336,7 +24337,7 @@ impl<'a> Engine<'a> {
             if !class.shared.borrow().iter().any(|(key, flag)| key == "\0buffer_allocator" && flag.is_true()) { return Err(format!("TypeError: pickle.PickleBuffer.__new__({}): {} is not a subtype of pickle.PickleBuffer", class.name, class.name).into()); }
             let handle = self.pickle_buffer_work(&[Value::Small(0), source.clone()])?;
             self.made += 1;
-            let object = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: class.clone(), fields: RefCell::new(Vec::new()), mark: self.made }));
+            let object = Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class: class.clone(), fields: RefCell::new(Vec::new()), mark: self.made }));
             self.class_write(object.clone(), "_handle", Some(handle), true)?;
             return Ok(object);
         }
@@ -26311,13 +26312,13 @@ impl<'a> Engine<'a> {
                     if let Some(old) = crate::faint::reusable(&args[0], &class) { return Ok(old); }
                 }
                 self.made += 1;
-                let bearer = Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(Vec::new()), mark: self.made });
-                crate::faint::remember(crate::faint::Hold::Object(Rc::downgrade(&bearer)));
-                let handle = crate::faint::make(hold, Rc::downgrade(&bearer), told);
+                let bearer = Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, fields: RefCell::new(Vec::new()), mark: self.made });
+                crate::faint::remember(crate::faint::Hold::Object(crate::value::Keep::downgrade(&bearer)));
+                let handle = crate::faint::make(hold, crate::value::Keep::downgrade(&bearer), told);
                 bearer.fields.borrow_mut().push(("\0weak".to_string(), handle));
                 Value::Object(bearer)
             } else {
-                let bearer = match args[1].contents() { Value::Object(o) => Rc::downgrade(&o), _ => Weak::new() };
+                let bearer = match args[1].contents() { Value::Object(o) => crate::value::Keep::downgrade(&o), _ => Weak::new() };
                 crate::faint::make(hold, bearer, told)
             }
         };
@@ -27927,7 +27928,7 @@ impl<'a> Engine<'a> {
                         // The incumbent POSIX record already carries fractional and nanosecond times.
                         let extra = data[10..].to_vec();
                         self.made += 1;
-                        Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class,
+                        Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class,
                             fields: RefCell::new(vec![("\0worth".into(), Value::tuple(data[..10].to_vec())), ("\0structseq".into(), Value::tuple(extra))]), mark: self.made }))
                     }
                     Some(Value::Text(op)) if op.as_ref() == "structseq_new" => {
@@ -27936,7 +27937,7 @@ impl<'a> Engine<'a> {
                         let payload = Value::tuple(one_after_another(&args[2]));
                         let extra = Value::tuple(one_after_another(&args[3]));
                         self.made += 1;
-                        Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None), class,
+                        Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None), class,
                             fields: RefCell::new(vec![("\0worth".into(), payload), ("\0structseq".into(), extra)]), mark: self.made }))
                     }
                     // The next entry of an open directory stream, made as a
@@ -27962,7 +27963,7 @@ impl<'a> Engine<'a> {
                         for (place, held) in places.iter_mut().zip([Value::text(&spelled), Value::text(&path), Value::of_big(inode.into()),
                             Value::Small(kind.into()), args[4].clone(), Value::Null, Value::Null]) { place.1 = held; }
                         self.made += 1;
-                        return reply(0, Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None), class: sample.class.clone(),
+                        return reply(0, Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None), class: sample.class.clone(),
                             fields: RefCell::new(places), mark: self.made})));
                     }
                     Some(Value::Text(op)) if op.as_ref() == "structseq_get" => {
@@ -29035,7 +29036,7 @@ impl<'a> Engine<'a> {
                 if args.len() != 1 || self.lang.reference_count_words.is_empty() { return Err(self.core_fault("core.arity", name)); }
                 let value = args[0].contents();
                 let count = match &value {
-                    Value::Object(v) | Value::Fields(v) => Rc::strong_count(v),
+                    Value::Object(v) | Value::Fields(v) => crate::value::Keep::strong_count(v),
                     Value::Trace(v) => Rc::strong_count(v),
                     Value::Class(v) => Rc::strong_count(v),
                     Value::Routine(v) => Rc::strong_count(v),
@@ -32141,7 +32142,7 @@ impl Engine<'_> {
                     let mut fields = unpacked.fields.borrow().clone();
                     for (key, flag) in &mut fields { if key == "__unpacked__" { *flag = Value::Flag(false); } }
                     self.made += 1;
-                    let alias = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: unpacked.class_now().clone(), fields: RefCell::new(fields), mark: self.made }));
+                    let alias = Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class: unpacked.class_now().clone(), fields: RefCell::new(fields), mark: self.made }));
                     return Ok(pack(vec![iter, pack(vec![alias])]));
                 }
             }
@@ -32308,7 +32309,7 @@ impl Engine<'_> {
                 let (Some(Value::Class(class)), Some(base)) = (parts.get(1), parts.get(2)) else { return Err(malformed()); };
                 self.made += 1;
                 let fields = vec![("\0worth".to_string(), base.clone().held(false))];
-                Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class: class.clone(), fields: RefCell::new(fields), mark: self.made })))
+                Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class: class.clone(), fields: RefCell::new(fields), mark: self.made })))
             }
             "class" => {
                 let Some(name) = text_at(1) else { return Err(malformed()) };
@@ -32339,7 +32340,7 @@ impl Engine<'_> {
                 match parts.get(1) {
                     Some(Value::Class(c)) => {
                         self.made += 1;
-                        Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class: c.clone(), fields: RefCell::new(vec![("\0worth".to_string(), cursor)]), mark: self.made })))
+                        Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None),  class: c.clone(), fields: RefCell::new(vec![("\0worth".to_string(), cursor)]), mark: self.made })))
                     }
                     _ => Ok(cursor),
                 }
@@ -32358,7 +32359,7 @@ impl Engine<'_> {
                 ];
                 let class = self.code_class();
                 self.made += 1;
-                Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made })))
+                Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made })))
             }
             _ => Err(malformed()),
         }
@@ -33446,7 +33447,7 @@ impl Engine<'_> {
                     Value::Map(a) => Rc::as_ptr(a) as usize as u64,
                     Value::Text(a) => a.as_ptr() as usize as u64,
                     Value::Codepoints(a) => a.as_ptr() as usize as u64,
-                    Value::Object(a) | Value::Fields(a) => Rc::as_ptr(a) as usize as u64,
+                    Value::Object(a) | Value::Fields(a) => Keep::as_ptr(a) as usize as u64,
                     Value::ValueMethod(a) => Rc::as_ptr(a) as usize as u64,
                     Value::TextMethod(_, _, member) => member.as_ptr() as usize as u64,
                     Value::Method(_, _, identity) => Rc::as_ptr(identity) as usize as u64,
@@ -34066,7 +34067,7 @@ impl Engine<'_> {
                 if let Some(Value::Object(namespace)) = self.modules.get(owner) {
                     let fields = namespace.fields.borrow();
                     let mut positions = self.changed_module_positions.borrow_mut();
-                    let cached = positions.entry(Rc::as_ptr(namespace) as usize).or_insert_with(|| (usize::MAX, HashMap::default()));
+                    let cached = positions.entry(crate::value::Keep::as_ptr(namespace) as usize).or_insert_with(|| (usize::MAX, HashMap::default()));
                     if cached.0 != fields.len() {
                         cached.1.clear();
                         for (position, (key, _)) in fields.iter().enumerate() { cached.1.insert(key.clone(), position); }
@@ -34507,7 +34508,7 @@ impl Engine<'_> {
         self.made += 1;
         let module_class = Rc::new(Class { direct: std::cell::RefCell::new(Vec::new()), lineage: RefCell::new(Vec::new()), outline: None, name: path.to_string(), base: std::cell::RefCell::new(None), answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: crate::value::ClassMembers::new(Vec::new()), slot_layout: std::cell::RefCell::new(None), dictionary_layout: std::cell::Cell::new(None), python_bases: std::cell::RefCell::new(None), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
         if !self.lang.weak_refused.is_empty() { module_class.weak_storage.set(Some(true)); }
-        let object = Rc::new(Instance {replacement_class: RefCell::new(None),
+        let object = Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None),
             class: module_class,
             fields: RefCell::new(Vec::new()), mark: self.made,
         });
@@ -34675,7 +34676,7 @@ impl Engine<'_> {
                     answers: vec![], fields: vec![], reaches: vec![], methods: vec![], constants: vec![],
                     python_names: RefCell::new(None), shared: crate::value::ClassMembers::new(vec![]), slot_layout: std::cell::RefCell::new(None), dictionary_layout: std::cell::Cell::new(None), python_bases: std::cell::RefCell::new(None), weak_storage: std::cell::Cell::new(None), declares_slots:false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
                 if !self.lang.weak_refused.is_empty() { class.weak_storage.set(Some(true)); }
-                let main = Value::Object(Rc::new(Instance { class, replacement_class: RefCell::new(None),
+                let main = Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  class, replacement_class: RefCell::new(None),
                     fields: RefCell::new(vec![("\0namespace".into(), Value::Bond(book))]), mark: self.made }));
                 self.modules.insert(name, main); self.module_addresses_ready.set(false); self.changed_module_positions.borrow_mut().clear();
             }
@@ -35626,7 +35627,7 @@ impl Engine<'_> {
         } else { self.root_class() };
         let dictionary = Value::Bond(self.natives_book());
         self.made += 1;
-        let object = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class,
+        let object = Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class,
             fields: RefCell::new(vec![("\0namespace".to_string(), dictionary.clone()), ("_namespace".to_string(), dictionary)]), mark: self.made }));
         self.builtins_view = Some(object.clone());
         Ok(object)
@@ -35805,7 +35806,7 @@ impl Engine<'_> {
             }
             self.made += 1;
             let parent = name.rsplit_once('.').map_or("", |(parent, _)| parent);
-            let spec = Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None),
+            let spec = Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None),
                 class: self.root_class(),
                 fields: RefCell::new(vec![("name".into(), Value::text(&name)),
                     ("origin".into(), Value::text(&self.source)), ("parent".into(), Value::text(parent)), ("loader".into(), Value::Null)]), mark: self.made }));
@@ -35833,7 +35834,7 @@ impl Engine<'_> {
         // language spelling the word carries one.
         if self.lang.builtins.contains_key("__loader_source") {
             self.made += 1;
-            let loader = Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),
+            let loader = Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None),
                 class: self.root_class(),
                 fields: RefCell::new(vec![("get_source".to_string(), Value::Native(Builtin::LoaderSource, Rc::from("get_source")))]),
                 mark: self.made,
@@ -35848,7 +35849,7 @@ impl Engine<'_> {
             let _ = self.book_put(&book, "__loader__", Some(loader));
         }
         self.made += 1;
-        let object = Rc::new(Instance {replacement_class: RefCell::new(None),
+        let object = Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None),
             class: Rc::new(Class { direct: std::cell::RefCell::new(Vec::new()), lineage: RefCell::new(Vec::new()), outline: None, name: main.clone(), base: std::cell::RefCell::new(None), answers: Vec::new(), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(), constants: Vec::new(), shared: crate::value::ClassMembers::new(Vec::new()), declares_slots: false, slot_layout: std::cell::RefCell::new(None), dictionary_layout: std::cell::Cell::new(None), python_bases: std::cell::RefCell::new(None), weak_storage: std::cell::Cell::new(None), python_names: std::cell::RefCell::new(None), sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)}),
             fields: RefCell::new(vec![("\0namespace".to_string(), Value::Bond(book))]), mark: self.made,
         });
@@ -36010,7 +36011,7 @@ impl Engine<'_> {
     /// handed out: the write is seen through the dictionary too, and a
     /// name the module never had is bound under a cell both share, the
     /// way a name written through the dictionary is.
-    fn module_member_mirror(&mut self, module: &Rc<Instance>, name: &str, value: &Option<Value>) {
+    fn module_member_mirror(&mut self, module: &Keep, name: &str, value: &Option<Value>) {
         self.changed_module_positions.borrow_mut().clear();
         if value.is_none() {
             let mut fields = module.fields.borrow_mut();
@@ -36018,7 +36019,7 @@ impl Engine<'_> {
                 Rc::make_mut(order).retain(|(key, _)| !matches!(key, Value::Text(word) if word.as_ref() == name));
             }
         }
-        let Some(path) = self.modules.iter().find(|(_, held)| matches!(held, Value::Object(space) if Rc::ptr_eq(space, module))).map(|(path, _)| path.clone()) else { return };
+        let Some(path) = self.modules.iter().find(|(_, held)| matches!(held, Value::Object(space) if crate::value::Keep::ptr_eq(space, module))).map(|(path, _)| path.clone()) else { return };
         let Some(book) = self.module_globals.get(&path).cloned() else { return };
         match value {
             None => {
@@ -36346,7 +36347,7 @@ impl Engine<'_> {
             if self.module_holding(&Value::Object(module.clone())).is_some() {
                 let fields = module.fields.borrow();
                 let mut indexes = self.changed_module_positions.borrow_mut();
-                let row = indexes.entry(Rc::as_ptr(module) as usize)
+                let row = indexes.entry(crate::value::Keep::as_ptr(module) as usize)
                     .or_insert_with(|| (usize::MAX, HashMap::default()));
                 if row.0 != fields.len() {
                     row.1.clear();
@@ -37612,7 +37613,7 @@ impl Engine<'_> {
         ])).collect())));
         fields.push(("co_stores".to_string(), Value::tuple(stores.iter().map(|name| Value::text(name)).collect())));
         self.made += 1;
-        Ok(Value::Object(Rc::new(Instance {replacement_class: RefCell::new(None),  class, fields: RefCell::new(fields), mark: self.made })))
+        Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None),  class, fields: RefCell::new(fields), mark: self.made })))
     }
 
     /// A deprecation warning said through the reference's warnings
@@ -38168,12 +38169,12 @@ impl Engine<'_> {
 fn duplicate_value(value: &Value, deep: bool, seen: &mut HashMap<usize, Value>, made: &mut usize) -> Value {
     match value {
         Value::Object(object) => {
-            let address = Rc::as_ptr(object) as usize;
+            let address = crate::value::Keep::as_ptr(object) as usize;
             if deep {
                 if let Some(copy) = seen.get(&address) { return copy.clone(); }
             }
             *made += 1;
-            let copy = Rc::new(Instance {replacement_class: RefCell::new(None),  class: object.class_now().clone(), fields: RefCell::new(Vec::new()), mark: *made });
+            let copy = Keep::new(Instance {anchored: std::cell::Cell::new(false), replacement_class: RefCell::new(None),  class: object.class_now().clone(), fields: RefCell::new(Vec::new()), mark: *made });
             let result = Value::Object(copy.clone());
             seen.insert(address, result.clone());
             let fields = object.fields.borrow().iter().map(|(name, worth)| {
@@ -38358,7 +38359,7 @@ impl Engine<'_> {
             ("\0code_archive".into(), archive)];
         self.made += 1;
         let class = self.code_class();
-        Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made })))
+        Ok(Value::Object(Keep::new(Instance {anchored: std::cell::Cell::new(false),  replacement_class: RefCell::new(None), class, fields: RefCell::new(fields), mark: self.made })))
     }
 }
 
