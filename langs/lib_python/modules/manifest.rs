@@ -389,6 +389,7 @@ pub static MODULES: &[(&str, &str, &str)] = &[
     ("linecache", include_str!("linecache.py"), "linecache.py"),
     ("locale", include_str!("locale.py"), "locale.py"),
     ("logging", include_str!("logging/__init__.py"), "logging/__init__.py"),
+    ("logging.handlers", include_str!("logging/handlers.py"), "logging/handlers.py"),
     ("logging", include_str!("logging.py"), "logging.py"),
     ("lzma", include_str!("lzma.py"), "lzma.py"),
     ("mailbox", include_str!("mailbox.py"), "mailbox.py"),

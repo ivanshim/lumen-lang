@@ -6452,6 +6452,12 @@ impl<'a> Machine<'a> {
             }
             if Self::names_a_kind(op) {
                 if self.table.flag("ext.stmt.type_parameters") && key == "__type_params__" { return Ok(Value::tuple(Vec::new())); }
+                // `from_bytes` read on the kind itself is the builtin a
+                // program gets from the name written whole. A subclass
+                // still takes the classmethod from integer_attribute.
+                if self.table.strings("ext.builtin.bytes.to_int").iter().any(|spelling| spelling == &format!("{word}.{key}")) {
+                    return Ok(Value::Intrinsic(Prim::Octets(15), Rc::from(format!("{word}.{key}"))));
+                }
                 if let Some(size) = self.integer_attribute(&value, key) { return Ok(size); }
                 if !key.is_empty() && key == self.detail("bases") {
                     let ancestor = if word.as_ref() == "bool" { self.kind_by_word("int") }
