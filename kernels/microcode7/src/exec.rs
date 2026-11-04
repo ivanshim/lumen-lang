@@ -6792,9 +6792,15 @@ impl<'a> Machine<'a> {
         let words = self.rules.trace_words;
         if words.len() <= 15 { return None; }
         if self.activation_kind.is_none() {
+            // The frame type carries each attribute as its own descriptor,
+            // so a kind question about the type's f_locals reads one there.
+            let mut shared = Vec::new();
+            for name in ["f_back", "f_code", "f_globals", "f_lasti", "f_lineno", "f_locals", "f_trace", "f_trace_lines"] {
+                shared.push((name.to_owned(), self.kind_entry("frame", name)));
+            }
             self.activation_kind = Some(Rc::new(Blueprint { name: words[9].to_string(), under: std::cell::RefCell::new(None), presentation: Some(format!("<class '{}'>", words[9])),
                 parents: std::cell::RefCell::new(Vec::new()), ancestry: std::cell::RefCell::new(Vec::new()), fields: Vec::new(), reaches: Vec::new(), methods: Vec::new(),
-                answers: Vec::new(), constants: vec![("__module__".into(), Value::text("builtins"))], shared: crate::data::BlueprintEntries::new(Vec::new()), instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)}));
+                answers: Vec::new(), constants: vec![("__module__".into(), Value::text("builtins"))], shared: crate::data::BlueprintEntries::new(shared), instance_slots: std::cell::RefCell::new(None), namespace_layout: std::cell::Cell::new(None), supplied_bases: std::cell::RefCell::new(None), weak_slot: Cell::new(None), has_slot_storage: false, sealed: Cell::new(false), order_supplied: Cell::new(false), supplied_order: RefCell::new(Vec::new()), type_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)}));
         }
         // Capture the actual globals while this frame is made. Looking up
         // globals later would use the formatter's module instead of ours.
@@ -22930,7 +22936,7 @@ impl<'a> Machine<'a> {
             if let [owner, parameter] = operands {
                 if let Value::Blueprint(class) = owner.settled() {
                     let family = Self::native_word(&class).or_else(|| Self::native_beneath(&class));
-                    let container = family.as_deref().is_some_and(|word| ["list", "dict", "set", "tuple", "frozenset"].contains(&word));
+                    let container = family.as_deref().is_some_and(|word| ["list", "dict", "set", "tuple", "frozenset", "type", "enumerate", "memoryview", "staticmethod", "classmethod", "generator", "coroutine", "async_generator"].contains(&word));
                     if container && self.inherited_entry(&class, "__class_getitem__").is_none() {
                         let method = self.read_class_member(owner.clone(), "__class_getitem__", false).map_err(|escape| self.suspension_fault(escape))?;
                         let result = self.apply_class_member(method, vec![parameter.clone()]);
@@ -22941,12 +22947,20 @@ impl<'a> Machine<'a> {
         }
         if operation == Prim::At && self.rules.has_any_ext_stmt_class_builtin {
             if let [Value::Intrinsic(kind, label), parameter] = operands {
-                let eligible = matches!(kind, Prim::Listed | Prim::Tupling | Prim::Dictionary | Prim::Uniques | Prim::Unchanging)
-                    && matches!(label.as_ref(), "list" | "tuple" | "dict" | "set" | "frozenset");
+                let eligible = matches!(kind, Prim::Listed | Prim::Tupling | Prim::Dictionary | Prim::Uniques | Prim::Unchanging | Prim::SortOf | Prim::Numbered | Prim::ClassWork(9) | Prim::ClassWork(10))
+                    && matches!(label.as_ref(), "list" | "tuple" | "dict" | "set" | "frozenset" | "type" | "enumerate" | "staticmethod" | "classmethod");
                 if eligible {
                     let alias_class = Value::Blueprint(self.native_kind("GenericAlias"));
                     let made = self.apply_class_member(alias_class, vec![operands[0].clone(), parameter.clone()]);
                     return made.map(Some).map_err(|escape| self.carried_native_fault(escape));
+                }
+            }
+        }
+        // A builtin kind with no class-getitem of its own is not subscriptable.
+        if operation == Prim::At && self.rules.has_any_ext_stmt_class_builtin {
+            if let [Value::Intrinsic(kind, label), _] = operands {
+                if kind.names_a_kind() {
+                    return Err(format!("TypeError: type '{}' is not subscriptable", label).into());
                 }
             }
         }

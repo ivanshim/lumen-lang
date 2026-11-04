@@ -671,6 +671,9 @@ def _buffer_hook(owner, name):
 _unhashed = object()
 
 class memoryview:
+    def __class_getitem__(cls, item):
+        import types
+        return types.GenericAlias(cls, item)
     def __buffer__(self, flags, /):
         from _buffer import getbuffer
         return getbuffer(self, flags)

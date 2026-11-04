@@ -7399,6 +7399,14 @@ impl<'a> Engine<'a> {
                 let class = Rc::new(Class { direct: std::cell::RefCell::new(Vec::new()), lineage: RefCell::new(Vec::new()), outline: Some(format!("<class '{}'>", keys[9])),
                     name: keys[9].clone(), base: std::cell::RefCell::new(None), answers: Vec::new(), fields: Vec::new(),
                     reaches: Vec::new(), methods: Vec::new(), constants: vec![("__module__".into(), Value::text("builtins"))], shared: crate::value::ClassMembers::new(Vec::new()), slot_layout: std::cell::RefCell::new(None), dictionary_layout: std::cell::Cell::new(None), python_bases: std::cell::RefCell::new(None), weak_storage: std::cell::Cell::new(None), declares_slots: false, sealed: std::cell::Cell::new(false), mro_adopted: std::cell::Cell::new(false), adopted_order: RefCell::new(Vec::new()), python_names: std::cell::RefCell::new(None), mro_place: std::cell::RefCell::new(vec![0]), mro_ready: std::cell::Cell::new(true), base_epoch: std::cell::Cell::new(0)});
+                // The frame type carries each attribute as its own descriptor,
+                // so a kind question about the type's f_locals reads one there.
+                {
+                    let mut shared = class.shared.borrow_mut();
+                    for name in ["f_back", "f_code", "f_globals", "f_lasti", "f_lineno", "f_locals", "f_trace", "f_trace_lines"] {
+                        shared.push((name.to_string(), self.held_kind_descriptor("frame", name)));
+                    }
+                }
                 self.frame_class = Some(class.clone());
                 class
             }
@@ -11606,7 +11614,7 @@ impl<'a> Engine<'a> {
         if matches!(op, Action::At) && Lang::spells(&self.lang.builtin_bases, "tuple") {
             if let Value::Class(class) = a.contents() {
                 let base = Self::own_kind(&class).or_else(|| Self::kind_beneath(&class));
-                if matches!(base.as_deref(), Some("tuple" | "list" | "dict" | "set" | "frozenset")) && self.class_value(&class, "__class_getitem__").is_none() {
+                if matches!(base.as_deref(), Some("tuple" | "list" | "dict" | "set" | "frozenset" | "type" | "enumerate" | "memoryview" | "staticmethod" | "classmethod" | "generator" | "coroutine" | "async_generator")) && self.class_value(&class, "__class_getitem__").is_none() {
                     let member = self.class_get(a.clone(), "__class_getitem__", false).map_err(|fault| fault.told(&self.wording()))?;
                     return self.class_apply(member, vec![b.clone()]).map_err(|fault| fault.told(&self.wording()));
                 }
@@ -11614,14 +11622,22 @@ impl<'a> Engine<'a> {
         }
         if matches!(op, Action::At) && Lang::spells(&self.lang.builtin_bases, "list") {
             if let Value::Native(kind, name) = a {
-                if matches!(kind, Builtin::List | Builtin::Tuple | Builtin::Dict | Builtin::Set | Builtin::Frozen)
-                    && matches!(name.as_ref(), "list" | "tuple" | "dict" | "set" | "frozenset") {
+                if matches!(kind, Builtin::List | Builtin::Tuple | Builtin::Dict | Builtin::Set | Builtin::Frozen | Builtin::SortOf | Builtin::Enumerate | Builtin::ClassTool(9) | Builtin::ClassTool(10))
+                    && matches!(name.as_ref(), "list" | "tuple" | "dict" | "set" | "frozenset" | "type" | "enumerate" | "staticmethod" | "classmethod") {
                     let maker = Value::Class(self.kind_class("GenericAlias"));
                     return match self.class_apply(maker.contents(), vec![a.clone(), b.clone()]) {
                         Ok(alias) => Ok(alias),
                         Err(Fault::Note(words)) => Err(words),
                         Err(escape) => { self.carried = Some(escape); Err(self.special_fault()) }
                     };
+                }
+            }
+        }
+        // A builtin kind with no class-getitem of its own is not subscriptable.
+        if matches!(op, Action::At) && Lang::spells(&self.lang.builtin_bases, "list") {
+            if let Value::Native(kind, name) = a {
+                if Self::kind_builtin(kind) {
+                    return Err(format!("TypeError: type '{}' is not subscriptable", name).into());
                 }
             }
         }

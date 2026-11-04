@@ -204,6 +204,14 @@ def lock_held():
 class _NativeFinder:
     @classmethod
     def find_spec(cls, fullname, path=None, target=None):
+        # Same rule as _runtime_import._module_name_ok. The path lookup
+        # collapses an empty name or a doubled dot, so a relative import
+        # pyclbr builds would resolve and walk forever. "@test" is kept.
+        if not isinstance(fullname, str) or not fullname:
+            return None
+        for part in fullname.split('.'):
+            if not part:
+                return None
         if not __load_module(fullname, False):
             return None
         from importlib._bootstrap_external import spec_from_file_location

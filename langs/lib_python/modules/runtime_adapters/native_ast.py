@@ -233,6 +233,21 @@ def _read_string(source, i, prefix):
         return (bytes(numbers), i)
     return (''.join(units), i)
 
+def _warn_invalid_escape(text):
+    # An escape the reader does not know is still kept. A warning treated
+    # as an error becomes the reference SyntaxError, without the sentence
+    # that only the warning carries.
+    import warnings
+    try:
+        warnings.warn(
+            '"%s" is an invalid escape sequence. Such sequences will not '
+            'work in the future. Did you mean "%s"? A raw string is also '
+            'an option.' % (text, text.replace('\\', '\\\\')),
+            SyntaxWarning, stacklevel=3)
+    except SyntaxWarning as error:
+        raise SyntaxError(str(error).replace(
+            ' Such sequences will not work in the future.', '')) from None
+
 def _read_escape(source, i, is_bytes):
     # i points just past the backslash. Returns the replacement text (or
     # None for a continued line) and the index past the escape.
@@ -252,10 +267,12 @@ def _read_escape(source, i, is_bytes):
         return _read_hex(source, i + 1, 2, '\\x')
     if c == 'u':
         if is_bytes:
+            _warn_invalid_escape('\\u')
             return ('\\u', i + 1)
         return _read_hex(source, i + 1, 4, '\\u')
     if c == 'U':
         if is_bytes:
+            _warn_invalid_escape('\\U')
             return ('\\U', i + 1)
         return _read_hex(source, i + 1, 8, '\\U')
     if c == 'N' and not is_bytes:
@@ -274,8 +291,10 @@ def _read_escape(source, i, is_bytes):
         if named is None or len(named) != 1:
             raise 'SyntaxError: unknown Unicode character name'
         return (named, close + 1)
-    # An unknown escape keeps the backslash, as Python does.
-    return ('\\' + c, i + 1)
+    # An unknown escape keeps the backslash, as Python does, and warns.
+    text = '\\' + c
+    _warn_invalid_escape(text)
+    return (text, i + 1)
 
 def _read_hex(source, i, width, label):
     digits = source[i:i + width]
@@ -1884,11 +1903,23 @@ def _string_skip_pos(source, i, row, col):
     _, row, col = _adv(source, start, i - start, row, col)
     return (i, row, col)
 
+def _nested_fstring_at(source, i):
+    # Whether the quote at i opens a nested f- or t-string: one prefix
+    # letter stands just before it and no name runs up to that prefix.
+    p = i - 1
+    if p < 0 or source[p] not in 'fFtT':
+        return False
+    q = p - 1
+    while q >= 0 and source[q] in 'rRbBuUfFtT':
+        q -= 1
+    return q < 0 or not _is_name_char(source[q])
+
 def _fstring_end(source, i):
     # i at the opening quote of an f-string literal; answers the index
     # just past the closing quote, the quote and the closing quote's
-    # index. Inside a replacement field every brace is structural; only
-    # in the text between them are {{ and }} escapes.
+    # index. Dictionary and set braces nest in the expression, while a
+    # format spec opens replacement fields. {{ and }} escape literal text
+    # only, and a quote inside a format spec is not a Python string.
     n = len(source)
     q = source[i]
     if source[i:i + 3] == q * 3:
@@ -1897,6 +1928,8 @@ def _fstring_end(source, i):
         quote = q
     i += len(quote)
     depth = 0
+    in_spec = []
+    brackets = []
     while i < n:
         c = source[i]
         if c == '\\':
@@ -1910,18 +1943,44 @@ def _fstring_end(source, i):
             if depth == 0 and source[i + 1:i + 2] == '{':
                 i += 2
                 continue
-            depth += 1
+            if depth > 0 and not in_spec[-1]:
+                brackets[-1] += 1
+            else:
+                depth += 1
+                in_spec.append(False)
+                brackets.append(0)
             i += 1
             continue
         if c == '}':
             if depth == 0 and source[i + 1:i + 2] == '}':
                 i += 2
                 continue
-            depth -= 1
+            if depth > 0 and not in_spec[-1] and brackets[-1] > 0:
+                brackets[-1] -= 1
+            else:
+                depth -= 1
+                if in_spec:
+                    in_spec.pop()
+                if brackets:
+                    brackets.pop()
             i += 1
             continue
-        if depth > 0 and (c == '"' or c == "'"):
-            i = _string_skip(source, i)
+        if depth > 0:
+            if not in_spec[-1]:
+                if c in '([':
+                    brackets[-1] += 1
+                elif c in ')]':
+                    if brackets[-1] > 0:
+                        brackets[-1] -= 1
+                elif c == ':' and brackets[-1] == 0:
+                    in_spec[-1] = True
+                elif c == '"' or c == "'":
+                    if _nested_fstring_at(source, i):
+                        i = _fstring_end(source, i)[0]
+                    else:
+                        i = _string_skip(source, i)
+                    continue
+            i += 1
             continue
         i += 1
     _syntax('unterminated f-string literal')
@@ -1981,7 +2040,7 @@ def _lex(source, start, end, row, col, for_field, comments=None):
                 continue
             toks.append(_Tok('newline', '\n', srow, scol, srow, scol + 1))
             continue
-        if c == '#' and not for_field:
+        if c == '#':
             j = source.find('\n', i)
             if j < 0 or j > end:
                 j = end
@@ -2166,7 +2225,11 @@ def _formatted(source, i, row, col, raw, multi, template=False):
             _syntax("f-string: valid expression required before '}'")
         c = source[i]
         if c == '"' or c == "'":
-            i, row, col = _string_skip_pos(source, i, row, col)
+            if _nested_fstring_at(source, i):
+                end = _fstring_end(source, i)[0]
+                i, row, col = _adv(source, i, end - i, row, col)
+            else:
+                i, row, col = _string_skip_pos(source, i, row, col)
             continue
         if c == '\\':
             i, row, col = _adv(source, i, 2, row, col)
@@ -2199,10 +2262,14 @@ def _formatted(source, i, row, col, raw, multi, template=False):
             kind = 't-string' if template else 'f-string'
             shown = source[expr_start:i + 1]
             i, row, col = _adv(source, i, 1, row, col)
-            while i < n and (source[i] in ' \t\r\n\f' or source[i] == '#'):
+            while i < n and (source[i] in ' \t\r\n\f' or source[i] == '#'
+                             or (source[i] == '\\' and source[i + 1:i + 2] == '\n')):
                 if source[i] == '#':
                     while i < n and source[i] not in '\r\n':
                         i, row, col = _adv(source, i, 1, row, col)
+                elif source[i] == '\\':
+                    # A backslash-newline is a line continuation, not debug text.
+                    i, row, col = _adv(source, i, 2, row, col)
                 else:
                     shown += source[i]
                     i, row, col = _adv(source, i, 1, row, col)
@@ -2251,8 +2318,12 @@ def _formatted(source, i, row, col, raw, multi, template=False):
                 if i >= n:
                     _syntax("f-string: valid expression required before '}'")
                 c2 = source[i]
-                if c2 == '"' or c2 == "'":
-                    i, row, col = _string_skip_pos(source, i, row, col)
+                if (c2 == '"' or c2 == "'") and sdepth > 0:
+                    if _nested_fstring_at(source, i):
+                        end = _fstring_end(source, i)[0]
+                        i, row, col = _adv(source, i, end - i, row, col)
+                    else:
+                        i, row, col = _string_skip_pos(source, i, row, col)
                     continue
                 if c2 == '\\':
                     i, row, col = _adv(source, i, 2, row, col)
@@ -2292,7 +2363,7 @@ def _formatted(source, i, row, col, raw, multi, template=False):
                           lineno=srow, col_offset=scol,
                           end_lineno=row, end_col_offset=col + 1)
     if template:
-        node = Interpolation(value=value, str=source[expr_start:expr_end].strip(),
+        node = Interpolation(value=value, str=source[expr_start:expr_end],
                              conversion=conv, format_spec=spec, lineno=srow,
                              col_offset=scol, end_lineno=row, end_col_offset=col + 1)
     i, row, col = _adv(source, i, 1, row, col)
@@ -2810,7 +2881,9 @@ class _Parser:
                         defaults.append(default)
             more = self.at_op(',')
             row = self.pop().srow if more else self.toks[self.at - 1].erow
-            if argument is not None:
+            # A comment on the closing ')' line follows the header, so it
+            # belongs to the function rather than the last parameter.
+            if argument is not None and not (self.at_op(closing) and self.toks[self.at].srow == row):
                 argument.type_comment = self.take_comment(row)
             if not more:
                 break
@@ -2894,6 +2967,28 @@ class _Parser:
         return copy_location(pattern, node)
 
     # Parse statement grammar independently from the tree consumers.
+    def match_runs_to_colon(self):
+        # A match header ends with ':' and a newline. An annotation or a
+        # lambda colon does not end the header, and ';' ends the statement.
+        depth = 0
+        j = self.at + 1
+        while j < len(self.toks):
+            tok = self.toks[j]
+            if tok.kind in ('end', 'newline') and depth == 0:
+                return False
+            if tok.kind == 'op':
+                if tok.text in '([{':
+                    depth += 1
+                elif tok.text in ')]}':
+                    depth -= 1
+                elif depth == 0:
+                    if tok.text == ';':
+                        return False
+                    if tok.text == ':' and self.toks[j + 1].kind == 'newline':
+                        return True
+            j += 1
+        return False
+
     def parse_stmt(self, start=None):
         token = self.toks[self.at]
         first = token if start is None else start
@@ -3011,7 +3106,7 @@ class _Parser:
             comment = self.suite_comment()
             body = self.parse_suite(first)
             return self.located(With, first, body[-1], items=items, body=body, type_comment=comment)
-        if word == 'match' and self.toks[self.at + 1].text not in ('=', '(', '.', '[', ':', ';', ','):
+        if word == 'match' and self.match_runs_to_colon():
             self.pop()
             subject, ss, se = self.parse_expr(True)
             self.expect_op(':')
@@ -3521,7 +3616,7 @@ class _Parser:
                 comma = self.pop()
                 le = (comma.erow, comma.ecol)
                 tok = self.toks[self.at]
-                if tok.kind in ('newline', 'end') or self.at_op(';') or self.at_op('=') or self.at_op(':') or self.at_op(')') or self.at_op(']') or self.at_op('}'):
+                if tok.kind in ('newline', 'end') or self.at_op(';') or self.at_op('=') or self.at_op(':') or self.at_op(')') or self.at_op(']') or self.at_op('}') or (tok.kind == 'op' and tok.text.endswith('=') and tok.text[:-1] in _BINOPS):
                     break
                 elt, es, ee = self.parse_expr(False)
                 elts.append(elt)
@@ -3559,7 +3654,7 @@ class _Parser:
                 return (node, ls, le)
             self.pop()
             right, rs, re = self.parse_and()
-            if type(node) == BoolOp and type(node.op) == Or:
+            if type(node) == BoolOp and type(node.op) == Or and not getattr(node, '_paren', False):
                 node.values.append(right)
                 node.end_lineno = re[0]
                 node.end_col_offset = re[1]
@@ -3578,7 +3673,7 @@ class _Parser:
                 return (node, ls, le)
             self.pop()
             right, rs, re = self.parse_not()
-            if type(node) == BoolOp and type(node.op) == And:
+            if type(node) == BoolOp and type(node.op) == And and not getattr(node, '_paren', False):
                 node.values.append(right)
                 node.end_lineno = re[0]
                 node.end_col_offset = re[1]
@@ -3927,6 +4022,7 @@ class _Parser:
                 return (node, (open_tok.srow, open_tok.scol),
                         (close_tok.erow, close_tok.ecol))
             close_tok = self.expect_op(')')
+            node._paren = True
             return (node, (open_tok.srow, open_tok.scol),
                     (close_tok.erow, close_tok.ecol))
         if kind == 'op' and tok.text == '[':
@@ -4069,6 +4165,8 @@ class _Parser:
                     pieces.append(value)
         values = []
         for piece in pieces:
+            if type(piece) == Constant and piece.value == '':
+                continue
             if values and type(values[-1]) == Constant and type(piece) == Constant:
                 prev = values[-1]
                 values[-1] = Constant(value=prev.value + piece.value,
@@ -4380,6 +4478,13 @@ def _parse_plain_prefix(source, filename, feature_version):
 
 def parse(source, filename='<unknown>', mode='exec', *, type_comments=False,
           feature_version=None, optimize=-1, fold_debug=False):
+    if isinstance(source, AST):
+        # ast.parse of a tree is compile(..., PyCF_ONLY_AST). optimize
+        # above zero asks for the optimised tree.
+        flags = PyCF_ONLY_AST
+        if optimize > 0:
+            flags |= PyCF_OPTIMIZED_AST
+        return _compile_ast(source, filename, mode, flags, optimize, feature_version)
     if isinstance(source, (bytes, bytearray)):
         # Source bytes name their own encoding: a byte-order mark or a coding comment.
         import io, tokenize

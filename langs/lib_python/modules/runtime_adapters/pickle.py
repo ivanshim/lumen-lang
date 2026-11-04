@@ -61,7 +61,7 @@ del load_string
 
 # Reduce native typing objects through their actual runtime kinds.
 def _save_native_generic_alias(self, obj):
-    self.save_reduce(type(obj), (obj.__origin__, obj.__args__), obj=obj)
+    self.save_reduce(type(obj), (obj.__origin__, obj.__args__), state=True if obj.__unpacked__ else None, obj=obj)
 
 import _typing as _native_typing
 import types as _native_types

@@ -731,6 +731,9 @@ def waitstatus_to_exitcode(status):
 
 class DirEntry:
     __slots__ = ('_name', '_path', '_inode', '_type', '_dir_fd', '_stat', '_lstat')
+    def __class_getitem__(cls, item):
+        import types
+        return types.GenericAlias(cls, item)
     def __init__(self, directory, name, inode, kind):
         import posixpath
         self._name = name

@@ -132,6 +132,16 @@ impl<'a> Engine<'a> {
                     hooks.push((name.into(), Self::adapter(240, vec![Value::text(helper)])));
                 }
             }
+            // Unknown names are the origin's. Directory, copy and state are the alias's own.
+            if let Some(reader) = self.lang.reader.clone() {
+                hooks.push((reader, Self::adapter(124, vec![Value::Small(16)])));
+            }
+            if let Some(dir_word) = self.lang.class_special.get(75).cloned() {
+                hooks.push((dir_word, Self::adapter(124, vec![Value::Small(17)])));
+            }
+            for (name, mode) in [("__copy__", 9), ("__deepcopy__", 10), ("__setstate__", 14)] {
+                hooks.push((name.to_string(), Self::adapter(124, vec![Value::Small(mode)])));
+            }
         }
         if word == "function" && self.lang.type_parameters {
             hooks.push((self.class_word("allocate").to_owned(), Self::adapter(14, vec![Value::text(word)])));
@@ -1615,6 +1625,9 @@ impl<'a> Engine<'a> {
                 .map_or_else(|| Value::Fields(module.clone()), |(_, book)| book.clone()));
         }
         let place = self.slot_place(thing, parts)?;
+        if let Some(Value::Adapter(source)) = parts.get(2) {
+            return self.slot_read(thing, &source.1);
+        }
         let Value::Object(o) = thing else { return Err(self.class_refusal()) };
         if parts.get(2).is_some_and(|part| part.plain() == "\0instance-namespace") {
             return Ok(o.fields.borrow().iter().find(|(key, _)| key == "\0namespace")
@@ -1645,6 +1658,9 @@ impl<'a> Engine<'a> {
             return Err(self.class_word("property.readonly").to_string().into());
         }
         let place = self.slot_place(thing, parts)?;
+        if matches!(parts.get(2), Some(Value::Adapter(_))) {
+            return Err("AttributeError: readonly attribute".into());
+        }
         let Value::Object(o) = thing else { return Err(self.class_refusal()) };
         if parts.get(2).is_some_and(|part|part.plain()=="\0instance-namespace") {return self.namespace_write(o,value);}
         if parts[0].plain() == "__weakref__" && !self.lang.weak_refused.is_empty() { return Err(format!("AttributeError: attribute '__weakref__' of '{}' objects is not writable", o.class_now().name).into()); }
@@ -5667,7 +5683,7 @@ impl<'a> Engine<'a> {
                 Value::Native(operation, word) if Self::kind_builtin(&operation) => Some(word.to_string()),
                 _ => None,
             };
-            if matches!(kind.as_deref(), Some("tuple" | "list" | "dict" | "set" | "frozenset" | "mappingproxy")) {
+            if matches!(kind.as_deref(), Some("tuple" | "list" | "dict" | "set" | "frozenset" | "mappingproxy" | "type" | "enumerate" | "memoryview" | "staticmethod" | "classmethod" | "generator" | "coroutine" | "async_generator")) {
                 return Ok(Value::ValueMethod(Rc::new((subject.clone(), name.to_string()))));
             }
         }
@@ -5917,6 +5933,12 @@ impl<'a> Engine<'a> {
                 }
                 if name==self.class_word("module") { return Ok(Value::text(self.home_module_word())); }
                 if name==self.class_word("qualified") { return Ok(Value::text(word)); }
+                // `from_bytes` read on the kind itself is the builtin a
+                // program gets from the name written whole. A subclass
+                // still takes the classmethod from integer_member.
+                if self.lang.builtins.get(&format!("{word}.{name}")) == Some(&Builtin::Bytes(15)) {
+                    return Ok(Value::Native(Builtin::Bytes(15), Rc::from(format!("{word}.{name}"))));
+                }
                 if let Some(size) = self.integer_member(&subject, name) { return Ok(size); }
                 if name==self.class_word("allocate") {
                     // Making a property outright allocates the subclass it
@@ -6261,7 +6283,7 @@ impl<'a> Engine<'a> {
                         o.fields.borrow_mut().push((name.into(), parameters.clone()));
                         return Ok(parameters);
                     }
-                    if ["__module__", "__name__", "__qualname__", "__doc__"].contains(&name) {
+                    if ["__module__", "__name__", "__qualname__", "__doc__", "__getitem__"].contains(&name) {
                         let origin = o.fields.borrow().iter().find(|(key, _)| key == "__origin__").unwrap().1.clone();
                         return self.class_get(origin, name, true);
                     }
@@ -8387,6 +8409,8 @@ impl<'a> Engine<'a> {
     /// for without being a class itself. A member that is absent, or
     /// is no tuple, leaves the walk with nothing.
     fn class_bases(&mut self, value:&Value) -> Flow<Option<Vec<Value>>> {
+        // Forwarded origin bases do not make a parameterized alias a class.
+        if matches!(value, Value::Object(alias) if Self::kind_beneath(&alias.class_now()).as_deref() == Some("GenericAlias")) { return Ok(None); }
         let name = self.class_word("bases").to_string();
         Ok(match self.asked_member(value, &name)? {
             Some(Value::Tuple(items)) => Some(items.as_ref().clone()),
@@ -8558,7 +8582,8 @@ impl<'a> Engine<'a> {
                 return self.beneath(value, &members, subclass);
             }
         }
-        if matches!(wanted, Value::Object(o) if o.class_now().name == "GenericAlias") {
+        if matches!(wanted, Value::Object(o) if Self::kind_beneath(&o.class_now()).as_deref() == Some("GenericAlias")) {
+            if let Some(answer) = self.value_answers(wanted, value, subclass)? { return Ok(answer); }
             return Err("TypeError: isinstance() argument 2 cannot be a parameterized generic".into());
         }
         if let Some(told)=self.maker_answers(wanted,value,subclass)? { return Ok(told); }
@@ -8725,6 +8750,15 @@ impl<'a> Engine<'a> {
         self.lang.builtins.iter().find(|(_,b)|**b==target).map(|(n,_)|n.clone()).unwrap_or_default()
     }
     pub(super) fn class_work(&mut self,which:u8,mut args:Vec<Value>)->Flow<Value> {
+        if which == 34 && !self.lang.readonly_member.is_empty() {
+            let [Value::Text(name), Value::Adapter(source)] = args.as_slice() else {
+                return Err("TypeError: read-only member requires a name and a native slot".into());
+            };
+            if !Self::valid_slot_name(name) || source.0 != 16 || source.1.len() != 2 {
+                return Err("TypeError: read-only member requires a name and a native slot".into());
+            }
+            return Ok(Self::adapter(16, vec![args[0].clone(), source.1[1].clone(), args[1].clone()]));
+        }
         if which == 30 && !self.lang.partial_call_words.is_empty() {
             let mut supplied = Vec::new();
             let mut keywords = Vec::new();
@@ -9462,7 +9496,7 @@ impl<'a> Engine<'a> {
         if operation == 0 {
             let Value::Class(class) = receiver else { return Err(self.class_refusal()); };
             if given.len() != 2 { return Err("TypeError: GenericAlias expected 2 arguments".into()); }
-            let args = match given[1].contents() { Value::Tuple(_) => given[1].clone(), value => Value::tuple(vec![value]) };
+            let args = match given[1].contents() { Value::Tuple(_) => given[1].clone(), _ => Value::tuple(vec![given[1].clone()]) };
             self.made += 1;
             return Ok(Value::Object(Rc::new(Instance { replacement_class: RefCell::new(None), class,
                 fields: RefCell::new(vec![("__origin__".into(), given[0].clone()), ("__args__".into(), args),
@@ -9471,6 +9505,44 @@ impl<'a> Engine<'a> {
         let origin = self.class_get(receiver.clone(), "__origin__", true)?;
         let args = self.class_get(receiver.clone(), "__args__", true)?;
         match operation {
+            16 if given.len() == 1 => {
+                let key = given[0].contents();
+                let name = match &key { Value::Text(text) => text.to_string(), _ => return Err(self.class_refusal()) };
+                self.class_get(origin, &name, false)
+            }
+            17 if given.is_empty() => {
+                let listed = self.class_work(8, vec![origin.clone()])?;
+                let mut names = self.special_items(&listed).map_err(Fault::Note)?;
+                names.retain(|held| !matches!(held.contents(), Value::Text(text) if matches!(text.as_ref(), "__bases__" | "__copy__" | "__deepcopy__")));
+                for prop in ["__origin__", "__args__", "__parameters__", "__unpacked__", "__mro_entries__"] {
+                    if !names.iter().any(|held| matches!(held.contents(), Value::Text(text) if text.as_ref() == prop)) {
+                        names.push(Value::text(prop));
+                    }
+                }
+                Ok(Value::tuple(names))
+            }
+            9 | 10 => {
+                let held = if operation == 10 {
+                    let module = self.import_module("copy")?;
+                    let deep = self.class_get(module, "deepcopy", false)?;
+                    let memo = given.first().cloned().ok_or_else(|| self.class_refusal())?;
+                    self.class_apply(deep, vec![args.clone(), memo])?
+                } else { args };
+                let star = self.class_get(receiver.clone(), "__unpacked__", true)?;
+                let Value::Object(owner) = receiver.contents() else { return Err(self.class_refusal()); };
+                let made = self.class_make(owner.class_now(), vec![origin, held])?;
+                if let Value::Object(object) = &made {
+                    for (key, value) in object.fields.borrow_mut().iter_mut() { if key == "__unpacked__" { *value = star.clone(); } }
+                }
+                Ok(made)
+            }
+            14 => {
+                let unpacked = matches!(given.first().map(Value::contents), Some(Value::Flag(true)));
+                if let Value::Object(object) = receiver.contents() {
+                    for (key, value) in object.fields.borrow_mut().iter_mut() { if key == "__unpacked__" { *value = Value::Flag(unpacked); } }
+                }
+                Ok(Value::Null)
+            }
             1 if self.lang.type_parameters => self.class_apply(Self::adapter(158, vec![Value::text("alias_repr")]), vec![receiver]),
             1 => {
                 let mut parts = Vec::new();
