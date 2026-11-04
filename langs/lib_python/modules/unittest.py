@@ -65,20 +65,20 @@ class _Entry(tuple):
         entry.where = where
         return entry
 
-class TextTestResult:
-    def __init__(self):
-        self.testsRun = 0
-        self.failures = []
-        self.errors = []
-        self.skipped = []
-        self.expectedFailures = []
-        self.unexpectedSuccesses = []
+# Built on first use so importing unittest does not load traceback.
+_TextTestResult = None
 
-    def wasSuccessful(self):
-        return len(self.failures) == 0 and len(self.errors) == 0 and len(self.unexpectedSuccesses) == 0
+def _text_test_result_class():
+    global _TextTestResult
+    if _TextTestResult is None:
+        base = _host_load_module('unittest.result').TestResult
+        class TextTestResult(base):
+            # The statistics doctest names CPython's runner module.
+            __module__ = 'unittest.runner'
+        TextTestResult.__qualname__ = 'TextTestResult'
+        _TextTestResult = TextTestResult
+    return _TextTestResult
 
-    def __repr__(self):
-        return '<unittest.runner.TextTestResult run=%d errors=%d failures=%d>' % (self.testsRun, len(self.errors), len(self.failures))
 class _NotWarns:
     def __init__(self, expected):
         self.expected = expected
@@ -1244,7 +1244,7 @@ class TextTestRunner:
 
     def run(self, test):
         self._progress = ""
-        result = TextTestResult()
+        result = _text_test_result_class()()
         if self.resultclass is not None:
             result = self.resultclass()
         started = _host_clock()

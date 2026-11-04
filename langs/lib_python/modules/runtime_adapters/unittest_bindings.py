@@ -6,8 +6,10 @@ def __getattr__(name):
         return _host_load_module('unittest.result')
     if name == 'TestResult':
         return _host_load_module('unittest.result').TestResult
+    if name == 'TextTestResult':
+        return _text_test_result_class()
     raise AttributeError("module 'unittest' has no attribute '" + name + "'")
 
 
 def __dir__():
-    return sorted(set(globals()) | {'TestResult', 'case', 'result'})
+    return sorted(set(globals()) | {'TestResult', 'TextTestResult', 'case', 'result'})
