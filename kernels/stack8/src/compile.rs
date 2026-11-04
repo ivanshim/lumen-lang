@@ -10731,7 +10731,126 @@ impl<'a> Compiler<'a> {
     /// target followed by a sign that writes is read as an assignment
     /// whose value is what was written — but not where the assignment
     /// is the whole statement, which is read as a statement.
+    /// Where a floor-zero expression ends when it cannot bind a name.
+    /// Lambdas, comprehensions, named expressions and interpolated strings
+    /// stay with the ordinary reader so their bindings are still recorded.
+    fn survey_value_end(&self) -> Option<usize> {
+        let lang = self.lang;
+        let mut index = self.pos;
+        let mut depth = 0i32;
+        let mut holding = false;
+        let last = self.tokens.len();
+        while index < last {
+            let token = &self.tokens[index];
+            let word = token.spelling();
+            if matches!(token.shape, Shape::StringBegin | Shape::StringEnd | Shape::StringField | Shape::StringExpression | Shape::StringFault | Shape::Quoted) {
+                return None;
+            }
+            if token.shape == Shape::Instr && (Lang::spells(&lang.lambda_words, word) || Lang::spells(&lang.yield_words, word) || Lang::spells(&lang.yield_from_words, word) || Lang::spells(&lang.await_words, word)) {
+                return None;
+            }
+            if Lang::spells(&lang.expression_assign, word) { return None; }
+            if depth > 0 && token.shape == Shape::Instr && (Lang::spells(&lang.comprehension_for, word) || Lang::spells(&lang.async_words, word)) {
+                return None;
+            }
+            if depth > 0 {
+                if token.shape == Shape::Sign {
+                    match token.lexeme.as_str() {
+                        "(" | "[" | "{" => depth += 1,
+                        ")" | "]" | "}" => depth -= 1,
+                        _ => {}
+                    }
+                }
+                index += 1;
+                if depth == 0 { holding = true; }
+                continue;
+            }
+            if !holding {
+                if token.shape == Shape::Sign && matches!(token.lexeme.as_str(), "(" | "[" | "{") {
+                    depth = 1;
+                    index += 1;
+                    continue;
+                }
+                if matches!(token.shape, Shape::Numeral | Shape::Quote | Shape::Bytes | Shape::Codepoints) {
+                    let literal = token.shape;
+                    index += 1;
+                    if lang.adjacent_strings && matches!(literal, Shape::Quote | Shape::Bytes | Shape::Codepoints) {
+                        while index < last {
+                            match self.tokens[index].shape {
+                                Shape::StringBegin | Shape::StringEnd | Shape::StringField | Shape::StringExpression | Shape::StringFault => return None,
+                                Shape::Quote | Shape::Bytes | Shape::Codepoints => index += 1,
+                                _ => break,
+                            }
+                        }
+                    }
+                    holding = true;
+                    continue;
+                }
+                if Lang::spells(&lang.ellipsis_words, word) {
+                    index += 1;
+                    holding = true;
+                    continue;
+                }
+                if lang.monadic.contains_key(word) {
+                    index += 1;
+                    continue;
+                }
+                if token.shape == Shape::Instr {
+                    let reserved = lang.keywords.contains(word)
+                        && !Lang::spells(&lang.true_words, word)
+                        && !Lang::spells(&lang.false_words, word)
+                        && !Lang::spells(&lang.null_words, word);
+                    if reserved { return None; }
+                    index += 1;
+                    holding = true;
+                    continue;
+                }
+                return None;
+            }
+            if token.shape == Shape::Instr && Lang::spells(&lang.membership_not, word)
+                && self.tokens.get(index + 1).is_some_and(|next| Lang::spells(&lang.membership_words, next.spelling())) {
+                index += 2;
+                holding = false;
+                continue;
+            }
+            let bracket = token.shape == Shape::Sign && matches!(token.lexeme.as_str(), "(" | "[" | "{");
+            let joins = match token.shape {
+                Shape::Instr => lang.dyadic.contains_key(word) || Lang::spells(&lang.if_else_words, word),
+                Shape::Sign => bracket || Lang::spells(&lang.pipe_words, word) || lang.dyadic.contains_key(word),
+                _ => false,
+            };
+            if !joins { return Some(index); }
+            if bracket {
+                depth = 1;
+                index += 1;
+                continue;
+            }
+            index += 1;
+            holding = false;
+        }
+        if holding && depth == 0 { Some(index) } else { None }
+    }
+
     fn expr_at(&mut self, floor: u32, may_write: bool) -> Res<()> {
+        // The binding survey still compiles every assignment and nested
+        // scope. A plain value contributes no name, so its instructions
+        // are not built on that pass.
+        if floor == 0 && self.discovering && !self.writing_place && self.annotation_target.is_none() {
+            if let Some(end) = self.survey_value_end() {
+                let compound_target = match self.tokens.get(end) {
+                    Some(token) => token.shape == Shape::Sign && self.lang.compound.contains_key(&token.lexeme),
+                    None => false,
+                };
+                if !compound_target {
+                    self.pos = end;
+                    // A deletion or a subscript still classifies the value
+                    // by the instruction it leaves. One placeholder keeps
+                    // that shape; this pass discards the instructions.
+                    self.constant(Value::Small(0));
+                    return Ok(());
+                }
+            }
+        }
         if let Some(starts) = &mut self.ast_expression_starts { starts.push(self.pos); }
         let result = self.expr_read(floor, may_write);
         if let Some(starts) = &mut self.ast_expression_starts { starts.pop(); }
