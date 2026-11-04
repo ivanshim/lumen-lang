@@ -2415,6 +2415,83 @@ impl<'a> Machine<'a> {
         let Some(Value::Thing(thing)) = values.first() else { return Err(self.class_unready()) };
         thing.holds.borrow().iter().find(|(key, _)| key == "\0callable").map(|(_, held)| held.clone()).ok_or_else(|| self.class_unready())
     }
+    /// `randrange(n)` when `n` is a positive int of at most 32 bits and this
+    /// instance still uses the stock `getrandbits` rejection loop. `None`
+    /// leaves the original Python method to run, which is what a subclass
+    /// that replaced `getrandbits` or `_randbelow` requires.
+    fn native_small_randrange(&mut self, values: &[Value], stock_below: Option<&Value>) -> Option<Res> {
+        if values.len() != 2 || values.iter().any(|value| matches!(value, Value::Couple(_))) {
+            return None;
+        }
+        let stock_below = match stock_below.map(Value::settled) {
+            Some(Value::Routine(code) | Value::Method(code, _, _) | Value::Bound(code, _)) => Rc::as_ptr(&code) as usize,
+            _ => return None,
+        };
+        let receiver = values[0].settled();
+        let Value::Small(n) = values[1].settled() else { return None; };
+        if n <= 0 || n > u32::MAX as i64 { return None; }
+        let Value::Thing(thing) = &receiver else { return None; };
+        // Instance attributes hide the class methods, and `_stream` lives on
+        // the instance. The class methods stay stock until a namespace write.
+        let mark = {
+            let holds = thing.holds.borrow();
+            let mut mark = None;
+            for (word, value) in holds.iter() {
+                if (word == "getrandbits" || word == "_randbelow") && !matches!(value, Value::Unset) {
+                    return None;
+                }
+                if word == "_stream" {
+                    match value.settled() {
+                        Value::Small(found) => mark = Some(found),
+                        _ => return None,
+                    }
+                }
+            }
+            mark
+        };
+        let Some(mark) = mark else { return None; };
+        if !Self::stock_range_class(&thing.blueprint(), stock_below) { return None; }
+        let width = i64::from((n as u64).ilog2() + 1);
+        loop {
+            let drawn = match self.prim(Prim::Chance, "__random", &[Value::text("bits"), Value::Small(mark), Value::Small(width)]) {
+                Ok(value) => value,
+                Err(fault) => return Some(Err(fault.into())),
+            };
+            if let Some(raised) = self.got_away.take() { return Some(Err(raised)); }
+            let Value::Small(bit) = drawn.settled() else { return None; };
+            if bit < n { return Some(Ok(Value::Small(bit))); }
+        }
+    }
+
+    /// Stock wrappers, remembered per class until any class namespace is written.
+    fn stock_range_class(class: &Rc<Blueprint>, stock_below: usize) -> bool {
+        thread_local! {
+            static STOCK: std::cell::Cell<(usize, usize, u64, bool)> = std::cell::Cell::new((0, 0, 0, false));
+        }
+        let ptr = Rc::as_ptr(class) as usize;
+        let epoch = crate::data::namespace_change();
+        if let Some(stock) = STOCK.with(|slot| {
+            let (seen, seen_below, stamped, stock) = slot.get();
+            (seen == ptr && seen_below == stock_below && stamped == epoch).then_some(stock)
+        }) {
+            return stock;
+        }
+        let stock = Self::lookup_ordered(class, |parent| Self::own_entry(parent, "getrandbits")).is_some_and(|bits| {
+            match bits.settled() {
+                Value::Wrapped(133, parts) => parts.first().map(|op| op.bare()).as_deref() == Some("bits"),
+                _ => false,
+            }
+        }) && Self::lookup_ordered(class, |parent| Self::own_entry(parent, "_randbelow")).is_some_and(|below| {
+            match below.settled() {
+                Value::Routine(code) | Value::Method(code, _, _) | Value::Bound(code, _) => Rc::as_ptr(&code) as usize == stock_below,
+                _ => false,
+            }
+        });
+        STOCK.with(|slot| slot.set((ptr, stock_below, epoch, stock)));
+        stock
+    }
+
+
     pub(crate) fn apply_class_member(&mut self, mut f: Value, mut values: Vec<Value>) -> Res {
         loop {
             if let Some(fault) = self.symbolic_access(&f) { return Err(fault.into()); }
@@ -2940,7 +3017,7 @@ impl<'a> Machine<'a> {
                         self.check_library_target(description, &target)?;
                         Ok(Self::wrap(3, vec![kept[0].clone(), target]))
                     }
-                    133 if kept.len() == 3 => {
+                    133 if kept.len() == 3 && kept[0].bare() == "library" => {
                         let (input, keywords) = self.open_arguments(values)?;
                         let Some(receiver) = input.first() else {
                             let word = self.read_class_member(kept[1].clone(), "__qualname__", false)?.bare();
@@ -2955,6 +3032,14 @@ impl<'a> Machine<'a> {
                     // entry for index protocols, cold instances and refusals.
                     133=>{
                         let operation=kept[0].bare();
+                        // A stock randrange(stop) is one rejection loop. Anything
+                        // else, including a subclass draw, stays the Python method.
+                        if operation == "range" {
+                            if let Some(answer) = self.native_small_randrange(&values, kept.get(2)) {
+                                return answer;
+                            }
+                            return self.apply_class_member(kept[1].clone(), values);
+                        }
                         let needed=if operation=="next" {1} else {2};
                         let ordinary=values.len()==needed
                             && matches!(values.first().map(Value::settled),Some(Value::Thing(_)))
@@ -5572,7 +5657,7 @@ impl<'a> Machine<'a> {
             }
         }
         if let Value::Wrapped(133, description) = value.settled() {
-            if description.len() == 3 {
+            if description.len() == 3 && description[0].bare() == "library" {
                 match key {
                     "__objclass__" => return Ok(description[2].clone()),
                     "__get__" => return Ok(Self::wrap(239, vec![Value::Wrapped(133, description)])),
