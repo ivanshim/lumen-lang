@@ -351,6 +351,12 @@ class _HostFile:
             return self._carried(value)
         # A size counts what the reader sees, so a \r\n inside the
         # window stands for a single character.
+        window = self._buffer[self._pos:self._pos + size]
+        if '\r' not in window:
+            self._note_newlines(window)
+            self._pos += len(window)
+            self._lines = None
+            return window
         start = self._pos
         at = start
         end = len(self._buffer)
@@ -388,6 +394,12 @@ class _HostFile:
         # Universal newlines cut after \r\n, \r or \n and after no
         # other character, so the extra breaks str.splitlines knows
         # stay inside their line.
+        if '\r' not in text:
+            parts = text.split('\n')
+            lines = [part + '\n' for part in parts[:-1]]
+            if parts[-1]:
+                lines.append(parts[-1])
+            return lines
         lines = []
         start = 0
         at = 0
@@ -432,6 +444,15 @@ class _HostFile:
                 self._pos = stop
                 self._lines = None
                 return self._carried(self._buffer[start:stop])
+            window = self._buffer[start:start + size]
+            if '\r' not in window:
+                found = window.find('\n')
+                stop = len(window) if found < 0 else found + 1
+                piece = window[:stop]
+                self._note_newlines(piece)
+                self._pos = start + stop
+                self._lines = None
+                return piece
             at = start
             end = len(self._buffer)
             seen = []

@@ -4037,8 +4037,11 @@ impl<'a> Machine<'a> {
                 _ => false,
             });
         let given = if !raw_keys && self.table.flag("ext.op.arithmetic.python_numbers") && given.iter().any(|item| matches!(item, Value::Couple(pair) if matches!(pair.0, Value::Flag(_)))) {
-            let (mut positional, named) = self.open_arguments(given)?;
-            positional.extend(named.into_iter().map(|(key, item)| Value::Couple(Rc::new((Value::text(&key), item)))));
+            let (mut positional, named) = self.expanded_arguments(given)?;
+            for (key, _) in &named {
+                if !matches!(key.type_text(), Value::Unpaired(_)) { self.word_of_key(key)?; }
+            }
+            positional.extend(named.into_iter().map(|(key, item)| Value::Couple(Rc::new((key, item)))));
             positional
         } else { given };
         if self.protocol_spelled() {
@@ -4072,9 +4075,9 @@ impl<'a> Machine<'a> {
                 self.class_of_parts(values)?
             },
             (Some(allocator),_)=>{
-                let (positions, names) = self.open_arguments(given.clone())?;
+                let (positions, names) = self.expanded_arguments(given.clone())?;
                 let mut flat: Vec<Value> = positions;
-                for (key, value) in names { flat.push(Value::Couple(Rc::new((Value::text(&key), value)))); }
+                for (key, value) in names { flat.push(Value::Couple(Rc::new((key, value)))); }
                 let allocator=self.member_binding(allocator,None,class.clone())?;
                 let mut args=vec![Value::Blueprint(class.clone())];args.extend(flat);self.apply_class_member(allocator,args)?
             },
@@ -8913,7 +8916,7 @@ impl<'a> Machine<'a> {
     }
     pub(super) fn work_on_class(&mut self,op:u8,mut values:Vec<Value>)->Res {
         if op == 30 && self.table.has_any("ext.builtin.partial.call") {
-            let (mut actual, overriding) = self.open_arguments(values)?;
+            let (mut actual, overriding) = self.expanded_arguments(values)?;
             if actual.len() == 0 { return Err(String::from("TypeError: descriptor '__call__' requires a 'functools.partial' object").into()); }
             let object = actual.remove(0);
             let callee = self.read_class_member(object.clone(), "func", false)?;
@@ -8933,14 +8936,27 @@ impl<'a> Machine<'a> {
             } else { given.append(&mut actual); }
             let saved_names = self.read_class_member(object, "keywords", false)?.settled();
             let Value::Dict(saved_names) = saved_names else { return Err(String::from("TypeError: partial keywords must be a dictionary").into()); };
-            let mut named: Vec<_> = saved_names.iter().map(|pair| (pair.0.bare(), pair.1.clone())).collect();
+            let mut named: Vec<(Vec<u32>, Value, Value)> = Vec::new();
+            for pair in saved_names.iter() {
+                // A hand-written dictionary key may be a string descendant,
+                // kept beside its hash: unwrap it, insist on real string
+                // ancestry and take the underlying text, not a rendering.
+                let Some(codes) = Self::text_key(&pair.0).and_then(|text| text.character_numbers()) else {
+                    return Err(String::from("TypeError: keywords must be strings").into());
+                };
+                named.push((codes, pair.0.clone(), pair.1.clone()));
+            }
             for (name, held) in overriding {
-                match named.iter_mut().find(|pair| pair.0 == name) {
-                    Some(pair) => pair.1 = held,
-                    None => named.push((name, held)),
+                let Some(codes) = Self::text_key(&name).and_then(|text| text.character_numbers()) else {
+                    return Err(String::from("TypeError: keywords must be strings").into());
+                };
+                match named.iter_mut().find(|entry| entry.0 == codes) {
+                    Some(entry) => entry.2 = held,
+                    None => named.push((codes, name, held)),
                 }
             }
-            given.extend(named.into_iter().map(|pair| Value::Couple(Rc::new((Value::text(&pair.0), pair.1)))));
+            let named = named.into_iter().map(|(_, key, held)| (key, held)).collect::<Vec<_>>();
+            given.push(Value::Couple(Rc::new((Value::Flag(true), Value::Dict(Rc::new(named.into()))))));
             return self.apply_class_member(callee, given);
         }
         if op == 27 && self.table.has_any("ext.builtin.partial_repr") {

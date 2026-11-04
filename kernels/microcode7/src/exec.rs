@@ -15342,7 +15342,7 @@ impl<'a> Machine<'a> {
     }
 
     // Retain raw native keyword keys through expansion.
-    fn expanded_arguments(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(Value, Value)>)> {
+    pub(super) fn expanded_arguments(&mut self, values: Vec<Value>) -> Res<(Vec<Value>, Vec<(Value, Value)>)> {
         self.expanded_arguments_for(values, "", None)
     }
 
@@ -15359,14 +15359,17 @@ impl<'a> Machine<'a> {
 
     // Preserve caller-specific spread diagnostics before native events.
     fn expanded_arguments_for(&mut self, values: Vec<Value>, shown: &str, program: Option<&Rc<Routine>>) -> Res<(Vec<Value>, Vec<(Value, Value)>)> {
-        let lone = values.iter().filter(|given| !matches!(given, Value::Couple(pair) if matches!(pair.0, Value::Text(_)))).count() == 1;
+        let lone = values.iter().filter(|given| match given {
+            Value::Couple(pair) => Self::text_key(&pair.0).is_none(),
+            _ => true,
+        }).count() == 1;
         let mut positions = Vec::new();
         let mut names = Vec::new();
         let mut folded = Vec::new();
         for worth in values {
             let Value::Couple(pair) = worth else { positions.push(worth); continue };
             match &pair.0 {
-                Value::Text(_) => {
+                Value::Text(_) | Value::Unpaired(_) => {
                     self.note_keyword(&mut folded, &pair.0, shown, program)?;
                     names.push((pair.0.clone(), pair.1.clone()));
                 },
@@ -15416,7 +15419,13 @@ impl<'a> Machine<'a> {
                         Err(escaped) => return Err(escaped),
                     }
                 }
-                _ => return Err(self.argument_fault("ext.syntax.call.amiss", None).into()),
+                _ => match Self::text_key(&pair.0) {
+                    Some(_) => {
+                        self.note_keyword(&mut folded, &pair.0, shown, program)?;
+                        names.push((pair.0.clone(), pair.1.clone()));
+                    }
+                    None => return Err(self.argument_fault("ext.syntax.call.amiss", None).into()),
+                },
             }
         }
         Ok((positions, names))
@@ -15472,6 +15481,20 @@ impl<'a> Machine<'a> {
     }
 
 
+
+
+
+
+    /// The text a keyword name stands for, apart from the object the call
+    /// wrote: a string descendant is still a name, and the value itself is
+    /// kept for the callee's gathering place.
+    pub(super) fn text_key(key: &Value) -> Option<Value> {
+        let bare = match key { Value::Keyed(inner, _) => inner.settled(), other => other.settled() };
+        match bare.type_text() {
+            text @ (Value::Text(_) | Value::Unpaired(_)) => Some(text),
+            _ => None,
+        }
+    }
 
 
 
@@ -15839,16 +15862,17 @@ impl<'a> Machine<'a> {
         // The spare worths a gathering place takes stand as a tuple, so
         // that they read, weigh and compare as the language says.
         if let Some(slot) = gather { fitted[slot] = Value::tuple(remaining); }
+        let keys: Vec<String> = match manners.contains(&'p') {
+            true => named.iter().filter_map(|(key, _)| self.word_of_key(key).ok()).collect(),
+            false => Vec::new(),
+        };
         let mut spare_names = Vec::new();
-        if !named.is_empty() {
-            let keys: Vec<String> = match manners.contains(&'p') {
-                true => named.iter().filter_map(|(key, _)| self.word_of_key(key).ok()).collect(),
-                false => Vec::new(),
-            };
-            let mut already = std::collections::HashSet::<_, crate::table::FxBuildHasher>::default();
-            for (key, worth) in named {
-                let word = match self.word_of_key(&key) {
-                    Ok(word) => word,
+        let mut already = std::collections::HashSet::new();
+        for (key, worth) in named {
+            let (held, text) = match Self::text_key(&key) {
+                Some(text) => (key.clone(), text),
+                None => match self.word_of_key(&key) {
+                    Ok(word) => { let text = Value::text(&word); (text.clone(), text) }
                     Err(fault) => {
                         if gather_names.is_some() && raw_maker {
                             spare_names.push((self.hash_key(&key)?, worth));
@@ -15856,25 +15880,23 @@ impl<'a> Machine<'a> {
                         }
                         return Err(fault.into());
                     }
-                };
-                // A place given twice over, once in order and once by name,
-                // is worded with the routine the call was meant for, under
-                // the name it goes by where it was written.
-                let duplicate = || match self.table.strings("ext.syntax.call.amiss.positional") {
-                    [opening, between, closing] => self.whole_complaint(opening.clone() + &self.routine_called(program) + between + &word + closing),
-                    _ => self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&word)),
-                };
-                if !already.insert(word.clone()) { return Err(self.keyword_twice(program, &word).into()); }
-                let found = program.formals.iter().enumerate()
-                    .find(|(at, name)| **name == word && matches!(manners[*at], 'b' | 'n'));
-                if let Some((at, _)) = found {
-                    if !matches!(fitted[at], Value::Unset) { return Err(duplicate().into()); }
-                    fitted[at] = worth;
-                } else if gather_names.is_some() {
-                    spare_names.push((Value::text(&word), worth));
-                } else {
-                    return Err(self.unplaced_keyword(program, manners, &keys, &word).into());
-                }
+                },
+            };
+            let word = match &text { Value::Text(text) => text.to_string(), _ => text.bare() };
+            let duplicate = || match self.table.strings("ext.syntax.call.amiss.positional") {
+                [opening, between, closing] => self.whole_complaint(opening.clone() + &self.routine_called(program) + between + &word + closing),
+                _ => self.argument_fault("ext.syntax.call.amiss.duplicate", Some(&word)),
+            };
+            if !already.insert(text.character_numbers()) { return Err(self.keyword_twice(program, &word).into()); }
+            let found = program.formals.iter().enumerate()
+                .find(|(at, name)| matches!(&text, Value::Text(text) if name.as_str() == text.as_ref()) && matches!(manners[*at], 'b' | 'n'));
+            if let Some((at, _)) = found {
+                if !matches!(fitted[at], Value::Unset) { return Err(duplicate().into()); }
+                fitted[at] = worth;
+            } else if gather_names.is_some() {
+                spare_names.push((held, worth));
+            } else {
+                return Err(self.unplaced_keyword(program, manners, &keys, &word).into());
             }
         }
         if handed > ordinary.len() && gather.is_none() {
