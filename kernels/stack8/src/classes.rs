@@ -2259,6 +2259,83 @@ impl<'a> Engine<'a> {
         }
         Ok(())
     }
+    /// `randrange(n)` when `n` is a positive int of at most 32 bits and this
+    /// instance still uses the stock `getrandbits` rejection loop. `None`
+    /// leaves the original Python method to run, which is what a subclass
+    /// that replaced `getrandbits` or `_randbelow` requires.
+    fn native_small_randrange(&mut self, args: &[Value], stock_below: Option<&Value>) -> Option<Flow<Value>> {
+        if args.len() != 2 || args.iter().any(|value| matches!(value, Value::Tie(_))) {
+            return None;
+        }
+        let stock_below = match stock_below.map(Value::contents) {
+            Some(Value::Routine(code) | Value::Method(_, code, _)) => Rc::as_ptr(&code) as usize,
+            _ => return None,
+        };
+        let receiver = args[0].contents();
+        let Value::Small(n) = args[1].contents() else { return None; };
+        if n <= 0 || n > u32::MAX as i64 { return None; }
+        let Value::Object(object) = &receiver else { return None; };
+        // Instance attributes hide the class methods, and `_stream` lives on
+        // the instance. The class methods stay stock until a namespace write.
+        let mark = {
+            let fields = object.fields.borrow();
+            let mut mark = None;
+            for (key, held) in fields.iter() {
+                if (key == "getrandbits" || key == "_randbelow") && !matches!(held.contents(), Value::Blank | Value::Gap) {
+                    return None;
+                }
+                if key == "_stream" {
+                    match held.contents() {
+                        Value::Small(found) => mark = Some(found),
+                        _ => return None,
+                    }
+                }
+            }
+            mark
+        };
+        let Some(mark) = mark else { return None; };
+        if !Self::stock_range_class(&object.class_now(), stock_below) { return None; }
+        let width = i64::from((n as u64).ilog2() + 1);
+        loop {
+            let mut request = vec![Value::text("bits"), Value::Small(mark), Value::Small(width)];
+            let drawn = match self.builtin(Builtin::Twister, "__random", &mut request) {
+                Ok(value) => value,
+                Err(error) => return Some(Err(error.into())),
+            };
+            let Value::Small(bit) = drawn.contents() else { return None; };
+            if bit < n { return Some(Ok(Value::Small(bit))); }
+        }
+    }
+
+    /// Stock wrappers, remembered per class until any class namespace is written.
+    fn stock_range_class(class: &Rc<Class>, stock_below: usize) -> bool {
+        thread_local! {
+            static STOCK: std::cell::Cell<(usize, usize, u64, bool)> = std::cell::Cell::new((0, 0, 0, false));
+        }
+        let ptr = Rc::as_ptr(class) as usize;
+        let epoch = crate::value::members_revision();
+        if let Some(stock) = STOCK.with(|slot| {
+            let (seen, seen_below, stamped, stock) = slot.get();
+            (seen == ptr && seen_below == stock_below && stamped == epoch).then_some(stock)
+        }) {
+            return stock;
+        }
+        let stock = Self::ordered_lookup(class, |parent| Self::own_class_value(parent, "getrandbits")).is_some_and(|bits| {
+            match bits.contents() {
+                Value::Adapter(found) => found.0 == 63 && found.1.first().map(|op| op.plain()).as_deref() == Some("bits"),
+                _ => false,
+            }
+        }) && Self::ordered_lookup(class, |parent| Self::own_class_value(parent, "_randbelow")).is_some_and(|below| {
+            match below.contents() {
+                Value::Routine(code) | Value::Method(_, code, _) => Rc::as_ptr(&code) as usize == stock_below,
+                _ => false,
+            }
+        });
+        STOCK.with(|slot| slot.set((ptr, stock_below, epoch, stock)));
+        stock
+    }
+
+
     #[allow(unused_variables)]
     pub(crate) fn class_apply(&mut self, callable: Value, mut args: Vec<Value>) -> Flow<Value> {
         if let Some(missing) = self.annotation_operation(&callable) { return Err(missing.into()); }
@@ -2351,7 +2428,7 @@ impl<'a> Engine<'a> {
                     if !(2..=3).contains(&args.len()){return Err("TypeError: invalid super descriptor arguments".into());}
                     self.bind_super_object(args[0].clone(),args[1].clone())
                 }
-                63 if w.1.len() == 3 => {
+                63 if w.1.len() == 3 && w.1[0].plain() == "library" => {
                     let items = self.call_items(args)?;
                     let Some(receiver) = items.first().filter(|(key, _)| key.is_none()).map(|(_, v)| v.clone()) else {
                         return Err(format!("TypeError: unbound method {}() needs an argument", self.class_get(w.1[1].clone(), "__qualname__", false)?.plain()).into());
@@ -2822,6 +2899,12 @@ impl<'a> Engine<'a> {
         match w.0 {
             63
             => {
+                    if w.1[0].plain() == "range" {
+                        if let Some(answer) = self.native_small_randrange(&args, w.1.get(2)) {
+                            return answer;
+                        }
+                        return self.class_apply(w.1[1].clone(), args);
+                    }
                     let bits = w.1[0].plain() == "bits";
                     let valid = args.len() == if bits { 2 } else { 1 }
                         && matches!(args.first().map(|value| value.contents()), Some(Value::Object(_)))
@@ -5124,7 +5207,7 @@ impl<'a> Engine<'a> {
             }
         }
         if let Value::Adapter(slot) = subject.contents() {
-            if slot.0 == 63 && slot.1.len() == 3 {
+            if slot.0 == 63 && slot.1.len() == 3 && slot.1[0].plain() == "library" {
                 if name == "__get__" { return Ok(Self::adapter(239, vec![Value::Adapter(slot.clone())])); }
                 if name == "__objclass__" { return Ok(slot.1[2].clone()); }
             }

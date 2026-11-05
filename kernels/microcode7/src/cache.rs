@@ -288,5 +288,10 @@ pub fn pack_saved_forms(serialized: &[u8]) -> Result<Vec<u8>, String> {
 pub fn unpack_forms(packet: &[u8]) -> Result<serde_json::Value, String> {
     let compressed = packet.strip_prefix(b"LCC6").ok_or("ValueError: invalid compiled forms header")?;
     let serialized = lumen_zlib::decompress(compressed).map_err(|fault| format!("ValueError: {fault}"))?;
-    serde_json::from_slice(&serialized).map_err(|fault| format!("ValueError: {fault}"))
+    // serde_json refuses nesting past 128. A module this compiler just wrote can be deeper.
+    let mut decoder = serde_json::Deserializer::from_slice(&serialized);
+    decoder.disable_recursion_limit();
+    let value = serde_json::Value::deserialize(&mut decoder).map_err(|fault| format!("ValueError: {fault}"))?;
+    decoder.end().map_err(|fault| format!("ValueError: {fault}"))?;
+    Ok(value)
 }

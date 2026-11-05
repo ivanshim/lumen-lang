@@ -227,9 +227,30 @@ class Timer(Thread):
     def cancel(self):
         self.finished.set()
 
-# CPython internal: register func to be called before joining threads.
-# This is used by concurrent.futures.thread for interpreter shutdown.
+_SHUTTING_DOWN = False
+_threading_atexits = []
+_atexits_hooked = False
+
+
+# Run registered shutdown callbacks in reverse registration order.
+def _run_threading_atexits():
+    global _SHUTTING_DOWN
+    _SHUTTING_DOWN = True
+    while _threading_atexits:
+        func, args, kwargs = _threading_atexits.pop()
+        func(*args, **kwargs)
+
+
+# Register a callback before interpreter shutdown joins any worker threads.
 def _register_atexit(func, *arg, **kwargs):
-    """Register *func* to be called before joining threads."""
-    import atexit
-    atexit.register(func, *arg, **kwargs)
+    """Register a function to be called at shutdown, in reverse order,
+    the way the reference calls it before joining the non-daemon
+    threads."""
+    global _atexits_hooked
+    if _SHUTTING_DOWN:
+        raise RuntimeError("can't register atexit after shutdown")
+    _threading_atexits.append((func, arg, kwargs))
+    if not _atexits_hooked:
+        import atexit
+        atexit.register(_run_threading_atexits)
+        _atexits_hooked = True

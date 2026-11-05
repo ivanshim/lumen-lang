@@ -347,3 +347,72 @@ def check_call(*popenargs, **kwargs):
             cmd = popenargs[0]
         raise CalledProcessError(retcode, cmd)
     return 0
+
+
+def _optim_args_from_interpreter_flags():
+    """Return a list of command-line arguments reproducing the current
+    optimization settings in sys.flags."""
+    import sys
+    args = []
+    value = sys.flags.optimize
+    if value > 0:
+        args.append('-' + 'O' * value)
+    return args
+
+
+def _args_from_interpreter_flags():
+    """Return a list of command-line arguments reproducing the current
+    settings in sys.flags, sys.warnoptions and sys._xoptions."""
+    import sys
+    flag_opt_map = {
+        'debug': 'd',
+        'dont_write_bytecode': 'B',
+        'no_site': 'S',
+        'verbose': 'v',
+        'bytes_warning': 'b',
+        'quiet': 'q',
+    }
+    args = _optim_args_from_interpreter_flags()
+    for flag, opt in flag_opt_map.items():
+        v = getattr(sys.flags, flag)
+        if v > 0:
+            args.append('-' + opt * v)
+
+    if sys.flags.isolated:
+        args.append('-I')
+    else:
+        if sys.flags.ignore_environment:
+            args.append('-E')
+        if sys.flags.no_user_site:
+            args.append('-s')
+        if sys.flags.safe_path:
+            args.append('-P')
+
+    warnopts = list(getattr(sys, 'warnoptions', ()))
+    xoptions = getattr(sys, '_xoptions', {})
+    bytes_warning = sys.flags.bytes_warning
+    dev_mode = sys.flags.dev_mode
+
+    # Startup may not have recorded the options it implies, so remove only those present.
+    if bytes_warning > 1 and "error::BytesWarning" in warnopts:
+        warnopts.remove("error::BytesWarning")
+    elif bytes_warning and "default::BytesWarning" in warnopts:
+        warnopts.remove("default::BytesWarning")
+    if dev_mode and 'default' in warnopts:
+        warnopts.remove('default')
+    for opt in warnopts:
+        args.append('-W' + opt)
+
+    if dev_mode:
+        args.extend(('-X', 'dev'))
+    for opt in sorted(xoptions):
+        if opt == 'dev':
+            continue
+        value = xoptions[opt]
+        if value is True:
+            arg = opt
+        else:
+            arg = '%s=%s' % (opt, value)
+        args.extend(('-X', arg))
+
+    return args

@@ -27705,17 +27705,13 @@ impl<'a> Machine<'a> {
                         Some(wanted) => {
                             let mut kept = Vec::new();
                             for name in wanted {
-                                match names.iter().find(|(word, _)| word == name) {
-                                    Some((word, entry)) => kept.push((word.clone(), entry.clone())),
-                                    // A name the wildcard asks for that the
-                                    // namespace never bound is a submodule
-                                    // the reference imports on demand.
-                                    None => {
-                                        let from = match &v[0] { Value::Thing(space) => space.of.name.clone(), _ => String::new() };
-                                        let child = self.namespace_item(&v[0], &from, name)?;
-                                        kept.push((name.clone(), child));
-                                    }
-                                }
+                                // Each named entry is reached the way a
+                                // from-import reaches it: an entry the
+                                // namespace holds, else the reading it names,
+                                // else the submodule of that name. An entry
+                                // standing unset is no entry.
+                                let reached = self.namespace_item(&v[0], &namespace.of.name, name)?;
+                                kept.push((name.clone(), reached));
                             }
                             kept
                         }
@@ -27725,6 +27721,20 @@ impl<'a> Machine<'a> {
                         if (!explicit && name.starts_with('_')) || !self.table.name_like(&name) { continue; }
                         let worth = if let Value::Shared(cell) = entry { cell.borrow().clone() } else { entry };
                         if matches!(worth, Value::Unset) { continue; }
+                        // A text running in a dictionary of its own is
+                        // handed the names there and nowhere else: a
+                        // wildcard it runs never reaches into the module
+                        // that called it, so that module keeps its own.
+                        if let Some(which) = self.reading_now {
+                            let book = &self.readings[which];
+                            let goes_to = match &book.outer {
+                                Some(outer) if book.declared.iter().any(|word| word == &name) => outer,
+                                _ => &book.near,
+                            };
+                            let goes_to = goes_to.clone();
+                            if let Err(escape) = self.booked_put(&goes_to, &name, Some(worth.clone())) { self.got_away = Some(escape); }
+                            continue;
+                        }
                         let owner = self.loaded_spaces.get(&self.written_in).and_then(|path| self.imported.get(path)).cloned();
                         let key = match &owner {
                             Some(Value::Thing(module)) => format!("\0import/{}/{name}", module.of.name),
@@ -27736,18 +27746,6 @@ impl<'a> Machine<'a> {
                             && self.user_source_started && self.written_in == self.entry_file;
                         if self.names_in_calls && entry_binding { self.main_bindings.insert(name.clone()); }
                         self.booked_write(slot, &name, Some(worth.clone()));
-                        // A text running in a dictionary of its own is
-                        // handed the names there as well, so a later
-                        // piece of the same text finds them.
-                        if let Some(which) = self.reading_now {
-                            let book = &self.readings[which];
-                            let goes_to = match &book.outer {
-                                Some(outer) if book.declared.iter().any(|word| word == &name) => outer,
-                                _ => &book.near,
-                            };
-                            let goes_to = goes_to.clone();
-                            if let Err(escape) = self.booked_put(&goes_to, &name, Some(worth.clone())) { self.got_away = Some(escape); }
-                        }
                         let saved = {
                             let mut cells = self.outermost.cells.borrow_mut();
                             cells.resize(self.idents.len(), Value::Unset);
@@ -30824,7 +30822,7 @@ impl<'a> Machine<'a> {
                 };
                 let whole = |at: usize| -> Result<BigInt, String> { v[at].as_big() };
                 match working {
-                    "method" if v.len() == 3 => Value::Wrapped(133, Rc::new(vec![v[1].clone(), v[2].clone()]).into()),
+                    "method" if v.len() == 3 || (v.len() == 4 && v[1].bare() == "range") => Value::Wrapped(133, Rc::new(v[1..].to_vec()).into()),
                     "pid" if v.len() == 1 => Value::Small(std::process::id() as i64),
                     "begin" => {
                         if v.len() != 1 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }
@@ -35779,6 +35777,7 @@ impl Machine<'_> {
         // Give Python finders their turn, without reentering during bootstrap.
         let python_paths = self.table.single("ext.system.module.path").is_some() && (file_entry || !self.library_sources.contains_key(path));
         if python_paths && self.imported.contains_key("sys") && !self.importing.contains("sys") && (bootstrap_complete || !initializing_library)
+            && (file_entry || !self.stock_path_hooks())
             && self.importing.insert(String::from("\0finder-search")) {
             let found: Result<(Value, Value), String> = (|| {
                 let support = self.bootstrap_namespace("_zipimport_path")?;
@@ -36082,6 +36081,35 @@ impl Machine<'_> {
         self.importing.remove(path);
         self.refresh_import_table(path);
         Ok(value)
+    }
+
+    fn stock_path_hooks(&self) -> bool {
+        let Some(system) = self.imported.get("sys") else { return false };
+        let Some(mut hooks) = Self::imported_attribute(system, "path_hooks") else { return false };
+        while let Value::Shared(cell) | Value::Mutable(cell, _) = hooks {
+            hooks = cell.borrow().clone();
+        }
+        let items = match hooks {
+            Value::Vector(items) | Value::Tuple(items) => items,
+            _ => return false,
+        };
+        if items.len() != 2 { return false; }
+        let name_of = |item: &Value| -> Option<String> {
+            let mut current = item.clone();
+            while let Value::Shared(cell) | Value::Mutable(cell, _) = current {
+                current = cell.borrow().clone();
+            }
+            match current {
+                Value::Routine(body) | Value::Bound(body, _) => Some(body.ident.clone()),
+                Value::Method(body, _, _) => Some(body.ident.clone()),
+                _ => None,
+            }
+        };
+        let named: Vec<Option<String>> = items.iter().map(name_of).collect();
+        matches!(
+            (named.first(), named.get(1)),
+            (Some(Some(zip)), Some(Some(file))) if zip == "_zip_path_hook" && file == "_file_path_hook"
+        )
     }
 
     /// Check each search directory for an enclosing regular file.
@@ -37742,10 +37770,19 @@ impl<'a> Machine<'a> {
     /// such a cell before a program's own value could stand in for one
     /// too.
     fn booked_put(&mut self, book: &Rc<RefCell<Value>>, name: &str, value: Option<Value>) -> Result<(), Escape> {
-        let held = book.borrow().clone();
-        match &held {
-            Value::Dict(_) => { set_down(book, name, value); Ok(()) }
-            Value::Attributes(_) | Value::Thing(_) | Value::Vector(_) => self.mapping_write(&held, name, value),
+        // Cloning a dict keeps a second Rc alive across the write, and
+        // make_mut then copies every pair before the name is stored.
+        let shape = match &*book.borrow() {
+            Value::Dict(_) => 0u8,
+            Value::Attributes(_) | Value::Thing(_) | Value::Vector(_) => 1,
+            _ => 2,
+        };
+        match shape {
+            0 => { set_down(book, name, value); Ok(()) }
+            1 => {
+                let held = book.borrow().clone();
+                self.mapping_write(&held, name, value)
+            }
             _ => Ok(()),
         }
     }
