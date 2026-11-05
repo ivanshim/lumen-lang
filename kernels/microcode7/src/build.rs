@@ -17,6 +17,10 @@ use crate::data::{Reach, Value};
 
 type Res<T> = Result<T, String>;
 
+thread_local! {
+    /// The number of monadic steps the reading of this thread has open.
+    static MONADIC_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Holds {
@@ -11155,6 +11159,23 @@ impl<'a> Builder<'a> {
     /// A piece of an expression, with a step written before or after it
     /// where the language spells one.
     fn monadic_expr(&mut self) -> Res<Form> {
+        // Only a language that names the incomplete-source fault beside
+        // the reference keeps a bound on how deep its reader may go.
+        if self.table.strings("ext.builtin.compile.incomplete").is_empty() { return self.monadic_under(); }
+        let held = MONADIC_DEPTH.with(|slot| { let count = slot.get() + 1; slot.set(count); count });
+        if held > 6000 {
+            MONADIC_DEPTH.with(|slot| slot.set(slot.get() - 1));
+            return Err(String::from("RecursionError: maximum recursion depth exceeded").into());
+        }
+        let made = self.monadic_under();
+        MONADIC_DEPTH.with(|slot| slot.set(slot.get() - 1));
+        made
+    }
+
+    /// A text folded under more monadic steps than the reference reads
+    /// answers with RecursionError, so the reader's stack is not worn
+    /// away by a run of signs.
+    fn monadic_under(&mut self) -> Res<Form> {
         let began = self.pos;
         let node = self.monadic_read()?;
         let mapping = TREE_SITES.with(|sites| !sites.borrow().is_empty());

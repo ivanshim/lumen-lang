@@ -15086,8 +15086,14 @@ impl<'a> Machine<'a> {
                 self.apply_held(writer, vec![Value::text(&tail)])?;
                 if drained {
                     if let Some(word) = table.single("ext.builtin.print.flush") {
-                        let flush = self.attribute(&sink, word)
-                            .ok_or_else(|| self.member_missing(&sink, word))?;
+                        // A stream handed to print may answer its flush
+                        // only through its own __getattr__, so the full
+                        // member read stands behind the native shortcut.
+                        let flush = match self.attribute(&sink, word) {
+                            Some(flush) => flush,
+                            None => self.read_class_member(sink.clone(), word, false)
+                                .map_err(|_| self.member_missing(&sink, word))?,
+                        };
                         self.apply_held(flush, Vec::new())?;
                     }
                 }
@@ -23843,7 +23849,7 @@ impl<'a> Machine<'a> {
             },
             (Prim::Truthful, []) => Value::Flag(false),
             (Prim::Truthful | Prim::AsTruth, [one]) => Value::Flag(self.object_truth(one)?),
-            (Prim::Length, [one]) if self.appointed(one, 10).is_some() => {
+            (Prim::Length, [one]) if self.appointment(one, 10).is_some() => {
                 let reported = self.ask_special(one, 10, &[])?.unwrap();
                 // Strip Python integer wrappers before inspecting their value.
                 let length = if self.rules.has_any_ext_builtin_bool_result {
@@ -38855,6 +38861,16 @@ impl<'a> Machine<'a> {
                 sites_value = pair[1].clone();
                 match pair[0].settled() { Value::Text(code) => code, _ => return Err(self.source_refused()) }
                 }
+            }
+            Value::Unpaired(_) => {
+                // The reference encodes a source string before reading
+                // it; a lone surrogate cannot be encoded, so the kind
+                // that names that fault answers here.
+                if let Err(Escape::Thrown(fault)) = self.reject_type_surrogates(&v[0]) {
+                    self.got_away = Some(Escape::Thrown(fault));
+                    return Err(String::new());
+                }
+                return Err(self.source_refused());
             }
             _ => return Err("TypeError: compile() arg 1 must be a string, bytes or AST object".to_owned()),
         };

@@ -12483,7 +12483,7 @@ impl<'a> Engine<'a> {
                 self.special_call(&args[2], 12, vec![args[0].clone(), args[1].clone()])?;
                 args[2].clone()
             }
-            Builtin::Length if args.len() == 1 && self.special_method(&args[0], 10).is_some() => {
+            Builtin::Length if args.len() == 1 && self.special_value(&args[0], 10).is_some() => {
                 let mut answer = self.special_call(&args[0], 10, Vec::new())?.unwrap();
                 // Python reads an integer subclass's stored length directly.
                 if self.lang.bool_result.is_some() {
@@ -37572,6 +37572,20 @@ impl Engine<'_> {
                     Value::Null => self.source_buffer(Value::Object(tree), &file)?,
                     _ => return Err(self.source_unready()),
                 }
+            }
+            Value::Codepoints(row) => {
+                // The reference encodes a source string to UTF-8 before
+                // reading it; a lone surrogate cannot be encoded and is
+                // named so rather than refused outright.
+                if let Some(start) = row.iter().position(|point| (0xd800..=0xdfff).contains(point)) {
+                    let end = row[start..].iter().take_while(|point| (0xd800..=0xdfff).contains(*point)).count() + start;
+                    if let Some(Value::Class(class)) = self.native_exceptions.get("UnicodeEncodeError").cloned() {
+                        let raised = self.exception_instance(class, vec![Value::text("utf-8"), args[0].contents(), Value::Small(start as i64), Value::Small(end as i64), Value::text("surrogates not allowed")], Value::Null);
+                        self.chain_context(&raised); self.carried = Some(Fault::Thrown(raised));
+                        return Err(String::new());
+                    }
+                }
+                return Err(self.source_unready());
             }
             _ => return Err("TypeError: compile() arg 1 must be a string, bytes or AST object".into()),
         };
