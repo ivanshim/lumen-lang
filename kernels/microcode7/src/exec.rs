@@ -7916,7 +7916,11 @@ impl<'a> Machine<'a> {
                 let saved = (self.row, self.extent);
                 self.row = position.0;
                 self.extent = Some(*position);
-                let mut result = self.value_of(inner, frame);
+                // Without a tracer, setting coordinates cannot run code between the entry checks and the dyad.
+                let mut result = match inner.as_ref() {
+                    Form::Dyad { .. } if matches!(self.tracing_function, Value::Nil) => self.value_arm_4(inner, frame),
+                    _ => self.value_of(inner, frame),
+                };
                 if result.is_err() { result = self.traced_result(result); }
                 (self.row, self.extent) = saved;
                 self.cursor.set(previous);
