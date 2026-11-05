@@ -11,12 +11,12 @@ impl<'a> Engine<'a> {
         let place = match part.as_bytes().first() {
             Some(b'n') => if part == "name" { 0 } else if part == "namespace" { 8 } else { NO_PLACE },
             Some(b'q') if part == "qualified" => 1,
-            Some(b'm') => if part == "module" { 2 } else if part == "mro" { 18 } else { NO_PLACE },
+            Some(b'm') => if part == "module" { 2 } else if part == "mro" { 18 } else if part == "main" { 26 } else { NO_PLACE },
             Some(b'k') if part == "kind" => 3,
-            Some(b'g') if part == "get" => 4,
+            Some(b'g') => if part == "get" { 4 } else if part == "globals" { 28 } else { NO_PLACE },
             Some(b's') => match part { "set" => 5, "subclass" => 22, "slots" => 24, _ => NO_PLACE },
             Some(b'r') => match part { "remove" => 6, "root" => 9, "receiver" => 20, _ => NO_PLACE },
-            Some(b'c') if part == "call" => 7,
+            Some(b'c') => if part == "call" { 7 } else if part == "code" { 27 } else { NO_PLACE },
             Some(b'a') if part == "allocate" => 10,
             Some(b'd') => match part {
                 "descriptor.get" => 11, "descriptor.set" => 12, "descriptor.delete" => 13,
@@ -26,6 +26,8 @@ impl<'a> Engine<'a> {
             Some(b'o') if part == "order" => 19,
             Some(b'u') if part == "unready" => 21,
             Some(b't') if part == "text_signature" => 23,
+            Some(b'f') if part == "function" => 29,
+            Some(b'p') if part == "prepare" => 30,
             _ => NO_PLACE,
         };
         if place != NO_PLACE { return self.member_words[place]; }
@@ -418,6 +420,25 @@ impl<'a> Engine<'a> {
     fn allocation_kind(c: &Class) -> Option<String> {
         if let Some(kind) = Self::own_kind(c) { return Some(kind); }
         c.base().and_then(|parent| Self::allocation_kind(&parent))
+    }
+    /// What `kind_beneath` finds, handed to a question instead of returned,
+    /// so that asking about the kind makes no copy of its spelling.
+    pub(super) fn kind_beneath_asked<R>(c: &Class, ask: impl FnOnce(Option<&str>) -> R) -> R {
+        let line = c.lineage.borrow();
+        let mut generic = false;
+        for held in std::iter::once(c).chain(line.iter().map(Rc::as_ref)) {
+            let Some(value) = held.constants.iter().find(|(n, _)| n == "\0kind").map(|(_, v)| v) else { continue; };
+            match value {
+                // Generic supplies typing hooks, not another native storage layout.
+                Value::Text(word) if word.as_ref() == "Generic" => generic = true,
+                Value::Text(word) => return ask(Some(word.as_ref())),
+                other => {
+                    let word = other.plain();
+                    if word == "Generic" { generic = true; } else { return ask(Some(word.as_str())); }
+                }
+            }
+        }
+        if generic { ask(Some("Generic")) } else { ask(None) }
     }
 
     /// Whether a class stands on the builtin kind named, through any of
@@ -2206,6 +2227,79 @@ impl<'a> Engine<'a> {
     pub(super) fn closure_title(name: &str) -> &str {
         if name.starts_with("#class_cell") { "__class__" } else { name }
     }
+
+    fn plain_sequence(value: &Value) -> bool {
+        matches!(value, Value::Array(_) | Value::Tuple(_) | Value::Counted(_))
+    }
+    fn mt_stream(&mut self, subject: Option<&Value>) -> Flow<Option<Value>> {
+        let Some(subject) = subject else { return Ok(None); };
+        let Value::Object(obj) = subject.contents() else { return Ok(None); };
+        if obj.fields.borrow().iter().any(|(name, _)| name == "random") { return Ok(None); }
+        let class = obj.class_now();
+        let Some(Value::Adapter(found)) = self.class_value(&class, "random") else { return Ok(None); };
+        if found.0 != 63 || found.1.first().is_none_or(|op| op.plain() != "next") { return Ok(None); }
+        match self.class_get(subject.clone(), "_stream", false) {
+            Ok(mark @ Value::Small(n)) if n >= 0 => Ok(Some(mark)),
+            Err(fault) if !self.attribute_fault(&fault) => Err(fault),
+            _ => Ok(None),
+        }
+    }
+    fn binomial_call(args: &[Value], mark: Value) -> Option<Vec<Value>> {
+        if args.len() != 3 { return None; }
+        if matches!(args[1].contents(), Value::Tie(_)) || matches!(args[2].contents(), Value::Tie(_)) { return None; }
+        let Value::Small(trials) = args[1].contents() else { return None; };
+        if trials < 0 || (trials as f64) as i64 != trials { return None; }
+        let chance_value = args[2].contents();
+        let Value::Real(real) = &chance_value else { return None; };
+        if real.outside() { return None; }
+        let chance = crate::value::as_binary(&real.p, &real.q);
+        if !(chance > 0.0 && chance < 1.0) { return None; }
+        Some(vec![Value::text("binomial"), mark, Value::Small(trials), chance_value])
+    }
+    fn choices_call(args: &[Value], mark: Value) -> Option<Vec<Value>> {
+        let mut population = None;
+        let mut weights = None;
+        let mut cumulative = None;
+        let mut copies = None;
+        let mut seen = 0u8;
+        for arg in args.iter().skip(1) {
+            let shown = arg.contents();
+            if let Value::Tie(pair) = shown {
+                let name = pair.0.plain();
+                if name == "k" {
+                    if copies.is_some() { return None; }
+                    let Value::Small(n) = pair.1.contents() else { return None; };
+                    copies = Some(n);
+                } else if name == "cum_weights" {
+                    if cumulative.is_some() { return None; }
+                    cumulative = Some(pair.1.contents());
+                } else { return None; }
+            } else if seen == 0 {
+                population = Some(shown);
+                seen = 1;
+            } else if seen == 1 {
+                if !matches!(shown, Value::Null) { weights = Some(shown); }
+                seen = 2;
+            } else { return None; }
+        }
+        let population = population?;
+        if !Self::plain_sequence(&population) { return None; }
+        if let Some(row) = &weights { if !Self::plain_sequence(row) { return None; } }
+        if let Some(row) = &cumulative { if !Self::plain_sequence(row) { return None; } }
+        if weights.is_some() && cumulative.is_some() { return None; }
+        let copies = copies.unwrap_or(1);
+        if copies > 1_000_000 { return None; }
+        let (mode, payload) = if let Some(row) = cumulative { (2i64, row) }
+            else if let Some(row) = weights { (1, row) }
+            else { (0, Value::Null) };
+        Some(vec![Value::text("choices"), mark, population, Value::Small(mode), payload, Value::Small(copies)])
+    }
+    fn variate_request(&mut self, op: &str, args: &[Value]) -> Flow<Option<Vec<Value>>> {
+        let Some(mark) = self.mt_stream(args.first())? else { return Ok(None); };
+        if op == "binomial" { return Ok(Self::binomial_call(args, mark)); }
+        if op == "choices" { return Ok(Self::choices_call(args, mark)); }
+        Ok(None)
+    }
     pub(super) fn adapter(kind: u8, mut values: Vec<Value>) -> Value {
         if (kind == 4 || kind == 5) && values.len() == 1 {
             values.push(Value::Bond(Rc::new(RefCell::new(Value::Map(Rc::new(Vec::new().into())).held(true)))));
@@ -2822,7 +2916,20 @@ impl<'a> Engine<'a> {
         match w.0 {
             63
             => {
-                    let bits = w.1[0].plain() == "bits";
+                                        let op_name = w.1[0].plain();
+                    if op_name == "binomial" || op_name == "choices" {
+                        if let Some(request) = self.variate_request(&op_name, &args)? {
+                            match self.class_apply(Value::text("__random"), request) {
+                                Err(Fault::Note(note)) if note == "\0defer" => {}
+                                other => return other,
+                            }
+                        }
+                        return self.class_apply(w.1[1].clone(), args);
+                    }
+                    if op_name != "next" && op_name != "bits" {
+                        return self.class_apply(w.1[1].clone(), args);
+                    }
+                    let bits = op_name == "bits";
                     let valid = args.len() == if bits { 2 } else { 1 }
                         && matches!(args.first().map(|value| value.contents()), Some(Value::Object(_)))
                         && (!bits || matches!(args[1].contents(), Value::Small(n) if n >= 0));
@@ -5021,7 +5128,7 @@ impl<'a> Engine<'a> {
         if self.lang.bind_names && (!name.starts_with("__") || name == self.class_word("kind")) {
             if let Value::Object(object) = subject {
                 let class = object.class_now();
-                let ordinary = Self::kind_beneath(&class).as_deref().is_none_or(|word| word == self.class_word("root"))
+                let ordinary = Self::kind_beneath_asked(&class, |kind| kind.is_none_or(|word| word == self.class_word("root")))
                     && self.module_holding(subject).is_none()
                     && !object.fields.borrow().iter().any(|(key, _)| key.as_bytes().first() == Some(&0));
                 if ordinary && (plain || self.class_value(&class, self.class_word("get")).is_none()) {
@@ -5288,8 +5395,7 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        if let Some(answer) = self.ordinary_instance_read(&subject, name, plain) { return answer; }
-        if self.lang.bind_names && !name.starts_with("__") {
+        if let Some(answer) = self.ordinary_instance_read(&subject, name, plain) { return answer; }        if self.lang.bind_names && !name.starts_with("__") {
             if let Value::Object(instance) = &subject {
                 let class = instance.class_now();
                 let slotted = class.declares_slots || class.lineage.borrow().iter().any(|base| base.declares_slots);

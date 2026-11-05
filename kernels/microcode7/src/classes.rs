@@ -19,14 +19,21 @@ impl<'a> Machine<'a> {
                 _ => self.detail_other(key),
             },
             4 => match key {
+                "base" => self.rules.detail_base,
                 "call" => self.rules.detail_call,
+                "code" => self.rules.detail_code,
                 "kind" => self.rules.detail_kind,
                 "main" => self.rules.detail_main,
                 "name" => self.rules.detail_name,
                 "root" => self.rules.detail_root,
                 _ => self.detail_other(key),
             },
-            5 if key == "order" => self.rules.detail_order,
+            5 => match key {
+                "bases" => self.rules.detail_bases,
+                "order" => self.rules.detail_order,
+                "slots" => self.rules.detail_slots,
+                _ => self.detail_other(key),
+            },
             6 => match key {
                 "remove" => self.rules.detail_delete,
                 "module" => self.rules.detail_module,
@@ -34,11 +41,14 @@ impl<'a> Machine<'a> {
             },
             7 => match key {
                 "getitem" => self.rules.detail_getitem,
+                "globals" => self.rules.detail_globals,
+                "prepare" => self.rules.detail_prepare,
                 "unready" => self.rules.detail_unready,
                 _ => self.detail_other(key),
             },
             8 => match key {
                 "defaults" => self.rules.detail_defaults,
+                "function" => self.rules.detail_function,
                 "subclass" => self.rules.detail_subclass,
                 "allocate" => self.rules.detail_allocate,
                 "receiver" => self.rules.detail_receiver,
@@ -495,6 +505,25 @@ impl<'a> Machine<'a> {
     fn storage_native(b: &Blueprint) -> Option<String> {
         if let Some(word) = Self::native_word(b) { return Some(word); }
         b.under().as_ref().and_then(|parent| Self::storage_native(parent))
+    }
+    /// The word `native_beneath` would give, put to a question where it is
+    /// found rather than copied out, so that asking costs no allocation.
+    pub(super) fn native_beneath_asked<R>(b:&Blueprint,ask:impl FnOnce(Option<&str>)->R)->R {
+        let line=b.ancestry.borrow();
+        let mut generic=false;
+        for held in std::iter::once(b).chain(line.iter().map(Rc::as_ref)) {
+            let Some(value)=held.constants.iter().find(|(k,_)|k=="\0native").map(|(_,v)|v) else { continue; };
+            match value {
+                // A typing-only parent must not hide the concrete container family.
+                Value::Text(text) if text.as_ref()=="Generic" => generic=true,
+                Value::Text(text) => return ask(Some(text.as_ref())),
+                other => {
+                    let word=other.bare();
+                    if word=="Generic" { generic=true; } else { return ask(Some(word.as_str())); }
+                }
+            }
+        }
+        if generic { ask(Some("Generic")) } else { ask(None) }
     }
 
     /// Whether a blueprint stands on the native kind named, through any
@@ -2356,6 +2385,90 @@ impl<'a> Machine<'a> {
     pub(super) fn capture_title(word: &str) -> &str {
         match word.strip_prefix("#completed_class") { Some(_) => "__class__", None => word }
     }
+
+    fn stored_sequence(value: &Value) -> bool {
+        matches!(value, Value::Vector(_) | Value::Tuple(_) | Value::Progression(_))
+    }
+    fn twister_mark(&mut self, subject: &Value) -> Res<Option<Value>> {
+        let Value::Thing(thing) = subject.settled() else { return Ok(None); };
+        if thing.holds.borrow().iter().any(|(name, _)| name == "random") { return Ok(None); }
+        let owner = thing.blueprint();
+        let Some(Value::Wrapped(133, parts)) = self.inherited_entry(&owner, "random") else { return Ok(None); };
+        if parts.first().map(|item| item.bare()).as_deref() != Some("next") { return Ok(None); }
+        match self.read_class_member(subject.clone(), "_stream", false) {
+            Ok(Value::Small(mark)) if mark >= 0 => Ok(Some(Value::Small(mark))),
+            Err(error) if !self.missing_member_escape(&error) => Err(error),
+            _ => Ok(None),
+        }
+    }
+    fn binomial_request(values: &[Value], mark: Value) -> Option<Vec<Value>> {
+        if values.len() != 3 { return None; }
+        let n_word = values[1].settled();
+        let p_word = values[2].settled();
+        if matches!(n_word, Value::Couple(_)) || matches!(p_word, Value::Couple(_)) { return None; }
+        let Value::Small(count) = n_word else { return None; };
+        if count < 0 || (count as f64) as i64 != count { return None; }
+        let Value::Frac(ratio) = &p_word else { return None; };
+        if ratio.past_numbers() { return None; }
+        let p = crate::data::nearest_binary(&ratio.above, &ratio.beneath);
+        if !(p > 0.0 && p < 1.0) { return None; }
+        Some(vec![Value::text("binomial"), mark, Value::Small(count), p_word])
+    }
+    fn choices_request(values: &[Value], mark: Value) -> Option<Vec<Value>> {
+        let mut sample = None;
+        let mut mass = None;
+        let mut running = None;
+        let mut take = None;
+        let mut placed = 0u8;
+        let mut at = 1usize;
+        while at < values.len() {
+            let shown = values[at].settled();
+            if let Value::Couple(pair) = &shown {
+                let name = pair.0.bare();
+                if name == "k" {
+                    if take.is_some() { return None; }
+                    let Value::Small(n) = pair.1.settled() else { return None; };
+                    take = Some(n);
+                } else if name == "cum_weights" {
+                    if running.is_some() { return None; }
+                    running = Some(pair.1.settled());
+                } else { return None; }
+            } else if placed == 0 {
+                sample = Some(shown);
+                placed = 1;
+            } else if placed == 1 {
+                if !matches!(shown, Value::Nil) { mass = Some(shown); }
+                placed = 2;
+            } else { return None; }
+            at += 1;
+        }
+        let sample = sample?;
+        if !Self::stored_sequence(&sample) { return None; }
+        if mass.as_ref().is_some_and(|row| !Self::stored_sequence(row)) { return None; }
+        if running.as_ref().is_some_and(|row| !Self::stored_sequence(row)) { return None; }
+        if mass.is_some() && running.is_some() { return None; }
+        let take = take.unwrap_or(1);
+        if take > 1000000 { return None; }
+        let (mode, payload) = if let Some(row) = running { (2i64, row) }
+            else if let Some(row) = mass { (1, row) }
+            else { (0, Value::Nil) };
+        Some(vec![Value::text("choices"), mark, sample, Value::Small(mode), payload, Value::Small(take)])
+    }
+    fn dispatch_variate(&mut self, operation: &str, values: &[Value]) -> Res<Option<Value>> {
+        if operation != "binomial" && operation != "choices" { return Ok(None); }
+        let Some(receiver) = values.first() else { return Ok(None); };
+        let Some(mark) = self.twister_mark(receiver)? else { return Ok(None); };
+        let request = if operation == "binomial" { Self::binomial_request(values, mark) } else { Self::choices_request(values, mark) };
+        let Some(request) = request else { return Ok(None); };
+        match self.prim(Prim::Chance, "__random", &request) {
+            Err(note) if note == "\0defer" => { self.got_away.take(); Ok(None) }
+            Err(note) => Err(note.into()),
+            Ok(produced) => {
+                if let Some(raised) = self.got_away.take() { return Err(raised); }
+                Ok(Some(produced))
+            }
+        }
+    }
     fn wrap(tag:u8,mut items:Vec<Value>)->Value {
         if matches!(tag,4|5) && items.len()==1 {
             items.push(Value::Shared(Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into())).keep(true)))));
@@ -2962,6 +3075,13 @@ impl<'a> Machine<'a> {
                     // entry for index protocols, cold instances and refusals.
                     133=>{
                         let operation=kept[0].bare();
+                        if operation=="binomial" || operation=="choices" {
+                            if let Some(done)=self.dispatch_variate(&operation,&values)?{return Ok(done);}
+                            return self.apply_class_member(kept[1].clone(),values);
+                        }
+                        if operation!="next" && operation!="bits" {
+                            return self.apply_class_member(kept[1].clone(),values);
+                        }
                         let needed=if operation=="next" {1} else {2};
                         let ordinary=values.len()==needed
                             && matches!(values.first().map(Value::settled),Some(Value::Thing(_)))

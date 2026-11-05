@@ -938,6 +938,11 @@ class SystemRandom(Random):
 # for most programs and is easier for the casual user than making them
 # instantiate their own Random() instance.
 
+# Twister binomial and choices read the native stream. A generator that
+# replaces random() keeps the Python definitions above.
+Random.binomialvariate = __random('method', 'binomial', Random.binomialvariate)
+Random.choices = __random('method', 'choices', Random.choices)
+
 _inst = Random()
 seed = _inst.seed
 random = _inst.random

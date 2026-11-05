@@ -148,19 +148,24 @@ pub struct Progression {
     pub limit: BigInt,
     pub stride: BigInt,
     pub word: String,
+    /// Where the walk starts, strides and ends, in plain words when it
+    /// fits them; asked at every turn of a loop, so reckoned once.
+    pub plain: std::cell::OnceCell<Option<(i128, i128, i128)>>,
 }
 
 impl Progression {
     /// Use wide integers when the bounds, their difference and a
     /// nonzero step fit. Other progressions retain the big integer path.
     fn plain_bounds(&self) -> Option<(i128, i128, i128)> {
-        let first=self.first.to_i128()?;
-        let limit=self.limit.to_i128()?;
-        let stride=self.stride.to_i128()?;
-        let magnitude=stride.checked_abs().filter(|step|*step!=0)?;
-        let span=if stride<0 {first.checked_sub(limit)?} else {limit.checked_sub(first)?};
-        let size=if span<=0 {0} else {(span-1)/magnitude+1};
-        Some((first, stride, size))
+        *self.plain.get_or_init(|| {
+            let first=self.first.to_i128()?;
+            let limit=self.limit.to_i128()?;
+            let stride=self.stride.to_i128()?;
+            let magnitude=stride.checked_abs().filter(|step|*step!=0)?;
+            let span=if stride<0 {first.checked_sub(limit)?} else {limit.checked_sub(first)?};
+            let size=if span<=0 {0} else {(span-1)/magnitude+1};
+            Some((first, stride, size))
+        })
     }
 
     pub fn count(&self) -> BigInt {
@@ -2605,6 +2610,10 @@ impl Hold {
 
     pub fn as_ptr(handle: &Hold) -> *const Thing {
         Rc::as_ptr(&handle.0)
+    }
+
+    pub fn get_mut(handle: &mut Hold) -> Option<&mut Thing> {
+        Rc::get_mut(&mut handle.0)
     }
 
     pub fn downgrade(handle: &Hold) -> std::rc::Weak<Thing> {

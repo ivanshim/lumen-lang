@@ -109,18 +109,23 @@ pub struct Counted {
     pub stop: BigInt,
     pub step: BigInt,
     pub name: String,
+    /// The bounds in machine words, worked out the first time they are
+    /// asked for, since a loop asks for them at every step.
+    pub words: std::cell::OnceCell<Option<(i128, i128, i128)>>,
 }
 
 impl Counted {
     /// Bounds whose distance and stride fit checked wide arithmetic.
     /// Larger bounds and a zero stride use arbitrary precision.
     fn narrow(&self) -> Option<(i128, i128, i128)> {
-        let step=self.step.to_i128()?;
-        if step==0 || step.checked_abs().is_none() { return None; }
-        let start=self.start.to_i128()?;
-        let stop=self.stop.to_i128()?;
-        if step>0 { stop.checked_sub(start)?; } else { start.checked_sub(stop)?; }
-        Some((start,stop,step))
+        *self.words.get_or_init(|| {
+            let step=self.step.to_i128()?;
+            if step==0 || step.checked_abs().is_none() { return None; }
+            let start=self.start.to_i128()?;
+            let stop=self.stop.to_i128()?;
+            if step>0 { stop.checked_sub(start)?; } else { start.checked_sub(stop)?; }
+            Some((start,stop,step))
+        })
     }
 
     /// Count a walk after the bounds have passed the overflow checks.
@@ -138,7 +143,11 @@ impl Counted {
         else { (distance - 1) / self.step.abs() + 1 }
     }
 
-    pub fn at(&self, mut index: BigInt) -> Option<Value> {
+    pub fn at(&self, index: BigInt) -> Option<Value> {
+        self.at_place(&index)
+    }
+
+    pub fn at_place(&self, index: &BigInt) -> Option<Value> {
         // A walk within the machine's words is counted in words. This
         // is the road a loop over a counted row takes at every step,
         // and the great numbers cost more than the walk itself.
@@ -151,6 +160,7 @@ impl Counted {
             }
         }
         let length = self.length();
+        let mut index = index.clone();
         if index.is_negative() { index += &length; }
         (index >= BigInt::zero() && index < length).then(|| Value::of_big(&self.start + index * &self.step))
     }
@@ -2715,6 +2725,10 @@ impl Keep {
 
     pub fn as_ptr(handle: &Keep) -> *const Instance {
         Rc::as_ptr(&handle.0)
+    }
+
+    pub fn get_mut(handle: &mut Keep) -> Option<&mut Instance> {
+        Rc::get_mut(&mut handle.0)
     }
 
     pub fn downgrade(handle: &Keep) -> std::rc::Weak<Instance> {
