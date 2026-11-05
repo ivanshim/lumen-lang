@@ -1403,7 +1403,8 @@ class FileIO(_RawIOBase):
                     if fd < 0:
                         raise ValueError('opener returned ' + str(fd))
                 owned = True
-                os.set_inheritable(fd, False)
+                if opener is not None:
+                    os.set_inheritable(fd, False)
             # The C code asks the system directly, so a replaced os.fstat is not seen here.
             import posix
             try:
