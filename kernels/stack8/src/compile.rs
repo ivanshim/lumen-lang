@@ -2533,9 +2533,8 @@ impl<'a> Compiler<'a> {
             literal.push_str(&leading.next().unwrap().lexeme);
             doc_end += 1;
         }
-        let documentation_at = self.tokens.len() - self.tokens[self.pos..].iter().skip_while(|t| matches!(t.shape, Shape::LineEnd | Shape::Open) || self.lang.block_intros.contains(&t.lexeme)).count();
         let is_doc = !expression && quoted && leading.peek().is_some_and(|t| matches!(t.shape, Shape::LineEnd | Shape::Close | Shape::Finish) || self.lang.ends_stmt(&t.lexeme));
-        if is_doc && self.registry.optimize == 2 { self.omitted_docs.insert(documentation_at); }
+        if is_doc && self.registry.optimize == 2 { self.omitted_docs.insert(doc_begin); }
         let doc = (is_doc && self.registry.optimize < 2).then_some(literal);
         let doc_literal = is_doc;
         let doc = if self.lang.class_builder.is_empty() { doc } else { doc.map(|text| clean_python_documentation(&text)) };
