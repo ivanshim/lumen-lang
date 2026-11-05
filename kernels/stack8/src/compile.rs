@@ -10905,7 +10905,7 @@ impl<'a> Compiler<'a> {
             if lang.chained_comparisons {
                 if let Some((op, tier, width)) = self.comparison()? {
                     if tier < floor { break; }
-                    self.comparisons(op, tier, width)?;
+                    self.comparisons(begins, op, tier, width)?;
                     continue;
                 }
             }
@@ -11145,13 +11145,14 @@ impl<'a> Compiler<'a> {
 
     /// Each link keeps its far side for the link after it. A false link
     /// goes straight to the end, leaving the rest untouched.
-    fn comparisons(&mut self, mut op: Action, tier: u32, mut width: usize) -> Res<()> {
+    fn comparisons(&mut self, begins: usize, mut op: Action, tier: u32, mut width: usize) -> Res<()> {
         let near = self.gensym("near");
         let far = self.gensym("far");
         let answer = self.gensym("comparison");
         let saved_left = self.mark();
         self.write(&near);
         let mut exits = Vec::new();
+        let mut locations = Vec::new();
         loop {
             for _ in 0..width { self.pass_token(); }
             let rhs = self.mark();
@@ -11166,20 +11167,26 @@ impl<'a> Compiler<'a> {
             let saved_right = self.mark();
             self.write(&far);
             let following = self.comparison()?.filter(|(_, level, _)| *level == tier);
-            if exits.is_empty() && following.is_none() {
+            let single = exits.is_empty() && following.is_none();
+            if single {
                 // A single comparison needs no cells to preserve a middle operand.
                 self.piece().instrs[saved_left] = Instr::Nothing;
                 self.piece().instrs[saved_right] = Instr::Nothing;
-                self.act(op, 2);
-                return Ok(());
+            } else {
+                // Each side is moved out of its temporary at its last use, so
+                // that the temporaries hold nothing once the link is judged:
+                // a value's last holder may be one of them, and it must go
+                // when the program lets it go.
+                self.read(&near);
+                self.read(&far);
             }
-            // Each side is moved out of its temporary at its last use, so
-            // that the temporaries hold nothing once the link is judged:
-            // a value's last holder may be one of them, and it must go
-            // when the program lets it go.
-            self.read(&near);
-            self.read(&far);
-            self.act(op, 2);
+            self.ast_operation_location();
+            if !self.lang.trace_fields.is_empty() {
+                let location = self.expression_location(begins);
+                locations.push(self.put(location));
+            }
+            self.put(Instr::Act(op, 2));
+            if single { return Ok(()); }
             self.write(&answer);
             let Some((next, level, words)) = following else { break; };
             let _ = level;
@@ -11189,6 +11196,11 @@ impl<'a> Compiler<'a> {
             self.write(&near);
             op = next;
             width = words;
+        }
+        // Earlier links are emitted before the last operand reveals the chain's end.
+        if !locations.is_empty() {
+            let location = self.expression_location(begins);
+            for at in locations { self.piece().instrs[at] = location.clone(); }
         }
         for exit in exits { self.land(exit); }
         self.let_go(&near);

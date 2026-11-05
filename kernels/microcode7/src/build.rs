@@ -10790,7 +10790,7 @@ impl<'a> Builder<'a> {
             if table.flag("ext.op.compare.chained") {
                 if let Some((operation, level, words)) = self.comparison_head()? {
                     if floor > level { break; }
-                    left = self.comparison_tail(left, operation, level, words)?;
+                    left = self.comparison_tail(left, operation, level, words, origin)?;
                     continue;
                 }
             }
@@ -10982,19 +10982,20 @@ impl<'a> Builder<'a> {
 
     /// The next link runs beneath the true arm of this one. Its near
     /// side is the cell this link filled, so no middle is read twice.
-    fn comparison_tail(&mut self, left: Form, operation: Prim, level: u32, words: usize) -> Res<Form> {
+    fn comparison_tail(&mut self, left: Form, operation: Prim, level: u32, words: usize, origin: usize) -> Res<Form> {
         for _ in 0..words { self.move_past(); }
         let mut side = self.expr(level + 1)?;
         if self.table.has_any("ext.builtin.compile.modes") && matches!(operation, Prim::Contains | Prim::Absent) {
             if let Some(set) = frozen_display(&side, self.table) { side = constant(set); }
         }
         let Some((following, tier, width)) = self.comparison_head()?.filter(|(_, tier, _)| *tier == level) else {
-            return Ok(prim_call(operation, vec![left, side]));
+            return Ok(self.located(self.span_since(origin), prim_call(operation, vec![left, side])));
         };
         let near = self.gensym("middle");
         let far = self.gensym("next");
-        let test = prim_call(operation, vec![Form::Read(near.clone()), Form::Read(far.clone())]);
-        let rest = self.comparison_tail(Form::Read(far.clone()), following, tier, width)?;
+        let rest = self.comparison_tail(Form::Read(far.clone()), following, tier, width, origin)?;
+        let test = self.located(self.span_since(origin),
+            prim_call(operation, vec![Form::Read(near.clone()), Form::Read(far.clone())]));
         let answer = self.choose(test, rest, constant(Value::Flag(false)));
         let judged = self.gensym("judged");
         Ok(sequence(vec![Form::Write(near.clone(), Box::new(left)), Form::Write(far.clone(), Box::new(side)),

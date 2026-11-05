@@ -86,7 +86,7 @@ class Instruction:
         self.opcode = self.opname = opcode
         self.arg = self.oparg = self.argval = argval
         self.argrepr = '' if argval is None else str(argval)
-        self.positions = Positions(positions[0], positions[2], positions[1], positions[3])
+        self.positions = Positions(*positions)
         self.starts_line = self.positions.lineno
         self.is_jump_target = False
         self.is_jump = is_jump
