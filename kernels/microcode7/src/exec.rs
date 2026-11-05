@@ -599,7 +599,7 @@ impl<T: Clone> PerModule<T> {
 /// Where a module's names are kept: the dictionary globals() handed out,
 /// if one was, and the module itself.
 #[derive(Clone)]
-struct ModuleHome { stamp: (usize, usize), book: Option<Rc<RefCell<Value>>>, module: Option<Rc<Thing>> }
+struct ModuleHome { stamp: (usize, usize), book: Option<Rc<RefCell<Value>>>, module: Option<Hold> }
 
 pub struct Machine<'a> {
     native_slot_names: HashMap<String, usize, crate::table::FxBuildHasher>,
@@ -634,7 +634,7 @@ pub struct Machine<'a> {
     memory_stream_class: Option<(std::rc::Weak<Blueprint>, u64, Vec<String>)>,
     tool_words: RefCell<Vec<Option<String>>>,
     /// Frame records of calls that ended with nothing else holding them.
-    activation_pool: Vec<Rc<Thing>>,
+    activation_pool: Vec<Hold>,
     generator_frames: HashMap<usize, Weak<RefCell<Suspension>>, crate::table::FxBuildHasher>,
     coroutine_bodies: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<Routine>, Option<Weak<Thing>>, Value, usize)>,
     async_generators: HashMap<usize, (Weak<RefCell<Suspension>>, Rc<RefCell<Option<Rc<RefCell<Value>>>>>, Rc<Cell<bool>>, Rc<Cell<bool>>)>,
@@ -6873,7 +6873,7 @@ impl<'a> Machine<'a> {
         // rather than made afresh; its names are the same eight.
         if !hidden && locals.is_none() && matches!(self.tracing_function, Value::Nil) {
             if let Some(mut worn) = self.activation_pool.pop() {
-                if let Some(thing) = Rc::get_mut(&mut worn) {
+                if let Some(thing) = crate::data::Hold::get_mut(&mut worn) {
                     self.made += 1;
                     thing.turn = self.made;
                     let slots = thing.holds.get_mut();
@@ -6914,10 +6914,10 @@ impl<'a> Machine<'a> {
     /// A record of a call that ended and that nothing else holds is kept
     /// for the next call, after letting go of the frame, the caller and
     /// the globals it pointed at.
-    fn keep_activation(&mut self, ended: Option<Rc<Thing>>) {
+    fn keep_activation(&mut self, ended: Option<Hold>) {
         let Some(mut record) = ended else { return };
-        if self.activation_pool.len() >= 32 || Rc::weak_count(&record) != 0 { return; }
-        let Some(thing) = Rc::get_mut(&mut record) else { return };
+        if self.activation_pool.len() >= 32 || crate::data::Hold::weak_count(&record) != 0 { return; }
+        let Some(thing) = crate::data::Hold::get_mut(&mut record) else { return };
         let slots = thing.holds.get_mut();
         if slots.len() != 8 { return; }
         for at in [1, 2, 4, 5, 6] { slots[at].1 = Value::Nil; }

@@ -661,7 +661,7 @@ impl MapStore {
         result
     }
 
-    fn note_pushed_spelling(spellings: &mut Option<Result<std::collections::HashMap<Rc<str>, usize>, ()>>, key: &Value, at: usize) {
+    fn note_pushed_spelling(spellings: &mut Option<Result<std::collections::HashMap<Rc<str>, usize, crate::table::FxBuildHasher>, ()>>, key: &Value, at: usize) {
         let Some(Ok(words)) = spellings.as_mut() else { return };
         let mut current = key;
         while let Value::Keyed(inner, _) = current { current = inner; }
@@ -2605,6 +2605,14 @@ impl Hold {
 
     pub fn as_ptr(handle: &Hold) -> *const Thing {
         Rc::as_ptr(&handle.0)
+    }
+
+    pub fn weak_count(handle: &Hold) -> usize {
+        Rc::weak_count(&handle.0)
+    }
+
+    pub fn get_mut(handle: &mut Hold) -> Option<&mut Thing> {
+        Rc::get_mut(&mut handle.0)
     }
 
     pub fn downgrade(handle: &Hold) -> std::rc::Weak<Thing> {
