@@ -2807,6 +2807,15 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// Runs a kernel-private builtin by its word with arguments already
+    /// plain, skipping the spread-opening a user-written call needs.
+    fn native_named_call(&mut self, word: &str, mut args: Vec<Value>) -> Flow<Value> {
+        let Some(op) = self.lang.builtins.get(word).copied() else { return self.class_apply(Value::text(word), args); };
+        let answer = self.builtin(op, word, &mut args);
+        if let Some(raised) = self.carried.take() { return Err(raised); }
+        Ok(answer?)
+    }
+
     #[allow(unused_variables, unused_mut, unreachable_patterns, unreachable_code)]
     fn adapter_arm_9(&mut self, w: Rc<(u8, Vec<Value>)>, mut args: Vec<Value>) -> Flow<Value> {
 
@@ -2822,7 +2831,7 @@ impl<'a> Engine<'a> {
                             Ok(mark @ Value::Small(_)) => {
                                 let mut native = vec![w.1[0].clone(), mark];
                                 if bits { native.push(args[1].clone()); }
-                                return self.class_apply(Value::text("__random"), native);
+                                return self.native_named_call("__random", native);
                             }
                             Err(fault) if !self.attribute_fault(&fault) => return Err(fault),
                             _ => {},
@@ -2851,24 +2860,24 @@ impl<'a> Engine<'a> {
                                 let mean = crate::value::as_binary(&m.p, &m.q);
                                 let input = crate::value::as_binary(&point.p, &point.q);
                                 if mean.is_finite() && input.is_finite() && scale.is_finite() && scale * scale > 0.0 && (scale * scale).is_finite() {
-                                    return self.class_apply(Value::text("__math"), vec![w.1[0].clone(), x, mu, sigma]);
+                                    return self.native_named_call("__math", vec![w.1[0].clone(), x, mu, sigma]);
                                 }
                             }
                         }
                     }
                     if operation == "sqrt_frac_rto" && args.len() == 2 && args.iter().all(|value| matches!(value.contents(), Value::Small(_) | Value::Huge(_) | Value::Flag(_))) {
-                        return self.class_apply(Value::text("__math"), vec![w.1[0].clone(), args[0].clone(), args[1].clone()]);
+                        return self.native_named_call("__math", vec![w.1[0].clone(), args[0].clone(), args[1].clone()]);
                     }
                     if operation == "isqrt" && args.len() == 1 {
                         let number = args[0].contents();
                         if matches!(number, Value::Small(_) | Value::Huge(_) | Value::Flag(_)) {
-                            return self.class_apply(Value::text("__math"), vec![w.1[0].clone(), number]);
+                            return self.native_named_call("__math", vec![w.1[0].clone(), number]);
                         }
                     }
                     if operation == "fsum" && self.lang.math_fsum && args.len() == 1 {
                         let values = match args[0].contents() { Value::Array(values) | Value::Tuple(values) => Some(values), _ => None };
                         if values.is_some_and(|row| row.iter().all(|item| matches!(item.contents(), Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Flag(_)))) {
-                            return self.class_apply(Value::text("__math"), vec![w.1[0].clone(), args[0].clone()]);
+                            return self.native_named_call("__math", vec![w.1[0].clone(), args[0].clone()]);
                         }
                     }
                     if args.len() == 1 {
@@ -2896,7 +2905,7 @@ impl<'a> Engine<'a> {
                                 _ => false,
                             };
                             if domain {
-                                return self.class_apply(Value::text("__math"), vec![w.1[0].clone(),args[0].clone()]);
+                                return self.native_named_call("__math", vec![w.1[0].clone(),args[0].clone()]);
                             }
                         }
                     }
@@ -5006,6 +5015,42 @@ impl<'a> Engine<'a> {
         if name == layout[2] { return Some(Value::ValueMethod(Rc::new((subject.clone(), "integer_size".to_string())))); }
         None
     }
+    fn ordinary_instance_read(&mut self, subject: &Value, name: &str, plain: bool) -> Option<Flow<Value>> {
+        // Ordinary Python instance storage needs no native-kind dispatch.
+        // Keep live descriptor and custom-getter lookup ahead of its fields.
+        if self.lang.bind_names && (!name.starts_with("__") || name == self.class_word("kind")) {
+            if let Value::Object(object) = subject {
+                let class = object.class_now();
+                let ordinary = Self::kind_beneath(&class).as_deref().is_none_or(|word| word == self.class_word("root"))
+                    && self.module_holding(subject).is_none()
+                    && !object.fields.borrow().iter().any(|(key, _)| key.as_bytes().first() == Some(&0));
+                if ordinary && (plain || self.class_value(&class, self.class_word("get")).is_none()) {
+                    let member = self.class_value(&class, name);
+                    if name == self.class_word("kind") {
+                        let answer = match member {
+                            Some(member) => self.bind_class_value(member, Some(subject.clone()), class),
+                            None => Ok(Value::Class(class)),
+                        };
+                        return Some(self.finish_attribute_read(subject, name, plain, answer));
+                    }
+                    if member.as_ref().is_some_and(|entry| self.takes_writes(entry)
+                        && (matches!(entry, Value::Adapter(parts) if matches!(parts.0, 6 | 16 | 28)) || self.descriptor_hook(entry, "descriptor.get").is_some())) {
+                        let answer = self.bind_class_value(member.unwrap(), Some(subject.clone()), class); return Some(self.finish_attribute_read(subject, name, plain, answer));
+                    }
+                    let own = object.fields.borrow().iter().find(|(key, held)| key == name && !matches!(held.contents(), Value::Blank)).map(|(_, held)| held.clone());
+                    if let Some(own) = own { return Some(Ok(own)); }
+                    if let Some(member) = member { let answer = self.bind_class_value(member, Some(subject.clone()), class); return Some(self.finish_attribute_read(subject, name, plain, answer)); }
+                    if self.root_member(name, Some(&class)).is_none() {
+                        self.absent_member = Some((name.to_owned(), subject.clone()));
+                        let absent = Err(self.missing_member(subject, name));
+                        return Some(self.finish_attribute_read(subject, name, plain, absent));
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// A member read that ends in a missing member -- whether the class's
     /// own reading hook said so, or a property's getter, or nothing was
     /// found -- is offered to the class's fallback reader before it is
@@ -5048,6 +5093,14 @@ impl<'a> Engine<'a> {
                 }
             }
         }
+        // Exact text values have intrinsic methods, with no instance hooks.
+        if let (true, Value::Text(text)) = (self.lang.bind_names, &subject) {
+            if let Some(Builtin::Text(operation)) = self.lang.builtins.get(name) {
+                return Ok(Value::TextMethod(text.clone(), *operation, Rc::from(name)));
+            }
+        }
+        if let Some(answer) = self.ordinary_instance_read(&subject, name, plain) { return answer; }
+
         self.class_get_slow(subject, name, plain)
     }
 
@@ -5235,38 +5288,7 @@ impl<'a> Engine<'a> {
                 }
             }
         }
-        // Ordinary Python instance storage needs no native-kind dispatch.
-        // Keep live descriptor and custom-getter lookup ahead of its fields.
-        if self.lang.bind_names && (!name.starts_with("__") || name == self.class_word("kind")) {
-            if let Value::Object(object) = &subject {
-                let class = object.class_now();
-                let ordinary = Self::kind_beneath(&class).as_deref().is_none_or(|word| word == self.class_word("root"))
-                    && self.module_holding(&subject).is_none()
-                    && !object.fields.borrow().iter().any(|(key, _)| key.as_bytes().first() == Some(&0));
-                if ordinary && (plain || self.class_value(&class, self.class_word("get")).is_none()) {
-                    let member = self.class_value(&class, name);
-                    if name == self.class_word("kind") {
-                        let answer = match member {
-                            Some(member) => self.bind_class_value(member, Some(subject.clone()), class),
-                            None => Ok(Value::Class(class)),
-                        };
-                        return self.finish_attribute_read(&subject, name, plain, answer);
-                    }
-                    if member.as_ref().is_some_and(|entry| self.takes_writes(entry)
-                        && (matches!(entry, Value::Adapter(parts) if matches!(parts.0, 6 | 16 | 28)) || self.descriptor_hook(entry, "descriptor.get").is_some())) {
-                        let answer = self.bind_class_value(member.unwrap(), Some(subject.clone()), class); return self.finish_attribute_read(&subject, name, plain, answer);
-                    }
-                    let own = object.fields.borrow().iter().find(|(key, held)| key == name && !matches!(held.contents(), Value::Blank)).map(|(_, held)| held.clone());
-                    if let Some(own) = own { return Ok(own); }
-                    if let Some(member) = member { let answer = self.bind_class_value(member, Some(subject.clone()), class); return self.finish_attribute_read(&subject, name, plain, answer); }
-                    if self.root_member(name, Some(&class)).is_none() {
-                        self.absent_member = Some((name.to_owned(), subject.clone()));
-                        let absent = Err(self.missing_member(&subject, name));
-                        return self.finish_attribute_read(&subject, name, plain, absent);
-                    }
-                }
-            }
-        }
+        if let Some(answer) = self.ordinary_instance_read(&subject, name, plain) { return answer; }
         if self.lang.bind_names && !name.starts_with("__") {
             if let Value::Object(instance) = &subject {
                 let class = instance.class_now();

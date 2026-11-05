@@ -2404,6 +2404,13 @@ impl<'a> Machine<'a> {
         }
         Ok(())
     }
+    /// The arithmetic primitive entered straight, for operands the caller
+    /// has already vetted; the generic member call would open them again.
+    fn reckon_direct(&mut self, operands: Vec<Value>) -> Res {
+        let outcome = self.prim(Prim::Reckon, "__math", &operands);
+        if let Some(raised) = self.got_away.take() { return Err(raised); }
+        Ok(outcome?)
+    }
     fn get_arity(&self, name: &str, count: usize) -> Res<()> {
         match count {
             0 => Err(format!("TypeError: {name} expected at least 1 argument, got 0").into()),
@@ -2991,20 +2998,20 @@ impl<'a> Machine<'a> {
                                         let coordinates = [a, b, c].map(|r| crate::data::nearest_binary(&r.above, &r.beneath));
                                         let variance = coordinates[2] * coordinates[2];
                                         if coordinates.iter().all(|n| n.is_finite()) && variance > 0.0 && variance.is_finite() {
-                                            return self.apply_class_member(Value::text("__math"), vec![kept[0].clone(), input, center, spread]);
+                                            return self.reckon_direct(vec![kept[0].clone(), input, center, spread]);
                                         }
                                     }
                                 }
                             }
                         }
                         if operation == "sqrt_frac_rto" && values.len() == 2 && values.iter().all(|value| matches!(value.settled(), Value::Flag(_) | Value::Huge(_) | Value::Small(_))) {
-                            return self.apply_class_member(Value::text("__math"), vec![kept[0].clone(), values[0].clone(), values[1].clone()]);
+                            return self.reckon_direct(vec![kept[0].clone(), values[0].clone(), values[1].clone()]);
                         }
                         if operation == "isqrt" {
                             if let [integer] = values.as_slice() {
                                 let native = integer.settled();
                                 if matches!(native, Value::Flag(_) | Value::Huge(_) | Value::Small(_)) {
-                                    return self.apply_class_member(Value::text("__math"), vec![kept[0].clone(), native]);
+                                    return self.reckon_direct(vec![kept[0].clone(), native]);
                                 }
                             }
                         }
@@ -3012,7 +3019,7 @@ impl<'a> Machine<'a> {
                             if let [sequence] = values.as_slice() {
                                 let items = match sequence.settled() { Value::Vector(items) | Value::Tuple(items) => Some(items), _ => None };
                                 let native = items.is_some_and(|items| items.iter().all(|item| matches!(item.settled(), Value::Frac(_) | Value::Flag(_) | Value::Huge(_) | Value::Small(_))));
-                                if native { return self.apply_class_member(Value::text("__math"), vec![kept[0].clone(), sequence.clone()]); }
+                                if native { return self.reckon_direct(vec![kept[0].clone(), sequence.clone()]); }
                             }
                         }
                         if let [integer]=values.as_slice() {
@@ -3042,7 +3049,7 @@ impl<'a> Machine<'a> {
                         if fast {
                             let mut operands=vec![kept[0].clone()];
                             operands.extend(values);
-                            self.apply_class_member(Value::text("__math"),operands)
+                            self.reckon_direct(operands)
                         } else {self.apply_class_member(kept[1].clone(),values)}
                     }
                     0=>Ok(kept[0].clone()),
@@ -5509,6 +5516,39 @@ impl<'a> Machine<'a> {
         let method = self.read_class_member(description[1].clone(), "__name__", false)?.bare();
         Err(format!("TypeError: descriptor '{method}' for '{}' objects doesn't apply to a '{}' object", declaring.python_title().unwrap_or_else(|| declaring.name.clone()), target.settled().kind_word()).into())
     }
+    fn plain_instance_member(&mut self, value: &Value, key: &str, direct: bool) -> Option<Res> {
+        // A heap instance with plain storage can use the normal Python order
+        // before considering any of the native blueprint-specific readers.
+        if self.names_in_calls && (!key.as_bytes().starts_with(b"__") || key == self.detail("kind")) {
+            if let Value::Thing(thing) = value {
+                let owner = thing.blueprint();
+                let simple = !thing.holds.borrow().iter().any(|entry| entry.0.as_bytes().first() == Some(&0))
+                    && Self::native_beneath(&owner).as_deref().is_none_or(|word| word == self.detail("root")) && self.namespace_holding(value).is_none();
+                if simple && (direct || self.inherited_entry(&owner, self.detail("get")).is_none()) {
+                    let inherited = self.inherited_entry(&owner, key);
+                    if key == self.detail("kind") {
+                        if let Some(inherited) = inherited { let sought = self.member_binding(inherited, Some(value.clone()), owner); return Some(self.complete_member_read(value, key, direct, sought)); }
+                        return Some(Ok(Value::Blueprint(owner)));
+                    }
+                    if inherited.as_ref().is_some_and(|entry| self.writes_too(entry)
+                        && (matches!(entry, Value::Wrapped(6 | 32 | 58, _)) || self.protocol_entry(entry, "descriptor.get").is_some())) {
+                        let sought = self.member_binding(inherited.unwrap(), Some(value.clone()), owner); return Some(self.complete_member_read(value, key, direct, sought));
+                    }
+                    let stored = thing.holds.borrow().iter().find_map(|(name, held)| {
+                        (name == key && !matches!(held.settled(), Value::Unset)).then(|| held.clone())
+                    });
+                    if let Some(stored) = stored { return Some(Ok(stored)); }
+                    if inherited.is_none() && self.from_the_root(key, true, &owner).is_none() {
+                        self.sought_in_vain = Some((String::from(key), value.clone()));
+                        return Some(self.complete_member_read(value, key, direct, Err(self.absent_attribute(value, key))));
+                    }
+                    if let Some(inherited) = inherited { let sought = self.member_binding(inherited, Some(value.clone()), owner); return Some(self.complete_member_read(value, key, direct, sought)); }
+                }
+            }
+        }
+        None
+    }
+
     pub(crate) fn read_class_member(&mut self,value:Value,key:&str,direct:bool)->Res {
         // Resolve plain instance storage before inspecting unrelated callable kinds.
         if self.names_in_calls && !key.starts_with("__") {
@@ -5538,6 +5578,15 @@ impl<'a> Machine<'a> {
                 }
             }
         }
+        if self.names_in_calls {
+            if let Value::Text(text) = &value {
+                if let Some(Prim::Textual(operation)) = self.table.prims.get(key) {
+                    return Ok(Value::TextCall { subject: text.clone(), work: *operation, name: Rc::from(key) });
+                }
+            }
+        }
+        if let Some(answer) = self.plain_instance_member(&value, key, direct) { return answer; }
+
         self.read_class_member_slow(value, key, direct)
     }
     fn read_class_member_slow(&mut self, value: Value, key: &str, direct: bool) -> Res {
@@ -5718,36 +5767,7 @@ impl<'a> Machine<'a> {
                 }
             }
         }
-        // A heap instance with plain storage can use the normal Python order
-        // before considering any of the native blueprint-specific readers.
-        if self.names_in_calls && (!key.as_bytes().starts_with(b"__") || key == self.detail("kind")) {
-            if let Value::Thing(thing) = &value {
-                let owner = thing.blueprint();
-                let simple = !thing.holds.borrow().iter().any(|entry| entry.0.as_bytes().first() == Some(&0))
-                    && Self::native_beneath(&owner).as_deref().is_none_or(|word| word == self.detail("root")) && self.namespace_holding(&value).is_none();
-                let default_reader = direct || self.inherited_entry(&owner, self.detail("get")).is_none();
-                if simple && default_reader {
-                    let inherited = self.inherited_entry(&owner, key);
-                    if key == self.detail("kind") {
-                        if let Some(inherited) = inherited { let sought = self.member_binding(inherited, Some(value.clone()), owner); return self.complete_member_read(&value, key, direct, sought); }
-                        return Ok(Value::Blueprint(owner));
-                    }
-                    if inherited.as_ref().is_some_and(|entry| self.writes_too(entry)
-                        && (matches!(entry, Value::Wrapped(6 | 32 | 58, _)) || self.protocol_entry(entry, "descriptor.get").is_some())) {
-                        let sought = self.member_binding(inherited.unwrap(), Some(value.clone()), owner); return self.complete_member_read(&value, key, direct, sought);
-                    }
-                    let stored = thing.holds.borrow().iter().find_map(|(name, held)| {
-                        (name == key && !matches!(held.settled(), Value::Unset)).then(|| held.clone())
-                    });
-                    if let Some(stored) = stored { return Ok(stored); }
-                    if inherited.is_none() && self.from_the_root(key, true, &owner).is_none() {
-                        self.sought_in_vain = Some((String::from(key), value.clone()));
-                        return self.complete_member_read(&value, key, direct, Err(self.absent_attribute(&value, key)));
-                    }
-                    if let Some(inherited) = inherited { let sought = self.member_binding(inherited, Some(value.clone()), owner); return self.complete_member_read(&value, key, direct, sought); }
-                }
-            }
-        }
+        if let Some(answer) = self.plain_instance_member(&value, key, direct) { return answer; }
         if self.names_in_calls && !key.as_bytes().starts_with(b"__") {
             let slot = match &value {
                 Value::Thing(thing) => {

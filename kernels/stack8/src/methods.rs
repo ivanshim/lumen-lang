@@ -575,15 +575,18 @@ pub fn call(receiver: &Value, op: &str, args: &[Value], names: &[(String, Value)
                     let offset = |n: usize| -> usize { if plain { n } else { s.char_indices().nth(n).map_or(s.len(), |(byte, _)| byte) } };
                     let piece: &str = &s[offset(start)..offset(stop.max(start))];
                     if matches!(op,"startswith"|"endswith") {
-                        let patterns = match &a[0] { Value::Tuple(row) => row.as_ref().clone(), v => vec![v.clone()] };
-                        for pattern in patterns { let t=text(&pattern,fault)?; if valid && if op == "startswith" { piece.starts_with(&t) } else { piece.ends_with(&t) } { return Ok(Value::Flag(true)); } }
+                        let patterns = match &a[0] { Value::Tuple(row) => row.as_slice(), value => std::slice::from_ref(value) };
+                        for pattern in patterns {
+                            let Value::Text(needle) = pattern.contents() else { return Err(fault("arguments")); };
+                            if valid && if op == "startswith" { piece.starts_with(needle.as_ref()) } else { piece.ends_with(needle.as_ref()) } { return Ok(Value::Flag(true)); }
+                        }
                         return Ok(Value::Flag(false));
                     }
-                    let needle = text(&a[0],fault)?;
-                    if op == "count" { return Ok(Value::Small(if !valid {0} else if needle.is_empty() {piece.chars().count() as i64+1} else {piece.matches(&needle).count() as i64})); }
-                    let found = if !valid { None } else if op == "rfind" || op == "rindex" { piece.rfind(&needle) } else { piece.find(&needle) };
+                    let Value::Text(needle) = a[0].contents() else { return Err(fault("arguments")); };
+                    if op == "count" { return Ok(Value::Small(if !valid {0} else if needle.is_empty() {piece.chars().count() as i64+1} else {piece.matches(needle.as_ref()).count() as i64})); }
+                    let found = if !valid { None } else if op == "rfind" || op == "rindex" { piece.rfind(needle.as_ref()) } else { piece.find(needle.as_ref()) };
                     if (op == "index" || op == "rindex") && found.is_none() { return Err(fault("substring")); }
-                    return Ok(Value::Small(found.map_or(-1,|i| (start+piece[..i].chars().count()) as i64)));
+                    return Ok(Value::Small(found.map_or(-1,|i| (start+if plain { i } else { piece[..i].chars().count() }) as i64)));
                 }
                 "isdigit" | "isalpha" | "isalnum" | "isspace" | "islower" | "isupper" => {
                     arity(0,0)?;

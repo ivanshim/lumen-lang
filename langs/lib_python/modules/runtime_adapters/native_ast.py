@@ -3567,6 +3567,12 @@ class _Parser:
                 else:
                     self.set_store(elt, context)
             return
+        if type(node) == Starred:
+            if context is Del:
+                _syntax('cannot delete starred')
+            node.ctx = context()
+            self.set_store(node.value, context)
+            return
         _syntax('invalid syntax')
 
     # Every level answers (node, loose start, loose end): the loose span
