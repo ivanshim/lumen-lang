@@ -2469,6 +2469,66 @@ impl<'a> Machine<'a> {
             }
         }
     }
+    fn below_is_stock(candidate: &Value, stock: &Value) -> bool {
+        let (Value::Routine(left), Value::Routine(right)) = (candidate.settled(), stock.settled()) else {
+            return false;
+        };
+        left.ident.as_str() == "_randbelow_with_getrandbits" && Rc::ptr_eq(&left, &right)
+    }
+    fn span_payload(&mut self, values: &[Value]) -> Res<Option<Vec<Value>>> {
+        if values.len() != 2 { return Ok(None); }
+        let Value::Small(limit) = values[1].settled() else { return Ok(None); };
+        if limit <= 0 { return Ok(None); }
+        let Value::Thing(thing) = values[0].settled() else { return Ok(None); };
+        let blocked = thing.holds.borrow().iter().any(|(name, _)| name == "getrandbits" || name == "_randbelow");
+        if blocked { return Ok(None); }
+        let owner = thing.blueprint();
+        let Some(candidate) = self.inherited_entry(&owner, "_randbelow") else { return Ok(None); };
+        let Some(stock) = self.inherited_entry(&owner, "_randbelow_with_getrandbits") else { return Ok(None); };
+        if !Self::below_is_stock(&candidate, &stock) { return Ok(None); }
+        let Some(Value::Wrapped(133, parts)) = self.inherited_entry(&owner, "getrandbits") else { return Ok(None); };
+        let mode = parts.first().map(|item| item.bare()).unwrap_or_default();
+        if mode == "osbits" {
+            return Ok(Some(vec![Value::text("osbelow"), Value::Small(limit)]));
+        }
+        if mode != "bits" { return Ok(None); }
+        match self.read_class_member(values[0].clone(), "_stream", false) {
+            Ok(Value::Small(mark)) if mark >= 0 => Ok(Some(vec![Value::text("below"), Value::Small(mark), Value::Small(limit)])),
+            Err(error) if !self.missing_member_escape(&error) => Err(error),
+            _ => Ok(None),
+        }
+    }
+    fn finish_draw(&mut self, request: &[Value]) -> Res<Option<Value>> {
+        match self.prim(Prim::Chance, "__random", request) {
+            Err(note) if note == "\0defer" => {
+                self.got_away.take();
+                Ok(None)
+            }
+            Err(note) => Err(note.into()),
+            Ok(produced) => {
+                if let Some(raised) = self.got_away.take() { return Err(raised); }
+                Ok(Some(produced))
+            }
+        }
+    }
+    fn quick_span(&mut self, values: &[Value]) -> Res<Option<Value>> {
+        let Some(request) = self.span_payload(values)? else { return Ok(None); };
+        self.finish_draw(&request)
+    }
+    fn os_draw(&mut self, operation: &str, values: &[Value]) -> Res<Option<Value>> {
+        if values.is_empty() { return Ok(None); }
+        let Value::Thing(_) = values[0].settled() else { return Ok(None); };
+        let request = if operation == "osunit" && values.len() == 1 {
+            vec![Value::text("osunit")]
+        } else if operation == "osbits" && values.len() == 2 {
+            let Value::Small(width) = values[1].settled() else { return Ok(None); };
+            if !(0..=64).contains(&width) { return Ok(None); }
+            vec![Value::text("osbits"), Value::Small(width)]
+        } else {
+            return Ok(None);
+        };
+        self.finish_draw(&request)
+    }
     fn wrap(tag:u8,mut items:Vec<Value>)->Value {
         if matches!(tag,4|5) && items.len()==1 {
             items.push(Value::Shared(Rc::new(RefCell::new(Value::Dict(Rc::new(Vec::new().into())).keep(true)))));
@@ -3078,6 +3138,14 @@ impl<'a> Machine<'a> {
                         if operation=="binomial" || operation=="choices" {
                             if let Some(done)=self.dispatch_variate(&operation,&values)?{return Ok(done);}
                             return self.apply_class_member(kept[1].clone(),values);
+                        }
+                        if operation == "randrange" {
+                            if let Some(done) = self.quick_span(&values)? { return Ok(done); }
+                            return self.apply_class_member(kept[1].clone(), values);
+                        }
+                        if operation == "osunit" || operation == "osbits" {
+                            if let Some(done) = self.os_draw(&operation, &values)? { return Ok(done); }
+                            return self.apply_class_member(kept[1].clone(), values);
                         }
                         if operation!="next" && operation!="bits" {
                             return self.apply_class_member(kept[1].clone(),values);

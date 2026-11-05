@@ -30275,6 +30275,18 @@ impl<'a> Engine<'a> {
                         .map_err(|_| "OSError: the source of disorder did not answer".to_string())?;
                     Ok(held)
                 }
+                // The leading `width` bits of a fresh big-endian draw.
+                fn entropy_bits(width: u64) -> Result<u64, String> {
+                    if width == 0 { return Ok(0); }
+                    let nbytes = ((width + 7) / 8) as usize;
+                    let raw = read_disorder(nbytes)?;
+                    let mut packed = 0u64;
+                    for byte in raw {
+                        packed = (packed << 8) | u64::from(byte);
+                    }
+                    let spare = (nbytes as u32) * 8 - (width as u32);
+                    Ok(packed >> spare)
+                }
                 // The place the stream stands at, told as a whole
                 // number a library can hand back.
                 let whole_arg = |at: usize| -> Option<BigInt> { arith::whole_of(&args[at].contents()) };
@@ -30375,6 +30387,67 @@ impl<'a> Engine<'a> {
 
                             Value::of_big(BigInt::from(num_bigint::BigUint::new(drawn)))
                         }
+                    }
+                    "below" => {
+                        if args.len() != 3 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let Some(under) = whole_arg(1).and_then(|n| n.to_usize()) else {
+                            return Err(self.lang.module_helper_amiss.clone());
+                        };
+                        let Some(limit) = whole_arg(2).and_then(|n| n.to_u64()) else {
+                            return Err("\0defer".into());
+                        };
+                        if limit == 0 { return Err("\0defer".into()); }
+                        let width = 64 - limit.leading_zeros();
+                        let drawn = LENT.with(|held| -> Result<u64, String> {
+                            let mut slot = held.borrow_mut();
+                            let Some(stream) = slot.get_mut(under) else {
+                                return Err(self.lang.module_helper_amiss.clone());
+                            };
+                            loop {
+                                let sample = if width <= 32 {
+                                    u64::from(stream.word() >> (32 - width))
+                                } else {
+                                    let low = u64::from(stream.word());
+                                    let high = u64::from(stream.word() >> (64 - width));
+                                    low | (high << 32)
+                                };
+                                if sample < limit { return Ok(sample); }
+                            }
+                        })?;
+                        Value::Small(drawn as i64)
+                    }
+                    "osbelow" => {
+                        if args.len() != 2 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let Some(limit) = whole_arg(1).and_then(|n| n.to_u64()) else {
+                            return Err("\0defer".into());
+                        };
+                        if limit == 0 { return Err("\0defer".into()); }
+                        let width = u64::from(64 - limit.leading_zeros());
+                        let drawn = loop {
+                            let sample = entropy_bits(width)?;
+                            if sample < limit { break sample; }
+                        };
+                        Value::Small(drawn as i64)
+                    }
+                    "osbits" => {
+                        if args.len() != 2 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let Some(count) = whole_arg(1).and_then(|n| n.to_u64()) else {
+                            return Err("\0defer".into());
+                        };
+                        if count > 64 { return Err("\0defer".into()); }
+                        let drawn = entropy_bits(count)?;
+                        if drawn <= i64::MAX as u64 {
+                            Value::Small(drawn as i64)
+                        } else {
+                            Value::of_big(BigInt::from(drawn))
+                        }
+                    }
+                    "osunit" => {
+                        if args.len() != 1 { return Err(self.lang.module_helper_amiss.clone()); }
+                        let drawn = (entropy_bits(53)? as f64) * (1.0 / 9007199254740992.0);
+                        let mut value = crate::value::real_of(drawn, self.lang.real_digits.unwrap_or(arith::DEFAULT_PLACES));
+                        if let Value::Real(real) = &mut value { Rc::make_mut(real).floating = self.lang.math_floating; }
+                        value
                     }
                     "binomial" => {
                         if args.len() != 4 { return Err(self.lang.module_helper_amiss.clone()); }

@@ -30864,6 +30864,19 @@ impl<'a> Machine<'a> {
 
                     Ok(numbers)
                 }
+                fn noise_word(width: u32) -> Result<u128, String> {
+                    if width == 0 { return Ok(0); }
+                    let span = width.div_ceil(8) as usize;
+                    let raw = disorder(span)?;
+                    let mut acc = 0u128;
+                    let mut index = 0usize;
+                    while index < raw.len() {
+                        acc = (acc << 8) | u128::from(raw[index]);
+                        index += 1;
+                    }
+                    let spare = (span * 8) as u32 - width;
+                    Ok(acc >> spare)
+                }
                 #[link(name = "m")]
                 extern "C" {
                     fn log2(arg: f64) -> f64;
@@ -31173,6 +31186,66 @@ impl<'a> Machine<'a> {
 
                             Value::Huge(Rc::new(BigInt::from(num_bigint::BigUint::new(limbs))))
                         }
+                    }
+                    "below" => {
+                        if v.len() != 3 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }
+                        let which = match &v[1] {
+                            Value::Small(mark) if *mark >= 0 => *mark as usize,
+                            _ => return Err("\0defer".to_string()),
+                        };
+                        marked(which)?;
+                        let Value::Small(limit) = v[2].settled() else { return Err("\0defer".to_string()); };
+                        if limit <= 0 { return Err("\0defer".to_string()); }
+                        let width = (limit as u64).ilog2() + 1;
+                        let chosen = DRAWN_ON.with(|streams| -> Result<u64, String> {
+                            let mut all = streams.borrow_mut();
+                            let Some(stream) = all.get_mut(which) else {
+                                return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string());
+                            };
+                            loop {
+                                let sample = if width > 32 {
+                                    let floor = draw(&mut stream.0, &mut stream.1);
+                                    let keep = width - 32;
+                                    let roof = draw(&mut stream.0, &mut stream.1) >> (32 - keep);
+                                    u64::from(floor) | (u64::from(roof) << 32)
+                                } else {
+                                    let shift = 32 - width;
+                                    u64::from(draw(&mut stream.0, &mut stream.1) >> shift)
+                                };
+                                if sample < limit as u64 { return Ok(sample); }
+                            }
+                        })?;
+                        Value::Small(chosen as i64)
+                    }
+                    "osbelow" => {
+                        if v.len() != 2 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }
+                        let Value::Small(limit) = v[1].settled() else { return Err("\0defer".to_string()); };
+                        if limit <= 0 { return Err("\0defer".to_string()); }
+                        let width = (limit as u64).ilog2() + 1;
+                        let mut chosen = noise_word(width)? as u64;
+                        while chosen >= limit as u64 {
+                            chosen = noise_word(width)? as u64;
+                        }
+                        Value::Small(chosen as i64)
+                    }
+                    "osbits" => {
+                        if v.len() != 2 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }
+                        let Value::Small(count) = v[1].settled() else { return Err("\0defer".to_string()); };
+                        if !(0..=64).contains(&count) { return Err("\0defer".to_string()); }
+                        let drawn = noise_word(count as u32)?;
+                        if drawn <= i64::MAX as u128 {
+                            Value::Small(drawn as i64)
+                        } else {
+                            Value::Huge(Rc::new(BigInt::from(drawn as u64)))
+                        }
+                    }
+                    "osunit" => {
+                        if v.len() != 1 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }
+                        let magnitude = noise_word(53)?;
+                        let unit = (magnitude as f64) * (1.0 / 9007199254740992.0);
+                        let mut worth = crate::data::worth_of_binary(unit, self.real_figures());
+                        if let Value::Frac(ratio) = &mut worth { Rc::make_mut(ratio).float_style = self.rules.floating_math; }
+                        worth
                     }
                     "binomial" => {
                         if v.len() != 4 { return Err(self.table.strings("ext.builtin.module.helper.amiss").first().map(String::as_str).unwrap_or_default().to_string()); }

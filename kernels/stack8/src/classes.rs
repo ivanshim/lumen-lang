@@ -2244,6 +2244,56 @@ impl<'a> Engine<'a> {
             _ => Ok(None),
         }
     }
+    /// The stock rejection helper, not a replacement a subclass installed.
+    fn stock_below(found: &Value, plain: &Value) -> bool {
+        let Value::Routine(body) = found.contents() else { return false; };
+        if body.ident != "_randbelow_with_getrandbits" { return false; }
+        match plain.contents() {
+            Value::Routine(other) => Rc::ptr_eq(&body, &other),
+            _ => false,
+        }
+    }
+    /// randrange(limit) when the receiver still uses getrandbits rejection.
+    fn span_request(&mut self, args: &[Value]) -> Flow<Option<Vec<Value>>> {
+        if args.len() != 2 { return Ok(None); }
+        let Value::Small(limit) = args[1].contents() else { return Ok(None); };
+        if limit <= 0 { return Ok(None); }
+        let Value::Object(obj) = args[0].contents() else { return Ok(None); };
+        if obj.fields.borrow().iter().any(|(name, _)| name == "getrandbits" || name == "_randbelow") {
+            return Ok(None);
+        }
+        let class = obj.class_now();
+        let Some(found) = self.class_value(&class, "_randbelow") else { return Ok(None); };
+        let Some(plain) = self.class_value(&class, "_randbelow_with_getrandbits") else { return Ok(None); };
+        if !Self::stock_below(&found, &plain) { return Ok(None); }
+        let Some(Value::Adapter(hook)) = self.class_value(&class, "getrandbits") else { return Ok(None); };
+        if hook.0 != 63 { return Ok(None); }
+        let mode = hook.1.first().map(|op| op.plain()).unwrap_or_default();
+        if mode == "osbits" {
+            return Ok(Some(vec![Value::text("osbelow"), Value::Small(limit)]));
+        }
+        if mode != "bits" { return Ok(None); }
+        match self.class_get(args[0].clone(), "_stream", false) {
+            Ok(mark @ Value::Small(n)) if n >= 0 => Ok(Some(vec![Value::text("below"), mark, Value::Small(limit)])),
+            Err(fault) if !self.attribute_fault(&fault) => Err(fault),
+            _ => Ok(None),
+        }
+    }
+    fn os_request(op_name: &str, args: &[Value]) -> Flow<Option<Vec<Value>>> {
+        let Some(receiver) = args.first() else { return Ok(None); };
+        if !matches!(receiver.contents(), Value::Object(_)) { return Ok(None); }
+        if op_name == "osunit" && args.len() == 1 {
+            return Ok(Some(vec![Value::text("osunit")]));
+        }
+        if op_name == "osbits" && args.len() == 2 {
+            if let Value::Small(width) = args[1].contents() {
+                if (0..=64).contains(&width) {
+                    return Ok(Some(vec![Value::text("osbits"), Value::Small(width)]));
+                }
+            }
+        }
+        Ok(None)
+    }
     fn binomial_call(args: &[Value], mark: Value) -> Option<Vec<Value>> {
         if args.len() != 3 { return None; }
         if matches!(args[1].contents(), Value::Tie(_)) || matches!(args[2].contents(), Value::Tie(_)) { return None; }
@@ -2920,6 +2970,20 @@ impl<'a> Engine<'a> {
                     if op_name == "binomial" || op_name == "choices" {
                         if let Some(request) = self.variate_request(&op_name, &args)? {
                             match self.class_apply(Value::text("__random"), request) {
+                                Err(Fault::Note(note)) if note == "\0defer" => {}
+                                other => return other,
+                            }
+                        }
+                        return self.class_apply(w.1[1].clone(), args);
+                    }
+                    if op_name == "randrange" || op_name == "osunit" || op_name == "osbits" {
+                        let prepared = if op_name == "randrange" {
+                            self.span_request(&args)?
+                        } else {
+                            Self::os_request(&op_name, &args)?
+                        };
+                        if let Some(prepared) = prepared {
+                            match self.class_apply(Value::text("__random"), prepared) {
                                 Err(Fault::Note(note)) if note == "\0defer" => {}
                                 other => return other,
                             }
