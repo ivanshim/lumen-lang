@@ -6481,16 +6481,25 @@ impl<'a> Engine<'a> {
     // throw, so cleanup may await; synchronous close ends the delegate first.
     fn step_generator_mode(&mut self, held: &Rc<RefCell<Generator>>, sent: Value, hurled: Option<Value>, given: &[Value], close_on_exit: bool) -> Flow<Option<Value>> {
         let program = held.try_borrow().ok().and_then(|state| state.program.clone());
+        let previous_reading = self.reading_in;
+        if program.as_ref().is_some_and(|body| body.globe.is_none() || matches!(&body.globe, Some(Value::Fields(_)))) {
+            self.reading_in = None;
+        }
         let book = program.as_ref().and_then(|body| Self::function_book(body));
         let supplied = book.is_some();
         let ordinary = !self.function_books.is_empty() && program.as_ref().is_some_and(|body| body.globe.is_none());
-        if !supplied && !ordinary { return self.step_generator_body(held, sent, hurled, given, close_on_exit); }
+        if !supplied && !ordinary {
+            let outcome = self.step_generator_body(held, sent, hurled, given, close_on_exit);
+            self.reading_in = previous_reading;
+            return outcome;
+        }
         let namespace = book.or_else(|| self.function_books.first().cloned().flatten());
         let saved = std::mem::replace(&mut self.outer_book, namespace);
         if supplied { self.function_books.push(saved.clone()); }
         let outcome = self.step_generator_body(held, sent, hurled, given, close_on_exit);
         if supplied { self.function_books.pop(); }
         self.outer_book = saved;
+        self.reading_in = previous_reading;
         outcome
     }
 
@@ -7056,12 +7065,17 @@ impl<'a> Engine<'a> {
     }
 
     fn locals_proxy(&self, value: &Value) -> Option<Keep> {
-        let Value::Object(proxy) = value.contents() else { return None };
+        let known = self.locals_class.as_ref()?;
         // The proxy is found by the very class it was made from, not by
         // its name: an ordinary class a program calls FrameLocalsProxy
         // is no proxy of ours and keeps its own members.
-        let known = self.locals_class.as_ref()?;
-        Rc::ptr_eq(known, &proxy.class_now()).then(|| proxy.clone())
+        // Inspect only cells and instances; opening a dictionary view would
+        // allocate its entire row even though that row cannot be a proxy.
+        match value {
+            Value::Object(proxy) => Rc::ptr_eq(known, &proxy.class_now()).then(|| proxy.clone()),
+            Value::Collection(cell, _) | Value::Bond(cell) => self.locals_proxy(&cell.borrow()),
+            _ => None,
+        }
     }
 
     fn locals_proxy_frame(proxy: &Keep) -> Option<Keep> {
@@ -11325,6 +11339,12 @@ impl<'a> Engine<'a> {
     }
 
     fn special_dyad(&mut self, op: &Action, a: &Value, b: &Value) -> Res<Value> {
+        // Exact strings have no user comparison hooks. Subclasses still
+        // follow the object protocol below.
+        if matches!((a, b), (Value::Text(_), Value::Text(_)))
+            && matches!(op, Action::Eq | Action::Ne | Action::Lt | Action::Le | Action::Gt | Action::Ge) {
+            return self.dyadic(op, a, b);
+        }
         let plain_number = |value: &Value| matches!(value, Value::Small(_) | Value::Huge(_) | Value::Real(_) | Value::Frac(_) | Value::Flag(_));
         let numerical_work = self.lang.python_numbers && matches!(op,
             Action::Add | Action::Sub | Action::Mul | Action::Div | Action::DivReal | Action::IntDiv | Action::Mod | Action::Power);
@@ -34539,7 +34559,7 @@ impl Engine<'_> {
                 return Err(self.carried.take().unwrap_or_else(|| said.into()));
             }
         };
-        let names: Vec<String> = local.idents[offset..].to_vec();
+        let names = std::mem::take(&mut local.idents);
         let mut spelled = format!("\0module:{offset}:{path}:");
         let stem = spelled.len();
         for name in &names { spelled.truncate(stem); spelled.push_str(name); self.registry.slot(&spelled); }
@@ -38090,7 +38110,7 @@ impl Engine<'_> {
         local.home = Some(module_hint.as_deref().map(Rc::from));
         let (program, shown, warnings) = self.text_program(source, &tokens, &file, mode, Some(&mut local), top_await, module_hint.as_deref(), positions)?;
         let program = match replacements { Some(values) => Rc::new(program.replacing_constants(&values)?), None => program };
-        let names: Vec<String> = local.idents[offset..].to_vec();
+        let names = std::mem::take(&mut local.idents);
         for name in &names { self.registry.slot(&format!("\0names:{offset}:{name}")); }
         self.world.resize(self.registry.idents.len(), Value::Blank);
         // Warning hooks may import modules, so reserve the compiled slots first.

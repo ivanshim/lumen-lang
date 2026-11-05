@@ -5531,9 +5531,8 @@ impl<'a> Machine<'a> {
     // throw, so cleanup may await; synchronous close ends the delegate first.
     fn step_into_mode(&mut self, generator: &Rc<RefCell<Suspension>>, sent: Value, hurled: Option<Value>, given: &[Value], close_on_exit: bool) -> Res<Option<Value>> {
         let previous_reading = self.reading_now;
-        if let Some(book) = generator.try_borrow().ok().and_then(|state| state.source_reading) {
-            if book < self.readings.len() { self.reading_now = Some(book); }
-        }
+        self.reading_now = generator.try_borrow().ok().and_then(|state| state.source_reading)
+            .filter(|book| *book < self.readings.len());
         let body = generator.try_borrow().ok().and_then(|state| state.of.clone());
         let namespace = body.map(|program| self.enter_function_globals(&program));
         let result = self.step_into_body(generator, sent, hurled, given, close_on_exit);
@@ -7063,9 +7062,15 @@ impl<'a> Machine<'a> {
 
     /// The proxy standing for a frame's names, where the value is one.
     pub(super) fn locals_proxy(&self, value: &Value) -> Option<Hold> {
-        let Value::Thing(held) = value.settled() else { return None };
-        let known = self.locals_kind.as_ref()?;
-        Rc::ptr_eq(known, &held.blueprint()).then(|| held)
+        let registered = self.locals_kind.as_ref()?;
+        // A dictionary window is never a proxy, and settling one builds its row.
+        if let Value::Thing(instance) = value {
+            return Rc::ptr_eq(registered, &instance.blueprint()).then(|| instance.clone());
+        }
+        if let Value::Mutable(place, _) | Value::Shared(place) = value {
+            return self.locals_proxy(&place.borrow());
+        }
+        None
     }
 
     fn locals_frame(proxy: &Hold) -> Option<Hold> {
@@ -8106,7 +8111,8 @@ impl<'a> Machine<'a> {
             Some(std::mem::take(&mut self.annotation_scopes))
         } else { None };
         let suspended_reading = self.reading_now;
-        if p.globe.is_none() { self.reading_now = None; }
+        // A module callback starts outside any caller's temporary reading.
+        if p.globe.is_none() || Self::uses_module_namespace(&p) { self.reading_now = None; }
         let previous = self.enter_function_globals(&p);
         let annotation_world = chosen.map(|book| self.world_book.replace(book));
         let outcome = if p.generator && self.rules.suspends {
@@ -16202,6 +16208,15 @@ impl<'a> Machine<'a> {
         Ok(Value::Generator(walk))
     }
 
+    // Identify module callbacks whose temporary caller namespace must be suspended.
+    fn uses_module_namespace(program: &Routine) -> bool {
+        match program.globe.as_ref() {
+            Some(Value::Attributes(_)) => true,
+            Some(Value::Shared(link) | Value::Mutable(link, _)) => matches!(&*link.borrow(), Value::Attributes(_)),
+            _ => false,
+        }
+    }
+
     fn explicit_globals(program: &Routine) -> Option<Rc<RefCell<Value>>> {
         match program.globe.as_ref()? {
             Value::Shared(cell) | Value::Mutable(cell, _) => {
@@ -16295,9 +16310,13 @@ impl<'a> Machine<'a> {
                 }).or(handed);
             }
         }
-        let resumed_reading = match (&program.globe, &handed) {
-            (None, None) => self.reading_now.take(),
-            _ => self.reading_now,
+        let resumed_reading = if Self::uses_module_namespace(&program) {
+            self.reading_now.take()
+        } else {
+            match (&program.globe, &handed) {
+                (None, None) => self.reading_now.take(),
+                _ => self.reading_now,
+            }
         };
         let namespace = self.enter_function_globals(&program);
         let saved_world = handed.map(|book| self.world_book.replace(book));
@@ -16393,7 +16412,7 @@ impl<'a> Machine<'a> {
             return Err(Escape::Error(format!("SystemError: unknown opcode {operation}")));
         }
         let inherited = self.reading_now;
-        if program.globe.is_none() { self.reading_now = None; }
+        if program.globe.is_none() || Self::uses_module_namespace(&program) { self.reading_now = None; }
         let answer = self.drive_body(program, frame);
         self.reading_now = inherited;
         answer
@@ -22815,6 +22834,13 @@ impl<'a> Machine<'a> {
 
     #[allow(unused_variables, unused_mut)]
     fn user_operation(&mut self, operation: Prim, operands: &[Value]) -> Result<Option<Value>, String> {
+        if let [Value::Text(_), Value::Text(_)] = operands {
+            // Leave primitive text ordering to the native operation. A Thing
+            // derived from text is deliberately excluded from this route.
+            if matches!(operation, Prim::Eq | Prim::Ne | Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge) {
+                return Ok(None);
+            }
+        }
         let local_answer = self.locals_operation(operation, operands);
         if let Some(answer) = self.locals_do(local_answer)? { return Ok(Some(answer)); }
         if let (Prim::At, [Value::Window(owner, 'm'), key]) = (operation, operands) {
@@ -39237,14 +39263,16 @@ impl<'a> Machine<'a> {
             Ok(tokens) => tokens,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col, None, &source)),
         };
-        let seeded = self.idents.clone();
         let natives = if self.rules.builtin_namespace_words.is_empty() { None } else {
             Some(self.source_natives().map_err(|escape| self.carried_native_fault(escape))?)
         };
-        let (mut built, shown) = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, natives, None, settling, sites)?;
+        let seeded = std::mem::take(&mut self.idents);
+        let built = self.text_built(&source, &tokens, &seeded, &file, mode, &[], top_await, None, natives, None, settling, sites);
+        self.idents = seeded;
+        let (mut built, shown) = built?;
         // What the build noted about how the text is written is said
         // once the text stands, each warning through the warnings module.
-        self.idents = built.globals.clone();
+        self.idents = std::mem::take(&mut built.globals);
         self.newest_places.borrow_mut().0 = 0;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         if warn_source {
@@ -39310,7 +39338,7 @@ impl<'a> Machine<'a> {
             Ok(built) => built,
             Err((said, row, col)) => return Err(self.text_unreadable_at(mode, said, &file, row, col.0, Some((col.2, col.1)), &source)),
         };
-        self.idents = built.globals.clone();
+        self.idents = std::mem::take(&mut built.globals);
         self.newest_places.borrow_mut().0 = 0;
         self.outermost.cells.borrow_mut().resize(self.idents.len(), Value::Unset);
         if warn_source {
