@@ -3956,8 +3956,9 @@ impl<'a> Engine<'a> {
         // way too, since what it holds is kept there and not here, and
         // so is a name nothing has bound where the language keeps its
         // unbound names in a module.
-        self.book_of(slot.far, &slot.ident).is_some() || matches!(self.world[slot.far], Value::Bond(_))
+        matches!(self.world[slot.far], Value::Bond(_))
             || (!self.lang.names_module.is_empty() && matches!(self.world[slot.far], Value::Blank))
+            || self.book_of(slot.far, &slot.ident).is_some()
     }
 
     /// The cell a binding lives in, for reading in place.
@@ -35508,7 +35509,7 @@ impl Engine<'_> {
 
     /// Write a name into the dictionary it is kept in, or take it out.
     fn write_booked(&mut self, kept: Kept, name: &str, value: Option<Value>, binding: Option<usize>) {
-        let binding = if self.supplied_globals(name) { None } else { binding };
+        let binding = if binding.is_some() && self.supplied_globals(name) { None } else { binding };
         match kept {
             Kept::Module(at) => if Self::public_name(name) { compiled_book_write(&self.module_books[at].1, name, value, binding) },
             Kept::Outer => if let Some(book) = self.outer_book.clone() {

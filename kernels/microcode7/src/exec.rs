@@ -36406,8 +36406,9 @@ impl<'a> Machine<'a> {
     /// The dictionary an outermost slot lives in, if any: that of the
     /// reading it belongs to, else the world's once that has been asked for.
     fn supplied_namespace(&self, name: &str) -> bool {
-        self.table.single("ext.builtin.compile.kind").is_some() && Self::visible_name(name) && self.world_book.is_some()
+        self.world_book.is_some()
             && self.frames_named.last().is_some_and(|body| !body.reads_annotation && body.flags & 1 != 0 && Self::explicit_globals(body).is_some())
+            && Self::visible_name(name) && self.table.single("ext.builtin.compile.kind").is_some()
     }
 
     fn book_holding(&self, at: usize, name: &str) -> Option<Held> {
