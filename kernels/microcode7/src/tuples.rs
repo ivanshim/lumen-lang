@@ -4,49 +4,56 @@ use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use crate::data::Value;
 
-// Released rows of up to this many slots are kept in a tier of their own size.
-const TIERS: usize = 16;
-
 thread_local! {
     static ACTIVE: Cell<bool> = const { Cell::new(false) };
     static VACANT: Rc<Vec<Value>> = Rc::new(vec![]);
-    static RESERVE: RefCell<TupleReserve> = const { RefCell::new(TupleReserve { tiers: [const { Vec::new() }; TIERS], oversize: Vec::new(), stored: 0, retained_bytes: 0 }) };
+    static RESERVE: RefCell<TupleReserve> = const { RefCell::new(TupleReserve { allocations: Vec::new(), bins: [const { Vec::new() }; 64], occupied: 0, count: 0, retained_bytes: 0 }) };
 }
 
 // Budget accounting belongs to the pool, not to each released tuple.
-struct TupleReserve { tiers: [Vec<Rc<Vec<Value>>>; TIERS], oversize: Vec<Rc<Vec<Value>>>, stored: usize, retained_bytes: usize }
+struct TupleReserve { allocations: Vec<Rc<Vec<Value>>>, bins: [Vec<Rc<Vec<Value>>>; 64], occupied: u64, count: usize, retained_bytes: usize }
 impl TupleReserve {
     fn acquire(&mut self, needed: usize) -> Option<Rc<Vec<Value>>> {
-        if self.stored == 0 { return None; }
-        let mut found = None;
-        let mut tier = needed;
-        while found.is_none() && tier < TIERS {
-            found = self.tiers[tier].pop();
-            tier += 1;
+        if self.count == 0 { return None; }
+        let candidates = if needed < 64 { self.occupied >> needed } else { 0 };
+        if candidates != 0 {
+            let bin = needed + candidates.trailing_zeros() as usize;
+            let result = self.bins[bin].pop().unwrap();
+            if self.bins[bin].is_empty() { self.occupied ^= 1u64 << bin; }
+            self.count -= 1;
+            self.retained_bytes -= result.capacity().saturating_mul(std::mem::size_of::<Value>());
+            return Some(result);
         }
-        if found.is_none() {
-            let mut best: Option<(usize, usize)> = None;
-            for (at, row) in self.oversize.iter().enumerate() {
-                let room = row.capacity();
-                if room >= needed && best.map_or(true, |(_, least)| room < least) { best = Some((at, room)); }
-            }
-            found = best.map(|(at, _)| self.oversize.swap_remove(at));
+        let mut best = None;
+        let mut capacity = usize::MAX;
+        let mut cursor = self.allocations.len();
+        while cursor > 0 {
+            cursor -= 1;
+            let available = self.allocations[cursor].capacity();
+            if available < needed || available >= capacity { continue; }
+            capacity = available;
+            best = Some(cursor);
+            if available == needed { break; }
         }
-        let row = found?;
-        self.stored -= 1;
-        self.retained_bytes -= row.capacity().saturating_mul(std::mem::size_of::<Value>());
-        Some(row)
+        best.map(|at| {
+            let row = self.allocations.swap_remove(at);
+            self.count -= 1;
+            self.retained_bytes -= row.capacity().saturating_mul(std::mem::size_of::<Value>());
+            row
+        })
     }
-    fn shelve(&mut self, row: Rc<Vec<Value>>) {
-        let room = row.capacity();
-        if room < TIERS { self.tiers[room].push(row); } else { self.oversize.push(row); }
-        self.stored += 1;
+    fn release(&mut self, row: Rc<Vec<Value>>) {
+        self.count += 1;
+        let bin = row.capacity();
+        if bin >= 64 { self.allocations.push(row); }
+        else {
+            self.bins[bin].push(row);
+            self.occupied |= 1u64 << bin;
+        }
     }
     fn clear(&mut self) {
-        for tier in self.tiers.iter_mut() { tier.clear(); }
-        self.oversize.clear();
-        self.stored = 0;
-        self.retained_bytes = 0;
+        for bucket in &mut self.bins { bucket.clear(); }
+        self.allocations.clear(); self.occupied = 0; self.count = 0; self.retained_bytes = 0;
     }
 }
 
@@ -100,9 +107,9 @@ impl Drop for Sequence {
         let cost = values.capacity().saturating_mul(std::mem::size_of::<Value>());
         let _ = RESERVE.try_with(|reserve| {
             let mut reserve = reserve.borrow_mut();
-            if reserve.stored < 256 && cost <= (1024usize * 1024).saturating_sub(reserve.retained_bytes) {
+            if reserve.count < 256 && cost <= (1024usize * 1024).saturating_sub(reserve.retained_bytes) {
                 reserve.retained_bytes += cost;
-                reserve.shelve(self.row.clone());
+                reserve.release(self.row.clone());
             }
         });
     }
