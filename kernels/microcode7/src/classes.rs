@@ -523,7 +523,7 @@ impl<'a> Machine<'a> {
         }
         let order=self.detail("order").to_owned();
         if !order.is_empty(){kind.shared.borrow_mut().push((order.clone(),self.kind_entry("type",&order)));}
-        for word in [self.detail("namespace"), self.detail("mro")] {
+        for word in [self.detail("namespace"), self.detail("mro"), self.detail("subclasses")] {
             if !word.is_empty() { kind.shared.borrow_mut().push((word.to_owned(), self.kind_entry("type", word))); }
         }
         for at in [1, 8, 17, 76, 77] { if let Some(key) = self.rules.specials.get(at) {
@@ -1815,7 +1815,8 @@ impl<'a> Machine<'a> {
                     let _ = fresh;
                     Ok(Value::Nil)
     }
-    fn slot_value(&self,thing:&Value,parts:&[Value])->Res {
+    fn slot_value(&mut self,thing:&Value,parts:&[Value])->Res {
+        if matches!(parts.get(2), Some(Value::Small(-3))) { return self.class_from_type(vec![thing.clone()]); }
         if parts.get(2).is_some_and(|field|field.bare()=="\0instance-book" || matches!(field, Value::Small(-2))) {
             if let (Value::Blueprint(class),Some(Value::Blueprint(declaring)))=(thing,parts.get(1)) {
                 if Self::builder_over(class).is_some_and(|maker|std::iter::once(&maker).chain(maker.ancestry().iter()).any(|base|Rc::ptr_eq(base,declaring))) {
@@ -1856,7 +1857,51 @@ impl<'a> Machine<'a> {
             } else {self.absent_attribute(thing,&parts[0].bare())}
         })
     }
-    fn slot_change(&self,thing:&Value,parts:&[Value],replacement:Option<Value>)->Res {
+    fn replace_thing_blueprint(&self, t: &Hold, replacement: Option<Value>) -> Res {
+        match replacement {
+            Some(Value::Blueprint(next)) => {
+                let previous = t.blueprint();
+                let alike = self.reclassification_storage_matches(&previous, &next);
+                // Module subclasses can replace the native class if no slot adds storage.
+                let plain_module = |kind: &Blueprint| {
+                    if Self::native_beneath(kind).as_deref() != Some("module") { return false; }
+                    for base in std::iter::once(kind).chain(kind.ancestry.borrow().iter().map(Rc::as_ref)) {
+                        if let Some(declared) = Self::own_entry(base, self.detail("slots")) {
+                            match declared.settled() {
+                                Value::Tuple(row) | Value::Vector(row) if row.is_empty() => {},
+                                _ => return false,
+                            }
+                        }
+                    }
+                    true
+                };
+                let native_namespace = self.namespace_holding(&Value::Thing(t.clone())).is_some() && Self::native_beneath(&previous).is_none();
+                let module_storage = (plain_module(&previous) || native_namespace) && plain_module(&next);
+                let heap_pair=previous.type_names.borrow().is_some() && next.type_names.borrow().is_some();
+                let module_pair=Self::native_beneath(&previous).as_deref()==Some("module") && Self::native_beneath(&next).as_deref()==Some("module");
+                if !module_storage && !Rc::ptr_eq(&previous,&next) && (!(heap_pair||module_pair)||!self.matching_bases(&previous,&next)||!self.reclassification_storage_matches(&previous,&next)) {
+                    return Err("TypeError: __class__ assignment: object layout differs".to_owned().into());
+                }
+                // The worth a slot keeps stands under the key of
+                // the blueprint that declared it: move it over.
+                if alike {
+                    let (was, now) = (format!(":{:p}", Rc::as_ptr(&previous)), format!(":{:p}", Rc::as_ptr(&next)));
+                    for entry in t.holds.borrow_mut().iter_mut() {
+                        if entry.0.starts_with("\0slot:") && entry.0.ends_with(&was) { let cut = entry.0.len() - was.len(); entry.0.truncate(cut); entry.0.push_str(&now); }
+                    }
+                }
+                t.reclassified.replace(Some(next));
+                return Ok(Value::Nil);
+            }
+            _ => return Err("TypeError: __class__ must be set to a class".to_owned().into()),
+        }
+    }
+    fn slot_change(&mut self,thing:&Value,parts:&[Value],replacement:Option<Value>)->Res {
+        if matches!(parts.get(2), Some(Value::Small(-3))) {
+            if let Value::Thing(instance) = thing { return self.replace_thing_blueprint(instance, replacement); }
+            let attribute = self.detail("kind").to_owned();
+            return self.alter_class_member(thing.clone(), &attribute, replacement, true);
+        }
         if matches!(thing,Value::Blueprint(_)) && parts.get(2).is_some_and(|field|field.bare()=="\0instance-book" || matches!(field, Value::Small(-2))) {
             self.slot_value(thing,parts)?;
             return Err("AttributeError: attribute '__dict__' of 'type' objects is not writable".to_string().into());
@@ -3429,9 +3474,24 @@ impl<'a> Machine<'a> {
                     // the kind and the receiver's own, as CPython's
                     // descriptor does.
                     60=>{
+                        if kept[0].bare() == "type" && kept[1].bare() == self.detail("subclasses") {
+                            let mut supplied = values.into_iter();
+                            let first = supplied.next().ok_or_else(|| Escape::Error("TypeError: unbound method type.__subclasses__() needs an argument".into()))?;
+                            if !self.stands_for_a_kind(&first) { return Err(String::from("TypeError: descriptor '__subclasses__' requires a type object").into()); }
+                            let class = self.parent_type_arg(&first)?;
+                            return self.apply_class_member(Self::wrap(204, vec![Value::Blueprint(class)]), supplied.collect());
+                        }
                         if kept[0].bare()=="type" && kept[1].bare()==self.detail("order"){return self.call_type_mro(values);}
                         let entry=kept[1].bare();
                         let word=kept[0].bare();
+                        if entry == self.detail("subclass") && word == self.detail("root") {
+                            let (inputs, options) = self.open_arguments(values)?;
+                            let Some(receiver) = inputs.first() else { return Err(format!("TypeError: descriptor '{entry}' of '{word}' object needs an argument").into()); };
+                            if !self.stands_for_a_kind(receiver) { return Err(format!("TypeError: descriptor '{entry}' requires a type object").into()); }
+                            let owner = self.parent_type_arg(receiver)?;
+                            if inputs.len() > 1 || !options.is_empty() { return Err(format!("TypeError: {}.{entry}() takes no keyword arguments", owner.name).into()); }
+                            return Ok(Value::Nil);
+                        }
                         if values.is_empty() {
                             if word == "module" && self.rules.specials.get(1).is_some_and(|name| name == &entry) {
                                 return Err("TypeError: descriptor '__repr__' of 'module' object needs an argument".to_owned().into());
@@ -4274,7 +4334,7 @@ impl<'a> Machine<'a> {
         let class = if let Value::Blueprint(type_object) = &target { type_object.clone() } else if matches!(&target, Value::Intrinsic(Prim::Truthful, _)) { self.native_kind("bool") } else { match self.parent_from_type(&target) { Ok(kind) => kind, Err(_) => {
             return Err(format!("TypeError: descriptor '{public}' for type '{home}' needs a type, not a '{}' as arg 2", limited_name(bad_type_name)).into());
         }} };
-        let parent = self.kind_by_word(&home).ok_or_else(|| self.class_unready())?;
+        let parent = if home == self.detail("root") { Value::Blueprint(self.common_ancestor()) } else { self.kind_by_word(&home).ok_or_else(|| self.class_unready())? };
         let exported = class.shared.borrow().iter().any(|entry| entry.0 == "\0buffer_allocator" && entry.1.is_true());
         let public_type = match class.type_names.borrow().as_ref() {
             Some(names) if !exported => names.short.type_text().bare(),
@@ -4449,6 +4509,9 @@ impl<'a> Machine<'a> {
             if parts.len() == 3 {
                 let owner = if let Some(Value::Thing(instance)) = &receiver { instance.blueprint() }
                     else if let Some(Value::Blueprint(class)) = &receiver { class.clone() } else { owner };
+                if parts[1].bare() == self.detail("subclass") && parts[0].bare() == self.detail("root") {
+                    return Ok(Self::wrap(3, vec![entry.clone(), Value::Blueprint(owner)]));
+                }
                 let qualified = format!("{}.{}", parts[0].bare(), parts[1].bare());
                 if Self::native_word(&owner).as_deref() == Some(parts[0].bare().as_str()) {
                     if let Some(task) = self.table.prims.get(&qualified) { return Ok(Value::Intrinsic(*task, Rc::from(qualified))); }
@@ -4963,8 +5026,14 @@ impl<'a> Machine<'a> {
         let spelling = self.table.single("ext.stmt.class.constructor").unwrap_or_default().to_owned();
         self.loose_entries.borrow_mut().entry((String::from("object"), spelling)).or_insert_with(|| Self::wrap(2, Vec::new())).clone()
     }
+    fn subclass_hook_descriptor(&self) -> Value {
+        let word = self.detail("subclass").to_owned();
+        self.loose_entries.borrow_mut().entry((String::from("object"), word.clone()))
+            .or_insert_with(|| Self::wrap(60, vec![Value::text(self.detail("root")), Value::text(&word), Value::Flag(true)])).clone()
+    }
     fn from_the_root(&self,key:&str,of_a_thing:bool,class:&Blueprint)->Option<Value> {
         if key.is_empty(){return None;}
+        if key == self.detail("subclass") { return Some(self.subclass_hook_descriptor()); }
         if self.rules.words_ext_stmt_class_detail_root_members.iter().any(|word|word==key) {
             let owner = Self::native_beneath(class).unwrap_or_else(|| self.detail("root").to_owned());
             let cache_key = format!("{owner} member {key}");
@@ -5469,6 +5538,8 @@ impl<'a> Machine<'a> {
         if word == "bool" { return Some("Returns True when the argument is true, False otherwise.\nThe builtins True and False are the only two instances of the class bool.\nThe class bool is a subclass of the class int, and cannot be subclassed."); }
         if word == "str" { return Some("str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'."); }
         match word {
+            "function" => Some("Create a function object.\n\n  code\n    a code object\n  globals\n    the globals dictionary\n  name\n    a string that overrides the name from the code object\n  argdefs\n    a tuple that specifies the default argument values\n  closure\n    a tuple that supplies the bindings for free variables"),
+            "method" => Some("Create a bound instance method object."),
             "object" => Some("The base class of the class hierarchy.\n\nWhen called, it accepts no arguments and returns a new featureless\ninstance that has no instance attributes and cannot be given any.\n"),
             "enumerate" => Some("Return an enumerate object.\n\n  iterable\n    an object supporting iteration\n\nThe enumerate object yields pairs containing a count (from start, which\ndefaults to zero) and a value yielded by the iterable argument.\n\nenumerate is useful for obtaining an indexed list:\n    (0, seq[0]), (1, seq[1]), (2, seq[2]), ..."),
             "reversed" => Some("Return a reverse iterator over the values of the given sequence."),
@@ -6382,6 +6453,7 @@ impl<'a> Machine<'a> {
                 if key==self.detail("qualified") { return Ok(Value::text(&format!("{}.{}", kind, word))); }
                 if key==self.detail("name") { return Ok(Value::text(word)); }
                 if key=="__objclass__" {
+                    if kind.as_ref() == self.detail("root") { return Ok(Value::Blueprint(self.common_ancestor())); }
                     if let Some(owner)=self.kind_by_word(kind) { return Ok(owner); }
                 }
                 if key==self.detail("descriptor.get") { return Ok(Self::wrap(31, vec![value.clone()])); }
@@ -6450,6 +6522,12 @@ impl<'a> Machine<'a> {
         // Routines, wrapped routines and slots are members that bind, and
         // read as such; a slot writes and removes besides.
         if let Value::Wrapped(32, parts) = &value {
+            if key == self.detail("doc") && matches!(parts.get(2), Some(Value::Small(-3))) {
+                let title = format!("{}.{}", self.detail("root"), self.detail("kind"));
+                for pair in self.table.strings("ext.stmt.class.detail.native.docs").chunks_exact(2) {
+                    if pair[0] == title { return Ok(Value::text(&pair[1])); }
+                }
+            }
             if matches!(parts.get(2), Some(Value::Small(-2))) {
                 match key {
                     "__objclass__" => return Ok(parts[1].clone()),
@@ -6496,6 +6574,7 @@ impl<'a> Machine<'a> {
         if matches!(&value, Value::Intrinsic(Prim::SortOf, _))
             || (!self.rules.words_ext_stmt_class_builder.is_empty() && (matches!(&value, Value::Blueprint(b) if self.builds_classes(b) || Self::native_word(b).is_some_and(|word| self.table.prims.get(&word) == Some(&Prim::SortOf)))
                 || self.kind_spelling(&value).is_some_and(|word| self.table.prims.get(word.as_ref()) == Some(&Prim::SortOf)))) {
+            if key == self.detail("subclasses") && !key.is_empty() { return Ok(self.kind_entry("type", key)); }
             if self.rules.words_ext_stmt_class_constructor.first().map(String::as_str)==Some(key){return Ok(Self::wrap(73,Vec::new()));}
             let operation = [("allocate", 70), ("call", 71), ("prepare", 72), ("get", 10), ("set", 11), ("remove", 12)]
                 .into_iter().find_map(|(part, tag)| (key == self.detail(part)).then_some(tag));
@@ -6812,9 +6891,17 @@ impl<'a> Machine<'a> {
                 // already does, so a class standing only on the root
                 // answers `__hash__` when its methods are asked.
                 if Rc::ptr_eq(b, &self.common_ancestor()) {
-                    let listed: Vec<(Value, Value)> = self.rules.words_ext_stmt_class_detail_root_members.iter()
+                    let mut listed: Vec<(Value, Value)> = self.rules.words_ext_stmt_class_detail_root_members.iter()
                         .filter_map(|name| self.from_the_root(name, false, b).map(|member| (Value::text(name), member)))
                         .collect();
+                    let hook = self.detail("subclass");
+                    if !hook.is_empty() { listed.push((Value::text(hook), self.subclass_hook_descriptor())); }
+                    let attribute = self.detail("kind");
+                    if !attribute.is_empty() {
+                        let descriptor = self.loose_entries.borrow_mut().entry(("object".to_owned(), attribute.to_owned()))
+                            .or_insert_with(|| Self::wrap(32, vec![Value::text(attribute), Value::Blueprint(b.clone()), Value::Small(-3)])).clone();
+                        listed.push((Value::text(attribute), descriptor));
+                    }
                     return Ok(Value::Window(Rc::new(Value::Dict(Rc::new(listed.into()))), 'm'));
                 }
                 // A class standing for a native kind holds what a value
@@ -6908,6 +6995,10 @@ impl<'a> Machine<'a> {
             // method is bound to the thing.
             if let Some(builder)=Self::builder_over(b) {
                 if let Some(found)=self.inherited_entry(&builder,key){return self.member_binding(found,Some(value.clone()),builder);}
+            }
+            if !key.is_empty() && key == self.detail("subclass") {
+                let descriptor = self.subclass_hook_descriptor();
+                return self.member_binding(descriptor, None, b.clone());
             }
             // The formatting every blueprint has from the root: a thing
             // and a specification, answered as the format builtin would.
@@ -8062,45 +8153,7 @@ impl<'a> Machine<'a> {
                     if let Some(Value::Attributes(view))=&replacement {if crate::data::Hold::ptr_eq(view,t){return Ok(Value::Nil);}}
                     return self.replace_instance_book(t,replacement);
                 }
-                if key == self.detail("kind") {
-                    match replacement {
-                        Some(Value::Blueprint(next)) => {
-                            let previous = t.blueprint();
-                            let alike = self.reclassification_storage_matches(&previous, &next);
-                            // Module subclasses can replace the native class if no slot adds storage.
-                            let plain_module = |kind: &Blueprint| {
-                                if Self::native_beneath(kind).as_deref() != Some("module") { return false; }
-                                for base in std::iter::once(kind).chain(kind.ancestry.borrow().iter().map(Rc::as_ref)) {
-                                    if let Some(declared) = Self::own_entry(base, self.detail("slots")) {
-                                        match declared.settled() {
-                                            Value::Tuple(row) | Value::Vector(row) if row.is_empty() => {},
-                                            _ => return false,
-                                        }
-                                    }
-                                }
-                                true
-                            };
-                            let native_namespace = self.namespace_holding(&subject).is_some() && Self::native_beneath(&previous).is_none();
-                            let module_storage = (plain_module(&previous) || native_namespace) && plain_module(&next);
-                            let heap_pair=previous.type_names.borrow().is_some() && next.type_names.borrow().is_some();
-                            let module_pair=Self::native_beneath(&previous).as_deref()==Some("module") && Self::native_beneath(&next).as_deref()==Some("module");
-                            if !module_storage && !Rc::ptr_eq(&previous,&next) && (!(heap_pair||module_pair)||!self.matching_bases(&previous,&next)||!self.reclassification_storage_matches(&previous,&next)) {
-                                return Err("TypeError: __class__ assignment: object layout differs".to_owned().into());
-                            }
-                            // The worth a slot keeps stands under the key of
-                            // the blueprint that declared it: move it over.
-                            if alike {
-                                let (was, now) = (format!(":{:p}", Rc::as_ptr(&previous)), format!(":{:p}", Rc::as_ptr(&next)));
-                                for entry in t.holds.borrow_mut().iter_mut() {
-                                    if entry.0.starts_with("\0slot:") && entry.0.ends_with(&was) { let cut = entry.0.len() - was.len(); entry.0.truncate(cut); entry.0.push_str(&now); }
-                                }
-                            }
-                            t.reclassified.replace(Some(next));
-                            return Ok(Value::Nil);
-                        }
-                        _ => return Err("TypeError: __class__ must be set to a class".to_owned().into()),
-                    }
-                }
+                if key == self.detail("kind") { return self.replace_thing_blueprint(t, replacement); }
                 // A loaded namespace keeps each binding in a cell its own
                 // code reads through; a new value goes into the cell, and
                 // one taken away leaves the cell empty so every reading
@@ -8612,7 +8665,7 @@ impl<'a> Machine<'a> {
         // whether a field has a default finds a descriptor, not a value.
         let slot_word = match value {
             Value::Wrapped(32, fields) if matches!(fields.get(1), Some(Value::Blueprint(_))) => {
-                Some(if matches!(fields.get(2), Some(Value::Small(-2))) { "getset_descriptor" } else { "member_descriptor" })
+                Some(if matches!(fields.get(2), Some(Value::Small(-2 | -3))) { "getset_descriptor" } else { "member_descriptor" })
             }
             _ => None,
         };
@@ -9108,7 +9161,7 @@ impl<'a> Machine<'a> {
             if values.len() != 2 { return Err(self.class_unready()); }
             let receiver = values[0].clone();
             let Value::Blueprint(root) = &values[1] else { return Err(self.class_unready()); };
-            let read_slot = |key: &str| -> Res {
+            let mut read_slot = |key: &str| -> Res {
                 match self.inherited_entry(root, key) {
                     Some(Value::Wrapped(32, layout)) => self.slot_value(&receiver, &layout),
                     _ => Err(self.class_unready()),
